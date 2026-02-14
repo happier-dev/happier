@@ -10,6 +10,7 @@ const setScmRemoteConfirmPolicy = vi.fn();
 const setScmPushRejectPolicy = vi.fn();
 const setScmDefaultDiffModeByBackend = vi.fn();
 const setFilesDiffSyntaxHighlightingMode = vi.fn();
+const setFilesChangedFilesRowDensity = vi.fn();
 
 vi.mock('react-native-unistyles', () => ({
     useUnistyles: () => ({
@@ -33,6 +34,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (name === 'scmPushRejectPolicy') return ['prompt_fetch', setScmPushRejectPolicy];
         if (name === 'scmDefaultDiffModeByBackend') return [{}, setScmDefaultDiffModeByBackend];
         if (name === 'filesDiffSyntaxHighlightingMode') return ['off', setFilesDiffSyntaxHighlightingMode];
+        if (name === 'filesChangedFilesRowDensity') return ['comfortable', setFilesChangedFilesRowDensity];
         return [null, vi.fn()];
     },
 }));
@@ -107,5 +109,26 @@ describe('SourceControlSettingsView', () => {
         });
 
         expect(setFilesDiffSyntaxHighlightingMode).toHaveBeenCalledWith('simple');
+    });
+
+    it('allows updating changed files row density', async () => {
+        setFilesChangedFilesRowDensity.mockClear();
+
+        const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(SourceControlSettingsView));
+        });
+
+        const items = tree!.root.findAllByType('Item' as any);
+        const compactItem = items.find((item) => item.props.title === 'Changed files density: Compact');
+        expect(compactItem).toBeTruthy();
+
+        await act(async () => {
+            compactItem!.props.onPress();
+        });
+
+        expect(setFilesChangedFilesRowDensity).toHaveBeenCalledWith('compact');
     });
 });

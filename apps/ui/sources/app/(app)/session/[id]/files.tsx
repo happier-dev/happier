@@ -108,9 +108,11 @@ export default function FilesScreen() {
     const scmPushRejectPolicy = useSetting('scmPushRejectPolicy');
     const scmReviewMaxFiles = useSetting('scmReviewMaxFiles');
     const scmReviewMaxChangedLines = useSetting('scmReviewMaxChangedLines');
+    const filesChangedFilesRowDensity = useSetting('filesChangedFilesRowDensity');
     const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
     const sessionPath = session?.metadata?.path ?? null;
     const machineId = typeof session?.metadata?.machineId === 'string' ? session.metadata.machineId : '';
+    const changedFilesRowDensity = filesChangedFilesRowDensity === 'compact' ? 'compact' : 'comfortable';
     const machine = useMachine(machineId);
     const isSessionInactive = session?.active === false;
     const machineReachable = resolveSessionMachineReachability({
@@ -461,6 +463,7 @@ export default function FilesScreen() {
                             maxChangedLines={typeof scmReviewMaxChangedLines === 'number' ? scmReviewMaxChangedLines : 2000}
                             onFilePress={handleFilePress}
                             focusPath={reviewFocusPath}
+                            rowDensity={changedFilesRowDensity}
                         />
                     ) : (
                         <ChangedFilesList
@@ -472,6 +475,7 @@ export default function FilesScreen() {
                             repositoryOnlyFiles={repositoryOnlyFiles}
                             suppressedInferredCount={suppressedInferredCount}
                             onFilePress={handleFilePress}
+                            rowDensity={changedFilesRowDensity}
                         />
                     )
                 ) : null}

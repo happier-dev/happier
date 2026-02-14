@@ -146,6 +146,26 @@ const FILES_SYNTAX_HIGHLIGHTING_OPTIONS: ReadonlyArray<{
     },
 ];
 
+const FILES_CHANGED_FILES_DENSITY_OPTIONS: ReadonlyArray<{
+    id: 'comfortable' | 'compact';
+    title: string;
+    subtitle: string;
+    iconName: IoniconName;
+}> = [
+    {
+        id: 'comfortable',
+        title: 'Changed files density: Comfortable',
+        subtitle: 'Larger rows with clearer file subtitles and status.',
+        iconName: 'list-outline',
+    },
+    {
+        id: 'compact',
+        title: 'Changed files density: Compact',
+        subtitle: 'Smaller rows for easier scanning when many files changed.',
+        iconName: 'reorder-three-outline',
+    },
+];
+
 export const SourceControlSettingsView = React.memo(function SourceControlSettingsView() {
     const { theme } = useUnistyles();
     const [scmCommitStrategy, setScmCommitStrategy] = useSettingMutable('scmCommitStrategy');
@@ -154,9 +174,11 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
     const [scmPushRejectPolicy, setScmPushRejectPolicy] = useSettingMutable('scmPushRejectPolicy');
     const [scmDefaultDiffModeByBackend, setScmDefaultDiffModeByBackend] = useSettingMutable('scmDefaultDiffModeByBackend');
     const [filesDiffSyntaxHighlightingMode, setFilesDiffSyntaxHighlightingMode] = useSettingMutable('filesDiffSyntaxHighlightingMode');
+    const [filesChangedFilesRowDensity, setFilesChangedFilesRowDensity] = useSettingMutable('filesChangedFilesRowDensity');
     const backendPlugins = scmBackendSettingsRegistry.listPlugins();
     const currentDiffModeByBackend = scmDefaultDiffModeByBackend ?? {};
     const effectiveFilesDiffSyntaxHighlightingMode = (filesDiffSyntaxHighlightingMode ?? 'off') as 'off' | 'simple' | 'advanced';
+    const effectiveFilesChangedFilesRowDensity = filesChangedFilesRowDensity === 'compact' ? 'compact' : 'comfortable';
 
     const renderIcon = React.useCallback((iconName: IoniconName) => (
         <Ionicons name={iconName} size={29} color={theme.colors.textSecondary} />
@@ -244,6 +266,17 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                         icon={renderIcon(option.iconName)}
                         rightElement={effectiveFilesDiffSyntaxHighlightingMode === option.id ? <Ionicons name="checkmark" size={20} color="#007AFF" /> : null}
                         onPress={() => setFilesDiffSyntaxHighlightingMode(option.id)}
+                        showChevron={false}
+                    />
+                ))}
+                {FILES_CHANGED_FILES_DENSITY_OPTIONS.map((option) => (
+                    <Item
+                        key={option.id}
+                        title={option.title}
+                        subtitle={option.subtitle}
+                        icon={renderIcon(option.iconName)}
+                        rightElement={effectiveFilesChangedFilesRowDensity === option.id ? <Ionicons name="checkmark" size={20} color="#007AFF" /> : null}
+                        onPress={() => setFilesChangedFilesRowDensity(option.id)}
                         showChevron={false}
                     />
                 ))}

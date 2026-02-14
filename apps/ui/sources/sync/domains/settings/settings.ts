@@ -298,6 +298,7 @@ const SettingsSchemaBase = z.object({
 
     // Files/diff rendering options (flat; used by CodeLines surfaces).
     filesDiffSyntaxHighlightingMode: z.enum(['off', 'simple', 'advanced']).describe('Diff/file syntax highlighting mode'),
+    filesChangedFilesRowDensity: z.enum(['comfortable', 'compact']).describe('Row density for changed files list and review'),
     filesDiffTokenizationMaxBytes: z.number().describe('Maximum bytes to tokenize before falling back to plain text'),
     filesDiffTokenizationMaxLines: z.number().describe('Maximum line count to tokenize before falling back to plain text'),
     filesDiffTokenizationMaxLineLength: z.number().describe('Maximum per-line length to tokenize before falling back to plain text for that line'),
@@ -471,6 +472,7 @@ export const settingsDefaults: Settings = {
     scmReviewMaxChangedLines: 2000,
 
     filesDiffSyntaxHighlightingMode: 'simple',
+    filesChangedFilesRowDensity: 'comfortable',
     filesDiffTokenizationMaxBytes: 250_000,
     filesDiffTokenizationMaxLines: 5_000,
     filesDiffTokenizationMaxLineLength: 2_000,
