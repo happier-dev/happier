@@ -12,6 +12,7 @@ import { CodeGutter } from './CodeGutter';
 export function CodeLineRow(props: {
     line: CodeLine;
     selected: boolean;
+    highlighted?: boolean;
     onPressLine?: (line: CodeLine) => void;
     onPressAddComment?: (line: CodeLine) => void;
     commentActive?: boolean;
@@ -23,6 +24,7 @@ export function CodeLineRow(props: {
         language: string | null;
         maxLineLength: number;
     }>;
+    advancedTokens?: readonly Readonly<{ text: string; color: string }>[];
 }) {
     const { theme } = useUnistyles();
     const { line, selected, onPressLine, onPressAddComment } = props;
@@ -32,6 +34,7 @@ export function CodeLineRow(props: {
     const isWeb = Platform.OS === 'web';
     const [isHovered, setIsHovered] = React.useState(false);
     const commentActive = props.commentActive === true;
+    const highlighted = props.highlighted === true;
 
     const onPress = line.selectable && onPressLine ? () => onPressLine(line) : undefined;
     const onLongPress = !isWeb && onPressAddComment && !line.renderIsHeaderLine ? () => onPressAddComment(line) : undefined;
@@ -54,7 +57,7 @@ export function CodeLineRow(props: {
             ? theme.colors.diff.hunkHeaderText
             : theme.colors.diff.contextText;
 
-    const tokens = React.useMemo(() => {
+    const simpleTokens = React.useMemo(() => {
         const mode = props.syntaxHighlighting?.mode ?? 'off';
         const language = props.syntaxHighlighting?.language ?? null;
         const maxLineLength = props.syntaxHighlighting?.maxLineLength ?? 0;
@@ -76,7 +79,11 @@ export function CodeLineRow(props: {
     }, [theme.colors, textColor]);
 
     return (
-        <View style={[styles(theme).row, { backgroundColor }]}>
+        <View style={[
+            styles(theme).row,
+            highlighted ? styles(theme).rowHighlighted : null,
+            { backgroundColor },
+        ]}>
             <Pressable
                 style={styles(theme).rowPressable}
                 onPress={onPress}
@@ -100,13 +107,19 @@ export function CodeLineRow(props: {
                         ellipsizeMode={wrapLines ? undefined : 'clip'}
                         style={[styles(theme).codeText, { color: textColor }, !wrapLines ? styles(theme).noWrap : null]}
                     >
-                        {tokens
-                            ? tokens.map((token, idx) => (
-                                <Text key={idx} style={{ color: renderTokenColor(token.type) }}>
+                        {(props.syntaxHighlighting?.mode === 'advanced' && props.advancedTokens && !line.renderIsHeaderLine)
+                            ? props.advancedTokens.map((token, idx) => (
+                                <Text key={idx} style={{ color: token.color }}>
                                     {token.text}
                                 </Text>
                             ))
-                            : (line.renderCodeText || ' ')}
+                            : simpleTokens
+                                ? simpleTokens.map((token, idx) => (
+                                    <Text key={idx} style={{ color: renderTokenColor(token.type) }}>
+                                        {token.text}
+                                    </Text>
+                                ))
+                                : (line.renderCodeText || ' ')}
                     </Text>
                 </View>
             </Pressable>
@@ -138,6 +151,11 @@ const styles = (theme: any) => StyleSheet.create({
         paddingVertical: 1,
         paddingHorizontal: 8,
         alignItems: 'flex-start',
+    },
+    rowHighlighted: {
+        borderLeftWidth: 3,
+        borderLeftColor: theme.colors.textLink ?? theme.colors.link ?? theme.colors.textSecondary,
+        paddingLeft: 5,
     },
     rowPressable: {
         flexDirection: 'row',

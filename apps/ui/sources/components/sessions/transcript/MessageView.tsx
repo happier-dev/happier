@@ -18,6 +18,7 @@ import { isCommittedMessageDiscarded } from "@/utils/sessions/discardedCommitted
 import { shouldShowMessageCopyButton } from '@/components/sessions/transcript/messageCopyVisibility';
 import { StructuredMessageBlock } from '@/components/sessions/transcript/structured/StructuredMessageBlock';
 import { useRouter } from 'expo-router';
+import { buildSessionFileDeepLink } from '@/utils/url/sessionFileDeepLink';
 
 export const MessageView = (props: {
   message: Message;
@@ -124,7 +125,12 @@ function UserTextBlock(props: {
             message={props.message as any}
             sessionId={props.sessionId}
             onJumpToAnchor={(target) => {
-              router.push(`/session/${props.sessionId}/file?path=${encodeURIComponent(target.filePath)}`);
+              router.push(buildSessionFileDeepLink({
+                sessionId: props.sessionId,
+                filePath: target.filePath,
+                source: target.source,
+                anchor: target.anchor,
+              }));
             }}
           />
           <MarkdownView markdown={props.message.displayText || props.message.text} onOptionPress={handleOptionPress} />
@@ -191,7 +197,12 @@ function AgentTextBlock(props: {
         message={props.message as any}
         sessionId={props.sessionId}
         onJumpToAnchor={(target) => {
-          router.push(`/session/${props.sessionId}/file?path=${encodeURIComponent(target.filePath)}`);
+          router.push(buildSessionFileDeepLink({
+            sessionId: props.sessionId,
+            filePath: target.filePath,
+            source: target.source,
+            anchor: target.anchor,
+          }));
         }}
       />
       <MarkdownView markdown={props.message.text} onOptionPress={handleOptionPress} />
@@ -330,13 +341,18 @@ function ToolCallBlock(props: {
   }
   return (
     <View style={styles.toolContainer}>
-      <StructuredMessageBlock
-        message={props.message as any}
-        sessionId={props.sessionId}
-        onJumpToAnchor={(target) => {
-          router.push(`/session/${props.sessionId}/file?path=${encodeURIComponent(target.filePath)}`);
-        }}
-      />
+        <StructuredMessageBlock
+          message={props.message as any}
+          sessionId={props.sessionId}
+          onJumpToAnchor={(target) => {
+            router.push(buildSessionFileDeepLink({
+              sessionId: props.sessionId,
+              filePath: target.filePath,
+              source: target.source,
+              anchor: target.anchor,
+            }));
+          }}
+        />
       <ToolView
         tool={props.message.tool}
         metadata={props.metadata}

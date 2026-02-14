@@ -37,6 +37,7 @@ import type { ScmDiffArea } from '@happier-dev/protocol';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useCodeLinesSyntaxHighlighting } from '@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { parseSessionFileDeepLinkAnchor } from '@/utils/url/sessionFileDeepLink';
 
 interface FileContent {
     content: string;
@@ -59,6 +60,16 @@ export default function FileScreen() {
     const { id: sessionIdParam } = useLocalSearchParams<{ id: string }>();
     const sessionId = sessionIdParam || '';
     const searchParams = useLocalSearchParams();
+    const deepLinkAnchor = React.useMemo(
+        () => parseSessionFileDeepLinkAnchor(searchParams as any),
+        [searchParams]
+    );
+    const deepLinkKey = React.useMemo(() => {
+        if (!deepLinkAnchor) return '';
+        const a = deepLinkAnchor.anchor;
+        if (a.kind === 'fileLine') return `file:fileLine:${a.startLine}`;
+        return `diff:diffLine:${a.startLine}:${a.side}:${a.oldLine ?? ''}:${a.newLine ?? ''}`;
+    }, [deepLinkAnchor]);
 
     const scmCommitStrategy = useSetting('scmCommitStrategy');
     const scmDefaultDiffModeByBackend = useSetting('scmDefaultDiffModeByBackend');
@@ -102,6 +113,8 @@ export default function FileScreen() {
     const [editorText, setEditorText] = React.useState('');
     const [isSavingEdits, setIsSavingEdits] = React.useState(false);
     const [fileWriteSupported, setFileWriteSupported] = React.useState(true);
+    type ParsedDeepLink = NonNullable<ReturnType<typeof parseSessionFileDeepLinkAnchor>>;
+    const [jumpToAnchor, setJumpToAnchor] = React.useState<ParsedDeepLink['anchor'] | null>(deepLinkAnchor?.anchor ?? null);
 
     const hasIncludedDelta = fileEntry?.hasIncludedDelta === true;
     const hasPendingDelta = fileEntry?.hasPendingDelta === true;
@@ -223,12 +236,34 @@ export default function FileScreen() {
     }, [error]);
 
     React.useEffect(() => {
-        if (diffContent) {
-            setDisplayMode('diff');
-        } else if (fileContent) {
-            setDisplayMode('file');
+        // Prefer explicit deep-link source when provided.
+        if (deepLinkAnchor?.source === 'file') {
+            if (fileContent) setDisplayMode('file');
+            return;
         }
-    }, [diffContent, fileContent]);
+        if (deepLinkAnchor?.source === 'diff') {
+            if (diffContent) setDisplayMode('diff');
+            return;
+        }
+
+        if (diffContent) setDisplayMode('diff');
+        else if (fileContent) setDisplayMode('file');
+    }, [deepLinkAnchor?.source, diffContent, fileContent]);
+
+    React.useEffect(() => {
+        if (!deepLinkAnchor) {
+            setJumpToAnchor(null);
+            return;
+        }
+
+        setJumpToAnchor(deepLinkAnchor.anchor);
+
+        const timer = setTimeout(() => {
+            setJumpToAnchor(null);
+        }, 8000);
+
+        return () => clearTimeout(timer);
+    }, [deepLinkKey]);
 
     React.useEffect(() => {
         if (displayMode !== 'file') {
@@ -455,6 +490,7 @@ export default function FileScreen() {
                     onToggleLine={toggleSelectedLine}
                     reviewCommentsEnabled={reviewCommentsEnabled}
                     reviewCommentDrafts={reviewCommentDrafts}
+                    jumpToAnchor={jumpToAnchor}
                     onUpsertReviewCommentDraft={(draft) => {
                         storage.getState().upsertSessionReviewCommentDraft(sessionId, draft);
                     }}

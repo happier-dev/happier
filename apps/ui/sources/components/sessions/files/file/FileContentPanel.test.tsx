@@ -117,6 +117,66 @@ describe('FileContentPanel', () => {
         expect(view.props.virtualized).toBe(false);
     });
 
+    it('passes scroll/highlight target for fileLine anchors', async () => {
+        const { FileContentPanel } = await import('./FileContentPanel');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <FileContentPanel
+                    theme={theme as any}
+                    displayMode="file"
+                    sessionId="s1"
+                    filePath="src/a.ts"
+                    diffContent={null}
+                    fileContent={['one', 'two', 'three'].join('\n')}
+                    language="typescript"
+                    selectedLineIndexes={new Set()}
+                    lineSelectionEnabled={false}
+                    onToggleLine={vi.fn()}
+                    jumpToAnchor={{ kind: 'fileLine', startLine: 2 }}
+                />
+            );
+        });
+
+        const view = tree!.root.findByType('CodeLinesView' as any);
+        expect(view.props.scrollToLineId).toBe('f:2');
+        expect(view.props.highlightLineId).toBe('f:2');
+    });
+
+    it('passes scroll/highlight target for diffLine anchors', async () => {
+        const { FileContentPanel } = await import('./FileContentPanel');
+
+        // sourceIndex mapping: anchor.startLine is sourceIndex + 1 for the unified diff line list.
+        const diff = ['@@ -1,1 +1,1 @@', '+const a = 1;', ''].join('\n');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <FileContentPanel
+                    theme={theme as any}
+                    displayMode="diff"
+                    sessionId="s1"
+                    filePath="src/a.ts"
+                    diffContent={diff}
+                    fileContent={null}
+                    language="typescript"
+                    selectedLineIndexes={new Set()}
+                    lineSelectionEnabled={false}
+                    onToggleLine={vi.fn()}
+                    jumpToAnchor={{ kind: 'diffLine', startLine: 2, side: 'after', oldLine: null, newLine: 1 }}
+                />
+            );
+        });
+
+        const view = tree!.root.findByType('CodeLinesView' as any);
+        const lines = view.props.lines as Array<{ id: string; sourceIndex: number }>;
+        const target = lines.find((l) => l.sourceIndex === 1);
+        expect(target).toBeTruthy();
+        expect(view.props.scrollToLineId).toBe(target!.id);
+        expect(view.props.highlightLineId).toBe(target!.id);
+    });
+
     it('renders empty message when file mode has no content', async () => {
         const { FileContentPanel } = await import('./FileContentPanel');
 

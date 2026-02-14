@@ -189,7 +189,7 @@ describe('MessageView (structured meta)', () => {
             jumpButtons[0]!.props.onPress();
         });
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/file?path=src%2Ffoo.ts');
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/file?path=src%2Ffoo.ts&source=file&anchor=fileLine&startLine=12');
     });
 
     it('renders a structured review-findings card for tool-call messages when meta.happier.kind is review_findings.v1', async () => {

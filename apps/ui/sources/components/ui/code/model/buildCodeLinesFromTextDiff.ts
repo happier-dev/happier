@@ -1,4 +1,4 @@
-import { calculateUnifiedDiff } from '@/components/diff/calculateDiff';
+import { calculateUnifiedDiff } from '@/components/ui/code/model/diff/calculateDiff';
 
 import type { CodeLine } from './codeLineTypes';
 

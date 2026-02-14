@@ -7,7 +7,7 @@ import { buildCodeLinesFromFile } from '@/components/ui/code/model/buildCodeLine
 import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
 import { useCodeLinesReviewComments } from '@/components/sessions/reviews/comments/useCodeLinesReviewComments';
 import { Typography } from '@/constants/Typography';
-import type { ReviewCommentDraft, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
+import type { ReviewCommentAnchor, ReviewCommentDraft, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { t } from '@/text';
 import type { CodeLinesSyntaxHighlightingConfig } from '@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting';
 
@@ -28,6 +28,7 @@ type FileContentPanelProps = {
     onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
     onDeleteReviewCommentDraft?: (commentId: string) => void;
     onReviewCommentError?: (message: string) => void;
+    jumpToAnchor?: ReviewCommentAnchor | null;
 };
 
 export function FileContentPanel({
@@ -47,6 +48,7 @@ export function FileContentPanel({
     onUpsertReviewCommentDraft,
     onDeleteReviewCommentDraft,
     onReviewCommentError,
+    jumpToAnchor,
 }: FileContentPanelProps) {
     const lines = React.useMemo(() => {
         if (displayMode === 'diff' && typeof diffContent === 'string') {
@@ -91,6 +93,23 @@ export function FileContentPanel({
         return ids;
     }, [displayMode, lineSelectionEnabled, lines, selectedLineIndexes]);
 
+    const jumpToLineId = React.useMemo(() => {
+        const anchor = jumpToAnchor ?? null;
+        if (!anchor) return null;
+
+        if (displayMode === 'file' && anchor.kind === 'fileLine') {
+            const target = lines.find((l) => !l.renderIsHeaderLine && l.newLine === anchor.startLine);
+            return target?.id ?? null;
+        }
+
+        if (displayMode === 'diff' && anchor.kind === 'diffLine') {
+            const target = lines.find((l) => !l.renderIsHeaderLine && (l.sourceIndex + 1) === anchor.startLine);
+            return target?.id ?? null;
+        }
+
+        return null;
+    }, [displayMode, jumpToAnchor, lines]);
+
     const handlePressLine = React.useCallback((line: any) => {
         if (!lineSelectionEnabled) return;
         if (!onToggleLine) return;
@@ -115,6 +134,8 @@ export function FileContentPanel({
                     contentPaddingHorizontal={16}
                     contentPaddingVertical={16}
                     virtualized={virtualized}
+                    scrollToLineId={jumpToLineId ?? undefined}
+                    highlightLineId={jumpToLineId ?? undefined}
                     syntaxHighlighting={syntaxHighlighting}
                 />
             ) : displayMode === 'file' && typeof fileContent === 'string' ? (
@@ -127,6 +148,8 @@ export function FileContentPanel({
                         contentPaddingHorizontal={16}
                         contentPaddingVertical={16}
                         virtualized={virtualized}
+                        scrollToLineId={jumpToLineId ?? undefined}
+                        highlightLineId={jumpToLineId ?? undefined}
                         syntaxHighlighting={syntaxHighlighting}
                     />
                 ) : (

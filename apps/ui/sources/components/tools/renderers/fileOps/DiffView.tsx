@@ -5,7 +5,7 @@ import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { ToolDiffView } from '@/components/tools/shell/presentation/ToolDiffView';
 import { useSetting } from '@/sync/domains/state/storage';
-import { buildDiffBlocks, buildDiffFileEntries, parseUnifiedDiff, type DiffFileEntry } from '@/components/diff/diffViewModel';
+import { buildDiffBlocks, buildDiffFileEntries, parseUnifiedDiff, type DiffFileEntry } from '@/components/ui/code/model/diff/diffViewModel';
 import { t } from '@/text';
 
 export const DiffView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
