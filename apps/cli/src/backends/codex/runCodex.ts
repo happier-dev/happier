@@ -72,6 +72,7 @@ import {
 } from './runtime/sessionTurnLifecycle';
 import { createLocalRemoteModeController } from '@/agent/localControl/createLocalRemoteModeController';
 import { createCodexRemoteTerminalUi } from './runtime/createCodexRemoteTerminalUi';
+import { resolveCodexStartingMode } from './utils/resolveCodexStartingMode';
 
 /**
  * Main entry point for the codex command with ink UI
@@ -337,7 +338,12 @@ export async function runCodex(opts: {
         experimentalCodexResumeEnabled,
     });
 
-    let mode: 'local' | 'remote' = opts.startingMode ?? 'remote';
+    let mode: 'local' | 'remote' = resolveCodexStartingMode({
+        explicitStartingMode: opts.startingMode,
+        startedBy: startedByForLocalControl,
+        hasTtyForLocal,
+        localControlEnabled: experimentalCodexAcpEnabled || experimentalCodexResumeEnabled,
+    });
     let localModeFallbackMessage: string | null = null;
 
     if (mode === 'local') {
