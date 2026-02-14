@@ -26,6 +26,7 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
     const auth = useAuth();
     const [isLoading, setIsLoading] = React.useState(false);
     const checkScannerPermissions = useCheckScannerPermissions();
+    const isProcessingRef = React.useRef(false);
 
     const processAuthUrl = React.useCallback(async (url: string) => {
         const parsed = parseTerminalConnectUrl(url);
@@ -132,15 +133,26 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
         if (CameraView.isModernBarcodeScannerAvailable) {
             const subscription = CameraView.onModernBarcodeScanned(async (event) => {
                 if (event.data.startsWith('happier://terminal?')) {
-                    // Dismiss scanner on Android is called automatically when barcode is scanned
-                    if (Platform.OS === 'ios') {
-                        await CameraView.dismissScanner();
+                    if (isProcessingRef.current) {
+                        return;
                     }
-                    await processAuthUrl(event.data);
+                    isProcessingRef.current = true;
+                    try {
+                        // Dismiss scanner on Android is called automatically when barcode is scanned
+                        if (Platform.OS === 'ios') {
+                            await CameraView.dismissScanner().catch(() => {});
+                        }
+                        await processAuthUrl(event.data);
+                    } finally {
+                        isProcessingRef.current = false;
+                    }
                 }
             });
             return () => {
                 subscription.remove();
+                if (Platform.OS === 'ios') {
+                    void CameraView.dismissScanner().catch(() => {});
+                }
             };
         }
     }, [processAuthUrl]);
