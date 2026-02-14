@@ -8,6 +8,13 @@ import {
   type SpawnSessionResult,
 } from '@/rpc/handlers/registerSessionHandlers';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SessionContinueWithReplayRpcParamsSchema } from '@happier-dev/protocol';
+import { buildHappierReplayPromptFromDialog } from '@happier-dev/agents';
+import { isPermissionMode } from '@/api/types';
+import { CATALOG_AGENT_IDS } from '@/backends/types';
+import type { CatalogAgentId } from '@/backends/types';
+import { readCredentials } from '@/persistence';
+import { hydrateReplayDialogFromTranscript } from '@/session/replay/hydrateReplayDialogFromTranscript';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 
@@ -25,6 +32,22 @@ async function toCanonicalPath(path: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+function isKnownAgentId(value: string): value is CatalogAgentId {
+  return (CATALOG_AGENT_IDS as readonly string[]).includes(value);
+}
+
+function parseEnvBoundedInt(
+  name: string,
+  bounds: Readonly<{ min: number; max: number }>,
+  fallback: number | null,
+): number | null {
+  const rawValue = process.env[name];
+  if (typeof rawValue !== 'string' || rawValue.trim().length === 0) return fallback;
+  const parsedValue = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(parsedValue)) return fallback;
+  return Math.min(bounds.max, Math.max(bounds.min, parsedValue));
 }
 
 export function registerMachineRpcHandlers(params: Readonly<{
@@ -57,6 +80,10 @@ export function registerMachineRpcHandlers(params: Readonly<{
     } = params || {};
 
     const normalizedModelId = typeof modelId === 'string' && modelId.trim().length > 0 ? modelId : undefined;
+    const normalizedPermissionMode =
+      typeof permissionMode === 'string' && isPermissionMode(permissionMode) ? permissionMode : undefined;
+    const normalizedPermissionModeUpdatedAt =
+      normalizedPermissionMode && typeof permissionModeUpdatedAt === 'number' ? permissionModeUpdatedAt : undefined;
     const envKeys = environmentVariables && typeof environmentVariables === 'object'
       ? Object.keys(environmentVariables as Record<string, unknown>)
       : [];
@@ -71,8 +98,8 @@ export function registerMachineRpcHandlers(params: Readonly<{
       profileId,
       hasToken: !!token,
       terminal,
-      permissionMode,
-      permissionModeUpdatedAt: typeof permissionModeUpdatedAt === 'number' ? permissionModeUpdatedAt : undefined,
+      permissionMode: normalizedPermissionMode,
+      permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt,
       modelId: normalizedModelId,
       modelUpdatedAt: typeof modelUpdatedAt === 'number' ? modelUpdatedAt : undefined,
       environmentVariableCount: envKeys.length,
@@ -90,8 +117,6 @@ export function registerMachineRpcHandlers(params: Readonly<{
         directory,
         agent,
         resume,
-        sessionEncryptionKeyBase64,
-        sessionEncryptionVariant,
         experimentalCodexResume,
         experimentalCodexAcp
       } = params;
@@ -111,20 +136,6 @@ export function registerMachineRpcHandlers(params: Readonly<{
           errorMessage: 'Session ID is required for resume',
         };
       }
-      if (!sessionEncryptionKeyBase64) {
-        return {
-          type: 'error',
-          errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
-          errorMessage: 'Session encryption key is required for resume',
-        };
-      }
-      if (sessionEncryptionVariant !== 'dataKey') {
-        return {
-          type: 'error',
-          errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_UNSUPPORTED_ENCRYPTION_VARIANT,
-          errorMessage: 'Unsupported session encryption variant for resume',
-        };
-      }
 
       const result = await spawnSession({
         directory,
@@ -132,10 +143,8 @@ export function registerMachineRpcHandlers(params: Readonly<{
         existingSessionId,
         approvedNewDirectoryCreation: true,
         resume: typeof resume === 'string' ? resume : undefined,
-        sessionEncryptionKeyBase64,
-        sessionEncryptionVariant,
-        permissionMode,
-        permissionModeUpdatedAt,
+        permissionMode: normalizedPermissionMode,
+        permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt,
         modelId: normalizedModelId,
         modelUpdatedAt: typeof modelUpdatedAt === 'number' ? modelUpdatedAt : undefined,
         experimentalCodexResume: Boolean(experimentalCodexResume),
@@ -165,8 +174,8 @@ export function registerMachineRpcHandlers(params: Readonly<{
       profileId,
       terminal,
       resume,
-      permissionMode,
-      permissionModeUpdatedAt,
+      permissionMode: normalizedPermissionMode,
+      permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt,
       modelId: normalizedModelId,
       modelUpdatedAt: typeof modelUpdatedAt === 'number' ? modelUpdatedAt : undefined,
       windowsRemoteSessionConsole,
@@ -186,6 +195,126 @@ export function registerMachineRpcHandlers(params: Readonly<{
       case 'error':
         return result;
     }
+  });
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY, async (raw: unknown) => {
+    const parsed = SessionContinueWithReplayRpcParamsSchema.safeParse(raw);
+    if (!parsed.success) {
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Invalid params',
+      };
+    }
+
+    const {
+      directory,
+      agent,
+      approvedNewDirectoryCreation,
+      permissionMode,
+      permissionModeUpdatedAt,
+      modelId,
+      modelUpdatedAt,
+      replay,
+    } = parsed.data;
+
+    if (!isKnownAgentId(agent)) {
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Unknown agent id',
+      };
+    }
+
+    const maxEnvSeedChars =
+      parseEnvBoundedInt('HAPPIER_REPLAY_MAX_ENV_SEED_CHARS', { min: 1, max: 500_000 }, 20_000) ?? 20_000;
+    const maxTextChars = parseEnvBoundedInt('HAPPIER_REPLAY_MAX_TEXT_CHARS', { min: 1, max: 50_000 }, null);
+
+    const credentials = await readCredentials().catch(() => null);
+    if (!credentials || credentials.encryption.type !== 'dataKey') {
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
+        errorMessage: 'This daemon is not provisioned with dataKey credentials and cannot decrypt transcripts for replay.',
+      };
+    }
+
+    const hydrated = await hydrateReplayDialogFromTranscript({
+      credentials,
+      previousSessionId: replay.previousSessionId,
+      limit: 200,
+      maxTextChars: maxTextChars ?? undefined,
+    }).catch(() => null);
+    if (!hydrated || hydrated.dialog.length === 0) {
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Unable to hydrate replay dialog from transcript.',
+      };
+    }
+
+    const seedDraft = buildHappierReplayPromptFromDialog({
+      previousSessionId: replay.previousSessionId,
+      strategy: replay.strategy ?? 'recent_messages',
+      recentMessagesCount: replay.recentMessagesCount ?? 16,
+      dialog: hydrated.dialog,
+    });
+
+    if (!seedDraft.trim()) {
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Replay seed draft is empty',
+      };
+    }
+
+    const normalizedModelId = typeof modelId === 'string' && modelId.trim().length > 0 ? modelId : undefined;
+    const normalizedPermissionMode =
+      typeof permissionMode === 'string' && isPermissionMode(permissionMode) ? permissionMode : undefined;
+    const normalizedPermissionModeUpdatedAt =
+      normalizedPermissionMode && typeof permissionModeUpdatedAt === 'number' ? permissionModeUpdatedAt : undefined;
+
+    logger.debug('[API MACHINE] Continuing session with replay', {
+      directory,
+      agent,
+      approvedNewDirectoryCreation,
+      permissionMode: normalizedPermissionMode,
+      permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt,
+      modelId: normalizedModelId,
+      modelUpdatedAt: typeof modelUpdatedAt === 'number' ? modelUpdatedAt : undefined,
+      previousSessionId: replay.previousSessionId,
+      dialogCount: hydrated.dialog.length,
+      strategy: replay.strategy ?? 'recent_messages',
+      recentMessagesCount: replay.recentMessagesCount ?? 16,
+      seedMode: replay.seedMode ?? 'draft',
+    });
+
+    const shouldInjectSeedDraftAsInitialPrompt =
+      replay.seedMode === 'daemon_initial_prompt' && seedDraft.length <= maxEnvSeedChars;
+
+    const result = await spawnSession({
+      directory,
+      agent,
+      approvedNewDirectoryCreation,
+      permissionMode: normalizedPermissionMode,
+      permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt,
+      modelId: normalizedModelId,
+      modelUpdatedAt: typeof modelUpdatedAt === 'number' ? modelUpdatedAt : undefined,
+      ...(shouldInjectSeedDraftAsInitialPrompt ? { initialPrompt: seedDraft } : {}),
+    } satisfies SpawnSessionOptions);
+
+    if (result.type === 'success') {
+      if (!result.sessionId) {
+        return {
+          type: 'error',
+          errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_NO_PID,
+          errorMessage: 'Spawn succeeded but no session id was returned',
+        };
+      }
+      return { type: 'success', sessionId: result.sessionId, seedDraft };
+    }
+
+    return result;
   });
 
   // Register stop session handler
