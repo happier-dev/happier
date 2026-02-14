@@ -33,6 +33,16 @@ test('release binary smoke harness hard-kills nested build commands on timeout',
   );
   assert.match(
     raw,
+    /function didCommandTimeout\(result\)/,
+    'binary smoke harness should normalize timeout detection across spawn timeout and GNU timeout exit codes',
+  );
+  assert.match(
+    raw,
+    /result\?\.status\s*===\s*124[\s\S]*result\?\.status\s*===\s*137/,
+    'timeout normalization should treat GNU timeout exit codes as timeout outcomes',
+  );
+  assert.match(
+    raw,
     /runWithHardTimeout\(\s*process\.execPath,\s*\[\s*'scripts\/release\/build-cli-binaries\.mjs'/,
     'CLI binary build path should use hard-timeout wrapper',
   );

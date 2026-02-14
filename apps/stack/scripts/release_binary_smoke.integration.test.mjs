@@ -39,6 +39,13 @@ function runWithHardTimeout(command, args, options) {
   return spawnSync(command, args, options);
 }
 
+function didCommandTimeout(result) {
+  if (result?.error?.code === 'ETIMEDOUT') return true;
+  if (result?.status === 124 || result?.status === 137) return true;
+  if (result?.signal === 'SIGKILL') return true;
+  return false;
+}
+
 function currentTarget() {
   const os = process.platform === 'linux' ? 'linux' : process.platform === 'darwin' ? 'darwin' : '';
   const arch = process.arch === 'x64' ? 'x64' : process.arch === 'arm64' ? 'arm64' : '';
@@ -109,7 +116,7 @@ test('compiled happier and server binaries execute from isolated cwd', async (t)
     env: { ...process.env, HAPPIER_NONINTERACTIVE: '1' },
     timeout: 7000,
   });
-  const cliTimedOut = cliVersion.error && cliVersion.error.code === 'ETIMEDOUT';
+  const cliTimedOut = didCommandTimeout(cliVersion);
   const cliExited = (cliVersion.status ?? 1) === 0;
   assert.ok(cliTimedOut || cliExited, cliVersion.stderr || cliVersion.stdout);
   const versionText = `${cliVersion.stdout || ''}${cliVersion.stderr || ''}`.trim();
@@ -162,7 +169,7 @@ test('compiled happier and server binaries execute from isolated cwd', async (t)
       },
       timeout: 7000,
     });
-    const timedOut = serverBoot.error && serverBoot.error.code === 'ETIMEDOUT';
+    const timedOut = didCommandTimeout(serverBoot);
     const cleanExit = (serverBoot.status ?? 1) === 0;
     const serverOutput = `${serverBoot.stderr || ''}\n${serverBoot.stdout || ''}`;
     assert.ok(timedOut || cleanExit, serverOutput);
