@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const filesToolbarSpy = vi.fn();
 const routerPushSpy = vi.fn();
+let mockLocalSearchParams: Record<string, any> = {};
 let sourceControlOperationsPanelProps: any = null;
 let changedFilesListProps: any = null;
 let changedFilesReviewProps: any = null;
@@ -69,6 +70,7 @@ vi.mock('@react-navigation/native', () => ({
 
 vi.mock('expo-router', () => ({
     useRouter: () => ({ push: routerPushSpy }),
+    useLocalSearchParams: () => mockLocalSearchParams,
 }));
 
 vi.mock('@expo/vector-icons', () => ({
@@ -250,6 +252,7 @@ describe('FilesScreen', () => {
     beforeEach(() => {
         filesToolbarSpy.mockClear();
         routerPushSpy.mockClear();
+        mockLocalSearchParams = {};
         clearCommitSelectionPathsSpy.mockClear();
         clearCommitSelectionPatchesSpy.mockClear();
         setRepositoryTreeExpandedPathsSpy.mockClear();
@@ -306,6 +309,28 @@ describe('FilesScreen', () => {
                 sha: '32a2a2aba05750117ad36d9386b396fdd5416a2e',
             },
         });
+    });
+
+    it('applies deep-link params to open changed-files review mode', async () => {
+        mockLocalSearchParams = {
+            presentation: 'review',
+            focusPath: 'src/example.ts',
+        };
+
+        const Screen = (await import('./files')).default;
+
+        await act(async () => {
+            renderer.create(<Screen />);
+        });
+        await act(async () => {});
+
+        // Toolbar reflects the deep-linked presentation.
+        const lastToolbarProps = filesToolbarSpy.mock.calls.at(-1)?.[0];
+        expect(lastToolbarProps?.changedFilesPresentation).toBe('review');
+
+        // Review renderer receives the focus path so it can scroll + highlight.
+        expect(changedFilesReviewProps).toBeTruthy();
+        expect(changedFilesReviewProps.focusPath).toBe('src/example.ts');
     });
 
     it('sanitizes whitespace-containing commit refs when navigating to the commit screen', async () => {

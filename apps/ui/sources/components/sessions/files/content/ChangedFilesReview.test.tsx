@@ -148,6 +148,49 @@ describe('ChangedFilesReview', () => {
         expect(calledPaths).toEqual(['src/a.ts', 'src/b.ts']);
     });
 
+    it('highlights a focused path when provided', async () => {
+        sessionScmDiffFileSpy.mockClear();
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: `diff:${req.path}:${req.area}`,
+            error: null,
+        }));
+
+        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={snapshot}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[fileA, fileB]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                    focusPath="src/b.ts"
+                />
+            );
+        });
+
+        // Allow effects to run.
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        const items = tree!.root.findAllByType('Item' as any);
+        const bItem = items.find((n) => n.props?.title === 'b.ts');
+        expect(bItem).toBeTruthy();
+        expect(bItem!.props.style).toBeTruthy();
+        expect(bItem!.props.style.backgroundColor).toBe(theme.colors.surfaceHigh);
+    });
+
     it('disables virtualization for diff blocks when review comments are enabled', async () => {
         sessionScmDiffFileSpy.mockClear();
         sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({

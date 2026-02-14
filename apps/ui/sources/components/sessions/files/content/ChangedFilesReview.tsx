@@ -37,6 +37,7 @@ type ChangedFilesReviewProps = {
     maxFiles: number;
     maxChangedLines: number;
     onFilePress: (file: ScmFileStatus) => void;
+    focusPath?: string | null;
     reviewCommentsEnabled?: boolean;
     reviewCommentDrafts?: readonly ReviewCommentDraft[];
     onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
@@ -235,6 +236,41 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
     const { width: viewportWidth } = useWindowDimensions();
     const showOutline = Platform.OS === 'web' && viewportWidth >= 900 && reviewFiles.length > 0;
 
+    const [highlightedPath, setHighlightedPath] = React.useState<string | null>(null);
+
+    const jumpToPath = React.useCallback((path: string) => {
+        if (typeof document === 'undefined') return;
+        const elementId = changedFilesReviewAnchorId(path);
+        const el = document.getElementById(elementId);
+        el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, []);
+
+    React.useEffect(() => {
+        const focusPath = typeof props.focusPath === 'string' ? props.focusPath : null;
+        if (!focusPath) return;
+        if (!reviewFiles.some((f) => f.fullPath === focusPath)) return;
+
+        setHighlightedPath(focusPath);
+        expandPath(focusPath);
+        if (tooLarge) {
+            setSelectedPath(focusPath);
+        }
+
+        // Only schedule timers on web/DOM environments (avoids test warnings and native overhead).
+        if (Platform.OS === 'web' && typeof document !== 'undefined') {
+            const scrollTimer = setTimeout(() => {
+                jumpToPath(focusPath);
+            }, 50);
+            const clearTimer = setTimeout(() => {
+                setHighlightedPath(null);
+            }, 8000);
+            return () => {
+                clearTimeout(scrollTimer);
+                clearTimeout(clearTimer);
+            };
+        }
+    }, [expandPath, jumpToPath, props.focusPath, reviewFiles, tooLarge]);
+
     const diffAreaSelector = diffConfig.availableModes.length > 1 ? (
         <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 }}>
             {diffConfig.availableModes.map((mode) => (
@@ -373,7 +409,7 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
                                                 : () => toggleCollapsed(file.fullPath)
                                         }
                                         showDivider={index < files.length - 1}
-                                        style={isSelected ? { backgroundColor: theme.colors.surfaceHigh } : undefined}
+                                        style={(isSelected || highlightedPath === file.fullPath) ? { backgroundColor: theme.colors.surfaceHigh } : undefined}
                                     />
                                     {showDiff && renderDiffBlock(file.fullPath)}
                                 </View>
@@ -388,13 +424,6 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
     if (!showOutline) {
         return leftContent;
     }
-
-    const jumpToPath = (path: string) => {
-        if (typeof document === 'undefined') return;
-        const elementId = changedFilesReviewAnchorId(path);
-        const el = document.getElementById(elementId);
-        el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    };
 
     return (
         <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>

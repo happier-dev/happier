@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View, ActivityIndicator, Platform } from 'react-native';
 import { useRoute } from '@react-navigation/native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ScmFileStatus } from '@/scm/scmStatusFiles';
@@ -51,6 +51,7 @@ export default function FilesScreen() {
     const route = useRoute();
     const router = useRouter();
     const sessionId = (route.params! as any).id as string;
+    const localSearchParams = useLocalSearchParams();
 
     const session = useSession(sessionId);
     const scmSnapshot = useSessionProjectScmSnapshot(sessionId);
@@ -71,6 +72,35 @@ export default function FilesScreen() {
     const [showAllRepositoryFiles, setShowAllRepositoryFiles] = React.useState(false);
     const [changedFilesViewMode, setChangedFilesViewMode] = React.useState(getDefaultChangedFilesViewMode);
     const [changedFilesPresentation, setChangedFilesPresentation] = React.useState<ChangedFilesPresentation>('list');
+    const [reviewFocusPath, setReviewFocusPath] = React.useState<string | null>(null);
+
+    const deepLinkPresentation = React.useMemo(() => {
+        const raw = (localSearchParams as any)?.presentation;
+        if (raw === 'review') return 'review';
+        if (raw === 'list') return 'list';
+        return null;
+    }, [localSearchParams]);
+    const deepLinkFocusPath = React.useMemo(() => {
+        const raw = (localSearchParams as any)?.focusPath;
+        return typeof raw === 'string' && raw.trim() ? raw : null;
+    }, [localSearchParams]);
+
+    const deepLinkAppliedRef = React.useRef(false);
+    React.useEffect(() => {
+        if (deepLinkAppliedRef.current) return;
+        if (!deepLinkPresentation && !deepLinkFocusPath) return;
+        deepLinkAppliedRef.current = true;
+
+        if (deepLinkPresentation) {
+            setChangedFilesPresentation(deepLinkPresentation);
+            // Focus paths only make sense in changed-files mode.
+            setShowAllRepositoryFiles(false);
+        }
+        if (deepLinkFocusPath) {
+            setReviewFocusPath(deepLinkFocusPath);
+            setShowAllRepositoryFiles(false);
+        }
+    }, [deepLinkFocusPath, deepLinkPresentation]);
 
     const { theme } = useUnistyles();
     const scmCommitStrategy = useSetting('scmCommitStrategy');
@@ -430,6 +460,7 @@ export default function FilesScreen() {
                             maxFiles={typeof scmReviewMaxFiles === 'number' ? scmReviewMaxFiles : 25}
                             maxChangedLines={typeof scmReviewMaxChangedLines === 'number' ? scmReviewMaxChangedLines : 2000}
                             onFilePress={handleFilePress}
+                            focusPath={reviewFocusPath}
                         />
                     ) : (
                         <ChangedFilesList
