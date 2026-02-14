@@ -38,7 +38,6 @@ import { inferPermissionIntentFromClaudeArgs } from './utils/inferPermissionInte
 import { adoptModelOverrideFromMetadata } from './utils/adoptModelOverrideFromMetadata';
 import { resolveModelOverrideFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
-import { ClaudeLocalPermissionBridge, DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE } from '@/backends/claude/localPermissions/localPermissionBridge';
 
 /** JavaScript runtime to use for spawning Claude Code */
 export type JsRuntime = 'node' | 'bun'
@@ -381,14 +380,6 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     // Variable to track current session instance (updated via onSessionReady callback)
     // Used by hook server to notify Session when Claude changes session ID
     let currentSession: Session | null = null;
-    let currentClaudeRemoteMetaState = resolveInitialClaudeRemoteMetaState({ metaDefaults: options.claudeRemoteMetaDefaults });
-    let localPermissionBridgeEnabled = currentClaudeRemoteMetaState.claudeLocalPermissionBridgeEnabled === true;
-    const permissionHookSecret = randomUUID();
-    let localPermissionBridge: ClaudeLocalPermissionBridge | null = null;
-    const disposeLocalPermissionBridge = () => {
-        const bridge: ClaudeLocalPermissionBridge | null = localPermissionBridge;
-        bridge?.dispose();
-    };
 
     // Start Hook server for receiving Claude session notifications
     const hookServer = await startHookServer({
@@ -403,31 +394,12 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
                 }
                 currentSession.onSessionFound(sessionId, data);
             }
-        },
-        onPermissionHook: async (data) => {
-            const hookTool = typeof (data as any)?.tool_name === 'string'
-                ? (data as any).tool_name
-                : (typeof (data as any)?.toolName === 'string' ? (data as any).toolName : 'unknown_tool');
-            const hookId = typeof (data as any)?.tool_use_id === 'string'
-                ? (data as any).tool_use_id
-                : (typeof (data as any)?.toolUseId === 'string' ? (data as any).toolUseId : '');
-            logger.debug(
-                `[START] Permission hook received: tool=${hookTool} id=${hookId || 'unknown'} bridge=${localPermissionBridgeEnabled ? 'enabled' : 'disabled'}`,
-            );
-            if (!localPermissionBridgeEnabled || !localPermissionBridge) {
-                return DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE;
-            }
-            return localPermissionBridge.handlePermissionHook(data);
-        },
-        permissionHookSecret,
+        }
     });
     logger.debug(`[START] Hook server started on port ${hookServer.port}`);
 
     // Generate hook settings file for Claude
-    const hookSettingsPath = generateHookSettingsFile(hookServer.port, {
-        enableLocalPermissionBridge: true,
-        permissionHookSecret,
-    });
+    const hookSettingsPath = generateHookSettingsFile(hookServer.port);
     logger.debug(`[START] Generated hook settings file: ${hookSettingsPath}`);
 
     // Print log file path
@@ -442,7 +414,6 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         capabilities: {
             ...(currentState.capabilities && typeof currentState.capabilities === 'object' ? currentState.capabilities : {}),
             askUserQuestionAnswersInPermission: true,
-            localPermissionBridgeInLocalMode: localPermissionBridgeEnabled,
         },
     }));
 
@@ -465,6 +436,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     let currentAppendSystemPrompt: string | undefined = undefined; // Track current append system prompt
     let currentAllowedTools: string[] | undefined = undefined; // Track current allowed tools
     let currentDisallowedTools: string[] | undefined = undefined; // Track current disallowed tools
+    let currentClaudeRemoteMetaState = resolveInitialClaudeRemoteMetaState({ metaDefaults: options.claudeRemoteMetaDefaults });
     session.onUserMessage((message) => {
         const adoptedModel = adoptModelOverrideFromMetadata({
             currentModelId: currentModel,
@@ -552,19 +524,6 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         }
 
         currentClaudeRemoteMetaState = applyClaudeRemoteMetaState(currentClaudeRemoteMetaState, message.meta);
-        const nextLocalPermissionBridgeEnabled = currentClaudeRemoteMetaState.claudeLocalPermissionBridgeEnabled === true;
-        if (nextLocalPermissionBridgeEnabled !== localPermissionBridgeEnabled) {
-            localPermissionBridgeEnabled = nextLocalPermissionBridgeEnabled;
-            logger.debug(`[loop] Local permission bridge updated from user message: ${localPermissionBridgeEnabled ? 'enabled' : 'disabled'}`);
-            session.updateAgentState((currentState) => ({
-                ...currentState,
-                capabilities: {
-                    ...(currentState.capabilities && typeof currentState.capabilities === 'object' ? currentState.capabilities : {}),
-                    askUserQuestionAnswersInPermission: true,
-                    localPermissionBridgeInLocalMode: localPermissionBridgeEnabled,
-                },
-            }));
-        }
 
         // Check for special commands before processing
         const specialCommand = parseSpecialCommand(message.content.text);
@@ -651,7 +610,6 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             happyServer.stop();
 
             // Stop Hook server and cleanup settings file
-            disposeLocalPermissionBridge();
             hookServer.stop();
             cleanupHookSettingsFile(hookSettingsPath);
 
@@ -695,17 +653,10 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
                 ...currentState,
                 controlledByUser: newMode === 'local'
             }));
-            if (newMode === 'local') {
-                localPermissionBridge?.activate();
-            }
         },
         onSessionReady: (sessionInstance) => {
             // Store reference for hook server callback
             currentSession = sessionInstance;
-            if (!localPermissionBridge) {
-                localPermissionBridge = new ClaudeLocalPermissionBridge(sessionInstance);
-                localPermissionBridge.activate();
-            }
         },
         mcpServers: {
             ...extractedMcp.mcpServers,
@@ -746,7 +697,6 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     logger.debug('Stopped Happier MCP server');
 
     // Stop Hook server and cleanup settings file
-    disposeLocalPermissionBridge();
     hookServer.stop();
     cleanupHookSettingsFile(hookSettingsPath);
     logger.debug('Stopped Hook server and cleaned up settings file');

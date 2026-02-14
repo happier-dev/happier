@@ -83,6 +83,12 @@ vi.mock('@/platform/cryptoRandom', () => ({
     getRandomBytes: mocks.getRandomBytes,
 }));
 
+// Worktree variants may import these; keep the test isolated from unrelated changes.
+vi.mock('@/sync/domains/settings/localOnlyServerSelectionSettings', () => ({
+    pickLocalOnlyServerSelectionSettings: () => ({}),
+    stripLocalOnlyServerSelectionSettings: <T extends Record<string, unknown>>(value: T) => value,
+}));
+
 import { syncSettings } from './syncSettings';
 
 const credentials: AuthCredentials = {
@@ -201,3 +207,4 @@ describe('syncSettings account settings ciphertext', () => {
         );
     });
 });
+

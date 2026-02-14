@@ -13,6 +13,10 @@ vi.mock('expo-notifications', () => ({
     getExpoPushTokenAsync: vi.fn(),
 }));
 
+vi.mock('@/sync/domains/settings/localOnlyServerSelectionSettings', () => ({
+    pickLocalOnlyServerSelectionSettings: () => ({}),
+}));
+
 describe('handleUpdateAccountSocketUpdate account settings ciphertext', () => {
     beforeEach(() => {
         vi.restoreAllMocks();
@@ -57,3 +61,4 @@ describe('handleUpdateAccountSocketUpdate account settings ciphertext', () => {
         expect(applySettings).toHaveBeenCalledWith(expect.objectContaining({ analyticsOptOut: true }), 7);
     });
 });
+
