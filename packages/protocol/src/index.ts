@@ -1,5 +1,33 @@
 export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
 
+export {
+  deriveAccountMachineKeyFromRecoverySecret,
+  openAccountScopedBlobCiphertext,
+  sealAccountScopedBlobCiphertext,
+  type AccountScopedBlobKind,
+  type AccountScopedCiphertextFormat,
+  type AccountScopedCryptoMaterial,
+  type AccountScopedOpenResult,
+} from './crypto/accountScopedCipher.js';
+
+export {
+  BOX_BUNDLE_MIN_BYTES,
+  BOX_BUNDLE_NONCE_BYTES,
+  BOX_BUNDLE_PUBLIC_KEY_BYTES,
+  deriveBoxPublicKeyFromSeed,
+  deriveBoxSecretKeyFromSeed,
+  openBoxBundle,
+  sealBoxBundle,
+} from './crypto/boxBundle.js';
+
+export {
+  ENCRYPTED_DATA_KEY_ENVELOPE_V1_VERSION_BYTE,
+  openEncryptedDataKeyEnvelopeV1,
+  sealEncryptedDataKeyEnvelopeV1,
+} from './crypto/encryptedDataKeyEnvelopeV1.js';
+
+export { decodeBase64, encodeBase64, type Base64Variant } from './crypto/base64.js';
+
 export { SPAWN_SESSION_ERROR_CODES, type SpawnSessionErrorCode, type SpawnSessionResult } from './spawnSession.js';
 export {
   RPC_ERROR_CODES,

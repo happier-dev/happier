@@ -8,6 +8,13 @@ import { encodeBase64, decodeBase64 } from "@/encryption/base64";
 import sodium from '@/encryption/libsodium.lib';
 import { decryptBox, encryptBox } from "@/encryption/libsodium";
 import { randomUUID } from '@/platform/randomUUID';
+import { getRandomBytes } from '@/platform/cryptoRandom';
+import {
+    openAccountScopedBlobCiphertext,
+    openEncryptedDataKeyEnvelopeV1,
+    sealAccountScopedBlobCiphertext,
+    sealEncryptedDataKeyEnvelopeV1,
+} from '@happier-dev/protocol';
 
 export class Encryption {
 
@@ -37,6 +44,9 @@ export class Encryption {
     }
 
     private readonly fallbackEncryption: Encryptor & Decryptor;
+    // Automation templates must be decryptable by the daemon across credential modes.
+    // We always seal them with secretbox using the master secret (legacy) or machine key (dataKey).
+    private readonly automationTemplateEncryption: Encryptor & Decryptor;
     private readonly contentKeyPair: sodium.KeyPair;
     readonly anonID: string;
     readonly contentDataKey: Uint8Array;
@@ -57,6 +67,7 @@ export class Encryption {
         this.fallbackEncryption = useDataKeyFallback
             ? new AES256Encryption(masterSecret)
             : new SecretBoxEncryption(masterSecret);
+        this.automationTemplateEncryption = new SecretBoxEncryption(masterSecret);
         this.cache = new EncryptionCache();
         this.contentDataKey = contentKeyPair.publicKey;
     }
@@ -176,30 +187,56 @@ export class Encryption {
         }
     }
 
+    async encryptAutomationTemplateRaw(data: any): Promise<string> {
+        const machineKey = this.getContentPrivateKey();
+        return sealAccountScopedBlobCiphertext({
+            kind: 'automation_template_payload',
+            material: { type: 'dataKey', machineKey },
+            payload: data,
+            randomBytes: getRandomBytes,
+        });
+    }
+
+    async decryptAutomationTemplateRaw(encrypted: string): Promise<any | null> {
+        const machineKey = this.getContentPrivateKey();
+        const opened = openAccountScopedBlobCiphertext({
+            kind: 'automation_template_payload',
+            material: { type: 'dataKey', machineKey },
+            ciphertext: encrypted,
+        });
+        if (opened) return opened.value ?? null;
+
+        try {
+            const encryptedData = decodeBase64(encrypted, 'base64');
+            const machineDecrypted = await new SecretBoxEncryption(machineKey).decrypt([encryptedData]);
+            if (machineDecrypted[0]) return machineDecrypted[0];
+
+            const decrypted = await this.automationTemplateEncryption.decrypt([encryptedData]);
+            return decrypted[0] || null;
+        } catch {
+            return null;
+        }
+    }
+
     //
     // Data Encryption Key decryption
     //
 
     async decryptEncryptionKey(encrypted: string) {
         const encryptedKey = decodeBase64(encrypted, 'base64');
-        if (encryptedKey[0] !== 0) {
-            return null;
-        }
-
-        const decrypted = decryptBox(encryptedKey.slice(1), this.contentKeyPair.privateKey);
-        if (!decrypted) {
-            return null;
-        }
-        return decrypted;
+        return openEncryptedDataKeyEnvelopeV1({
+            envelope: encryptedKey,
+            recipientSecretKeyOrSeed: this.contentKeyPair.privateKey,
+        });
     }
 
     async encryptEncryptionKey(key: Uint8Array): Promise<Uint8Array> {
         // Use public key for encryption (encrypt TO ourselves)
-        const encrypted = encryptBox(key, this.contentKeyPair.publicKey);
-        const result = new Uint8Array(encrypted.length + 1);
-        result[0] = 0; // Version byte
-        result.set(encrypted, 1);
-        return result;
+        return sealEncryptedDataKeyEnvelopeV1({
+            dataKey: key,
+            recipientPublicKey: this.contentKeyPair.publicKey,
+            randomBytes: getRandomBytes,
+        });
     }
 
     generateId(): string {

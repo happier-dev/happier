@@ -1,6 +1,7 @@
 import type { Credentials } from '@/persistence';
 
-import { decodeBase64, libsodiumDecryptForSecretKey } from '../encryption';
+import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import { decodeBase64 } from '../encryption';
 
 export function openSessionDataEncryptionKey(params: {
   credential: Credentials;
@@ -16,13 +17,8 @@ export function openSessionDataEncryptionKey(params: {
   }
 
   const encrypted = decodeBase64(encryptedBase64);
-  if (encrypted.length < 2) {
-    return null;
-  }
-  if (encrypted[0] !== 0) {
-    return null;
-  }
-
-  return libsodiumDecryptForSecretKey(encrypted.slice(1), params.credential.encryption.machineKey);
+  return openEncryptedDataKeyEnvelopeV1({
+    envelope: encrypted,
+    recipientSecretKeyOrSeed: params.credential.encryption.machineKey,
+  });
 }
-

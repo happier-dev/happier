@@ -1,6 +1,7 @@
 import type { Credentials } from '@/persistence';
 
-import { getRandomBytes, libsodiumEncryptForPublicKey } from '../encryption';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import { getRandomBytes } from '../encryption';
 
 export type EncryptionContext = {
   encryptionKey: Uint8Array;
@@ -15,17 +16,16 @@ export function resolveSessionEncryptionContext(credential: Credentials): Encryp
   let encryptionVariant: 'legacy' | 'dataKey';
 
   if (credential.encryption.type === 'dataKey') {
-    // Generate new encryption key
+    // Use a per-session key for session message encryption (AES-256-GCM).
     encryptionKey = getRandomBytes(32);
     encryptionVariant = 'dataKey';
 
-    // Derive and encrypt data encryption key
-    // const contentDataKey = await deriveKey(this.secret, 'Happy EnCoder', ['content']);
-    // const publicKey = libsodiumPublicKeyFromSecretKey(contentDataKey);
-    let encryptedDataKey = libsodiumEncryptForPublicKey(encryptionKey, credential.encryption.publicKey);
-    dataEncryptionKey = new Uint8Array(encryptedDataKey.length + 1);
-    dataEncryptionKey.set([0], 0); // Version byte
-    dataEncryptionKey.set(encryptedDataKey, 1); // Data key
+    // Publish the per-session key encrypted for the account's content keypair public key.
+    dataEncryptionKey = sealEncryptedDataKeyEnvelopeV1({
+      dataKey: encryptionKey,
+      recipientPublicKey: credential.encryption.publicKey,
+      randomBytes: getRandomBytes,
+    });
   } else {
     encryptionKey = credential.encryption.secret;
     encryptionVariant = 'legacy';
@@ -44,13 +44,11 @@ export function resolveMachineEncryptionContext(credential: Credentials): Encryp
     // Encrypt data encryption key
     encryptionVariant = 'dataKey';
     encryptionKey = credential.encryption.machineKey;
-    let encryptedDataKey = libsodiumEncryptForPublicKey(
-      credential.encryption.machineKey,
-      credential.encryption.publicKey
-    );
-    dataEncryptionKey = new Uint8Array(encryptedDataKey.length + 1);
-    dataEncryptionKey.set([0], 0); // Version byte
-    dataEncryptionKey.set(encryptedDataKey, 1); // Data key
+    dataEncryptionKey = sealEncryptedDataKeyEnvelopeV1({
+      dataKey: credential.encryption.machineKey,
+      recipientPublicKey: credential.encryption.publicKey,
+      randomBytes: getRandomBytes,
+    });
   } else {
     // Legacy encryption
     encryptionKey = credential.encryption.secret;
@@ -59,4 +57,3 @@ export function resolveMachineEncryptionContext(credential: Credentials): Encryp
 
   return { encryptionKey, encryptionVariant, dataEncryptionKey };
 }
-

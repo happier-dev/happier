@@ -12,7 +12,7 @@ import { dirname } from 'node:path'
 import { configuration } from '@/configuration'
 import { sanitizeServerIdForFilesystem } from '@/server/serverId';
 import * as z from 'zod';
-import { encodeBase64 } from '@/api/encryption';
+import { decodeBase64, encodeBase64 } from '@/api/encryption';
 import { logger } from '@/ui/logger';
 
 async function bestEffortChmod(path: string, mode: number): Promise<void> {
@@ -437,7 +437,7 @@ export async function readCredentials(): Promise<Credentials | null> {
         token: credentials.token,
         encryption: {
           type: 'legacy',
-          secret: new Uint8Array(Buffer.from(credentials.secret, 'base64'))
+          secret: decodeBase64(credentials.secret)
         }
       };
     } else if (credentials.encryption) {
@@ -445,8 +445,8 @@ export async function readCredentials(): Promise<Credentials | null> {
         token: credentials.token,
         encryption: {
           type: 'dataKey',
-          publicKey: new Uint8Array(Buffer.from(credentials.encryption.publicKey, 'base64')),
-          machineKey: new Uint8Array(Buffer.from(credentials.encryption.machineKey, 'base64'))
+          publicKey: decodeBase64(credentials.encryption.publicKey),
+          machineKey: decodeBase64(credentials.encryption.machineKey)
         }
       }
     }

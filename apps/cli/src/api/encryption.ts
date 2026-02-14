@@ -1,16 +1,21 @@
-import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
+import {
+  decodeBase64 as decodeBase64Protocol,
+  encodeBase64 as encodeBase64Protocol,
+  deriveBoxPublicKeyFromSeed,
+  openBoxBundle,
+  sealBoxBundle,
+  type Base64Variant,
+} from '@happier-dev/protocol';
 
 /**
  * Encode a Uint8Array to base64 string
  * @param buffer - The buffer to encode
  * @param variant - The encoding variant ('base64' or 'base64url')
  */
-export function encodeBase64(buffer: Uint8Array, variant: 'base64' | 'base64url' = 'base64'): string {
-  if (variant === 'base64url') {
-    return encodeBase64Url(buffer);
-  }
-  return Buffer.from(buffer).toString('base64')
+export function encodeBase64(buffer: Uint8Array, variant: Base64Variant = 'base64'): string {
+  return encodeBase64Protocol(buffer, variant);
 }
 
 /**
@@ -18,11 +23,7 @@ export function encodeBase64(buffer: Uint8Array, variant: 'base64' | 'base64url'
  * Base64URL uses '-' instead of '+', '_' instead of '/', and removes padding
  */
 export function encodeBase64Url(buffer: Uint8Array): string {
-  return Buffer.from(buffer)
-    .toString('base64')
-    .replaceAll('+', '-')
-    .replaceAll('/', '_')
-    .replaceAll('=', '')
+  return encodeBase64Protocol(buffer, 'base64url');
 }
 
 /**
@@ -31,16 +32,8 @@ export function encodeBase64Url(buffer: Uint8Array): string {
  * @param variant - The encoding variant ('base64' or 'base64url')
  * @returns The decoded Uint8Array
  */
-export function decodeBase64(base64: string, variant: 'base64' | 'base64url' = 'base64'): Uint8Array {
-  if (variant === 'base64url') {
-    // Convert base64url to base64
-    const base64Standard = base64
-      .replaceAll('-', '+')
-      .replaceAll('_', '/')
-      + '='.repeat((4 - base64.length % 4) % 4);
-    return new Uint8Array(Buffer.from(base64Standard, 'base64'));
-  }
-  return new Uint8Array(Buffer.from(base64, 'base64'));
+export function decodeBase64(base64: string, variant: Base64Variant = 'base64'): Uint8Array {
+  return decodeBase64Protocol(base64, variant);
 }
 
 
@@ -53,70 +46,25 @@ export function getRandomBytes(size: number): Uint8Array {
 }
 
 export function libsodiumPublicKeyFromSecretKey(seed: Uint8Array): Uint8Array {
-  // NOTE: This matches libsodium implementation, tweetnacl doesnt do this by default
-  const hashedSeed = new Uint8Array(createHash('sha512').update(seed).digest());
-  const secretKey = hashedSeed.slice(0, 32);
-  return new Uint8Array(tweetnacl.box.keyPair.fromSecretKey(secretKey).publicKey);
+  return deriveBoxPublicKeyFromSeed(seed);
 }
 
 export function libsodiumEncryptForPublicKey(data: Uint8Array, recipientPublicKey: Uint8Array): Uint8Array {
-  // Generate ephemeral keypair for this encryption
-  const ephemeralKeyPair = tweetnacl.box.keyPair();
-  
-  // Generate random nonce (24 bytes for box encryption)
-  const nonce = getRandomBytes(tweetnacl.box.nonceLength);
-  
-  // Encrypt the data using box (authenticated encryption)
-  const encrypted = tweetnacl.box(data, nonce, recipientPublicKey, ephemeralKeyPair.secretKey);
-  
-  // Bundle format: ephemeral public key (32 bytes) + nonce (24 bytes) + encrypted data
-  const result = new Uint8Array(ephemeralKeyPair.publicKey.length + nonce.length + encrypted.length);
-  result.set(ephemeralKeyPair.publicKey, 0);
-  result.set(nonce, ephemeralKeyPair.publicKey.length);
-  result.set(encrypted, ephemeralKeyPair.publicKey.length + nonce.length);
-  
-  return result;
+  return sealBoxBundle({
+    plaintext: data,
+    recipientPublicKey,
+    randomBytes: getRandomBytes,
+  });
 }
 
 export function libsodiumDecryptForSecretKey(
   encryptedBundle: Uint8Array,
   recipientSecretKeyOrSeed: Uint8Array
 ): Uint8Array | null {
-  // Bundle format: ephemeral public key (32 bytes) + nonce (24 bytes) + encrypted data
-  if (encryptedBundle.length < tweetnacl.box.publicKeyLength + tweetnacl.box.nonceLength) {
-    return null;
-  }
-
-  const ephemeralPublicKey = encryptedBundle.slice(0, tweetnacl.box.publicKeyLength);
-  const nonce = encryptedBundle.slice(
-    tweetnacl.box.publicKeyLength,
-    tweetnacl.box.publicKeyLength + tweetnacl.box.nonceLength
-  );
-  const encrypted = encryptedBundle.slice(tweetnacl.box.publicKeyLength + tweetnacl.box.nonceLength);
-
-  const tryOpen = (secretKey: Uint8Array): Uint8Array | null => {
-    try {
-      if (secretKey.length !== tweetnacl.box.secretKeyLength) return null;
-      const opened = tweetnacl.box.open(encrypted, nonce, ephemeralPublicKey, secretKey);
-      return opened ? new Uint8Array(opened) : null;
-    } catch {
-      return null;
-    }
-  };
-
-  // Best-effort: caller might already have a libsodium-style secret key.
-  if (recipientSecretKeyOrSeed.length === tweetnacl.box.secretKeyLength) {
-    const direct = tryOpen(recipientSecretKeyOrSeed);
-    if (direct) {
-      return direct;
-    }
-  }
-
-  // Compatibility path for credentials where machineKey is a seed and public key is
-  // derived from a hashed seed (CLI derivation / UI compat).
-  const hashedSeed = new Uint8Array(createHash('sha512').update(recipientSecretKeyOrSeed).digest());
-  const compatSecretKey = hashedSeed.slice(0, 32);
-  return tryOpen(compatSecretKey);
+  return openBoxBundle({
+    bundle: encryptedBundle,
+    recipientSecretKeyOrSeed,
+  });
 }
 
 /**

@@ -52,7 +52,8 @@ In the app:
 2. **AI provider settings**
 3. **Claude (remote)**
 
-All settings below affect **Claude remote mode only**. Local mode stays on the current implementation for now.
+Most settings below affect **Claude remote mode only**.  
+The one exception is **Experimental: local permission bridge**, which affects **local mode**.
 
 ## Settings reference (Claude remote)
 
@@ -61,11 +62,24 @@ All settings below affect **Claude remote mode only**. Local mode stays on the c
 | **Use Agent SDK (remote)** | Off | Enables the official Agent SDK remote runner (`@anthropic-ai/claude-agent-sdk`). When off, Happier uses the legacy remote runner. |
 | **Setting sources** | Project only | Controls what Claude settings get loaded: **Project only** loads repo config (for example `CLAUDE.md`); **User + Project** includes user-global config too; **None** ignores both for maximum determinism. |
 | **Partial streaming updates** | Off | Shows partial assistant output while Claude is still responding (remote Agent SDK only). |
+| **Experimental: local permission bridge** | Off | In local mode, forwards Claude permission prompts into Happier so you can approve/deny from the app UI instead of only in the terminal. |
 | **File checkpointing + /rewind** | Off | Enables file checkpoint capture and the `/rewind` command (remote Agent SDK only). Adds overhead. |
 | **Max thinking tokens** | Default | Sets an upper bound on Claude’s internal thinking budget (remote Agent SDK only). |
 | **Disable TODOs** | Off | Adds a remote-mode system instruction that asks Claude not to create TODO items/lists in its output. |
 | **Strict MCP server config** | Off | Fails the remote start if any MCP server config is invalid (instead of trying to continue). |
 | **Advanced options (JSON)** | Empty | Power-user overrides for a limited allowlist of Agent SDK query options (remote Agent SDK only). Invalid JSON is ignored with a user-visible warning. |
+
+## Local permission bridge (experimental)
+
+When **Experimental: local permission bridge** is enabled:
+
+- You can keep using Claude’s local TUI in your terminal.
+- Permission prompts are also available in Happier’s UI, so approvals can be done from the app.
+- If the bridge is unavailable, Claude falls back to its normal permission prompt behavior in the terminal.
+
+This is intended to improve local-mode usability when you want to keep session control in the app while still using Claude’s local runtime.
+
+**Apply timing:** This is a user-level setting that syncs with your account settings. It’s picked up when a local Claude session starts. If you change it while a local session is already running, restart that session (or send any message from the app) for the change to take effect.
 
 ### Advanced options (JSON): allowlist
 
