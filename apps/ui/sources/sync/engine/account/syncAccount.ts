@@ -12,6 +12,7 @@ import { HappyError } from '@/utils/errors/errors';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { serverFetch } from '@/sync/http/client';
+import { openAccountSettingsCiphertext } from '@/sync/domains/settings/accountSettingsCipher';
 
 export async function handleUpdateAccountSocketUpdate(params: {
     accountUpdate: any;
@@ -46,8 +47,16 @@ export async function handleUpdateAccountSocketUpdate(params: {
     // Handle settings updates (new for profile sync)
     if (accountUpdate.settings?.value) {
         try {
-            const decryptedSettings = await encryption.decryptRaw(accountUpdate.settings.value);
-            const parsedSettings = settingsParse(decryptedSettings);
+            const machineKey = encryption.getContentPrivateKey();
+            const opened = await openAccountSettingsCiphertext({
+                machineKey,
+                ciphertext: accountUpdate.settings.value,
+                fallbackDecryptRaw: (ciphertext) => encryption.decryptRaw(ciphertext),
+            });
+            if (!opened) {
+                throw new Error('Failed to decrypt account settings');
+            }
+            const parsedSettings = settingsParse(opened.value);
 
             // Version compatibility check
             const settingsSchemaVersion = parsedSettings.schemaVersion ?? 1;

@@ -8,6 +8,8 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { sealSecretsDeep } from '@/sync/encryption/secretSettings';
 import { serverFetch } from '@/sync/http/client';
+import { getRandomBytes } from '@/platform/cryptoRandom';
+import { openAccountSettingsCiphertext, sealAccountSettingsCiphertext } from '@/sync/domains/settings/accountSettingsCipher';
 
 export async function syncSettings(params: {
     credentials: AuthCredentials;
@@ -35,6 +37,12 @@ export async function syncSettings(params: {
         while (retryCount < maxRetries) {
             const version = storage.getState().settingsVersion;
             const settings = applySettings(storage.getState().settings, pendingSettings);
+            const machineKey = encryption.getContentPrivateKey();
+            const settingsCiphertext = sealAccountSettingsCiphertext({
+                machineKey,
+                settings: settings as unknown as Record<string, unknown>,
+                randomBytes: getRandomBytes,
+            });
             dbgSettings('syncSettings: POST attempt', {
                 endpoint: activeServerUrl,
                 attempt: retryCount + 1,
@@ -45,7 +53,7 @@ export async function syncSettings(params: {
             const response = await serverFetch('/v1/account/settings', {
                 method: 'POST',
                 body: JSON.stringify({
-                    settings: await encryption.encryptRaw(settings),
+                    settings: settingsCiphertext,
                     expectedVersion: version ?? 0,
                 }),
                 headers: {
@@ -82,8 +90,16 @@ export async function syncSettings(params: {
                 };
 
                 // Parse server settings
-                const serverSettings = data.currentSettings
-                    ? settingsParse(await encryption.decryptRaw(data.currentSettings))
+                const machineKey = encryption.getContentPrivateKey();
+                const openedServerSettings = data.currentSettings
+                    ? await openAccountSettingsCiphertext({
+                          machineKey,
+                          ciphertext: data.currentSettings,
+                          fallbackDecryptRaw: (ciphertext) => encryption.decryptRaw(ciphertext),
+                      })
+                    : null;
+                const serverSettings = openedServerSettings
+                    ? settingsParse(openedServerSettings.value)
                     : { ...settingsDefaults };
 
                 // Merge: server base + our pending changes (our changes win)
@@ -147,8 +163,16 @@ export async function syncSettings(params: {
     };
 
     // Parse response
-    const parsedSettings = data.settings
-        ? settingsParse(await encryption.decryptRaw(data.settings))
+    const machineKey = encryption.getContentPrivateKey();
+    const openedSettings = data.settings
+        ? await openAccountSettingsCiphertext({
+              machineKey,
+              ciphertext: data.settings,
+              fallbackDecryptRaw: (ciphertext) => encryption.decryptRaw(ciphertext),
+          })
+        : null;
+    const parsedSettings = openedSettings
+        ? settingsParse(openedSettings.value)
         : { ...settingsDefaults };
 
     dbgSettings('syncSettings: GET applied', {
@@ -163,6 +187,38 @@ export async function syncSettings(params: {
     // Sync PostHog opt-out state with settings
     if (tracking) {
         parsedSettings.analyticsOptOut ? tracking.optOut() : tracking.optIn();
+    }
+
+    // Best-effort migration: if settings were readable but not in the canonical v1 account-scoped format,
+    // rewrite them so other clients (e.g. terminals/daemons) can decrypt them reliably.
+    if (data.settings && openedSettings && openedSettings.format !== 'account_scoped_v1') {
+        try {
+            const migrateCiphertext = sealAccountSettingsCiphertext({
+                machineKey,
+                settings: parsedSettings as unknown as Record<string, unknown>,
+                randomBytes: getRandomBytes,
+            });
+            const migrateRes = await serverFetch('/v1/account/settings', {
+                method: 'POST',
+                body: JSON.stringify({
+                    settings: migrateCiphertext,
+                    expectedVersion: data.settingsVersion,
+                }),
+                headers: {
+                    'Authorization': `Bearer ${credentials.token}`,
+                    'Content-Type': 'application/json',
+                },
+            }, { includeAuth: false });
+
+            if (migrateRes.ok) {
+                const migrateData = (await migrateRes.json()) as { success?: unknown } | undefined;
+                if (migrateData && typeof migrateData === 'object' && (migrateData as any).success === true) {
+                    storage.getState().applySettings(parsedSettings, data.settingsVersion + 1);
+                }
+            }
+        } catch {
+            // ignore migration failures (non-fatal)
+        }
     }
 }
 
