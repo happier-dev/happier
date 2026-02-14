@@ -98,8 +98,14 @@ export function registerFileSystemHandlers(rpcHandlerManager: RpcHandlerManager,
 
         const resolvedPath = validation.resolvedPath!;
         try {
-            // If expectedHash is provided (not null), verify existing file
-            if (data.expectedHash !== null && data.expectedHash !== undefined) {
+            // expectedHash contract:
+            // - undefined: no expectation; allow overwrite or create.
+            // - null: expecting a new file (must not exist).
+            // - string: expecting an existing file with that hash (conflict check).
+            if (data.expectedHash === undefined) {
+                // No expectation: allow best-effort write.
+            } else if (data.expectedHash !== null) {
+                // expectedHash is provided (string): verify existing file hash.
                 try {
                     const existingBuffer = await readFile(resolvedPath);
                     const existingHash = createHash('sha256').update(existingBuffer).digest('hex');

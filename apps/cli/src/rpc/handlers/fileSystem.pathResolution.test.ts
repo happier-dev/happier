@@ -13,6 +13,7 @@ vi.mock('fs/promises', () => ({
 }));
 
 import { readFile, writeFile } from 'fs/promises';
+import { stat } from 'fs/promises';
 
 import { registerFileSystemHandlers } from './fileSystem';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -73,5 +74,49 @@ describe('registerFileSystemHandlers', () => {
     if (!write) throw new Error('expected write handler');
     await write({ path: './sub/file.bin', content: Buffer.from('x').toString('base64'), expectedHash: null });
     expect(writeFile).toHaveBeenCalledWith(resolve('/work/dir', 'sub', 'file.bin'), expect.any(Buffer));
+  });
+
+  it('allows overwriting an existing file when expectedHash is undefined', async () => {
+    vi.clearAllMocks();
+    const mgr = createRpcHandlerManager();
+    registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, '/work/dir');
+
+    const write = mgr.handlers.get(RPC_METHODS.WRITE_FILE);
+    if (!write) throw new Error('expected write handler');
+
+    // Simulate an existing file.
+    vi.mocked(stat).mockResolvedValueOnce({} as any);
+
+    const writeResult = await write({
+      path: 'exists.txt',
+      content: Buffer.from('updated').toString('base64'),
+      // expectedHash intentionally omitted / undefined: should be treated as "no expectation".
+      expectedHash: undefined,
+    });
+
+    expect(writeResult).toMatchObject({ success: true });
+    expect(writeFile).toHaveBeenCalledWith(resolve('/work/dir', 'exists.txt'), expect.any(Buffer));
+  });
+
+  it('rejects overwriting an existing file when expectedHash is null (new file expected)', async () => {
+    vi.clearAllMocks();
+    const mgr = createRpcHandlerManager();
+    registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, '/work/dir');
+
+    const write = mgr.handlers.get(RPC_METHODS.WRITE_FILE);
+    if (!write) throw new Error('expected write handler');
+
+    // Simulate an existing file.
+    vi.mocked(stat).mockResolvedValueOnce({} as any);
+
+    const writeResult = await write({
+      path: 'exists.txt',
+      content: Buffer.from('updated').toString('base64'),
+      expectedHash: null,
+    });
+
+    expect(writeResult).toMatchObject({ success: false });
+    expect(String((writeResult as any).error ?? '')).toContain('expected to be new');
+    expect(writeFile).not.toHaveBeenCalled();
   });
 });
