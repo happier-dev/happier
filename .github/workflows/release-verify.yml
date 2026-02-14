@@ -1,0 +1,102 @@
+name: RELEASE — Verify artifacts (post-build)
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Target — Channel to verify (preview uses dev ref; production uses main ref by default)"
+        required: true
+        type: choice
+        default: preview
+        options:
+          - preview
+          - production
+      run_installers_smoke:
+        description: "Verify — Installers smoke (linux/macos/windows)"
+        required: true
+        default: true
+        type: boolean
+      run_binary_smoke:
+        description: "Verify — Binary smoke (cli/server/self-host)"
+        required: true
+        default: true
+        type: boolean
+      run_self_host_systemd:
+        description: "Verify — Real self-host systemd E2E (linux)"
+        required: true
+        default: false
+        type: boolean
+      run_self_host_launchd:
+        description: "Verify — Real self-host launchd E2E (macOS)"
+        required: true
+        default: false
+        type: boolean
+      run_self_host_schtasks:
+        description: "Verify — Real self-host schtasks E2E (Windows)"
+        required: true
+        default: false
+        type: boolean
+      run_self_host_daemon:
+        description: "Verify — Real self-host + CLI daemon E2E (linux+mac)"
+        required: true
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      channel:
+        required: true
+        type: string
+      run_installers_smoke:
+        required: false
+        default: true
+        type: boolean
+      run_binary_smoke:
+        required: false
+        default: true
+        type: boolean
+      run_self_host_systemd:
+        required: false
+        default: false
+        type: boolean
+      run_self_host_launchd:
+        required: false
+        default: false
+        type: boolean
+      run_self_host_schtasks:
+        required: false
+        default: false
+        type: boolean
+      run_self_host_daemon:
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: release-verify-${{ inputs.channel }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify (tests.yml)
+    uses: ./.github/workflows/tests.yml
+    with:
+      run_ui: false
+      run_server: false
+      run_cli: false
+      run_stack: false
+      run_typecheck: false
+      run_cli_daemon_e2e: false
+      run_e2e_core: false
+      run_server_db_contract: false
+      run_providers: false
+      run_release_contracts: false
+      run_installers_smoke: ${{ inputs.run_installers_smoke }}
+      run_binary_smoke: ${{ inputs.run_binary_smoke }}
+      run_self_host_systemd: ${{ inputs.run_self_host_systemd }}
+      run_self_host_launchd: ${{ inputs.run_self_host_launchd }}
+      run_self_host_schtasks: ${{ inputs.run_self_host_schtasks }}
+      run_self_host_daemon: ${{ inputs.run_self_host_daemon }}

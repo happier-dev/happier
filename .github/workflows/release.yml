@@ -37,10 +37,19 @@ on:
           - smoke
           - extended
       custom_checks:
-        description: "Checks (CUST) — Comma-separated toggles used only when checks_profile=custom: e2e_core,server_db_contract,stress,cli_smoke_linux,self_host_systemd,build_website,build_docs"
+        description: "Checks (CUST) — Comma-separated toggles used only when checks_profile=custom: e2e_core,server_db_contract,stress,cli_smoke_linux,build_website,build_docs"
         required: true
-        default: e2e_core,server_db_contract,cli_smoke_linux,self_host_systemd,build_website,build_docs
+        default: e2e_core,server_db_contract,cli_smoke_linux,build_website,build_docs
         type: string
+      release_verify_profile:
+        description: "Verify — Post-build release verification (none=skip, smoke=installers+binaries, full=include self-host E2E). Preview-only; runs best-effort after publishing."
+        required: true
+        type: choice
+        default: none
+        options:
+          - none
+          - smoke
+          - full
       dry_run:
         description: "Safety — Run checks and show plan, but do not push/deploy"
         required: true
@@ -199,7 +208,12 @@ jobs:
       providers_update_baselines: false
       run_stress: ${{ inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',stress,') }}
       run_release_contracts: true
-      run_self_host_systemd: ${{ inputs.checks_profile == 'full' || (inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',self_host_systemd,')) }}
+      run_installers_smoke: false
+      run_binary_smoke: false
+      run_self_host_systemd: false
+      run_self_host_launchd: false
+      run_self_host_schtasks: false
+      run_self_host_daemon: false
       stress_repeat: "5"
       stress_seed: ""
 
@@ -909,6 +923,23 @@ jobs:
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
       npm_tag: ${{ inputs.environment == 'production' && 'latest' || 'next' }}
       run_tests: false
+
+  release_verify:
+    if: always() && needs.publish_npm.result == 'success' && inputs.environment == 'preview' && inputs.release_verify_profile != 'none'
+    needs: [publish_npm]
+    continue-on-error: true
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/release-verify.yml
+    with:
+      channel: preview
+      run_installers_smoke: true
+      run_binary_smoke: true
+      run_self_host_systemd: ${{ inputs.release_verify_profile == 'full' }}
+      run_self_host_launchd: ${{ inputs.release_verify_profile == 'full' }}
+      run_self_host_schtasks: ${{ inputs.release_verify_profile == 'full' }}
+      run_self_host_daemon: ${{ inputs.release_verify_profile == 'full' }}
 
   sync_dev:
     if: inputs.dry_run != true && inputs.environment == 'production' && (vars.RELEASE_SYNC_DEV_FROM_MAIN == '' || vars.RELEASE_SYNC_DEV_FROM_MAIN == 'true')

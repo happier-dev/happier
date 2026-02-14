@@ -24,7 +24,7 @@ test('release workflow uses compact grouped inputs', async () => {
   const { parsed } = await loadWorkflow();
   const inputs = parsed?.on?.workflow_dispatch?.inputs ?? {};
 
-  for (const key of ['custom_checks', 'deploy_targets', 'desktop_mode', 'bump_app_override', 'bump_cli_override', 'bump_stack_override']) {
+  for (const key of ['custom_checks', 'deploy_targets', 'desktop_mode', 'bump_app_override', 'bump_cli_override', 'bump_stack_override', 'release_verify_profile']) {
     assert.ok(inputs[key], `expected grouped input ${key}`);
   }
 
@@ -58,7 +58,6 @@ test('release workflow derives promote mode from confirm and uses grouped toggle
 
   assert.match(raw, /inputs\.checks_profile == 'custom' && contains\(format\(',\{0\},', inputs\.custom_checks\), ',e2e_core,'\)/);
   assert.match(raw, /inputs\.checks_profile == 'custom' && contains\(format\(',\{0\},', inputs\.custom_checks\), ',server_db_contract,'\)/);
-  assert.match(raw, /inputs\.checks_profile == 'custom' && contains\(format\(',\{0\},', inputs\.custom_checks\), ',self_host_systemd,'\)/);
   assert.match(raw, /inputs\.checks_profile == 'custom' && contains\(format\(',\{0\},', inputs\.custom_checks\), ',build_website,'\)/);
   assert.match(raw, /inputs\.checks_profile == 'custom' && contains\(format\(',\{0\},', inputs\.custom_checks\), ',build_docs,'\)/);
   assert.match(raw, /inputs\.checks_profile == 'custom' && contains\(format\(',\{0\},', inputs\.custom_checks\), ',cli_smoke_linux,'\)/);
