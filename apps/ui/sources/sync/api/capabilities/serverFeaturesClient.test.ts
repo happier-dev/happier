@@ -34,6 +34,7 @@ describe('serverFeaturesClient', () => {
     });
 
     afterEach(() => {
+        vi.useRealTimers();
         globalThis.fetch = originalFetch;
         vi.restoreAllMocks();
         vi.resetModules();
@@ -92,6 +93,127 @@ describe('serverFeaturesClient', () => {
         if (result.status === 'unsupported') {
             expect(result.reason).toBe('endpoint_missing');
         }
+    });
+
+    it('caches endpoint-missing responses even when forced (cooldown)', async () => {
+        const payload = {
+            features: {
+                sharing: { session: { enabled: true }, public: { enabled: true }, contentKeys: { enabled: true }, pendingQueueV2: { enabled: true } },
+                voice: { enabled: false, configured: false, provider: null },
+                social: { friends: { enabled: true, allowUsername: false, requiredIdentityProviderId: 'github' } },
+                oauth: { providers: {} },
+                auth: {
+                    signup: { methods: [] },
+                    login: { requiredProviders: [] },
+                    recovery: { providerReset: { enabled: false, providers: [] } },
+                    ui: { autoRedirect: { enabled: false, providerId: null }, recoveryKeyReminder: { enabled: true } },
+                    providers: {},
+                    misconfig: [],
+                },
+            },
+        };
+
+        (globalThis.fetch as unknown as ReturnType<typeof vi.fn>)
+            .mockResolvedValueOnce(createResponse(404, {}))
+            // If the client incorrectly refetches during cooldown, this 200 would flip the snapshot to ready.
+            .mockResolvedValueOnce(createResponse(200, payload));
+
+        const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-02-13T00:00:00.000Z'));
+
+        const first = await getServerFeaturesSnapshot({ force: true, timeoutMs: 50 });
+        const second = await getServerFeaturesSnapshot({ force: true, timeoutMs: 50 });
+
+        expect(first.status).toBe('unsupported');
+        expect(second.status).toBe('unsupported');
+        expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+    });
+
+    it('allows forced revalidation after endpoint-missing cooldown expires', async () => {
+        const payload = {
+            features: {
+                sharing: { session: { enabled: true }, public: { enabled: true }, contentKeys: { enabled: true }, pendingQueueV2: { enabled: true } },
+                voice: { enabled: false, configured: false, provider: null },
+                social: { friends: { enabled: true, allowUsername: false, requiredIdentityProviderId: 'github' } },
+                oauth: { providers: {} },
+                auth: {
+                    signup: { methods: [] },
+                    login: { requiredProviders: [] },
+                    recovery: { providerReset: { enabled: false, providers: [] } },
+                    ui: { autoRedirect: { enabled: false, providerId: null }, recoveryKeyReminder: { enabled: true } },
+                    providers: {},
+                    misconfig: [],
+                },
+            },
+        };
+
+        (globalThis.fetch as unknown as ReturnType<typeof vi.fn>)
+            .mockResolvedValueOnce(createResponse(404, {}))
+            .mockResolvedValueOnce(createResponse(200, payload));
+
+        const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-02-13T00:00:00.000Z'));
+
+        const first = await getServerFeaturesSnapshot({ force: true, timeoutMs: 50 });
+        expect(first.status).toBe('unsupported');
+        expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+
+        // After cooldown, a forced refresh should revalidate.
+        vi.setSystemTime(new Date('2026-02-13T00:01:00.000Z'));
+
+        const second = await getServerFeaturesSnapshot({ force: true, timeoutMs: 50 });
+        expect(second.status).toBe('ready');
+        expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
+    });
+
+    it('retries after a short ttl when probing fails (network error)', async () => {
+        const payload = {
+            features: {
+                sharing: { session: { enabled: true }, public: { enabled: true }, contentKeys: { enabled: true }, pendingQueueV2: { enabled: true } },
+                voice: { enabled: false, configured: false, provider: null },
+                social: { friends: { enabled: true, allowUsername: false, requiredIdentityProviderId: 'github' } },
+                oauth: { providers: {} },
+                auth: {
+                    signup: { methods: [] },
+                    login: { requiredProviders: [] },
+                    recovery: { providerReset: { enabled: false, providers: [] } },
+                    ui: { autoRedirect: { enabled: false, providerId: null }, recoveryKeyReminder: { enabled: true } },
+                    providers: {},
+                    misconfig: [],
+                },
+            },
+        };
+
+        (globalThis.fetch as unknown as ReturnType<typeof vi.fn>)
+            .mockRejectedValueOnce(new Error('network down'))
+            .mockResolvedValueOnce(createResponse(200, payload));
+
+        const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-02-13T00:00:00.000Z'));
+
+        const first = await getServerFeaturesSnapshot({ timeoutMs: 50 });
+        expect(first.status).toBe('error');
+        expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+
+        // Within the short error TTL, we should not refetch.
+        const second = await getServerFeaturesSnapshot({ timeoutMs: 50 });
+        expect(second.status).toBe('error');
+        expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+
+        // After TTL, the client should retry.
+        vi.setSystemTime(new Date('2026-02-13T00:00:06.000Z'));
+        const third = await getServerFeaturesSnapshot({ timeoutMs: 50 });
+        expect(third.status).toBe('ready');
+        expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
     });
 
     it('fetches features against the explicit serverId url (not the active server)', async () => {

@@ -8,6 +8,8 @@ export function resolveFriendsFeature(env: NodeJS.ProcessEnv): Pick<FeaturesResp
 
     const requiredProviderId = friendsPolicy.requiredIdentityProviderId;
     const providerConfigured = requiredProviderId ? oauthProviders[requiredProviderId]?.configured === true : true;
+    // Fail-closed: only advertise friends as enabled when there is an available identity path.
+    // If username identity is disabled and the required provider isn't configured, clients should hide entry points.
     const enabled = friendsPolicy.enabled && (friendsPolicy.allowUsername || providerConfigured);
 
     return {

@@ -11,13 +11,13 @@ import { trackFriendsConnect } from '@/track';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useSearch } from '@/hooks/search/useSearch';
-import { useRequireInboxFriendsEnabled } from '@/hooks/inbox/useRequireInboxFriendsEnabled';
+import { useRequireFriendsEnabled } from '@/hooks/friends/useRequireFriendsEnabled';
 import { HappyError } from '@/utils/errors/errors';
 import { RequireFriendsIdentityForFriends } from '@/components/friends/RequireFriendsIdentityForFriends';
 
 export default function SearchFriendsScreen() {
     const { theme } = useUnistyles();
-    const enabled = useRequireInboxFriendsEnabled();
+    const enabled = useRequireFriendsEnabled();
     const { credentials } = useAuth();
     const [searchQuery, setSearchQuery] = useState('');
     const [processingUserId, setProcessingUserId] = useState<string | null>(null);

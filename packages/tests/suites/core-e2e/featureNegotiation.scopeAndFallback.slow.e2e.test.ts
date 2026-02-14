@@ -15,7 +15,7 @@ describe('core e2e: feature negotiation scope and fallback', () => {
     server = null;
   });
 
-  it('reports social.friends disabled when identity provider is required but unavailable', async () => {
+  it('reports social.friends disabled when identity provider is required but oauth provider is not configured', async () => {
     const testDir = run.testDir('feature-negotiation-friends-provider-fallback');
     server = await startServerLight({
       testDir,

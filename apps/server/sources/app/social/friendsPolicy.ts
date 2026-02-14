@@ -1,4 +1,4 @@
-import { parseBooleanEnv } from "@/config/env";
+import { readSocialFriendsFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 
 export type FriendsPolicy = Readonly<{
     enabled: boolean;
@@ -7,12 +7,10 @@ export type FriendsPolicy = Readonly<{
 }>;
 
 export function resolveFriendsPolicyFromEnv(env: NodeJS.ProcessEnv): FriendsPolicy {
-    const enabled = parseBooleanEnv(env.FRIENDS_ENABLED, true);
-    const allowUsername = parseBooleanEnv(env.FRIENDS_ALLOW_USERNAME, false);
-    const requiredIdentityProviderIdRaw =
-        typeof env.FRIENDS_IDENTITY_PROVIDER === "string" && env.FRIENDS_IDENTITY_PROVIDER.trim()
-            ? env.FRIENDS_IDENTITY_PROVIDER.trim()
-            : "github";
+    const featureEnv = readSocialFriendsFeatureEnv(env);
+    const enabled = featureEnv.enabled;
+    const allowUsername = featureEnv.allowUsername;
+    const requiredIdentityProviderIdRaw = featureEnv.identityProvider;
     const requiredIdentityProviderId = allowUsername ? null : requiredIdentityProviderIdRaw.toLowerCase();
     return Object.freeze({ enabled, allowUsername, requiredIdentityProviderId });
 }

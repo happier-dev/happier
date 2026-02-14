@@ -5,9 +5,16 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { parseServerFeatures } from './serverFeaturesParse';
 
-const CACHE_TTL_MS = 10 * 60 * 1000;
+const TTL_READY_MS = 10 * 60 * 1000;
+const TTL_UNSUPPORTED_ENDPOINT_MISSING_MS = 60 * 60 * 1000;
+const TTL_UNSUPPORTED_INVALID_PAYLOAD_MS = 10 * 60 * 1000;
+const TTL_ERROR_NETWORK_MS = 5 * 1000;
+const TTL_ERROR_TIMEOUT_MS = 5 * 1000;
+const TTL_ERROR_RESPONSE_STATUS_MS = 30 * 1000;
 
-type CacheEntry = Readonly<{ value: ServerFeaturesSnapshot; at: number }>;
+const FORCE_COOLDOWN_ENDPOINT_MISSING_MS = 60 * 1000;
+
+type CacheEntry = Readonly<{ value: ServerFeaturesSnapshot; at: number; ttlMs: number }>;
 
 export type ServerFeaturesSnapshot =
     | Readonly<{ status: 'ready'; features: ServerFeatures }>
@@ -19,6 +26,34 @@ const inFlightByServerId = new Map<string, Promise<ServerFeaturesSnapshot>>();
 
 function isEndpointMissing(status: number): boolean {
     return status === 404 || status === 405 || status === 501;
+}
+
+function getCacheTtlMs(snapshot: ServerFeaturesSnapshot): number {
+    if (snapshot.status === 'ready') return TTL_READY_MS;
+    if (snapshot.status === 'unsupported') {
+        return snapshot.reason === 'endpoint_missing'
+            ? TTL_UNSUPPORTED_ENDPOINT_MISSING_MS
+            : TTL_UNSUPPORTED_INVALID_PAYLOAD_MS;
+    }
+
+    // error
+    switch (snapshot.reason) {
+        case 'timeout':
+            return TTL_ERROR_TIMEOUT_MS;
+        case 'network':
+            return TTL_ERROR_NETWORK_MS;
+        case 'response_status':
+            return TTL_ERROR_RESPONSE_STATUS_MS;
+        default:
+            return TTL_ERROR_NETWORK_MS;
+    }
+}
+
+function getForceCooldownMs(snapshot: ServerFeaturesSnapshot): number {
+    if (snapshot.status === 'unsupported' && snapshot.reason === 'endpoint_missing') {
+        return FORCE_COOLDOWN_ENDPOINT_MISSING_MS;
+    }
+    return 0;
 }
 
 function getCacheKey(serverId?: string): string {
@@ -62,10 +97,17 @@ export async function getServerFeaturesSnapshot(params?: {
         ? normalizeBaseUrl(getServerProfileById(requestedServerId)?.serverUrl ?? '')
         : null;
 
-    if (!force) {
-        const cached = cachedByServerId.get(cacheKey) ?? null;
-        if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
-            return cached.value;
+    const cached = cachedByServerId.get(cacheKey) ?? null;
+    if (cached) {
+        const ageMs = Date.now() - cached.at;
+        const fresh = ageMs >= 0 && ageMs < cached.ttlMs;
+        if (fresh) {
+            if (!force) return cached.value;
+
+            const cooldownMs = getForceCooldownMs(cached.value);
+            if (ageMs < cooldownMs) {
+                return cached.value;
+            }
         }
     }
 
@@ -74,10 +116,10 @@ export async function getServerFeaturesSnapshot(params?: {
         return await inFlight;
     }
 
-    const request = (async (): Promise<ServerFeaturesSnapshot> => {
+        const request = (async (): Promise<ServerFeaturesSnapshot> => {
         if (isExplicitServerRequest && !explicitServerUrl) {
             const value: ServerFeaturesSnapshot = { status: 'error', reason: 'network' };
-            cachedByServerId.set(cacheKey, { value, at: Date.now() });
+            cachedByServerId.set(cacheKey, { value, at: Date.now(), ttlMs: getCacheTtlMs(value) });
             return value;
         }
 
@@ -103,7 +145,7 @@ export async function getServerFeaturesSnapshot(params?: {
                 const value: ServerFeaturesSnapshot = isEndpointMissing(response.status)
                     ? { status: 'unsupported', reason: 'endpoint_missing' }
                     : { status: 'error', reason: 'response_status' };
-                cachedByServerId.set(cacheKey, { value, at: Date.now() });
+                cachedByServerId.set(cacheKey, { value, at: Date.now(), ttlMs: getCacheTtlMs(value) });
                 return value;
             }
 
@@ -111,17 +153,17 @@ export async function getServerFeaturesSnapshot(params?: {
             const parsed = parseServerFeatures(payload);
             if (!parsed) {
                 const value: ServerFeaturesSnapshot = { status: 'unsupported', reason: 'invalid_payload' };
-                cachedByServerId.set(cacheKey, { value, at: Date.now() });
+                cachedByServerId.set(cacheKey, { value, at: Date.now(), ttlMs: getCacheTtlMs(value) });
                 return value;
             }
 
             const value: ServerFeaturesSnapshot = { status: 'ready', features: parsed };
-            cachedByServerId.set(cacheKey, { value, at: Date.now() });
+            cachedByServerId.set(cacheKey, { value, at: Date.now(), ttlMs: getCacheTtlMs(value) });
             return value;
         } catch (error) {
             const aborted = controller.signal.aborted || (error instanceof Error && error.name === 'AbortError');
             const value: ServerFeaturesSnapshot = { status: 'error', reason: aborted ? 'timeout' : 'network' };
-            cachedByServerId.set(cacheKey, { value, at: Date.now() });
+            cachedByServerId.set(cacheKey, { value, at: Date.now(), ttlMs: getCacheTtlMs(value) });
             return value;
         } finally {
             clearTimeout(timer);

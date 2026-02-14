@@ -24,7 +24,7 @@ import { getAgentCore, resolveAgentIdFromConnectedServiceId, getAgentIconSource,
 import { HappyError } from '@/utils/errors/errors';
 import { setAccountUsername } from '@/sync/api/account/apiUsername';
 import { storage } from '@/sync/domains/state/storageStore';
-import { useInboxFriendsEnabled } from '@/hooks/server/useInboxFriendsEnabled';
+import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
 import { ProviderIdentityItems } from '@/components/account/ProviderIdentityItems';
 import { isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
@@ -38,7 +38,7 @@ export default React.memo(() => {
     const { connectAccount, isLoading: isConnecting } = useConnectAccount();
     const profile = useProfile();
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
-    const friendsEnabled = useInboxFriendsEnabled();
+    const friendsEnabled = useFriendsEnabled();
     const applyProfile = storage((state) => state.applyProfile);
 
     // Get the current secret key

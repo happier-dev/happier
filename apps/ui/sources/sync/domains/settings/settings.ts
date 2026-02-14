@@ -280,14 +280,12 @@ const SettingsSchemaBase = z.object({
     wrapLinesInDiffs: z.boolean().describe('Whether to wrap long lines in diff views'),
     analyticsOptOut: z.boolean().describe('Whether to opt out of anonymous analytics'),
     experiments: z.boolean().describe('Whether to enable experimental features'),
+    // Per-feature toggle map (gated by `experiments` master switch for experimental entries).
+    // Keys are owned by the features domain (registry/catalog) so the settings schema can remain stable.
+    featureToggles: z.record(z.string(), z.boolean()).default({}).describe('Per-feature feature toggles map'),
     // Per-backend enablement map used across picker/settings/profile surfaces.
     // Unknown keys are allowed to avoid schema churn when adding backends.
     backendEnabledById: z.record(z.string(), z.boolean()).default(DEFAULT_BACKEND_ENABLED_BY_ID).describe('Per-backend enable/disable toggles'),
-    // Per-experiment toggles (gated by `experiments` master switch in UI/usage)
-    expUsageReporting: z.boolean().describe('Experimental: enable usage reporting UI'),
-    // Deprecated: kept parse-compatible for one migration window.
-    expFileViewer: z.boolean().describe('Deprecated: legacy session file viewer experiment flag'),
-    expScmOperations: z.boolean().describe('Experimental: enable source-control write operations UI'),
     scmCommitStrategy: z.enum(SCM_COMMIT_STRATEGIES).describe('Source-control commit strategy: atomic working-copy commit or live Git staging'),
     scmGitRepoPreferredBackend: z.enum(SCM_GIT_REPO_BACKEND_OPTIONS).describe('Preferred backend for .git repositories'),
     scmRemoteConfirmPolicy: z.enum(SCM_REMOTE_CONFIRM_POLICIES).describe('Confirmation policy for SCM remote pull/push operations'),
@@ -311,10 +309,6 @@ const SettingsSchemaBase = z.object({
     filesEditorBridgeMaxChunkBytes: z.number().describe('Maximum chunk size for editor WebView bridge payloads'),
     filesEditorWebMonacoEnabled: z.boolean().describe('Kill switch: enable Monaco editor surface on web/desktop'),
     filesEditorNativeCodeMirrorEnabled: z.boolean().describe('Kill switch: enable CodeMirror WebView surface on native'),
-    expShowThinkingMessages: z.boolean().describe('Experimental: show assistant thinking messages'),
-    expSessionType: z.boolean().describe('Experimental: show session type selector (simple vs worktree)'),
-    expZen: z.boolean().describe('Experimental: enable Zen navigation/experience'),
-    expInboxFriends: z.boolean().describe('Experimental: enable inbox/friends UI + related UX'),
     useProfiles: z.boolean().describe('Whether to enable AI backend profiles feature'),
     useEnhancedSessionWizard: z.boolean().describe('A/B test flag: Use enhanced profile-based session wizard UI'),
     // Default permission modes for new sessions (account-level; per agent).
@@ -463,10 +457,8 @@ export const settingsDefaults: Settings = {
     wrapLinesInDiffs: false,
     analyticsOptOut: false,
     experiments: false,
+    featureToggles: {},
     backendEnabledById: DEFAULT_BACKEND_ENABLED_BY_ID,
-    expUsageReporting: false,
-    expFileViewer: false,
-    expScmOperations: false,
     scmCommitStrategy: 'atomic',
     scmGitRepoPreferredBackend: 'git',
     scmRemoteConfirmPolicy: 'always',
@@ -488,10 +480,6 @@ export const settingsDefaults: Settings = {
     filesEditorBridgeMaxChunkBytes: 64_000,
     filesEditorWebMonacoEnabled: true,
     filesEditorNativeCodeMirrorEnabled: true,
-    expShowThinkingMessages: false,
-    expSessionType: false,
-    expZen: false,
-    expInboxFriends: false,
     useProfiles: false,
     sessionDefaultPermissionModeByAgent: DEFAULT_SESSION_PERMISSION_MODE_BY_AGENT,
     sessionPermissionModeApplyTiming: 'immediate',
@@ -752,26 +740,6 @@ export function settingsParse(settings: unknown): Settings {
 
         result.sessionDefaultPermissionModeByAgent = byAgent as any;
     }
-
-    // Migration: Introduce per-experiment toggles.
-    // If persisted settings only had `experiments` (older clients), default ALL experiment toggles
-    // to match the master switch so existing users keep the same behavior.
-    const experimentKeys = [
-        'expUsageReporting',
-        'expShowThinkingMessages',
-        'expSessionType',
-        'expZen',
-        'expInboxFriends',
-    ] as const;
-    const hasAnyExperimentKey =
-        experimentKeys.some((k) => k in input);
-	    if (!hasAnyExperimentKey) {
-	        const enableAll = result.experiments === true;
-	        for (const key of experimentKeys) {
-	            result[key] = enableAll;
-	        }
-	    }
-
 	    // Migration: derive `voiceProviderId` from legacy `voiceMode` when missing.
 	    // This keeps older clients (that only persisted voiceMode) working with the new provider selector.
 	    if (!('voiceProviderId' in input)) {
@@ -783,6 +751,17 @@ export function settingsParse(settings: unknown): Settings {
 	    // Safety: tool arguments are never shared with voice providers.
 	    // Even if a persisted settings blob contains `voiceShareToolArgs: true`, force it off.
 	    result.voiceShareToolArgs = false;
+
+    // Migration: hard cutover from legacy `inbox.friends` feature id to `social.friends`.
+    // Preserve explicit user choice when present.
+    if (result.featureToggles && typeof result.featureToggles === 'object') {
+        const map = result.featureToggles as Record<string, unknown>;
+        const legacy = map['inbox.friends'];
+        if (typeof legacy === 'boolean' && typeof map['social.friends'] !== 'boolean') {
+            map['social.friends'] = legacy;
+        }
+        delete map['inbox.friends'];
+    }
 
 	    const DROPPED_KEYS = new Set([
 	        // Removed in favor of `defaultPermissionModeByAgent`.
@@ -796,6 +775,16 @@ export function settingsParse(settings: unknown): Settings {
         'codexResumeInstallSpec',
         // Voice is no longer experimental; the old experiment toggle is ignored.
         'expVoiceAuthFlow',
+        // Hard cutover: legacy experiment toggles are now driven by `featureToggles`.
+        'expUsageReporting',
+        'expFileViewer',
+        'expScmOperations',
+        'expShowThinkingMessages',
+        'expSessionType',
+        'expZen',
+        'expInboxFriends',
+        // Hard cutover: experimentalFeatureToggles was replaced by featureToggles.
+        'experimentalFeatureToggles',
     ]);
 
     // Preserve unknown fields (forward compatibility).

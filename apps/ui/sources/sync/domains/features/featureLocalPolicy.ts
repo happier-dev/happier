@@ -1,26 +1,28 @@
 import type { FeatureId } from '@happier-dev/protocol';
 import type { Settings } from '@/sync/domains/settings/settings';
+import { resolveUiFeatureToggleEnabled } from './featureRegistry';
 
 type FeatureLocalPolicyResolver = (settings: Settings) => boolean;
 
 const LOCAL_POLICY_BY_FEATURE: Readonly<Record<FeatureId, FeatureLocalPolicyResolver>> = {
-    automations: (settings) => settings.experiments === true && settings.expAutomations !== false,
-    'automations.existingSessionTarget': (settings) => settings.experiments === true && settings.expAutomations !== false,
+    automations: (settings) => resolveUiFeatureToggleEnabled(settings, 'automations'),
+    // Existing-session targeting is a subordinate capability of automations; keep it tied to the parent toggle.
+    'automations.existingSessionTarget': (settings) => resolveUiFeatureToggleEnabled(settings, 'automations'),
+    'execution.runs': (settings) => resolveUiFeatureToggleEnabled(settings, 'execution.runs'),
     voice: () => true,
-    'social.friends': (settings) => settings.experiments === true && settings.expInboxFriends === true,
+    'social.friends': (settings) => resolveUiFeatureToggleEnabled(settings, 'social.friends'),
     'auth.recovery.providerReset': () => true,
     'auth.ui.recoveryKeyReminder': () => true,
     bugReports: () => true,
-    'scm.writeOperations': (settings) => settings.experiments === true && settings.expScmOperations === true,
-    'files.reviewComments': (settings) => settings.experiments === true,
-    'files.diffSyntaxHighlighting': (settings) => settings.experiments === true,
-    'files.editor': (settings) => settings.experiments === true && settings.expScmOperations === true,
-    'files.syntaxHighlighting.advanced': (settings) => settings.experiments === true,
-    'session.typeSelector': (settings) => settings.experiments === true && settings.expSessionType === true,
-    'zen.navigation': (settings) => settings.experiments === true && settings.expZen === true,
-    'inbox.friends': (settings) => settings.experiments === true && settings.expInboxFriends === true,
-    'usage.reporting': (settings) => settings.experiments === true && settings.expUsageReporting === true,
-    'messages.thinkingVisibility': (settings) => settings.experiments === true && settings.expShowThinkingMessages === true,
+    'scm.writeOperations': (settings) => resolveUiFeatureToggleEnabled(settings, 'scm.writeOperations'),
+    'files.reviewComments': (settings) => resolveUiFeatureToggleEnabled(settings, 'files.reviewComments'),
+    'files.diffSyntaxHighlighting': (settings) => resolveUiFeatureToggleEnabled(settings, 'files.diffSyntaxHighlighting'),
+    'files.editor': (settings) => resolveUiFeatureToggleEnabled(settings, 'files.editor'),
+    'files.syntaxHighlighting.advanced': (settings) => resolveUiFeatureToggleEnabled(settings, 'files.syntaxHighlighting.advanced'),
+    'session.typeSelector': (settings) => resolveUiFeatureToggleEnabled(settings, 'session.typeSelector'),
+    'zen.navigation': (settings) => resolveUiFeatureToggleEnabled(settings, 'zen.navigation'),
+    'usage.reporting': (settings) => resolveUiFeatureToggleEnabled(settings, 'usage.reporting'),
+    'messages.thinkingVisibility': (settings) => resolveUiFeatureToggleEnabled(settings, 'messages.thinkingVisibility'),
     'codex.resume.mcp': (settings) => settings.codexBackendMode === 'mcp_resume',
     'codex.resume.acp': (settings) => settings.codexBackendMode === 'acp',
 };

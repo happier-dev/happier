@@ -18,7 +18,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { sync } from '@/sync/sync';
 import { PopoverBoundaryProvider } from '@/components/ui/popover';
 import { ConnectionStatusControl } from '@/components/navigation/ConnectionStatusControl';
-import { useInboxFriendsEnabled } from '@/hooks/server/useInboxFriendsEnabled';
+import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { config } from '@/config';
 import { isStackContext } from '@/sync/domains/server/serverContext';
 import { isUsingCustomServer } from '@/sync/domains/server/serverConfig';
@@ -211,10 +212,8 @@ export const SidebarView = React.memo(() => {
     const popoverBoundaryRef = React.useRef<any>(null);
     const friendRequests = useFriendRequests();
     const inboxHasContent = useInboxHasContent();
-    const experimentsEnabled = useSetting('experiments');
-    const expZen = useSetting('expZen');
     const showEnvironmentBadge = useSetting('showEnvironmentBadge');
-    const inboxFriendsEnabled = useInboxFriendsEnabled();
+    const inboxFriendsEnabled = useFriendsEnabled();
 
     // Compute connection status once per render (theme-reactive, no stale memoization)
     const connectionStatus = (() => {
@@ -262,7 +261,7 @@ export const SidebarView = React.memo(() => {
     // Uses same formula as SidebarNavigator.tsx:18 for consistency
     const { width: windowWidth } = useWindowDimensions();
     const sidebarWidth = Math.min(Math.max(Math.floor(windowWidth * 0.3), 250), 360);
-    const showZen = experimentsEnabled && expZen;
+    const showZen = useFeatureEnabled('zen.navigation');
     // With Zen enabled: 4 icons (148px total), threshold 408px > max 360px → always left-justify
     // Without Zen: 3 icons (108px total), threshold 328px → left-justify below ~340px
     const shouldLeftJustify = showZen || sidebarWidth < 340;

@@ -7,11 +7,11 @@ import { t } from '@/text';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useRouter } from 'expo-router';
-import { useRequireInboxFriendsEnabled } from '@/hooks/inbox/useRequireInboxFriendsEnabled';
+import { useRequireFriendsEnabled } from '@/hooks/friends/useRequireFriendsEnabled';
 import { RequireFriendsIdentityForFriends } from '@/components/friends/RequireFriendsIdentityForFriends';
 
 export default function FriendsManageScreen() {
-    const enabled = useRequireInboxFriendsEnabled();
+    const enabled = useRequireFriendsEnabled();
     const router = useRouter();
     const friends = useAcceptedFriends();
     const friendRequests = useFriendRequests();

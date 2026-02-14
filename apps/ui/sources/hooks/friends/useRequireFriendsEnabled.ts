@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { useRouter } from 'expo-router';
-import { useInboxFriendsEnabled } from '@/hooks/server/useInboxFriendsEnabled';
 
-export function useRequireInboxFriendsEnabled(): boolean {
+import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
+
+export function useRequireFriendsEnabled(): boolean {
     const router = useRouter();
-    const enabled = useInboxFriendsEnabled();
+    const enabled = useFriendsEnabled();
 
     React.useEffect(() => {
         if (enabled) return;

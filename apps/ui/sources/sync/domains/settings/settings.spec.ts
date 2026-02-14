@@ -94,36 +94,59 @@ describe('settings', () => {
                 }
             });
         });
-
-        it('should default per-experiment toggles to true when experiments is true (migration)', () => {
+        it('defaults featureToggles to empty even when experiments is true', () => {
             const parsed = settingsParse({
                 experiments: true,
-                // Note: per-experiment keys intentionally omitted (older clients)
+                // Note: per-feature toggles intentionally omitted.
             } as any);
 
-            expect((parsed as any).expUsageReporting).toBe(true);
-            // Deprecated: file browser is now stable and should not be toggled by experiments migration.
-            expect((parsed as any).expFileViewer).toBe(false);
-            expect((parsed as any).expShowThinkingMessages).toBe(true);
-            expect((parsed as any).expSessionType).toBe(true);
-            expect((parsed as any).expZen).toBe(true);
-            expect((parsed as any).expInboxFriends).toBe(true);
-            expect((parsed as any).expScmOperations).toBe(false);
+            expect((parsed as any).featureToggles).toEqual({});
         });
 
-        it('should default per-experiment toggles to false when experiments is false (migration)', () => {
+        it('drops legacy exp* keys on parse (hard cutover)', () => {
             const parsed = settingsParse({
-                experiments: false,
-                // Note: per-experiment keys intentionally omitted (older clients)
+                experiments: true,
+                expUsageReporting: true,
+                expFileViewer: true,
+                expScmOperations: true,
+                expShowThinkingMessages: true,
+                expSessionType: true,
+                expZen: true,
+                expInboxFriends: true,
             } as any);
 
-            expect((parsed as any).expUsageReporting).toBe(false);
-            expect((parsed as any).expFileViewer).toBe(false);
-            expect((parsed as any).expShowThinkingMessages).toBe(false);
-            expect((parsed as any).expSessionType).toBe(false);
-            expect((parsed as any).expZen).toBe(false);
-            expect((parsed as any).expInboxFriends).toBe(false);
-            expect((parsed as any).expScmOperations).toBe(false);
+            expect((parsed as any).expUsageReporting).toBeUndefined();
+            expect((parsed as any).expFileViewer).toBeUndefined();
+            expect((parsed as any).expScmOperations).toBeUndefined();
+            expect((parsed as any).expShowThinkingMessages).toBeUndefined();
+            expect((parsed as any).expSessionType).toBeUndefined();
+            expect((parsed as any).expZen).toBeUndefined();
+            expect((parsed as any).expInboxFriends).toBeUndefined();
+        });
+
+        it('preserves explicit featureToggles when present', () => {
+            const parsed = settingsParse({
+                experiments: true,
+                featureToggles: {
+                    'session.typeSelector': true,
+                },
+            } as any);
+
+            expect((parsed as any).featureToggles).toEqual({
+                'session.typeSelector': true,
+            });
+        });
+
+        it('migrates featureToggles inbox.friends to social.friends (hard cutover)', () => {
+            const parsed = settingsParse({
+                experiments: true,
+                featureToggles: {
+                    'inbox.friends': true,
+                },
+            } as any);
+
+            expect((parsed as any).featureToggles?.['inbox.friends']).toBeUndefined();
+            expect((parsed as any).featureToggles?.['social.friends']).toBe(true);
         });
 
         it('defaults per-agent new-session permission modes', () => {

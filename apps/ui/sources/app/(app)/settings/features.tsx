@@ -1,20 +1,23 @@
 import React from 'react';
 import { Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { FEATURE_IDS } from '@happier-dev/protocol';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { useSettingMutable, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { Switch } from '@/components/ui/forms/Switch';
 import { t } from '@/text';
+import { FeatureDiagnosticsPanel } from '@/components/settings/features/FeatureDiagnosticsPanel';
+import {
+    buildUiFeatureToggleDefaults,
+    listUiFeatureToggleDefinitions,
+    resolveUiFeatureToggleEnabled,
+} from '@/sync/domains/features/featureRegistry';
 
 export default React.memo(function FeaturesSettingsScreen() {
     const [experiments, setExperiments] = useSettingMutable('experiments');
-    const [expUsageReporting, setExpUsageReporting] = useSettingMutable('expUsageReporting');
-    const [expScmOperations, setExpScmOperations] = useSettingMutable('expScmOperations');
-    const [expShowThinkingMessages, setExpShowThinkingMessages] = useSettingMutable('expShowThinkingMessages');
-    const [expSessionType, setExpSessionType] = useSettingMutable('expSessionType');
-    const [expZen, setExpZen] = useSettingMutable('expZen');
+    const [featureToggles, setFeatureToggles] = useSettingMutable('featureToggles');
     const [useProfiles, setUseProfiles] = useSettingMutable('useProfiles');
     const [agentInputEnterToSend, setAgentInputEnterToSend] = useSettingMutable('agentInputEnterToSend');
     const [commandPaletteEnabled, setCommandPaletteEnabled] = useLocalSettingMutable('commandPaletteEnabled');
@@ -25,21 +28,19 @@ export default React.memo(function FeaturesSettingsScreen() {
     const [useEnhancedSessionWizard, setUseEnhancedSessionWizard] = useSettingMutable('useEnhancedSessionWizard');
     const [useMachinePickerSearch, setUseMachinePickerSearch] = useSettingMutable('useMachinePickerSearch');
     const [usePathPickerSearch, setUsePathPickerSearch] = useSettingMutable('usePathPickerSearch');
+    const [devModeEnabled] = useLocalSettingMutable('devModeEnabled');
 
-    const setAllExperimentToggles = React.useCallback((enabled: boolean) => {
-        setExpUsageReporting(enabled);
-        // Intentionally NOT auto-enabled: this exposes write operations on user repositories.
-        setExpScmOperations(false);
-        setExpShowThinkingMessages(enabled);
-        setExpSessionType(enabled);
-        setExpZen(enabled);
-    }, [
-        setExpScmOperations,
-        setExpSessionType,
-        setExpShowThinkingMessages,
-        setExpUsageReporting,
-        setExpZen,
-    ]);
+    const toggleDefinitions = React.useMemo(() => listUiFeatureToggleDefinitions(), []);
+    const standardToggleDefinitions = toggleDefinitions.filter((d) => !d.isExperimental);
+    const experimentalToggleDefinitions = toggleDefinitions.filter((d) => d.isExperimental);
+
+    const seedExperimentalFeatureToggleDefaults = React.useCallback(() => {
+        const defaults = buildUiFeatureToggleDefaults({ experimentalOnly: true });
+        setFeatureToggles({
+            ...(featureToggles ?? {}),
+            ...defaults,
+        });
+    }, [featureToggles, setFeatureToggles]);
 
     return (
         <ItemList style={{ paddingTop: 0 }}>
@@ -144,8 +145,10 @@ export default React.memo(function FeaturesSettingsScreen() {
                             value={experiments}
                             onValueChange={(next) => {
                                 setExperiments(next);
-                                // Requirement: toggling the master switch enables/disables all experiments by default.
-                                setAllExperimentToggles(next);
+                                if (next) {
+                                    // Requirement: toggling the master switch enables all experimental toggles by default.
+                                    seedExperimentalFeatureToggleDefaults();
+                                }
                             }}
                         />
                     }
@@ -153,47 +156,72 @@ export default React.memo(function FeaturesSettingsScreen() {
                 />
             </ItemGroup>
 
-            {experiments && (
+            {standardToggleDefinitions.length > 0 && (
+                <ItemGroup
+                    title="Features"
+                    footer="Per-feature local toggles (independent of server support)."
+                >
+                    {standardToggleDefinitions.map((d) => {
+                        const enabled = resolveUiFeatureToggleEnabled({ experiments, featureToggles }, d.featureId);
+
+                        return (
+                            <Item
+                                key={d.featureId}
+                                title={t(d.titleKey)}
+                                subtitle={t(d.subtitleKey)}
+                                icon={<Ionicons name={d.icon.ioniconName as keyof typeof Ionicons.glyphMap} size={29} color={d.icon.color} />}
+                                rightElement={
+                                    <Switch
+                                        value={enabled}
+                                        onValueChange={(next) => {
+                                            setFeatureToggles({
+                                                ...(featureToggles ?? {}),
+                                                [d.featureId]: next,
+                                            });
+                                        }}
+                                    />
+                                }
+                                showChevron={false}
+                            />
+                        );
+                    })}
+                </ItemGroup>
+            )}
+
+            {experiments && experimentalToggleDefinitions.length > 0 && (
                 <ItemGroup
                     title={t('settingsFeatures.experimentalOptions')}
                     footer={t('settingsFeatures.experimentalOptionsDescription')}
                 >
-                    <Item
-                        title={t('settingsFeatures.expUsageReporting')}
-                        subtitle={t('settingsFeatures.expUsageReportingSubtitle')}
-                        icon={<Ionicons name="analytics-outline" size={29} color="#007AFF" />}
-                        rightElement={<Switch value={expUsageReporting} onValueChange={setExpUsageReporting} />}
-                        showChevron={false}
-                    />
-                    <Item
-                        title={t('settingsFeatures.expScmOperations')}
-                        subtitle={t('settingsFeatures.expScmOperationsSubtitle')}
-                        icon={<Ionicons name="git-branch-outline" size={29} color="#FF9500" />}
-                        rightElement={<Switch value={expScmOperations} onValueChange={setExpScmOperations} />}
-                        showChevron={false}
-                    />
-                    <Item
-                        title={t('settingsFeatures.expShowThinkingMessages')}
-                        subtitle={t('settingsFeatures.expShowThinkingMessagesSubtitle')}
-                        icon={<Ionicons name="chatbubbles-outline" size={29} color="#34C759" />}
-                        rightElement={<Switch value={expShowThinkingMessages} onValueChange={setExpShowThinkingMessages} />}
-                        showChevron={false}
-                    />
-                    <Item
-                        title={t('settingsFeatures.expSessionType')}
-                        subtitle={t('settingsFeatures.expSessionTypeSubtitle')}
-                        icon={<Ionicons name="layers-outline" size={29} color="#AF52DE" />}
-                        rightElement={<Switch value={expSessionType} onValueChange={setExpSessionType} />}
-                        showChevron={false}
-                    />
-                    <Item
-                        title={t('settingsFeatures.expZen')}
-                        subtitle={t('settingsFeatures.expZenSubtitle')}
-                        icon={<Ionicons name="leaf-outline" size={29} color="#34C759" />}
-                        rightElement={<Switch value={expZen} onValueChange={setExpZen} />}
-                        showChevron={false}
-                    />
+                    {experimentalToggleDefinitions.map((d) => {
+                        const enabled = resolveUiFeatureToggleEnabled({ experiments, featureToggles }, d.featureId);
+
+                        return (
+                            <Item
+                                key={d.featureId}
+                                title={t(d.titleKey)}
+                                subtitle={t(d.subtitleKey)}
+                                icon={<Ionicons name={d.icon.ioniconName as keyof typeof Ionicons.glyphMap} size={29} color={d.icon.color} />}
+                                rightElement={
+                                    <Switch
+                                        value={enabled}
+                                        onValueChange={(next) => {
+                                            setFeatureToggles({
+                                                ...(featureToggles ?? {}),
+                                                [d.featureId]: next,
+                                            });
+                                        }}
+                                    />
+                                }
+                                showChevron={false}
+                            />
+                        );
+                    })}
                 </ItemGroup>
+            )}
+
+            {(__DEV__ || devModeEnabled) && (
+                <FeatureDiagnosticsPanel featureIds={FEATURE_IDS} />
             )}
         </ItemList>
     );

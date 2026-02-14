@@ -7,7 +7,7 @@ import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
 import { layout } from '@/components/ui/layout/layout';
 import { useInboxHasContent } from '@/hooks/inbox/useInboxHasContent';
-import { useInboxFriendsEnabled } from '@/hooks/server/useInboxFriendsEnabled';
+import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
 
 export type TabType = 'zen' | 'inbox' | 'sessions' | 'settings';
 
@@ -84,7 +84,7 @@ const styles = StyleSheet.create((theme) => ({
 export const TabBar = React.memo(({ activeTab, onTabPress, inboxBadgeCount = 0 }: TabBarProps) => {
     const { theme } = useUnistyles();
     const insets = useSafeAreaInsets();
-    const inboxFriendsEnabled = useInboxFriendsEnabled();
+    const inboxFriendsEnabled = useFriendsEnabled();
     const inboxHasContent = useInboxHasContent();
 
     const tabs: { key: TabType; icon: any; label: string }[] = React.useMemo(() => {

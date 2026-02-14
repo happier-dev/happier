@@ -22,7 +22,7 @@ import { t } from '@/text';
 import { isUsingCustomServer } from '@/sync/domains/server/serverConfig';
 import { trackFriendsSearch } from '@/track';
 import { ConnectionStatusControl } from '@/components/navigation/ConnectionStatusControl';
-import { useInboxFriendsEnabled } from '@/hooks/server/useInboxFriendsEnabled';
+import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
 
 interface MainViewProps {
@@ -188,7 +188,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     const router = useRouter();
     const friendRequests = useFriendRequests();
     const realtimeStatus = useRealtimeStatus();
-    const inboxFriendsEnabled = useInboxFriendsEnabled();
+    const inboxFriendsEnabled = useFriendsEnabled();
 
     // Tab state management
     // NOTE: Zen tab removed - the feature never got to a useful state

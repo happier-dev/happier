@@ -9,8 +9,8 @@ vi.mock('expo-router', () => ({
     useRouter: () => ({ push: () => {} }),
 }));
 
-vi.mock('@/hooks/inbox/useRequireInboxFriendsEnabled', () => ({
-    useRequireInboxFriendsEnabled: () => true,
+vi.mock('@/hooks/friends/useRequireFriendsEnabled', () => ({
+    useRequireFriendsEnabled: () => true,
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({

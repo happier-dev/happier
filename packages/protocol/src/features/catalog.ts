@@ -4,6 +4,7 @@ import type { FeatureCatalogEntry } from './catalogTypes.js';
 const descriptions: Record<(typeof FEATURE_IDS)[number], string> = {
   automations: 'Automations feature surfaces and scheduling runtime.',
   'automations.existingSessionTarget': 'Automation target support for existing session execution.',
+  'execution.runs': 'Execution runs / sub-agent orchestration surfaces and runtime.',
   voice: 'Happier voice assistant feature availability.',
   'social.friends': 'Friends and related social feature availability.',
   'auth.recovery.providerReset': 'Auth provider reset support during recovery flows.',
@@ -16,7 +17,6 @@ const descriptions: Record<(typeof FEATURE_IDS)[number], string> = {
   'files.syntaxHighlighting.advanced': 'Advanced syntax highlighting engine selection (web/desktop).',
   'session.typeSelector': 'Session type selector in session creation UX.',
   'zen.navigation': 'Zen navigation entry and related UX.',
-  'inbox.friends': 'Inbox friends navigation and related social entry UX.',
   'usage.reporting': 'Usage reporting surfaces and telemetry views.',
   'messages.thinkingVisibility': 'Thinking/status message visibility.',
   'codex.resume.mcp': 'Codex MCP resume capability feature gate.',

@@ -31,8 +31,8 @@ vi.mock('@/auth/context/AuthContext', () => ({
     }),
 }));
 
-vi.mock('@/hooks/server/useInboxFriendsEnabled', () => ({
-    useInboxFriendsEnabled: () => true,
+vi.mock('@/hooks/server/useFriendsEnabled', () => ({
+    useFriendsEnabled: () => true,
 }));
 
 vi.mock('@/hooks/server/useFriendsIdentityReadiness', () => ({

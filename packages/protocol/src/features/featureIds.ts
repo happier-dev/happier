@@ -1,6 +1,7 @@
 export const FEATURE_IDS = [
   'automations',
   'automations.existingSessionTarget',
+  'execution.runs',
   'voice',
   'social.friends',
   'auth.recovery.providerReset',
@@ -13,7 +14,6 @@ export const FEATURE_IDS = [
   'files.syntaxHighlighting.advanced',
   'session.typeSelector',
   'zen.navigation',
-  'inbox.friends',
   'usage.reporting',
   'messages.thinkingVisibility',
   'codex.resume.mcp',

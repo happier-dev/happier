@@ -8,7 +8,7 @@ import { useHeaderHeight, useIsTablet } from '@/utils/platform/responsive';
 import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { useRequireInboxFriendsEnabled } from '@/hooks/inbox/useRequireInboxFriendsEnabled';
+import { useRequireFriendsEnabled } from '@/hooks/friends/useRequireFriendsEnabled';
 
 const styles = StyleSheet.create((theme) => ({
     container: {
@@ -35,7 +35,7 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 export default function InboxPage() {
-    const enabled = useRequireInboxFriendsEnabled();
+    const enabled = useRequireFriendsEnabled();
     const router = useRouter();
     const { theme } = useUnistyles();
     const insets = useSafeAreaInsets();
