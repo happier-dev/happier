@@ -16,8 +16,8 @@ describe('searchFiles', () => {
         fileSearchCache.clearCache();
     });
 
-    it('falls back to directory listing when ripgrep response is malformed', async () => {
-        mockSessionRipgrep.mockResolvedValue(null);
+    it('falls back to directory listing when ripgrep fails', async () => {
+        mockSessionRipgrep.mockRejectedValue(new Error('ripgrep unavailable'));
         mockSessionListDirectory
             .mockResolvedValueOnce({
                 success: true,

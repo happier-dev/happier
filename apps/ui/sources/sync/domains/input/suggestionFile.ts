@@ -141,11 +141,16 @@ class FileSearchCache {
     }
 
     private async buildFileItemsFromRipgrep(sessionId: string): Promise<FileItem[] | null> {
-        const response = await sessionRipgrep(
-            sessionId,
-            ['--files', '--follow'],
-            undefined
-        ) as SessionRipgrepLikeResponse | null;
+        let response: SessionRipgrepLikeResponse | null = null;
+        try {
+            response = await sessionRipgrep(
+                sessionId,
+                ['--files', '--follow'],
+                undefined
+            ) as SessionRipgrepLikeResponse | null;
+        } catch {
+            return null;
+        }
 
         if (!response || response.success !== true || typeof response.stdout !== 'string') {
             return null;
@@ -166,11 +171,16 @@ class FileSearchCache {
         const needle = escapeRipgrepGlob(trimmed).replace(/\s+/g, '*');
         const pattern = `*${needle}*`;
 
-        const response = await sessionRipgrep(
-            sessionId,
-            ['--files', '--follow', '--hidden', '--iglob', pattern],
-            undefined
-        ) as SessionRipgrepLikeResponse | null;
+        let response: SessionRipgrepLikeResponse | null = null;
+        try {
+            response = await sessionRipgrep(
+                sessionId,
+                ['--files', '--follow', '--hidden', '--iglob', pattern],
+                undefined
+            ) as SessionRipgrepLikeResponse | null;
+        } catch {
+            return null;
+        }
 
         if (!response || response.success !== true || typeof response.stdout !== 'string') {
             return null;
