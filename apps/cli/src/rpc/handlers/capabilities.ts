@@ -4,6 +4,7 @@ import { checklists } from '@/capabilities/checklists';
 import { buildDetectContext } from '@/capabilities/context/buildDetectContext';
 import { buildCliCapabilityData } from '@/capabilities/probes/cliBase';
 import { tmuxCapability } from '@/capabilities/registry/toolTmux';
+import { executionRunsCapability } from '@/capabilities/registry/toolExecutionRuns';
 import { createCapabilitiesService } from '@/capabilities/service';
 import type { Capability } from '@/capabilities/service';
 import type {
@@ -102,6 +103,7 @@ export function registerCapabilitiesHandlers(rpcHandlerManager: RpcHandlerManage
                 ...cliCapabilities,
                 ...extraCapabilities,
                 tmuxCapability,
+                executionRunsCapability,
             ],
             checklists,
             buildContext: buildDetectContext,

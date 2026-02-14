@@ -52,10 +52,12 @@ const baseChecklists = {
     [CHECKLIST_IDS.NEW_SESSION]: [
         ...cliAgentRequests,
         { id: 'tool.tmux' },
+        { id: 'tool.executionRuns' },
     ],
     [CHECKLIST_IDS.MACHINE_DETAILS]: [
         ...cliAgentRequests,
         { id: 'tool.tmux' },
+        { id: 'tool.executionRuns' },
         { id: 'dep.codex-mcp-resume' },
         { id: 'dep.codex-acp' },
     ],
