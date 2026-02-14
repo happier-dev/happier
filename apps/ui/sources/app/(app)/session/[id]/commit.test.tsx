@@ -65,8 +65,8 @@ vi.mock('@/components/ui/text/StyledText', () => ({
     Text: 'Text',
 }));
 
-vi.mock('@/components/sessions/files/file/ScmDiffDisplay', () => ({
-    ScmDiffDisplay: ({ diffContent }: any) => React.createElement('ScmDiffDisplay', { diffContent }),
+vi.mock('@/components/ui/code/view/CodeLinesView', () => ({
+    CodeLinesView: (props: any) => React.createElement('CodeLinesView', props),
 }));
 
 vi.mock('@/sync/ops', () => ({

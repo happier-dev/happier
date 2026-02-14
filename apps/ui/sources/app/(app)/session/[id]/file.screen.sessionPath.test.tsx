@@ -56,6 +56,10 @@ vi.mock('@/components/sessions/files/file/FileScreenState', () => ({
     FileLoadingState: () => React.createElement('FileLoadingState'),
 }));
 
+vi.mock('@/components/sessions/files/file/editor/FileEditorPanel', () => ({
+    FileEditorPanel: () => React.createElement('FileEditorPanel'),
+}));
+
 vi.mock('@/hooks/session/files/useFileScmStageActions', () => ({
     useFileScmStageActions: () => ({
         isApplyingStage: false,
@@ -67,6 +71,7 @@ vi.mock('@/hooks/session/files/useFileScmStageActions', () => ({
 vi.mock('@/sync/ops', () => ({
     sessionScmDiffFile: sessionScmDiffFileMock,
     sessionReadFile: sessionReadFileMock,
+    sessionWriteFile: vi.fn(async () => ({ success: false, error: 'write unavailable' })),
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
@@ -98,6 +103,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
         hasConflicts: false,
     }),
     useSessionProjectScmCommitSelectionPaths: () => [],
+    useSessionReviewCommentsDrafts: () => [],
     useSetting: () => null,
 }));
 
