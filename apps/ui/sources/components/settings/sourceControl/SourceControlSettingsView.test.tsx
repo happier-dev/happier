@@ -9,6 +9,7 @@ const setScmGitRepoPreferredBackend = vi.fn();
 const setScmRemoteConfirmPolicy = vi.fn();
 const setScmPushRejectPolicy = vi.fn();
 const setScmDefaultDiffModeByBackend = vi.fn();
+const setFilesDiffSyntaxHighlightingMode = vi.fn();
 
 vi.mock('react-native-unistyles', () => ({
     useUnistyles: () => ({
@@ -31,6 +32,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (name === 'scmRemoteConfirmPolicy') return ['always', setScmRemoteConfirmPolicy];
         if (name === 'scmPushRejectPolicy') return ['prompt_fetch', setScmPushRejectPolicy];
         if (name === 'scmDefaultDiffModeByBackend') return [{}, setScmDefaultDiffModeByBackend];
+        if (name === 'filesDiffSyntaxHighlightingMode') return ['off', setFilesDiffSyntaxHighlightingMode];
         return [null, vi.fn()];
     },
 }));
@@ -84,5 +86,26 @@ describe('SourceControlSettingsView', () => {
         expect(titles).toContain('Sapling default diff: Pending');
         expect(titles).toContain('Sapling default diff: Combined');
         expect(titles).not.toContain('Sapling default diff: Included');
+    });
+
+    it('allows updating diff syntax highlighting mode', async () => {
+        setFilesDiffSyntaxHighlightingMode.mockClear();
+
+        const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(SourceControlSettingsView));
+        });
+
+        const items = tree!.root.findAllByType('Item' as any);
+        const simpleItem = items.find((item) => item.props.title === 'Syntax highlighting: Simple');
+        expect(simpleItem).toBeTruthy();
+
+        await act(async () => {
+            simpleItem!.props.onPress();
+        });
+
+        expect(setFilesDiffSyntaxHighlightingMode).toHaveBeenCalledWith('simple');
     });
 });

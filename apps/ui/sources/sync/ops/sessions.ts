@@ -8,6 +8,7 @@ import { isRpcMethodNotAvailableError } from '../runtime/rpcErrors';
 import { buildResumeHappySessionRpcParams, type ResumeHappySessionRpcParams } from '../domains/session/resume/resumeSessionPayload';
 import { storage } from '../domains/state/storage';
 import { nowServerMs } from '../runtime/time';
+import { encodeBase64 } from '@/encryption/base64';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type {
@@ -99,6 +100,7 @@ interface SessionWriteFileResponse {
     success: boolean;
     hash?: string;
     error?: string;
+    errorCode?: string;
 }
 
 // List directory operation types
@@ -386,7 +388,8 @@ export async function sessionReadFile(sessionId: string, path: string): Promise<
     } catch (error) {
         return {
             success: false,
-            error: error instanceof Error ? error.message : 'Unknown error'
+            error: error instanceof Error ? error.message : 'Unknown error',
+            errorCode: readRpcErrorCode(error)
         };
     }
 }
@@ -401,7 +404,8 @@ export async function sessionWriteFile(
     expectedHash?: string | null
 ): Promise<SessionWriteFileResponse> {
     try {
-        const request: SessionWriteFileRequest = { path, content, expectedHash };
+        const contentBase64 = encodeBase64(new TextEncoder().encode(content), 'base64');
+        const request: SessionWriteFileRequest = { path, content: contentBase64, expectedHash };
         const response = await apiSocket.sessionRPC<SessionWriteFileResponse, SessionWriteFileRequest>(
             sessionId,
             'writeFile',

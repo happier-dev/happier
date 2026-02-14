@@ -181,4 +181,51 @@ describe('FileActionToolbar', () => {
         expect(texts.some((node) => node.props.children === 'Select for commit')).toBe(true);
         expect(texts.some((node) => node.props.children === 'Remove from selection')).toBe(true);
     });
+
+    it('shows an Edit button in file mode when editor is enabled', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+        const onStartEditingFile = vi.fn();
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                React.createElement(FileActionToolbar as any, {
+                    theme,
+                    displayMode: 'file',
+                    onDisplayMode: () => {},
+                    diffMode: 'pending',
+                    onDiffMode: () => {},
+                    hasPendingDelta: false,
+                    hasIncludedDelta: false,
+                    scmWriteEnabled: false,
+                    includeExcludeEnabled: false,
+                    virtualSelectionEnabled: false,
+                    isSelectedForCommit: false,
+                    lineSelectionEnabled: false,
+                    selectedLineCount: 0,
+                    isApplyingStage: false,
+                    inFlightScmOperation: null,
+                    onStageFile: () => {},
+                    onUnstageFile: () => {},
+                    onApplySelectedLines: () => {},
+                    onClearSelection: () => {},
+                    fileEditorEnabled: true,
+                    isEditingFile: false,
+                    onStartEditingFile,
+                }),
+            );
+        });
+
+        const editButton = tree!.root
+            .findAllByType('Pressable' as any)
+            .find((pressable) =>
+                pressable.findAllByType('Text' as any).some((textNode) => textNode.props.children === 'Edit')
+            );
+        expect(editButton).toBeTruthy();
+
+        act(() => {
+            editButton!.props.onPress();
+        });
+        expect(onStartEditingFile).toHaveBeenCalledTimes(1);
+    });
 });

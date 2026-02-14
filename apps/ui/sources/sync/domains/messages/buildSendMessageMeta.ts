@@ -14,6 +14,7 @@ export function buildSendMessageMeta(args: {
     agentId: AgentId | null;
     settings: Record<string, unknown>;
     session: unknown;
+    metaOverrides?: Partial<MessageMeta>;
 }): MessageMeta {
     const base = buildOutgoingMessageMeta({
         sentFrom: args.sentFrom,
@@ -24,11 +25,16 @@ export function buildSendMessageMeta(args: {
         displayText: args.displayText,
     });
 
-    return addProviderMessageMetaExtras({
+    const withProviderExtras = addProviderMessageMetaExtras({
         meta: base,
         agentId: args.agentId,
         settings: args.settings,
         session: args.session,
     });
-}
 
+    if (!args.metaOverrides) return withProviderExtras;
+    return {
+        ...withProviderExtras,
+        ...args.metaOverrides,
+    };
+}

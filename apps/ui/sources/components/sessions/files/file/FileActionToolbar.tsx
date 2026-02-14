@@ -30,6 +30,13 @@ type FileActionToolbarProps = {
     onUnstageFile: () => void;
     onApplySelectedLines: () => void;
     onClearSelection: () => void;
+    fileEditorEnabled?: boolean;
+    isEditingFile?: boolean;
+    fileEditorDirty?: boolean;
+    fileEditorBusy?: boolean;
+    onStartEditingFile?: () => void;
+    onCancelEditingFile?: () => void;
+    onSaveEditingFile?: () => void;
 };
 
 export function FileActionToolbar(props: FileActionToolbarProps) {
@@ -54,12 +61,20 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
         onUnstageFile,
         onApplySelectedLines,
         onClearSelection,
+        fileEditorEnabled,
+        isEditingFile,
+        fileEditorDirty,
+        fileEditorBusy,
+        onStartEditingFile,
+        onCancelEditingFile,
+        onSaveEditingFile,
     } = props;
 
     const actionBusy = isApplyingStage || Boolean(inFlightScmOperation);
     const canIncludeFile = hasPendingDelta || isUntrackedFile === true;
     const canUseSelectionActions = includeExcludeEnabled || virtualSelectionEnabled;
     const canRemoveFromSelection = virtualSelectionEnabled ? isSelectedForCommit : hasIncludedDelta;
+    const showFileEditorActions = fileEditorEnabled === true && displayMode === 'file';
 
     const chipStyle = (active: boolean) => ({
         paddingVertical: 7,
@@ -114,6 +129,46 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                     {t('files.file')}
                 </Text>
             </Pressable>
+
+            {showFileEditorActions && !isEditingFile && onStartEditingFile ? (
+                <Pressable onPress={onStartEditingFile} style={chipStyle(false)}>
+                    <Text
+                        style={{
+                            fontSize: 13,
+                            fontWeight: '600',
+                            color: theme.colors.text,
+                            ...Typography.default(),
+                        }}
+                    >
+                        Edit
+                    </Text>
+                </Pressable>
+            ) : null}
+
+            {showFileEditorActions && isEditingFile ? (
+                <>
+                    <Pressable
+                        disabled={Boolean(fileEditorBusy) || !fileEditorDirty}
+                        onPress={onSaveEditingFile}
+                        style={{
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
+                            borderRadius: 10,
+                            backgroundColor: theme.colors.textLink,
+                            opacity: Boolean(fileEditorBusy) || !fileEditorDirty ? 0.6 : 1,
+                        }}
+                    >
+                        <Text style={{ color: 'white', fontSize: 13, ...Typography.default('semiBold') }}>
+                            Save
+                        </Text>
+                    </Pressable>
+                    <Pressable onPress={onCancelEditingFile} style={chipStyle(false)}>
+                        <Text style={{ color: theme.colors.text, fontSize: 13, ...Typography.default('semiBold') }}>
+                            Cancel
+                        </Text>
+                    </Pressable>
+                </>
+            ) : null}
 
             {hasPendingDelta && (
                 <Pressable

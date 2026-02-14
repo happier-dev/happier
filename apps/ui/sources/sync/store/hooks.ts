@@ -21,6 +21,7 @@ import type { Settings } from '../domains/settings/settings';
 import type { SessionListViewItem } from '../domains/session/listing/sessionListViewData';
 import { computeHasUnreadActivity } from '../domains/messages/unread';
 import { sync } from '../sync';
+import type { ReviewCommentDraft } from '../domains/input/reviewComments/reviewCommentTypes';
 
 import { getStorage } from '../domains/state/storageStore';
 import type { KnownEntitlements } from '../domains/state/storageStore';
@@ -34,6 +35,7 @@ export function useSession(id: string): Session | null {
 }
 
 const emptyArray: unknown[] = [];
+const emptyReviewCommentDrafts: ReviewCommentDraft[] = [];
 
 export function useSessionMessages(
   sessionId: string
@@ -75,6 +77,12 @@ export function useSessionPendingMessages(
         isLoaded: pending?.isLoaded ?? false,
       };
     })
+  );
+}
+
+export function useSessionReviewCommentsDrafts(sessionId: string): ReviewCommentDraft[] {
+  return getStorage()(
+    useShallow((state) => state.reviewCommentsDraftsBySessionId[sessionId] ?? emptyReviewCommentDrafts)
   );
 }
 

@@ -111,3 +111,23 @@ if (unpatchedPaths.length > 0) {
 }
 
 run('npx', ['setup-skia-web', 'public'], { cwd: expoAppDir });
+
+// Vendor Monaco static assets for web/desktop code editor. Metro can't bundle Monaco workers reliably, so we serve
+// the minified `vs/` directory as static files and load via AMD loader at runtime.
+try {
+    const monacoCandidateDirs = [
+        path.resolve(expoAppDir, 'node_modules', 'monaco-editor'),
+        path.resolve(repoRootDir, 'node_modules', 'monaco-editor'),
+    ];
+    const monacoDir = monacoCandidateDirs.find((p) => fs.existsSync(p));
+    if (monacoDir) {
+        const src = path.resolve(monacoDir, 'min', 'vs');
+        const dst = path.resolve(expoAppDir, 'public', 'monaco', 'vs');
+        if (fs.existsSync(src)) {
+            fs.mkdirSync(path.dirname(dst), { recursive: true });
+            fs.cpSync(src, dst, { recursive: true, force: true });
+        }
+    }
+} catch (e) {
+    // Best-effort: Monaco is an experimental feature and should not break installs.
+}

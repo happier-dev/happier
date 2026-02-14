@@ -5,6 +5,7 @@ import type { Automation, AutomationRun } from '../domains/automations/automatio
 import type { FeedItem } from '../domains/social/feedTypes';
 import type { RelationshipUpdatedEvent, UserProfile } from '../domains/social/friendTypes';
 import type { LocalSettings } from '../domains/settings/localSettings';
+import type { ReviewCommentDraft } from '../domains/input/reviewComments/reviewCommentTypes';
 import type { PendingMessage, Session, Machine, ScmStatus, ScmWorkingSnapshot, DiscardedPendingMessage } from '../domains/state/storageTypes';
 import type { ScmCommitSelectionPatch } from '../domains/state/storageTypes';
 import type { NormalizedMessage } from '../typesRaw';
@@ -50,6 +51,7 @@ export interface SessionsDomainSlice {
     sessionScmStatus: Record<string, ScmStatus | null>;
     sessionLastViewed: Record<string, number>;
     sessionRepositoryTreeExpandedPathsBySessionId: Record<string, string[]>;
+    reviewCommentsDraftsBySessionId: Record<string, ReviewCommentDraft[]>;
     applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: 'online' | number })[]) => void;
     applyScmStatus: (sessionId: string, status: ScmStatus | null) => void;
     getActiveSessions: () => Session[];
@@ -57,6 +59,9 @@ export interface SessionsDomainSlice {
     setSessionRepositoryTreeExpandedPaths: (sessionId: string, paths: string[]) => void;
     clearSessionRepositoryTreeExpandedPaths: (sessionId: string) => void;
     updateSessionDraft: (sessionId: string, draft: string | null) => void;
+    upsertSessionReviewCommentDraft: (sessionId: string, draft: ReviewCommentDraft) => void;
+    deleteSessionReviewCommentDraft: (sessionId: string, commentId: string) => void;
+    clearSessionReviewCommentDrafts: (sessionId: string) => void;
     markSessionOptimisticThinking: (sessionId: string) => void;
     clearSessionOptimisticThinking: (sessionId: string) => void;
     markSessionViewed: (sessionId: string) => void;

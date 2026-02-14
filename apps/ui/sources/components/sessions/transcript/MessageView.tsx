@@ -13,9 +13,11 @@ import { ToolView } from '@/components/tools/shell/views/ToolView';
 import { AgentEvent } from "@/sync/typesRaw";
 import { sync } from '@/sync/sync';
 import { Option } from '@/components/markdown/MarkdownView';
-import { useSetting } from "@/sync/domains/state/storage";
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { isCommittedMessageDiscarded } from "@/utils/sessions/discardedCommittedMessages";
 import { shouldShowMessageCopyButton } from '@/components/sessions/transcript/messageCopyVisibility';
+import { StructuredMessageBlock } from '@/components/sessions/transcript/structured/StructuredMessageBlock';
+import { useRouter } from 'expo-router';
 
 export const MessageView = (props: {
   message: Message;
@@ -92,6 +94,7 @@ function UserTextBlock(props: {
 }) {
   const [isHovered, setIsHovered] = React.useState(false);
   const isWeb = Platform.OS === 'web';
+  const router = useRouter();
   const isDiscarded = isCommittedMessageDiscarded(props.metadata, props.message.localId);
   const handleOptionPress = React.useCallback((option: Option) => {
     void (async () => {
@@ -117,6 +120,13 @@ function UserTextBlock(props: {
         onHoverOut={isWeb ? () => setIsHovered(false) : undefined}
       >
         <View style={[styles.userMessageBubble, isDiscarded && styles.userMessageBubbleDiscarded]}>
+          <StructuredMessageBlock
+            message={props.message as any}
+            sessionId={props.sessionId}
+            onJumpToAnchor={(target) => {
+              router.push(`/session/${props.sessionId}/file?path=${encodeURIComponent(target.filePath)}`);
+            }}
+          />
           <MarkdownView markdown={props.message.displayText || props.message.text} onOptionPress={handleOptionPress} />
           {isDiscarded && (
             <Text style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
@@ -148,9 +158,8 @@ function AgentTextBlock(props: {
 }) {
   const [isHovered, setIsHovered] = React.useState(false);
   const isWeb = Platform.OS === 'web';
-  const experiments = useSetting('experiments');
-  const expShowThinkingMessages = useSetting('expShowThinkingMessages');
-  const showThinkingMessages = experiments && expShowThinkingMessages;
+  const router = useRouter();
+  const showThinkingMessages = useFeatureEnabled('messages.thinkingVisibility');
   const handleOptionPress = React.useCallback((option: Option) => {
     void (async () => {
       try {
@@ -165,7 +174,7 @@ function AgentTextBlock(props: {
     })();
   }, [props.canSendMessages, props.sessionId]);
 
-  // Hide thinking messages unless experiments is enabled
+  // Hide thinking messages unless the feature flag is enabled.
   if (props.message.isThinking && !showThinkingMessages) {
     return null;
   }
@@ -178,6 +187,13 @@ function AgentTextBlock(props: {
       onHoverIn={isWeb ? () => setIsHovered(true) : undefined}
       onHoverOut={isWeb ? () => setIsHovered(false) : undefined}
     >
+      <StructuredMessageBlock
+        message={props.message as any}
+        sessionId={props.sessionId}
+        onJumpToAnchor={(target) => {
+          router.push(`/session/${props.sessionId}/file?path=${encodeURIComponent(target.filePath)}`);
+        }}
+      />
       <MarkdownView markdown={props.message.text} onOptionPress={handleOptionPress} />
       <View
         pointerEvents={showCopyButton ? 'auto' : 'none'}
@@ -308,11 +324,19 @@ function ToolCallBlock(props: {
     disableToolNavigation?: boolean;
   };
 }) {
+  const router = useRouter();
   if (!props.message.tool) {
     return null;
   }
   return (
     <View style={styles.toolContainer}>
+      <StructuredMessageBlock
+        message={props.message as any}
+        sessionId={props.sessionId}
+        onJumpToAnchor={(target) => {
+          router.push(`/session/${props.sessionId}/file?path=${encodeURIComponent(target.filePath)}`);
+        }}
+      />
       <ToolView
         tool={props.message.tool}
         metadata={props.metadata}

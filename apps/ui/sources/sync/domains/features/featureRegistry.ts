@@ -50,6 +50,26 @@ export const UI_FEATURE_REGISTRY: Readonly<Record<FeatureId, UiFeatureDefinition
         serverRequired: false,
         serverEnabled: ALWAYS_ENABLED,
     },
+    'files.reviewComments': {
+        id: 'files.reviewComments',
+        serverRequired: false,
+        serverEnabled: ALWAYS_ENABLED,
+    },
+    'files.diffSyntaxHighlighting': {
+        id: 'files.diffSyntaxHighlighting',
+        serverRequired: false,
+        serverEnabled: ALWAYS_ENABLED,
+    },
+    'files.editor': {
+        id: 'files.editor',
+        serverRequired: false,
+        serverEnabled: ALWAYS_ENABLED,
+    },
+    'files.syntaxHighlighting.advanced': {
+        id: 'files.syntaxHighlighting.advanced',
+        serverRequired: false,
+        serverEnabled: ALWAYS_ENABLED,
+    },
     'session.typeSelector': {
         id: 'session.typeSelector',
         serverRequired: false,

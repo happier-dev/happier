@@ -27,6 +27,7 @@ import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
+import { PrimaryCircleIconButton } from '@/components/ui/buttons/PrimaryCircleIconButton';
 import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 import { TextInputState, MultiTextInputHandle } from '@/components/ui/forms/MultiTextInput';
 import { applySuggestion } from '@/components/autocomplete/applySuggestion';
@@ -124,6 +125,7 @@ interface AgentInputProps {
     panelStyle?: ViewStyle;
     maxWidthCap?: number | null;
     extraActionChips?: ReadonlyArray<AgentInputExtraActionChip>;
+    hasSendableAttachments?: boolean;
 }
 
 function truncateWithEllipsis(value: string, maxChars: number) {
@@ -438,34 +440,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     actionButtonIcon: {
         color: theme.colors.button.secondary.tint,
     },
-    sendButton: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
-        justifyContent: 'center',
-        alignItems: 'center',
-        flexShrink: 0,
-        marginLeft: 8,
-        marginRight: 8,
-    },
-    sendButtonActive: {
-        backgroundColor: theme.colors.button.primary.background,
-    },
-    sendButtonInactive: {
-        backgroundColor: theme.colors.button.primary.disabled,
-    },
-    sendButtonInner: {
-        width: '100%',
-        height: '100%',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    sendButtonInnerPressed: {
-        opacity: 0.7,
-    },
-    sendButtonIcon: {
-        color: theme.colors.button.primary.tint,
-    },
 }));
 
 export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, AgentInputProps>((props, ref) => {
@@ -483,6 +457,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     }, [keyboardHeight, screenHeight]);
 
     const hasText = props.value.trim().length > 0;
+    const hasSendableContent = hasText || props.hasSendableAttachments === true;
 
     const agentId: AgentId = resolveAgentIdFromFlavor(props.metadata?.flavor) ?? props.agentType ?? DEFAULT_AGENT_ID;
     const modelOptions = React.useMemo(() => getModelOptionsForSession(agentId, props.metadata ?? null), [agentId, props.metadata]);
@@ -1609,77 +1584,61 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                 })()}
 
                                 {/* Send/Voice button - aligned with first row */}
-                                <View
-                                    style={[
-                                        styles.sendButton,
-                                        (hasText || props.isSending || (props.onMicPress && !props.isMicActive))
-                                            ? styles.sendButtonActive
-                                            : styles.sendButtonInactive
-                                    ]}
-	                                >
-	                                    <Pressable
-	                                        style={(p) => [
-	                                            styles.sendButtonInner,
-	                                            p.pressed ? styles.sendButtonInnerPressed : null,
-	                                        ]}
-	                                        accessibilityRole="button"
-	                                        accessibilityLabel={hasText
-	                                            ? (props.sessionId ? t('voiceMediator.commitSend') : t('newSession.title'))
-	                                            : (props.onMicPress ? t('voiceAssistant.label') : (props.sessionId ? t('voiceMediator.commitSend') : t('newSession.title')))}
-	                                        accessibilityHint={
-                                                (!hasText && !props.onMicPress)
-                                                    ? t('session.inputPlaceholder')
-                                                    : undefined
-                                            }
-	                                        accessibilityState={{
-	                                            disabled: Boolean(props.disabled || props.isSendDisabled || props.isSending || (!hasText && !props.onMicPress)),
-	                                        }}
-	                                        hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-	                                        onPress={() => {
-	                                            hapticsLight();
-	                                            if (hasText) {
-	                                                props.onSend();
-                                            } else {
-                                                props.onMicPress?.();
-                                            }
-                                        }}
-                                        disabled={props.disabled || props.isSendDisabled || props.isSending || (!hasText && !props.onMicPress)}
-                                    >
-                                        {props.isSending ? (
-                                            <ActivityIndicator
-                                                size="small"
-                                                color={theme.colors.button.primary.tint}
-                                            />
-                                        ) : hasText ? (
-                                            <Octicons
-                                                name="arrow-up"
-                                                size={16}
-                                                color={theme.colors.button.primary.tint}
-                                                style={[
-                                                    styles.sendButtonIcon,
-                                                    { marginTop: Platform.OS === 'web' ? 2 : 0 }
-                                                ]}
-                                            />
-                                        ) : props.onMicPress && !props.isMicActive ? (
+                                <PrimaryCircleIconButton
+                                    active={hasSendableContent || props.isSending || Boolean(props.onMicPress)}
+                                    loading={props.isSending}
+                                    disabled={props.disabled || props.isSendDisabled || props.isSending || (!hasSendableContent && !props.onMicPress)}
+                                    accessibilityLabel={
+                                        hasSendableContent
+                                            ? (props.sessionId ? t('common.send') : t('newSession.title'))
+                                            : (props.onMicPress ? t('voiceAssistant.label') : (props.sessionId ? t('common.send') : t('newSession.title')))
+                                    }
+                                    accessibilityHint={
+                                        (!hasSendableContent && !props.onMicPress)
+                                            ? t('session.inputPlaceholder')
+                                            : undefined
+                                    }
+                                    accessibilityState={{
+                                        disabled: Boolean(props.disabled || props.isSendDisabled || props.isSending || (!hasSendableContent && !props.onMicPress)),
+                                    }}
+                                    hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
+                                    onPress={() => {
+                                        hapticsLight();
+                                        if (hasSendableContent) {
+                                            props.onSend();
+                                        } else {
+                                            props.onMicPress?.();
+                                        }
+                                    }}
+                                    style={{ marginLeft: 8, marginRight: 8 }}
+                                >
+                                    {hasSendableContent ? (
+                                        <Octicons
+                                            name="arrow-up"
+                                            size={16}
+                                            color={theme.colors.button.primary.tint}
+                                            style={{ marginTop: Platform.OS === 'web' ? 2 : 0 }}
+                                        />
+                                    ) : props.onMicPress ? (
+                                        props.isMicActive ? (
+                                            <Ionicons name="stop-circle" size={22} color={theme.colors.button.primary.tint} />
+                                        ) : (
                                             <Image
                                                 source={require('@/assets/images/icon-voice-white.png')}
                                                 style={{ width: 24, height: 24 }}
                                                 tintColor={theme.colors.button.primary.tint}
                                             />
-                                        ) : (
-                                            <Octicons
-                                                name="arrow-up"
-                                                size={16}
-                                                color={theme.colors.button.primary.tint}
-                                                style={[
-                                                    styles.sendButtonIcon,
-                                                    { marginTop: Platform.OS === 'web' ? 2 : 0 }
-                                                ]}
-                                            />
-                                        )}
-                                    </Pressable>
-	                                </View>
-	                            </View>,
+                                        )
+                                    ) : (
+                                        <Octicons
+                                            name="arrow-up"
+                                            size={16}
+                                            color={theme.colors.button.primary.tint}
+                                            style={{ marginTop: Platform.OS === 'web' ? 2 : 0 }}
+                                        />
+                                    )}
+                                </PrimaryCircleIconButton>
+		                            </View>,
 	
 		                            // Row 2: Path + Resume selectors (separate line to match pre-PR272 layout)
 		                            // - wrap: shown below

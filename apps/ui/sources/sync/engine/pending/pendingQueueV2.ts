@@ -162,9 +162,10 @@ export async function enqueuePendingMessageV2(params: {
     text: string;
     displayText?: string;
     encryption: Encryption;
+    metaOverrides?: Record<string, unknown>;
     request: (path: string, init?: RequestInit) => Promise<Response>;
 }): Promise<void> {
-    const { sessionId, text, displayText, encryption, request } = params;
+    const { sessionId, text, displayText, encryption, request, metaOverrides } = params;
 
     storage.getState().markSessionOptimisticThinking(sessionId);
 
@@ -199,6 +200,7 @@ export async function enqueuePendingMessageV2(params: {
             agentId,
             settings: storage.getState().settings,
             session,
+            metaOverrides: metaOverrides as any,
         }),
     };
 

@@ -120,6 +120,32 @@ const DIFF_MODE_OPTIONS: ReadonlyArray<{
     { id: 'included', title: 'Included', iconName: 'checkmark-circle-outline' },
 ];
 
+const FILES_SYNTAX_HIGHLIGHTING_OPTIONS: ReadonlyArray<{
+    id: 'off' | 'simple' | 'advanced';
+    title: string;
+    subtitle: string;
+    iconName: IoniconName;
+}> = [
+    {
+        id: 'off',
+        title: 'Syntax highlighting: Off',
+        subtitle: 'Render diffs and files as plain monospace text.',
+        iconName: 'text-outline',
+    },
+    {
+        id: 'simple',
+        title: 'Syntax highlighting: Simple',
+        subtitle: 'Fast token-based highlighting for common languages.',
+        iconName: 'color-palette-outline',
+    },
+    {
+        id: 'advanced',
+        title: 'Syntax highlighting: Advanced',
+        subtitle: 'Higher fidelity highlighting on web/desktop; falls back to simple on native.',
+        iconName: 'sparkles-outline',
+    },
+];
+
 export const SourceControlSettingsView = React.memo(function SourceControlSettingsView() {
     const { theme } = useUnistyles();
     const [scmCommitStrategy, setScmCommitStrategy] = useSettingMutable('scmCommitStrategy');
@@ -127,8 +153,10 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
     const [scmRemoteConfirmPolicy, setScmRemoteConfirmPolicy] = useSettingMutable('scmRemoteConfirmPolicy');
     const [scmPushRejectPolicy, setScmPushRejectPolicy] = useSettingMutable('scmPushRejectPolicy');
     const [scmDefaultDiffModeByBackend, setScmDefaultDiffModeByBackend] = useSettingMutable('scmDefaultDiffModeByBackend');
+    const [filesDiffSyntaxHighlightingMode, setFilesDiffSyntaxHighlightingMode] = useSettingMutable('filesDiffSyntaxHighlightingMode');
     const backendPlugins = scmBackendSettingsRegistry.listPlugins();
     const currentDiffModeByBackend = scmDefaultDiffModeByBackend ?? {};
+    const effectiveFilesDiffSyntaxHighlightingMode = (filesDiffSyntaxHighlightingMode ?? 'off') as 'off' | 'simple' | 'advanced';
 
     const renderIcon = React.useCallback((iconName: IoniconName) => (
         <Ionicons name={iconName} size={29} color={theme.colors.textSecondary} />
@@ -199,6 +227,23 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                         icon={renderIcon(option.iconName)}
                         rightElement={scmPushRejectPolicy === option.id ? <Ionicons name="checkmark" size={20} color="#007AFF" /> : null}
                         onPress={() => setScmPushRejectPolicy(option.id)}
+                        showChevron={false}
+                    />
+                ))}
+            </ItemGroup>
+
+            <ItemGroup
+                title="Files display"
+                footer="Syntax highlighting is experimental and may be disabled for very large diffs."
+            >
+                {FILES_SYNTAX_HIGHLIGHTING_OPTIONS.map((option) => (
+                    <Item
+                        key={option.id}
+                        title={option.title}
+                        subtitle={option.subtitle}
+                        icon={renderIcon(option.iconName)}
+                        rightElement={effectiveFilesDiffSyntaxHighlightingMode === option.id ? <Ionicons name="checkmark" size={20} color="#007AFF" /> : null}
+                        onPress={() => setFilesDiffSyntaxHighlightingMode(option.id)}
                         showChevron={false}
                     />
                 ))}

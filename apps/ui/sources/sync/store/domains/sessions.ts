@@ -8,7 +8,22 @@ import type {
 import type { NormalizedMessage } from '../../typesRaw';
 import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
 import { nowServerMs } from '../../runtime/time';
-import { loadSessionDrafts, loadSessionLastViewed, loadSessionModelModeUpdatedAts, loadSessionModelModes, loadSessionPermissionModeUpdatedAts, loadSessionPermissionModes, saveSessionDrafts, saveSessionLastViewed, saveSessionModelModeUpdatedAts, saveSessionModelModes, saveSessionPermissionModeUpdatedAts, saveSessionPermissionModes } from '../../domains/state/persistence';
+import {
+    loadSessionDrafts,
+    loadSessionLastViewed,
+    loadSessionModelModeUpdatedAts,
+    loadSessionModelModes,
+    loadSessionPermissionModeUpdatedAts,
+    loadSessionPermissionModes,
+    loadSessionReviewCommentsDrafts,
+    saveSessionDrafts,
+    saveSessionLastViewed,
+    saveSessionModelModeUpdatedAts,
+    saveSessionModelModes,
+    saveSessionPermissionModeUpdatedAts,
+    saveSessionPermissionModes,
+    saveSessionReviewCommentsDrafts,
+} from '../../domains/state/persistence';
 import { projectManager } from '../../runtime/orchestration/projectManager';
 import { isModelMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { isModelSelectableForSession } from '@/sync/domains/models/modelOptions';
@@ -16,6 +31,7 @@ import { resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { parsePermissionIntentAlias, resolveMetadataStringOverrideV1, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
 import { buildSessionListViewDataWithServerScope } from '../buildSessionListViewDataWithServerScope';
 import { setActiveServerSessionListCache } from '../sessionListCache';
+import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 
 import type { StoreGet, StoreSet } from './_shared';
 import { applyAgentStateUpdateToSessionMessages } from './messages';
@@ -36,6 +52,7 @@ export type SessionsDomain = {
     sessionScmStatus: Record<string, ScmStatus | null>;
     sessionLastViewed: Record<string, number>;
     sessionRepositoryTreeExpandedPathsBySessionId: Record<string, string[]>;
+    reviewCommentsDraftsBySessionId: Record<string, ReviewCommentDraft[]>;
     isDataReady: boolean;
 
     getActiveSessions: () => Session[];
@@ -53,6 +70,9 @@ export type SessionsDomain = {
     markSessionViewed: (sessionId: string) => void;
     updateSessionPermissionMode: (sessionId: string, mode: PermissionMode) => void;
     updateSessionModelMode: (sessionId: string, mode: SessionModelMode) => void;
+    upsertSessionReviewCommentDraft: (sessionId: string, draft: ReviewCommentDraft) => void;
+    deleteSessionReviewCommentDraft: (sessionId: string, commentId: string) => void;
+    clearSessionReviewCommentDrafts: (sessionId: string) => void;
 
     getProjects: () => import('../../runtime/orchestration/projectManager').Project[];
     getProject: (projectId: string) => import('../../runtime/orchestration/projectManager').Project | null;
@@ -138,6 +158,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
     let sessionPermissionModeUpdatedAts = loadSessionPermissionModeUpdatedAts();
     let sessionModelModeUpdatedAts = loadSessionModelModeUpdatedAts();
     let sessionLastViewed = loadSessionLastViewed();
+    let reviewCommentsDraftsBySessionId = loadSessionReviewCommentsDrafts();
     let sessionRepositoryTreeExpandedPathsBySessionId: Record<string, string[]> = {};
 
     return {
@@ -148,6 +169,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
         sessionScmStatus: {},
         sessionLastViewed,
         sessionRepositoryTreeExpandedPathsBySessionId,
+        reviewCommentsDraftsBySessionId,
         isDataReady: false,
         getActiveSessions: () => {
             const state = get();
@@ -450,6 +472,35 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 ),
             };
         }),
+        upsertSessionReviewCommentDraft: (sessionId: string, draft: ReviewCommentDraft) => set((state) => {
+            const existing = state.reviewCommentsDraftsBySessionId[sessionId] ?? [];
+            const next = existing.some((d) => d.id === draft.id)
+                ? existing.map((d) => (d.id === draft.id ? draft : d))
+                : [...existing, draft];
+
+            const merged = { ...state.reviewCommentsDraftsBySessionId, [sessionId]: next };
+            reviewCommentsDraftsBySessionId = merged;
+            saveSessionReviewCommentsDrafts(merged);
+            return { ...state, reviewCommentsDraftsBySessionId: merged };
+        }),
+        deleteSessionReviewCommentDraft: (sessionId: string, commentId: string) => set((state) => {
+            const existing = state.reviewCommentsDraftsBySessionId[sessionId] ?? [];
+            const next = existing.filter((d) => d.id !== commentId);
+            const merged = { ...state.reviewCommentsDraftsBySessionId };
+            if (next.length > 0) merged[sessionId] = next;
+            else delete merged[sessionId];
+            reviewCommentsDraftsBySessionId = merged;
+            saveSessionReviewCommentsDrafts(merged);
+            return { ...state, reviewCommentsDraftsBySessionId: merged };
+        }),
+        clearSessionReviewCommentDrafts: (sessionId: string) => set((state) => {
+            if (!(sessionId in state.reviewCommentsDraftsBySessionId)) return state;
+            const merged = { ...state.reviewCommentsDraftsBySessionId };
+            delete merged[sessionId];
+            reviewCommentsDraftsBySessionId = merged;
+            saveSessionReviewCommentsDrafts(merged);
+            return { ...state, reviewCommentsDraftsBySessionId: merged };
+        }),
         markSessionOptimisticThinking: (sessionId: string) => set((state) => {
             const session = state.sessions[sessionId];
             if (!session) return state;
@@ -751,11 +802,17 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             const { [sessionId]: _deletedScmStatus, ...remainingScmStatus } = state.sessionScmStatus;
             const { [sessionId]: _deletedTreeState, ...remainingTreeState } = state.sessionRepositoryTreeExpandedPathsBySessionId;
             sessionRepositoryTreeExpandedPathsBySessionId = remainingTreeState;
+            const { [sessionId]: _deletedReviewDrafts, ...remainingReviewDrafts } = state.reviewCommentsDraftsBySessionId;
+            reviewCommentsDraftsBySessionId = remainingReviewDrafts;
             
             // Clear drafts and permission modes from persistent storage
             const drafts = loadSessionDrafts();
             delete drafts[sessionId];
             saveSessionDrafts(drafts);
+
+            const reviewDrafts = loadSessionReviewCommentsDrafts();
+            delete reviewDrafts[sessionId];
+            saveSessionReviewCommentsDrafts(reviewDrafts);
             
             const modes = loadSessionPermissionModes();
             delete modes[sessionId];
@@ -793,6 +850,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 sessionMessages: remainingSessionMessages,
                 sessionScmStatus: remainingScmStatus,
                 sessionRepositoryTreeExpandedPathsBySessionId: remainingTreeState,
+                reviewCommentsDraftsBySessionId: remainingReviewDrafts,
                 sessionLastViewed: { ...sessionLastViewed },
                 sessionListViewData,
                 sessionListViewDataByServerId: setActiveServerSessionListCache(

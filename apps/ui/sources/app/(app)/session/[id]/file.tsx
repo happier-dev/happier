@@ -1,18 +1,21 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { FileActionToolbar, type FileDiffMode } from '@/components/sessions/files/file/FileActionToolbar';
 import { FileContentPanel } from '@/components/sessions/files/file/FileContentPanel';
 import { FileHeader } from '@/components/sessions/files/file/FileHeader';
 import { FileBinaryState, FileErrorState, FileLoadingState } from '@/components/sessions/files/file/FileScreenState';
+import { FileEditorPanel } from '@/components/sessions/files/file/editor/FileEditorPanel';
 import {
     sessionScmDiffFile,
     sessionReadFile,
+    sessionWriteFile,
 } from '@/sync/ops';
 import {
     storage,
     useSession,
     useSessions,
+    useSessionReviewCommentsDrafts,
     useSessionProjectScmCommitSelectionPaths,
     useSessionProjectScmInFlightOperation,
     useSessionProjectScmSnapshot,
@@ -32,6 +35,8 @@ import { useFileScmStageActions } from '@/hooks/session/files/useFileScmStageAct
 import { resolveSessionPathState } from '@/hooks/session/files/sessionPathState';
 import type { ScmDiffArea } from '@happier-dev/protocol';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useCodeLinesSyntaxHighlighting } from '@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
 interface FileContent {
     content: string;
@@ -58,6 +63,16 @@ export default function FileScreen() {
     const scmCommitStrategy = useSetting('scmCommitStrategy');
     const scmDefaultDiffModeByBackend = useSetting('scmDefaultDiffModeByBackend');
     const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
+    const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments');
+    const fileEditorFeatureEnabled = useFeatureEnabled('files.editor');
+    const showLineNumbers = useSetting('showLineNumbers');
+    const wrapLinesInDiffs = useSetting('wrapLinesInDiffs');
+    const filesEditorAutoSave = useSetting('filesEditorAutoSave');
+    const filesEditorChangeDebounceMs = useSetting('filesEditorChangeDebounceMs');
+    const filesEditorMaxFileBytes = useSetting('filesEditorMaxFileBytes');
+    const filesEditorBridgeMaxChunkBytes = useSetting('filesEditorBridgeMaxChunkBytes');
+    const filesEditorWebMonacoEnabled = useSetting('filesEditorWebMonacoEnabled');
+    const filesEditorNativeCodeMirrorEnabled = useSetting('filesEditorNativeCodeMirrorEnabled');
     const session = useSession(sessionId);
     const sessionsReady = useSessions() !== null;
     const sessionPath = session?.metadata?.path ?? null;
@@ -81,6 +96,12 @@ export default function FileScreen() {
     const [isLoading, setIsLoading] = React.useState(true);
     const [selectedLineIndexes, setSelectedLineIndexes] = React.useState<Set<number>>(new Set());
     const [error, setError] = React.useState<string | null>(null);
+    const [isEditingFile, setIsEditingFile] = React.useState(false);
+    const [editorResetKey, setEditorResetKey] = React.useState(0);
+    const [editorOriginalText, setEditorOriginalText] = React.useState('');
+    const [editorText, setEditorText] = React.useState('');
+    const [isSavingEdits, setIsSavingEdits] = React.useState(false);
+    const [fileWriteSupported, setFileWriteSupported] = React.useState(true);
 
     const hasIncludedDelta = fileEntry?.hasIncludedDelta === true;
     const hasPendingDelta = fileEntry?.hasPendingDelta === true;
@@ -209,6 +230,12 @@ export default function FileScreen() {
         }
     }, [diffContent, fileContent]);
 
+    React.useEffect(() => {
+        if (displayMode !== 'file') {
+            setIsEditingFile(false);
+        }
+    }, [displayMode]);
+
     const {
         isApplyingStage,
         handleStage,
@@ -245,6 +272,105 @@ export default function FileScreen() {
     const fileName = filePath.split('/').pop() || filePath;
     const filePathDir = filePath.split('/').slice(0, -1).join('/');
     const language = getFileLanguageFromPath(filePath);
+    const syntaxHighlighting = useCodeLinesSyntaxHighlighting(filePath);
+    const reviewCommentDrafts = useSessionReviewCommentsDrafts(sessionId);
+
+    const editorSurfaceEnabled = fileWriteSupported
+        && fileEditorFeatureEnabled === true
+        && (Platform.OS === 'web' ? filesEditorWebMonacoEnabled === true : filesEditorNativeCodeMirrorEnabled === true);
+
+    const editorDirty = isEditingFile && editorText !== editorOriginalText;
+
+    const startEditingFile = React.useCallback(() => {
+        if (!editorSurfaceEnabled) return;
+        if (!fileContent || fileContent.isBinary) return;
+        const content = fileContent.content ?? '';
+        if (content.length > filesEditorMaxFileBytes) {
+            Modal.alert(t('common.error'), `File is too large to edit in-app (${content.length} bytes).`);
+            return;
+        }
+        setEditorOriginalText(content);
+        setEditorText(content);
+        setEditorResetKey((k) => k + 1);
+        setIsEditingFile(true);
+    }, [editorSurfaceEnabled, fileContent, filesEditorMaxFileBytes]);
+
+    const cancelEditingFile = React.useCallback(() => {
+        setIsEditingFile(false);
+        setEditorText('');
+        setEditorOriginalText('');
+        setEditorResetKey((k) => k + 1);
+    }, []);
+
+    const saveEditingFile = React.useCallback(async () => {
+        if (!isEditingFile) return;
+        if (!editorDirty) return;
+        if (isSavingEdits) return;
+
+        if (editorText.length > filesEditorMaxFileBytes) {
+            Modal.alert(t('common.error'), `File is too large to edit in-app (${editorText.length} bytes).`);
+            return;
+        }
+
+        try {
+            setIsSavingEdits(true);
+            // Best-effort conflict check: ensure the file didn't change since editing began.
+            try {
+                const latest = await sessionReadFile(sessionId, filePath);
+                if (latest.success && latest.content) {
+                    const latestDecoded = decodeUtf8Base64(latest.content);
+                    if (latestDecoded !== editorOriginalText) {
+                        const shouldOverwrite = await Modal.confirm(
+                            t('common.unsavedChangesWarning'),
+                            'This file changed since you started editing. Overwrite the latest version?',
+                            { confirmText: t('common.continue'), cancelText: t('common.cancel'), destructive: true },
+                        );
+                        if (!shouldOverwrite) {
+                            return;
+                        }
+                    }
+                }
+            } catch {
+                // Ignore conflict check failures and proceed with a best-effort write.
+            }
+
+            const response = await sessionWriteFile(sessionId, filePath, editorText);
+            if (!response.success) {
+                if (response.errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE || response.errorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND) {
+                    setFileWriteSupported(false);
+                    setIsEditingFile(false);
+                    Modal.alert(t('common.error'), 'File editing is not supported by this CLI/daemon. Update to a newer version to enable write operations.');
+                    return;
+                }
+                Modal.alert(t('common.error'), response.error || 'Failed to write file');
+                return;
+            }
+            setIsEditingFile(false);
+            setEditorOriginalText(editorText);
+            await refreshAll();
+        } catch (err) {
+            Modal.alert(t('common.error'), err instanceof Error ? err.message : 'Failed to write file');
+        } finally {
+            setIsSavingEdits(false);
+        }
+    }, [editorDirty, editorOriginalText, editorText, filePath, filesEditorMaxFileBytes, isEditingFile, isSavingEdits, refreshAll, sessionId]);
+
+    React.useEffect(() => {
+        if (!isEditingFile) return;
+        if (!filesEditorAutoSave) return;
+        if (!editorDirty) return;
+        const handle = setTimeout(() => {
+            void saveEditingFile();
+        }, filesEditorChangeDebounceMs);
+        return () => clearTimeout(handle);
+    }, [editorDirty, filesEditorAutoSave, filesEditorChangeDebounceMs, isEditingFile, saveEditingFile]);
+
+    const handleDisplayMode = React.useCallback((mode: 'file' | 'diff') => {
+        setDisplayMode(mode);
+        if (mode !== 'file') {
+            setIsEditingFile(false);
+        }
+    }, []);
 
     if (isLoading) {
         return <FileLoadingState theme={theme} fileName={fileName} />;
@@ -266,7 +392,7 @@ export default function FileScreen() {
                 <FileActionToolbar
                     theme={theme}
                     displayMode={displayMode}
-                    onDisplayMode={setDisplayMode}
+                    onDisplayMode={handleDisplayMode}
                     diffMode={diffMode}
                     onDiffMode={setDiffMode}
                     hasPendingDelta={hasPendingDelta}
@@ -290,19 +416,56 @@ export default function FileScreen() {
                         void applySelectedLines();
                     }}
                     onClearSelection={() => setSelectedLineIndexes(new Set())}
+                    fileEditorEnabled={editorSurfaceEnabled}
+                    isEditingFile={isEditingFile}
+                    fileEditorDirty={editorDirty}
+                    fileEditorBusy={isSavingEdits}
+                    onStartEditingFile={startEditingFile}
+                    onCancelEditingFile={cancelEditingFile}
+                    onSaveEditingFile={() => {
+                        void saveEditingFile();
+                    }}
                 />
             )}
 
-            <FileContentPanel
-                theme={theme}
-                displayMode={displayMode}
-                diffContent={diffContent}
-                fileContent={fileContent?.content ?? ''}
-                language={language}
-                selectedLineIndexes={selectedLineIndexes}
-                lineSelectionEnabled={lineSelectionEnabled}
-                onToggleLine={toggleSelectedLine}
-            />
+            {displayMode === 'file' && isEditingFile && fileContent ? (
+                <FileEditorPanel
+                    theme={theme}
+                    resetKey={`${editorResetKey}`}
+                    value={editorText}
+                    language={language}
+                    onChange={setEditorText}
+                    wrapLines={wrapLinesInDiffs}
+                    showLineNumbers={showLineNumbers}
+                    changeDebounceMs={filesEditorChangeDebounceMs}
+                    bridgeMaxChunkBytes={filesEditorBridgeMaxChunkBytes}
+                />
+            ) : (
+                <FileContentPanel
+                    theme={theme}
+                    displayMode={displayMode}
+                    sessionId={sessionId}
+                    filePath={filePath}
+                    diffContent={diffContent}
+                    fileContent={fileContent ? fileContent.content : null}
+                    language={language}
+                    syntaxHighlighting={syntaxHighlighting}
+                    selectedLineIndexes={selectedLineIndexes}
+                    lineSelectionEnabled={lineSelectionEnabled}
+                    onToggleLine={toggleSelectedLine}
+                    reviewCommentsEnabled={reviewCommentsEnabled}
+                    reviewCommentDrafts={reviewCommentDrafts}
+                    onUpsertReviewCommentDraft={(draft) => {
+                        storage.getState().upsertSessionReviewCommentDraft(sessionId, draft);
+                    }}
+                    onDeleteReviewCommentDraft={(commentId) => {
+                        storage.getState().deleteSessionReviewCommentDraft(sessionId, commentId);
+                    }}
+                    onReviewCommentError={(message) => {
+                        Modal.alert(t('common.error'), message);
+                    }}
+                />
+            )}
         </View>
     );
 }

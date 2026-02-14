@@ -1,5 +1,6 @@
 import { AgentContentView } from '@/components/sessions/transcript/AgentContentView';
 import { AgentInput } from '@/components/sessions/agentInput';
+import type { AgentInputExtraActionChip, AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/AgentInput';
 import { getSuggestions } from '@/components/autocomplete/suggestions';
 import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView';
 import { ChatList } from '@/components/sessions/transcript/ChatList';
@@ -7,6 +8,7 @@ import { Deferred } from '@/components/ui/forms/Deferred';
 import { EmptyMessages } from '@/components/ui/empty/EmptyMessages';
 import { VoiceAssistantStatusBar } from '@/components/voice/shell/VoiceAssistantStatusBar';
 import { useDraft } from '@/hooks/session/useDraft';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { Modal } from '@/modal';
 import { voiceHooks } from '@/realtime/hooks/voiceHooks';
 import { startRealtimeSession, stopRealtimeSession } from '@/realtime/RealtimeSession';
@@ -22,13 +24,15 @@ import { runVoiceMediatorCommitFlow } from '@/voice/mediator/commitFlow';
 import { getVoiceMediatorExtraActionChips } from '@/voice/mediator/extraActionChips';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { sessionAbort, resumeSession } from '@/sync/ops';
-import { storage, useIsDataReady, useLocalSetting, useMachine, useRealtimeStatus, useSessionMessages, useSessionPendingMessages, useSessionUsage, useSetting, useSettings } from '@/sync/domains/state/storage';
+import { storage, useIsDataReady, useLocalSetting, useMachine, useRealtimeStatus, useSessionMessages, useSessionPendingMessages, useSessionReviewCommentsDrafts, useSessionUsage, useSetting, useSettings } from '@/sync/domains/state/storage';
 import { canResumeSessionWithOptions, getAgentVendorResumeId } from '@/agents/runtime/resumeCapabilities';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, buildResumeSessionExtrasFromUiState, getAgentResumeExperimentsFromSettings, getResumePreflightIssues, getResumePreflightPrefetchPlan } from '@/agents/catalog/catalog';
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
 import { useSession } from '@/sync/domains/state/storage';
 import { Session } from '@/sync/domains/state/storageTypes';
 import { sync } from '@/sync/sync';
+import { buildReviewCommentsDisplayText, buildReviewCommentsPromptText } from '@/sync/domains/input/reviewComments/reviewCommentPrompt';
+import { buildReviewCommentsV1MetaPayload } from '@/sync/domains/input/reviewComments/reviewCommentMeta';
 import { applyPermissionModeSelection } from '@/sync/domains/permissions/permissionModeApply';
 import { supportsAcpAgentModeOverrides } from '@/sync/acp/sessionModeControl';
 import { t } from '@/text';
@@ -235,7 +239,7 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                 ),
             applyToComposer: (text) => setMessage(text),
             sendToSession: async (text) => {
-                await sync.submitMessage(sessionId, text);
+                await sync.submitMessage(sessionId, text, displayText, metaOverrides);
             },
             alert: async (_title, message) => Modal.alert(t('common.error'), message),
             notActiveTitle: t('common.error'),
@@ -690,6 +694,49 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
 
     const shouldShowInput = inactiveUi.shouldShowInput;
 
+    const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments');
+    const reviewCommentDrafts = useSessionReviewCommentsDrafts(sessionId);
+    const hasReviewCommentDrafts = reviewCommentsEnabled && reviewCommentDrafts.length > 0;
+
+    const extraActionChips: ReadonlyArray<AgentInputExtraActionChip> | undefined = React.useMemo(() => {
+        const base = voiceExtraActionChips ?? [];
+        if (!hasReviewCommentDrafts) return base.length > 0 ? base : undefined;
+        const chip: AgentInputExtraActionChip = {
+            key: 'review-comments',
+            render: (ctx: AgentInputExtraActionChipRenderContext) => (
+                <Pressable
+                    onPress={() => {
+                        const preview = reviewCommentDrafts
+                            .slice(0, 12)
+                            .map((d, idx) => `${idx + 1}) ${d.filePath}: ${d.body}`)
+                            .join('\n');
+                        Modal.alert(
+                            buildReviewCommentsDisplayText({ drafts: reviewCommentDrafts }),
+                            preview.length > 0 ? preview : undefined,
+                            [
+                                { text: t('common.cancel'), style: 'cancel' },
+                                {
+                                    text: t('common.discard'),
+                                    style: 'destructive',
+                                    onPress: () => storage.getState().clearSessionReviewCommentDrafts(sessionId),
+                                },
+                            ],
+                        );
+                    }}
+                    style={({ pressed }) => ctx.chipStyle(Boolean(pressed))}
+                >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Ionicons name="chatbox-ellipses-outline" size={14} color={ctx.iconColor} />
+                        {ctx.showLabel ? (
+                            <Text style={ctx.textStyle}>{`Review (${reviewCommentDrafts.length})`}</Text>
+                        ) : null}
+                    </View>
+                </Pressable>
+            ),
+        };
+        return [...base, chip];
+    }, [hasReviewCommentDrafts, reviewCommentDrafts, sessionId, voiceExtraActionChips]);
+
     const input = shouldShowInput ? (
         <View>
             <AgentInput
@@ -697,6 +744,7 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                 value={message}
                 onChangeText={setMessage}
                 sessionId={sessionId}
+                hasSendableAttachments={hasReviewCommentDrafts}
                 permissionMode={permissionMode}
                 onPermissionModeChange={updatePermissionMode}
                 onAcpSessionModeChange={supportsAcpAgentModeOverrides(agentId) ? updateAcpSessionModeOverride : undefined}
@@ -726,11 +774,35 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                         Modal.alert(t('common.error'), t('session.sharing.noEditPermission'));
                         return;
                     }
-                    const text = message.trim();
-                    if (!text) return;
+                    const additionalMessage = message;
+                    const trimmedText = message.trim();
+                    const shouldSendReviewComments = hasReviewCommentDrafts;
+
+                    const outbound = shouldSendReviewComments
+                        ? {
+                            text: buildReviewCommentsPromptText({ sessionId, drafts: reviewCommentDrafts, additionalMessage }),
+                            displayText: buildReviewCommentsDisplayText({ drafts: reviewCommentDrafts }),
+                            metaOverrides: {
+                                happier: {
+                                    kind: 'review_comments.v1',
+                                    payload: buildReviewCommentsV1MetaPayload({ sessionId, drafts: reviewCommentDrafts }),
+                                },
+                            } as Record<string, unknown>,
+                        }
+                        : (trimmedText.length > 0
+                            ? { text: trimmedText, displayText: undefined, metaOverrides: undefined }
+                            : null);
+
+                    if (!outbound) return;
+
+                    const previousMessage = message;
                     setMessage('');
                     clearDraft();
                     trackMessageSent();
+
+                    const text = outbound.text;
+                    const displayText = outbound.displayText;
+                    const metaOverrides = outbound.metaOverrides;
 
                     const configuredMode = storage.getState().settings.sessionMessageSendMode;
                     const busySteerSendPolicy = storage.getState().settings.sessionBusySteerSendPolicy;
@@ -739,9 +811,12 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                     if (submitMode === 'server_pending') {
                         void (async () => {
                             try {
-                                await sync.enqueuePendingMessage(sessionId, text);
+                                await sync.enqueuePendingMessage(sessionId, text, displayText, metaOverrides);
+                                if (shouldSendReviewComments) {
+                                    storage.getState().clearSessionReviewCommentDrafts(sessionId);
+                                }
                             } catch (e) {
-                                setMessage(text);
+                                setMessage(previousMessage);
                                 Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToSendMessage'));
                                 return;
                             }
@@ -795,7 +870,7 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                                 // even if spawning/resume fails.
                                 const supportsPendingQueueV2 = typeof session.pendingVersion === 'number';
                                 if (supportsPendingQueueV2) {
-                                    await sync.enqueuePendingMessage(sessionId, text);
+                                    await sync.enqueuePendingMessage(sessionId, text, displayText, metaOverrides);
                                     await handleResumeSession();
                                     return;
                                 }
@@ -803,12 +878,15 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                                 // Fallback for older servers: resume first, then submit directly.
                                 const resumed = await handleResumeSession();
                                 if (!resumed) {
-                                    setMessage(text);
+                                    setMessage(previousMessage);
                                     return;
                                 }
-                                await sync.submitMessage(sessionId, text);
+                                await sync.submitMessage(sessionId, text, displayText, metaOverrides);
+                            if (shouldSendReviewComments) {
+                                storage.getState().clearSessionReviewCommentDrafts(sessionId);
+                            }
                             } catch (e) {
-                                setMessage(text);
+                                setMessage(previousMessage);
                                 Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToResumeSession'));
                             }
                         })();
@@ -817,9 +895,9 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
 
                     void (async () => {
                         try {
-                            await sync.submitMessage(sessionId, text);
+                            await sync.submitMessage(sessionId, text, displayText, metaOverrides);
                         } catch (e) {
-                            setMessage(text);
+                            setMessage(previousMessage);
                             Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToSendMessage'));
                         }
                     })();
@@ -827,7 +905,7 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                 isSendDisabled={!shouldShowInput || isResuming || isReadOnly}
                 onMicPress={micButtonState.onMicPress}
                 isMicActive={micButtonState.isMicActive}
-                extraActionChips={voiceExtraActionChips}
+                extraActionChips={extraActionChips}
                 onAbort={() => sessionAbort(sessionId)}
                 showAbortButton={shouldShowAbortButtonForSessionState(sessionStatus.state)}
                 onFileViewerPress={() => router.push(`/session/${sessionId}/files`)}

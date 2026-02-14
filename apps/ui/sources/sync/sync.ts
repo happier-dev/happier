@@ -524,7 +524,7 @@ class Sync {
     }
 
 
-    async sendMessage(sessionId: string, text: string, displayText?: string) {
+    async sendMessage(sessionId: string, text: string, displayText?: string, metaOverrides?: Record<string, unknown>) {
         storage.getState().markSessionOptimisticThinking(sessionId);
 
         // Get encryption
@@ -823,7 +823,7 @@ class Sync {
         });
     }
 
-    async submitMessage(sessionId: string, text: string, displayText?: string): Promise<void> {
+    async submitMessage(sessionId: string, text: string, displayText?: string, metaOverrides?: Record<string, unknown>): Promise<void> {
         const configuredMode = storage.getState().settings.sessionMessageSendMode;
         const busySteerSendPolicy = storage.getState().settings.sessionBusySteerSendPolicy;
         const session = storage.getState().sessions[sessionId] ?? null;
@@ -831,14 +831,14 @@ class Sync {
 
         if (mode === 'interrupt') {
             try { await this.abortSession(sessionId); } catch { }
-            await this.sendMessage(sessionId, text, displayText);
+            await this.sendMessage(sessionId, text, displayText, metaOverrides);
             return;
         }
         if (mode === 'server_pending') {
-            await this.enqueuePendingMessage(sessionId, text, displayText);
+            await this.enqueuePendingMessage(sessionId, text, displayText, metaOverrides);
             return;
         }
-        await this.sendMessage(sessionId, text, displayText);
+        await this.sendMessage(sessionId, text, displayText, metaOverrides);
     }
 
     private async updateSessionMetadataWithRetry(sessionId: string, updater: (metadata: Metadata) => Metadata): Promise<void> {
@@ -979,11 +979,12 @@ class Sync {
         });
     }
 
-    async enqueuePendingMessage(sessionId: string, text: string, displayText?: string): Promise<void> {
+    async enqueuePendingMessage(sessionId: string, text: string, displayText?: string, metaOverrides?: Record<string, unknown>): Promise<void> {
         await enqueuePendingMessageV2({
             sessionId,
             text,
             displayText,
+            metaOverrides,
             encryption: this.encryption,
             request: (path, init) => apiSocket.request(path, init),
         });

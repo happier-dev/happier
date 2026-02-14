@@ -12,13 +12,17 @@ import { t } from '@/text';
 import { formatFileSubtitle } from '@/components/sessions/files/filesUtils';
 import { scmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';
 import type { ScmDiffArea } from '@happier-dev/protocol';
-import { ScmDiffDisplay } from '@/components/sessions/files/file/ScmDiffDisplay';
+import { CodeLinesView } from '@/components/ui/code/view/CodeLinesView';
+import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
 import { ChangedFilesReviewOutline } from '@/components/sessions/files/content/review/ChangedFilesReviewOutline';
 import { changedFilesReviewAnchorId } from '@/components/sessions/files/content/review/changedFilesReviewAnchorId';
 import { useChangedFilesReviewCollapsedPaths } from '@/components/sessions/files/content/review/useChangedFilesReviewCollapsedPaths';
 import { useChangedFilesReviewDiffLoading } from '@/components/sessions/files/content/review/useChangedFilesReviewDiffLoading';
 import { ChangedFileIcon, ChangedFileStatusIcon } from '@/components/sessions/files/changedFiles/ChangedFileRowIcons';
 import { ChangedFilesSectionHeader } from '@/components/sessions/files/changedFiles/ChangedFilesSectionHeader';
+import { useCodeLinesReviewComments } from '@/components/sessions/reviews/comments/useCodeLinesReviewComments';
+import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
+import { useCodeLinesSyntaxHighlighting } from '@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting';
 
 type ChangedFilesReviewProps = {
     theme: any;
@@ -33,6 +37,11 @@ type ChangedFilesReviewProps = {
     maxFiles: number;
     maxChangedLines: number;
     onFilePress: (file: ScmFileStatus) => void;
+    reviewCommentsEnabled?: boolean;
+    reviewCommentDrafts?: readonly ReviewCommentDraft[];
+    onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
+    onDeleteReviewCommentDraft?: (commentId: string) => void;
+    onReviewCommentError?: (message: string) => void;
 };
 
 function renderFileSubtitle(file: ScmFileStatus) {
@@ -53,6 +62,77 @@ type DiffState = {
     error: string | null;
 };
 
+function ChangedFilesReviewDiffBlock(props: {
+    theme: any;
+    sessionId: string;
+    filePath: string;
+    state: DiffState;
+    reviewCommentsEnabled: boolean;
+    reviewCommentDrafts: readonly ReviewCommentDraft[];
+    onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
+    onDeleteReviewCommentDraft?: (commentId: string) => void;
+    onReviewCommentError?: (message: string) => void;
+}) {
+    const { theme, sessionId, filePath, state } = props;
+    const syntaxHighlighting = useCodeLinesSyntaxHighlighting(filePath);
+
+    if (state.status === 'loading' || state.status === 'idle') {
+        return (
+            <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+            </View>
+        );
+    }
+    if (state.status === 'error') {
+        return (
+            <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+                <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                    {state.error ?? t('files.reviewUnableToLoadDiff')}
+                </Text>
+            </View>
+        );
+    }
+    if (!state.diff) {
+        return (
+            <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+                <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                    {t('files.noChanges')}
+                </Text>
+            </View>
+        );
+    }
+
+    const lines = React.useMemo(() => buildCodeLinesFromUnifiedDiff({ unifiedDiff: state.diff }), [state.diff]);
+    const draftsForFile = React.useMemo(() => {
+        if (!props.reviewCommentsEnabled) return [];
+        return props.reviewCommentDrafts.filter((d) => d.filePath === filePath && d.source === 'diff');
+    }, [filePath, props.reviewCommentDrafts, props.reviewCommentsEnabled]);
+
+    const controls = useCodeLinesReviewComments({
+        enabled: props.reviewCommentsEnabled,
+        filePath,
+        source: 'diff',
+        lines,
+        drafts: draftsForFile,
+        onUpsertDraft: props.onUpsertReviewCommentDraft,
+        onDeleteDraft: props.onDeleteReviewCommentDraft,
+        onError: props.onReviewCommentError,
+    });
+
+    return (
+        <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+            <CodeLinesView
+                lines={lines}
+                onPressAddComment={controls?.onPressAddComment}
+                isCommentActive={controls?.isCommentActive}
+                renderAfterLine={controls?.renderAfterLine}
+                virtualized={!props.reviewCommentsEnabled}
+                syntaxHighlighting={syntaxHighlighting}
+            />
+        </View>
+    );
+}
+
 export function ChangedFilesReview(props: ChangedFilesReviewProps) {
     const {
         theme,
@@ -72,6 +152,8 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
     const isDarkTheme = theme.dark === true;
     const plugin = scmUiBackendRegistry.getPluginForSnapshot(snapshot);
     const diffConfig = plugin.diffModeConfig(snapshot);
+    const reviewCommentsEnabled = props.reviewCommentsEnabled === true;
+    const reviewCommentDrafts = props.reviewCommentDrafts ?? [];
 
     const [diffArea, setDiffArea] = React.useState<ScmDiffArea>(diffConfig.defaultMode);
     React.useEffect(() => {
@@ -172,35 +254,18 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
 
     const renderDiffBlock = (path: string) => {
         const state: DiffState = getDiffState(path);
-        if (state.status === 'loading' || state.status === 'idle') {
-            return (
-                <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-                    <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-                </View>
-            );
-        }
-        if (state.status === 'error') {
-            return (
-                <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-                    <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
-                        {state.error ?? t('files.reviewUnableToLoadDiff')}
-                    </Text>
-                </View>
-            );
-        }
-        if (!state.diff) {
-            return (
-                <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-                    <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
-                        {t('files.noChanges')}
-                    </Text>
-                </View>
-            );
-        }
         return (
-            <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
-                <ScmDiffDisplay diffContent={state.diff} />
-            </View>
+            <ChangedFilesReviewDiffBlock
+                theme={theme}
+                sessionId={sessionId}
+                filePath={path}
+                state={state}
+                reviewCommentsEnabled={reviewCommentsEnabled}
+                reviewCommentDrafts={reviewCommentDrafts}
+                onUpsertReviewCommentDraft={props.onUpsertReviewCommentDraft}
+                onDeleteReviewCommentDraft={props.onDeleteReviewCommentDraft}
+                onReviewCommentError={props.onReviewCommentError}
+            />
         );
     };
 

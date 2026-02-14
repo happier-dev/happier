@@ -295,6 +295,21 @@ const SettingsSchemaBase = z.object({
     scmDefaultDiffModeByBackend: z.record(z.string(), z.enum(SCM_DIFF_MODE_OPTIONS)).default({}).describe('Preferred default diff mode by backend id'),
     scmReviewMaxFiles: z.number().describe('Maximum file count for unified SCM diff review mode before falling back to single-file review'),
     scmReviewMaxChangedLines: z.number().describe('Maximum total changed lines for unified SCM diff review mode before falling back to single-file review'),
+
+    // Files/diff rendering options (flat; used by CodeLines surfaces).
+    filesDiffSyntaxHighlightingMode: z.enum(['off', 'simple', 'advanced']).describe('Diff/file syntax highlighting mode'),
+    filesDiffTokenizationMaxBytes: z.number().describe('Maximum bytes to tokenize before falling back to plain text'),
+    filesDiffTokenizationMaxLines: z.number().describe('Maximum line count to tokenize before falling back to plain text'),
+    filesDiffTokenizationMaxLineLength: z.number().describe('Maximum per-line length to tokenize before falling back to plain text for that line'),
+    filesDiffTokenizationMaxTimeMs: z.number().describe('Maximum tokenization time budget per render cycle (best-effort)'),
+
+    // Embedded editor options (flat; experimental).
+    filesEditorAutoSave: z.boolean().describe('Whether to auto-save in the embedded editor'),
+    filesEditorChangeDebounceMs: z.number().describe('Debounce milliseconds for editor change propagation'),
+    filesEditorMaxFileBytes: z.number().describe('Maximum file size supported for editing in UI'),
+    filesEditorBridgeMaxChunkBytes: z.number().describe('Maximum chunk size for editor WebView bridge payloads'),
+    filesEditorWebMonacoEnabled: z.boolean().describe('Kill switch: enable Monaco editor surface on web/desktop'),
+    filesEditorNativeCodeMirrorEnabled: z.boolean().describe('Kill switch: enable CodeMirror WebView surface on native'),
     expShowThinkingMessages: z.boolean().describe('Experimental: show assistant thinking messages'),
     expSessionType: z.boolean().describe('Experimental: show session type selector (simple vs worktree)'),
     expZen: z.boolean().describe('Experimental: enable Zen navigation/experience'),
@@ -454,6 +469,19 @@ export const settingsDefaults: Settings = {
     scmDefaultDiffModeByBackend: {},
     scmReviewMaxFiles: 25,
     scmReviewMaxChangedLines: 2000,
+
+    filesDiffSyntaxHighlightingMode: 'simple',
+    filesDiffTokenizationMaxBytes: 250_000,
+    filesDiffTokenizationMaxLines: 5_000,
+    filesDiffTokenizationMaxLineLength: 2_000,
+    filesDiffTokenizationMaxTimeMs: 40,
+
+    filesEditorAutoSave: false,
+    filesEditorChangeDebounceMs: 250,
+    filesEditorMaxFileBytes: 2_500_000,
+    filesEditorBridgeMaxChunkBytes: 64_000,
+    filesEditorWebMonacoEnabled: true,
+    filesEditorNativeCodeMirrorEnabled: true,
     expShowThinkingMessages: false,
     expSessionType: false,
     expZen: false,

@@ -256,6 +256,37 @@ describe('AgentInput (send button accessibility)', () => {
         act(() => tree!.unmount());
     });
 
+    it('does not set the empty-input accessibility hint when there is sendable auxiliary content', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const onSend = vi.fn();
+
+        let tree: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    sessionId="session-1"
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={onSend}
+                    hasSendableAttachments={true}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                />
+            );
+        });
+
+        const send = findSendPressable(tree!);
+        expect(send.props.accessibilityHint).toBeUndefined();
+
+        act(() => {
+            send.props.onPress();
+        });
+        expect(onSend).toHaveBeenCalledTimes(1);
+
+        act(() => tree!.unmount());
+    });
+
     it('uses the session creation label when value is empty (no sessionId, no mic)', async () => {
         const { AgentInput } = await import('./AgentInput');
 
@@ -299,7 +330,70 @@ describe('AgentInput (send button accessibility)', () => {
 
         const send = findSendPressable(tree!);
         expect(send.props.accessibilityRole).toBe('button');
-        expect(send.props.accessibilityLabel).toBe('voiceMediator.commitSend');
+        expect(send.props.accessibilityLabel).toBe('common.send');
+        act(() => tree!.unmount());
+    });
+
+    it('keeps the voice icon visible while mic is enabled and inactive (no text)', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    sessionId="session-1"
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onMicPress={() => {}}
+                    isMicActive={false}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                />
+            );
+        });
+
+        const send = findSendPressable(tree!);
+        const images = send.findAllByType('Image' as any);
+        expect(images.length).toBe(1);
+
+        const octicons = send.findAllByType('Octicons' as any);
+        expect(octicons.some((n) => n.props?.name === 'arrow-up')).toBe(false);
+
+        act(() => tree!.unmount());
+    });
+
+    it('shows a stop control while mic is enabled and active (no text)', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    sessionId="session-1"
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onMicPress={() => {}}
+                    isMicActive={true}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                />
+            );
+        });
+
+        const send = findSendPressable(tree!);
+        const images = send.findAllByType('Image' as any);
+        expect(images.length).toBe(0);
+
+        const ionicons = send.findAllByType('Ionicons' as any);
+        expect(ionicons.some((n) => n.props?.name === 'stop-circle')).toBe(true);
+
+        const octicons = send.findAllByType('Octicons' as any);
+        expect(octicons.some((n) => n.props?.name === 'arrow-up')).toBe(false);
+
         act(() => tree!.unmount());
     });
 });

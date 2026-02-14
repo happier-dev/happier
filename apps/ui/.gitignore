@@ -13,3 +13,6 @@ node_modules/
 .expo/
 dist/
 web-build/
+
+# Vendored by postinstall for Monaco web editor surface (do not commit).
+public/monaco/
