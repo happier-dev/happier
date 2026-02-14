@@ -103,7 +103,7 @@ test('compiled happier and server binaries execute from isolated cwd', async (t)
   t.after(() => {
     spawnSync('bash', ['-lc', `rm -rf "${cliExtract.extractDir.replaceAll('"', '\\"')}"`], { stdio: 'ignore' });
   });
-  const cliVersion = spawnSync(cliExtract.binaryPath, ['--version'], {
+  const cliVersion = runWithHardTimeout(cliExtract.binaryPath, ['--version'], {
     cwd: '/tmp',
     encoding: 'utf-8',
     env: { ...process.env, HAPPIER_NONINTERACTIVE: '1' },
@@ -147,7 +147,7 @@ test('compiled happier and server binaries execute from isolated cwd', async (t)
     t.after(() => {
       spawnSync('bash', ['-lc', `rm -rf "${serverDataDir.replaceAll('"', '\\"')}"`], { stdio: 'ignore' });
     });
-    const serverBoot = spawnSync(serverExtract.binaryPath, [], {
+    const serverBoot = runWithHardTimeout(serverExtract.binaryPath, [], {
       cwd: '/tmp',
       encoding: 'utf-8',
       env: {

@@ -41,4 +41,14 @@ test('release binary smoke harness hard-kills nested build commands on timeout',
     /runWithHardTimeout\(\s*process\.execPath,\s*\[\s*'scripts\/release\/build-server-binaries\.mjs'/,
     'server binary build path should use hard-timeout wrapper',
   );
+  assert.match(
+    raw,
+    /runWithHardTimeout\(\s*cliExtract\.binaryPath,\s*\[\s*'--version'\s*\]/,
+    'CLI binary invocation should use hard-timeout wrapper',
+  );
+  assert.match(
+    raw,
+    /runWithHardTimeout\(\s*serverExtract\.binaryPath,\s*\[\s*\]/,
+    'server binary invocation should use hard-timeout wrapper',
+  );
 });
