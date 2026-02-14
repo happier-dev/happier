@@ -27,8 +27,8 @@ describe("featuresRoutes", () => {
     });
 
     describe("friends", () => {
-        it("returns friends=false when FRIENDS_ENABLED is off", async () => {
-            process.env.FRIENDS_ENABLED = "0";
+        it("returns friends=false when HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED is off", async () => {
+            process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "0";
             process.env.GITHUB_CLIENT_ID = "id";
             process.env.GITHUB_CLIENT_SECRET = "secret";
             process.env.GITHUB_REDIRECT_URL = "https://example.com/v1/oauth/github/callback";
@@ -37,9 +37,9 @@ describe("featuresRoutes", () => {
             expect(payload.features.social.friends.enabled).toBe(false);
         });
 
-        it("returns friends=true and allowUsername=true when FRIENDS_ALLOW_USERNAME is on", async () => {
-            process.env.FRIENDS_ENABLED = "1";
-            process.env.FRIENDS_ALLOW_USERNAME = "1";
+        it("returns friends=true and allowUsername=true when HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME is on", async () => {
+            process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
+            process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "1";
             delete process.env.GITHUB_CLIENT_ID;
             delete process.env.GITHUB_CLIENT_SECRET;
             delete process.env.GITHUB_REDIRECT_URL;
@@ -52,8 +52,8 @@ describe("featuresRoutes", () => {
         });
 
         it("returns friends=false when identity provider is required but OAuth provider is not configured", async () => {
-            process.env.FRIENDS_ENABLED = "1";
-            process.env.FRIENDS_ALLOW_USERNAME = "0";
+            process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
+            process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "0";
             delete process.env.GITHUB_CLIENT_ID;
             delete process.env.GITHUB_CLIENT_SECRET;
             delete process.env.GITHUB_REDIRECT_URL;
@@ -69,7 +69,7 @@ describe("featuresRoutes", () => {
     describe("voice", () => {
         it("returns voice=false when ElevenLabs is not configured", async () => {
             process.env.NODE_ENV = "production";
-            process.env.VOICE_ENABLED = "1";
+            process.env.HAPPIER_FEATURE_VOICE__ENABLED = "1";
             delete process.env.ELEVENLABS_API_KEY;
             delete process.env.ELEVENLABS_AGENT_ID_PROD;
 
@@ -81,7 +81,7 @@ describe("featuresRoutes", () => {
 
         it("returns voice=true when voice is enabled and ElevenLabs is configured", async () => {
             process.env.NODE_ENV = "production";
-            process.env.VOICE_ENABLED = "1";
+            process.env.HAPPIER_FEATURE_VOICE__ENABLED = "1";
             process.env.ELEVENLABS_API_KEY = "el_key";
             process.env.ELEVENLABS_AGENT_ID_PROD = "agent_1";
             process.env.REVENUECAT_SECRET_KEY = "rc_secret";
@@ -94,10 +94,10 @@ describe("featuresRoutes", () => {
 
         it("returns voice=false when subscription is required and RevenueCat is not configured", async () => {
             process.env.NODE_ENV = "production";
-            process.env.VOICE_ENABLED = "1";
+            process.env.HAPPIER_FEATURE_VOICE__ENABLED = "1";
             process.env.ELEVENLABS_API_KEY = "el_key";
             process.env.ELEVENLABS_AGENT_ID_PROD = "agent_1";
-            delete process.env.VOICE_REQUIRE_SUBSCRIPTION;
+            delete process.env.HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION;
             delete process.env.REVENUECAT_SECRET_KEY;
 
             const payload = await getFeaturesPayload();
@@ -108,10 +108,10 @@ describe("featuresRoutes", () => {
 
         it("returns voice=true when subscription is not required even without RevenueCat", async () => {
             process.env.NODE_ENV = "production";
-            process.env.VOICE_ENABLED = "1";
+            process.env.HAPPIER_FEATURE_VOICE__ENABLED = "1";
             process.env.ELEVENLABS_API_KEY = "el_key";
             process.env.ELEVENLABS_AGENT_ID_PROD = "agent_1";
-            process.env.VOICE_REQUIRE_SUBSCRIPTION = "0";
+            process.env.HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION = "0";
             delete process.env.REVENUECAT_SECRET_KEY;
 
             const payload = await getFeaturesPayload();
@@ -170,7 +170,7 @@ describe("featuresRoutes", () => {
         it("exposes provider reset as enabled when configured", async () => {
             process.env.AUTH_ANONYMOUS_SIGNUP_ENABLED = "0";
             process.env.AUTH_SIGNUP_PROVIDERS = "github";
-            process.env.AUTH_RECOVERY_PROVIDER_RESET_ENABLED = "1";
+            process.env.HAPPIER_FEATURE_AUTH_RECOVERY__PROVIDER_RESET_ENABLED = "1";
             process.env.GITHUB_CLIENT_ID = "id";
             process.env.GITHUB_CLIENT_SECRET = "secret";
             process.env.GITHUB_REDIRECT_URL = "https://example.com/oauth/github/callback";
@@ -180,10 +180,10 @@ describe("featuresRoutes", () => {
             expect(payload.features.auth.recovery.providerReset.providers).toContain("github");
         });
 
-        it("exposes provider reset as disabled when AUTH_RECOVERY_PROVIDER_RESET_ENABLED=0", async () => {
+        it("exposes provider reset as disabled when HAPPIER_FEATURE_AUTH_RECOVERY__PROVIDER_RESET_ENABLED=0", async () => {
             process.env.AUTH_ANONYMOUS_SIGNUP_ENABLED = "0";
             process.env.AUTH_SIGNUP_PROVIDERS = "github";
-            process.env.AUTH_RECOVERY_PROVIDER_RESET_ENABLED = "0";
+            process.env.HAPPIER_FEATURE_AUTH_RECOVERY__PROVIDER_RESET_ENABLED = "0";
             process.env.GITHUB_CLIENT_ID = "id";
             process.env.GITHUB_CLIENT_SECRET = "secret";
             process.env.GITHUB_REDIRECT_URL = "https://example.com/oauth/github/callback";
@@ -198,8 +198,8 @@ describe("featuresRoutes", () => {
             expect(payload.features.auth.ui.recoveryKeyReminder.enabled).toBe(true);
         });
 
-        it("allows disabling recovery key reminder UI via AUTH_UI_RECOVERY_KEY_REMINDER_ENABLED=0", async () => {
-            process.env.AUTH_UI_RECOVERY_KEY_REMINDER_ENABLED = "0";
+        it("allows disabling recovery key reminder UI via HAPPIER_FEATURE_AUTH_UI__RECOVERY_KEY_REMINDER_ENABLED=0", async () => {
+            process.env.HAPPIER_FEATURE_AUTH_UI__RECOVERY_KEY_REMINDER_ENABLED = "0";
 
             const payload = await getFeaturesPayload();
             expect(payload.features.auth.ui.recoveryKeyReminder.enabled).toBe(false);
@@ -237,6 +237,61 @@ describe("featuresRoutes", () => {
                     }),
                 ]),
             );
+        });
+    });
+
+    describe("bug reports", () => {
+        it("returns bug report capability enabled by default", async () => {
+            delete process.env.HAPPIER_FEATURE_BUG_REPORTS__ENABLED;
+            delete process.env.HAPPIER_FEATURE_BUG_REPORTS__PROVIDER_URL;
+            delete process.env.HAPPIER_FEATURE_BUG_REPORTS__DEFAULT_INCLUDE_DIAGNOSTICS;
+
+            const payload = await getFeaturesPayload();
+            expect(payload.features.bugReports.enabled).toBe(true);
+            expect(payload.features.bugReports.providerUrl).toBe("https://reports.happier.dev");
+            expect(payload.features.bugReports.defaultIncludeDiagnostics).toBe(true);
+            expect(payload.features.bugReports.contextWindowMs).toBe(30 * 60 * 1000);
+        });
+
+        it("allows disabling bug report capability via env", async () => {
+            process.env.HAPPIER_FEATURE_BUG_REPORTS__ENABLED = "0";
+            process.env.HAPPIER_FEATURE_BUG_REPORTS__PROVIDER_URL = "https://reports.enterprise.local";
+            process.env.HAPPIER_FEATURE_BUG_REPORTS__DEFAULT_INCLUDE_DIAGNOSTICS = "0";
+            process.env.HAPPIER_FEATURE_BUG_REPORTS__CONTEXT_WINDOW_MS = "60000";
+
+            const payload = await getFeaturesPayload();
+            expect(payload.features.bugReports.enabled).toBe(false);
+            expect(payload.features.bugReports.providerUrl).toBe("https://reports.enterprise.local");
+            expect(payload.features.bugReports.defaultIncludeDiagnostics).toBe(false);
+            expect(payload.features.bugReports.contextWindowMs).toBe(60000);
+        });
+
+        it("does not fail open when provider url env is invalid", async () => {
+            process.env.HAPPIER_FEATURE_BUG_REPORTS__PROVIDER_URL = "invalid-provider-url";
+
+            const payload = await getFeaturesPayload();
+            expect(payload.features.bugReports.enabled).toBe(true);
+            expect(payload.features.bugReports.providerUrl).toBeNull();
+        });
+    });
+
+    describe("automations", () => {
+        it("returns automations enabled by default and existing-session target disabled", async () => {
+            delete process.env.HAPPIER_FEATURE_AUTOMATIONS__ENABLED;
+            delete process.env.HAPPIER_FEATURE_AUTOMATIONS__EXISTING_SESSION_TARGET;
+
+            const payload = await getFeaturesPayload();
+            expect(payload.features.automations.enabled).toBe(true);
+            expect(payload.features.automations.existingSessionTarget).toBe(false);
+        });
+
+        it("allows disabling automations and enabling existing-session target via env", async () => {
+            process.env.HAPPIER_FEATURE_AUTOMATIONS__ENABLED = "0";
+            process.env.HAPPIER_FEATURE_AUTOMATIONS__EXISTING_SESSION_TARGET = "1";
+
+            const payload = await getFeaturesPayload();
+            expect(payload.features.automations.enabled).toBe(false);
+            expect(payload.features.automations.existingSessionTarget).toBe(true);
         });
     });
 });
