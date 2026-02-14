@@ -10,5 +10,13 @@ describe('AgentStateSchema capabilities', () => {
 
         expect(parsed.capabilities?.inFlightSteer).toBe(true);
     });
-});
 
+    it('preserves localPermissionBridgeInLocalMode capability when present', () => {
+        const parsed = AgentStateSchema.parse({
+            capabilities: { localPermissionBridgeInLocalMode: true },
+        });
+
+        expect(parsed.capabilities?.localPermissionBridgeInLocalMode).toBe(true);
+    });
+
+});

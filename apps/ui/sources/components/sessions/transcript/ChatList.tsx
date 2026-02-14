@@ -10,6 +10,7 @@ import { ChatFooter } from './ChatFooter';
 import { buildChatListItems, type ChatListItem } from '@/components/sessions/chatListItems';
 import { PendingUserTextMessageView } from '@/components/sessions/pending/PendingUserTextMessageView';
 import { sync } from '@/sync/sync';
+import { getPermissionsInUiWhileLocal } from '@/sync/domains/state/agentStateCapabilities';
 
 export type ChatListBottomNotice = {
     title: string;
@@ -72,9 +73,11 @@ const ListFooter = React.memo((props: {
     onRequestSwitchToRemote?: () => void;
 }) => {
     const session = useSession(props.sessionId)!;
+    const permissionsInUiWhileLocal = getPermissionsInUiWhileLocal(session.agentState?.capabilities);
     return (
         <ChatFooter
             controlledByUser={session.agentState?.controlledByUser || false}
+            permissionsInUiWhileLocal={permissionsInUiWhileLocal}
             notice={props.bottomNotice ?? null}
             onRequestSwitchToRemote={props.onRequestSwitchToRemote}
         />

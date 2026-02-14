@@ -2,6 +2,9 @@ export type ClaudeRemoteMetaState = Readonly<{
     claudeRemoteAgentSdkEnabled: boolean;
     claudeRemoteSettingSources: 'project' | 'user_project' | 'none';
     claudeRemoteIncludePartialMessages: boolean;
+    claudeLocalPermissionBridgeEnabled: boolean;
+    claudeLocalPermissionBridgeWaitIndefinitely: boolean;
+    claudeLocalPermissionBridgeTimeoutSeconds: number;
     claudeRemoteEnableFileCheckpointing: boolean;
     claudeRemoteMaxThinkingTokens: number | null;
     claudeRemoteDisableTodos: boolean;
@@ -10,9 +13,12 @@ export type ClaudeRemoteMetaState = Readonly<{
 }>;
 
 export const DEFAULT_CLAUDE_REMOTE_META_STATE: ClaudeRemoteMetaState = Object.freeze({
-    claudeRemoteAgentSdkEnabled: false,
+    claudeRemoteAgentSdkEnabled: true,
     claudeRemoteSettingSources: 'project',
     claudeRemoteIncludePartialMessages: false,
+    claudeLocalPermissionBridgeEnabled: false,
+    claudeLocalPermissionBridgeWaitIndefinitely: false,
+    claudeLocalPermissionBridgeTimeoutSeconds: 600,
     claudeRemoteEnableFileCheckpointing: false,
     claudeRemoteMaxThinkingTokens: null,
     claudeRemoteDisableTodos: false,
@@ -46,6 +52,23 @@ export function applyClaudeRemoteMetaState(prev: ClaudeRemoteMetaState, meta: un
 
     if (typeof record.claudeRemoteIncludePartialMessages === 'boolean') {
         next.claudeRemoteIncludePartialMessages = record.claudeRemoteIncludePartialMessages;
+    }
+
+    if (typeof record.claudeLocalPermissionBridgeEnabled === 'boolean') {
+        next.claudeLocalPermissionBridgeEnabled = record.claudeLocalPermissionBridgeEnabled;
+    }
+
+    if (typeof record.claudeLocalPermissionBridgeWaitIndefinitely === 'boolean') {
+        next.claudeLocalPermissionBridgeWaitIndefinitely = record.claudeLocalPermissionBridgeWaitIndefinitely;
+    }
+
+    if (
+        typeof record.claudeLocalPermissionBridgeTimeoutSeconds === 'number'
+        && Number.isFinite(record.claudeLocalPermissionBridgeTimeoutSeconds)
+        && record.claudeLocalPermissionBridgeTimeoutSeconds > 0
+        && Number.isInteger(record.claudeLocalPermissionBridgeTimeoutSeconds)
+    ) {
+        next.claudeLocalPermissionBridgeTimeoutSeconds = record.claudeLocalPermissionBridgeTimeoutSeconds;
     }
 
     if (typeof record.claudeRemoteEnableFileCheckpointing === 'boolean') {

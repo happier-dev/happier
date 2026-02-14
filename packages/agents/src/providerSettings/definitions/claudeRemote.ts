@@ -27,9 +27,12 @@ export function normalizeClaudeRemoteAdvancedOptionsJson(raw: unknown): string {
 }
 
 export const CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS = Object.freeze({
-  claudeRemoteAgentSdkEnabled: false,
+  claudeRemoteAgentSdkEnabled: true,
   claudeRemoteSettingSources: 'project' as 'project' | 'user_project' | 'none',
   claudeRemoteIncludePartialMessages: false,
+  claudeLocalPermissionBridgeEnabled: false,
+  claudeLocalPermissionBridgeWaitIndefinitely: false,
+  claudeLocalPermissionBridgeTimeoutSeconds: 600,
   claudeRemoteEnableFileCheckpointing: false,
   claudeRemoteMaxThinkingTokens: null as number | null,
   claudeRemoteDisableTodos: false,
@@ -42,6 +45,9 @@ export function buildClaudeRemoteProviderSettingsShape(zod: typeof z): z.ZodRawS
     claudeRemoteAgentSdkEnabled: zod.boolean(),
     claudeRemoteSettingSources: zod.enum(['project', 'user_project', 'none']),
     claudeRemoteIncludePartialMessages: zod.boolean(),
+    claudeLocalPermissionBridgeEnabled: zod.boolean(),
+    claudeLocalPermissionBridgeWaitIndefinitely: zod.boolean(),
+    claudeLocalPermissionBridgeTimeoutSeconds: zod.number().int().positive(),
     claudeRemoteEnableFileCheckpointing: zod.boolean(),
     claudeRemoteMaxThinkingTokens: zod.number().int().positive().nullable(),
     claudeRemoteDisableTodos: zod.boolean(),
@@ -57,6 +63,11 @@ export function buildClaudeRemoteOutgoingMessageMetaExtras(settings: Readonly<Re
     claudeRemoteAgentSdkEnabled: Boolean(settings.claudeRemoteAgentSdkEnabled),
     claudeRemoteSettingSources: typeof settings.claudeRemoteSettingSources === 'string' ? settings.claudeRemoteSettingSources : 'project',
     claudeRemoteIncludePartialMessages: Boolean(settings.claudeRemoteIncludePartialMessages),
+    claudeLocalPermissionBridgeEnabled: Boolean(settings.claudeLocalPermissionBridgeEnabled),
+    claudeLocalPermissionBridgeWaitIndefinitely: Boolean(settings.claudeLocalPermissionBridgeWaitIndefinitely),
+    claudeLocalPermissionBridgeTimeoutSeconds: typeof settings.claudeLocalPermissionBridgeTimeoutSeconds === 'number'
+      ? settings.claudeLocalPermissionBridgeTimeoutSeconds
+      : 600,
     claudeRemoteEnableFileCheckpointing: Boolean(settings.claudeRemoteEnableFileCheckpointing),
     claudeRemoteMaxThinkingTokens: typeof settings.claudeRemoteMaxThinkingTokens === 'number' ? settings.claudeRemoteMaxThinkingTokens : null,
     claudeRemoteDisableTodos: Boolean(settings.claudeRemoteDisableTodos),
@@ -71,4 +82,3 @@ export const CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFINITION: ProviderSettingsDefinit
   settingsDefaults: CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS,
   buildOutgoingMessageMetaExtras: ({ settings }) => buildClaudeRemoteOutgoingMessageMetaExtras(settings),
 });
-

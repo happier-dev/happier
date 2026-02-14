@@ -151,6 +151,15 @@ export const MetadataSchema = z.object({
         pendingActivityAt: z.number(),
         updatedAt: z.number(),
     }).optional(),
+    /**
+     * System/hidden sessions created for internal control planes (voice, execution carrier, etc).
+     * These should be excluded from user-facing lists by default.
+     */
+    systemSessionV1: z.object({
+        v: z.literal(1),
+        key: z.string(),
+        hidden: z.boolean().optional(),
+    }).optional(),
 });
 
 export type Metadata = z.infer<typeof MetadataSchema>;
@@ -180,6 +189,8 @@ export const AgentStateSchema = z.object({
     capabilities: z.object({
         askUserQuestionAnswersInPermission: z.boolean().optional(),
         inFlightSteer: z.boolean().optional(),
+        localPermissionBridgeInLocalMode: z.boolean().optional(),
+        permissionsInUiWhileLocal: z.boolean().optional(),
     }).nullish(),
 }).passthrough();
 

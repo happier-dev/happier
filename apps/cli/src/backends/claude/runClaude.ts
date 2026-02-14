@@ -383,15 +383,31 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     let currentSession: Session | null = null;
     let currentClaudeRemoteMetaState = resolveInitialClaudeRemoteMetaState({ metaDefaults: options.claudeRemoteMetaDefaults });
     let localPermissionBridgeEnabled = currentClaudeRemoteMetaState.claudeLocalPermissionBridgeEnabled === true;
+    let localPermissionBridgeWaitIndefinitely = currentClaudeRemoteMetaState.claudeLocalPermissionBridgeWaitIndefinitely === true;
+    let localPermissionBridgeTimeoutMs = localPermissionBridgeWaitIndefinitely
+        ? null
+        : currentClaudeRemoteMetaState.claudeLocalPermissionBridgeTimeoutSeconds * 1000;
     const permissionHookSecret = randomUUID();
     let localPermissionBridge: ClaudeLocalPermissionBridge | null = null;
     const disposeLocalPermissionBridge = () => {
         const bridge: ClaudeLocalPermissionBridge | null = localPermissionBridge;
         bridge?.dispose();
     };
+    const rebuildLocalPermissionBridge = () => {
+        if (!currentSession) {
+            return;
+        }
+        disposeLocalPermissionBridge();
+        if (!localPermissionBridgeEnabled) {
+            localPermissionBridge = null;
+            return;
+        }
+        localPermissionBridge = new ClaudeLocalPermissionBridge(currentSession, { responseTimeoutMs: localPermissionBridgeTimeoutMs });
+        localPermissionBridge.activate();
+    };
 
     // Start Hook server for receiving Claude session notifications
-    const hookServer = await startHookServer({
+    const hookServerOptions: Parameters<typeof startHookServer>[0] = {
         onSessionHook: (sessionId, data) => {
             logger.debug(`[START] Session hook received: ${sessionId}`, data);
             
@@ -420,7 +436,9 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             return localPermissionBridge.handlePermissionHook(data);
         },
         permissionHookSecret,
-    });
+        permissionRequestTimeoutMs: localPermissionBridgeWaitIndefinitely ? null : localPermissionBridgeTimeoutMs,
+    };
+    const hookServer = await startHookServer(hookServerOptions);
     logger.debug(`[START] Hook server started on port ${hookServer.port}`);
 
     // Generate hook settings file for Claude
@@ -443,6 +461,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             ...(currentState.capabilities && typeof currentState.capabilities === 'object' ? currentState.capabilities : {}),
             askUserQuestionAnswersInPermission: true,
             localPermissionBridgeInLocalMode: localPermissionBridgeEnabled,
+            permissionsInUiWhileLocal: localPermissionBridgeEnabled,
         },
     }));
 
@@ -553,15 +572,29 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
 
         currentClaudeRemoteMetaState = applyClaudeRemoteMetaState(currentClaudeRemoteMetaState, message.meta);
         const nextLocalPermissionBridgeEnabled = currentClaudeRemoteMetaState.claudeLocalPermissionBridgeEnabled === true;
-        if (nextLocalPermissionBridgeEnabled !== localPermissionBridgeEnabled) {
+        const nextLocalPermissionBridgeWaitIndefinitely = currentClaudeRemoteMetaState.claudeLocalPermissionBridgeWaitIndefinitely === true;
+        const nextLocalPermissionBridgeTimeoutMs = nextLocalPermissionBridgeWaitIndefinitely
+            ? null
+            : currentClaudeRemoteMetaState.claudeLocalPermissionBridgeTimeoutSeconds * 1000;
+
+        if (
+            nextLocalPermissionBridgeEnabled !== localPermissionBridgeEnabled
+            || nextLocalPermissionBridgeWaitIndefinitely !== localPermissionBridgeWaitIndefinitely
+            || nextLocalPermissionBridgeTimeoutMs !== localPermissionBridgeTimeoutMs
+        ) {
             localPermissionBridgeEnabled = nextLocalPermissionBridgeEnabled;
-            logger.debug(`[loop] Local permission bridge updated from user message: ${localPermissionBridgeEnabled ? 'enabled' : 'disabled'}`);
+            localPermissionBridgeWaitIndefinitely = nextLocalPermissionBridgeWaitIndefinitely;
+            localPermissionBridgeTimeoutMs = nextLocalPermissionBridgeTimeoutMs;
+            hookServerOptions.permissionRequestTimeoutMs = localPermissionBridgeWaitIndefinitely ? null : localPermissionBridgeTimeoutMs;
+            logger.debug(`[loop] Local permission bridge updated from user message: enabled=${localPermissionBridgeEnabled ? 'yes' : 'no'} timeoutMs=${localPermissionBridgeTimeoutMs === null ? 'infinite' : String(localPermissionBridgeTimeoutMs)}`);
+            rebuildLocalPermissionBridge();
             session.updateAgentState((currentState) => ({
                 ...currentState,
                 capabilities: {
                     ...(currentState.capabilities && typeof currentState.capabilities === 'object' ? currentState.capabilities : {}),
                     askUserQuestionAnswersInPermission: true,
                     localPermissionBridgeInLocalMode: localPermissionBridgeEnabled,
+                    permissionsInUiWhileLocal: localPermissionBridgeEnabled,
                 },
             }));
         }
@@ -703,8 +736,10 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             // Store reference for hook server callback
             currentSession = sessionInstance;
             if (!localPermissionBridge) {
-                localPermissionBridge = new ClaudeLocalPermissionBridge(sessionInstance);
+                localPermissionBridge = new ClaudeLocalPermissionBridge(sessionInstance, { responseTimeoutMs: localPermissionBridgeTimeoutMs });
                 localPermissionBridge.activate();
+            } else if (localPermissionBridgeEnabled) {
+                rebuildLocalPermissionBridge();
             }
         },
         mcpServers: {

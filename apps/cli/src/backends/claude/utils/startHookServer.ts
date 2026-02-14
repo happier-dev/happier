@@ -129,8 +129,10 @@ export interface HookServerOptions {
      *
      * This must be long enough for a human to approve/deny from the UI; Claude Code hook
      * commands can run substantially longer than 5 seconds.
+     *
+     * Set to `null` to wait indefinitely (no terminal fallback).
      */
-    permissionRequestTimeoutMs?: number;
+    permissionRequestTimeoutMs?: number | null;
 }
 
 export interface HookServer {
@@ -148,10 +150,19 @@ export interface HookServer {
  */
 export async function startHookServer(options: HookServerOptions): Promise<HookServer> {
     const { onSessionHook, onPermissionHook, permissionHookSecret } = options;
-    const permissionRequestTimeoutMs =
-        typeof options.permissionRequestTimeoutMs === 'number' && Number.isFinite(options.permissionRequestTimeoutMs) && options.permissionRequestTimeoutMs > 0
-            ? options.permissionRequestTimeoutMs
-            : 10 * 60 * 1000;
+    const resolvePermissionRequestTimeoutMs = (): number | null => {
+        if (options.permissionRequestTimeoutMs === null) {
+            return null;
+        }
+        if (
+            typeof options.permissionRequestTimeoutMs === 'number'
+            && Number.isFinite(options.permissionRequestTimeoutMs)
+            && options.permissionRequestTimeoutMs > 0
+        ) {
+            return options.permissionRequestTimeoutMs;
+        }
+        return 10 * 60 * 1000;
+    };
 
     return new Promise((resolve, reject) => {
         const server: Server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -224,12 +235,16 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
                     }
                 }
 
-                const responseTimeout = setTimeout(() => {
-                    if (!res.headersSent) {
-                        logger.debug('[hookServer] Permission hook request timeout');
-                        res.writeHead(408).end('timeout');
-                    }
-                }, permissionRequestTimeoutMs);
+                const permissionRequestTimeoutMs = resolvePermissionRequestTimeoutMs();
+                const responseTimeout = permissionRequestTimeoutMs === null
+                    ? null
+                    : setTimeout(() => {
+                        if (!res.headersSent) {
+                            logger.debug('[hookServer] Permission hook request timeout');
+                            res.writeHead(408).end('timeout');
+                        }
+                    }, permissionRequestTimeoutMs);
+                responseTimeout?.unref?.();
 
                 const readTimeout = setTimeout(() => {
                     if (!res.headersSent) {
@@ -273,11 +288,15 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
                             hookSpecificOutput: { hookEventName: 'PermissionRequest' },
                         };
 
-                    clearTimeout(responseTimeout);
+                    if (responseTimeout) {
+                        clearTimeout(responseTimeout);
+                    }
                     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(response));
                 } catch (error) {
                     clearTimeout(readTimeout);
-                    clearTimeout(responseTimeout);
+                    if (responseTimeout) {
+                        clearTimeout(responseTimeout);
+                    }
                     logger.debug('[hookServer] Error handling permission hook:', error);
                     if (!res.headersSent) {
                         res.writeHead(200, { 'Content-Type': 'application/json' }).end(

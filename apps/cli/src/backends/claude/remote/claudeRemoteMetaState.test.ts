@@ -45,6 +45,8 @@ describe('applyClaudeRemoteMetaState', () => {
     const next = applyClaudeRemoteMetaState(DEFAULT_CLAUDE_REMOTE_META_STATE, {
       claudeRemoteAgentSdkEnabled: true,
       claudeRemoteIncludePartialMessages: true,
+      claudeLocalPermissionBridgeEnabled: true,
+      claudeLocalPermissionBridgeWaitIndefinitely: true,
       claudeRemoteEnableFileCheckpointing: true,
       claudeRemoteDisableTodos: true,
       claudeRemoteStrictMcpServerConfig: true,
@@ -53,6 +55,8 @@ describe('applyClaudeRemoteMetaState', () => {
     expect(next).toMatchObject({
       claudeRemoteAgentSdkEnabled: true,
       claudeRemoteIncludePartialMessages: true,
+      claudeLocalPermissionBridgeEnabled: true,
+      claudeLocalPermissionBridgeWaitIndefinitely: true,
       claudeRemoteEnableFileCheckpointing: true,
       claudeRemoteDisableTodos: true,
       claudeRemoteStrictMcpServerConfig: true,
@@ -69,6 +73,18 @@ describe('applyClaudeRemoteMetaState', () => {
       claudeRemoteAdvancedOptionsJson: { plugins: [] },
     });
     expect(next.claudeRemoteAdvancedOptionsJson).toBe('{"plugins":[]}');
+  });
+
+  it('applies positive integers for claudeLocalPermissionBridgeTimeoutSeconds', () => {
+    const next = applyClaudeRemoteMetaState(DEFAULT_CLAUDE_REMOTE_META_STATE, {
+      claudeLocalPermissionBridgeTimeoutSeconds: 123,
+    });
+    expect((next as any).claudeLocalPermissionBridgeTimeoutSeconds).toBe(123);
+
+    const next2 = applyClaudeRemoteMetaState(next, {
+      claudeLocalPermissionBridgeTimeoutSeconds: 0,
+    });
+    expect((next2 as any).claudeLocalPermissionBridgeTimeoutSeconds).toBe(123);
   });
 
   it('returns a frozen result object', () => {

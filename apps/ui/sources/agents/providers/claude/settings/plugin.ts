@@ -60,6 +60,32 @@ export const CLAUDE_PROVIDER_SETTINGS_PLUGIN = {
                     subtitle: 'Show partial assistant output while Claude is still responding.',
                 },
                 {
+                    key: 'claudeLocalPermissionBridgeEnabled',
+                    kind: 'boolean',
+                    title: 'Experimental: local permission bridge',
+                    subtitle:
+                        'Forward Claude local-mode permission prompts to Happier so you can approve or deny from the app UI.',
+                },
+                {
+                    key: 'claudeLocalPermissionBridgeWaitIndefinitely',
+                    kind: 'boolean',
+                    title: 'Experimental: wait indefinitely',
+                    subtitle:
+                        'When enabled, Happier will wait indefinitely for an approval/deny from the app UI (no terminal fallback; may hang if the UI is closed).',
+                },
+                {
+                    key: 'claudeLocalPermissionBridgeTimeoutSeconds',
+                    kind: 'number',
+                    title: 'Local permission timeout (seconds)',
+                    subtitle:
+                        'How long to wait for an approval/deny from the app UI before falling back to the terminal prompt (default: 600 = 10 minutes).',
+                    numberSpec: {
+                        min: 1,
+                        step: 30,
+                        placeholder: '600',
+                    },
+                },
+                {
                     key: 'claudeRemoteEnableFileCheckpointing',
                     kind: 'boolean',
                     title: 'File checkpointing + /rewind',

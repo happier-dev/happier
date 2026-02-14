@@ -42,11 +42,17 @@ export const en = {
         updates: 'Activity',
     },
 
+    runs: {
+        title: 'Runs',
+        empty: 'No runs yet.',
+    },
+
     common: {
         // Simple string constants
         add: 'Add',
         actions: 'Actions',
         cancel: 'Cancel',
+        close: 'Close',
         authenticate: 'Authenticate',
         save: 'Save',
         saveAs: 'Save As',
@@ -76,6 +82,7 @@ export const en = {
         urlPlaceholder: 'https://example.com',
         home: 'Home',
         message: 'Message',
+        send: 'Send',
         files: 'Files',
         fileViewer: 'File Viewer',
         loading: 'Loading...',
@@ -195,6 +202,8 @@ export const en = {
         session: 'Session',
         sessionSubtitleTmuxEnabled: 'Tmux enabled',
         sessionSubtitleMessageSendingAndTmux: 'Message sending and tmux',
+        servers: 'Servers',
+        serversSubtitle: 'Saved servers, groups, and defaults',
 
         // Dynamic settings messages
         accountConnected: ({ service }: { service: string }) => `${service} account connected`,
@@ -332,10 +341,22 @@ export const en = {
         experimentalFeaturesDisabled: 'Using stable features only',
         experimentalOptions: 'Experimental options',
         experimentalOptionsDescription: 'Choose which experimental features are enabled.',
+        expAutomations: 'Automations',
+        expAutomationsSubtitle: 'Enable automations UI surfaces and scheduling',
+        expExecutionRuns: 'Execution runs',
+        expExecutionRunsSubtitle: 'Enable execution runs (sub-agents / reviews) control plane surfaces',
         expUsageReporting: 'Usage reporting',
         expUsageReportingSubtitle: 'Enable usage and token reporting screens',
         expScmOperations: 'Source control operations',
         expScmOperationsSubtitle: 'Enable experimental source-control write operations (stage/commit/push/pull). Read-only file browsing is stable.',
+        expFilesReviewComments: 'File review comments',
+        expFilesReviewCommentsSubtitle: 'Add line-level review comments from file and diff views, then send them as a structured message',
+        expFilesDiffSyntaxHighlighting: 'Diff syntax highlighting',
+        expFilesDiffSyntaxHighlightingSubtitle: 'Enable syntax highlighting in diff and code views (with performance limits)',
+        expFilesAdvancedSyntaxHighlighting: 'Advanced syntax highlighting',
+        expFilesAdvancedSyntaxHighlightingSubtitle: 'Use heavier, higher-fidelity syntax highlighting (web only, may be slower)',
+        expFilesEditor: 'Embedded file editor',
+        expFilesEditorSubtitle: 'Enable editing files directly from the file browser (Monaco on web/desktop, CodeMirror on native)',
         expShowThinkingMessages: 'Show thinking messages',
         expShowThinkingMessagesSubtitle: 'Show assistant thinking/status messages in chat',
         expSessionType: 'Session type selector',
@@ -344,8 +365,8 @@ export const en = {
         expZenSubtitle: 'Enable the Zen navigation entry',
         expVoiceAuthFlow: 'Voice auth flow',
         expVoiceAuthFlowSubtitle: 'Use authenticated voice token flow (paywall-aware)',
-            expInboxFriends: 'Inbox & Friends',
-            expInboxFriendsSubtitle: 'Enable the Inbox tab and Friends features',
+            expFriends: 'Friends',
+            expFriendsSubtitle: 'Enable Friends features (Inbox tab and session sharing)',
             webFeatures: 'Web Features',
             webFeaturesDescription: 'Features available only in the web version of the app.',
         enterToSend: 'Enter to Send',
@@ -392,7 +413,6 @@ export const en = {
         voiceSessionFailed: 'Failed to start voice session',
         voiceServiceUnavailable: 'Voice service is temporarily unavailable',
         voiceAlreadyStarting: 'Voice is already starting in another session',
-        voiceMediatorNotActive: 'Start a mediator conversation first, then commit.',
         oauthInitializationFailed: 'Failed to initialize OAuth flow',
         tokenStorageFailed: 'Failed to store authentication tokens',
         oauthStateMismatch: 'Security validation failed. Please try again',
@@ -729,11 +749,19 @@ export const en = {
         tapToEnd: 'Tap to end',
     },
 
-    voiceMediator: {
-        commitChip: 'Commit',
-        commitTitle: 'Commit to session',
-        commitSend: 'Send',
-        commitEdit: 'Edit',
+    voiceSurface: {
+        start: 'Start',
+        stop: 'Stop',
+        selectSessionToStart: 'Select a session to start voice',
+        targetSession: 'Target session',
+        noTarget: 'No session selected',
+        clearTarget: 'Clear target',
+    },
+
+    voiceActivity: {
+        title: 'Voice Activity',
+        empty: 'No voice activity yet.',
+        clear: 'Clear',
     },
 
     server: {
@@ -756,10 +784,14 @@ export const en = {
         autoConfigHint: 'If you’re self-hosting: configure the server first, then sign in (or create an account), then connect your terminal.',
         renameServer: 'Rename server',
         renameServerPrompt: 'Enter a new name for this server.',
+        renameServerGroup: 'Rename server group',
+        renameServerGroupPrompt: 'Enter a new name for this server group.',
         serverNamePlaceholder: 'Server name',
         cannotRenameCloud: 'You can’t rename the cloud server.',
         removeServer: 'Remove server',
         removeServerConfirm: ({ name }: { name: string }) => `Remove "${name}" from saved servers?`,
+        removeServerGroup: 'Remove server group',
+        removeServerGroupConfirm: ({ name }: { name: string }) => `Remove "${name}" from saved server groups?`,
         cannotRemoveCloud: 'You can’t remove the cloud server.',
         signOutThisServer: 'Also sign out from this server?',
         signOutThisServerPrompt: 'Stored credentials were found for this server on this device.',
@@ -769,11 +801,21 @@ export const en = {
         authStatusUnknown: 'Auth status unknown',
         switchToServer: 'Switch to this server',
         active: 'Active',
+        default: 'Default',
         addServerTitle: 'Add server',
         switchForThisTab: 'Switch for this tab',
         makeDefaultOnDevice: 'Make default on this device',
         serverNameLabel: 'Server name',
         addAndUse: 'Add and use',
+        addTargetsTitle: 'Add',
+        addServerSubtitle: 'Add a new server and switch to it',
+        addServerGroupTitle: 'Add server group',
+        addServerGroupSubtitle: 'Create a reusable group of servers',
+        serverGroupNameLabel: 'Group name',
+        serverGroupNamePlaceholder: 'My server group',
+        serverGroupServersLabel: 'Servers',
+        saveServerGroup: 'Save group',
+        serverGroupMustHaveServer: 'A server group must include at least one server.',
     },
 
     sessionInfo: {
@@ -1130,6 +1172,9 @@ export const en = {
         noSessionAttributedChanges: 'No session-attributed changes currently detected.',
         notRepo: 'Not a source-control repository',
         notUnderSourceControl: 'This directory is not under source control',
+        searching: 'Searching files...',
+        noFilesFound: 'No files found',
+        noFilesInProject: 'No files in project',
         repositoryFolderLoadFailed: 'Unable to load folder',
         repositoryCollapseAll: 'Collapse all',
         reviewFilterPlaceholder: 'Filter files...',
@@ -1137,9 +1182,6 @@ export const en = {
         reviewLargeDiffOneAtATime: 'Large diff detected, showing one file at a time.',
         reviewDiffRequestFailed: 'Unable to load diff',
         reviewUnableToLoadDiff: 'Unable to load diff',
-        searching: 'Searching files...',
-        noFilesFound: 'No files found',
-        noFilesInProject: 'No files in project',
         tryDifferentTerm: 'Try a different search term',
         searchResults: ({ count }: { count: number }) => `Search Results (${count})`,
         projectRoot: 'Project root',
@@ -1207,16 +1249,73 @@ export const en = {
     settingsVoice: {
         // Voice settings screen
         modeTitle: 'Voice',
-        modeDescription: 'Configure voice features. You can disable voice entirely, use Happier Voice (subscription-gated), or use your own ElevenLabs account.',
+        modeDescription:
+            'Configure voice features. Depending on server capabilities, choose Happier Voice, Local voice, or your own ElevenLabs account.',
         mode: {
             off: 'Off',
             offSubtitle: 'Disable all voice features',
             happier: 'Happier Voice',
             happierSubtitle: 'Use Happier Voice (subscription required)',
-            local: 'Local OSS Voice',
-            localSubtitle: 'Use local OpenAI-compatible STT/TTS endpoints',
+            local: 'Local voice',
+            localSubtitle: 'Use device speech or local OpenAI-compatible STT/TTS endpoints',
             byo: 'Use My ElevenLabs',
             byoSubtitle: 'Use your own ElevenLabs API key and agent',
+        },
+        ui: {
+            title: 'Voice Surface',
+            footer: 'Optional on-screen activity feed for voice events (not written into the session).',
+            activityFeedEnabled: 'Enable voice activity feed',
+            activityFeedEnabledSubtitle: 'Show recent voice events on screen while using voice',
+            activityFeedAutoExpandOnStart: 'Auto-expand on start',
+            activityFeedAutoExpandOnStartSubtitle: 'Expand the activity feed automatically when voice starts',
+            scopeTitle: 'Default voice scope',
+            scopeSubtitle: 'Choose whether voice is treated as global (account-scoped) or session-scoped by default.',
+            scopeGlobal: 'Global (account)',
+            scopeGlobalSubtitle: 'Voice stays visible while you navigate; you can target sessions',
+            scopeSession: 'Session',
+            scopeSessionSubtitle: 'Voice is controlled from within the session you started it from',
+            surfaceLocationTitle: 'Surface placement',
+            surfaceLocationSubtitle: 'Choose where the voice surface appears.',
+            surfaceLocation: {
+                autoTitle: 'Auto',
+                autoSubtitle: 'Global scope shows in the sidebar; session scope shows in the session.',
+                sidebarTitle: 'Sidebar',
+                sidebarSubtitle: 'Show the voice surface in the sidebar.',
+                sessionTitle: 'Session',
+                sessionSubtitle: 'Show the voice surface above the input in the session.',
+            },
+            updates: {
+                title: 'Session updates',
+                footer: 'Control what the voice assistant receives as background context.',
+                activeSessionTitle: 'Active target session',
+                activeSessionSubtitle: 'What to send automatically for the session you are targeting.',
+                otherSessionsTitle: 'Other sessions',
+                otherSessionsSubtitle: 'What to send automatically for sessions you are not targeting.',
+                level: {
+                    noneTitle: 'None',
+                    noneSubtitle: 'Do not send automatic updates.',
+                    activityTitle: 'Activity only',
+                    activitySubtitle: 'Send counts and timestamps only.',
+                    summariesTitle: 'Summaries',
+                    summariesSubtitle: 'Send short, safe summaries (no raw message text).',
+                    snippetsTitle: 'Snippets',
+                    snippetsSubtitle: 'Send short message snippets (privacy risk).',
+                },
+                snippetsMaxMessagesTitle: 'Max snippet messages',
+                snippetsMaxMessagesSubtitle: 'Limit how many messages are included per update.',
+                includeUserMessagesInSnippetsTitle: 'Include your messages',
+                includeUserMessagesInSnippetsSubtitle: 'If enabled, snippets can include your messages.',
+                otherSessionsSnippetsModeTitle: 'Other sessions snippets',
+                otherSessionsSnippetsModeSubtitle: 'Control when snippets for other sessions are allowed.',
+                otherSessionsSnippetsMode: {
+                    neverTitle: 'Never',
+                    neverSubtitle: 'Disable snippets for other sessions.',
+                    onDemandTitle: 'On demand',
+                    onDemandSubtitle: 'Allow only when the user explicitly asks.',
+                    autoTitle: 'Auto',
+                    autoSubtitle: 'Allow automatic other-session snippets (noisy).',
+                },
+            },
         },
         byo: {
             title: 'Use My ElevenLabs',
@@ -1224,25 +1323,26 @@ export const en = {
             notConfigured:
                 'Setup (2 minutes):\n' +
                 '1) Create an ElevenLabs account (or sign in).\n' +
-                '2) Create an API key (Settings → API keys).\n' +
+                '2) Create an API key (Developers → API Keys). Recommended permissions: Text to Speech (Access), Voices (Read), Conversational AI / Agents (Read & Write).\n' +
                 '3) Paste the API key in Happier.\n' +
                 '4) Tap "Create Happier Agent" to auto-provision (it fills the Agent ID).\n\n' +
-                'Tip: Your API key is only stored on this device (encrypted). If you rotate it in ElevenLabs, paste the new one here.',
+                'Tip: Your API key is stored encrypted. Happier never shows it again after you save it. If you rotate it in ElevenLabs, paste the new one here.',
             createAccount: 'Create ElevenLabs account',
             createAccountSubtitle: 'Sign up (or sign in), then return here to connect',
             openApiKeys: 'Open ElevenLabs API keys',
             openApiKeysSubtitle:
-                'In ElevenLabs: Settings → API keys → Create API key → Copy the key (you might only see it once). Tip: name it “Happier”.',
+                'In ElevenLabs: Developers → API Keys → Create API key → Copy the key (you might only see it once). Tip: name it “Happier”.',
             apiKeyHelp: 'How to create an API key',
             apiKeyHelpSubtitle: 'Step-by-step help for creating and copying your ElevenLabs API key',
             apiKeyHelpDialogTitle: 'Create an ElevenLabs API key',
             apiKeyHelpDialogBody:
                 '1) Open ElevenLabs (web).\n' +
-                '2) Go to Settings → API keys (if you don’t see Settings, open the profile menu first).\n' +
+                '2) Go to Developers → API Keys.\n' +
                 '3) Click "Create API key" (name it “Happier”).\n' +
-                '4) Copy the key (you may only be able to see it once).\n' +
-                '5) Back in Happier, tap "API Key" and paste it.\n' +
-                '6) Tap "Create Happier Agent" to provision automatically (it fills the Agent ID).\n\n' +
+                '4) Recommended permissions: Text to Speech (Access), Voices (Read), Conversational AI / Agents (Read & Write).\n' +
+                '5) Copy the key (you may only be able to see it once).\n' +
+                '6) Back in Happier, tap "API Key" and paste it.\n' +
+                '7) Tap "Create Happier Agent" to provision automatically (it fills the Agent ID).\n\n' +
                 'If you prefer manual setup:\n' +
                 '- Create an agent in ElevenLabs, then copy/paste its Agent ID into Happier.\n\n' +
                 'Security tip: treat API keys like passwords. If you think it leaked, revoke it and create a new one. (Most ElevenLabs keys start with "xi-".)',
@@ -1264,9 +1364,23 @@ export const en = {
             apiKeyNotSet: 'Not set',
             apiKeyTitle: 'ElevenLabs API Key',
             apiKeyDescription:
-                'Create an API key in ElevenLabs → Settings → API keys → Create API key.\n' +
-                'Paste it here (stored encrypted on-device).',
+                'Create an API key in ElevenLabs → Developers → API Keys → Create API key.\n' +
+                'Recommended permissions: Text to Speech (Access), Voices (Read), Conversational AI / Agents (Read & Write).\n' +
+                'Paste it here (stored encrypted).',
             apiKeyPlaceholder: 'xi-api-key',
+            voiceSearchPlaceholder: 'Search voices',
+            speakerBoostTitle: 'Speaker boost',
+            speakerBoostSubtitle: 'Improve clarity and presence (optional).',
+            speakerBoostAuto: 'Auto',
+            speakerBoostAutoSubtitle: 'Use ElevenLabs default.',
+            speakerBoostOn: 'On',
+            speakerBoostOnSubtitle: 'Force enable speaker boost.',
+            speakerBoostOff: 'Off',
+            speakerBoostOffSubtitle: 'Force disable speaker boost.',
+            voiceGroupTitle: 'Voice',
+            voiceGroupFooter: 'Choose how your ElevenLabs agent speaks. Changes apply when you update the agent.',
+            provisioningGroupTitle: 'Agent provisioning',
+            provisioningGroupFooter: 'If you change voice/tuning, tap Update Agent to apply it in ElevenLabs.',
             apiKeySaveFailed: 'Failed to save API key. Please try again.',
             disconnect: 'Disconnect',
             disconnectSubtitle: 'Remove stored ElevenLabs credentials from this device',
@@ -1275,7 +1389,7 @@ export const en = {
             disconnectConfirm: 'Disconnect',
         },
         local: {
-            title: 'Local OSS Voice',
+            title: 'Local voice',
             footer: 'Configure OpenAI-compatible endpoints for speech-to-text (STT) and text-to-speech (TTS).\n\nWeb note: your endpoint must allow CORS (and respond to OPTIONS preflight) for Test STT/TTS to work in the browser.',
             localhostWarning: 'Note: "localhost" and "127.0.0.1" usually won’t work on phones. Use your computer’s LAN IP or a tunnel.',
             notSet: 'Not set',
@@ -1401,9 +1515,11 @@ export const en = {
             recentMessagesCountDescription: 'Enter a number between 0 and 50.',
             recentMessagesCountInvalid: 'Please enter a number between 0 and 50.',
             shareToolNames: 'Share tool names',
-            shareToolNamesSubtitle: 'Include tool names/descriptions (arguments are always redacted)',
+            shareToolNamesSubtitle: 'Include tool names/descriptions in voice context',
+            shareToolArgs: 'Share tool arguments',
+            shareToolArgsSubtitle: 'Include tool arguments (may include paths or secrets)',
             sharePermissionRequests: 'Share permission requests',
-            sharePermissionRequestsSubtitle: 'Forward permission prompts (arguments are always redacted)',
+            sharePermissionRequestsSubtitle: 'Forward permission prompts to voice',
             shareFilePaths: 'Share local file paths',
             shareFilePathsSubtitle: 'Include local paths in voice context (not recommended)',
         },
@@ -1435,7 +1551,7 @@ export const en = {
         server: 'Server',
         backup: 'Backup',
         backupDescription: 'Your secret key is the only way to recover your account. Save it in a secure place like a password manager.',
-        secretKey: 'Secret Key',
+        secretKey: 'Backup your secret key',
         tapToReveal: 'Tap to reveal',
         tapToHide: 'Tap to hide',
         secretKeyLabel: 'SECRET KEY (TAP TO COPY)',
@@ -1640,6 +1756,7 @@ export const en = {
 
     chatFooter: {
         permissionsTerminalOnly: 'Permissions are shown in the terminal only. Reset or send a message to control from the app.',
+        sessionRunningLocally: 'This session is running locally on this computer. You can switch to remote to control it from the app.',
         switchToRemote: 'Switch to remote',
         localModeAvailable: 'Local mode is available for this session.',
         localModeUnavailableMachineOffline: 'Local mode is unavailable while this machine is offline.',

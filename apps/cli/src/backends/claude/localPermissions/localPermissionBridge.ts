@@ -14,14 +14,14 @@ type PendingPermissionRequest = {
     toolName: string;
     toolInput: unknown;
     createdAt: number;
-    timeout: NodeJS.Timeout;
+    timeout: NodeJS.Timeout | null;
     resolve: (response: PermissionHookResponse) => void;
     promise: Promise<PermissionHookResponse>;
 };
 
 type CompletionStatus = 'approved' | 'denied' | 'canceled';
 
-const DEFAULT_RESPONSE_TIMEOUT_MS = 90_000;
+const DEFAULT_RESPONSE_TIMEOUT_MS = 10 * 60 * 1000;
 const PERMISSION_TIMED_OUT_REASON = 'Timed out waiting for permission response';
 const TRANSCRIPT_TAIL_BYTES = 512 * 1024;
 
@@ -35,14 +35,18 @@ export const DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE = {
 
 export class ClaudeLocalPermissionBridge {
     private readonly session: Session;
-    private readonly responseTimeoutMs: number;
+    private readonly responseTimeoutMs: number | null;
     private readonly pendingRequests = new Map<string, PendingPermissionRequest>();
 
-    constructor(session: Session, opts?: { responseTimeoutMs?: number }) {
+    constructor(session: Session, opts?: { responseTimeoutMs?: number | null }) {
         this.session = session;
-        this.responseTimeoutMs = typeof opts?.responseTimeoutMs === 'number' && opts.responseTimeoutMs > 0
-            ? opts.responseTimeoutMs
-            : DEFAULT_RESPONSE_TIMEOUT_MS;
+        if (opts?.responseTimeoutMs === null) {
+            this.responseTimeoutMs = null;
+        } else if (typeof opts?.responseTimeoutMs === 'number' && Number.isFinite(opts.responseTimeoutMs) && opts.responseTimeoutMs > 0) {
+            this.responseTimeoutMs = opts.responseTimeoutMs;
+        } else {
+            this.responseTimeoutMs = DEFAULT_RESPONSE_TIMEOUT_MS;
+        }
     }
 
     activate(): void {
@@ -54,7 +58,9 @@ export class ClaudeLocalPermissionBridge {
 
     dispose(): void {
         for (const pending of [...this.pendingRequests.values()]) {
-            clearTimeout(pending.timeout);
+            if (pending.timeout) {
+                clearTimeout(pending.timeout);
+            }
             this.completeRequest({
                 requestId: pending.id,
                 toolName: pending.toolName,
@@ -95,18 +101,20 @@ export class ClaudeLocalPermissionBridge {
             resolvePending = resolve;
         });
 
-        const timeout = setTimeout(() => {
-            this.completeRequest({
-                requestId,
-                toolName,
-                toolInput,
-                createdAt,
-                status: 'canceled',
-                reason: PERMISSION_TIMED_OUT_REASON,
-                hookResponse: DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE,
-            });
-        }, this.responseTimeoutMs);
-        timeout.unref?.();
+        const timeout = this.responseTimeoutMs === null
+            ? null
+            : setTimeout(() => {
+                this.completeRequest({
+                    requestId,
+                    toolName,
+                    toolInput,
+                    createdAt,
+                    status: 'canceled',
+                    reason: PERMISSION_TIMED_OUT_REASON,
+                    hookResponse: DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE,
+                });
+            }, this.responseTimeoutMs);
+        timeout?.unref?.();
 
         this.pendingRequests.set(requestId, {
             id: requestId,
@@ -253,7 +261,9 @@ export class ClaudeLocalPermissionBridge {
     }): void {
         const pending = this.pendingRequests.get(params.requestId);
         if (pending) {
-            clearTimeout(pending.timeout);
+            if (pending.timeout) {
+                clearTimeout(pending.timeout);
+            }
             this.pendingRequests.delete(params.requestId);
         }
 
@@ -319,6 +329,7 @@ export class ClaudeLocalPermissionBridge {
                 ...(currentState.capabilities ?? {}),
                 askUserQuestionAnswersInPermission: true,
                 localPermissionBridgeInLocalMode: true,
+                permissionsInUiWhileLocal: true,
             },
             requests: {
                 ...(currentState.requests ?? {}),

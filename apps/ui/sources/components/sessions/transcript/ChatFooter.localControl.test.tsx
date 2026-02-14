@@ -69,6 +69,25 @@ describe('ChatFooter (local control)', () => {
         });
     });
 
+    it('shows a local-running notice (without terminal-only copy) when the local permission bridge is enabled', async () => {
+        const tree = await renderFooter({
+            controlledByUser: true,
+            permissionsInUiWhileLocal: true,
+            onRequestSwitchToRemote: vi.fn(),
+        });
+
+        const textNodes = tree.root.findAllByType('Text');
+        expect(textNodes.some((node) => node.props.children === 'chatFooter.permissionsTerminalOnly')).toBe(false);
+        expect(textNodes.some((node) => node.props.children === 'chatFooter.sessionRunningLocally')).toBe(true);
+
+        const pressables = tree.root.findAllByType('Pressable');
+        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.switchToRemote')).toBe(true);
+
+        await act(async () => {
+            tree.unmount();
+        });
+    });
+
     it('does not render switch-to-local controls while remote-controlled', async () => {
         const tree = await renderFooter({
             controlledByUser: false,

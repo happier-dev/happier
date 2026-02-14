@@ -15,6 +15,37 @@ describe('ClaudeLocalPermissionBridge', () => {
     vi.useRealTimers();
   });
 
+  it('defaults to a 10 minute timeout before canceling when no UI response arrives', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-default-timeout');
+    const bridge = new ClaudeLocalPermissionBridge(session);
+    bridge.activate();
+
+    let resolved = false;
+    const pending = bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Bash',
+      tool_input: { command: 'npm --version' },
+      tool_use_id: 'toolu_default_timeout_1',
+    });
+    pending.then(() => {
+      resolved = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(resolved).toBe(false);
+    expect(client.agentState.requests.toolu_default_timeout_1).toBeDefined();
+
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000 - 90_000);
+    await expect(pending).resolves.toMatchObject({
+      continue: true,
+      suppressOutput: true,
+      hookSpecificOutput: { hookEventName: 'PermissionRequest' },
+    });
+    expect(client.agentState.completedRequests.toolu_default_timeout_1).toMatchObject({
+      status: 'canceled',
+    });
+  });
+
   it('publishes pending permission requests and resolves allow decisions', async () => {
     const { session, client } = createPermissionHandlerSessionStub('session-1');
     const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
@@ -109,6 +140,27 @@ describe('ClaudeLocalPermissionBridge', () => {
     expect(client.agentState.completedRequests.toolu_timeout_1).toMatchObject({
       status: 'canceled',
     });
+  });
+
+  it('waits indefinitely when responseTimeoutMs is null', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-infinite-timeout');
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: null });
+    bridge.activate();
+
+    let resolved = false;
+    const pending = bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Bash',
+      tool_input: { command: 'npm --version' },
+      tool_use_id: 'toolu_infinite_1',
+    });
+    pending.then(() => {
+      resolved = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+    expect(resolved).toBe(false);
+    expect(client.agentState.requests.toolu_infinite_1).toBeDefined();
   });
 
   it('generates a request id when tool_use_id is missing', async () => {

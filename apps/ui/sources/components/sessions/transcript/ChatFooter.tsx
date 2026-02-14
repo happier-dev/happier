@@ -9,6 +9,7 @@ import { layout } from '@/components/ui/layout/layout';
 
 interface ChatFooterProps {
     controlledByUser?: boolean;
+    permissionsInUiWhileLocal?: boolean;
     notice?: Pick<SessionNoticeBannerProps, 'title' | 'body'> | null;
     onRequestSwitchToRemote?: () => void;
 }
@@ -60,7 +61,7 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
                         color={theme.colors.box.warning.text}
                     />
                     <Text style={warningTextStyle}>
-                        {t('chatFooter.permissionsTerminalOnly')}
+                        {t(props.permissionsInUiWhileLocal ? 'chatFooter.sessionRunningLocally' : 'chatFooter.permissionsTerminalOnly')}
                     </Text>
                     {props.onRequestSwitchToRemote && (
                         <Pressable
