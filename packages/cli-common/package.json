@@ -21,6 +21,10 @@
     "./workspaces": {
       "types": "./dist/workspaces/index.d.ts",
       "default": "./dist/workspaces/index.js"
+    },
+    "./service": {
+      "types": "./dist/service/index.d.ts",
+      "default": "./dist/service/index.js"
     }
   },
   "files": [

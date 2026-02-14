@@ -51,6 +51,18 @@ test('release workflow publishes server runner only when explicitly requested', 
     /if\s+\[\s*"\$p"\s*=\s*"server_runner"\s*\];\s+then\s+publish_server="true";\s+fi/,
     'server runner npm publishing should be controlled via server_runner deploy target',
   );
+
+  assert.match(
+    raw,
+    /publish_server_runtime:[\s\S]*?uses:\s*\.\/\.github\/workflows\/publish-server-runtime\.yml/,
+    'server runtime publishing should be handled by a dedicated workflow (decoupled from SaaS deploy)',
+  );
+
+  assert.match(
+    raw,
+    /deploy_server:[\s\S]*?publish_runtime_release:\s*false/,
+    'SaaS server deploy must not implicitly publish rolling server runtime releases',
+  );
 });
 
 test('release workflows do not embed invalid JS escaping in node -p/-e snippets', async () => {

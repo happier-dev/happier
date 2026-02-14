@@ -15,6 +15,7 @@ if ($Token) {
 }
 $InstallDir = if ($env:HAPPIER_INSTALL_DIR) { $env:HAPPIER_INSTALL_DIR } else { Join-Path $env:USERPROFILE ".happier" }
 $BinDir = if ($env:HAPPIER_BIN_DIR) { $env:HAPPIER_BIN_DIR } else { Join-Path $env:USERPROFILE ".local\bin" }
+$WithDaemon = if ($env:HAPPIER_WITH_DAEMON) { $env:HAPPIER_WITH_DAEMON } else { "1" }
 $DefaultMinisignPubKey = @"
 untrusted comment: minisign public key 91AE28177BF6E43C
 RWQ85PZ7FyiukYbL3qv/bKnwgbT68wLVzotapeMFIb8n+c7pBQ7U8W2t
@@ -155,6 +156,15 @@ try {
 
   Write-Host "Happier CLI installed at $target"
   & $target --version
+
+  if ($WithDaemon -ne "0") {
+    Write-Host "Installing daemon service (user-mode)..."
+    try {
+      & $target daemon service install *> $null
+    } catch {
+      Write-Warning "daemon service install failed. You can retry manually: `"$target daemon service install`""
+    }
+  }
 }
 finally {
   Remove-Item -Path $tmpDir.FullName -Recurse -Force -ErrorAction SilentlyContinue

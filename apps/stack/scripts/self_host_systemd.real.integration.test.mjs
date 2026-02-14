@@ -1,38 +1,13 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { chmod, cp, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises';
-import { createServer } from 'node:net';
+import { chmod, cp, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-const SELF_HOST_PORT_MIN = 20_000;
-const SELF_HOST_PORT_MAX = 29_999;
-const SELF_HOST_PORT_ATTEMPTS = 40;
 const SELF_HOST_INSTALL_TIMEOUT_MS = 420_000;
 
-function commandExists(cmd) {
-  return spawnSync('bash', ['-lc', `command -v ${cmd} >/dev/null 2>&1`], { stdio: 'ignore' }).status === 0;
-}
-
-function run(cmd, args, { cwd, env, timeoutMs = 0, allowFail = false, stdio = 'pipe' } = {}) {
-  const result = spawnSync(cmd, args, {
-    cwd,
-    env: env ?? process.env,
-    encoding: 'utf-8',
-    stdio,
-    timeout: timeoutMs || undefined,
-  });
-  const timedOut = result.error && result.error.code === 'ETIMEDOUT';
-  if (!allowFail && (timedOut || (result.status ?? 1) !== 0)) {
-    const stderr = String(result.stderr ?? '').trim();
-    const stdout = String(result.stdout ?? '').trim();
-    const reason = timedOut ? 'timed out' : `exited with status ${result.status}`;
-    throw new Error(`[self-host-systemd] ${cmd} ${args.join(' ')} ${reason}\nstdout:\n${stdout}\nstderr:\n${stderr}`);
-  }
-  return result;
-}
+import { commandExists, extractBinaryFromArtifact, reserveLocalhostPort, run, waitForHealth } from './self_host_service_e2e_harness.mjs';
 
 function runAsRoot(cmd, args, { cwd, env, timeoutMs = 0, allowFail = false, stdio = 'pipe' } = {}) {
   const mergedEnv = {
@@ -40,75 +15,20 @@ function runAsRoot(cmd, args, { cwd, env, timeoutMs = 0, allowFail = false, stdi
     ...(env ?? {}),
   };
   if (typeof process.getuid === 'function' && process.getuid() === 0) {
-    return run(cmd, args, { cwd, env: mergedEnv, timeoutMs, allowFail, stdio });
+    return run(cmd, args, { label: 'self-host-systemd', cwd, env: mergedEnv, timeoutMs, allowFail, stdio });
   }
   if (!commandExists('sudo')) {
     throw new Error('[self-host-systemd] sudo is required for systemd self-host test');
   }
   const envArgs = Object.entries(mergedEnv).map(([key, value]) => `${key}=${String(value ?? '')}`);
   return run('sudo', ['-E', 'env', ...envArgs, cmd, ...args], {
+    label: 'self-host-systemd',
     cwd,
     env: process.env,
     timeoutMs,
     allowFail,
     stdio,
   });
-}
-
-async function extractBinaryFromArtifact({ artifactPath, binaryName }) {
-  const extractDir = await mkdtemp(join(tmpdir(), 'happier-self-host-systemd-artifact-'));
-  run('tar', ['-xzf', artifactPath, '-C', extractDir], { timeoutMs: 30_000 });
-  const roots = await readdir(extractDir);
-  assert.ok(roots.length > 0, `expected extracted root directory for ${artifactPath}`);
-  return {
-    extractDir,
-    binaryPath: join(extractDir, roots[0], binaryName),
-  };
-}
-
-async function waitForHealth(url, timeoutMs = 60_000) {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    try {
-      const response = await fetch(url, {
-        headers: { accept: 'application/json' },
-      });
-      if (response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        if (payload?.ok === true) {
-          return true;
-        }
-      }
-    } catch {
-      // keep polling until timeout
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-  }
-  return false;
-}
-
-async function canBindLocalhostPort(port) {
-  return await new Promise((resolvePort) => {
-    const server = createServer();
-    server.unref();
-    server.once('error', () => resolvePort(false));
-    server.listen(port, '127.0.0.1', () => {
-      server.close((error) => {
-        resolvePort(!error);
-      });
-    });
-  });
-}
-
-async function reserveLocalhostPort() {
-  for (let attempt = 0; attempt < SELF_HOST_PORT_ATTEMPTS; attempt += 1) {
-    const candidate =
-      SELF_HOST_PORT_MIN + Math.floor(Math.random() * (SELF_HOST_PORT_MAX - SELF_HOST_PORT_MIN + 1));
-    if (await canBindLocalhostPort(candidate)) {
-      return candidate;
-    }
-  }
-  throw new Error('failed to reserve localhost port from non-ephemeral range');
 }
 
 test(
@@ -148,6 +68,7 @@ test(
         '--targets=linux-x64',
       ],
       {
+        label: 'self-host-systemd',
         cwd: repoRoot,
         env: { ...process.env },
         timeoutMs: 8 * 60_000,
@@ -162,6 +83,7 @@ test(
         '--targets=linux-x64',
       ],
       {
+        label: 'self-host-systemd',
         cwd: repoRoot,
         env: { ...process.env },
         timeoutMs: 8 * 60_000,
@@ -171,8 +93,8 @@ test(
     const hstackArtifact = join(repoRoot, 'dist', 'release-assets', 'stack', `hstack-v${version}-linux-x64.tar.gz`);
     const serverArtifact = join(repoRoot, 'dist', 'release-assets', 'server', `happier-server-v${version}-linux-x64.tar.gz`);
 
-    const extractedHstack = await extractBinaryFromArtifact({ artifactPath: hstackArtifact, binaryName: 'hstack' });
-    const extractedServer = await extractBinaryFromArtifact({ artifactPath: serverArtifact, binaryName: 'happier-server' });
+    const extractedHstack = await extractBinaryFromArtifact({ label: 'self-host-systemd', artifactPath: hstackArtifact, binaryName: 'hstack' });
+    const extractedServer = await extractBinaryFromArtifact({ label: 'self-host-systemd', artifactPath: serverArtifact, binaryName: 'happier-server' });
 
     t.after(async () => {
       await rm(extractedHstack.extractDir, { recursive: true, force: true });

@@ -12,7 +12,8 @@ test('tests workflow gates installer smoke on existing release tags (bootstrap-f
 
   // We deliberately avoid hard-coding step names; we only assert on the behavior:
   // the workflow must check for the cli-stable tag and only run the installer when it exists.
-  assert.match(raw, /releases\/tags\/cli-stable/, 'tests.yml should check GitHub releases/tags/cli-stable');
+  assert.match(raw, /releases\/tags\//, 'tests.yml should check GitHub releases/tags/<tag>');
+  assert.match(raw, /cli-stable/, 'tests.yml should include a stable tag default (cli-stable)');
 
   const expectedIf = /if:\s*steps\.cli_tag\.outputs\.tag_exists\s*==\s*'true'/;
   assert.match(raw, expectedIf, 'installer smoke steps should be gated by cli_tag.tag_exists');

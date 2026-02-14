@@ -2,10 +2,16 @@
 set -euo pipefail
 
 CHANNEL="${HAPPIER_CHANNEL:-stable}"
+MODE="${HAPPIER_SELF_HOST_MODE:-user}"
+MODE_SOURCE="default"
+if [[ -n "${HAPPIER_SELF_HOST_MODE:-}" ]]; then
+  MODE_SOURCE="env"
+fi
 WITH_CLI="${HAPPIER_WITH_CLI:-1}"
 NONINTERACTIVE="${HAPPIER_NONINTERACTIVE:-0}"
-STACK_INSTALL_DIR="${HAPPIER_SELF_HOST_INSTALL_ROOT:-${HAPPIER_INSTALL_DIR:-/opt/happier}}"
-STACK_BIN_DIR="${HAPPIER_SELF_HOST_BIN_DIR:-${HAPPIER_BIN_DIR:-/usr/local/bin}}"
+HAPPIER_HOME="${HAPPIER_HOME:-${HOME}/.happier}"
+STACK_INSTALL_DIR="${HAPPIER_STACK_INSTALL_ROOT:-}"
+STACK_BIN_DIR="${HAPPIER_STACK_BIN_DIR:-}"
 GITHUB_REPO="${HAPPIER_GITHUB_REPO:-happier-dev/happier}"
 DEFAULT_MINISIGN_PUBKEY="$(cat <<'EOF'
 untrusted comment: minisign public key 91AE28177BF6E43C
@@ -21,12 +27,22 @@ usage() {
 Usage:
   curl -fsSL https://happier.dev/self-host | bash
 
+Mode:
+  curl -fsSL https://happier.dev/self-host | bash -s -- --mode user
+  curl -fsSL https://happier.dev/self-host | sudo bash -s -- --mode system
+
 Preview channel:
   curl -fsSL https://happier.dev/self-host | bash -s -- --channel preview
-  curl -fsSL https://happier.dev/self-host | sudo env HAPPIER_CHANNEL=preview bash
-  curl -fsSL https://happier.dev/self-host-preview | sudo bash
+  curl -fsSL https://happier.dev/self-host | HAPPIER_CHANNEL=preview bash
+  curl -fsSL https://happier.dev/self-host-preview | bash
+
+Windows (PowerShell):
+  irm https://happier.dev/self-host-preview.ps1 | iex
 
 Options:
+  --mode <user|system>
+  --user
+  --system
   --channel <stable|preview>
   --stable
   --preview
@@ -43,34 +59,38 @@ for arg in "$@"; do
   esac
 done
 
-if [[ "$(uname -s)" != "Linux" ]]; then
-  echo "Happier Self-Host guided installer currently supports Linux only." >&2
-  exit 1
-fi
-
-if ! command -v systemctl >/dev/null 2>&1; then
-  echo "systemctl is required for self-host installation." >&2
-  exit 1
-fi
-
-if [[ "${EUID}" -ne 0 ]]; then
-  if command -v sudo >/dev/null 2>&1; then
-    if [[ -f "${0}" ]]; then
-      echo "Re-running with sudo for system-level install..."
-      exec sudo -E bash "$0" "$@"
-    fi
-    echo "This installer requires root. Re-run with sudo:" >&2
-    echo "  curl -fsSL https://happier.dev/self-host | sudo bash -s -- $*" >&2
-    echo "Preview:" >&2
-    echo "  curl -fsSL https://happier.dev/self-host | sudo env HAPPIER_CHANNEL=preview bash" >&2
-    exit 1
-  fi
-  echo "Please run as root (or install sudo)." >&2
-  exit 1
-fi
-
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --mode)
+      if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        echo "Missing value for --mode" >&2
+        usage >&2
+        exit 1
+      fi
+      MODE="${2}"
+      MODE_SOURCE="arg"
+      shift 2
+      ;;
+    --mode=*)
+      MODE="${1#*=}"
+      if [[ -z "${MODE}" ]]; then
+        echo "Missing value for --mode" >&2
+        usage >&2
+        exit 1
+      fi
+      MODE_SOURCE="arg"
+      shift 1
+      ;;
+    --user)
+      MODE="user"
+      MODE_SOURCE="arg"
+      shift 1
+      ;;
+    --system)
+      MODE="system"
+      MODE_SOURCE="arg"
+      shift 1
+      ;;
     --channel)
       if [[ $# -lt 2 || -z "${2:-}" ]]; then
         echo "Missing value for --channel" >&2
@@ -109,8 +129,61 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "${MODE}" != "user" && "${MODE}" != "system" ]]; then
+  echo "Invalid mode: ${MODE}. Expected user or system." >&2
+  exit 1
+fi
+
 if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "preview" ]]; then
   echo "Invalid HAPPIER_CHANNEL='${CHANNEL}'. Expected stable or preview." >&2
+  exit 1
+fi
+
+UNAME="$(uname -s)"
+OS=""
+case "${UNAME}" in
+  Linux) OS="linux" ;;
+  Darwin) OS="darwin" ;;
+  *)
+    echo "Happier Self-Host guided installer currently supports macOS and Linux only." >&2
+    echo "On Windows, run the PowerShell installer instead:" >&2
+    echo "  irm https://happier.dev/self-host-preview.ps1 | iex" >&2
+    exit 1
+    ;;
+esac
+
+if [[ -z "${STACK_INSTALL_DIR}" ]]; then
+  if [[ "${MODE}" == "system" ]]; then
+    STACK_INSTALL_DIR="${HAPPIER_INSTALL_DIR:-/opt/happier}"
+  else
+    STACK_INSTALL_DIR="${HAPPIER_HOME}/stack"
+  fi
+fi
+
+if [[ -z "${STACK_BIN_DIR}" ]]; then
+  if [[ "${MODE}" == "system" ]]; then
+    STACK_BIN_DIR="${HAPPIER_BIN_DIR:-/usr/local/bin}"
+  else
+    STACK_BIN_DIR="${HAPPIER_HOME}/bin"
+  fi
+fi
+
+if [[ "${MODE}" == "system" && "${EUID}" -ne 0 ]]; then
+  if command -v sudo >/dev/null 2>&1; then
+    if [[ -f "${0}" ]]; then
+      echo "Re-running with sudo for system-level install..."
+      exec sudo -E bash "$0" "$@"
+    fi
+    echo "This installer requires root for --mode system. Re-run with sudo:" >&2
+    echo "  curl -fsSL https://happier.dev/self-host | sudo bash -s -- $*" >&2
+    exit 1
+  fi
+  echo "Please run as root (or install sudo) for --mode system." >&2
+  exit 1
+fi
+
+if [[ "${OS}" == "linux" && ! command -v systemctl >/dev/null 2>&1 ]]; then
+  echo "systemctl is required for self-host installation on Linux." >&2
   exit 1
 fi
 
@@ -179,8 +252,18 @@ ensure_minisign() {
 
   # Self-contained fallback: download a known minisign release asset into TMP_DIR.
   local minisign_version="0.12"
-  local asset="minisign-${minisign_version}-linux.tar.gz"
-  local expected_sha="9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73"
+  local asset=""
+  local expected_sha=""
+  if [[ "${OS}" == "linux" ]]; then
+    asset="minisign-${minisign_version}-linux.tar.gz"
+    expected_sha="9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73"
+  elif [[ "${OS}" == "darwin" ]]; then
+    asset="minisign-${minisign_version}-macos.zip"
+    expected_sha="89000b19535765f9cffc65a65d64a820f433ef6db8020667f7570e06bf6aac63"
+  else
+    echo "minisign bootstrap is not supported on this platform." >&2
+    return 1
+  fi
   local url_base="https://github.com/jedisct1/minisign/releases/download/${minisign_version}"
 
   local archive_path="${TMP_DIR}/${asset}"
@@ -194,9 +277,20 @@ ensure_minisign() {
 
   local extract_dir="${TMP_DIR}/minisign-extract"
   mkdir -p "${extract_dir}"
-  tar -xzf "${archive_path}" -C "${extract_dir}"
+  if [[ "${asset}" == *.tar.gz ]]; then
+    tar -xzf "${archive_path}" -C "${extract_dir}"
+  else
+    if command -v unzip >/dev/null 2>&1; then
+      unzip -q "${archive_path}" -d "${extract_dir}"
+    elif command -v ditto >/dev/null 2>&1; then
+      ditto -x -k "${archive_path}" "${extract_dir}"
+    else
+      echo "unzip (or ditto) is required to bootstrap minisign on macOS." >&2
+      return 1
+    fi
+  fi
   local bin_path
-  bin_path="$(find "${extract_dir}" -type f -name minisign -perm -u+x | head -n 1 || true)"
+  bin_path="$(find "${extract_dir}" -type f -name minisign | head -n 1 || true)"
   if [[ -z "${bin_path}" ]]; then
     echo "Failed to locate minisign binary in bootstrap archive." >&2
     return 1
@@ -229,11 +323,11 @@ if ! RELEASE_JSON="$(curl -fsSL "${API_URL}")"; then
   fi
   exit 1
 fi
-ASSET_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "^hstack-v.*-linux-${ARCH}\\.tar\\.gz$")"
+ASSET_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "^hstack-v.*-${OS}-${ARCH}\\.tar\\.gz$")"
 CHECKSUMS_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "^checksums-hstack-v.*\\.txt$")"
 SIG_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "^checksums-hstack-v.*\\.txt\\.minisig$")"
 if [[ -z "${ASSET_URL}" ]]; then
-  echo "Unable to find hstack binary for linux-${ARCH} in ${TAG}." >&2
+  echo "Unable to find hstack binary for ${OS}-${ARCH} in ${TAG}." >&2
   exit 1
 fi
 if [[ -z "${CHECKSUMS_URL}" ]]; then
@@ -290,20 +384,18 @@ if [[ -z "${BINARY_PATH}" ]]; then
   exit 1
 fi
 
-mkdir -p "${STACK_INSTALL_DIR}/bin" "${STACK_BIN_DIR}" /etc/happier /var/lib/happier /var/log/happier
+mkdir -p "${STACK_INSTALL_DIR}/bin" "${STACK_BIN_DIR}"
 cp "${BINARY_PATH}" "${STACK_INSTALL_DIR}/bin/hstack"
 chmod +x "${STACK_INSTALL_DIR}/bin/hstack"
 ln -sf "${STACK_INSTALL_DIR}/bin/hstack" "${STACK_BIN_DIR}/hstack"
 
 echo "Installed hstack to ${STACK_INSTALL_DIR}/bin/hstack"
 
-SELF_HOST_ARGS=(self-host install --non-interactive --channel="${CHANNEL}")
+SELF_HOST_ARGS=(self-host install --non-interactive --channel="${CHANNEL}" --mode="${MODE}")
 if [[ "${WITH_CLI}" != "1" ]]; then
   SELF_HOST_ARGS+=(--without-cli)
 fi
 
-export HAPPIER_SELF_HOST_INSTALL_ROOT="${STACK_INSTALL_DIR}"
-export HAPPIER_SELF_HOST_BIN_DIR="${STACK_BIN_DIR}"
 export HAPPIER_NONINTERACTIVE="${NONINTERACTIVE}"
 
 if [[ "${NONINTERACTIVE}" != "1" ]]; then
@@ -313,4 +405,4 @@ fi
 
 echo
 echo "Happier Self-Host installation completed."
-echo "Run: hstack self-host status"
+echo "Run: ${STACK_BIN_DIR}/hstack self-host status"

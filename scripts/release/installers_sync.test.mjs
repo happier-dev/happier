@@ -78,6 +78,7 @@ test('syncInstallers publishes preview shortcut endpoints', () => {
   assert.ok(targets.includes('install-preview'), 'expected install-preview to be published');
   assert.ok(targets.includes('self-host-preview'), 'expected self-host-preview to be published');
   assert.ok(targets.includes('install-preview.ps1'), 'expected install-preview.ps1 to be published');
+  assert.ok(targets.includes('self-host-preview.ps1'), 'expected self-host-preview.ps1 to be published');
 });
 
 test('syncInstallers normalizes target file modes even when contents are already in sync', async () => {

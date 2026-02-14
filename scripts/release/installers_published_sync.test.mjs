@@ -12,9 +12,15 @@ const { INSTALLER_PUBLISH_SPECS } = await import('./sync-installers.mjs');
 
 function applyTransform({ source, transform }) {
   if (transform === 'preview-default-channel') {
-    return source
-      .replace('HAPPIER_CHANNEL:-stable', 'HAPPIER_CHANNEL:-preview')
-      .replace('$Channel = "stable"', '$Channel = "preview"');
+    const shellUpdated = source.replaceAll('HAPPIER_CHANNEL:-stable', 'HAPPIER_CHANNEL:-preview');
+    return shellUpdated
+      .split('\n')
+      .map((line) => {
+        if (!line.includes('$Channel')) return line;
+        if (!line.includes('"stable"')) return line;
+        return line.replace('"stable"', '"preview"');
+      })
+      .join('\n');
   }
   return source;
 }

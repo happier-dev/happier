@@ -19,6 +19,9 @@ export const CLI_STACK_TARGETS = [
 export const SERVER_TARGETS = [
   { bunTarget: 'bun-linux-x64', os: 'linux', arch: 'x64', exeExt: '' },
   { bunTarget: 'bun-linux-arm64', os: 'linux', arch: 'arm64', exeExt: '' },
+  { bunTarget: 'bun-darwin-x64', os: 'darwin', arch: 'x64', exeExt: '' },
+  { bunTarget: 'bun-darwin-arm64', os: 'darwin', arch: 'arm64', exeExt: '' },
+  { bunTarget: 'bun-windows-x64', os: 'windows', arch: 'x64', exeExt: '.exe' },
 ];
 
 let _isGnuTar = null;

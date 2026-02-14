@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CLI_STACK_TARGETS, resolveTargets } from './lib/binary_release.mjs';
+import { CLI_STACK_TARGETS, SERVER_TARGETS, resolveTargets } from './lib/binary_release.mjs';
 
 test('resolveTargets returns all targets when filter is empty', () => {
   const targets = resolveTargets({ availableTargets: CLI_STACK_TARGETS, requested: '' });
@@ -20,4 +20,14 @@ test('resolveTargets throws for unknown requested targets', () => {
   assert.throws(() => {
     resolveTargets({ availableTargets: CLI_STACK_TARGETS, requested: 'linux-ppc64' });
   }, /unknown target/);
+});
+
+test('SERVER_TARGETS covers linux/darwin/windows defaults', () => {
+  const targets = resolveTargets({ availableTargets: SERVER_TARGETS, requested: '' });
+  const set = new Set(targets.map((t) => `${t.os}-${t.arch}`));
+  assert.ok(set.has('linux-x64'));
+  assert.ok(set.has('linux-arm64'));
+  assert.ok(set.has('darwin-x64'));
+  assert.ok(set.has('darwin-arm64'));
+  assert.ok(set.has('windows-x64'));
 });

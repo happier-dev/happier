@@ -873,8 +873,20 @@ jobs:
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
       allow_cross_promote: false
       bump: none
-      publish_runtime_release: ${{ inputs.environment != 'production' }}
+      publish_runtime_release: false
       run_tests: false
+
+  publish_server_runtime:
+    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && inputs.environment == 'preview' && needs.plan.outputs.publish_server == 'true' && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped')
+    needs: [plan, bump_versions_dev]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-server-runtime.yml
+    secrets: inherit
+    with:
+      channel: preview
+      source_ref: dev
+      allow_stable: false
 
   deploy_website:
     if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || needs.plan.outputs.bump_website != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')

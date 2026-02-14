@@ -95,6 +95,7 @@ jobs:
       run_providers: false
       run_release_contracts: false
       run_installers_smoke: ${{ inputs.run_installers_smoke }}
+      installers_channel: ${{ inputs.channel == 'production' && 'stable' || 'preview' }}
       run_binary_smoke: ${{ inputs.run_binary_smoke }}
       run_self_host_systemd: ${{ inputs.run_self_host_systemd }}
       run_self_host_launchd: ${{ inputs.run_self_host_launchd }}

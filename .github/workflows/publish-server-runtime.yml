@@ -1,0 +1,239 @@
+name: PUBLISH — Server Runtime (GitHub)
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Release channel (preview only for now)"
+        required: true
+        type: choice
+        default: preview
+        options:
+          - preview
+          - stable
+      source_ref:
+        description: "Source ref to publish (auto => preview:dev, stable:main)"
+        required: true
+        default: auto
+        type: string
+      allow_stable:
+        description: "Safety — allow publishing stable artifacts (disabled by default)"
+        required: true
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      channel:
+        required: true
+        type: string
+      source_ref:
+        required: false
+        default: auto
+        type: string
+      allow_stable:
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-server-runtime-${{ inputs.channel }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release_actor_guard:
+    name: Release actor guard
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Authorize release actor
+        uses: ./.github/actions/release-actor-guard
+        with:
+          team_slug: release-admins
+
+  build:
+    needs: [release_actor_guard]
+    runs-on: ubuntu-latest
+    environment: release-shared
+    outputs:
+      target_sha: ${{ steps.meta.outputs.target_sha }}
+      server_version: ${{ steps.meta.outputs.server_version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      title: ${{ steps.meta.outputs.title }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      rolling_tag: ${{ steps.meta.outputs.rolling_tag }}
+      notes: ${{ steps.meta.outputs.notes }}
+    steps:
+      - name: Enforce stable publishing gate
+        if: ${{ inputs.channel == 'stable' && inputs.allow_stable != true }}
+        run: |
+          echo "Stable server runtime publishing is disabled. Re-run with allow_stable=true if intentional." >&2
+          exit 1
+
+      - name: Resolve source ref
+        id: resolve_source
+        run: |
+          set -euo pipefail
+          channel="${{ inputs.channel }}"
+          src="${{ inputs.source_ref }}"
+          if [ "$src" = "auto" ]; then
+            if [ "$channel" = "preview" ]; then
+              src="dev"
+            else
+              src="main"
+            fi
+          fi
+          echo "ref=$src" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - name: Checkout source ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.resolve_source.outputs.ref }}
+          fetch-depth: 0
+          token: ${{ steps.app_token.outputs.token }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack (Yarn)
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+
+      - name: Install minisign (signing + verification)
+        uses: ./.github/actions/bootstrap-minisign
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Run release contract tests
+        run: yarn -s test:release:contracts
+
+      - name: Verify installer assets are synced
+        run: node scripts/release/sync-installers.mjs --check
+
+      - name: Compute publish metadata
+        id: meta
+        run: |
+          set -euo pipefail
+
+          server_version="$(node -p 'require("./apps/server/package.json").version' | tr -d '\n')"
+          if [ -z "${server_version:-}" ]; then
+            echo "Unable to resolve apps/server version" >&2
+            exit 1
+          fi
+
+          channel="${{ inputs.channel }}"
+          if [ "$channel" = "preview" ]; then
+            echo "tag=server-preview" >> "$GITHUB_OUTPUT"
+            echo "title=Server Preview" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "rolling_tag=true" >> "$GITHUB_OUTPUT"
+            echo "notes=Rolling preview server runtime release." >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=server-stable" >> "$GITHUB_OUTPUT"
+            echo "title=Server Stable" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "rolling_tag=true" >> "$GITHUB_OUTPUT"
+            echo "notes=Stable server runtime release." >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "server_version=${server_version}" >> "$GITHUB_OUTPUT"
+          echo "target_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build server runtime binaries
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          node scripts/release/build-server-binaries.mjs \
+            --channel="${{ inputs.channel }}" \
+            --version="${{ steps.meta.outputs.server_version }}"
+
+      - name: Generate server manifests
+        env:
+          ASSETS_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag }}
+          MANIFEST_CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          node scripts/release/publish-manifests.mjs \
+            --product=happier-server \
+            --channel="${MANIFEST_CHANNEL}" \
+            --version="${{ steps.meta.outputs.server_version }}" \
+            --artifacts-dir="dist/release-assets/server" \
+            --out-dir="dist/release-assets/server/manifests" \
+            --assets-base-url="${ASSETS_BASE_URL}" \
+            --commit-sha="${{ steps.meta.outputs.target_sha }}" \
+            --workflow-run-id="${{ github.run_id }}"
+
+      - name: Verify server release artifacts
+        run: |
+          set -euo pipefail
+          version="${{ steps.meta.outputs.server_version }}"
+          channel="${{ inputs.channel }}"
+          test -f "dist/release-assets/server/checksums-happier-server-v${version}.txt"
+          test -f "dist/release-assets/server/checksums-happier-server-v${version}.txt.minisig"
+          test -f "dist/release-assets/server/manifests/v1/happier-server/${channel}/latest.json"
+
+      - name: Cryptographic verify server release artifacts
+        run: |
+          set -euo pipefail
+          version="${{ steps.meta.outputs.server_version }}"
+          node scripts/release/verify-artifacts.mjs \
+            --artifacts-dir="dist/release-assets/server" \
+            --checksums="dist/release-assets/server/checksums-happier-server-v${version}.txt" \
+            --public-key="scripts/release/installers/happier-release.pub" \
+            --skip-smoke
+
+      - name: Upload server runtime assets artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-runtime-assets
+          path: dist/release-assets/server/**
+          retention-days: 7
+
+  publish:
+    needs: [build]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-github-release.yml
+    secrets: inherit
+    with:
+      tag: ${{ needs.build.outputs.tag }}
+      title: ${{ needs.build.outputs.title }}
+      target_sha: ${{ needs.build.outputs.target_sha }}
+      prerelease: ${{ needs.build.outputs.prerelease == 'true' }}
+      rolling_tag: ${{ needs.build.outputs.rolling_tag == 'true' }}
+      generate_notes: false
+      notes: ${{ needs.build.outputs.notes }}
+      assets_artifact: server-runtime-assets
+      assets_artifact_path: dist/release-assets
+      assets_dir: dist/release-assets/server
+      clobber: true
+

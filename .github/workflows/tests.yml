@@ -118,6 +118,14 @@ on:
         required: true
         default: true
         type: boolean
+      installers_channel:
+        description: "Installers — Channel for installer smoke tests (stable uses install.sh/install.ps1; preview uses install-preview.*)"
+        required: true
+        default: stable
+        type: choice
+        options:
+          - stable
+          - preview
       run_binary_smoke:
         description: "Binaries — Run isolated binary smoke tests (cli/server/self-host)"
         required: true
@@ -125,6 +133,21 @@ on:
         type: boolean
       run_self_host_systemd:
         description: "Binaries — Run real Linux systemd self-host install/uninstall E2E"
+        required: true
+        default: false
+        type: boolean
+      run_self_host_launchd:
+        description: "Binaries — Run real macOS launchd self-host install/uninstall E2E"
+        required: true
+        default: false
+        type: boolean
+      run_self_host_schtasks:
+        description: "Binaries — Run real Windows schtasks self-host install/uninstall E2E"
+        required: true
+        default: false
+        type: boolean
+      run_self_host_daemon:
+        description: "Binaries — Run real self-host (linux+mac) + CLI daemon integration E2E"
         required: true
         default: false
         type: boolean
@@ -224,11 +247,27 @@ on:
         required: false
         default: true
         type: boolean
+      installers_channel:
+        required: false
+        default: stable
+        type: string
       run_binary_smoke:
         required: false
         default: true
         type: boolean
       run_self_host_systemd:
+        required: false
+        default: false
+        type: boolean
+      run_self_host_launchd:
+        required: false
+        default: false
+        type: boolean
+      run_self_host_schtasks:
+        required: false
+        default: false
+        type: boolean
+      run_self_host_daemon:
         required: false
         default: false
         type: boolean
@@ -553,6 +592,8 @@ jobs:
     name: Installer Smoke (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      INSTALLERS_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || 'stable' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -564,23 +605,31 @@ jobs:
 
       # Bootstrap-friendly: this repo can be green before the first GitHub release exists.
       # Once cli-stable is published, we enforce that the published installer can install it.
-      - name: Detect cli-stable release tag
+      - name: Detect CLI release tag
         id: cli_tag
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          api="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/cli-stable"
+          tag="cli-stable"
+          installer="install.sh"
+          if [ "${INSTALLERS_CHANNEL}" = "preview" ]; then
+            tag="cli-preview"
+            installer="install-preview.sh"
+          fi
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${tag}"
           code="$(curl -sS -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer ${GITHUB_TOKEN}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${api}" || true)"
           if [ "${code}" = "200" ]; then
             echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+            echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+            echo "installer=${installer}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "tag_exists=false" >> "$GITHUB_OUTPUT"
-          echo "Skipping installer smoke: cli-stable release tag not found (HTTP ${code})."
+          echo "Skipping installer smoke: ${tag} release tag not found (HTTP ${code})."
 
       - name: Run CLI installer from isolated temp location
         if: steps.cli_tag.outputs.tag_exists == 'true'
@@ -594,7 +643,7 @@ jobs:
           export HAPPIER_NONINTERACTIVE=1
           export HAPPIER_NO_PATH_UPDATE=1
 
-          cp apps/website/public/install.sh /tmp/happier-install.sh
+          cp "apps/website/public/${{ steps.cli_tag.outputs.installer }}" /tmp/happier-install.sh
           chmod +x /tmp/happier-install.sh
           /tmp/happier-install.sh
 
@@ -607,6 +656,8 @@ jobs:
     name: Installer Smoke (macOS)
     runs-on: macos-latest
     timeout-minutes: 25
+    env:
+      INSTALLERS_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || 'stable' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -614,23 +665,31 @@ jobs:
       - name: Verify published installers are synced
         run: node scripts/release/sync-installers.mjs --check
 
-      - name: Detect cli-stable release tag
+      - name: Detect CLI release tag
         id: cli_tag
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          api="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/cli-stable"
+          tag="cli-stable"
+          installer="install.sh"
+          if [ "${INSTALLERS_CHANNEL}" = "preview" ]; then
+            tag="cli-preview"
+            installer="install-preview.sh"
+          fi
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${tag}"
           code="$(curl -sS -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer ${GITHUB_TOKEN}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${api}" || true)"
           if [ "${code}" = "200" ]; then
             echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+            echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+            echo "installer=${installer}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "tag_exists=false" >> "$GITHUB_OUTPUT"
-          echo "Skipping installer smoke: cli-stable release tag not found (HTTP ${code})."
+          echo "Skipping installer smoke: ${tag} release tag not found (HTTP ${code})."
 
       - name: Run CLI installer from isolated temp location
         if: steps.cli_tag.outputs.tag_exists == 'true'
@@ -644,7 +703,7 @@ jobs:
           export HAPPIER_NONINTERACTIVE=1
           export HAPPIER_NO_PATH_UPDATE=1
 
-          cp apps/website/public/install.sh /tmp/happier-install.sh
+          cp "apps/website/public/${{ steps.cli_tag.outputs.installer }}" /tmp/happier-install.sh
           chmod +x /tmp/happier-install.sh
           /tmp/happier-install.sh
 
@@ -657,6 +716,8 @@ jobs:
     name: Installer Smoke (Windows)
     runs-on: windows-latest
     timeout-minutes: 25
+    env:
+      INSTALLERS_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || 'stable' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -665,14 +726,20 @@ jobs:
         shell: pwsh
         run: node scripts/release/sync-installers.mjs --check
 
-      - name: Detect cli-stable release tag
+      - name: Detect CLI release tag
         id: cli_tag
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = "Continue"
-          $api = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/cli-stable"
+          $tag = "cli-stable"
+          $installer = "install.ps1"
+          if ($env:INSTALLERS_CHANNEL -eq "preview") {
+            $tag = "cli-preview"
+            $installer = "install-preview.ps1"
+          }
+          $api = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"
           $headers = @{
             Authorization = "Bearer $env:GITHUB_TOKEN"
             "X-GitHub-Api-Version" = "2022-11-28"
@@ -682,9 +749,11 @@ jobs:
             Invoke-RestMethod -Uri $api -Headers $headers | Out-Null
             $exists = "true"
           } catch {
-            Write-Host "Skipping installer smoke: cli-stable release tag not found."
+            Write-Host "Skipping installer smoke: $tag release tag not found."
           }
           "tag_exists=$exists" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "installer=$installer" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Run CLI installer from isolated temp location
         shell: pwsh
@@ -698,7 +767,7 @@ jobs:
           $env:HAPPIER_BIN_DIR = Join-Path $env:RUNNER_TEMP ".local\bin"
 
           $scriptPath = Join-Path $env:RUNNER_TEMP "happier-install.ps1"
-          Copy-Item -Path "apps/website/public/install.ps1" -Destination $scriptPath -Force
+          Copy-Item -Path ("apps/website/public/" + "${{ steps.cli_tag.outputs.installer }}") -Destination $scriptPath -Force
           & $scriptPath
 
           $binaryPath = Join-Path $env:HAPPIER_BIN_DIR "happier.exe"
@@ -782,6 +851,117 @@ jobs:
         run: |
           set -euo pipefail
           node --test apps/stack/scripts/self_host_systemd.real.integration.test.mjs
+
+  self-host-launchd-e2e:
+    if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_self_host_launchd }}
+    name: Self-Host E2E (macOS launchd)
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Run real launchd self-host E2E
+        run: |
+          set -euo pipefail
+          node --test apps/stack/scripts/self_host_launchd.real.integration.test.mjs
+
+  self-host-schtasks-e2e:
+    if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_self_host_schtasks }}
+    name: Self-Host E2E (Windows schtasks)
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Run real schtasks self-host E2E
+        run: node --test apps/stack/scripts/self_host_schtasks.real.integration.test.mjs
+
+  self-host-daemon-e2e:
+    if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_self_host_daemon }}
+    name: Self-Host + Daemon E2E
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Run real self-host + daemon E2E
+        run: node --test apps/stack/scripts/self_host_daemon.real.integration.test.mjs
 
   typecheck:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_typecheck }}

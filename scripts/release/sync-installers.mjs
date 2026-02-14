@@ -14,6 +14,8 @@ export const INSTALLER_PUBLISH_SPECS = [
   { source: 'self-host.sh', targets: ['self-host-preview.sh', 'self-host-preview'], transform: 'preview-default-channel' },
   { source: 'install.ps1', targets: ['install.ps1'] },
   { source: 'install.ps1', targets: ['install-preview.ps1'], transform: 'preview-default-channel' },
+  { source: 'self-host.ps1', targets: ['self-host.ps1'] },
+  { source: 'self-host.ps1', targets: ['self-host-preview.ps1'], transform: 'preview-default-channel' },
   { source: 'happier-release.pub', targets: ['happier-release.pub'] },
 ];
 
@@ -40,10 +42,16 @@ function applyTransform(contents, transform) {
   if (!transform) return contents;
   const raw = contents.toString('utf8');
   if (transform === 'preview-default-channel') {
-    const updated = raw
-      .replaceAll('HAPPIER_CHANNEL:-stable', 'HAPPIER_CHANNEL:-preview')
-      .replaceAll('$Channel = "stable"', '$Channel = "preview"');
-    return Buffer.from(updated, 'utf8');
+    const shellUpdated = raw.replaceAll('HAPPIER_CHANNEL:-stable', 'HAPPIER_CHANNEL:-preview');
+    const lines = shellUpdated.split('\n');
+    const ps1Updated = lines
+      .map((line) => {
+        if (!line.includes('$Channel')) return line;
+        if (!line.includes('"stable"')) return line;
+        return line.replace('"stable"', '"preview"');
+      })
+      .join('\n');
+    return Buffer.from(ps1Updated, 'utf8');
   }
   throw new Error(`[release] unknown installer transform: ${transform}`);
 }

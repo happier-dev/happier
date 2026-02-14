@@ -5,6 +5,7 @@ CHANNEL="${HAPPIER_CHANNEL:-preview}"
 PRODUCT="${HAPPIER_PRODUCT:-cli}"
 INSTALL_DIR="${HAPPIER_INSTALL_DIR:-$HOME/.happier}"
 BIN_DIR="${HAPPIER_BIN_DIR:-$HOME/.local/bin}"
+WITH_DAEMON="${HAPPIER_WITH_DAEMON:-1}"
 NO_PATH_UPDATE="${HAPPIER_NO_PATH_UPDATE:-0}"
 NONINTERACTIVE="${HAPPIER_NONINTERACTIVE:-0}"
 GITHUB_REPO="${HAPPIER_GITHUB_REPO:-happier-dev/happier}"
@@ -32,6 +33,8 @@ Options:
   --channel <stable|preview>
   --stable
   --preview
+  --with-daemon
+  --without-daemon
   -h, --help
 EOF
 }
@@ -62,6 +65,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --preview)
       CHANNEL="preview"
+      shift 1
+      ;;
+    --with-daemon)
+      WITH_DAEMON="1"
+      shift 1
+      ;;
+    --without-daemon)
+      WITH_DAEMON="0"
       shift 1
       ;;
     -h|--help)
@@ -373,6 +384,15 @@ chmod +x "${INSTALL_DIR}/bin/${EXE_NAME}"
 ln -sf "${INSTALL_DIR}/bin/${EXE_NAME}" "${BIN_DIR}/${EXE_NAME}"
 
 append_path_hint
+
+if [[ "${PRODUCT}" == "cli" && "${WITH_DAEMON}" == "1" ]]; then
+  echo
+  echo "Installing daemon service (user-mode)..."
+  if ! "${INSTALL_DIR}/bin/${EXE_NAME}" daemon service install >/dev/null 2>&1; then
+    echo "Warning: daemon service install failed. You can retry manually:" >&2
+    echo "  ${INSTALL_DIR}/bin/${EXE_NAME} daemon service install" >&2
+  fi
+fi
 
 echo
 echo "${INSTALL_NAME} installed:"
