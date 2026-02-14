@@ -5,9 +5,14 @@
 /apps/website/public/happier-release.pub @happier-dev/release-admins
 /apps/website/public/install.sh @happier-dev/release-admins
 /apps/website/public/install @happier-dev/release-admins
+/apps/website/public/install-preview.sh @happier-dev/release-admins
+/apps/website/public/install-preview @happier-dev/release-admins
 /apps/website/public/install.ps1 @happier-dev/release-admins
+/apps/website/public/install-preview.ps1 @happier-dev/release-admins
 /apps/website/public/self-host.sh @happier-dev/release-admins
 /apps/website/public/self-host @happier-dev/release-admins
+/apps/website/public/self-host-preview.sh @happier-dev/release-admins
+/apps/website/public/self-host-preview @happier-dev/release-admins
 
 # Release workflows and reusable release actions.
 /.github/workflows/release-*.yml @happier-dev/release-admins

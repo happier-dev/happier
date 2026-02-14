@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CHANNEL="${HAPPIER_CHANNEL:-stable}"
+CHANNEL="${HAPPIER_CHANNEL:-preview}"
 PRODUCT="${HAPPIER_PRODUCT:-cli}"
 INSTALL_DIR="${HAPPIER_INSTALL_DIR:-$HOME/.happier}"
 BIN_DIR="${HAPPIER_BIN_DIR:-$HOME/.local/bin}"

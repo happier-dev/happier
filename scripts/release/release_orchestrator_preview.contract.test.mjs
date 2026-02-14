@@ -82,6 +82,17 @@ test('release-npm is compatible with npm trusted publishing (OIDC)', async () =>
   assert.doesNotMatch(raw, /NPM_TOKEN is required for npm publish\./);
 });
 
+test('release-npm installs Sapling before cli integration tests', async () => {
+  const raw = await loadWorkflow('release-npm.yml');
+
+  assert.match(
+    raw,
+    /- name: Install Sapling[\s\S]*?if:\s*inputs\.publish_cli && inputs\.run_tests[\s\S]*?bash scripts\/ci\/install_sapling_ubuntu22\.sh/,
+    'release-npm should install Sapling in the cli test lane before running sapling integration tests',
+  );
+  assert.match(raw, /- name: Run cli tests[\s\S]*?yarn --cwd apps\/cli test:integration/);
+});
+
 test('release-npm derives unique preview prerelease versions from base versions', async () => {
   const raw = await loadWorkflow('release-npm.yml');
 
@@ -123,13 +134,11 @@ test('release-npm does not manage deploy/* branches (deploy is for server/web ap
   assert.doesNotMatch(raw, /deploy\/\$\{\{\s*inputs\.channel\s*\}\}\/stack/, 'release-npm should not promote deploy/<channel>/stack');
 });
 
-test('publish-github-release skips asset upload when rolling tag move is blocked', async () => {
+test('publish-github-release uploads assets without relying on git tag force-push', async () => {
   const raw = await loadWorkflow('publish-github-release.yml');
-  assert.match(
-    raw,
-    /- name: Upload assets[\s\S]*?if:\s*\$\{\{\s*\(!inputs\.rolling_tag \|\| steps\.move_rolling_tag\.outputs\.pushed == 'true'\)\s*&&\s*\(inputs\.assets != '' \|\| inputs\.assets_dir != ''\)\s*\}\}/,
-    'asset upload must be gated by rolling tag success when using rolling releases',
-  );
+  assert.doesNotMatch(raw, /- name: Move rolling tag/, 'publish-github-release should not try to force-move git tags');
+  assert.doesNotMatch(raw, /move_rolling_tag/, 'publish-github-release must not depend on rolling tag push results');
+  assert.match(raw, /- name: Upload assets[\s\S]*?inputs\.assets_dir != ''/, 'publish-github-release should upload assets when configured');
 });
 
 test('promote-ui native_submit handles preview platform credential gaps without aborting all submissions', async () => {
@@ -138,4 +147,16 @@ test('promote-ui native_submit handles preview platform credential gaps without 
   assert.match(raw, /for submit_platform_name in ios android; do/);
   assert.match(raw, /if \[ "\$\{\{ inputs\.environment \}\}" = "preview" \]; then/);
   assert.match(raw, /::warning::Expo submit failed for/);
+});
+
+test('production server deploy does not publish stable server runtime GitHub releases by default', async () => {
+  const release = await loadWorkflow('release.yml');
+  const promoteServer = await loadWorkflow('promote-server.yml');
+
+  assert.match(promoteServer, /publish_runtime_release:/, 'promote-server should expose a publish_runtime_release input');
+  assert.match(
+    release,
+    /deploy_server:[\s\S]*?uses:\s*\.\/\.github\/workflows\/promote-server\.yml[\s\S]*?publish_runtime_release:\s*\$\{\{\s*inputs\.environment\s*!=\s*'production'\s*\}\}/,
+    'release orchestrator should disable stable server runtime publishing for production deploys',
+  );
 });

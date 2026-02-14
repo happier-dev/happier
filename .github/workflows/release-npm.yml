@@ -293,6 +293,12 @@ jobs:
           PUBLISH_SERVER: ${{ inputs.publish_server }}
           SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
 
+      - name: Install Sapling
+        if: inputs.publish_cli && inputs.run_tests
+        run: |
+          set -euo pipefail
+          bash scripts/ci/install_sapling_ubuntu22.sh
+
       - name: Run cli tests
         if: inputs.publish_cli && inputs.run_tests
         run: |
