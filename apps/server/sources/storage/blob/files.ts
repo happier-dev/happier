@@ -32,11 +32,13 @@ export function initFilesS3FromEnv(env: NodeJS.ProcessEnv = process.env): void {
 
     const s3bucket = requiredEnv(env, 'S3_BUCKET');
     const s3public = requiredEnv(env, 'S3_PUBLIC_URL');
+    const s3Region = env.S3_REGION?.trim() ? env.S3_REGION.trim() : 'us-east-1';
 
     const s3client = new Minio.Client({
         endPoint: s3Host,
         port: s3Port,
         useSSL: s3UseSSL,
+        region: s3Region,
         accessKey: requiredEnv(env, 'S3_ACCESS_KEY'),
         secretKey: requiredEnv(env, 'S3_SECRET_KEY'),
     });
