@@ -11,6 +11,7 @@ import { handleDoctorCliCommand } from './commands/doctor';
 import { handleInstallCliCommand } from './commands/install';
 import { handleLogoutCliCommand } from './commands/logout';
 import { handleNotifyCliCommand } from './commands/notify';
+import { handleResumeCliCommand } from './commands/resume';
 import { handleServerCliCommand } from './commands/server';
 import { handleSelfCliCommand } from './commands/self';
 import { handleSelfUpdateCliCommand } from './commands/selfUpdate';
@@ -47,6 +48,7 @@ export const commandRegistry: Readonly<Record<string, CommandHandler>> = {
   install: handleInstallCliCommand,
   logout: handleLogoutCliCommand,
   notify: handleNotifyCliCommand,
+  resume: handleResumeCliCommand,
   server: handleServerCliCommand,
   self: handleSelfCliCommand,
   'self-update': handleSelfUpdateCliCommand,

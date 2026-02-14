@@ -5,8 +5,8 @@ import { router } from 'expo-router';
 import { useAuth } from '@/auth/context/AuthContext';
 import { TokenStorage, type AuthCredentials, isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
 import { decodeBase64 } from '@/encryption/base64';
-import { encryptBox } from '@/encryption/libsodium';
 import { authApprove } from '@/auth/flows/approve';
+import { buildTerminalResponseV1, buildTerminalResponseV2 } from '@/auth/terminal/terminalProvisioning';
 import { useCheckScannerPermissions } from '@/hooks/ui/useCheckCameraPermissions';
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -15,6 +15,7 @@ import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
 import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
 import { clearPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { parseTerminalConnectUrl } from '@/utils/path/terminalConnectUrl';
+import { storage } from '@/sync/domains/state/storageStore';
 
 interface UseConnectTerminalOptions {
     onSuccess?: () => void;
@@ -69,15 +70,26 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
             }
 
             const publicKey = decodeBase64(parsed.publicKeyB64Url, 'base64url');
-            // V1 response requires the legacy recovery secret. For dataKey credentials we prefer V2.
-            const responseV1 = isLegacyAuthCredentials(activeCredentials)
-                ? encryptBox(decodeBase64(activeCredentials.secret, 'base64url'), publicKey)
-                : new Uint8Array();
+
+            const allowLegacySecretExportEnabled = Boolean(
+                storage.getState().settings?.terminalConnectLegacySecretExportEnabled,
+            );
+
             const contentPrivateKey = sync.encryption.getContentPrivateKey();
-            let responseV2Bundle = new Uint8Array(contentPrivateKey.length + 1);
-            responseV2Bundle[0] = 0;
-            responseV2Bundle.set(contentPrivateKey, 1);
-            const responseV2 = encryptBox(responseV2Bundle, publicKey);
+            const responseV2 = buildTerminalResponseV2({
+                contentPrivateKey,
+                terminalEphemeralPublicKey: publicKey,
+            });
+
+            const responseV1 =
+                allowLegacySecretExportEnabled && isLegacyAuthCredentials(activeCredentials)
+                    ? () =>
+                        buildTerminalResponseV1({
+                            legacySecretB64Url: activeCredentials.secret,
+                            terminalEphemeralPublicKey: publicKey,
+                        })
+                    : new Uint8Array();
+
             await authApprove(activeCredentials.token, publicKey, responseV1, responseV2);
 
             // If we successfully completed a pending connect, clear it.

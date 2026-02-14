@@ -416,6 +416,10 @@ const SettingsSchemaBase = z.object({
         global: z.record(z.string(), z.boolean()).default({}),
     }).default({ perMachine: {}, global: {} }).describe('Tracks which CLI installation warnings user has dismissed (per-machine or globally)'),
 
+    // Terminal connect compatibility toggle (device-local; not synced to server).
+    // When enabled, the app may export legacy auth material to terminals if v2 provisioning is unavailable.
+    terminalConnectLegacySecretExportEnabled: z.boolean().describe('Allow terminal connect to fall back to exporting the legacy auth secret (compatibility mode)'),
+
     // Tool rendering detail level preferences (synced per user).
     // Keep flat: use toolView* prefix (see tool-normalization-refactor-plan.md).
     toolViewDetailLevelDefault: z.enum(['title', 'summary', 'full']).describe('Default tool detail level in the session timeline'),
@@ -577,6 +581,8 @@ export const settingsDefaults: Settings = {
     favoriteProfiles: [],
     // Dismissed CLI warnings (empty by default)
     dismissedCLIWarnings: { perMachine: {}, global: {} },
+
+    terminalConnectLegacySecretExportEnabled: false,
 
     toolViewDetailLevelDefault: 'summary',
     toolViewDetailLevelDefaultLocalControl: 'title',

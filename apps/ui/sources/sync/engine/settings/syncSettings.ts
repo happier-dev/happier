@@ -2,6 +2,10 @@ import { tracking } from '@/track';
 import { HappyError } from '@/utils/errors/errors';
 import { applySettings, settingsDefaults, settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import { summarizeSettings, summarizeSettingsDelta, dbgSettings, isSettingsSyncDebugEnabled } from '@/sync/domains/settings/debugSettings';
+import {
+    pickLocalOnlyAccountSettings,
+    stripLocalOnlyAccountSettings,
+} from '@/sync/domains/settings/localOnlyAccountSettings';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -9,7 +13,7 @@ import type { Encryption } from '@/sync/encryption/encryption';
 import { sealSecretsDeep } from '@/sync/encryption/secretSettings';
 import { serverFetch } from '@/sync/http/client';
 import { getRandomBytes } from '@/platform/cryptoRandom';
-import { openAccountSettingsCiphertext, sealAccountSettingsCiphertext } from '@/sync/domains/settings/accountSettingsCipher';
+import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 
 export async function syncSettings(params: {
     credentials: AuthCredentials;
@@ -23,24 +27,26 @@ export async function syncSettings(params: {
     const maxRetries = 3;
     let retryCount = 0;
     let lastVersionMismatch: { expectedVersion: number; currentVersion: number; pendingKeys: string[] } | null = null;
+    const pendingServerSettings = stripLocalOnlyAccountSettings(pendingSettings);
 
     // Apply pending settings
-    if (Object.keys(pendingSettings).length > 0) {
+    if (Object.keys(pendingServerSettings).length > 0) {
         dbgSettings('syncSettings: pending detected; will POST', {
             endpoint: activeServerUrl,
             expectedVersion: storage.getState().settingsVersion ?? 0,
-            pendingKeys: Object.keys(pendingSettings).sort(),
-            pendingSummary: summarizeSettingsDelta(pendingSettings as Partial<Settings>),
+            pendingKeys: Object.keys(pendingServerSettings).sort(),
+            pendingSummary: summarizeSettingsDelta(pendingServerSettings as Partial<Settings>),
             base: summarizeSettings(storage.getState().settings, { version: storage.getState().settingsVersion }),
         });
 
         while (retryCount < maxRetries) {
             const version = storage.getState().settingsVersion;
-            const settings = applySettings(storage.getState().settings, pendingSettings);
-            const machineKey = encryption.getContentPrivateKey();
-            const settingsCiphertext = sealAccountSettingsCiphertext({
-                machineKey,
-                settings: settings as unknown as Record<string, unknown>,
+            const mergedSettings = applySettings(storage.getState().settings, pendingServerSettings);
+            const settings = stripLocalOnlyAccountSettings(mergedSettings);
+            const settingsCiphertext = sealAccountScopedBlobCiphertext({
+                kind: 'account_settings',
+                material: { type: 'dataKey', machineKey: encryption.getContentPrivateKey() },
+                payload: settings,
                 randomBytes: getRandomBytes,
             });
             dbgSettings('syncSettings: POST attempt', {
@@ -86,29 +92,25 @@ export async function syncSettings(params: {
                 lastVersionMismatch = {
                     expectedVersion: version ?? 0,
                     currentVersion: data.currentVersion,
-                    pendingKeys: Object.keys(pendingSettings).sort(),
+                    pendingKeys: Object.keys(pendingServerSettings).sort(),
                 };
 
                 // Parse server settings
-                const machineKey = encryption.getContentPrivateKey();
-                const openedServerSettings = data.currentSettings
-                    ? await openAccountSettingsCiphertext({
-                          machineKey,
-                          ciphertext: data.currentSettings,
-                          fallbackDecryptRaw: (ciphertext) => encryption.decryptRaw(ciphertext),
-                      })
-                    : null;
-                const serverSettings = openedServerSettings
-                    ? settingsParse(openedServerSettings.value)
+                const serverSettings = data.currentSettings
+                    ? settingsParse((await decryptAccountSettingsCiphertextForUi(encryption, data.currentSettings)) ?? {})
                     : { ...settingsDefaults };
 
                 // Merge: server base + our pending changes (our changes win)
-                const mergedSettings = applySettings(serverSettings, pendingSettings);
+                const mergedServerSettings = applySettings(serverSettings, pendingServerSettings);
+                const mergedSettings = applySettings(
+                    mergedServerSettings,
+                    pickLocalOnlyAccountSettings(storage.getState().settings),
+                );
                 dbgSettings('syncSettings: version-mismatch merge', {
                     endpoint: activeServerUrl,
                     expectedVersion: version ?? 0,
                     currentVersion: data.currentVersion,
-                    pendingKeys: Object.keys(pendingSettings).sort(),
+                    pendingKeys: Object.keys(pendingServerSettings).sort(),
                     serverParsed: summarizeSettings(serverSettings, { version: data.currentVersion }),
                     merged: summarizeSettings(mergedSettings, { version: data.currentVersion }),
                 });
@@ -132,6 +134,14 @@ export async function syncSettings(params: {
 
             throw new Error(`Failed to sync settings: ${data.error}`);
         }
+    } else if (Object.keys(pendingSettings).length > 0) {
+        // Pending keys can include UI-local server-selection fields, which are intentionally local-only.
+        // Drop them from pending storage to avoid unnecessary sync attempts.
+        clearPendingSettings();
+        dbgSettings('syncSettings: cleared local-only pending settings keys', {
+            endpoint: activeServerUrl,
+            pendingKeys: Object.keys(pendingSettings).sort(),
+        });
     }
 
     // If exhausted retries, throw to trigger outer backoff delay
@@ -164,15 +174,24 @@ export async function syncSettings(params: {
 
     // Parse response
     const machineKey = encryption.getContentPrivateKey();
-    const openedSettings = data.settings
-        ? await openAccountSettingsCiphertext({
-              machineKey,
+    const opened = data.settings
+        ? openAccountScopedBlobCiphertext({
+              kind: 'account_settings',
+              material: { type: 'dataKey', machineKey },
               ciphertext: data.settings,
-              fallbackDecryptRaw: (ciphertext) => encryption.decryptRaw(ciphertext),
           })
         : null;
-    const parsedSettings = openedSettings
-        ? settingsParse(openedSettings.value)
+    const fallbackDecrypted = !opened && data.settings
+        ? await decryptAccountSettingsCiphertextForUi(encryption, data.settings)
+        : null;
+    const decryptedSettings = (() => {
+        const value = opened?.value ?? fallbackDecrypted;
+        return value && typeof value === 'object' && !Array.isArray(value)
+            ? (value as Record<string, unknown>)
+            : null;
+    })();
+    const parsedSettings = decryptedSettings
+        ? settingsParse(decryptedSettings)
         : { ...settingsDefaults };
 
     dbgSettings('syncSettings: GET applied', {
@@ -181,21 +200,27 @@ export async function syncSettings(params: {
         parsed: summarizeSettings(parsedSettings, { version: data.settingsVersion }),
     });
 
+    const nextSettings = applySettings(
+        parsedSettings,
+        pickLocalOnlyAccountSettings(storage.getState().settings),
+    );
+
     // Apply settings to storage
-    storage.getState().applySettings(parsedSettings, data.settingsVersion);
+    storage.getState().applySettings(nextSettings, data.settingsVersion);
 
     // Sync PostHog opt-out state with settings
     if (tracking) {
-        parsedSettings.analyticsOptOut ? tracking.optOut() : tracking.optIn();
+        nextSettings.analyticsOptOut ? tracking.optOut() : tracking.optIn();
     }
 
     // Best-effort migration: if settings were readable but not in the canonical v1 account-scoped format,
     // rewrite them so other clients (e.g. terminals/daemons) can decrypt them reliably.
-    if (data.settings && openedSettings && openedSettings.format !== 'account_scoped_v1') {
+    if (data.settings && decryptedSettings && (!opened || opened.format !== 'account_scoped_v1')) {
         try {
-            const migrateCiphertext = sealAccountSettingsCiphertext({
-                machineKey,
-                settings: parsedSettings as unknown as Record<string, unknown>,
+            const migrateCiphertext = sealAccountScopedBlobCiphertext({
+                kind: 'account_settings',
+                material: { type: 'dataKey', machineKey },
+                payload: stripLocalOnlyAccountSettings(parsedSettings),
                 randomBytes: getRandomBytes,
             });
             const migrateRes = await serverFetch('/v1/account/settings', {
@@ -211,15 +236,39 @@ export async function syncSettings(params: {
             }, { includeAuth: false });
 
             if (migrateRes.ok) {
-                const migrateData = (await migrateRes.json()) as { success?: unknown } | undefined;
-                if (migrateData && typeof migrateData === 'object' && (migrateData as any).success === true) {
-                    storage.getState().applySettings(parsedSettings, data.settingsVersion + 1);
+                const migrateData = await migrateRes.json() as { success?: unknown; version?: unknown } | undefined;
+                const ok = Boolean(migrateData && typeof migrateData === 'object' && (migrateData as any).success === true);
+                const nextVersion =
+                    typeof (migrateData as any)?.version === 'number'
+                        ? (migrateData as any).version
+                        : data.settingsVersion + 1;
+                if (ok) {
+                    storage.getState().applySettings(nextSettings, nextVersion);
                 }
             }
         } catch {
             // ignore migration failures (non-fatal)
         }
     }
+}
+
+async function decryptAccountSettingsCiphertextForUi(encryption: Encryption, ciphertext: string): Promise<Record<string, unknown> | null> {
+    const machineKey = encryption.getContentPrivateKey();
+    const opened = openAccountScopedBlobCiphertext({
+        kind: 'account_settings',
+        material: { type: 'dataKey', machineKey },
+        ciphertext,
+    });
+    if (opened?.value && typeof opened.value === 'object' && !Array.isArray(opened.value)) {
+        return opened.value as Record<string, unknown>;
+    }
+
+    // Backwards compatibility for historical ciphertext formats produced by older app builds.
+    const decrypted = await encryption.decryptRaw(ciphertext);
+    if (decrypted && typeof decrypted === 'object' && !Array.isArray(decrypted)) {
+        return decrypted as Record<string, unknown>;
+    }
+    return null;
 }
 
 export function applySettingsLocalDelta(params: {
@@ -286,8 +335,16 @@ export function applySettingsLocalDelta(params: {
 
     storage.getState().applySettingsLocal(delta);
 
+    const deltaForServer = stripLocalOnlyAccountSettings(delta);
+    if (Object.keys(deltaForServer).length === 0) {
+        dbgSettings('applySettings: local-only delta (no pending sync)', {
+            delta: summarizeSettingsDelta(delta),
+        });
+        return;
+    }
+
     // Save pending settings
-    const nextPending = { ...getPendingSettings(), ...delta };
+    const nextPending = { ...getPendingSettings(), ...deltaForServer };
     setPendingSettings(nextPending);
     dbgSettings('applySettings: pendingSettings updated', {
         pendingKeys: Object.keys(nextPending).sort(),

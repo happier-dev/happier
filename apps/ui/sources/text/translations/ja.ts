@@ -1439,6 +1439,14 @@ export const ja: TranslationStructure = {
             defaultTitle: 'Default',
             defaultSubtitle: 'Use the global default.',
         },
+        terminalConnect: {
+            title: 'Terminal connect',
+            legacySecretExportTitle: 'Legacy secret export (compatibility)',
+            legacySecretExportEnabledSubtitle:
+                'Enabled: exports your legacy account secret to the terminal so older terminals can connect. Not recommended.',
+            legacySecretExportDisabledSubtitle:
+                'Disabled (recommended): provision terminals with the content key only (Terminal Connect V2).',
+        },
     },
     settingsVoice: {
         // Voice settings screen

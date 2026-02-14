@@ -118,6 +118,7 @@ export default React.memo(function SessionSettingsScreen() {
     const [toolViewDetailLevelDefaultLocalControl, setToolViewDetailLevelDefaultLocalControl] = useSettingMutable('toolViewDetailLevelDefaultLocalControl');
     const [toolViewDetailLevelByToolName, setToolViewDetailLevelByToolName] = useSettingMutable('toolViewDetailLevelByToolName');
     const [toolViewShowDebugByDefault, setToolViewShowDebugByDefault] = useSettingMutable('toolViewShowDebugByDefault');
+    const [terminalConnectLegacySecretExportEnabled, setTerminalConnectLegacySecretExportEnabled] = useSettingMutable('terminalConnectLegacySecretExportEnabled');
 
     const enabledAgentIds = useEnabledAgentIds();
 
@@ -485,6 +486,26 @@ export default React.memo(function SessionSettingsScreen() {
                         )}
                     </>
                 )}
+            </ItemGroup>
+
+            <ItemGroup title={t('settingsSession.terminalConnect.title')}>
+                <Item
+                    title={t('settingsSession.terminalConnect.legacySecretExportTitle')}
+                    subtitle={
+                        terminalConnectLegacySecretExportEnabled
+                            ? t('settingsSession.terminalConnect.legacySecretExportEnabledSubtitle')
+                            : t('settingsSession.terminalConnect.legacySecretExportDisabledSubtitle')
+                    }
+                    icon={<Ionicons name="shield-outline" size={29} color="#5856D6" />}
+                    rightElement={
+                        <Switch
+                            value={terminalConnectLegacySecretExportEnabled}
+                            onValueChange={setTerminalConnectLegacySecretExportEnabled}
+                        />
+                    }
+                    showChevron={false}
+                    onPress={() => setTerminalConnectLegacySecretExportEnabled(!terminalConnectLegacySecretExportEnabled)}
+                />
             </ItemGroup>
         </ItemList>
     );
