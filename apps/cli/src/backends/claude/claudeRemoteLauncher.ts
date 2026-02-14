@@ -18,6 +18,7 @@ import { syncClaudePermissionModeFromMetadata } from "./utils/syncPermissionMode
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { waitForMessagesOrPending } from '@/agent/runtime/waitForMessagesOrPending';
 import { cleanupStdinAfterInk } from '@/ui/ink/cleanupStdinAfterInk';
+import { restoreStdinBestEffort } from '@/ui/ink/restoreStdinBestEffort';
 import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
 import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
 
@@ -478,11 +479,6 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 
         // Clean up permission handler
         permissionHandler.reset();
-
-        // Reset Terminal
-        if (process.stdin.isTTY) {
-            process.stdin.setRawMode(false);
-        }
         if (inkInstance) {
             inkInstance.unmount();
         }
@@ -490,6 +486,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
         // Give Ink a brief moment to release stdin/tty state, then drain any buffered input
         // (e.g. “double space” spam) so it doesn't leak into the next interactive process.
         await cleanupStdinAfterInk({ stdin: process.stdin as any, drainMs: 75 });
+        restoreStdinBestEffort({ stdin: process.stdin as any });
 
         messageBuffer.clear();
 

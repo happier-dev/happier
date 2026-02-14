@@ -2,6 +2,7 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 
 import { logger } from '@/ui/logger';
+import { restoreStdinBestEffort } from '@/ui/ink/restoreStdinBestEffort';
 import { loop } from '@/backends/claude/loop';
 import { AgentState, Metadata, Session as ApiSession } from '@/api/types';
 import packageJson from '../../../package.json';
@@ -659,6 +660,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
 
     // Setup signal handlers for graceful shutdown and crash reporting.
     const cleanup = async (event: RunnerTerminationEvent, outcome: ReturnType<typeof computeRunnerTerminationOutcome>) => {
+        restoreStdinBestEffort({ stdin: process.stdin as any });
         logger.debug('[START] Cleanup initiated', {
             kind: event.kind,
             ...(event.kind === 'signal' ? { signal: event.signal } : {}),

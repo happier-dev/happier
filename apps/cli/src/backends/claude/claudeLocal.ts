@@ -10,6 +10,7 @@ import { claudeFindLastSession } from "./utils/claudeFindLastSession";
 import { getProjectPath } from "./utils/path";
 import { projectPath } from "@/projectPath";
 import { systemPrompt } from "./utils/systemPrompt";
+import { restoreStdinBestEffort } from "@/ui/ink/restoreStdinBestEffort";
 
 /**
  * Error thrown when the Claude process exits with a non-zero exit code.
@@ -186,7 +187,7 @@ export async function claudeLocal(opts: {
     // Spawn the process
     try {
         // Start the interactive process
-        process.stdin.pause();
+        restoreStdinBestEffort({ stdin: process.stdin as any });
         await new Promise<void>((r, reject) => {
             const args: string[] = []
 
