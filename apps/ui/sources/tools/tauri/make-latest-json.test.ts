@@ -157,4 +157,63 @@ describe('make-latest-json (tool)', () => {
             expect(latest.platforms['darwin-aarch64'].signature).toBe(filesByPlatform['darwin-aarch64'].expected);
         });
     });
+
+    it('supports flattened artifact downloads where platform appears in filename', () => {
+        withTempDir('happier-make-latest-json-flat-', (tmp) => {
+            const artifactsDir = path.join(tmp, 'artifacts');
+            const outPath = path.join(tmp, 'latest.json');
+
+            const repo = 'happier-dev/happier';
+            const releaseTag = 'ui-preview';
+            const pubDate = '2026-02-14T00:00:00Z';
+            const version = '1.2.3-preview.999';
+            const notes = 'Rolling preview build.';
+
+            const filesByPlatform: Record<string, { name: string; sig: string }> = {
+                'linux-x86_64': { name: 'happier-ui-preview-linux-x86_64.AppImage', sig: 'sig-linux-flat' },
+                'windows-x86_64': { name: 'happier-ui-preview-windows-x86_64.exe', sig: 'sig-windows-flat' },
+                'darwin-x86_64': { name: 'happier-ui-preview-darwin-x86_64.app.tar.gz', sig: 'sig-macos-intel-flat' },
+                'darwin-aarch64': { name: 'happier-ui-preview-darwin-aarch64.app.tar.gz', sig: 'sig-macos-arm-flat' },
+            };
+
+            for (const { name, sig } of Object.values(filesByPlatform)) {
+                const basePath = path.join(artifactsDir, name);
+                writeFile(basePath, 'payload');
+                writeFile(`${basePath}.sig`, sig);
+            }
+
+            runMakeLatestJson([
+                '--channel',
+                'preview',
+                '--version',
+                version,
+                '--pub-date',
+                pubDate,
+                '--notes',
+                notes,
+                '--repo',
+                repo,
+                '--release-tag',
+                releaseTag,
+                '--artifacts-dir',
+                artifactsDir,
+                '--out',
+                outPath,
+            ]);
+
+            const latest = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+            expect(latest.platforms['linux-x86_64'].url).toBe(
+                `https://github.com/${repo}/releases/download/${releaseTag}/${filesByPlatform['linux-x86_64'].name}`
+            );
+            expect(latest.platforms['windows-x86_64'].url).toBe(
+                `https://github.com/${repo}/releases/download/${releaseTag}/${filesByPlatform['windows-x86_64'].name}`
+            );
+            expect(latest.platforms['darwin-x86_64'].url).toBe(
+                `https://github.com/${repo}/releases/download/${releaseTag}/${filesByPlatform['darwin-x86_64'].name}`
+            );
+            expect(latest.platforms['darwin-aarch64'].url).toBe(
+                `https://github.com/${repo}/releases/download/${releaseTag}/${filesByPlatform['darwin-aarch64'].name}`
+            );
+        });
+    });
 });

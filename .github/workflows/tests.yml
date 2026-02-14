@@ -743,8 +743,8 @@ jobs:
       - name: Run isolated binary smoke tests
         run: |
           set -euo pipefail
-          node --test apps/stack/scripts/self_host_binary_smoke.integration.test.mjs
-          node --test apps/stack/scripts/release_binary_smoke.integration.test.mjs
+          timeout --signal=KILL --kill-after=30s 25m node --test apps/stack/scripts/self_host_binary_smoke.integration.test.mjs
+          timeout --signal=KILL --kill-after=30s 45m node --test apps/stack/scripts/release_binary_smoke.integration.test.mjs
 
   self-host-systemd-e2e:
     if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_self_host_systemd }}
