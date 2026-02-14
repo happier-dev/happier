@@ -71,6 +71,9 @@ jobs:
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
     environment: release-shared
+    env:
+      RELEASE_BOT_APP_ID: ${{ secrets.RELEASE_BOT_APP_ID }}
+      RELEASE_BOT_PRIVATE_KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -78,15 +81,12 @@ jobs:
           fetch-depth: 0
 
       - name: Create GitHub App token (release bot)
-        env:
-          RELEASE_BOT_APP_ID: ${{ secrets.RELEASE_BOT_APP_ID }}
-          RELEASE_BOT_PRIVATE_KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-        if: ${{ env.RELEASE_BOT_APP_ID != '' && env.RELEASE_BOT_PRIVATE_KEY != '' }}
         id: app_token
         uses: actions/create-github-app-token@v1
+        if: ${{ env.RELEASE_BOT_APP_ID != '' && env.RELEASE_BOT_PRIVATE_KEY != '' }}
         with:
-          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          app-id: ${{ env.RELEASE_BOT_APP_ID }}
+          private-key: ${{ env.RELEASE_BOT_PRIVATE_KEY }}
 
       - name: Configure git remote auth (release bot)
         if: ${{ steps.app_token.outcome == 'success' && steps.app_token.outputs.token != '' }}
@@ -103,42 +103,32 @@ jobs:
           name: ${{ inputs.assets_artifact }}
           path: ${{ inputs.assets_artifact_path }}
 
-      - name: Move rolling tag
-        if: inputs.rolling_tag
+      - name: Move rolling tag (best-effort)
+        if: ${{ inputs.rolling_tag }}
         id: move_rolling_tag
         env:
           TAG: ${{ inputs.tag }}
           SHA: ${{ inputs.target_sha }}
         run: |
           set -euo pipefail
-          git fetch --tags origin >/dev/null 2>&1 || echo "::warning::git fetch --tags origin failed; proceeding with local refs."
-          if ! git cat-file -e "${SHA}^{commit}" 2>/dev/null; then
-            git fetch --no-tags origin "${SHA}" >/dev/null 2>&1 || true
-          fi
-          if ! git cat-file -e "${SHA}^{commit}" 2>/dev/null; then
-            echo "Missing target commit object for rolling tag: ${SHA}" >&2
-            exit 1
-          fi
+
+          pushed="false"
           git tag -f "${TAG}" "${SHA}"
+
           set +e
-          out="$(git push origin "refs/tags/${TAG}" --force 2>&1)"
-          code="$?"
+          git push origin "refs/tags/${TAG}" --force
+          status="$?"
           set -e
-          if [ "${code}" != "0" ]; then
-            echo "${out}" >&2
-            # Some repositories restrict tag creation/updates via rulesets.
-            # For rolling tags, treat that as non-fatal so release pipelines can still complete.
-            if echo "${out}" | grep -q "GH013"; then
-              echo "::warning::Rolling tag push blocked by repository rules (GH013). Skipping rolling tag update for '${TAG}'."
-              echo "pushed=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            exit "${code}"
+
+          if [ "${status}" -eq 0 ]; then
+            pushed="true"
+          else
+            echo "::warning::Rolling tag push failed (tag protections or permissions). Skipping asset upload for ${TAG}."
           fi
-          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+          echo "pushed=${pushed}" >> "${GITHUB_OUTPUT}"
 
       - name: Ensure release exists
-        if: ${{ !inputs.rolling_tag || steps.move_rolling_tag.outputs.pushed == 'true' }}
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
           TAG: ${{ inputs.tag }}
