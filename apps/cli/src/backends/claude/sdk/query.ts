@@ -383,19 +383,34 @@ export function query(config: {
     }
 
     config.options?.abort?.addEventListener('abort', cleanup)
+    const cleanupOnSigterm = () => cleanup()
+    const cleanupOnSigint = () => cleanup()
+    process.on('SIGTERM', cleanupOnSigterm)
+    process.on('SIGINT', cleanupOnSigint)
     process.on('exit', cleanup)
 
     // Handle process exit
     const processExitPromise = new Promise<void>((resolve) => {
-        child.on('close', (code) => {
+        child.on('close', (code, signal) => {
             if (config.options?.abort?.aborted) {
                 query.setError(new AbortError('Claude Code process aborted by user'))
+                resolve()
+                return
             }
+
+            if (signal) {
+                query.setError(new Error(`Claude Code process terminated with signal ${signal}`))
+                resolve()
+                return
+            }
+
             if (code !== 0) {
                 query.setError(new Error(`Claude Code process exited with code ${code}`))
-            } else {
                 resolve()
+                return
             }
+
+            resolve()
         })
     })
 
@@ -415,6 +430,9 @@ export function query(config: {
     processExitPromise.finally(() => {
         cleanup()
         config.options?.abort?.removeEventListener('abort', cleanup)
+        process.off('SIGTERM', cleanupOnSigterm)
+        process.off('SIGINT', cleanupOnSigint)
+        process.off('exit', cleanup)
         if (process.env.CLAUDE_SDK_MCP_SERVERS) {
             delete process.env.CLAUDE_SDK_MCP_SERVERS
         }
