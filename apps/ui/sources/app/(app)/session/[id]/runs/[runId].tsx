@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { ExecutionRunPublicState } from '@happier-dev/protocol';
@@ -11,6 +12,7 @@ import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orches
 import { t } from '@/text';
 import { renderExecutionRunStructuredMeta } from '@/components/sessions/runs/renderExecutionRunStructuredMeta';
 import { ExecutionRunDetailsPanel } from '@/components/sessions/runs/ExecutionRunDetailsPanel';
+import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
 
 type LoadState =
     | { status: 'loading' }
@@ -36,6 +38,7 @@ export default function SessionRunDetailsScreen() {
     const [stopError, setStopError] = React.useState<string | null>(null);
     const [isSending, setIsSending] = React.useState(false);
     const [isStopping, setIsStopping] = React.useState(false);
+    const headerTint = theme.colors.header?.tint ?? theme.colors.text;
 
     const load = React.useCallback(async () => {
         if (!sessionId || !runId) {
@@ -108,17 +111,28 @@ export default function SessionRunDetailsScreen() {
         return renderExecutionRunStructuredMeta({ meta: { kind, payload: meta.payload }, sessionId });
     }, [sessionId, state]);
 
-    return (
-        <View style={{ flex: 1, backgroundColor: theme.colors.surface, padding: 16, gap: 12 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={{ color: theme.colors.text, fontSize: 18, fontWeight: '600' }}>
-                    {t('runs.title') ?? 'Runs'} · {runId ?? ''}
-                </Text>
-                <Pressable onPress={() => void load()}>
-                    <Text style={{ color: theme.colors.textSecondary }}>{t('common.refresh') ?? 'Refresh'}</Text>
-                </Pressable>
-            </View>
+    const headerRight = React.useCallback(() => (
+        <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Refresh run"
+            onPress={() => void load()}
+            hitSlop={10}
+            style={({ pressed }) => ({ padding: 4, opacity: pressed ? 0.7 : 1 })}
+        >
+            <Ionicons name="refresh" size={20} color={headerTint} />
+        </Pressable>
+    ), [headerTint, load]);
 
+    const screenOptions = React.useMemo(() => ({
+        headerShown: true,
+        headerTitle: 'Run',
+        headerRight,
+    }), [headerRight]);
+
+    return (
+        <View style={{ flex: 1, backgroundColor: theme.colors.groupped?.background ?? theme.colors.surface }}>
+            <Stack.Screen options={screenOptions} />
+            <ConstrainedScreenContent style={{ flex: 1, paddingHorizontal: 16, paddingVertical: 16, gap: 12 }}>
             {state.status === 'loading' ? (
                 <ActivityIndicator size="small" color={theme.colors.textSecondary} />
             ) : state.status === 'error' ? (
@@ -262,6 +276,7 @@ export default function SessionRunDetailsScreen() {
                     ) : null}
                 </View>
             )}
+            </ConstrainedScreenContent>
         </View>
     );
 }

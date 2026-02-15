@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
@@ -10,6 +10,7 @@ import { useExecutionRunsBackendsForSession } from '@/hooks/server/useExecutionR
 import { t } from '@/text';
 import { buildExecutionRunsGuidanceBlock, coerceExecutionRunsGuidanceEntries } from '@/sync/domains/settings/executionRunsGuidance';
 import { buildAvailableReviewEngineOptions } from '@/sync/domains/reviews/reviewEngineCatalog';
+import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
 
 type ExecutionRunIntent = 'review' | 'plan' | 'delegate' | 'voice_agent';
 
@@ -68,6 +69,12 @@ export default function SessionNewRunScreen() {
     const canStart = Boolean(sessionId && selectedBackends.length > 0 && instructions.trim().length > 0 && !isStarting);
 
     const actionExecutor = React.useMemo(() => createDefaultActionExecutor(), []);
+
+    const screenOptions = React.useMemo(() => ({
+        headerShown: true,
+        headerTitle: 'Start run',
+        headerBackTitle: t('common.back'),
+    }), []);
 
     if (!sessionId) {
         return (
@@ -133,162 +140,167 @@ export default function SessionNewRunScreen() {
     }, [settings]);
 
     return (
-        <View style={{ flex: 1, backgroundColor: theme.colors.surface, padding: 16, gap: 16 }}>
-            <Text style={{ color: theme.colors.text, fontSize: 18, fontWeight: '600' }}>
-                Start run
-            </Text>
-
-            <View style={{ gap: 8 }}>
-                <Text style={{ color: theme.colors.textSecondary }}>Intent</Text>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-                    {(['review', 'plan', 'delegate'] as const).map((next) => {
-                        const selected = intent === next;
-                        return (
-                            <Pressable
-                                key={next}
-                                accessibilityRole="button"
-                                accessibilityLabel={`Select intent ${next}`}
-                                onPress={() => {
-                                    setIntent(next);
-                                    setPermissionMode(defaultPermissionModeForIntent(next));
-                                    if (next !== 'review') {
-                                        setSelectedBackends((prev) => prev.filter((id) => id !== 'coderabbit'));
-                                    }
-                                }}
-                                style={({ pressed }) => ({
-                                    paddingVertical: 8,
-                                    paddingHorizontal: 10,
-                                    borderRadius: 8,
-                                    borderWidth: 1,
-                                    borderColor: theme.colors.divider,
-                                    opacity: pressed ? 0.7 : 1,
-                                })}
-                            >
-                                <Text style={{ color: selected ? theme.colors.text : theme.colors.textSecondary }}>
-                                    {next}
-                                </Text>
-                            </Pressable>
-                        );
-                    })}
+        <View style={{ flex: 1, backgroundColor: theme.colors.groupped?.background ?? theme.colors.surface }}>
+            <Stack.Screen options={screenOptions} />
+            <ConstrainedScreenContent
+                style={{
+                    paddingHorizontal: 16,
+                    paddingVertical: 16,
+                    gap: 16,
+                }}
+            >
+                <View style={{ gap: 8 }}>
+                    <Text style={{ color: theme.colors.textSecondary }}>Intent</Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+                        {(['review', 'plan', 'delegate'] as const).map((next) => {
+                            const selected = intent === next;
+                            return (
+                                <Pressable
+                                    key={next}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`Select intent ${next}`}
+                                    onPress={() => {
+                                        setIntent(next);
+                                        setPermissionMode(defaultPermissionModeForIntent(next));
+                                        if (next !== 'review') {
+                                            setSelectedBackends((prev) => prev.filter((id) => id !== 'coderabbit'));
+                                        }
+                                    }}
+                                    style={({ pressed }) => ({
+                                        paddingVertical: 8,
+                                        paddingHorizontal: 10,
+                                        borderRadius: 8,
+                                        borderWidth: 1,
+                                        borderColor: theme.colors.divider,
+                                        opacity: pressed ? 0.7 : 1,
+                                    })}
+                                >
+                                    <Text style={{ color: selected ? theme.colors.text : theme.colors.textSecondary }}>
+                                        {next}
+                                    </Text>
+                                </Pressable>
+                            );
+                        })}
+                    </View>
                 </View>
-            </View>
 
-            <View style={{ gap: 8 }}>
-                <Text style={{ color: theme.colors.textSecondary }}>Permissions</Text>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-                    {(['read_only', 'default'] as const).map((next) => {
-                        const selected = permissionMode === next;
-                        return (
-                            <Pressable
-                                key={next}
-                                accessibilityRole="button"
-                                accessibilityLabel={`Select permissionMode ${next}`}
-                                onPress={() => setPermissionMode(next)}
-                                style={({ pressed }) => ({
-                                    paddingVertical: 8,
-                                    paddingHorizontal: 10,
-                                    borderRadius: 8,
-                                    borderWidth: 1,
-                                    borderColor: theme.colors.divider,
-                                    opacity: pressed ? 0.7 : 1,
-                                })}
-                            >
-                                <Text style={{ color: selected ? theme.colors.text : theme.colors.textSecondary }}>
-                                    {next}
-                                </Text>
-                            </Pressable>
-                        );
-                    })}
+                <View style={{ gap: 8 }}>
+                    <Text style={{ color: theme.colors.textSecondary }}>Permissions</Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+                        {(['read_only', 'default'] as const).map((next) => {
+                            const selected = permissionMode === next;
+                            return (
+                                <Pressable
+                                    key={next}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`Select permissionMode ${next}`}
+                                    onPress={() => setPermissionMode(next)}
+                                    style={({ pressed }) => ({
+                                        paddingVertical: 8,
+                                        paddingHorizontal: 10,
+                                        borderRadius: 8,
+                                        borderWidth: 1,
+                                        borderColor: theme.colors.divider,
+                                        opacity: pressed ? 0.7 : 1,
+                                    })}
+                                >
+                                    <Text style={{ color: selected ? theme.colors.text : theme.colors.textSecondary }}>
+                                        {next}
+                                    </Text>
+                                </Pressable>
+                            );
+                        })}
+                    </View>
                 </View>
-            </View>
 
-            <View style={{ gap: 8 }}>
-                <Text style={{ color: theme.colors.textSecondary }}>Backends</Text>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-                    {backendChoices.map((backendId) => {
-                        const selected = selectedBackends.includes(backendId);
-                        return (
-                            <Pressable
-                                key={backendId}
-                                accessibilityRole="button"
-                                accessibilityLabel={`Toggle backend ${backendId}`}
-                                onPress={() => toggleBackend(backendId)}
-                                style={({ pressed }) => ({
-                                    paddingVertical: 8,
-                                    paddingHorizontal: 10,
-                                    borderRadius: 8,
-                                    borderWidth: 1,
-                                    borderColor: theme.colors.divider,
-                                    opacity: pressed ? 0.7 : 1,
-                                })}
-                            >
-                                <Text style={{ color: selected ? theme.colors.text : theme.colors.textSecondary }}>
-                                    {backendId}
-                                </Text>
-                            </Pressable>
-                        );
-                    })}
+                <View style={{ gap: 8 }}>
+                    <Text style={{ color: theme.colors.textSecondary }}>Backends</Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+                        {backendChoices.map((backendId) => {
+                            const selected = selectedBackends.includes(backendId);
+                            return (
+                                <Pressable
+                                    key={backendId}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`Toggle backend ${backendId}`}
+                                    onPress={() => toggleBackend(backendId)}
+                                    style={({ pressed }) => ({
+                                        paddingVertical: 8,
+                                        paddingHorizontal: 10,
+                                        borderRadius: 8,
+                                        borderWidth: 1,
+                                        borderColor: theme.colors.divider,
+                                        opacity: pressed ? 0.7 : 1,
+                                    })}
+                                >
+                                    <Text style={{ color: selected ? theme.colors.text : theme.colors.textSecondary }}>
+                                        {backendId}
+                                    </Text>
+                                </Pressable>
+                            );
+                        })}
+                    </View>
                 </View>
-            </View>
 
-            <View style={{ gap: 8 }}>
-                <Text style={{ color: theme.colors.textSecondary }}>Instructions</Text>
-                <TextInput
-                    value={instructions}
-                    onChangeText={setInstructions}
-                    placeholder={'What should the sub-agent do?'}
-                    placeholderTextColor={theme.colors.textSecondary}
-                    multiline
-                    style={{
-                        borderWidth: 1,
-                        borderColor: theme.colors.divider,
-                        borderRadius: 10,
-                        padding: 12,
-                        minHeight: 96,
-                        color: theme.colors.text,
-                    }}
-                />
-            </View>
-
-            <View style={{ flexDirection: 'row', gap: 12 }}>
-                <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Start run"
-                    onPress={onStart}
-                    disabled={!canStart}
-                    style={({ pressed }) => ({
-                        paddingVertical: 10,
-                        paddingHorizontal: 14,
-                        borderRadius: 10,
-                        backgroundColor: canStart ? theme.colors.surfaceHigh : theme.colors.surfaceHigh,
-                        opacity: !canStart ? 0.5 : pressed ? 0.7 : 1,
-                    })}
-                >
-                    <Text style={{ color: theme.colors.text }}>Start</Text>
-                </Pressable>
-                <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Cancel"
-                    onPress={() => router.back()}
-                    style={({ pressed }) => ({
-                        paddingVertical: 10,
-                        paddingHorizontal: 14,
-                        borderRadius: 10,
-                        opacity: pressed ? 0.7 : 1,
-                    })}
-                >
-                    <Text style={{ color: theme.colors.textSecondary }}>{t('common.cancel') ?? 'Cancel'}</Text>
-                </Pressable>
-            </View>
-
-            {guidancePreview ? (
-                <View style={{ gap: 6 }}>
-                    <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>Guidance preview</Text>
-                    <Text style={{ color: theme.colors.textSecondary, fontSize: 12, fontFamily: 'Menlo' }}>
-                        {guidancePreview}
-                    </Text>
+                <View style={{ gap: 8 }}>
+                    <Text style={{ color: theme.colors.textSecondary }}>Instructions</Text>
+                    <TextInput
+                        value={instructions}
+                        onChangeText={setInstructions}
+                        placeholder={'What should the sub-agent do?'}
+                        placeholderTextColor={theme.colors.textSecondary}
+                        multiline
+                        style={{
+                            borderWidth: 1,
+                            borderColor: theme.colors.divider,
+                            borderRadius: 10,
+                            padding: 12,
+                            minHeight: 96,
+                            color: theme.colors.text,
+                        }}
+                    />
                 </View>
-            ) : null}
+
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Start run"
+                        onPress={onStart}
+                        disabled={!canStart}
+                        style={({ pressed }) => ({
+                            paddingVertical: 10,
+                            paddingHorizontal: 14,
+                            borderRadius: 10,
+                            backgroundColor: theme.colors.surfaceHigh,
+                            opacity: !canStart ? 0.5 : pressed ? 0.7 : 1,
+                        })}
+                    >
+                        <Text style={{ color: theme.colors.text }}>Start</Text>
+                    </Pressable>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Cancel"
+                        onPress={() => router.back()}
+                        style={({ pressed }) => ({
+                            paddingVertical: 10,
+                            paddingHorizontal: 14,
+                            borderRadius: 10,
+                            opacity: pressed ? 0.7 : 1,
+                        })}
+                    >
+                        <Text style={{ color: theme.colors.textSecondary }}>{t('common.cancel') ?? 'Cancel'}</Text>
+                    </Pressable>
+                </View>
+
+                {guidancePreview ? (
+                    <View style={{ gap: 6 }}>
+                        <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>Guidance preview</Text>
+                        <Text style={{ color: theme.colors.textSecondary, fontSize: 12, fontFamily: 'Menlo' }}>
+                            {guidancePreview}
+                        </Text>
+                    </View>
+                ) : null}
+            </ConstrainedScreenContent>
         </View>
     );
 }

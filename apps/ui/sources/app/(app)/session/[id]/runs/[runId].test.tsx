@@ -51,6 +51,7 @@ const machineExecutionRunsListSpy = vi.fn(async (_machineId: string, _opts?: Rec
         },
     ],
 }));
+const stackScreenSpy = vi.fn((_props: any) => null);
 
 vi.mock('react-native', () => ({
     Platform: {
@@ -107,7 +108,9 @@ vi.mock('react-native-unistyles', () => ({
 vi.mock('expo-router', () => ({
     useLocalSearchParams: () => ({ id: 'session-1', runId: 'run_1' }),
     useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
+    Stack: { Screen: (props: any) => stackScreenSpy(props) },
 }));
+vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
@@ -139,8 +142,46 @@ vi.mock('@/sync/domains/state/storage', () => ({
         }),
     },
 }));
+vi.mock('@/components/ui/layout/layout', () => ({ layout: { maxWidth: 999 } }));
 
 describe('Session Run Details Screen', () => {
+    it('configures the run details header and constrains the content width', async () => {
+        stackScreenSpy.mockClear();
+        getRunSpy.mockClear();
+        const Screen = (await import('./[runId]')).default;
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(Screen));
+            await Promise.resolve();
+        });
+
+        expect(stackScreenSpy).toHaveBeenCalled();
+        const stackOptions = stackScreenSpy.mock.calls.at(-1)?.[0]?.options;
+        expect(stackOptions?.headerTitle).toBe('Run');
+        expect(typeof stackOptions?.headerRight).toBe('function');
+
+        let headerRightTree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            headerRightTree = renderer.create(React.createElement(stackOptions.headerRight));
+        });
+        const refreshButton = headerRightTree!.root.findAllByType('Pressable')
+            .find((node: any) => node.props.accessibilityLabel === 'Refresh run');
+        expect(refreshButton).toBeDefined();
+
+        const views = tree!.root.findAllByType('View');
+        const hasConstrainedContainer = views.some((node: any) => {
+            const raw = node.props.style;
+            const styles = Array.isArray(raw) ? raw : [raw];
+            return styles.some((entry: any) => {
+                if (!entry || typeof entry !== 'object') return false;
+                return entry.maxWidth === 999 && entry.width === '100%' && entry.alignSelf === 'center';
+            });
+        });
+
+        expect(hasConstrainedContainer).toBe(true);
+    });
+
     it('loads run details via session execution run get', async () => {
         getRunSpy.mockClear();
         const Screen = (await import('./[runId]')).default;

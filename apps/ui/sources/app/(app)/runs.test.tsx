@@ -118,8 +118,11 @@ describe('Runs screen', () => {
     expect(stackOptions?.headerTitle).toBe('Runs');
     expect(typeof stackOptions?.headerRight).toBe('function');
 
-    const headerRightTree = renderer.create(React.createElement(stackOptions.headerRight));
-    const rightButtons = headerRightTree.root.findAllByType('Pressable');
+    let headerRightTree: renderer.ReactTestRenderer | null = null;
+    await act(async () => {
+      headerRightTree = renderer.create(React.createElement(stackOptions.headerRight));
+    });
+    const rightButtons = headerRightTree!.root.findAllByType('Pressable');
     const labels = rightButtons.map((button: any) => button.props.accessibilityLabel);
     expect(labels).toContain('Refresh runs');
     expect(labels).toContain('Toggle finished runs');

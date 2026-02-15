@@ -10,9 +10,9 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ExecutionRunRow } from '@/components/sessions/runs/ExecutionRunRow';
+import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { layout } from '@/components/ui/layout/layout';
 import { useMachineListByServerId, useMachineListStatusByServerId } from '@/sync/domains/state/storage';
 import { machineExecutionRunsList } from '@/sync/ops/machineExecutionRuns';
 import { sessionExecutionRunStop } from '@/sync/ops/sessionExecutionRuns';
@@ -135,7 +135,7 @@ export default function RunsScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.groupped?.background ?? theme.colors.surface }}>
       <Stack.Screen options={screenOptions} />
-      <View style={{ flex: 1, width: '100%', maxWidth: layout.maxWidth, alignSelf: 'center' }}>
+      <ConstrainedScreenContent style={{ flex: 1 }}>
         <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
           <Text style={{ color: theme.colors.textSecondary }}>
             {showFinished ? 'Showing finished runs' : 'Showing running runs'}
@@ -262,7 +262,7 @@ export default function RunsScreen() {
             })
           )}
         </ItemList>
-      </View>
+      </ConstrainedScreenContent>
     </View>
   );
 }

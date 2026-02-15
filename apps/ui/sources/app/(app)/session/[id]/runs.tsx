@@ -8,7 +8,7 @@ import type { ExecutionRunPublicState } from '@happier-dev/protocol';
 import { sessionExecutionRunList } from '@/sync/ops/sessionExecutionRuns';
 import { t } from '@/text';
 import { ExecutionRunList } from '@/components/sessions/runs/ExecutionRunList';
-import { layout } from '@/components/ui/layout/layout';
+import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
 
 type LoadState =
   | { status: 'loading' }
@@ -106,12 +106,9 @@ export default function SessionRunsScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.groupped?.background ?? theme.colors.surface }}>
       <Stack.Screen options={screenOptions} />
-      <View
+      <ConstrainedScreenContent
         style={{
           flex: 1,
-          width: '100%',
-          maxWidth: layout.maxWidth,
-          alignSelf: 'center',
           paddingHorizontal: 16,
           paddingTop: 12,
           paddingBottom: 16,
@@ -131,7 +128,7 @@ export default function SessionRunsScreen() {
             }}
           />
         )}
-      </View>
+      </ConstrainedScreenContent>
     </View>
   );
 }

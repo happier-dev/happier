@@ -44,6 +44,7 @@ vi.mock('react-native-unistyles', () => ({
     }),
     StyleSheet: { create: (fn: any) => fn({ colors: { surfaceHigh: '#222', divider: '#333', text: '#eee', textSecondary: '#aaa' } }) },
 }));
+vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
 vi.mock('expo-router', () => ({
     useLocalSearchParams: () => ({ id: 'session-1' }),
@@ -91,8 +92,11 @@ describe('Session Runs Screen', () => {
         const stackOptions = stackScreenSpy.mock.calls.at(-1)?.[0]?.options;
         expect(stackOptions?.headerTitle).toBe('Runs');
         expect(typeof stackOptions?.headerRight).toBe('function');
-        const headerRightTree = renderer.create(React.createElement(stackOptions.headerRight));
-        const buttons = headerRightTree.root.findAllByType('Pressable');
+        let headerRightTree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            headerRightTree = renderer.create(React.createElement(stackOptions.headerRight));
+        });
+        const buttons = headerRightTree!.root.findAllByType('Pressable');
         const runReview = buttons.find((b: any) => b.props.accessibilityLabel === 'Run review');
         expect(runReview).toBeDefined();
 
@@ -117,8 +121,11 @@ describe('Session Runs Screen', () => {
 
         const stackOptions = stackScreenSpy.mock.calls.at(-1)?.[0]?.options;
         expect(typeof stackOptions?.headerRight).toBe('function');
-        const headerRightTree = renderer.create(React.createElement(stackOptions.headerRight));
-        const buttons = headerRightTree.root.findAllByType('Pressable');
+        let headerRightTree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            headerRightTree = renderer.create(React.createElement(stackOptions.headerRight));
+        });
+        const buttons = headerRightTree!.root.findAllByType('Pressable');
         const delegate = buttons.find((b: any) => b.props.accessibilityLabel === 'Delegate task');
         expect(delegate).toBeDefined();
 
