@@ -31,6 +31,15 @@ test('hstack providers install --dry-run --json plans codex + claude installs', 
   assert.ok(planText.includes('claude.ai/install.sh'), planText);
 });
 
+test('hstack providers install accepts comma-separated positional list', () => {
+  const res = runProvidersCommand(['install', 'claude,codex', '--dry-run', '--json']);
+  assert.equal(res.status, 0, res.stderr);
+
+  const data = JSON.parse(res.stdout);
+  assert.equal(data.ok, true);
+  assert.deepEqual(data.providers, ['claude', 'codex']);
+});
+
 test('hstack providers install rejects unknown provider id', () => {
   const res = runProvidersCommand(['install', '--providers=not-a-provider', '--dry-run', '--json']);
   assert.notEqual(res.status, 0);

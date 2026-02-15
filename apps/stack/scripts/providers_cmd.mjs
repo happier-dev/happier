@@ -81,11 +81,11 @@ async function cmdInstall({ argv }) {
 
   const positionals = argv.filter((a) => a && a !== '--' && !a.startsWith('-'));
   const inputFromFlag = kv.get('--providers') ?? '';
-  const inputFromPositional = positionals.slice(1); // after "install"
+  const inputFromPositional = positionals;
 
   const wanted = [
     ...splitProviders(inputFromFlag),
-    ...inputFromPositional.map((s) => String(s).trim().toLowerCase()).filter(Boolean),
+    ...inputFromPositional.flatMap((s) => splitProviders(String(s).trim().toLowerCase())),
   ];
 
   if (wanted.length === 0) {
@@ -154,4 +154,3 @@ main().catch((error) => {
   process.stderr.write(`${msg}\n`);
   process.exit(1);
 });
-
