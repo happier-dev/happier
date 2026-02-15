@@ -67,6 +67,36 @@ const iosAssociatedDomains = iosAssociatedDomainsRaw
 // (e.g. to avoid iOS scheme collisions between multiple installs).
 const scheme = (process.env.EXPO_APP_SCHEME || process.env.HAPPY_STACKS_MOBILE_SCHEME || '').trim() || DEFAULTS.scheme;
 
+const parseOptionalBoolean = (raw) => {
+    const value = (raw ?? '').toString().trim().toLowerCase();
+    if (!value) return null;
+    if (value === '1' || value === 'true' || value === 'yes' || value === 'on') return true;
+    if (value === '0' || value === 'false' || value === 'no' || value === 'off') return false;
+    return null;
+};
+
+// iOS background audio is required for "call-like" realtime ElevenLabs sessions to keep working when the app is
+// backgrounded/locked. We enable this by default for all variants so dev-client testing matches production behavior.
+const iosBackgroundAudioOverride = parseOptionalBoolean(
+    process.env.EXPO_PUBLIC_IOS_BACKGROUND_AUDIO ?? process.env.EXPO_IOS_BACKGROUND_AUDIO
+);
+const iosBackgroundAudioEnabled = iosBackgroundAudioOverride ?? true;
+
+// Native model packs (Sherpa-ONNX) are download-on-demand. Expo "public" env vars are embedded
+// at bundle time, so we provide a dev-safe default mapping that can be overridden in EAS/env.
+//
+// Override points:
+// - EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS (full JSON mapping)
+// - EXPO_PUBLIC_HAPPIER_MODEL_PACKS_REPO + EXPO_PUBLIC_HAPPIER_MODEL_PACKS_TAG (convenience)
+const defaultModelPacksRepo = (process.env.EXPO_PUBLIC_HAPPIER_MODEL_PACKS_REPO || 'happier-dev/happier-assets').trim();
+const defaultModelPacksTag = (process.env.EXPO_PUBLIC_HAPPIER_MODEL_PACKS_TAG || 'model-packs').trim();
+if (!process.env.EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS) {
+    process.env.EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS = JSON.stringify({
+        "kokoro-82m-v1.0-onnx-q8-wasm": `https://github.com/${defaultModelPacksRepo}/releases/download/${defaultModelPacksTag}/kokoro-82m-v1.0-onnx-q8-wasm__manifest.json`,
+        "sherpa-onnx-streaming-zipformer-en-20M-2023-02-17": `https://github.com/${defaultModelPacksRepo}/releases/download/${defaultModelPacksTag}/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17__manifest.json`
+    });
+}
+
 export default {
     expo: {
         name,
@@ -90,6 +120,9 @@ export default {
             },
             infoPlist: {
                 NSMicrophoneUsageDescription: "Allow $(PRODUCT_NAME) to access your microphone for voice conversations with AI.",
+                // Required because we use on-device speech recognition (and some SDKs may reference it).
+                // Apple requires a purpose string even if the code path is not exercised.
+                NSSpeechRecognitionUsageDescription: "Allow $(PRODUCT_NAME) to convert your speech to text to enable voice conversations and transcription.",
                 NSLocalNetworkUsageDescription: "Allow $(PRODUCT_NAME) to find and connect to local devices on your network.",
                 NSBonjourServices: ["_http._tcp", "_https._tcp"],
                 NSAppTransportSecurity: {
@@ -153,7 +186,13 @@ export default {
             "expo-web-browser",
             "react-native-vision-camera",
             "@more-tech/react-native-libsodium",
-            "react-native-audio-api",
+            [
+                "react-native-audio-api",
+                {
+                    // Enables UIBackgroundModes=audio when true (required for realtime voice calls in background).
+                    iosBackgroundMode: iosBackgroundAudioEnabled
+                }
+            ],
             "@livekit/react-native-expo-plugin",
             "@config-plugins/react-native-webrtc",
             [
