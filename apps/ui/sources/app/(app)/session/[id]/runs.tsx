@@ -1,12 +1,14 @@
 import * as React from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { ExecutionRunPublicState } from '@happier-dev/protocol';
 import { sessionExecutionRunList } from '@/sync/ops/sessionExecutionRuns';
 import { t } from '@/text';
 import { ExecutionRunList } from '@/components/sessions/runs/ExecutionRunList';
+import { layout } from '@/components/ui/layout/layout';
 
 type LoadState =
   | { status: 'loading' }
@@ -26,6 +28,7 @@ export default function SessionRunsScreen() {
   const sessionId = normalizeSessionId((params as any)?.id);
 
   const [state, setState] = React.useState<LoadState>({ status: 'loading' });
+  const headerTint = theme.colors.header?.tint ?? theme.colors.text;
 
   const load = React.useCallback(async () => {
     if (!sessionId) {
@@ -46,6 +49,52 @@ export default function SessionRunsScreen() {
     void load();
   }, [load]);
 
+  const headerRight = React.useCallback(() => {
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Run review"
+          onPress={() => {
+            if (!sessionId) return;
+            router.push(`/session/${sessionId}/runs/new?intent=review` as any);
+          }}
+          hitSlop={10}
+          style={({ pressed }) => ({ padding: 4, opacity: pressed ? 0.7 : 1 })}
+        >
+          <Ionicons name="search-outline" size={20} color={headerTint} />
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Delegate task"
+          onPress={() => {
+            if (!sessionId) return;
+            router.push(`/session/${sessionId}/runs/new?intent=delegate` as any);
+          }}
+          hitSlop={10}
+          style={({ pressed }) => ({ padding: 4, opacity: pressed ? 0.7 : 1 })}
+        >
+          <Ionicons name="person-add-outline" size={20} color={headerTint} />
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Refresh runs"
+          onPress={() => void load()}
+          hitSlop={10}
+          style={({ pressed }) => ({ padding: 4, opacity: pressed ? 0.7 : 1 })}
+        >
+          <Ionicons name="refresh" size={20} color={headerTint} />
+        </Pressable>
+      </View>
+    );
+  }, [headerTint, load, router, sessionId]);
+
+  const screenOptions = React.useMemo(() => ({
+    headerShown: true,
+    headerTitle: 'Runs',
+    headerRight,
+  }), [headerRight]);
+
   if (!sessionId) {
     return (
       <View style={{ flex: 1, backgroundColor: theme.colors.surface, padding: 16 }}>
@@ -55,48 +104,34 @@ export default function SessionRunsScreen() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.surface, padding: 16, gap: 12 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Text style={{ color: theme.colors.text, fontSize: 18, fontWeight: '600' }}>
-          {t('runs.title') ?? 'Runs'}
-        </Text>
-        <Pressable onPress={() => void load()}>
-          <Text style={{ color: theme.colors.textSecondary }}>{t('common.refresh') ?? 'Refresh'}</Text>
-        </Pressable>
+    <View style={{ flex: 1, backgroundColor: theme.colors.groupped?.background ?? theme.colors.surface }}>
+      <Stack.Screen options={screenOptions} />
+      <View
+        style={{
+          flex: 1,
+          width: '100%',
+          maxWidth: layout.maxWidth,
+          alignSelf: 'center',
+          paddingHorizontal: 16,
+          paddingTop: 12,
+          paddingBottom: 16,
+          gap: 12,
+        }}
+      >
+        {state.status === 'loading' ? (
+          <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+        ) : state.status === 'error' ? (
+          <Text style={{ color: theme.colors.textSecondary }}>{state.error}</Text>
+        ) : (
+          <ExecutionRunList
+            runs={state.runs}
+            onPressRun={(run) => {
+              if (!sessionId) return;
+              router.push(`/session/${sessionId}/runs/${run.runId}` as any);
+            }}
+          />
+        )}
       </View>
-
-      <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Run review"
-          onPress={() => router.push(`/session/${sessionId}/runs/new?intent=review` as any)}
-          style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
-        >
-          <Text style={{ color: theme.colors.textSecondary }}>Run review</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Delegate task"
-          onPress={() => router.push(`/session/${sessionId}/runs/new?intent=delegate` as any)}
-          style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
-        >
-          <Text style={{ color: theme.colors.textSecondary }}>Delegate task</Text>
-        </Pressable>
-      </View>
-
-      {state.status === 'loading' ? (
-        <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-      ) : state.status === 'error' ? (
-        <Text style={{ color: theme.colors.textSecondary }}>{state.error}</Text>
-      ) : (
-        <ExecutionRunList
-          runs={state.runs}
-          onPressRun={(run) => {
-            if (!sessionId) return;
-            router.push(`/session/${sessionId}/runs/${run.runId}` as any);
-          }}
-        />
-      )}
     </View>
   );
 }
