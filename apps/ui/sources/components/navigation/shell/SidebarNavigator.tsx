@@ -3,20 +3,24 @@ import * as React from 'react';
 import { Drawer } from 'expo-router/drawer';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { SidebarView } from './SidebarView';
-import { Slot } from 'expo-router';
-import { useWindowDimensions } from 'react-native';
+import { CollapsedSidebarView } from './CollapsedSidebarView';
+import { Pressable, View, useWindowDimensions } from 'react-native';
+import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
 
 export const SidebarNavigator = React.memo(() => {
     const auth = useAuth();
     const isTablet = useIsTablet();
     const showPermanentDrawer = auth.isAuthenticated && isTablet;
     const { width: windowWidth } = useWindowDimensions();
+    const sidebarCollapsed = useLocalSetting('sidebarCollapsed');
+    const [, setSidebarCollapsed] = useLocalSettingMutable('sidebarCollapsed');
 
     // Calculate drawer width only when needed
     const drawerWidth = React.useMemo(() => {
         if (!showPermanentDrawer) return 280; // Default width for hidden drawer
+        if (sidebarCollapsed) return 72;
         return Math.min(Math.max(Math.floor(windowWidth * 0.3), 250), 360);
-    }, [windowWidth, showPermanentDrawer]);
+    }, [windowWidth, showPermanentDrawer, sidebarCollapsed]);
 
     const drawerNavigationOptions = React.useMemo(() => {
         if (!showPermanentDrawer) {
@@ -53,8 +57,31 @@ export const SidebarNavigator = React.memo(() => {
 
     // Always render SidebarView but hide it when not needed
     const drawerContent = React.useCallback(
-        () => <SidebarView />,
-        []
+        () => {
+            if (sidebarCollapsed) {
+                return <CollapsedSidebarView />;
+            }
+            return (
+                <View style={{ flex: 1 }}>
+                    <SidebarView />
+                    <Pressable
+                        testID="sidebar-collapse-button"
+                        onPress={() => setSidebarCollapsed(true)}
+                        style={{
+                            position: 'absolute',
+                            top: 12,
+                            right: 12,
+                            width: 28,
+                            height: 28,
+                            borderRadius: 8,
+                            opacity: 0.7,
+                        }}
+                        accessibilityRole="button"
+                    />
+                </View>
+            );
+        },
+        [sidebarCollapsed, setSidebarCollapsed]
     );
 
     return (
