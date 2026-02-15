@@ -1,4 +1,5 @@
 import { buildOpenAiSpeechRequest } from './openaiCompat';
+import { fetchWithTimeout } from '@/voice/runtime/fetchWithTimeout';
 
 export async function fetchOpenAiCompatSpeechAudio(opts: {
     baseUrl: string;
@@ -7,6 +8,7 @@ export async function fetchOpenAiCompatSpeechAudio(opts: {
     voice: string;
     format: 'mp3' | 'wav';
     input: string;
+    timeoutMs?: number;
 }): Promise<ArrayBuffer> {
     const req = buildOpenAiSpeechRequest({
         baseUrl: opts.baseUrl,
@@ -17,7 +19,7 @@ export async function fetchOpenAiCompatSpeechAudio(opts: {
         input: opts.input,
     });
 
-    const res = await fetch(req.url, req.init);
+    const res = await fetchWithTimeout(req.url, req.init, opts.timeoutMs ?? 15_000, 'tts_timeout');
     if (!res.ok) {
         throw new Error(`tts_failed:${res.status}`);
     }

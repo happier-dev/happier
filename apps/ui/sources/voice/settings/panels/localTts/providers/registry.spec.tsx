@@ -1,0 +1,54 @@
+import React from 'react';
+import { describe, expect, it, vi } from 'vitest';
+
+(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('react-native-unistyles', () => ({
+  useUnistyles: () => ({ theme: { colors: { textSecondary: '#999' } } }),
+}));
+
+vi.mock('@expo/vector-icons', () => ({
+  Ionicons: 'Ionicons',
+}));
+
+vi.mock('@/text', () => ({
+  t: (key: string) => key,
+}));
+
+vi.mock('@/modal', () => ({
+  Modal: {
+    prompt: vi.fn(),
+    alert: vi.fn(),
+  },
+}));
+
+vi.mock('@/components/ui/lists/Item', () => ({
+  Item: (props: any) => React.createElement('Item', props),
+}));
+
+vi.mock('@/components/ui/lists/ItemGroup', () => ({
+  ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children ?? null),
+}));
+
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+  DropdownMenu: (props: any) =>
+    React.createElement(
+      'DropdownMenu',
+      props,
+      typeof props.trigger === 'function'
+        ? props.trigger({ open: false, toggle: () => {}, openMenu: () => {}, closeMenu: () => {} })
+        : props.trigger ?? null,
+    ),
+}));
+
+import { VoiceLocalTtsProviderSchema } from '@/sync/domains/settings/voiceLocalTtsSettings';
+
+import { localTtsProviderSpecs } from './registry';
+
+describe('local TTS provider registry', () => {
+  it('covers every provider id in the settings schema', () => {
+    const schemaIds = new Set<string>(VoiceLocalTtsProviderSchema.options);
+    const registryIds = new Set<string>(localTtsProviderSpecs.map((spec) => spec.id));
+    expect(registryIds).toEqual(schemaIds);
+  });
+});

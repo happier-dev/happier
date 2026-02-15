@@ -1,77 +1,63 @@
-import { AudioModule, RecordingPresets, createAudioPlayer } from 'expo-audio';
-import { Platform } from 'react-native';
-import { create } from 'zustand';
+import { AudioModule, RecordingPresets } from 'expo-audio';
 
 import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/platform/microphonePermissions';
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
-import { buildOpenAiTranscriptionRequest } from './openaiCompat';
-import { fetchOpenAiCompatSpeechAudio } from './fetchOpenAiCompatSpeechAudio';
-import { speakDeviceText } from './speakDeviceText';
-import { DaemonMediatorClient } from '@/voice/mediator/daemonMediatorClient';
-import { OpenAiCompatMediatorClient } from '@/voice/mediator/openaiCompatMediatorClient';
-import type { VoiceMediatorClient } from '@/voice/mediator/types';
-import { buildVoiceInitialContext } from '@/voice/context/buildVoiceInitialContext';
-import { resolveDaemonVoiceMediatorModelIds } from '@/voice/mediator/resolveDaemonMediatorModels';
-import { isRpcMethodNotAvailableError } from '@/sync/runtime/rpcErrors';
+import { createDeviceSttController } from '@/voice/input/DeviceSttController';
+import { createSherpaStreamingSttController } from '@/voice/input/SherpaStreamingSttController';
+import { MissingGeminiApiKeyError, MissingSttBaseUrlError, transcribeRecordedAudioWithProvider } from '@/voice/input/transcribeRecordedAudioWithProvider';
+import { createVoiceAgentSessionController } from '@/voice/agent/VoiceAgentSessionController';
+import { speakAssistantText } from '@/voice/output/speakAssistantText';
+import { createTtsChunker, resolveStreamingTtsChunkChars } from '@/voice/output/TtsChunker';
+import { resolveVoiceNetworkTimeoutMs } from '@/voice/runtime/fetchWithTimeout';
+import { createVoicePlaybackController } from '@/voice/runtime/VoicePlaybackController';
+import { waitForNextAssistantTextMessage } from '@/voice/runtime/waitForNextAssistantTextMessage';
+import { createVoiceToolHandlers } from '@/voice/tools/handlers';
+import { resolveToolSessionId } from '@/voice/tools/resolveToolSessionId';
+import { voiceActivityController } from '@/voice/activity/voiceActivityController';
 
-export type LocalVoiceStatus = 'idle' | 'recording' | 'transcribing' | 'sending' | 'speaking' | 'error';
+import type { LocalVoiceState, LocalVoiceStatus } from './localVoiceState';
+import {
+  getLocalVoiceState,
+  patchLocalVoiceState,
+  setIdleStateUnlessRecording,
+} from './localVoiceState';
+import {
+  isHandsFreeDeviceSttEnabled,
+  isHandsFreeLocalNeuralSttEnabled,
+  isVoiceBargeInEnabled,
+  resolveLocalSttProvider,
+  resolveLocalVoiceAdapterSettings,
+} from './localVoiceSettings';
 
-export type LocalVoiceState = {
-  status: LocalVoiceStatus;
-  sessionId: string | null;
-  error: string | null;
-};
-
-const useLocalVoiceStore = create<LocalVoiceState>(() => ({
-  status: 'idle',
-  sessionId: null,
-  error: null,
-}));
-
-export function getLocalVoiceState(): LocalVoiceState {
-  return useLocalVoiceStore.getState();
-}
-
-export const useLocalVoiceStatus = () => useLocalVoiceStore((s) => s.status);
+export type { LocalVoiceState, LocalVoiceStatus } from './localVoiceState';
+export { getLocalVoiceState, useLocalVoiceStatus, subscribeLocalVoiceState } from './localVoiceState';
 
 let recorder: InstanceType<typeof AudioModule.AudioRecorder> | null = null;
 let inFlight: Promise<void> | null = null;
 
-type MediatorHandle = { client: VoiceMediatorClient; mediatorId: string; backend: 'daemon' | 'openai_compat' };
-const mediatorBySessionId = new Map<string, MediatorHandle>();
-const mediatorPendingContextBySessionId = new Map<string, string[]>();
-let openaiCompatMediatorClient: OpenAiCompatMediatorClient | null = null;
-let daemonMediatorClient: DaemonMediatorClient | null = null;
+const playbackController = createVoicePlaybackController();
+const voiceAgentSessions = createVoiceAgentSessionController();
+const deviceSttController = createDeviceSttController({
+  setState: patchLocalVoiceState,
+  getSettings: () => storage.getState().settings as any,
+  canAutoStopTurn: () => !inFlight,
+  onAutoStopTurn: (sessionId: string) => {
+    if (inFlight) return;
+    inFlight = stopDeviceSpeechRecognitionAndSend(sessionId).finally(() => {
+      inFlight = null;
+    });
+  },
+});
+const sherpaSttController = createSherpaStreamingSttController({
+  setState: patchLocalVoiceState,
+  getSettings: () => storage.getState().settings as any,
+});
 
-type DeviceSttHandle = {
-  sessionId: string;
-  transcript: string;
-  isFinal: boolean;
-  module: any;
-  resolveEnd: () => void;
-  endPromise: Promise<void>;
-  subscriptions: { remove(): void }[];
-};
-let deviceStt: DeviceSttHandle | null = null;
-
-function setState(patch: Partial<LocalVoiceState>) {
-  useLocalVoiceStore.setState((s) => ({ ...s, ...patch }));
-}
-
-function guessMimeType(uri: string): string {
-  const lower = uri.toLowerCase();
-  if (lower.endsWith('.webm')) return 'audio/webm';
-  if (lower.endsWith('.wav')) return 'audio/wav';
-  if (lower.endsWith('.mp3')) return 'audio/mpeg';
-  // expo-audio HIGH_QUALITY preset uses .m4a on native
-  return 'audio/mp4';
-}
-
-async function startRecording(sessionId: string) {
-  const perm = await requestMicrophonePermission();
-  if (!perm.granted) {
-    showMicrophonePermissionDeniedAlert(perm.canAskAgain);
+async function startRecording(sessionId: string): Promise<void> {
+  const permission = await requestMicrophonePermission();
+  if (!permission.granted) {
+    showMicrophonePermissionDeniedAlert(permission.canAskAgain);
     return;
   }
 
@@ -80,464 +66,416 @@ async function startRecording(sessionId: string) {
     await nextRecorder.prepareToRecordAsync();
     nextRecorder.record();
     recorder = nextRecorder;
-    setState({ status: 'recording', sessionId, error: null });
-  } catch (e) {
+    patchLocalVoiceState({ status: 'recording', sessionId, error: null });
+  } catch (error) {
     try {
       await nextRecorder.stop?.();
     } catch {
       // best-effort
     }
     recorder = null;
-    setState({ status: 'idle', sessionId: null, error: 'recording_start_failed' });
-    throw e;
+    patchLocalVoiceState({ status: 'idle', sessionId: null, error: 'recording_start_failed' });
+    throw error;
   }
 }
 
-async function startDeviceSpeechRecognition(sessionId: string) {
-  const perm = await requestMicrophonePermission();
-  if (!perm.granted) {
-    showMicrophonePermissionDeniedAlert(perm.canAskAgain);
-    return;
-  }
-
-  const { ExpoSpeechRecognitionModule } = await import('expo-speech-recognition');
-
-  if (typeof ExpoSpeechRecognitionModule?.isRecognitionAvailable === 'function' && !ExpoSpeechRecognitionModule.isRecognitionAvailable()) {
-    setState({ status: 'idle', sessionId: null, error: 'device_stt_unavailable' });
-    return;
-  }
-
-  try {
-    const res = await ExpoSpeechRecognitionModule.requestPermissionsAsync?.();
-    if (res && res.granted === false) {
-      setState({ status: 'idle', sessionId: null, error: 'device_stt_permission_denied' });
-      return;
-    }
-  } catch {
-    // Permission request best-effort; start() may still work on web.
-  }
-
-  // Cleanup any previous listeners (single recognizer instance semantics).
-  try {
-    deviceStt?.subscriptions.forEach((s) => s.remove());
-  } catch {
-    // ignore
-  }
-
-  let resolveEnd: null | (() => void) = null;
-  const endPromise = new Promise<void>((resolve) => {
-    resolveEnd = resolve;
-  });
-
-  const handle: DeviceSttHandle = {
-    sessionId,
-    transcript: '',
-    isFinal: false,
-    module: ExpoSpeechRecognitionModule,
-    resolveEnd: () => resolveEnd?.(),
-    endPromise,
-    subscriptions: [],
-  };
-  deviceStt = handle;
-
-  handle.subscriptions.push(
-    ExpoSpeechRecognitionModule.addListener('result', (event: any) => {
-      const results = Array.isArray(event?.results) ? event.results : [];
-      const transcript = typeof results?.[0]?.transcript === 'string' ? results[0].transcript.trim() : '';
-      if (!transcript) return;
-      handle.transcript = transcript;
-      if (event?.isFinal) handle.isFinal = true;
-    }),
-  );
-  handle.subscriptions.push(
-    ExpoSpeechRecognitionModule.addListener('end', () => {
-      handle.resolveEnd();
-    }),
-  );
-  handle.subscriptions.push(
-    ExpoSpeechRecognitionModule.addListener('error', () => {
-      handle.resolveEnd();
-    }),
-  );
-
-  const settings: any = storage.getState().settings;
-  const lang = typeof settings.voiceAssistantLanguage === 'string' && settings.voiceAssistantLanguage.trim()
-    ? settings.voiceAssistantLanguage.trim()
-    : undefined;
-
-  try {
-    ExpoSpeechRecognitionModule.start({
-      ...(lang ? { lang } : {}),
-      interimResults: true,
-      maxAlternatives: 1,
-      continuous: true,
-    } as any);
-  } catch (e) {
-    deviceStt = null;
-    setState({ status: 'idle', sessionId: null, error: 'device_stt_start_failed' });
-    throw e;
-  }
-
-  setState({ status: 'recording', sessionId, error: null });
-}
-
-async function stopDeviceSpeechRecognitionAndSend(sessionId: string) {
-  if (!deviceStt || deviceStt.sessionId !== sessionId) {
-    setState({ status: 'idle', sessionId: null });
-    return;
-  }
-
-  setState({ status: 'transcribing', error: null });
-
-  try {
-    deviceStt.module?.stop?.();
-  } catch {
-    // ignore
-  }
-
-  await Promise.race([
-    deviceStt.endPromise,
-    new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
-  ]);
-
-  const text = deviceStt.transcript.trim();
-  const subs = deviceStt.subscriptions;
-  deviceStt = null;
-  try {
-    subs.forEach((s) => s.remove());
-  } catch {
-    // ignore
-  }
-
-  if (!text) {
-    setState({ status: 'idle', sessionId: null });
-    return;
-  }
-
-  const settings = storage.getState().settings as any;
-  await sendVoiceTextTurn(sessionId, settings, text);
-}
-
-async function stopAndSend(sessionId: string) {
+async function stopAndSendRecordedTurn(sessionId: string): Promise<void> {
   if (!recorder) {
-    setState({ status: 'idle', sessionId: null });
+    patchLocalVoiceState({ status: 'idle', sessionId, error: null });
     return;
   }
 
-  setState({ status: 'transcribing', error: null });
+  patchLocalVoiceState({ status: 'transcribing', error: null });
   let uri: string | null = null;
   try {
     await recorder.stop();
     uri = recorder.uri;
   } catch {
     recorder = null;
-    setState({ status: 'idle', sessionId: null, error: 'recording_stop_failed' });
+    patchLocalVoiceState({ status: 'idle', sessionId, error: 'recording_stop_failed' });
     return;
   }
   recorder = null;
 
   if (!uri) {
-    setState({ status: 'idle', sessionId: null });
+    patchLocalVoiceState({ status: 'idle', sessionId, error: null });
     return;
   }
 
   const settings = storage.getState().settings as any;
-  const sttBaseUrl = (settings.voiceLocalSttBaseUrl ?? '').trim();
-  if (!sttBaseUrl) {
-    setState({ status: 'idle', sessionId: null, error: 'missing_stt_base_url' });
-    throw new Error('missing_stt_base_url');
-  }
-
-  const sttApiKey = settings.voiceLocalSttApiKey ? (sync.decryptSecretValue(settings.voiceLocalSttApiKey) ?? null) : null;
-  const sttModel = (settings.voiceLocalSttModel ?? 'whisper-1') as string;
-
-  const fileName = (RecordingPresets.HIGH_QUALITY as any)?.extension
-    ? `recording${(RecordingPresets.HIGH_QUALITY as any).extension}`
-    : 'recording.m4a';
-
-  const transcriptionReq = await (async () => {
-    if (Platform.OS === 'web' && uri.startsWith('blob:')) {
-      const blob = await (await fetch(uri)).blob();
-      return buildOpenAiTranscriptionRequest({
-        baseUrl: sttBaseUrl,
-        apiKey: sttApiKey,
-        model: sttModel,
-        file: { kind: 'web', blob, name: fileName.replace(/\.m4a$/i, '.webm') },
-      });
-    }
-    return buildOpenAiTranscriptionRequest({
-      baseUrl: sttBaseUrl,
-      apiKey: sttApiKey,
-      model: sttModel,
-      file: { kind: 'native', uri, name: fileName, mimeType: guessMimeType(fileName) },
-    });
-  })();
-
-  let res: Response;
+  let text: string | null = null;
   try {
-    res = await fetch(transcriptionReq.url, transcriptionReq.init);
-  } catch {
-    setState({ status: 'idle', sessionId: null, error: 'stt_failed' });
+    text = await transcribeRecordedAudioWithProvider({ uri, settings });
+  } catch (error) {
+    if (error instanceof MissingSttBaseUrlError) {
+      patchLocalVoiceState({ status: 'idle', sessionId, error: 'missing_stt_base_url' });
+      throw error;
+    }
+    if (error instanceof MissingGeminiApiKeyError) {
+      patchLocalVoiceState({ status: 'idle', sessionId, error: 'missing_stt_api_key' });
+      throw error;
+    }
+    patchLocalVoiceState({ status: 'idle', sessionId, error: 'stt_failed' });
     return;
   }
-  if (!res.ok) {
-    setState({ status: 'idle', sessionId: null, error: 'stt_failed' });
-    return;
-  }
-  const json = await res.json().catch(() => null);
-  const text = json && typeof json.text === 'string' ? json.text.trim() : '';
+
   if (!text) {
-    setState({ status: 'idle', sessionId: null });
+    patchLocalVoiceState({ status: 'idle', sessionId, error: null });
     return;
   }
 
   await sendVoiceTextTurn(sessionId, settings, text);
 }
 
-async function sendVoiceTextTurn(sessionId: string, settings: any, userText: string) {
-  const conversationMode = (settings.voiceLocalConversationMode ?? 'direct_session') as 'direct_session' | 'mediator';
-  if (conversationMode === 'mediator') {
-    setState({ status: 'sending' });
+async function stopDeviceSpeechRecognitionAndSend(sessionId: string): Promise<void> {
+  patchLocalVoiceState({ status: 'transcribing', error: null });
+
+  const text = await deviceSttController.stop(sessionId);
+  if (!text) {
+    if (deviceSttController.isHandsFreeSession(sessionId) && isHandsFreeDeviceSttEnabled(storage.getState().settings)) {
+      await deviceSttController.start(sessionId);
+      return;
+    }
+    patchLocalVoiceState({ status: 'idle', sessionId, error: null });
+    return;
+  }
+
+  const settings = storage.getState().settings as any;
+  await sendVoiceTextTurn(sessionId, settings, text);
+
+  if (deviceSttController.isHandsFreeSession(sessionId) && isHandsFreeDeviceSttEnabled(storage.getState().settings)) {
+    await deviceSttController.start(sessionId);
+  }
+}
+
+async function stopSherpaSpeechRecognitionAndSend(sessionId: string): Promise<void> {
+  patchLocalVoiceState({ status: 'transcribing', error: null });
+
+  const text = await sherpaSttController.stop(sessionId);
+  if (!text) {
+    if (sherpaSttController.isHandsFreeSession(sessionId) && isHandsFreeLocalNeuralSttEnabled(storage.getState().settings)) {
+      await sherpaSttController.start(sessionId);
+      return;
+    }
+    patchLocalVoiceState({ status: 'idle', sessionId, error: null });
+    return;
+  }
+
+  const settings = storage.getState().settings as any;
+  await sendVoiceTextTurn(sessionId, settings, text);
+
+  if (sherpaSttController.isHandsFreeSession(sessionId) && isHandsFreeLocalNeuralSttEnabled(storage.getState().settings)) {
+    await sherpaSttController.start(sessionId);
+  }
+}
+
+async function sendVoiceTextTurn(sessionId: string, settings: any, userText: string): Promise<void> {
+  const { adapterId, config } = resolveLocalVoiceAdapterSettings(settings);
+  const networkTimeoutMs = resolveVoiceNetworkTimeoutMs(config?.networkTimeoutMs, 15_000);
+  const conversationMode =
+    adapterId === 'local_conversation' ? ((config?.conversationMode ?? 'direct_session') as 'direct_session' | 'agent') : 'direct_session';
+
+  voiceActivityController.appendUserText(sessionId, adapterId, userText);
+
+  if (conversationMode === 'agent') {
+    const autoSpeak = config?.tts?.autoSpeakReplies !== false;
+    const tts = config?.tts ?? null;
+    const legacyUseDeviceTts = tts?.useDeviceTts === true;
+    const legacyBaseUrl = typeof tts?.baseUrl === 'string' ? tts.baseUrl : null;
+    const ttsProvider =
+      typeof tts?.provider === 'string'
+        ? tts.provider
+        : legacyUseDeviceTts
+          ? 'device'
+          : legacyBaseUrl && legacyBaseUrl.trim().length > 0
+            ? 'openai_compat'
+            : 'openai_compat';
+    const openaiCompatBaseUrl = String(tts?.openaiCompat?.baseUrl ?? legacyBaseUrl ?? '').trim();
+      const streamingSpeechEnabled =
+      autoSpeak &&
+      config?.streaming?.enabled === true &&
+      config?.streaming?.ttsEnabled === true &&
+      (ttsProvider === 'device' ||
+        ttsProvider === 'local_neural' ||
+        (ttsProvider === 'openai_compat' && Boolean(openaiCompatBaseUrl)));
+    const streamingChunkChars = resolveStreamingTtsChunkChars(config?.streaming?.ttsChunkChars);
+
+    patchLocalVoiceState({ status: 'sending' });
     try {
-      const assistantText = await sendMediatorTurn(sessionId, userText);
+      type VoiceToolAction = Readonly<{ t?: unknown; args?: unknown }>;
+      type ToolResultEntry = Readonly<{
+        t: string;
+        args: unknown;
+        result: unknown;
+      }>;
 
-      const autoSpeak = settings.voiceLocalAutoSpeakReplies !== false;
-      if (!autoSpeak) {
-        return;
-      }
-
-      const useDeviceTts = settings.voiceLocalUseDeviceTts === true;
-      const ttsBaseUrl = (settings.voiceLocalTtsBaseUrl ?? '').trim();
-      if (!useDeviceTts && !ttsBaseUrl) {
-        return;
-      }
-
-      const ttsApiKey = settings.voiceLocalTtsApiKey ? (sync.decryptSecretValue(settings.voiceLocalTtsApiKey) ?? null) : null;
-      const ttsModel = (settings.voiceLocalTtsModel ?? 'tts-1') as string;
-      const ttsVoice = (settings.voiceLocalTtsVoice ?? 'alloy') as string;
-      const ttsFormat = (settings.voiceLocalTtsFormat ?? 'mp3') as 'mp3' | 'wav';
-
-      if (assistantText) {
-        if (useDeviceTts) {
-          await speakDeviceText(assistantText, () => setState({ status: 'speaking' })).catch(() => {});
-        } else {
-          setState({ status: 'speaking' });
-          await speakText({
-            baseUrl: ttsBaseUrl,
-            apiKey: ttsApiKey,
-            model: ttsModel,
-            voice: ttsVoice,
-            format: ttsFormat,
-            input: assistantText,
-          }).catch(() => {});
+      const parseToolResult = (value: string): unknown => {
+        const trimmed = String(value ?? '').trim();
+        if (!trimmed) return '';
+        try {
+          return JSON.parse(trimmed);
+        } catch {
+          return trimmed;
         }
+      };
+
+      const chunker = streamingSpeechEnabled ? createTtsChunker(streamingChunkChars) : null;
+      const playbackEpoch = playbackController.captureEpoch();
+      let queuedChunkCount = 0;
+      let chunkPlaybackQueue: Promise<void> = Promise.resolve();
+
+      const queueSpokenChunk = (chunkText: string) => {
+        const trimmed = chunkText.trim();
+        if (!trimmed) return;
+        queuedChunkCount += 1;
+        chunkPlaybackQueue = chunkPlaybackQueue
+          .then(async () => {
+            if (!playbackController.isEpochCurrent(playbackEpoch)) return;
+            await speakAssistantText({
+              text: trimmed,
+              settings,
+              networkTimeoutMs,
+              registerPlaybackStopper: playbackController.registerStopper,
+              onSpeaking: () => patchLocalVoiceState({ status: 'speaking' }),
+            });
+          })
+          .catch(() => {});
+      };
+
+      const { assistantText, actions: _actions } = await voiceAgentSessions.sendTurn(
+        sessionId,
+        userText,
+        chunker
+          ? {
+              onTextDelta: (textDelta) => {
+                const nextChunks = chunker.push(textDelta);
+                nextChunks.forEach((chunk) => queueSpokenChunk(chunk));
+              },
+            }
+          : undefined
+      );
+
+      voiceActivityController.appendAssistantText(sessionId, adapterId, assistantText);
+
+      const tools = createVoiceToolHandlers({
+        resolveSessionId: (explicitSessionId) =>
+          resolveToolSessionId({
+            explicitSessionId,
+            currentSessionId: null,
+          }),
+      });
+      const canSpeak =
+        autoSpeak &&
+        (ttsProvider === 'device' ||
+          ttsProvider === 'local_neural' ||
+          (ttsProvider === 'openai_compat' && Boolean(openaiCompatBaseUrl)));
+
+      const runActionsOnce = async (actions: ReadonlyArray<unknown>): Promise<ToolResultEntry[]> => {
+        const results: ToolResultEntry[] = [];
+        for (const actionRaw of actions) {
+          const action = actionRaw as VoiceToolAction;
+          const toolName = typeof action?.t === 'string' ? action.t.trim() : '';
+          if (!toolName) continue;
+          const handler = (tools as any)[toolName] as ((params: unknown) => Promise<string>) | undefined;
+          if (typeof handler !== 'function') {
+            results.push({
+              t: toolName,
+              args: action?.args ?? null,
+              result: { ok: false, errorCode: 'tool_not_supported', errorMessage: 'tool_not_supported' },
+            });
+            continue;
+          }
+          try {
+            const value = await handler(action?.args ?? null);
+            results.push({ t: toolName, args: action?.args ?? null, result: parseToolResult(value) });
+          } catch (error) {
+            results.push({
+              t: toolName,
+              args: action?.args ?? null,
+              result: {
+                ok: false,
+                errorCode: 'tool_failed',
+                errorMessage: error instanceof Error ? error.message : 'tool_failed',
+              },
+            });
+          }
+        }
+        return results;
+      };
+
+      const MAX_TOOL_ROUNDS = 3;
+      const initialActions = _actions ?? [];
+      const initialToolResults = await runActionsOnce(initialActions);
+
+      if (!canSpeak) {
+        // Even when autoSpeak is disabled, we still run a tool request/response loop so the agent can see outcomes.
+        let toolResults = initialToolResults;
+        for (let i = 0; i < MAX_TOOL_ROUNDS && toolResults.length > 0; i++) {
+          const toolResultsMessage = `VOICE_TOOL_RESULTS_JSON:\n${JSON.stringify({ toolResults })}`;
+          const followUp = await voiceAgentSessions.sendTurn(sessionId, toolResultsMessage);
+          voiceActivityController.appendAssistantText(sessionId, adapterId, followUp.assistantText);
+          toolResults = await runActionsOnce(followUp.actions ?? []);
+        }
+        return;
       }
+
+      if (chunker) {
+        chunker.flush().forEach((chunk) => queueSpokenChunk(chunk));
+        if (queuedChunkCount === 0 && assistantText.trim().length > 0) {
+          queueSpokenChunk(assistantText);
+        }
+        await chunkPlaybackQueue;
+      } else {
+        await speakAssistantText({
+          text: assistantText,
+          settings,
+          networkTimeoutMs,
+          registerPlaybackStopper: playbackController.registerStopper,
+          onSpeaking: () => patchLocalVoiceState({ status: 'speaking' }),
+        });
+      }
+
+      let toolResults = initialToolResults;
+      for (let i = 0; i < MAX_TOOL_ROUNDS && toolResults.length > 0; i++) {
+        const toolResultsMessage = `VOICE_TOOL_RESULTS_JSON:\n${JSON.stringify({ toolResults })}`;
+        const followUp = await voiceAgentSessions.sendTurn(sessionId, toolResultsMessage);
+        voiceActivityController.appendAssistantText(sessionId, adapterId, followUp.assistantText);
+        if (followUp.assistantText.trim().length > 0) {
+          await speakAssistantText({
+            text: followUp.assistantText,
+            settings,
+            networkTimeoutMs,
+            registerPlaybackStopper: playbackController.registerStopper,
+            onSpeaking: () => patchLocalVoiceState({ status: 'speaking' }),
+          });
+        }
+        toolResults = await runActionsOnce(followUp.actions ?? []);
+      }
+
       return;
-    } catch (error) {
-      console.error('[localVoiceEngine] mediator turn failed', error);
-      setState({ status: 'idle', sessionId: null, error: 'send_failed' });
-      return;
-    } finally {
-      setState({ status: 'idle', sessionId: null });
+	    } catch (error) {
+          voiceActivityController.appendError(sessionId, adapterId, 'voice_agent_send_failed', error instanceof Error ? error.message : 'send_failed');
+	      patchLocalVoiceState({ status: 'idle', sessionId, error: 'send_failed' });
+	      return;
+	    } finally {
+      setIdleStateUnlessRecording(sessionId);
     }
   }
 
   const baselineMessages = ((storage.getState() as any).sessionMessages?.[sessionId]?.messages ?? []) as any[];
   const baselineCount = baselineMessages.length;
-  const baselineIds = new Set<string>(baselineMessages.map((m: any) => m?.id).filter((id: any) => typeof id === 'string'));
+  const baselineIds = new Set<string>(
+    baselineMessages
+      .map((message: any) => message?.id)
+      .filter((messageId: any): messageId is string => typeof messageId === 'string')
+  );
 
-  setState({ status: 'sending' });
+  patchLocalVoiceState({ status: 'sending' });
   try {
     await sync.sendMessage(sessionId, userText);
+    voiceActivityController.appendActionExecuted(sessionId, adapterId, 'unknown', `Sent to session: ${userText.slice(0, 200)}`);
   } catch (error) {
-    setState({ status: 'idle', sessionId: null, error: 'send_failed' });
+    voiceActivityController.appendError(sessionId, adapterId, 'send_failed', error instanceof Error ? error.message : 'send_failed');
+    patchLocalVoiceState({ status: 'idle', sessionId, error: 'send_failed' });
     throw error;
   }
 
-  const autoSpeak = settings.voiceLocalAutoSpeakReplies !== false;
+  const autoSpeak = config?.tts?.autoSpeakReplies !== false;
   if (!autoSpeak) {
-    setState({ status: 'idle', sessionId: null });
+    patchLocalVoiceState({ status: 'idle', sessionId, error: null });
     return;
   }
 
   const assistantText = await waitForNextAssistantTextMessage(sessionId, baselineIds, baselineCount, 60_000);
   if (!assistantText) {
-    setState({ status: 'idle', sessionId: null });
+    patchLocalVoiceState({ status: 'idle', sessionId, error: null });
     return;
   }
 
-  const useDeviceTts = settings.voiceLocalUseDeviceTts === true;
-  if (useDeviceTts) {
-    await speakDeviceText(assistantText, () => setState({ status: 'speaking' })).catch(() => {});
-    setState({ status: 'idle', sessionId: null });
-    return;
-  }
-
-  const ttsBaseUrl = (settings.voiceLocalTtsBaseUrl ?? '').trim();
-  if (!ttsBaseUrl) {
-    setState({ status: 'idle', sessionId: null });
-    return;
-  }
-
-  const ttsApiKey = settings.voiceLocalTtsApiKey ? (sync.decryptSecretValue(settings.voiceLocalTtsApiKey) ?? null) : null;
-  const ttsModel = (settings.voiceLocalTtsModel ?? 'tts-1') as string;
-  const ttsVoice = (settings.voiceLocalTtsVoice ?? 'alloy') as string;
-  const ttsFormat = (settings.voiceLocalTtsFormat ?? 'mp3') as 'mp3' | 'wav';
-
-  setState({ status: 'speaking' });
-  await speakText({
-    baseUrl: ttsBaseUrl,
-    apiKey: ttsApiKey,
-    model: ttsModel,
-    voice: ttsVoice,
-    format: ttsFormat,
-    input: assistantText,
-  }).catch(() => {});
-
-  setState({ status: 'idle', sessionId: null });
+  await speakAssistantText({
+    text: assistantText,
+    settings,
+    networkTimeoutMs,
+    registerPlaybackStopper: playbackController.registerStopper,
+    onSpeaking: () => patchLocalVoiceState({ status: 'speaking' }),
+  });
+  setIdleStateUnlessRecording(sessionId);
 }
 
-async function getMediatorHandle(sessionId: string): Promise<MediatorHandle> {
-  const existing = mediatorBySessionId.get(sessionId);
-  if (existing) return existing;
-
-  const settings: any = storage.getState().settings;
-  const requestedBackend = (settings.voiceLocalMediatorBackend ?? 'daemon') as 'daemon' | 'openai_compat';
-  const permissionPolicy = (settings.voiceMediatorPermissionPolicy ?? 'read_only') as 'no_tools' | 'read_only';
-  const idleTtlSeconds = Number(settings.voiceMediatorIdleTtlSeconds ?? 300);
-  const verbosity = (settings.voiceMediatorVerbosity ?? 'short') as 'short' | 'balanced';
-  const agentSource = (settings.voiceMediatorAgentSource ?? 'session') as 'session' | 'agent';
-  const agentId = agentSource === 'agent' ? (settings.voiceMediatorAgentId ?? 'claude') : null;
-
-  const resolveModelIds = (backend: 'daemon' | 'openai_compat') => {
-    if (backend === 'openai_compat') {
-      const chatModelId = String(settings.voiceLocalChatChatModel ?? 'default');
-      const commitModelId = String(settings.voiceLocalChatCommitModel ?? chatModelId);
-      return { chatModelId, commitModelId };
-    }
-
-    const session = storage.getState().sessions?.[sessionId] ?? null;
-    if (!session) {
-      const chatModelId = String(settings.voiceMediatorChatModelId ?? 'default');
-      const commitModelId = String(settings.voiceMediatorCommitModelId ?? chatModelId);
-      return { chatModelId, commitModelId };
-    }
-
-    return resolveDaemonVoiceMediatorModelIds({
-      session,
-      settings,
-    });
-  };
-
-  const initialContext = buildVoiceInitialContext(sessionId);
-
-  const shouldFallbackFromDaemon = (e: unknown) => {
-    const err: any = e;
-    if (isRpcMethodNotAvailableError(err)) return true;
-    if (typeof err?.rpcErrorCode === 'string' && err.rpcErrorCode === 'VOICE_MEDIATOR_UNSUPPORTED') return true;
-    return false;
-  };
-
-  let backend: 'daemon' | 'openai_compat' = requestedBackend;
-  let { chatModelId, commitModelId } = resolveModelIds(backend);
-  let client: VoiceMediatorClient =
-    backend === 'openai_compat'
-      ? (openaiCompatMediatorClient ?? (openaiCompatMediatorClient = new OpenAiCompatMediatorClient()))
-      : (daemonMediatorClient ?? (daemonMediatorClient = new DaemonMediatorClient()));
-
-  const startArgs = {
-    sessionId,
-    agentSource,
-    ...(typeof agentId === 'string' ? { agentId } : {}),
-    verbosity,
-    permissionPolicy,
-    idleTtlSeconds,
-    initialContext,
-  };
-
-  const started = await (async () => {
-    try {
-      return await client.start({
-        ...startArgs,
-        chatModelId,
-        commitModelId,
-      });
-    } catch (e) {
-      if (requestedBackend !== 'daemon') throw e;
-      if (!shouldFallbackFromDaemon(e)) throw e;
-
-      const baseUrl = String(settings.voiceLocalChatBaseUrl ?? '').trim();
-      if (!baseUrl) throw e;
-
-      backend = 'openai_compat';
-      ({ chatModelId, commitModelId } = resolveModelIds(backend));
-      client = openaiCompatMediatorClient ?? (openaiCompatMediatorClient = new OpenAiCompatMediatorClient());
-      return await client.start({
-        ...startArgs,
-        chatModelId,
-        commitModelId,
-      });
-    }
-  })();
-
-  const handle: MediatorHandle = { client, mediatorId: started.mediatorId, backend };
-  mediatorBySessionId.set(sessionId, handle);
-  return handle;
+export async function stopLocalVoiceAgent(sessionId: string): Promise<void> {
+  deviceSttController.clearHandsFreeSession(sessionId);
+  sherpaSttController.clearHandsFreeSession(sessionId);
+  await voiceAgentSessions.stop(sessionId);
 }
 
-async function sendMediatorTurn(sessionId: string, userText: string): Promise<string> {
-  const handle = await getMediatorHandle(sessionId);
-  const pending = mediatorPendingContextBySessionId.get(sessionId) ?? [];
-  if (pending.length > 0) {
-    mediatorPendingContextBySessionId.delete(sessionId);
-    userText = `Context updates since your last voice turn:\n\n${pending.join('\n\n---\n\n')}\n\nUser said:\n${userText}`;
-  }
-  const res = await handle.client.sendTurn({ sessionId, mediatorId: handle.mediatorId, userText });
-  return res.assistantText;
+export function isLocalVoiceAgentActive(sessionId: string): boolean {
+  return voiceAgentSessions.isActive(sessionId);
 }
 
-export async function commitLocalVoiceMediator(sessionId: string): Promise<string> {
-  const handle = await getMediatorHandle(sessionId);
-  const res = await handle.client.commit({ sessionId, mediatorId: handle.mediatorId, kind: 'session_instruction' });
-  return res.commitText;
-}
-
-export async function stopLocalVoiceMediator(sessionId: string): Promise<void> {
-  const handle = mediatorBySessionId.get(sessionId);
-  if (!handle) return;
-  mediatorBySessionId.delete(sessionId);
-  mediatorPendingContextBySessionId.delete(sessionId);
-  try {
-    await handle.client.stop({ sessionId, mediatorId: handle.mediatorId });
-  } catch {
-    // best-effort only
-  }
-}
-
-export function isLocalVoiceMediatorActive(sessionId: string): boolean {
-  return mediatorBySessionId.has(sessionId);
-}
-
-export function appendLocalVoiceMediatorContextUpdate(sessionId: string, update: string): void {
-  const text = update.trim();
-  if (!text) return;
-  const existing = mediatorPendingContextBySessionId.get(sessionId) ?? [];
-  existing.push(text);
-  // Bound memory: keep only the last few updates.
-  const capped = existing.slice(Math.max(0, existing.length - 8));
-  mediatorPendingContextBySessionId.set(sessionId, capped);
+export function appendLocalVoiceAgentContextUpdate(sessionId: string, update: string): void {
+  voiceAgentSessions.appendContextUpdate(sessionId, update);
 }
 
 export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
-  if (inFlight) {
+  const realtimeStatus = (storage.getState() as any)?.realtimeStatus;
+  if (realtimeStatus === 'connected' || realtimeStatus === 'connecting') {
+    // Avoid audio-session conflicts: local voice should not start while a realtime call is active.
+    return;
+  }
+
+  const initialState = getLocalVoiceState();
+  const canAttemptBargeIn =
+    initialState.status === 'speaking' && initialState.sessionId === sessionId && isVoiceBargeInEnabled(storage.getState().settings);
+  const shouldNoopWhileSpeaking =
+    initialState.status === 'speaking' && initialState.sessionId === sessionId && !isVoiceBargeInEnabled(storage.getState().settings);
+
+  if (shouldNoopWhileSpeaking) {
+    return;
+  }
+
+  if (inFlight && !canAttemptBargeIn) {
     await inFlight;
   }
 
   const current = getLocalVoiceState();
+
+  if (current.status === 'speaking') {
+    if (current.sessionId !== sessionId) {
+      return;
+    }
+
+    if (!isVoiceBargeInEnabled(storage.getState().settings)) {
+      return;
+    }
+
+    playbackController.interrupt();
+    if (inFlight) {
+      await inFlight.catch(() => {});
+    }
+
+    const settings = storage.getState().settings as any;
+    const { config } = resolveLocalVoiceAdapterSettings(settings);
+    const sttProvider = resolveLocalSttProvider(settings);
+    const useDeviceStt = sttProvider === 'device';
+    const useSherpaStt = sttProvider === 'local_neural';
+    deviceSttController.setHandsFreeSession(useDeviceStt && config?.handsFree?.enabled === true ? sessionId : null);
+    sherpaSttController.setHandsFreeSession(useSherpaStt && config?.handsFree?.enabled === true ? sessionId : null);
+    inFlight = (useDeviceStt ? deviceSttController.start(sessionId) : useSherpaStt ? sherpaSttController.start(sessionId) : startRecording(sessionId)).finally(() => {
+      inFlight = null;
+    });
+    await inFlight;
+    return;
+  }
+
   if (current.status === 'idle') {
     const settings = storage.getState().settings as any;
-    const useDeviceStt = settings.voiceLocalUseDeviceStt === true;
-    inFlight = (useDeviceStt ? startDeviceSpeechRecognition(sessionId) : startRecording(sessionId)).finally(() => {
+    const { config } = resolveLocalVoiceAdapterSettings(settings);
+    const sttProvider = resolveLocalSttProvider(settings);
+    const useDeviceStt = sttProvider === 'device';
+    const useSherpaStt = sttProvider === 'local_neural';
+    deviceSttController.setHandsFreeSession(useDeviceStt && config?.handsFree?.enabled === true ? sessionId : null);
+    sherpaSttController.setHandsFreeSession(useSherpaStt && config?.handsFree?.enabled === true ? sessionId : null);
+    inFlight = (useDeviceStt ? deviceSttController.start(sessionId) : useSherpaStt ? sherpaSttController.start(sessionId) : startRecording(sessionId)).finally(() => {
       inFlight = null;
     });
     await inFlight;
@@ -548,190 +486,73 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
     if (current.sessionId !== sessionId) {
       return;
     }
+
     const settings = storage.getState().settings as any;
-    const useDeviceStt = settings.voiceLocalUseDeviceStt === true;
-    inFlight = (useDeviceStt ? stopDeviceSpeechRecognitionAndSend(sessionId) : stopAndSend(sessionId)).finally(() => {
+    const { config } = resolveLocalVoiceAdapterSettings(settings);
+    const sttProvider = resolveLocalSttProvider(settings);
+    const useDeviceStt = sttProvider === 'device';
+    const useSherpaStt = sttProvider === 'local_neural';
+    if (useDeviceStt) {
+      deviceSttController.clearHandsFreeSession();
+    }
+
+    if (useSherpaStt) {
+      sherpaSttController.clearHandsFreeSession();
+    }
+
+    inFlight = (useDeviceStt
+      ? stopDeviceSpeechRecognitionAndSend(sessionId)
+      : useSherpaStt
+        ? stopSherpaSpeechRecognitionAndSend(sessionId)
+        : stopAndSendRecordedTurn(sessionId)).finally(() => {
       inFlight = null;
     });
     await inFlight;
   }
 }
 
-async function waitForNextAssistantTextMessage(
-  sessionId: string,
-  baselineIds: Set<string>,
-  baselineCount: number,
-  timeoutMs: number
-): Promise<string | null> {
-  return await new Promise((resolve) => {
-    let settled = false;
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-    let unsubscribe: null | (() => void) = null;
+export async function stopLocalVoiceSession(): Promise<void> {
+  const current = getLocalVoiceState();
+  if (!current.sessionId) return;
 
-    const cleanup = () => {
-      if (timeout) clearTimeout(timeout);
-      timeout = null;
-      try {
-        unsubscribe?.();
-      } catch {
-        // Best-effort cleanup; ignore unsubscribe errors.
-      }
-      unsubscribe = null;
-    };
+  playbackController.interrupt();
 
-    const done = (text: string | null) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve(text);
-    };
+  const activeSessionId = current.sessionId;
 
-    const check = () => {
-      try {
-        const messages = (storage.getState() as any).sessionMessages?.[sessionId]?.messages ?? [];
-        const startIndex = messages.length >= baselineCount ? baselineCount : 0;
-        for (let idx = startIndex; idx < messages.length; idx++) {
-          const m = messages[idx];
-          if (m?.kind !== 'agent-text') continue;
-          if (typeof m?.text !== 'string') continue;
-          if (typeof m?.id === 'string' && baselineIds.has(m.id)) continue;
-          done(m.text);
-          return;
-        }
-      } catch {
-        done(null);
-      }
-    };
-
-    timeout = setTimeout(() => done(null), timeoutMs);
+  // Best-effort stop any recording (we intentionally do not send).
+  if (recorder) {
     try {
-      unsubscribe = storage.subscribe(check);
+      await recorder.stop();
     } catch {
-      done(null);
-      return;
+      // ignore
     }
-    check();
-  });
-}
-
-async function speakText(opts: {
-  baseUrl: string;
-  apiKey: string | null;
-  model: string;
-  voice: string;
-  format: 'mp3' | 'wav';
-  input: string;
-}): Promise<void> {
-  const buffer = await fetchOpenAiCompatSpeechAudio({
-    baseUrl: opts.baseUrl,
-    apiKey: opts.apiKey,
-    model: opts.model,
-    voice: opts.voice,
-    format: opts.format,
-    input: opts.input,
-  });
-
-  if (Platform.OS === 'web') {
-    const blob = new Blob([buffer], { type: opts.format === 'wav' ? 'audio/wav' : 'audio/mpeg' });
-    const url = URL.createObjectURL(blob);
-    const player = createAudioPlayer(url);
-    let subscription: { remove(): void } | null = null;
-    const cleanup = () => {
-      try {
-        subscription?.remove();
-      } catch {
-        // ignore
-      }
-      subscription = null;
-      try {
-        player.remove();
-      } catch {
-        // ignore
-      }
-      URL.revokeObjectURL(url);
-    };
-
-    return await new Promise<void>((resolve, reject) => {
-      let settled = false;
-      const safeResolve = () => {
-        if (settled) return;
-        settled = true;
-        resolve();
-      };
-      const safeReject = (error: unknown) => {
-        if (settled) return;
-        settled = true;
-        reject(error);
-      };
-
-      subscription = player.addListener('playbackStatusUpdate', (status: any) => {
-        if (status?.didJustFinish) {
-          cleanup();
-          safeResolve();
-        }
-      });
-
-      try {
-        player.play();
-      } catch (error) {
-        cleanup();
-        safeReject(error);
-      }
-    });
+    recorder = null;
   }
 
-  const ext = opts.format === 'wav' ? '.wav' : '.mp3';
-  const { File, Paths, deleteAsync } = await import('expo-file-system');
-  const file = new File(Paths.cache, `happier-voice-${Date.now()}${ext}`);
-  await file.write(new Uint8Array(buffer));
-
-  const player = createAudioPlayer(file.uri);
-  let subscription: { remove(): void } | null = null;
-  const cleanup = async () => {
+  if (typeof activeSessionId === 'string' && activeSessionId.trim().length > 0) {
     try {
-      subscription?.remove();
+      await deviceSttController.stop(activeSessionId);
     } catch {
       // ignore
     }
-    subscription = null;
+    deviceSttController.clearHandsFreeSession(activeSessionId);
+
     try {
-      player.remove();
+      await sherpaSttController.stop(activeSessionId);
     } catch {
       // ignore
     }
+    sherpaSttController.clearHandsFreeSession(activeSessionId);
+
     try {
-      await deleteAsync(file.uri, { idempotent: true });
+      await voiceAgentSessions.stop(activeSessionId);
     } catch {
       // ignore
     }
-  };
+  } else {
+    deviceSttController.clearHandsFreeSession();
+    sherpaSttController.clearHandsFreeSession();
+  }
 
-  return await new Promise<void>((resolve, reject) => {
-    let settled = false;
-    const safeResolve = () => {
-      if (settled) return;
-      settled = true;
-      resolve();
-    };
-    const safeReject = (error: unknown) => {
-      if (settled) return;
-      settled = true;
-      reject(error);
-    };
-
-    subscription = player.addListener('playbackStatusUpdate', (status: any) => {
-      if (!status?.didJustFinish) return;
-      void cleanup()
-        .then(() => safeResolve())
-        .catch((e) => safeReject(e));
-    });
-
-    try {
-      player.play();
-    } catch (error) {
-      void cleanup()
-        .then(() => safeReject(error))
-        .catch(() => safeReject(error));
-    }
-  });
+  patchLocalVoiceState({ status: 'idle', sessionId: null, error: null });
 }

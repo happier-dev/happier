@@ -2,12 +2,15 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
     createdAudioPlayers,
-    daemonMediatorStart,
+    daemonVoiceAgentStart,
     deleteAsync,
     expoSpeechSpeak,
+    expoSpeechStop,
+    emitSpeechRecEvent,
     getStorage,
     registerLocalVoiceEngineHarnessHooks,
     sendMessage,
+    speechRecStart,
     setPlatformOs,
 } from './localVoiceEngine.testHarness';
 
@@ -19,8 +22,25 @@ describe('local voice engine TTS behavior', () => {
         storage.__setState({
             settings: {
                 ...storage.getState().settings,
-                voiceLocalAutoSpeakReplies: true,
-                voiceLocalTtsBaseUrl: 'http://localhost:8001',
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_direct',
+                    adapters: {
+                        ...storage.getState().settings.voice.adapters,
+                        local_direct: {
+                            ...storage.getState().settings.voice.adapters.local_direct,
+                            tts: {
+                                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                                autoSpeakReplies: true,
+                                provider: 'openai_compat',
+                                openaiCompat: {
+                                    ...storage.getState().settings.voice.adapters.local_direct.tts.openaiCompat,
+                                    baseUrl: 'http://localhost:8001',
+                                },
+                            },
+                        },
+                    },
+                },
             },
         });
 
@@ -64,15 +84,31 @@ describe('local voice engine TTS behavior', () => {
         storage.__setState({
             settings: {
                 ...storage.getState().settings,
-                voiceLocalAutoSpeakReplies: true,
-                voiceLocalUseDeviceTts: true,
-                voiceLocalTtsBaseUrl: null,
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_direct',
+                    adapters: {
+                        ...storage.getState().settings.voice.adapters,
+                        local_direct: {
+                            ...storage.getState().settings.voice.adapters.local_direct,
+                            tts: {
+                                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                                autoSpeakReplies: true,
+                                provider: 'device',
+                                openaiCompat: {
+                                    ...storage.getState().settings.voice.adapters.local_direct.tts.openaiCompat,
+                                    baseUrl: null,
+                                },
+                            },
+                        },
+                    },
+                },
             },
         });
 
-        let onDone: null | (() => void) = null;
+        const onDoneRef: { current: (() => void) | undefined } = { current: undefined };
         expoSpeechSpeak.mockImplementationOnce((_text: string, opts: any) => {
-            onDone = typeof opts?.onDone === 'function' ? opts.onDone : null;
+            onDoneRef.current = typeof opts?.onDone === 'function' ? (opts.onDone as () => void) : undefined;
         });
 
         (globalThis.fetch as any).mockResolvedValueOnce({
@@ -111,16 +147,162 @@ describe('local voice engine TTS behavior', () => {
         for (let i = 0; i < 10; i++) await Promise.resolve();
         expect(resolved).toBe(false);
 
-        const onDoneFn: () => void =
-            onDone ??
-            (() => {
-                throw new Error('expected expo-speech onDone callback');
-            });
-        onDoneFn();
+        if (!onDoneRef.current) {
+            throw new Error('Expected Expo Speech onDone callback');
+        }
+        onDoneRef.current();
         await stopPromise;
 
         // Only STT fetch; no /v1/audio/speech call.
         expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('supports barge-in while device TTS is speaking when enabled', async () => {
+        const storage = await getStorage();
+        storage.__setState({
+            settings: {
+                ...storage.getState().settings,
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_direct',
+                    adapters: {
+                        ...storage.getState().settings.voice.adapters,
+                        local_direct: {
+                            ...storage.getState().settings.voice.adapters.local_direct,
+                            stt: {
+                                ...storage.getState().settings.voice.adapters.local_direct.stt,
+                                useDeviceStt: true,
+                                baseUrl: null,
+                            },
+                            tts: {
+                                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                                autoSpeakReplies: true,
+                                provider: 'device',
+                                bargeInEnabled: true,
+                                openaiCompat: {
+                                    ...storage.getState().settings.voice.adapters.local_direct.tts.openaiCompat,
+                                    baseUrl: null,
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        const onDoneRef: { current: (() => void) | undefined } = { current: undefined };
+        const onStoppedRef: { current: (() => void) | undefined } = { current: undefined };
+        expoSpeechSpeak.mockImplementation((_text: string, opts: any) => {
+            onDoneRef.current = typeof opts?.onDone === 'function' ? (opts.onDone as () => void) : undefined;
+            onStoppedRef.current = typeof opts?.onStopped === 'function' ? (opts.onStopped as () => void) : undefined;
+        });
+        expoSpeechStop.mockImplementation(() => {
+            onStoppedRef.current?.();
+        });
+
+        sendMessage.mockImplementationOnce(() => {
+            storage.__setState({
+                sessionMessages: {
+                    s1: {
+                        messages: [{ id: 'm1', kind: 'agent-text', text: 'Hi there', createdAt: Date.now() + 60_000 }],
+                    },
+                },
+            });
+            storage.__notify();
+        });
+
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = await import('./localVoiceEngine');
+        await toggleLocalVoiceTurn('s1');
+        emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript: 'first turn', confidence: 0.9, segments: [] }] });
+        const sendTurnPromise = toggleLocalVoiceTurn('s1');
+        emitSpeechRecEvent('end', {});
+
+        for (let i = 0; i < 200 && getLocalVoiceState().status !== 'speaking'; i += 1) {
+            await Promise.resolve();
+        }
+        expect(getLocalVoiceState().status).toBe('speaking');
+
+        await toggleLocalVoiceTurn('s1');
+        await sendTurnPromise;
+
+        expect(expoSpeechStop).toHaveBeenCalledTimes(1);
+        expect(speechRecStart).toHaveBeenCalledTimes(2);
+        expect(getLocalVoiceState().status).toBe('recording');
+    });
+
+    it('does not interrupt speaking when barge-in is disabled', async () => {
+        const storage = await getStorage();
+        storage.__setState({
+            settings: {
+                ...storage.getState().settings,
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_direct',
+                    adapters: {
+                        ...storage.getState().settings.voice.adapters,
+                        local_direct: {
+                            ...storage.getState().settings.voice.adapters.local_direct,
+                            stt: {
+                                ...storage.getState().settings.voice.adapters.local_direct.stt,
+                                useDeviceStt: true,
+                                baseUrl: null,
+                            },
+                            tts: {
+                                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                                autoSpeakReplies: true,
+                                provider: 'device',
+                                bargeInEnabled: false,
+                                openaiCompat: {
+                                    ...storage.getState().settings.voice.adapters.local_direct.tts.openaiCompat,
+                                    baseUrl: null,
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        const onDoneRef: { current: (() => void) | undefined } = { current: undefined };
+        const onStoppedRef: { current: (() => void) | undefined } = { current: undefined };
+        expoSpeechSpeak.mockImplementation((_text: string, opts: any) => {
+            onDoneRef.current = typeof opts?.onDone === 'function' ? (opts.onDone as () => void) : undefined;
+            onStoppedRef.current = typeof opts?.onStopped === 'function' ? (opts.onStopped as () => void) : undefined;
+        });
+        expoSpeechStop.mockImplementation(() => {
+            onStoppedRef.current?.();
+        });
+
+        sendMessage.mockImplementationOnce(() => {
+            storage.__setState({
+                sessionMessages: {
+                    s1: {
+                        messages: [{ id: 'm1', kind: 'agent-text', text: 'Hi there', createdAt: Date.now() + 60_000 }],
+                    },
+                },
+            });
+            storage.__notify();
+        });
+
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = await import('./localVoiceEngine');
+        await toggleLocalVoiceTurn('s1');
+        emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript: 'first turn', confidence: 0.9, segments: [] }] });
+        const sendTurnPromise = toggleLocalVoiceTurn('s1');
+        emitSpeechRecEvent('end', {});
+
+        for (let i = 0; i < 200 && getLocalVoiceState().status !== 'speaking'; i += 1) {
+            await Promise.resolve();
+        }
+        expect(getLocalVoiceState().status).toBe('speaking');
+
+        await toggleLocalVoiceTurn('s1');
+
+        expect(expoSpeechStop).not.toHaveBeenCalled();
+        expect(speechRecStart).toHaveBeenCalledTimes(1);
+        expect(getLocalVoiceState().status).toBe('speaking');
+
+        onDoneRef.current?.();
+        await sendTurnPromise;
     });
 
     it('waits for TTS playback to finish before returning to idle', async () => {
@@ -128,8 +310,25 @@ describe('local voice engine TTS behavior', () => {
         storage.__setState({
             settings: {
                 ...storage.getState().settings,
-                voiceLocalAutoSpeakReplies: true,
-                voiceLocalTtsBaseUrl: 'http://localhost:8001',
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_direct',
+                    adapters: {
+                        ...storage.getState().settings.voice.adapters,
+                        local_direct: {
+                            ...storage.getState().settings.voice.adapters.local_direct,
+                            tts: {
+                                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                                autoSpeakReplies: true,
+                                provider: 'openai_compat',
+                                openaiCompat: {
+                                    ...storage.getState().settings.voice.adapters.local_direct.tts.openaiCompat,
+                                    baseUrl: 'http://localhost:8001',
+                                },
+                            },
+                        },
+                    },
+                },
             },
         });
 
@@ -184,15 +383,35 @@ describe('local voice engine TTS behavior', () => {
         storage.__setState({
             settings: {
                 ...storage.getState().settings,
-                voiceLocalAutoSpeakReplies: true,
-                voiceLocalTtsBaseUrl: 'http://localhost:8001',
-                voiceLocalConversationMode: 'mediator',
-                voiceLocalMediatorBackend: 'daemon',
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_conversation',
+                    adapters: {
+                        ...storage.getState().settings.voice.adapters,
+                        local_conversation: {
+                            ...storage.getState().settings.voice.adapters.local_conversation,
+                            conversationMode: 'agent',
+                            agent: {
+                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                backend: 'daemon',
+                            },
+                            tts: {
+                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                autoSpeakReplies: true,
+                                provider: 'openai_compat',
+                                openaiCompat: {
+                                    ...storage.getState().settings.voice.adapters.local_conversation.tts.openaiCompat,
+                                    baseUrl: 'http://localhost:8001',
+                                },
+                            },
+                        },
+                    },
+                },
             },
         });
 
-        daemonMediatorStart.mockResolvedValueOnce({
-            mediatorId: 'm1',
+        daemonVoiceAgentStart.mockResolvedValueOnce({
+            voiceAgentId: 'va1',
             effective: { chatModelId: 'default', commitModelId: 'default', permissionPolicy: 'read_only' },
         });
 
@@ -225,8 +444,25 @@ describe('local voice engine TTS behavior', () => {
         storage.__setState({
             settings: {
                 ...storage.getState().settings,
-                voiceLocalAutoSpeakReplies: true,
-                voiceLocalTtsBaseUrl: 'http://localhost:8001',
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_direct',
+                    adapters: {
+                        ...storage.getState().settings.voice.adapters,
+                        local_direct: {
+                            ...storage.getState().settings.voice.adapters.local_direct,
+                            tts: {
+                                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                                autoSpeakReplies: true,
+                                provider: 'openai_compat',
+                                openaiCompat: {
+                                    ...storage.getState().settings.voice.adapters.local_direct.tts.openaiCompat,
+                                    baseUrl: 'http://localhost:8001',
+                                },
+                            },
+                        },
+                    },
+                },
             },
         });
 
@@ -249,8 +485,25 @@ describe('local voice engine TTS behavior', () => {
         storage.__setState({
             settings: {
                 ...storage.getState().settings,
-                voiceLocalAutoSpeakReplies: true,
-                voiceLocalTtsBaseUrl: 'http://localhost:8001',
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_direct',
+                    adapters: {
+                        ...storage.getState().settings.voice.adapters,
+                        local_direct: {
+                            ...storage.getState().settings.voice.adapters.local_direct,
+                            tts: {
+                                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                                autoSpeakReplies: true,
+                                provider: 'openai_compat',
+                                openaiCompat: {
+                                    ...storage.getState().settings.voice.adapters.local_direct.tts.openaiCompat,
+                                    baseUrl: 'http://localhost:8001',
+                                },
+                            },
+                        },
+                    },
+                },
             },
             sessionMessages: {
                 s1: {
@@ -302,8 +555,20 @@ describe('local voice engine TTS behavior', () => {
         storage.__setState({
             settings: {
                 ...storage.getState().settings,
-                voiceLocalConversationMode: 'direct_session',
-                voiceLocalAutoSpeakReplies: true,
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_direct',
+                    adapters: {
+                        ...storage.getState().settings.voice.adapters,
+                        local_direct: {
+                            ...storage.getState().settings.voice.adapters.local_direct,
+                            tts: {
+                                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                                autoSpeakReplies: true,
+                            },
+                        },
+                    },
+                },
             },
         });
 
@@ -336,9 +601,25 @@ describe('local voice engine TTS behavior', () => {
             storage.__setState({
                 settings: {
                     ...storage.getState().settings,
-                    voiceLocalConversationMode: 'direct_session',
-                    voiceLocalAutoSpeakReplies: true,
-                    voiceLocalTtsBaseUrl: 'http://localhost:8001',
+                    voice: {
+                        ...storage.getState().settings.voice,
+                        providerId: 'local_direct',
+                        adapters: {
+                            ...storage.getState().settings.voice.adapters,
+                            local_direct: {
+                                ...storage.getState().settings.voice.adapters.local_direct,
+                                tts: {
+                                    ...storage.getState().settings.voice.adapters.local_direct.tts,
+                                    autoSpeakReplies: true,
+                                    provider: 'openai_compat',
+                                    openaiCompat: {
+                                        ...storage.getState().settings.voice.adapters.local_direct.tts.openaiCompat,
+                                        baseUrl: 'http://localhost:8001',
+                                    },
+                                },
+                            },
+                        },
+                    },
                 },
                 sessionMessages: {},
             });

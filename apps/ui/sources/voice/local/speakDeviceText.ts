@@ -29,3 +29,11 @@ export async function speakDeviceText(text: string, onStart?: () => void): Promi
         }
     });
 }
+
+export function stopDeviceSpeech(): void {
+    try {
+        ExpoSpeech.stop();
+    } catch {
+        // best-effort
+    }
+}

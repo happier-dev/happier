@@ -98,5 +98,36 @@ describe('fetchOpenAiCompatSpeechAudio', () => {
       await once(server, 'close');
     }
   });
-});
 
+  it('aborts and throws timeout error when request exceeds timeoutMs', async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = ((_: RequestInfo | URL, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal) return;
+        signal.addEventListener(
+          'abort',
+          () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })),
+          { once: true },
+        );
+      });
+    }) as typeof fetch;
+    globalThis.fetch = fetchMock;
+
+    try {
+      await expect(
+        fetchOpenAiCompatSpeechAudio({
+          baseUrl: 'http://127.0.0.1:12345',
+          apiKey: null,
+          model: 'tts-1',
+          voice: 'alloy',
+          format: 'wav',
+          input: 'hello',
+          timeoutMs: 5,
+        }),
+      ).rejects.toThrow('tts_timeout');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

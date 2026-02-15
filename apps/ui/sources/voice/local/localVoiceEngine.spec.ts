@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-    daemonMediatorStart,
+    daemonVoiceAgentStart,
     getStorage,
     registerLocalVoiceEngineHarnessHooks,
     sendMessage,
@@ -24,22 +24,43 @@ describe('local voice engine (turn-based) smoke', () => {
         await toggleLocalVoiceTurn('s1');
         expect(globalThis.fetch).toHaveBeenCalledTimes(1);
         expect(sendMessage).toHaveBeenCalledWith('s1', 'hello world');
-        expect(getLocalVoiceState().status).toBe('idle');
+        // After a turn completes, the local voice session remains active (ready for another turn)
+        // until the user explicitly hangs up.
+        expect(getLocalVoiceState()).toMatchObject({ status: 'idle', sessionId: 's1' });
     });
 
-    it('mediator mode (daemon) resolves chat/commit models from settings sources', async () => {
+    it('agent mode (daemon) resolves chat/commit models from settings sources', async () => {
         const storage = await getStorage();
         storage.__setState({
             settings: {
                 ...storage.getState().settings,
-                voiceLocalSttBaseUrl: 'http://localhost:8000',
-                voiceLocalConversationMode: 'mediator',
-                voiceLocalMediatorBackend: 'daemon',
-                voiceMediatorChatModelSource: 'session',
-                voiceMediatorChatModelId: 'ignored',
-                voiceMediatorCommitModelSource: 'custom',
-                voiceMediatorCommitModelId: 'commit-model',
-                voiceLocalAutoSpeakReplies: false,
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_conversation',
+                    adapters: {
+                        ...storage.getState().settings.voice.adapters,
+                        local_conversation: {
+                            ...storage.getState().settings.voice.adapters.local_conversation,
+                            conversationMode: 'agent',
+                            stt: {
+                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                baseUrl: 'http://localhost:8000',
+                            },
+                            tts: {
+                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                autoSpeakReplies: false,
+                            },
+                            agent: {
+                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                backend: 'daemon',
+                                chatModelSource: 'session',
+                                chatModelId: 'ignored',
+                                commitModelSource: 'custom',
+                                commitModelId: 'commit-model',
+                            },
+                        },
+                    },
+                },
             },
             sessions: {
                 ...storage.getState().sessions,
@@ -47,8 +68,8 @@ describe('local voice engine (turn-based) smoke', () => {
             },
         });
 
-        daemonMediatorStart.mockResolvedValueOnce({
-            mediatorId: 'm1',
+        daemonVoiceAgentStart.mockResolvedValueOnce({
+            voiceAgentId: 'va1',
             effective: { chatModelId: 'session-model', commitModelId: 'commit-model', permissionPolicy: 'read_only' },
         });
 
@@ -61,9 +82,20 @@ describe('local voice engine (turn-based) smoke', () => {
         await toggleLocalVoiceTurn('s1');
         await toggleLocalVoiceTurn('s1');
 
-        expect(daemonMediatorStart).toHaveBeenCalledTimes(1);
-        const startArgs = (daemonMediatorStart as any).mock.calls?.[0]?.[0];
+        expect(daemonVoiceAgentStart).toHaveBeenCalledTimes(1);
+        const startArgs = (daemonVoiceAgentStart as any).mock.calls?.[0]?.[0];
         expect(startArgs.chatModelId).toBe('session-model');
         expect(startArgs.commitModelId).toBe('commit-model');
+    });
+
+    it('does not start a local voice turn while realtime voice is connected', async () => {
+        const storage = await getStorage();
+        storage.__setState({ realtimeStatus: 'connected' });
+
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = await import('./localVoiceEngine');
+        await toggleLocalVoiceTurn('s1');
+
+        // Local voice should not start recording while a realtime call is active.
+        expect(getLocalVoiceState().status).toBe('idle');
     });
 });

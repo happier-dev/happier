@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
     getStorage,
@@ -23,7 +23,19 @@ describe('local voice engine recording lifecycle', () => {
         storage.__setState({
             settings: {
                 ...storage.getState().settings,
-                voiceLocalSttBaseUrl: '',
+                voice: {
+                    ...storage.getState().settings.voice,
+                    adapters: {
+                        ...storage.getState().settings.voice.adapters,
+                        local_conversation: {
+                            ...storage.getState().settings.voice.adapters.local_conversation,
+                            stt: {
+                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                baseUrl: '',
+                            },
+                        },
+                    },
+                },
             },
         });
 
@@ -45,5 +57,51 @@ describe('local voice engine recording lifecycle', () => {
 
         expect(getLocalVoiceState().status).toBe('idle');
         expect(getLocalVoiceState().error).toBe('stt_failed');
+    });
+
+    it('times out STT request and resets to idle', async () => {
+        vi.useFakeTimers();
+        try {
+            const storage = await getStorage();
+            storage.__setState({
+                settings: {
+                    ...storage.getState().settings,
+                    voice: {
+                        ...storage.getState().settings.voice,
+                        adapters: {
+                            ...storage.getState().settings.voice.adapters,
+                            local_conversation: {
+                                ...storage.getState().settings.voice.adapters.local_conversation,
+                                networkTimeoutMs: 1000,
+                            },
+                        },
+                    },
+                },
+            });
+
+            (globalThis.fetch as any).mockImplementationOnce((_url: string, init?: RequestInit) => {
+                return new Promise<Response>((_resolve, reject) => {
+                    const signal = init?.signal;
+                    if (!signal) return;
+                    signal.addEventListener(
+                        'abort',
+                        () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })),
+                        { once: true },
+                    );
+                });
+            });
+
+            const { toggleLocalVoiceTurn, getLocalVoiceState } = await import('./localVoiceEngine');
+            await toggleLocalVoiceTurn('s1');
+
+            const stopPromise = toggleLocalVoiceTurn('s1');
+            await vi.advanceTimersByTimeAsync(1001);
+            await expect(stopPromise).resolves.toBeUndefined();
+
+            expect(getLocalVoiceState().status).toBe('idle');
+            expect(getLocalVoiceState().error).toBe('stt_failed');
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });
