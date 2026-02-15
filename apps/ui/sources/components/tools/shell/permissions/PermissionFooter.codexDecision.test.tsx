@@ -92,4 +92,41 @@ describe('PermissionFooter (codexDecision)', () => {
 
         expect(flattened).toContain('Run: pwd');
     });
+
+    it('approves execpolicy amendment using the latest proposed_execpolicy_amendment payload', async () => {
+        const { sessionAllow } = await import('@/sync/ops');
+
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(PermissionFooter, {
+                    permission: { id: 'p1', status: 'pending' },
+                    sessionId: 's1',
+                    toolName: 'execute',
+                    toolInput: { proposed_execpolicy_amendment: ['allow', 'read'] },
+                    metadata: { flavor: 'codex' },
+                }),
+            );
+        });
+
+        const buttons = tree.root.findAllByType('TouchableOpacity' as any);
+        const execPolicyButton = buttons.find((btn) => {
+            const texts = btn.findAllByType('Text' as any);
+            return texts.some((t) => t.props.children === 'codex.permissions.yesAlwaysAllowCommand');
+        });
+        expect(execPolicyButton).toBeTruthy();
+
+        await act(async () => {
+            execPolicyButton!.props.onPress();
+        });
+
+        expect(sessionAllow).toHaveBeenCalledWith(
+            's1',
+            'p1',
+            undefined,
+            undefined,
+            'approved_execpolicy_amendment',
+            { command: ['allow', 'read'] },
+        );
+    });
 });

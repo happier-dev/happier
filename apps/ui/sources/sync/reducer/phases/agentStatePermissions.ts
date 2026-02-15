@@ -5,6 +5,36 @@ import { equalOptionalStringArrays } from '../helpers/arrays';
 import type { ReducerState } from '../reducer';
 import { drainAndApplyOrphanToolResultsToMessage } from '../helpers/drainAndApplyOrphanToolResultsToMessage';
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return value as Record<string, unknown>;
+}
+
+function mergePermissionRequestArgumentsPreservingExecpolicy(
+    existing: unknown,
+    incoming: unknown,
+): unknown {
+    const existingObj = asRecord(existing);
+    const incomingObj = asRecord(incoming);
+    if (!existingObj || !incomingObj) return incoming;
+
+    // Preserve late-arriving fields that may be delivered outside AgentState.requests arguments,
+    // and would otherwise get dropped when we refresh arguments from AgentState.
+    const merged: Record<string, unknown> = { ...incomingObj };
+
+    const execPolicyKeys: Array<'proposed_execpolicy_amendment' | 'proposedExecpolicyAmendment'> = [
+        'proposed_execpolicy_amendment',
+        'proposedExecpolicyAmendment',
+    ];
+    for (const key of execPolicyKeys) {
+        if (!(key in incomingObj) && key in existingObj) {
+            merged[key] = existingObj[key];
+        }
+    }
+
+    return merged;
+}
+
 export function runAgentStatePermissionsPhase(params: Readonly<{
     state: ReducerState;
     agentState?: AgentState | null;
@@ -67,8 +97,18 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                             { name: request.tool, arguments: request.arguments }
                         );
                         if (!inputUnchanged) {
-                            message.tool.input = request.arguments;
-                            hasChanged = true;
+                            const merged = mergePermissionRequestArgumentsPreservingExecpolicy(
+                                message.tool.input,
+                                request.arguments,
+                            );
+                            const mergedUnchanged = compareToolCalls(
+                                { name: request.tool, arguments: message.tool.input },
+                                { name: request.tool, arguments: merged },
+                            );
+                            if (!mergedUnchanged) {
+                                message.tool.input = merged;
+                                hasChanged = true;
+                            }
                         }
                         if (!message.tool.permission) {
                             message.tool.permission = {
