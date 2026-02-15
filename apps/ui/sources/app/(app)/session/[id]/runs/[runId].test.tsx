@@ -8,20 +8,49 @@ type ExecutionRunGetArgs = [string, Record<string, unknown>];
 type ExecutionRunSendArgs = [string, Record<string, unknown>];
 type ExecutionRunStopArgs = [string, Record<string, unknown>];
 
-const getRunSpy = vi.fn(async (_sessionId: string, _params: Record<string, unknown>) => ({
+type MachineExecutionRunsListArgs = [string, Record<string, unknown>?];
+
+const getRunSpy = vi.fn<(...args: ExecutionRunGetArgs) => Promise<any>>(async (_sessionId: string, _params: Record<string, unknown>) => ({
     run: {
         runId: 'run_1',
         callId: 'call_1',
         sidechainId: 'side_1',
         intent: 'review',
         backendId: 'claude',
+        permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral',
+        runClass: 'bounded',
+        ioMode: 'request_response',
         status: 'succeeded',
         startedAtMs: 1,
         finishedAtMs: 2,
     },
 }));
-const sendRunSpy = vi.fn(async (_sessionId: string, _params: Record<string, unknown>) => ({ ok: true }));
-const stopRunSpy = vi.fn(async (_sessionId: string, _params: Record<string, unknown>) => ({ ok: true }));
+const sendRunSpy = vi.fn<(...args: ExecutionRunSendArgs) => Promise<any>>(async (_sessionId: string, _params: Record<string, unknown>) => ({ ok: true }));
+const stopRunSpy = vi.fn<(...args: ExecutionRunStopArgs) => Promise<any>>(async (_sessionId: string, _params: Record<string, unknown>) => ({ ok: true }));
+const machineExecutionRunsListSpy = vi.fn(async (_machineId: string, _opts?: Record<string, unknown>) => ({
+    ok: true,
+    runs: [
+        {
+            happyHomeDir: '/tmp/happy',
+            pid: 123,
+            happySessionId: 'session-1',
+            runId: 'run_1',
+            callId: 'call_1',
+            sidechainId: 'side_1',
+            intent: 'review',
+            backendId: 'claude',
+            runClass: 'bounded',
+            ioMode: 'request_response',
+            retentionPolicy: 'ephemeral',
+            status: 'succeeded',
+            startedAtMs: 1,
+            updatedAtMs: 2,
+            finishedAtMs: 2,
+            process: { pid: 123, cpu: 12.5, memory: 1048576 },
+        },
+    ],
+}));
 
 vi.mock('react-native', () => ({
     Platform: {
@@ -97,6 +126,20 @@ vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunStop: (...args: ExecutionRunStopArgs) => stopRunSpy(...args),
 }));
 
+vi.mock('@/sync/ops/machineExecutionRuns', () => ({
+    machineExecutionRunsList: (...args: MachineExecutionRunsListArgs) => machineExecutionRunsListSpy(...args),
+}));
+
+vi.mock('@/sync/domains/state/storage', () => ({
+    storage: {
+        getState: () => ({
+            sessions: {
+                'session-1': { id: 'session-1', updatedAt: 0, metadata: { machineId: 'machine-1' } },
+            },
+        }),
+    },
+}));
+
 describe('Session Run Details Screen', () => {
     it('loads run details via session execution run get', async () => {
         getRunSpy.mockClear();
@@ -111,6 +154,24 @@ describe('Session Run Details Screen', () => {
         expect(getRunSpy).toHaveBeenCalledWith('session-1', expect.objectContaining({ runId: 'run_1' }));
         const textNodes = tree!.root.findAllByType('Text');
         expect(textNodes.some((n: any) => String(n.props.children).includes('run_1'))).toBe(true);
+    });
+
+    it('renders daemon process stats when machine execution runs list includes the run', async () => {
+        getRunSpy.mockClear();
+        machineExecutionRunsListSpy.mockClear();
+        const Screen = (await import('./[runId]')).default;
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(Screen));
+            await Promise.resolve();
+        });
+
+        expect(machineExecutionRunsListSpy).toHaveBeenCalledWith('machine-1', expect.anything());
+        const textNodes = tree!.root.findAllByType('Text');
+        const joined = textNodes.map((n: any) => String(n.props.children)).join('\n');
+        expect(joined).toContain('pid 123');
+        expect(joined).toContain('cpu 12.5');
     });
 
     it('renders structured meta using the structured message registry when available', async () => {

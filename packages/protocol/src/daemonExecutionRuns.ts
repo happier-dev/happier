@@ -2,8 +2,10 @@ import { z } from 'zod';
 
 import {
   ExecutionRunClassSchema,
+  ExecutionRunDisplaySchema,
   ExecutionRunIntentSchema,
   ExecutionRunIoModeSchema,
+  ExecutionRunResumeHandleSchema,
   ExecutionRunRetentionPolicySchema,
   ExecutionRunStatusSchema,
 } from './executionRuns.js';
@@ -29,6 +31,7 @@ export const DaemonExecutionRunMarkerSchema = z.object({
   sidechainId: z.string().min(1),
   intent: ExecutionRunIntentSchema,
   backendId: z.string().min(1),
+  display: ExecutionRunDisplaySchema.optional(),
 
   runClass: ExecutionRunClassSchema,
   ioMode: ExecutionRunIoModeSchema,
@@ -42,7 +45,7 @@ export const DaemonExecutionRunMarkerSchema = z.object({
 
   summary: z.string().max(20_000).optional(),
   errorCode: z.string().max(200).optional(),
-  childVendorSessionId: z.string().min(1).nullable().optional(),
+  resumeHandle: ExecutionRunResumeHandleSchema.nullable().optional(),
 }).passthrough();
 export type DaemonExecutionRunMarker = z.infer<typeof DaemonExecutionRunMarkerSchema>;
 
@@ -67,4 +70,3 @@ export const DaemonExecutionRunListResponseSchema = z.object({
   runs: z.array(DaemonExecutionRunEntrySchema),
 }).passthrough();
 export type DaemonExecutionRunListResponse = z.infer<typeof DaemonExecutionRunListResponseSchema>;
-

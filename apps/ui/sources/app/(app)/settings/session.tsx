@@ -18,6 +18,8 @@ import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes'
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { getPermissionApplyTimingSubtitleKey } from './sessionI18n';
+import { ExecutionRunsGuidanceSettingsGroup } from '@/components/settings/session/ExecutionRunsGuidanceSettingsGroup';
+import { ActionsSettingsGroup } from '@/components/settings/actions/ActionsSettingsGroup';
 
 type ToolViewDetailLevel = 'title' | 'summary' | 'full';
 type ToolDetailLevelTranslationKey =
@@ -124,6 +126,13 @@ export default React.memo(function SessionSettingsScreen() {
 
     const [defaultPermissionByAgent, setDefaultPermissionByAgent] = useSettingMutable('sessionDefaultPermissionModeByAgent');
     const [permissionModeApplyTiming, setPermissionModeApplyTiming] = useSettingMutable('sessionPermissionModeApplyTiming');
+    const [sessionReplayEnabled, setSessionReplayEnabled] = useSettingMutable('sessionReplayEnabled');
+    const [sessionReplayStrategy, setSessionReplayStrategy] = useSettingMutable('sessionReplayStrategy');
+    const [sessionReplayRecentMessagesCount, setSessionReplayRecentMessagesCount] = useSettingMutable('sessionReplayRecentMessagesCount');
+    const [executionRunsGuidanceEnabled, setExecutionRunsGuidanceEnabled] = useSettingMutable('executionRunsGuidanceEnabled');
+    const [executionRunsGuidanceMaxChars, setExecutionRunsGuidanceMaxChars] = useSettingMutable('executionRunsGuidanceMaxChars');
+    const [executionRunsGuidanceEntries, setExecutionRunsGuidanceEntries] = useSettingMutable('executionRunsGuidanceEntries');
+    const [actionsSettingsV1, setActionsSettingsV1] = useSettingMutable('actionsSettingsV1');
     const getDefaultPermission = React.useCallback((agent: AgentId): PermissionMode => {
         const raw = (defaultPermissionByAgent as any)?.[agent] as PermissionMode | undefined;
         return (raw ?? 'default') as PermissionMode;
@@ -138,6 +147,7 @@ export default React.memo(function SessionSettingsScreen() {
     const [openProvider, setOpenProvider] = React.useState<null | AgentId>(null);
     const [openToolDetailMenu, setOpenToolDetailMenu] = React.useState<null | string>(null);
     const tToolDetail = t as (key: ToolDetailLevelTranslationKey) => string;
+    const [openReplayMenu, setOpenReplayMenu] = React.useState<boolean>(false);
 
     const options: Array<{ key: MessageSendMode; title: string; subtitle: string }> = [
         {
@@ -167,6 +177,19 @@ export default React.memo(function SessionSettingsScreen() {
             key: 'server_pending',
             title: t('settingsSession.messageSending.busySteerPolicy.queueForReviewTitle'),
             subtitle: t('settingsSession.messageSending.busySteerPolicy.queueForReviewSubtitle'),
+        },
+    ];
+
+    const replayStrategyOptions: Array<{ key: 'recent_messages' | 'summary_plus_recent'; title: string; subtitle: string }> = [
+        {
+            key: 'recent_messages',
+            title: t('settingsSession.replayResume.strategy.recentTitle'),
+            subtitle: t('settingsSession.replayResume.strategy.recentSubtitle'),
+        },
+        {
+            key: 'summary_plus_recent',
+            title: t('settingsSession.replayResume.strategy.summaryRecentTitle'),
+            subtitle: t('settingsSession.replayResume.strategy.summaryRecentSubtitle'),
         },
     ];
 
@@ -433,6 +456,95 @@ export default React.memo(function SessionSettingsScreen() {
                     );
                 })}
             </ItemGroup>
+
+            <ItemGroup
+                title={t('settingsSession.replayResume.title')}
+                footer={t('settingsSession.replayResume.footer')}
+            >
+                <Item
+                    title={t('settingsSession.replayResume.enabledTitle')}
+                    subtitle={sessionReplayEnabled ? t('settingsSession.replayResume.enabledSubtitleOn') : t('settingsSession.replayResume.enabledSubtitleOff')}
+                    icon={<Ionicons name="refresh-outline" size={29} color="#34C759" />}
+                    rightElement={<Switch value={sessionReplayEnabled} onValueChange={setSessionReplayEnabled} />}
+                    showChevron={false}
+                    onPress={() => setSessionReplayEnabled(!sessionReplayEnabled)}
+                />
+
+                {sessionReplayEnabled ? (
+                    <>
+                        <DropdownMenu
+                            open={openReplayMenu}
+                            onOpenChange={setOpenReplayMenu}
+                            variant="selectable"
+                            search={false}
+                            selectedId={String(sessionReplayStrategy ?? 'recent_messages')}
+                            showCategoryTitles={false}
+                            matchTriggerWidth={true}
+                            connectToTrigger={true}
+                            rowKind="item"
+                            popoverBoundaryRef={popoverBoundaryRef}
+                            trigger={({ open, toggle }) => (
+                                <Item
+                                    title={t('settingsSession.replayResume.strategyTitle')}
+                                    subtitle={replayStrategyOptions.find((opt) => opt.key === sessionReplayStrategy)?.title ?? String(sessionReplayStrategy)}
+                                    icon={<Ionicons name="list-outline" size={29} color="#34C759" />}
+                                    rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
+                                    onPress={toggle}
+                                    showChevron={false}
+                                    selected={false}
+                                />
+                            )}
+                            items={replayStrategyOptions.map((opt) => ({
+                                id: opt.key,
+                                title: opt.title,
+                                subtitle: opt.subtitle,
+                                icon: (
+                                    <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                        <Ionicons name="chatbox-ellipses-outline" size={22} color={theme.colors.textSecondary} />
+                                    </View>
+                                ),
+                            }))}
+                            onSelect={(id) => {
+                                setSessionReplayStrategy(id as any);
+                                setOpenReplayMenu(false);
+                            }}
+                        />
+
+                        <View style={[styles.inputContainer, { paddingTop: 0 }]}>
+                            <Text style={styles.fieldLabel}>
+                                {t('settingsSession.replayResume.recentMessagesTitle')}
+                            </Text>
+                            <TextInput
+                                style={styles.textInput}
+                                placeholder={t('settingsSession.replayResume.recentMessagesPlaceholder')}
+                                placeholderTextColor={theme.colors.input.placeholder}
+                                value={String(sessionReplayRecentMessagesCount ?? '')}
+                                keyboardType={Platform.select({ ios: 'number-pad', default: 'numeric' }) as any}
+                                onChangeText={(value) => {
+                                    const next = Number(String(value).replace(/[^0-9]/g, ''));
+                                    if (!Number.isFinite(next)) return;
+                                    const clamped = Math.max(1, Math.min(100, Math.floor(next)));
+                                    setSessionReplayRecentMessagesCount(clamped as any);
+                                }}
+                            />
+                        </View>
+                    </>
+                ) : null}
+            </ItemGroup>
+
+            <ExecutionRunsGuidanceSettingsGroup
+                enabled={Boolean(executionRunsGuidanceEnabled)}
+                setEnabled={(next) => setExecutionRunsGuidanceEnabled(next as any)}
+                maxChars={Number(executionRunsGuidanceMaxChars ?? 4_000)}
+                setMaxChars={(next) => setExecutionRunsGuidanceMaxChars(next as any)}
+                entries={(Array.isArray(executionRunsGuidanceEntries) ? (executionRunsGuidanceEntries as any[]) : []) as any}
+                setEntries={(next) => setExecutionRunsGuidanceEntries(next as any)}
+            />
+
+            <ActionsSettingsGroup
+                settings={(actionsSettingsV1 as any) ?? { v: 1, disabledActionIds: [] }}
+                setSettings={(next) => setActionsSettingsV1(next as any)}
+            />
 
             <ItemGroup title={t('profiles.tmux.title')}>
                 <Item

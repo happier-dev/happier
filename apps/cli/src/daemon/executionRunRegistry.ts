@@ -2,38 +2,11 @@ import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import * as z from 'zod';
+import { DaemonExecutionRunMarkerSchema, type DaemonExecutionRunMarker } from '@happier-dev/protocol';
 
-const ExecutionRunMarkerSchema = z.object({
-  // Safety/filtering: only accept markers for the current happyHomeDir.
-  happyHomeDir: z.string().min(1),
+const ExecutionRunMarkerSchema = DaemonExecutionRunMarkerSchema;
 
-  pid: z.number().int().positive(),
-  processCommandHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-  happySessionId: z.string().min(1),
-
-  runId: z.string().min(1),
-  callId: z.string().min(1),
-  sidechainId: z.string().min(1),
-  intent: z.enum(['review', 'plan', 'delegate', 'voice_agent']),
-  backendId: z.string().min(1),
-
-  runClass: z.enum(['bounded', 'long_lived']),
-  ioMode: z.enum(['request_response', 'streaming']),
-  retentionPolicy: z.enum(['ephemeral', 'resumable']),
-
-  status: z.enum(['running', 'succeeded', 'failed', 'cancelled', 'timeout']),
-  startedAtMs: z.number().int().nonnegative(),
-  updatedAtMs: z.number().int().nonnegative(),
-  finishedAtMs: z.number().int().nonnegative().optional(),
-  lastActivityAtMs: z.number().int().nonnegative().optional(),
-
-  summary: z.string().max(20_000).optional(),
-  errorCode: z.string().max(200).optional(),
-  childVendorSessionId: z.string().min(1).nullable().optional(),
-});
-
-export type ExecutionRunMarker = z.infer<typeof ExecutionRunMarkerSchema>;
+export type ExecutionRunMarker = DaemonExecutionRunMarker;
 
 function resolveExecutionRunMarkerDir(): string {
   return join(configuration.happyHomeDir, 'tmp', 'daemon-execution-runs');
@@ -117,4 +90,41 @@ export async function listExecutionRunMarkers(): Promise<ExecutionRunMarker[]> {
 
   out.sort((a, b) => a.startedAtMs - b.startedAtMs);
   return out;
+}
+
+export async function gcExecutionRunMarkers(params: Readonly<{
+  nowMs: number;
+  terminalTtlMs: number;
+  isPidAlive: (pid: number) => boolean | Promise<boolean>;
+  isPidSafeHappyProcess: (pid: number) => boolean | Promise<boolean>;
+}>): Promise<{ removedRunIds: string[] }> {
+  const markers = await listExecutionRunMarkers();
+  const removedRunIds: string[] = [];
+
+  for (const marker of markers) {
+    const isTerminal = typeof marker.finishedAtMs === 'number' || marker.status !== 'running';
+    if (isTerminal && typeof marker.finishedAtMs === 'number') {
+      if (params.nowMs - marker.finishedAtMs > params.terminalTtlMs) {
+        await removeExecutionRunMarker(marker.runId);
+        removedRunIds.push(marker.runId);
+        continue;
+      }
+    }
+
+    const alive = await params.isPidAlive(marker.pid);
+    if (!alive) {
+      await removeExecutionRunMarker(marker.runId);
+      removedRunIds.push(marker.runId);
+      continue;
+    }
+
+    const safe = await params.isPidSafeHappyProcess(marker.pid);
+    if (!safe) {
+      await removeExecutionRunMarker(marker.runId);
+      removedRunIds.push(marker.runId);
+      continue;
+    }
+  }
+
+  return { removedRunIds };
 }
