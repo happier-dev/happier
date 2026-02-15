@@ -1,0 +1,16 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'dev.happier.audio'
+version = '0.0.0'
+
+android {
+  namespace "dev.happier.audio"
+  defaultConfig {
+    versionCode 1
+    versionName version
+  }
+}
+

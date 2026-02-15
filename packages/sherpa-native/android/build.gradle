@@ -1,0 +1,115 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'dev.happier.sherpa'
+version = '0.0.0'
+
+def sherpaVersion = System.getenv("HAPPIER_SHERPA_ONNX_VERSION") ?: "v1.12.25"
+def sherpaArchive = "sherpa-onnx-${sherpaVersion}-android.tar.bz2"
+def sherpaBaseUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/${sherpaVersion}"
+def sherpaDir = new File(buildDir, "sherpa-onnx/${sherpaVersion}")
+def sherpaArchiveFile = new File(sherpaDir, sherpaArchive)
+def sherpaChecksumFile = new File(sherpaDir, "checksum.txt")
+def sherpaExtractDir = new File(sherpaDir, "extracted")
+
+static String sha256Hex(File file) {
+  def digest = java.security.MessageDigest.getInstance("SHA-256")
+  file.withInputStream { is ->
+    byte[] buffer = new byte[8192]
+    int read
+    while ((read = is.read(buffer)) > 0) {
+      digest.update(buffer, 0, read)
+    }
+  }
+  return digest.digest().collect { String.format("%02x", it) }.join()
+}
+
+def downloadText(String url, File outFile) {
+  outFile.parentFile.mkdirs()
+  outFile.withOutputStream { os ->
+    new URL(url).withInputStream { is -> os << is }
+  }
+}
+
+def downloadBinary(String url, File outFile) {
+  outFile.parentFile.mkdirs()
+  outFile.withOutputStream { os ->
+    new URL(url).withInputStream { is -> os << is }
+  }
+}
+
+tasks.register("prepareSherpaOnnxAndroid") {
+  outputs.dir(sherpaExtractDir)
+  doLast {
+    sherpaDir.mkdirs()
+
+    if (!sherpaChecksumFile.exists()) {
+      logger.lifecycle("[HappierSherpaNative] Downloading sherpa-onnx checksum.txt (${sherpaVersion})")
+      downloadText("${sherpaBaseUrl}/checksum.txt", sherpaChecksumFile)
+    }
+
+    if (!sherpaArchiveFile.exists()) {
+      logger.lifecycle("[HappierSherpaNative] Downloading ${sherpaArchive} (${sherpaVersion})")
+      downloadBinary("${sherpaBaseUrl}/${sherpaArchive}", sherpaArchiveFile)
+    }
+
+    def expected = null
+    sherpaChecksumFile.eachLine { line ->
+      def parts = line.trim().split("\\s+")
+      if (parts.length >= 2 && parts[1] == sherpaArchive) expected = parts[0]
+    }
+    if (expected == null || expected.toString().trim().isEmpty()) {
+      throw new GradleException("[HappierSherpaNative] sha256 not found for ${sherpaArchive}")
+    }
+
+    def actual = sha256Hex(sherpaArchiveFile)
+    if (expected.toString().toLowerCase() != actual.toLowerCase()) {
+      throw new GradleException("[HappierSherpaNative] sha256 mismatch for ${sherpaArchive}: expected=${expected} actual=${actual}")
+    }
+
+    if (!sherpaExtractDir.exists()) {
+      sherpaExtractDir.mkdirs()
+    }
+    def marker = new File(sherpaExtractDir, ".extracted")
+    if (!marker.exists()) {
+      logger.lifecycle("[HappierSherpaNative] Extracting ${sherpaArchive}")
+      exec {
+        workingDir sherpaExtractDir
+        commandLine "tar", "-xf", sherpaArchiveFile.absolutePath
+      }
+      marker.text = "ok"
+    }
+  }
+}
+
+android {
+  namespace "dev.happier.sherpa"
+  defaultConfig {
+    versionCode 1
+    versionName version
+
+    externalNativeBuild {
+      cmake {
+        arguments "-DSHERPA_EXTRACT_DIR=${sherpaExtractDir.absolutePath}"
+        cppFlags "-std=c++17"
+      }
+    }
+  }
+
+  externalNativeBuild {
+    cmake {
+      path file("src/main/cpp/CMakeLists.txt")
+    }
+  }
+
+  sourceSets {
+    main {
+      // jniLibs are extracted at build time under build/sherpa-onnx/.../extracted/jniLibs
+      jniLibs.srcDirs += ["${sherpaExtractDir.absolutePath}/jniLibs"]
+    }
+  }
+}
+
+preBuild.dependsOn(tasks.named("prepareSherpaOnnxAndroid"))

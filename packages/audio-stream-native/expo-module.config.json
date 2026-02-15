@@ -1,0 +1,11 @@
+{
+  "name": "HappierAudioStreamNative",
+  "platforms": ["ios", "android"],
+  "ios": {
+    "modules": ["HappierAudioStreamNativeModule"]
+  },
+  "android": {
+    "modules": ["dev.happier.audio.HappierAudioStreamNativeModule"]
+  }
+}
+

@@ -1,0 +1,8 @@
+{
+  "ios": {
+    "modules": ["HappierSherpaNativeModule"]
+  },
+  "android": {
+    "modules": ["dev.happier.sherpa.HappierSherpaNativeModule"]
+  }
+}
