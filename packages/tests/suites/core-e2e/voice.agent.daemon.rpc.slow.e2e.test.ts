@@ -5,13 +5,12 @@ import { join, resolve } from 'node:path';
 
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
-  VoiceMediatorCommitResponseSchema,
-  VoiceMediatorSendTurnResponseSchema,
-  VoiceMediatorTurnStreamCancelResponseSchema,
-  VoiceMediatorTurnStreamReadResponseSchema,
-  VoiceMediatorTurnStreamStartResponseSchema,
-  VoiceMediatorStartResponseSchema,
-  VoiceMediatorStopResponseSchema,
+  ExecutionRunActionResponseSchema,
+  ExecutionRunStartResponseSchema,
+  ExecutionRunStopResponseSchema,
+  ExecutionRunTurnStreamCancelResponseSchema,
+  ExecutionRunTurnStreamReadResponseSchema,
+  ExecutionRunTurnStreamStartResponseSchema,
 } from '@happier-dev/protocol';
 
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -62,7 +61,7 @@ async function callSessionRpc<TReq, TRes>(params: {
   return out;
 }
 
-describe('core e2e: voice mediator daemon sessionRPC', () => {
+describe('core e2e: voice agent daemon sessionRPC (execution runs)', () => {
   let server: StartedServer | null = null;
   let daemon: StartedDaemon | null = null;
 
@@ -72,7 +71,7 @@ describe('core e2e: voice mediator daemon sessionRPC', () => {
   });
 
   it('supports start/sendTurn/commit/stop without persisting transcript until explicit commit', async () => {
-    const testDir = run.testDir('voice-mediator-daemon-rpc');
+    const testDir = run.testDir('voice-agent-daemon-rpc');
     server = await startServerLight({ testDir });
     const serverBaseUrl = server.baseUrl;
     const auth = await createTestAuth(serverBaseUrl);
@@ -138,96 +137,85 @@ describe('core e2e: voice mediator daemon sessionRPC', () => {
     const start = await callSessionRpc({
       ui,
       sessionId,
-      method: SESSION_RPC_METHODS.VOICE_MEDIATOR_START,
+      method: SESSION_RPC_METHODS.EXECUTION_RUN_START,
       req: {
+        intent: 'voice_agent',
+        backendId: 'claude',
+        permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral',
+        runClass: 'long_lived',
+        ioMode: 'streaming',
         chatModelId: 'voice-chat-model',
         commitModelId: 'voice-commit-model',
-        permissionPolicy: 'read_only',
         idleTtlSeconds: 300,
-        initialContext: 'voice mediator e2e initial context',
+        initialContext: 'voice agent e2e initial context',
+        verbosity: 'short',
       },
       secret,
-      schema: VoiceMediatorStartResponseSchema,
+      schema: ExecutionRunStartResponseSchema,
       timeoutMs: 45_000,
     });
 
-    expect(typeof start.mediatorId).toBe('string');
+    expect(typeof start.runId).toBe('string');
 
-    const t1 = await callSessionRpc({
-      ui,
-      sessionId,
-      method: SESSION_RPC_METHODS.VOICE_MEDIATOR_SEND_TURN,
-      req: { mediatorId: start.mediatorId, userText: 'turn-1' },
-      secret,
-      schema: VoiceMediatorSendTurnResponseSchema,
-      timeoutMs: 45_000,
-    });
-    expect(t1.assistantText).toContain('FAKE_CLAUDE_OK_1');
-
-    const t2 = await callSessionRpc({
-      ui,
-      sessionId,
-      method: SESSION_RPC_METHODS.VOICE_MEDIATOR_SEND_TURN,
-      req: { mediatorId: start.mediatorId, userText: 'turn-2' },
-      secret,
-      schema: VoiceMediatorSendTurnResponseSchema,
-      timeoutMs: 45_000,
-    });
-    expect(t2.assistantText).toContain('FAKE_CLAUDE_OK_2');
-
-    const streamStart = await callSessionRpc({
-      ui,
-      sessionId,
-      method: SESSION_RPC_METHODS.VOICE_MEDIATOR_SEND_TURN_STREAM_START,
-      req: { mediatorId: start.mediatorId, userText: 'turn-stream-1' },
-      secret,
-      schema: VoiceMediatorTurnStreamStartResponseSchema,
-      timeoutMs: 45_000,
-    });
-    expect(typeof streamStart.streamId).toBe('string');
-
-    let streamCursor = 0;
-    let streamDone = false;
-    let streamedAssistantText = '';
-    for (let i = 0; i < 16 && !streamDone; i += 1) {
-      const streamRead = await callSessionRpc({
+    const sendTurn = async (userText: string): Promise<string> => {
+      const streamStart = await callSessionRpc({
         ui,
         sessionId,
-        method: SESSION_RPC_METHODS.VOICE_MEDIATOR_SEND_TURN_STREAM_READ,
-        req: { mediatorId: start.mediatorId, streamId: streamStart.streamId, cursor: streamCursor, maxEvents: 64 },
+        method: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START,
+        req: { runId: start.runId, message: userText },
         secret,
-        schema: VoiceMediatorTurnStreamReadResponseSchema,
+        schema: ExecutionRunTurnStreamStartResponseSchema,
         timeoutMs: 45_000,
       });
-      streamCursor = streamRead.nextCursor;
-      for (const event of streamRead.events) {
-        if (event.t === 'delta') streamedAssistantText += event.textDelta;
-        if (event.t === 'done') streamedAssistantText = event.assistantText;
+
+      let streamCursor = 0;
+      let streamDone = false;
+      let streamedAssistantText = '';
+      for (let i = 0; i < 16 && !streamDone; i += 1) {
+        const streamRead = await callSessionRpc({
+          ui,
+          sessionId,
+          method: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ,
+          req: { runId: start.runId, streamId: streamStart.streamId, cursor: streamCursor, maxEvents: 64 },
+          secret,
+          schema: ExecutionRunTurnStreamReadResponseSchema,
+          timeoutMs: 45_000,
+        });
+        streamCursor = streamRead.nextCursor;
+        for (const event of streamRead.events as any[]) {
+          if (event.t === 'delta') streamedAssistantText += String(event.textDelta ?? '');
+          if (event.t === 'done') streamedAssistantText = String(event.assistantText ?? streamedAssistantText);
+        }
+        streamDone = streamRead.done;
+        if (!streamDone) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
       }
-      streamDone = streamRead.done;
-      if (!streamDone) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-    }
-    expect(streamDone).toBe(true);
-    expect(streamedAssistantText).toContain('FAKE_CLAUDE_OK_3');
+      expect(streamDone).toBe(true);
+      return streamedAssistantText;
+    };
+
+    expect(await sendTurn('turn-1')).toContain('FAKE_CLAUDE_OK_1');
+    expect(await sendTurn('turn-2')).toContain('FAKE_CLAUDE_OK_2');
+    expect(await sendTurn('turn-stream-1')).toContain('FAKE_CLAUDE_OK_3');
 
     const streamCancelStart = await callSessionRpc({
       ui,
       sessionId,
-      method: SESSION_RPC_METHODS.VOICE_MEDIATOR_SEND_TURN_STREAM_START,
-      req: { mediatorId: start.mediatorId, userText: 'turn-stream-cancel' },
+      method: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START,
+      req: { runId: start.runId, message: 'turn-stream-cancel' },
       secret,
-      schema: VoiceMediatorTurnStreamStartResponseSchema,
+      schema: ExecutionRunTurnStreamStartResponseSchema,
       timeoutMs: 45_000,
     });
     const streamCancelled = await callSessionRpc({
       ui,
       sessionId,
-      method: SESSION_RPC_METHODS.VOICE_MEDIATOR_SEND_TURN_STREAM_CANCEL,
-      req: { mediatorId: start.mediatorId, streamId: streamCancelStart.streamId },
+      method: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL,
+      req: { runId: start.runId, streamId: streamCancelStart.streamId },
       secret,
-      schema: VoiceMediatorTurnStreamCancelResponseSchema,
+      schema: ExecutionRunTurnStreamCancelResponseSchema,
       timeoutMs: 45_000,
     });
     expect(streamCancelled.ok).toBe(true);
@@ -235,26 +223,26 @@ describe('core e2e: voice mediator daemon sessionRPC', () => {
     const commit = await callSessionRpc({
       ui,
       sessionId,
-      method: SESSION_RPC_METHODS.VOICE_MEDIATOR_COMMIT,
-      req: { mediatorId: start.mediatorId, kind: 'session_instruction', constraints: { maxChars: 1200 } },
+      method: SESSION_RPC_METHODS.EXECUTION_RUN_ACTION,
+      req: { runId: start.runId, actionId: 'voice_agent.commit', input: { maxChars: 1200 } },
       secret,
-      schema: VoiceMediatorCommitResponseSchema,
+      schema: ExecutionRunActionResponseSchema,
       timeoutMs: 45_000,
     });
-    expect(commit.commitText).toContain('FAKE_CLAUDE_OK_1');
+    expect(String((commit as any).result?.commitText ?? '')).toContain('FAKE_CLAUDE_OK_1');
 
     const stop = await callSessionRpc({
       ui,
       sessionId,
-      method: SESSION_RPC_METHODS.VOICE_MEDIATOR_STOP,
-      req: { mediatorId: start.mediatorId },
+      method: SESSION_RPC_METHODS.EXECUTION_RUN_STOP,
+      req: { runId: start.runId },
       secret,
-      schema: VoiceMediatorStopResponseSchema,
+      schema: ExecutionRunStopResponseSchema,
       timeoutMs: 45_000,
     });
     expect(stop.ok).toBe(true);
 
-    // Ensure daemon mediator does not write to the transcript by itself.
+	    // Ensure daemon voice agent does not write to the transcript by itself.
     const afterRpcMessages = await fetchAllMessages(serverBaseUrl, auth.token, sessionId);
     expect(afterRpcMessages.length).toBe(baselineMessages.length);
 
@@ -266,10 +254,10 @@ describe('core e2e: voice mediator daemon sessionRPC', () => {
     const localId = `voice-commit-${randomUUID()}`;
     const msg = {
       role: 'user',
-      content: { type: 'text', text: commit.commitText },
-      localId,
-      meta: { source: 'ui', sentFrom: 'e2e', feature: 'voice-mediator' },
-    };
+	      content: { type: 'text', text: commit.commitText },
+	      localId,
+	      meta: { source: 'ui', sentFrom: 'e2e', feature: 'voice-agent' },
+	    };
     const ciphertext = encryptLegacyBase64(msg, secret);
     const writeRes = await fetch(`${serverBaseUrl}/v2/sessions/${sessionId}/messages`, {
       method: 'POST',

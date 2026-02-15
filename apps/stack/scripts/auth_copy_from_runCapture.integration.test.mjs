@@ -28,7 +28,8 @@ test('hstack stack auth copy-from does not hit ReferenceError: runCapture is not
   const binDir = join(tmp, 'bin');
   await mkdir(binDir, { recursive: true });
   const yarnPath = join(binDir, 'yarn');
-  await writeFile(yarnPath, '#!/bin/bash\nexit 0\n', 'utf-8');
+  const yarnLogPath = join(tmp, 'yarn.calls.log');
+  await writeFile(yarnPath, `#!/bin/bash\necho \"$*\" >> ${JSON.stringify(yarnLogPath)}\nexit 0\n`, 'utf-8');
   await chmod(yarnPath, 0o755);
 
   const repoRoot = dirname(rootDir); // .../apps/stack -> .../ (monorepo root)
@@ -74,6 +75,12 @@ test('hstack stack auth copy-from does not hit ReferenceError: runCapture is not
   assert.ok(
     !res.stdout.includes('spawn yarn ENOENT') && !res.stderr.includes('spawn yarn ENOENT'),
     `expected yarn to be resolvable in light migrations step\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
+  );
+  const yarnCalls = await readFile(yarnLogPath, 'utf-8');
+  assert.match(
+    yarnCalls,
+    /\bmigrate:sqlite:deploy\b/,
+    `expected light auth flow without explicit DB provider to use sqlite migrations\ncalls:\n${yarnCalls}`
   );
 });
 

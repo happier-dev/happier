@@ -33,3 +33,20 @@ test('buildExpoDevEnv does not inject auth auto-restore env vars', () => {
   assert.equal(env.EXPO_PUBLIC_HAPPIER_STACK_DEV_AUTH_ENCRYPTION_MACHINE_KEY, undefined);
 });
 
+test('buildExpoDevEnv forces stack context in stack mode even when base env sets a different context', () => {
+  const baseEnv = {
+    ...process.env,
+    EXPO_PUBLIC_HAPPY_SERVER_CONTEXT: 'custom',
+  };
+
+  const env = buildExpoDevEnv({
+    baseEnv,
+    apiServerUrl: 'http://localhost:3013',
+    wantDevClient: false,
+    wantWeb: true,
+    stackMode: true,
+    stackName: 'qa-agent-2',
+  });
+
+  assert.equal(env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT, 'stack');
+});

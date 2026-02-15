@@ -448,6 +448,43 @@ test('hstack stack daemon <name> start uses runtime server port when env port is
   );
 });
 
+test('hstack stack daemon <name> start uses explicit HAPPIER_SERVER_URL when env port and runtime port are missing', async (t) => {
+  const fixture = await createDaemonFixture(t, {
+    prefix: 'happy-stacks-stack-daemon-explicit-server-url-',
+    stackName: 'exp-test',
+    serverPort: 4101,
+  });
+
+  await writeDummyAuth({ cliHomeDir: fixture.stackCliHome });
+
+  const explicitPort = fixture.serverPort + 9;
+  const envPath = join(fixture.storageDir, fixture.stackName, 'env');
+  await mkdir(dirname(envPath), { recursive: true });
+  await writeFile(
+    envPath,
+    [
+      `HAPPIER_STACK_REPO_DIR=${fixture.baseEnv.HAPPIER_STACK_WORKSPACE_DIR}/happier`,
+      `HAPPIER_STACK_CLI_HOME_DIR=${fixture.stackCliHome}`,
+      `HAPPIER_SERVER_URL=http://127.0.0.1:${explicitPort}`,
+      `HAPPIER_WEBAPP_URL=http://happier-exp-test.localhost:${explicitPort}`,
+      '',
+    ].join('\n'),
+    'utf-8'
+  );
+
+  registerDaemonCleanup(t, { env: fixture.baseEnv, stackName: fixture.stackName });
+
+  const startRes = await runHstack(['stack', 'daemon', fixture.stackName, 'start', '--json'], { env: fixture.baseEnv });
+  assertExitOk(startRes, 'stack daemon start uses explicit HAPPIER_SERVER_URL');
+
+  const logPath = join(fixture.stackCliHome, 'stub-daemon.log');
+  const logText = await readLogText(logPath);
+  assert.ok(
+    logText.includes(`server_url=http://127.0.0.1:${explicitPort}`),
+    `expected daemon env to target explicit HAPPIER_SERVER_URL port ${explicitPort}\n${logText}`
+  );
+});
+
 test('hstack stack auth <name> login --identity=<name> --print prints identity-scoped HAPPIER_HOME_DIR', async (t) => {
   const fixture = await createDaemonFixture(t, {
     prefix: 'happier-stack-auth-identity-',

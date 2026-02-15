@@ -14,6 +14,7 @@ import { expoExec } from './utils/expo/command.mjs';
 import { ensureDevExpoServer } from './utils/dev/expo_dev.mjs';
 import { resolveMobileReachableServerUrl } from './utils/server/mobile_api_url.mjs';
 import { patchIosXcodeProjectsForSigningAndIdentity, resolveIosAppXcodeProjects } from './utils/mobile/ios_xcodeproj_patch.mjs';
+import { pickMetroPort, resolveStablePortStart } from './utils/expo/metro_ports.mjs';
 
 /**
  * Mobile dev helper for the Happier UI Expo app (typically `apps/ui`).
@@ -75,6 +76,7 @@ async function main() {
   const uiRepoDir = getComponentDir(rootDir, 'happier-ui');
   await requireDir('happier-ui', uiRepoDir);
   await ensureDepsInstalled(uiRepoDir, 'happier-ui');
+  const happyDir = uiRepoDir;
 
   // Happy monorepo layouts (historical):
   // - legacy: <happyDir>/expo-app (split-repo era)
@@ -104,7 +106,9 @@ async function main() {
   // (Info.plist includes `dev.happier.app.dev`), so iOS will open the dev build instead of the App Store app.
   const appEnv = process.env.APP_ENV ?? kv.get('--app-env') ?? 'development';
   const host = kv.get('--host') ?? process.env.HAPPIER_STACK_MOBILE_HOST ?? 'lan';
-  const portRaw = kv.get('--port') ?? process.env.HAPPIER_STACK_MOBILE_PORT ?? '8081';
+  const portFromArg = kv.get('--port') ?? '';
+  const portFromEnv = process.env.HAPPIER_STACK_MOBILE_PORT ?? '';
+  const portRaw = portFromArg || portFromEnv || '8081';
   // Default behavior:
   // - `hstack mobile` starts Metro and keeps running.
   // - `hstack mobile --run-ios` / `hstack mobile:ios` just builds/installs and exits (unless --metro is provided).
@@ -125,6 +129,29 @@ async function main() {
   const autostart = getDefaultAutostartPaths();
   const stackCtx = resolveStackContext({ env, autostart });
   const { stackMode, runtimeStatePath, stackName, envPath } = stackCtx;
+
+  // Expo/React Native native build steps can probe the Metro port even when we pass `--no-bundler`.
+  // Defaulting to 8081 makes builds much more likely to fail late if another Metro/Expo starts on the same port.
+  //
+  // Strategy:
+  // - If the user explicitly sets --port or HAPPIER_STACK_MOBILE_PORT, honor it.
+  // - Otherwise pick a stable, collision-resistant port in a higher range for build-only steps.
+  const needsNativeBuildPort = flags.has('--prebuild') || flags.has('--run-ios');
+  if (needsNativeBuildPort) {
+    const forcedPort = (portFromArg || portFromEnv).toString().trim();
+    const stableKey = (stackMode && stackName ? stackName : '') || iosBundleId || scheme || 'happier';
+    const startPort = resolveStablePortStart({
+      env,
+      stackName: stableKey,
+      baseKey: 'HAPPIER_STACK_MOBILE_BUILD_PORT_BASE',
+      rangeKey: 'HAPPIER_STACK_MOBILE_BUILD_PORT_RANGE',
+      defaultBase: 19000,
+      defaultRange: 10000,
+    });
+    const metroPort = await pickMetroPort({ startPort, forcedPort, host: '127.0.0.1' });
+    env.RCT_METRO_PORT = String(metroPort);
+    env.EXPO_PACKAGER_PORT = String(metroPort);
+  }
 
   // Ensure the built iOS app registers the same scheme we use for dev-client QR links.
   // (Happy app reads EXPO_APP_SCHEME in app.config.js; default remains unchanged when unset.)

@@ -37,6 +37,7 @@ test('hstack stack auth copy-from skips pglite DB seed when lock is held by a li
       [
         `HAPPIER_STACK_STACK=${name}`,
         `HAPPIER_STACK_SERVER_COMPONENT=happier-server-light`,
+        `HAPPIER_DB_PROVIDER=pglite`,
         `HAPPIER_STACK_REPO_DIR=${repoRoot}`,
         `HAPPIER_SERVER_LIGHT_DATA_DIR=${dataDir}`,
         `HAPPIER_SERVER_LIGHT_FILES_DIR=${join(dataDir, 'files')}`,

@@ -45,6 +45,7 @@ export function buildLaunchdPlistXml(params: Readonly<{
   stderrPath: string;
   workingDirectory?: string;
   keepAliveOnFailure?: boolean;
+  startIntervalSec?: number;
 }>): string {
   const label = String(params.label ?? '').trim();
   if (!label) throw new Error('label is required');
@@ -78,6 +79,12 @@ export function buildLaunchdPlistXml(params: Readonly<{
         `    </dict>\n`
       );
 
+  const intervalRaw = Number(params.startIntervalSec);
+  const interval = Number.isFinite(intervalRaw) && intervalRaw > 0 ? Math.floor(intervalRaw) : 0;
+  const startInterval = interval
+    ? `\n    <key>StartInterval</key>\n    <integer>${interval}</integer>\n`
+    : '';
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -93,6 +100,7 @@ ${programArgsXml}
     <key>RunAtLoad</key>
     <true/>
 ${keepAlive}
+${startInterval}
 ${workingDirXml}    <key>StandardOutPath</key>
     <string>${xmlEscape(stdoutPath)}</string>
     <key>StandardErrorPath</key>
@@ -106,4 +114,3 @@ ${envXml}
 </plist>
 `;
 }
-

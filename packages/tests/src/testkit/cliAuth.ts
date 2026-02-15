@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { encodeBase64 } from './messageCrypto';
+import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
 
 const CLI_HOME_DIR_MODE = 0o700;
 const CLI_HOME_FILE_MODE = 0o600;
@@ -65,4 +66,61 @@ export async function seedCliAuthForServer(params: {
   });
 
   return { serverId, machineId };
+}
+
+export async function seedCliDataKeyAuthForServer(params: {
+  cliHome: string;
+  serverUrl: string;
+  token: string;
+  machineKey: Uint8Array;
+}): Promise<{ serverId: string; machineId: string; publicKey: Uint8Array }> {
+  const serverId = deriveServerIdFromUrl(params.serverUrl);
+  const machineId = randomUUID();
+
+  const publicKey = deriveBoxPublicKeyFromSeed(params.machineKey);
+  const credentials =
+    `${JSON.stringify(
+      {
+        token: params.token,
+        encryption: {
+          publicKey: Buffer.from(publicKey).toString('base64'),
+          machineKey: Buffer.from(params.machineKey).toString('base64'),
+        },
+      },
+      null,
+      2,
+    )}\n`;
+
+  const perServerDir = join(params.cliHome, 'servers', serverId);
+  await mkdir(perServerDir, { recursive: true, mode: CLI_HOME_DIR_MODE });
+  await writeFile(join(params.cliHome, 'access.key'), credentials, { encoding: 'utf8', mode: CLI_HOME_FILE_MODE });
+  await writeFile(join(perServerDir, 'access.key'), credentials, { encoding: 'utf8', mode: CLI_HOME_FILE_MODE });
+
+  const seededSettings = {
+    schemaVersion: 5,
+    onboardingCompleted: true,
+    activeServerId: serverId,
+    servers: {
+      [serverId]: {
+        id: serverId,
+        name: serverId,
+        serverUrl: params.serverUrl,
+        webappUrl: params.serverUrl,
+        createdAt: 0,
+        updatedAt: 0,
+        lastUsedAt: 0,
+      },
+    },
+    machineIdByServerId: {
+      [serverId]: machineId,
+    },
+    machineIdConfirmedByServerByServerId: {},
+    lastChangesCursorByServerIdByAccountId: {},
+  };
+  await writeFile(join(params.cliHome, 'settings.json'), JSON.stringify(seededSettings, null, 2) + '\n', {
+    encoding: 'utf8',
+    mode: CLI_HOME_FILE_MODE,
+  });
+
+  return { serverId, machineId, publicKey };
 }

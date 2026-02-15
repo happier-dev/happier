@@ -1981,6 +1981,9 @@ async function main() {
   const effectiveArgv = (() => {
     if (!commandsNeedingComponent.has(cmd)) return argv;
     const pos = argv.filter((a) => !a.startsWith('--'));
+    // Keep no-arg invocations untouched so handlers can apply their own defaults
+    // (for example: `wt status` should target the active repo, not a legacy component token).
+    if (pos.length <= 1) return argv;
     const maybeComponent = (pos[1] ?? '').trim();
     if (legacyComponents.has(maybeComponent)) return argv;
     // Insert the default component right after the command; legacy command handlers keep working.

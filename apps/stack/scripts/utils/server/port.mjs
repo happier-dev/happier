@@ -26,8 +26,26 @@ export function coercePort(v) {
 
 export function resolveServerPortFromEnv({ env = process.env, defaultPort = 3005 } = {}) {
   const raw = (env.HAPPIER_STACK_SERVER_PORT ?? '').toString().trim() || '';
-  const n = raw ? Number(raw) : Number(defaultPort);
-  return Number.isFinite(n) && n > 0 ? n : Number(defaultPort);
+  const explicitPort = raw ? Number(raw) : NaN;
+  if (Number.isFinite(explicitPort) && explicitPort > 0) {
+    return explicitPort;
+  }
+
+  const serverUrlRaw = (env.HAPPIER_SERVER_URL ?? '').toString().trim();
+  if (serverUrlRaw) {
+    try {
+      const parsed = new URL(serverUrlRaw);
+      const urlPort = Number(parsed.port);
+      if (Number.isFinite(urlPort) && urlPort > 0) {
+        return urlPort;
+      }
+    } catch {
+      // Ignore invalid URL and use the default fallback below.
+    }
+  }
+
+  const fallback = Number(defaultPort);
+  return Number.isFinite(fallback) && fallback > 0 ? fallback : 3005;
 }
 
 export function listPortsFromEnvObject(env, keys) {

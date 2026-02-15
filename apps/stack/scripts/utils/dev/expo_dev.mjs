@@ -10,7 +10,7 @@ import {
   writePidState,
 } from '../expo/expo.mjs';
 import { pickExpoDevMetroPort } from '../expo/metro_ports.mjs';
-import { recordStackRuntimeUpdate } from '../stack/runtime_state.mjs';
+import { isPidAlive, recordStackRuntimeUpdate } from '../stack/runtime_state.mjs';
 import { killProcessGroupOwnedByStack } from '../proc/ownership.mjs';
 import { expoSpawn } from '../expo/command.mjs';
 import { resolveMobileExpoConfig } from '../mobile/config.mjs';
@@ -204,6 +204,10 @@ function expoModeLabel({ wantWeb, wantDevClient }) {
   return 'disabled';
 }
 
+function normalizeApiServerUrl(raw) {
+  return String(raw ?? '').trim().replace(/\/+$/, '');
+}
+
 export function buildExpoDevEnv({
   baseEnv,
   apiServerUrl,
@@ -229,7 +233,7 @@ export function buildExpoDevEnv({
     : apiServerUrl;
 
   env.EXPO_PUBLIC_HAPPY_SERVER_URL = effectiveApiServerUrl;
-  if (stackMode && !env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT) {
+  if (stackMode) {
     env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
   }
   env.EXPO_PUBLIC_DEBUG = env.EXPO_PUBLIC_DEBUG ?? '1';
@@ -314,6 +318,7 @@ export async function ensureDevExpoServer({
 
   const running = await isStateProcessRunning(paths.statePath);
   const alreadyRunning = Boolean(running.running);
+  const desiredApiServerUrl = normalizeApiServerUrl(apiServerUrl);
 
   // Resolve Tailscale forwarding preference
   const wantTailscale = resolveExpoTailscaleEnabled({ env: baseEnv, expoTailscale });
@@ -344,8 +349,25 @@ export async function ensureDevExpoServer({
     }).catch(() => {});
   };
 
-  if (alreadyRunning && !restart) {
-    const pid = Number(running.state?.pid);
+  const runningStateApiServerUrl = normalizeApiServerUrl(running.state?.apiServerUrl);
+  const shouldRestartForApiServerMismatch =
+    alreadyRunning &&
+    !restart &&
+    stackMode &&
+    wantWeb &&
+    desiredApiServerUrl &&
+    runningStateApiServerUrl !== desiredApiServerUrl;
+  // In stack mode, never adopt "running by port probe only" state. It may belong to a
+  // different stack/session and has no reliable owned pid for lifecycle control.
+  const shouldRestartForPortFallbackInStackMode =
+    alreadyRunning &&
+    !restart &&
+    stackMode &&
+    running.reason === 'port';
+
+  if (alreadyRunning && !restart && !shouldRestartForApiServerMismatch && !shouldRestartForPortFallbackInStackMode) {
+    const statePid = Number(running.state?.pid);
+    const pid = Number.isFinite(statePid) && statePid > 1 && isPidAlive(statePid) ? statePid : null;
     const port = Number(running.state?.port);
 
     // Capability check: refuse to spawn a second Expo, so if the existing process doesn't match the
@@ -369,10 +391,17 @@ export async function ensureDevExpoServer({
       ok: true,
       skipped: true,
       reason: 'already_running',
-      pid: Number.isFinite(pid) ? pid : null,
+      pid: Number.isFinite(pid) && pid > 1 ? pid : null,
       port: Number.isFinite(port) ? port : null,
       mode: expoModeLabel({ wantWeb, wantDevClient }),
     };
+  }
+
+  if (shouldRestartForApiServerMismatch && !quiet) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[local] expo: restarting to align API server URL (running=${runningStateApiServerUrl || 'unset'}, wanted=${desiredApiServerUrl}).`
+    );
   }
 
   const reservedMetroPorts = new Set();
@@ -457,6 +486,7 @@ export async function ensureDevExpoServer({
       webEnabled: wantWeb,
       devClientEnabled: wantDevClient,
       host,
+      apiServerUrl: desiredApiServerUrl || null,
       scheme: wantDevClient ? scheme : null,
       tailscaleEnabled: wantTailscale,
       tailscaleForwarderPid: tailscaleResult?.pid ?? null,

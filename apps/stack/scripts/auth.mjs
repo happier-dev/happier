@@ -451,8 +451,9 @@ function resolveLightDirsForStack({ env, baseDir }) {
 function resolveDbProviderForLightFromEnv(env) {
   const raw = (env.HAPPIER_DB_PROVIDER ?? env.HAPPY_DB_PROVIDER ?? '').toString().trim().toLowerCase();
   if (raw === 'sqlite') return 'sqlite';
-  // Default for light flavor (embedded Postgres via pglite).
-  return 'pglite';
+  if (raw === 'pglite') return 'pglite';
+  // Default for light flavor.
+  return 'sqlite';
 }
 
 function resolveDbProviderForFullFromEnv(env) {

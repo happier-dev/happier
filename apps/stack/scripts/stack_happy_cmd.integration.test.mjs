@@ -25,6 +25,7 @@ async function writeStubHappyCli({ cliDir, message }) {
     [
       `console.log(JSON.stringify({`,
       `  message: ${JSON.stringify(message)},`,
+      `  args: process.argv.slice(2),`,
       `  stack: process.env.HAPPIER_STACK_STACK || null,`,
       `  envFile: process.env.HAPPIER_STACK_ENV_FILE || null,`,
       `  homeDir: process.env.HAPPIER_HOME_DIR || null,`,
@@ -260,4 +261,39 @@ test('hstack stack <name> happier ... stack-name-first shorthand works', async (
   const out = JSON.parse(res.stdout.trim());
   assert.equal(out.message, 'name-first');
   assert.equal(out.stack, fixture.stackName);
+});
+
+test('hstack stack bug-report <name> forwards bug-report command under stack env', async (t) => {
+  const fixture = await createHappyStackFixture(t, {
+    prefix: 'happier-stack-stack-bug-report-',
+    message: 'bug-report-alias',
+    serverPort: 4099,
+  });
+
+  const res = await runNodeCapture(
+    [
+      join(rootDir, 'bin', 'hstack.mjs'),
+      'stack',
+      'bug-report',
+      fixture.stackName,
+      '--',
+      '--title',
+      'CLI bug',
+      '--summary',
+      'summary',
+      '--current-behavior',
+      'current',
+      '--expected-behavior',
+      'expected',
+      '--accept-privacy-notice',
+      '--no-include-diagnostics',
+    ],
+    { cwd: rootDir, env: fixture.baseEnv }
+  );
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const out = JSON.parse(res.stdout.trim());
+  assert.equal(out.message, 'bug-report-alias');
+  assert.equal(out.stack, fixture.stackName);
+  assert.equal(out.args[0], 'bug-report');
 });

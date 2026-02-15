@@ -7,6 +7,7 @@ import {
   planServiceAction,
   renderSystemdServiceUnit,
   renderWindowsScheduledTaskWrapperPs1,
+  buildLaunchdPlistXml,
   applyServicePlan,
 } from '../dist/service/index.js';
 
@@ -47,6 +48,20 @@ test('renderWindowsScheduledTaskWrapperPs1 sets env and runs program args', () =
   assert.match(ps1, /\$env:PORT = "3005"/);
   assert.match(ps1, /Set-Location -LiteralPath/);
   assert.match(ps1, /happier-server\.exe/);
+});
+
+test('buildLaunchdPlistXml includes StartInterval when provided', () => {
+  const plist = buildLaunchdPlistXml({
+    label: 'dev.happier.timer',
+    programArgs: ['/usr/bin/true'],
+    env: {},
+    stdoutPath: '/tmp/out.log',
+    stderrPath: '/tmp/err.log',
+    workingDirectory: '/tmp',
+    keepAliveOnFailure: false,
+    startIntervalSec: 3600,
+  });
+  assert.match(plist, /<key>StartInterval<\/key>\s*<integer>3600<\/integer>/);
 });
 
 test('buildServiceDefinition writes expected service definition paths', () => {

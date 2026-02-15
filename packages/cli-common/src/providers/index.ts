@@ -18,7 +18,7 @@ export type ProviderCliInstallPlan = Readonly<{
 
 export type ProviderCliInstallPlanResult =
   | Readonly<{ ok: true; plan: ProviderCliInstallPlan; spec: ProviderCliInstallSpec }>
-  | Readonly<{ ok: false; errorMessage: string; spec: ProviderCliInstallSpec }>;
+  | Readonly<{ ok: false; errorCode: 'no-recipe'; errorMessage: string; spec: ProviderCliInstallSpec }>;
 
 export function resolvePlatformFromNodePlatform(nodePlatform: string): ProviderCliInstallPlatform | null {
   if (nodePlatform === 'darwin') return 'darwin';
@@ -55,7 +55,7 @@ export function planProviderCliInstall(params: Readonly<{ providerId: AgentId; p
   const spec = getProviderCliInstallSpec(params.providerId);
   const commands = resolveProviderInstallCommands(spec, params.platform);
   if (!commands) {
-    return { ok: false, spec, errorMessage: `No auto-install recipe available for ${spec.id} on ${params.platform}.` };
+    return { ok: false, errorCode: 'no-recipe', spec, errorMessage: `No auto-install recipe available for ${spec.id} on ${params.platform}.` };
   }
 
   const requiresAdmin = commands.some((c) => c.requiresAdmin);
@@ -114,7 +114,13 @@ function appendCommandLog(logPath: string, cmd: string, args: readonly string[],
 
 export type InstallProviderCliResult =
   | Readonly<{ ok: true; plan: ProviderCliInstallPlan; alreadyInstalled: boolean; logPath: string | null }>
-  | Readonly<{ ok: false; errorMessage: string; plan: ProviderCliInstallPlan | null; logPath: string | null }>;
+  | Readonly<{
+      ok: false;
+      errorCode: 'no-recipe' | 'command-not-found' | 'command-exec-failed' | 'command-failed';
+      errorMessage: string;
+      plan: ProviderCliInstallPlan | null;
+      logPath: string | null;
+    }>;
 
 export function installProviderCli(params: Readonly<{
   providerId: AgentId;
@@ -129,7 +135,7 @@ export function installProviderCli(params: Readonly<{
 
   const planned = planProviderCliInstall({ providerId: params.providerId, platform: params.platform });
   if (!planned.ok) {
-    return { ok: false, errorMessage: planned.errorMessage, plan: null, logPath: null };
+    return { ok: false, errorCode: planned.errorCode, errorMessage: planned.errorMessage, plan: null, logPath: null };
   }
 
   const plan = planned.plan;
@@ -150,21 +156,26 @@ export function installProviderCli(params: Readonly<{
 
   for (const c of plan.commands) {
     if (!commandExists(c.cmd, env)) {
-      return { ok: false, errorMessage: `Command not found: ${c.cmd}`, plan, logPath };
+      return { ok: false, errorCode: 'command-not-found', errorMessage: `Command not found: ${c.cmd}`, plan, logPath };
     }
     const res = spawnSync(c.cmd, [...c.args], { encoding: 'utf8', env: { ...process.env, ...env } });
     if (res.error) {
       appendCommandLog(logPath, c.cmd, c.args, '', res.error.message, res.status ?? null);
-      return { ok: false, errorMessage: res.error.message, plan, logPath };
+      return { ok: false, errorCode: 'command-exec-failed', errorMessage: res.error.message, plan, logPath };
     }
     const status = typeof res.status === 'number' ? res.status : null;
     appendCommandLog(logPath, c.cmd, c.args, String(res.stdout ?? ''), String(res.stderr ?? ''), status);
     if (status !== 0) {
       const stderr = String(res.stderr ?? '').trim();
-      return { ok: false, errorMessage: stderr || `Command failed (${status ?? 'unknown'}): ${c.cmd}`, plan, logPath };
+      return {
+        ok: false,
+        errorCode: 'command-failed',
+        errorMessage: stderr || `Command failed (${status ?? 'unknown'}): ${c.cmd}`,
+        plan,
+        logPath,
+      };
     }
   }
 
   return { ok: true, plan, alreadyInstalled: false, logPath };
 }
-

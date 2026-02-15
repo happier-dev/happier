@@ -9,7 +9,7 @@ Both flavors use the **same server codebase** (the monorepo server package, typi
 ### `happier-server-light` (recommended default)
 
 - **No Docker required**
-- Uses **embedded Postgres via PGlite** (“PG_Light”) stored under the stack directory (per-stack isolation)
+- Uses **SQLite by default** (stack-local file), with optional embedded Postgres via PGlite
 - Stores local public files under the stack directory
 - Best choice for a stable “main” stack and quick local installs
 
@@ -18,6 +18,7 @@ Light stacks are isolated by default:
 ```
 ~/.happier/stacks/<stack>/server-light/files
 ~/.happier/stacks/<stack>/server-light/pglite
+~/.happier/stacks/<stack>/server-light/happier-server-light.sqlite
 ```
 
 Key env vars (stored in the stack env file):
@@ -65,10 +66,10 @@ For a “one URL” UX (especially with Tailscale), hstack starts a lightweight 
 
 This means `hstack start --server=happier-server` can still work end-to-end without requiring AWS S3 or a separate nginx setup.
 
-## Migrating between flavors (PG_Light ⇢ Postgres)
+## Migrating between flavors (light ⇢ full)
 
 hstack includes an **experimental** migration helper that can copy core chat data from a
-`happier-server-light` stack (embedded PGlite) into a `happier-server` stack (Docker Postgres):
+`happier-server-light` stack into a `happier-server` stack (Docker Postgres):
 
 ```bash
 hstack migrate light-to-server --from-stack=main --to-stack=full1
@@ -90,7 +91,7 @@ Notes:
 - **`hstack dev`** is for rapid iteration:
   - for `happier-server`: hstack runs `prisma migrate deploy` by default (configurable via `HAPPIER_STACK_PRISMA_MIGRATE`).
   - for `happier-server-light`:
-    - hstack runs the server package’s `migrate:light:deploy` script, which applies `prisma migrate deploy` against the **embedded PGlite DB** using the standard Postgres schema (`prisma/schema.prisma`).
+    - hstack runs the server package’s `migrate:light:deploy` script, which applies provider-specific light migrations (SQLite by default, or PGlite when configured).
 
 Important: for a given run (`hstack start` / `hstack dev`) you choose **one** flavor.
 
@@ -143,5 +144,4 @@ There are two separate concepts:
 
 ## SQLite note
 
-SQLite is **not** used by `happier-server-light` today (it is PG_Light via embedded PGlite). SQLite may be reintroduced later as an additional light flavor, but it is not part of the current default stack.
-
+SQLite is the default DB for `happier-server-light`. You can opt into embedded Postgres (PGlite) by setting `HAPPIER_DB_PROVIDER=pglite` in the stack env.

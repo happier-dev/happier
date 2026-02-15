@@ -51,8 +51,15 @@ test('ensureDevExpoServer does not drop Expo output when spawnOptions stdio is i
       quiet: true,
     });
 
-    await delay(400);
-    const log = await readFile(teeFile, 'utf-8').catch(() => '');
+    // CI and local stacks can be noisy/slow (Corepack/Yarn probes, filesystem contention),
+    // so wait deterministically for the tee output instead of using a fixed delay.
+    const deadlineMs = Date.now() + 3000;
+    let log = '';
+    while (Date.now() < deadlineMs) {
+      log = await readFile(teeFile, 'utf-8').catch(() => '');
+      if (/hello-from-fake-expo/.test(log)) break;
+      await delay(100);
+    }
     assert.match(log, /hello-from-fake-expo/);
   } finally {
     await rm(tmp, { recursive: true, force: true });
