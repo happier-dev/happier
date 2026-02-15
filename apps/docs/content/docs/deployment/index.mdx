@@ -14,7 +14,8 @@ This section describes how to deploy **your own Happier Server** (the sync backe
 
 - **Docker** (recommended starting point): build from this repo’s `Dockerfile` and run with Docker / Docker Compose.
   - See: [Docker](./docker)
-- **Configuration reference**: see [Environment variables](./env) for common settings, including optional voice configuration.
+- **Configuration reference**: see [Environment variables](./env) for the complete server runtime env surface.
+- **Canonical env template**: `apps/server/.env.example`
 - **HStack** (stack CLI): a guided workflow that can run the server for you (documentation maintained separately).
 
 ## Server flavors (high level)
@@ -22,7 +23,7 @@ This section describes how to deploy **your own Happier Server** (the sync backe
 Happier Server supports two “flavors” that share the same API + internal logic; the difference is which storage backends are used:
 
 - **Full**: external Postgres (default) or MySQL 8+ + S3/Minio-compatible storage (default) or local files (`HAPPIER_FILES_BACKEND=local`); optional Redis for multi-replica realtime.
-- **Light**: embedded Postgres (PGlite, default) or SQLite stored on disk; local file storage served by the server at `GET /files/*`.
+- **Light**: SQLite (default) or embedded Postgres (PGlite) stored on disk; local file storage served by the server at `GET /files/*`.
 
 If you’re deploying a shared server for multiple users/devices, you likely want **full**. If you want the easiest single-node setup, start with **light**.
 

@@ -126,6 +126,7 @@ export function BugReportIssueDetailsSection(props: Readonly<{
     whatChangedRecently: string;
     onWhatChangedRecentlyChange: (value: string) => void;
     placeholderTextColor: string;
+    fieldErrors?: Partial<Record<'title' | 'summary', string>>;
     disabled: boolean;
 }>): React.JSX.Element {
     return (
@@ -135,18 +136,21 @@ export function BugReportIssueDetailsSection(props: Readonly<{
                 <Text style={bugReportComposerStyles.helperText}>Provide enough detail so we can reproduce and diagnose quickly.</Text>
             </View>
 
-            <View style={bugReportComposerStyles.sectionFields}>
-                <View style={bugReportComposerStyles.field}>
-                    <Text style={bugReportComposerStyles.label}>Title</Text>
-                    <TextInput
-                        value={props.title}
-                        onChangeText={props.onTitleChange}
-                        placeholder="Short issue title"
+                <View style={bugReportComposerStyles.sectionFields}>
+                    <View style={bugReportComposerStyles.field}>
+	                    <Text style={bugReportComposerStyles.label}>Title (required)</Text>
+	                    <TextInput
+	                        value={props.title}
+	                        onChangeText={props.onTitleChange}
+	                        placeholder="Short issue title"
                         placeholderTextColor={props.placeholderTextColor}
-                        style={bugReportComposerStyles.input}
+                        style={[bugReportComposerStyles.input, props.fieldErrors?.title ? bugReportComposerStyles.inputError : null]}
                         editable={!props.disabled}
                         maxLength={200}
                     />
+                    {props.fieldErrors?.title && props.title.trim().length > 0 && (
+                        <Text style={bugReportComposerStyles.errorText}>{props.fieldErrors.title}</Text>
+                    )}
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
@@ -165,22 +169,29 @@ export function BugReportIssueDetailsSection(props: Readonly<{
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
-                    <Text style={bugReportComposerStyles.label}>Concise summary</Text>
+                    <Text style={bugReportComposerStyles.label}>Concise summary (required)</Text>
                     <TextInput
                         value={props.summary}
                         onChangeText={props.onSummaryChange}
                         placeholder="One-paragraph summary"
                         placeholderTextColor={props.placeholderTextColor}
-                        style={[bugReportComposerStyles.input, bugReportComposerStyles.textArea]}
+                        style={[
+                            bugReportComposerStyles.input,
+                            bugReportComposerStyles.textArea,
+                            props.fieldErrors?.summary ? bugReportComposerStyles.inputError : null,
+                        ]}
                         editable={!props.disabled}
                         multiline
                         numberOfLines={4}
                         maxLength={800}
                     />
+                    {props.fieldErrors?.summary && props.summary.trim().length > 0 && (
+                        <Text style={bugReportComposerStyles.errorText}>{props.fieldErrors.summary}</Text>
+                    )}
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
-                    <Text style={bugReportComposerStyles.label}>Current behavior</Text>
+                    <Text style={bugReportComposerStyles.label}>Current behavior (optional)</Text>
                     <TextInput
                         value={props.currentBehavior}
                         onChangeText={props.onCurrentBehaviorChange}
@@ -195,7 +206,7 @@ export function BugReportIssueDetailsSection(props: Readonly<{
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
-                    <Text style={bugReportComposerStyles.label}>Expected behavior</Text>
+                    <Text style={bugReportComposerStyles.label}>Expected behavior (optional)</Text>
                     <TextInput
                         value={props.expectedBehavior}
                         onChangeText={props.onExpectedBehaviorChange}
@@ -210,7 +221,7 @@ export function BugReportIssueDetailsSection(props: Readonly<{
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
-                    <Text style={bugReportComposerStyles.label}>Reproduction steps</Text>
+                    <Text style={bugReportComposerStyles.label}>Reproduction steps (optional)</Text>
                     <TextInput
                         value={props.reproductionStepsText}
                         onChangeText={props.onReproductionStepsTextChange}
@@ -373,6 +384,7 @@ export function BugReportEnvironmentSection(props: Readonly<{
 export function BugReportConsentSection(props: Readonly<{
     acceptedPrivacyNotice: boolean;
     onAcceptedPrivacyNoticeChange: (value: boolean) => void;
+    errorText?: string;
 }>): React.JSX.Element {
     return (
         <View style={bugReportComposerStyles.section}>
@@ -388,6 +400,9 @@ export function BugReportConsentSection(props: Readonly<{
                     </View>
                     <Switch value={props.acceptedPrivacyNotice} onValueChange={props.onAcceptedPrivacyNoticeChange} />
                 </View>
+                {props.errorText ? (
+                    <Text style={bugReportComposerStyles.errorText}>{props.errorText}</Text>
+                ) : null}
             </View>
         </View>
     );

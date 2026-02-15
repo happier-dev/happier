@@ -10,12 +10,12 @@ export type BugReportComposerSubmissionInput = {
     title: string;
     summary: string;
     reporterGithubUsername?: string;
-    currentBehavior: string;
-    expectedBehavior: string;
+    currentBehavior?: string;
+    expectedBehavior?: string;
     reproductionStepsText: string;
     whatChangedRecently: string;
-    frequency: BugReportFrequency;
-    severity: BugReportSeverity;
+    frequency?: BugReportFrequency;
+    severity?: BugReportSeverity;
     environment: {
         appVersion: string;
         platform: string;
@@ -53,12 +53,13 @@ function toOptionalValue(raw: string | undefined): string | undefined {
 
 function buildBugReportForm(input: BugReportComposerSubmissionInput): BugReportFormPayload {
     const acceptedPrivacyNotice = input.includeDiagnostics ? input.acceptedPrivacyNotice : true;
+    const normalizedRepro = normalizeReproductionSteps(input.reproductionStepsText);
     return {
         title: input.title.trim(),
         summary: appendBugReportReporterToSummary(input.summary, input.reporterGithubUsername),
-        currentBehavior: input.currentBehavior.trim(),
-        expectedBehavior: input.expectedBehavior.trim(),
-        reproductionSteps: normalizeReproductionSteps(input.reproductionStepsText),
+        currentBehavior: toOptionalValue(input.currentBehavior),
+        expectedBehavior: toOptionalValue(input.expectedBehavior),
+        reproductionSteps: normalizedRepro.length > 0 ? normalizedRepro : undefined,
         frequency: input.frequency,
         severity: input.severity,
         whatChangedRecently: toOptionalValue(input.whatChangedRecently),
@@ -73,36 +74,55 @@ function buildBugReportForm(input: BugReportComposerSubmissionInput): BugReportF
         },
         consent: {
             includeDiagnostics: input.includeDiagnostics,
-            allowMaintainerFollowUp: true,
             acceptedPrivacyNotice,
         },
     };
 }
 
+const BUG_REPORT_TITLE_MIN_CHARS = 3;
+const BUG_REPORT_SUMMARY_MIN_CHARS = 3;
+
+export type BugReportDraftField = 'title' | 'summary' | 'privacy';
+export type BugReportDraftFieldErrors = Partial<Record<BugReportDraftField, string>>;
+
+export function getBugReportDraftFieldErrors(input: BugReportComposerSubmissionInput): BugReportDraftFieldErrors {
+    const errors: BugReportDraftFieldErrors = {};
+
+    if (input.title.trim().length < BUG_REPORT_TITLE_MIN_CHARS) {
+        errors.title = `Title must be at least ${BUG_REPORT_TITLE_MIN_CHARS} characters.`;
+    }
+    if (input.summary.trim().length < BUG_REPORT_SUMMARY_MIN_CHARS) {
+        errors.summary = `Summary must be at least ${BUG_REPORT_SUMMARY_MIN_CHARS} characters.`;
+    }
+    if (input.includeDiagnostics && !input.acceptedPrivacyNotice) {
+        errors.privacy = 'Privacy consent is required when including diagnostics.';
+    }
+
+    return errors;
+}
+
 export function validateBugReportDraft(input: BugReportComposerSubmissionInput): BugReportDraftValidation {
-    if (input.title.trim().length < 3) {
+    const errors = getBugReportDraftFieldErrors(input);
+
+    if (errors.title) {
         return {
             code: 'title',
             title: 'Missing title',
-            message: 'Please add a short bug title (at least 3 characters).',
+            message: errors.title,
         };
     }
-    if (
-        input.summary.trim().length < 5
-        || input.currentBehavior.trim().length < 5
-        || input.expectedBehavior.trim().length < 5
-    ) {
+    if (errors.summary) {
         return {
             code: 'details',
             title: 'Incomplete report',
-            message: 'Please fill summary, current behavior, and expected behavior.',
+            message: `Summary must be at least ${BUG_REPORT_SUMMARY_MIN_CHARS} characters.`,
         };
     }
-    if (input.includeDiagnostics && !input.acceptedPrivacyNotice) {
+    if (errors.privacy) {
         return {
             code: 'privacy',
             title: 'Privacy consent required',
-            message: 'Please confirm that diagnostics may include non-sensitive debugging data.',
+            message: 'Please confirm the privacy notice to include diagnostics and logs.',
         };
     }
     return { code: 'ok' };
@@ -114,7 +134,7 @@ export async function submitBugReportFromDraft(input: {
     input: BugReportComposerSubmissionInput;
     issueOwner: string;
     issueRepo: string;
-    labels: string[];
+    existingIssueNumber?: number;
     openFallbackIssue: (environment: BugReportComposerSubmissionInput['environment']) => Promise<void>;
     collectDiagnosticsArtifacts: (input: {
         machines: Machine[];
@@ -131,7 +151,7 @@ export async function submitBugReportFromDraft(input: {
         maxArtifactBytes?: number;
         issueOwner: string;
         issueRepo: string;
-        labels?: string[];
+        existingIssueNumber?: number;
     }) => Promise<{ reportId: string; issueNumber: number; issueUrl: string }>;
 }): Promise<BugReportSubmissionOutcome> {
     if (!input.feature.enabled || !input.feature.providerUrl) {
@@ -162,7 +182,7 @@ export async function submitBugReportFromDraft(input: {
         maxArtifactBytes: input.feature.maxArtifactBytes,
         issueOwner: input.issueOwner,
         issueRepo: input.issueRepo,
-        labels: input.labels,
+        existingIssueNumber: input.existingIssueNumber,
     });
 
     return {

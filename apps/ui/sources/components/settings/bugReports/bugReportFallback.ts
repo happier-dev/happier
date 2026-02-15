@@ -41,7 +41,6 @@ export function buildFallbackIssueUrl(input: {
     body: string;
     owner: string;
     repo: string;
-    labels?: string[];
 }): string {
     return buildBugReportFallbackIssueUrl(input);
 }

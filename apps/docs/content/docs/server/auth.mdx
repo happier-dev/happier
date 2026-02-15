@@ -5,6 +5,16 @@ description: Configure signup/login policies and GitHub enforcement for a self-h
 
 Happier supports a **device-key** account model (each account is tied to a device secret), and can optionally enforce **provider-based authentication** and **eligibility policies** (enterprise/self-hosting).
 
+## mTLS (client certificates)
+
+mTLS is an enterprise authentication option where the user’s device presents a company-issued certificate during the TLS handshake.
+
+- It can be used as a login method (no OAuth redirect flow).
+- It does **not** automatically imply end-to-end encryption (E2EE).
+- For most enterprise deployments that want server-side search and do not want user-managed keys, combine mTLS with **encryption opt-out** (plaintext storage mode).
+
+See the dedicated guide: [mTLS Auth](./auth-mtls).
+
 ## Core concepts
 
 ### Anonymous vs provider signup

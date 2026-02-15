@@ -72,6 +72,16 @@ happier auth login --no-open --method web
 
 This prints an authorization URL and waits until you approve it in your browser (the request can expire; if it does, rerun the command).
 
+### Recommended: remote pairing over SSH
+
+If you have SSH access and want a fully automated experience (request + approval + credential write), run this from a machine where you're already authenticated:
+
+```bash
+happier auth pair-remote --ssh user@host --json
+```
+
+This is especially useful for provisioning headless servers because you can approve the connection from your already-signed-in machine and avoid copy/pasting URLs.
+
 ## Troubleshooting
 
 - **Check status**: `happier daemon status`

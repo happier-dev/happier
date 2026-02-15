@@ -36,6 +36,34 @@ Recommended first-run flow:
 - If you already use Happier on another device, sign in with that same account.
 - If you open a terminal-connect link while logged out, Happier routes you through sign in and then returns you to terminal approval automatically.
 
+### Remote machine pairing (SSH, automated)
+
+If you want to run Happier on a **remote machine** (VPS, home server, dev box) but approve/authenticate it from a machine where you're already signed in:
+
+```bash
+happier auth pair-remote --ssh user@host --json
+```
+
+Notes:
+
+- This orchestrates a claim-gated pairing flow over SSH (remote request → local approve → remote wait).
+- Add `--server ...` or `--server-url/--webapp-url` if you're targeting a self-hosted server.
+
+### Pairing (JSON, manual / scripting)
+
+Split the flow when you want full control (automation, custom SSH, etc):
+
+```bash
+# On the remote host (prints a request + publicKey)
+happier auth request --json
+
+# On a local machine that's already authenticated (approves the public key)
+happier auth approve --public-key <publicKey> --json
+
+# Back on the remote host (waits, claims, and writes credentials)
+happier auth wait --public-key <publicKey> --json
+```
+
 ## Server profiles
 
 ### Save and switch servers
@@ -60,6 +88,7 @@ You can also use URL flags:
 
 ```bash
 happier --server-url https://api.company.example --webapp-url https://app.company.example auth login
+happier --server-url https://api.company.example --webapp-url https://app.company.example auth pair-remote --ssh user@host --json
 ```
 
 ## Daemon (background mode)

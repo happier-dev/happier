@@ -5,6 +5,25 @@ description: Update channels and update behavior for app, desktop, and CLI compo
 
 Happier ships different components with different update paths.
 
+## Update channels
+
+Most artifacts are published into channels:
+
+- `stable` (production)
+- `preview` (pre-release / early access)
+
+## Integrity verification (binaries + bundles)
+
+Self-host and relay runtime downloads are verified before install:
+
+- **SHA256**: downloaded archive matches the published checksums file.
+- **minisign**: the checksums file is verified with the embedded Happier minisign public key.
+
+## Hosted web app / SaaS server
+
+- Hosted web UI updates are delivered by normal deploys: users get the latest on refresh.
+- The hosted server (our SaaS) is updated via deployment tooling (not via the self-host runtime artifact channel).
+
 ## Mobile app
 
 - Mobile app updates are delivered through normal app distribution channels.
@@ -15,16 +34,84 @@ Happier ships different components with different update paths.
 - Desktop update checks and banners are supported.
 - Stable/preview feeds are managed by release channel and signing configuration.
 
+You can generally think of desktop updates as: “the app periodically checks an update feed, downloads a signed update, and applies it.”
+
 ## CLI / stack tooling
 
 Common commands:
 
 ```bash
 happier self-update
+hstack self update
 hstack self-host rollback --to <version>
 ```
 
 Use rollback for controlled recovery when validating new releases in self-hosted environments.
+
+### Installer-driven updates
+
+If you installed via an installer script, rerunning that installer is a valid way to update.
+
+Preview installs are always explicit:
+
+```bash
+HAPPIER_CHANNEL=preview happier self-update
+HAPPIER_CHANNEL=preview hstack self update
+```
+
+## Self-host server runtime
+
+The self-host runtime is installed and managed by `hstack`:
+
+```bash
+hstack self-host install --channel=preview
+hstack self-host status --channel=preview
+hstack self-host update --channel=preview
+hstack self-host rollback --channel=preview --to <version>
+```
+
+### What `self-host update` updates
+
+When enabled, `hstack self-host update` pulls and installs:
+
+- the **server runtime binary** (from a rolling GitHub release tag, based on channel)
+- the **UI web bundle** (separate rolling GitHub release tag), if UI is enabled
+
+The UI web bundle is installed into a versioned directory and switched via an atomic `ui-web/current` pointer.
+
+### Auto-update (opt-in)
+
+Auto-update is **disabled by default**. You can enable it at install time:
+
+```bash
+hstack self-host install --channel=preview --auto-update --auto-update-interval=60
+```
+
+Or via env:
+
+- `HAPPIER_SELF_HOST_AUTO_UPDATE=1`
+- `HAPPIER_SELF_HOST_AUTO_UPDATE_INTERVAL_MINUTES=60`
+
+Implementation is platform-native and runs `hstack self-host update` on an interval:
+
+- Linux: `systemd` timer (user or system mode)
+- macOS: `launchd` `StartInterval`
+- Windows: `schtasks` scheduled task
+
+`hstack self-host status` reports both:
+
+- **configured** auto-update intent (enabled + interval)
+- **job state** (whether the timer/task is installed/enabled/active)
+
+## Relay server runner (self-hostable entrypoint)
+
+The relay runner can also pull and cache runtime artifacts by rolling tag:
+
+- downloads/verifies server runtime (and optionally UI web)
+- caches extracted artifacts in the platform cache directory
+- sets `HAPPIER_SERVER_UI_DIR` automatically when UI is enabled
+
+This is useful when you want a single “run the server” entrypoint that tracks a channel, without installing a system service.
 
 ## Release channels
 

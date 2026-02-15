@@ -60,12 +60,12 @@ This document describes how to deploy the Happier backend (`apps/server`) and th
     - `AUTH_GITHUB_APP_INSTALLATION_ID_BY_ORG` (e.g. `acme=123,other=456`)
 - Voice (server-minted ElevenLabs conversation tokens via `POST /v1/voice/token`):
   - Required: `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID_PROD`
-  - Required when `VOICE_REQUIRE_SUBSCRIPTION=true`: `REVENUECAT_SECRET_KEY`
+  - Required when `HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION=true`: `REVENUECAT_SECRET_KEY`
   - Optional controls:
-    - `VOICE_ENABLED` (`true`/`false`, default `true`)
-    - `VOICE_REQUIRE_SUBSCRIPTION` (`true`/`false`, defaults to `true` when `NODE_ENV=production`)
+    - `HAPPIER_FEATURE_VOICE__ENABLED` (`true`/`false`, default `true`)
+    - `HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION` (`true`/`false`, defaults to `true` when `NODE_ENV=production`)
     - `VOICE_FREE_SESSIONS_PER_MONTH` (default `0`)
-    - `VOICE_FREE_MINUTES_PER_MONTH` (default `0`, enforced when `VOICE_REQUIRE_SUBSCRIPTION=true`)
+    - `VOICE_FREE_MINUTES_PER_MONTH` (default `0`, enforced when `HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION=true`)
     - `VOICE_MAX_CONCURRENT_SESSIONS` (default `1`)
     - `VOICE_MAX_SESSION_SECONDS` (default `1200`, min `30`)
     - `VOICE_MAX_MINUTES_PER_DAY` (default `0` = unlimited; global per-user guardrail)

@@ -1,16 +1,17 @@
 import * as React from 'react';
 
 import type { Profile } from '@/sync/domains/profiles/profile';
-import { getLinkedProvider } from '@/sync/domains/profiles/profile';
+import { getLinkedProvider, profileDefaults } from '@/sync/domains/profiles/profile';
 
-export function useBugReportReporterGithubUsername(profile: Profile): {
-  reporterGithubUsername: string;
-  setReporterGithubUsername: (value: string) => void;
-} {
-  const touched = React.useRef(false);
-  const githubLinkedProvider = React.useMemo(() => getLinkedProvider(profile, 'github'), [profile]);
-  const defaultValue = githubLinkedProvider?.login ? `@${githubLinkedProvider.login}` : '';
-  const [state, setState] = React.useState('');
+export function useBugReportReporterGithubUsername(profile: Profile | null): {
+	  reporterGithubUsername: string;
+	  setReporterGithubUsername: (value: string) => void;
+	} {
+	  const touched = React.useRef(false);
+	  const resolvedProfile = profile ?? profileDefaults;
+	  const githubLinkedProvider = React.useMemo(() => getLinkedProvider(resolvedProfile, 'github'), [resolvedProfile]);
+	  const defaultValue = githubLinkedProvider?.login ? `@${githubLinkedProvider.login}` : '';
+	  const [state, setState] = React.useState('');
 
   React.useEffect(() => {
     if (!touched.current) {

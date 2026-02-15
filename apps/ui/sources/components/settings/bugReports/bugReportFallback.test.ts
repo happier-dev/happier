@@ -8,9 +8,9 @@ describe('normalizeReproductionSteps', () => {
         expect(steps).toEqual(['Open app', 'Click settings', 'Tap report issue', 'done']);
     });
 
-    it('returns fallback step when input is empty', () => {
+    it('returns an empty list when input is empty', () => {
         const steps = normalizeReproductionSteps('   ');
-        expect(steps).toEqual(['Unknown']);
+        expect(steps).toEqual([]);
     });
 });
 
@@ -38,9 +38,12 @@ describe('formatFallbackIssueBody', () => {
         expect(body).toContain('Sessions drop after a minute.');
         expect(body).toContain('Diagnostics: not included');
         expect(body).toContain('Upgraded CLI yesterday');
+        // Privacy: never include server URLs in GitHub issues.
+        expect(body).not.toContain('Server URL:');
+        expect(body).not.toContain('https://example.dev');
     });
 
-    it('redacts credentials and query params from server URL', () => {
+    it('does not include server URL even when provided', () => {
         const body = formatFallbackIssueBody({
             summary: 'summary',
             currentBehavior: 'current',
@@ -57,7 +60,8 @@ describe('formatFallbackIssueBody', () => {
             diagnosticsIncluded: true,
         });
 
-        expect(body).toContain('https://example.dev:8443/api');
+        expect(body).not.toContain('Server URL:');
+        expect(body).not.toContain('example.dev');
         expect(body).not.toContain('admin:super-secret');
         expect(body).not.toContain('?token=');
     });
@@ -72,11 +76,11 @@ describe('buildFallbackIssueUrl', () => {
             repo: 'happier',
         });
 
-        expect(url).toContain('https://github.com/happier-dev/happier/issues/new?');
-        expect(url).toContain('title=Session%20disconnects');
-        expect(url).toContain('body=Body%20text');
-        expect(url).toContain('labels=bug');
-    });
+	        expect(url).toContain('https://github.com/happier-dev/happier/issues/new?');
+	        expect(url).toContain('title=Session%20disconnects');
+	        expect(url).toContain('body=Body%20text');
+	        expect(url).not.toContain('labels=');
+	    });
 
     it('keeps generated issue URL under practical browser limits', () => {
         const veryLargeBody = `Summary\n${'x'.repeat(40_000)}`;
@@ -91,23 +95,9 @@ describe('buildFallbackIssueUrl', () => {
         expect(url).toContain('title=Session%20disconnects');
     });
 
-  it('keeps generated issue URL bounded even with excessive labels', () => {
-    const labels = Array.from({ length: 500 }, (_, index) => `label-${index}-${'x'.repeat(30)}`);
-    const url = buildFallbackIssueUrl({
-      title: 'Session disconnects',
-            body: 'Body text',
-            owner: 'happier-dev',
-            repo: 'happier',
-            labels,
-        });
-
-    expect(url.length).toBeLessThanOrEqual(7600);
-    expect(url).toContain('title=Session%20disconnects');
-  });
-
-  it('falls back to default owner/repo when provided values are invalid', () => {
-    const url = buildFallbackIssueUrl({
-      title: 'Session disconnects',
+	  it('falls back to default owner/repo when provided values are invalid', () => {
+	    const url = buildFallbackIssueUrl({
+	      title: 'Session disconnects',
       body: 'Body text',
       owner: 'foo?bar',
       repo: '../repo',

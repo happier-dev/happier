@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { BugReportsFeature } from './bugReportFeatureDefaults';
-import { submitBugReportFromDraft, validateBugReportDraft } from './bugReportSubmissionFlow';
+import { getBugReportDraftFieldErrors, submitBugReportFromDraft, validateBugReportDraft } from './bugReportSubmissionFlow';
 
 const baseFeature: BugReportsFeature = {
   enabled: true,
@@ -41,6 +41,16 @@ describe('validateBugReportDraft', () => {
   });
 });
 
+describe('getBugReportDraftFieldErrors', () => {
+  it('returns per-field min-length errors and privacy requirement', () => {
+    expect(getBugReportDraftFieldErrors(baseInput)).toEqual({});
+
+    expect(getBugReportDraftFieldErrors({ ...baseInput, title: 'x' }).title).toMatch(/at least 3/i);
+    expect(getBugReportDraftFieldErrors({ ...baseInput, summary: 'x' }).summary).toMatch(/at least 3/i);
+    expect(getBugReportDraftFieldErrors({ ...baseInput, includeDiagnostics: true, acceptedPrivacyNotice: false }).privacy).toBeTruthy();
+  });
+});
+
 describe('submitBugReportFromDraft', () => {
   it('uses fallback flow when provider is disabled', async () => {
     const openFallbackIssue = vi.fn(async () => {});
@@ -51,17 +61,16 @@ describe('submitBugReportFromDraft', () => {
       issueUrl: 'https://github.com/happier-dev/happier/issues/1',
     }));
 
-    const result = await submitBugReportFromDraft({
-      feature: { ...baseFeature, enabled: false },
-      machines: [],
-      input: baseInput,
-      issueOwner: 'happier-dev',
-      issueRepo: 'happier',
-      labels: ['bug'],
-      openFallbackIssue,
-      collectDiagnosticsArtifacts,
-      submitBugReport,
-    });
+	    const result = await submitBugReportFromDraft({
+	      feature: { ...baseFeature, enabled: false },
+	      machines: [],
+	      input: baseInput,
+	      issueOwner: 'happier-dev',
+	      issueRepo: 'happier',
+	      openFallbackIssue,
+	      collectDiagnosticsArtifacts,
+	      submitBugReport,
+	    });
 
     expect(result).toEqual({ mode: 'fallback' });
     expect(openFallbackIssue).toHaveBeenCalledTimes(1);
@@ -87,17 +96,16 @@ describe('submitBugReportFromDraft', () => {
       issueUrl: 'https://github.com/happier-dev/happier/issues/77',
     }));
 
-    const result = await submitBugReportFromDraft({
-      feature: baseFeature,
-      machines: [],
-      input: baseInput,
-      issueOwner: 'happier-dev',
-      issueRepo: 'happier',
-      labels: ['bug'],
-      openFallbackIssue,
-      collectDiagnosticsArtifacts,
-      submitBugReport,
-    });
+	    const result = await submitBugReportFromDraft({
+	      feature: baseFeature,
+	      machines: [],
+	      input: baseInput,
+	      issueOwner: 'happier-dev',
+	      issueRepo: 'happier',
+	      openFallbackIssue,
+	      collectDiagnosticsArtifacts,
+	      submitBugReport,
+	    });
 
     expect(result).toEqual({
       mode: 'submitted',
@@ -128,17 +136,16 @@ describe('submitBugReportFromDraft', () => {
       issueUrl: 'https://github.com/happier-dev/happier/issues/2',
     }));
 
-    await submitBugReportFromDraft({
-      feature: baseFeature,
-      machines: [],
-      input: { ...baseInput, includeDiagnostics: false, acceptedPrivacyNotice: false },
-      issueOwner: 'happier-dev',
-      issueRepo: 'happier',
-      labels: ['bug'],
-      openFallbackIssue,
-      collectDiagnosticsArtifacts,
-      submitBugReport,
-    });
+	    await submitBugReportFromDraft({
+	      feature: baseFeature,
+	      machines: [],
+	      input: { ...baseInput, includeDiagnostics: false, acceptedPrivacyNotice: false },
+	      issueOwner: 'happier-dev',
+	      issueRepo: 'happier',
+	      openFallbackIssue,
+	      collectDiagnosticsArtifacts,
+	      submitBugReport,
+	    });
 
     expect(submitBugReport).toHaveBeenCalledWith(expect.objectContaining({
       form: expect.objectContaining({
@@ -150,33 +157,56 @@ describe('submitBugReportFromDraft', () => {
     }));
   });
 
-  it('includes allowMaintainerFollowUp=true in the submitted form', async () => {
+  it('does not include allowMaintainerFollowUp in the submitted form', async () => {
     const openFallbackIssue = vi.fn(async () => {});
     const collectDiagnosticsArtifacts = vi.fn(async () => ({ artifacts: [] }));
-    const submitBugReport = vi.fn(async () => ({
+    const submitBugReport = vi.fn(async (_input: unknown) => ({
       reportId: 'report-99',
       issueNumber: 99,
       issueUrl: 'https://github.com/happier-dev/happier/issues/99',
     }));
 
-    await submitBugReportFromDraft({
-      feature: baseFeature,
-      machines: [],
-      input: baseInput,
-      issueOwner: 'happier-dev',
-      issueRepo: 'happier',
-      labels: ['bug'],
-      openFallbackIssue,
-      collectDiagnosticsArtifacts,
-      submitBugReport,
-    });
+	    await submitBugReportFromDraft({
+	      feature: baseFeature,
+	      machines: [],
+	      input: baseInput,
+	      issueOwner: 'happier-dev',
+	      issueRepo: 'happier',
+	      openFallbackIssue,
+	      collectDiagnosticsArtifacts,
+	      submitBugReport,
+	    });
+
+	    const call = submitBugReport.mock.calls[0]?.[0];
+	    expect(call).toBeTruthy();
+	    const consent = (call as any)?.form?.consent ?? {};
+	    expect('allowMaintainerFollowUp' in consent).toBe(false);
+	    expect('labels' in (call as any)).toBe(false);
+	  });
+
+  it('forwards selected existingIssueNumber to the submission client', async () => {
+    const openFallbackIssue = vi.fn(async () => {});
+    const collectDiagnosticsArtifacts = vi.fn(async () => ({ artifacts: [] }));
+    const submitBugReport = vi.fn(async () => ({
+      reportId: 'report-existing',
+      issueNumber: 42,
+      issueUrl: 'https://github.com/happier-dev/happier/issues/42',
+    }));
+
+	    await submitBugReportFromDraft({
+	      feature: baseFeature,
+	      machines: [],
+	      input: baseInput,
+	      issueOwner: 'happier-dev',
+	      issueRepo: 'happier',
+	      existingIssueNumber: 42,
+	      openFallbackIssue,
+	      collectDiagnosticsArtifacts,
+	      submitBugReport,
+	    } as any); // test-only: optional field is introduced as part of duplicate-issue flow
 
     expect(submitBugReport).toHaveBeenCalledWith(expect.objectContaining({
-      form: expect.objectContaining({
-        consent: expect.objectContaining({
-          allowMaintainerFollowUp: true,
-        }),
-      }),
+      existingIssueNumber: 42,
     }));
   });
 
@@ -189,20 +219,19 @@ describe('submitBugReportFromDraft', () => {
       issueUrl: 'https://github.com/happier-dev/happier/issues/100',
     }));
 
-    await submitBugReportFromDraft({
-      feature: baseFeature,
-      machines: [],
-      input: {
-        ...baseInput,
-        reporterGithubUsername: '@Foo-Bar',
-      },
-      issueOwner: 'happier-dev',
-      issueRepo: 'happier',
-      labels: ['bug'],
-      openFallbackIssue,
-      collectDiagnosticsArtifacts,
-      submitBugReport,
-    });
+	    await submitBugReportFromDraft({
+	      feature: baseFeature,
+	      machines: [],
+	      input: {
+	        ...baseInput,
+	        reporterGithubUsername: '@Foo-Bar',
+	      },
+	      issueOwner: 'happier-dev',
+	      issueRepo: 'happier',
+	      openFallbackIssue,
+	      collectDiagnosticsArtifacts,
+	      submitBugReport,
+	    });
 
     expect(submitBugReport).toHaveBeenCalledWith(expect.objectContaining({
       form: expect.objectContaining({
@@ -220,20 +249,19 @@ describe('submitBugReportFromDraft', () => {
       issueUrl: 'https://github.com/happier-dev/happier/issues/77',
     }));
 
-    await submitBugReportFromDraft({
-      feature: baseFeature,
-      machines: [],
-      input: {
-        ...baseInput,
-        diagnosticsKinds: ['daemon', 'not-a-real-kind'],
-      } as any,
-      issueOwner: 'happier-dev',
-      issueRepo: 'happier',
-      labels: ['bug'],
-      openFallbackIssue,
-      collectDiagnosticsArtifacts,
-      submitBugReport,
-    });
+	    await submitBugReportFromDraft({
+	      feature: baseFeature,
+	      machines: [],
+	      input: {
+	        ...baseInput,
+	        diagnosticsKinds: ['daemon', 'not-a-real-kind'],
+	      } as any,
+	      issueOwner: 'happier-dev',
+	      issueRepo: 'happier',
+	      openFallbackIssue,
+	      collectDiagnosticsArtifacts,
+	      submitBugReport,
+	    });
 
     expect(collectDiagnosticsArtifacts).toHaveBeenCalledWith(expect.objectContaining({
       acceptedKinds: ['daemon'],

@@ -65,6 +65,14 @@ export const bugReportComposerStyles = StyleSheet.create((theme) => ({
         color: theme.colors.text,
         fontSize: 15,
     },
+    inputError: {
+        borderColor: theme.colors.textDestructive,
+    },
+    errorText: {
+        color: theme.colors.textDestructive,
+        fontSize: 13,
+        lineHeight: 18,
+    },
     textArea: {
         minHeight: 100,
         textAlignVertical: 'top' as const,
@@ -74,6 +82,30 @@ export const bugReportComposerStyles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'space-between',
         gap: 8,
+    },
+    similarIssuesList: {
+        gap: 10,
+    },
+    similarIssueRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        backgroundColor: theme.colors.surfaceHigh,
+        paddingVertical: 12,
+        paddingHorizontal: 12,
+    },
+    similarIssueRowSelected: {
+        borderColor: theme.colors.button.primary.background,
+        backgroundColor: theme.colors.surfaceHigh,
+    },
+    similarIssueTitle: {
+        color: theme.colors.text,
+        fontSize: 14,
+        fontWeight: '700',
     },
     toggleRows: {
         gap: 16,

@@ -218,6 +218,15 @@ This sets:
 - `EXPO_PUBLIC_DEBUG=1`
 - Debug logging enabled
 
+## Local neural voice (native model packs)
+
+On iOS/Android, the **Local neural (beta)** STT/TTS backends use downloadable **model packs** (Sherpa-ONNX).
+
+By default, `app.config.js` provides a dev-friendly mapping to a GitHub Release tag, but you can override:
+- `EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS` — JSON map `{ [packId]: manifestUrl }`
+- `EXPO_PUBLIC_HAPPIER_MODEL_PACKS_REPO` — repo slug like `happier-dev/happier-assets`
+- `EXPO_PUBLIC_HAPPIER_MODEL_PACKS_TAG` — release tag like `model-packs`
+
 ## Troubleshooting
 
 ### Build fails with "Bundle identifier already in use"

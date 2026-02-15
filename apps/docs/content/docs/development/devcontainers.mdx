@@ -1,0 +1,78 @@
+---
+title: Dev Containers
+description: Run Happier CLI + daemon inside a container, and pair it to your account without opening a browser.
+---
+
+This page explains how to run Happier inside a container (for example: a remote VM or a disposable “dev container”) and authenticate it **from your local machine**.
+
+## Devcontainer image
+
+We publish a preview devcontainer image on Docker Hub:
+
+```bash
+docker pull happierdev/devcontainer:preview
+```
+
+The image includes:
+
+- `happier` CLI
+- optional provider CLIs (install on first boot via env)
+
+### Optional: install provider CLIs on first boot
+
+Set `HAPPIER_PROVIDER_CLIS` to install provider CLIs into the container user’s npm prefix:
+
+```bash
+docker run --rm -it \
+  -e HAPPIER_PROVIDER_CLIS=claude,codex \
+  happierdev/devcontainer:preview
+```
+
+Supported values today: `claude`, `codex`.
+
+## Recommended: persist Happier state
+
+Persist `~/.happier` so credentials, machine IDs, logs, etc. survive container restarts:
+
+```bash
+docker run --rm -it \
+  -v happier-home:/home/happier/.happier \
+  happierdev/devcontainer:preview
+```
+
+## Pair a remote container/host from your local CLI (no web UI)
+
+If your **local** machine is already authenticated (`happier auth status` is OK), you can pair a **remote** host/container over SSH:
+
+```bash
+happier auth pair-remote --ssh user@host --json
+```
+
+What this does:
+
+1. Runs `happier auth request --json` on the remote host.
+2. Approves the request locally using your existing token (the local token is **not** sent to the remote host).
+3. Runs `happier auth wait --public-key ... --json` on the remote host to claim the request and write credentials.
+
+### Manual (scriptable) alternative
+
+If you want to integrate with custom orchestration:
+
+1) On the remote host:
+
+```bash
+happier auth request --json
+```
+
+2) On your local machine (authenticated):
+
+```bash
+happier auth approve --public-key <publicKey> --json
+```
+
+3) Back on the remote host:
+
+```bash
+happier auth wait --public-key <publicKey> --json
+```
+

@@ -5,6 +5,38 @@ description: Deploy the Happier Server using Docker / Docker Compose.
 
 This page explains how to deploy **your own Happier Server** with Docker. It focuses on the server only.
 
+Use `/apps/server/.env.example` as your base env template and load the same values in Docker/Compose.
+
+## Prebuilt images (recommended)
+
+We publish preview Docker images on Docker Hub:
+
+```bash
+docker pull happierdev/relay-server:preview
+```
+
+The `relay-server` image defaults to the **light flavor + SQLite**, with all data stored under `/data`. Mount it as a volume so upgrades and restarts are safe.
+
+```bash
+docker run --rm -p 3005:3005 \
+  -v happier-server-data:/data \
+  happierdev/relay-server:preview
+```
+
+## Connect a daemon from another machine
+
+Most self-host setups run the **server** in Docker, but run the **daemon** on a different machine (laptop, workstation, dev box).
+
+After your server is reachable at `HAPPIER_SERVER_URL` (and you know the matching `HAPPIER_WEBAPP_URL`), authenticate the daemon machine against it.
+
+- Interactive: `happier --server-url ... --webapp-url ... auth login`
+- Automated over SSH (recommended for headless servers): `happier --server-url ... --webapp-url ... auth pair-remote --ssh user@host --json`
+
+See:
+
+- [CLI auth](/docs/clients/cli#authenticate)
+- [Daemon auth](/docs/clients/daemon#headless-authentication-no-tty)
+
 ## Build images
 
 This repo includes a top-level `Dockerfile` with multiple targets.
@@ -15,6 +47,9 @@ docker build -t happier-server --target server .
 
 # Worker image (sets SERVER_ROLE=worker in the image)
 docker build -t happier-server-worker --target server-worker .
+
+# Relay server image (defaults to light flavor + sqlite; stores state under /data)
+docker build -t happier-relay-server --target relay-server .
 ```
 
 ### Optional: build only selected DB providers
@@ -120,6 +155,13 @@ docker run --rm -p 3005:3005 \
 
 Production note: remove `--rm` and add `--restart unless-stopped` (or your platform’s equivalent), and prefer `--env-file` over long `-e ...` lists.
 
+Example:
+
+```bash
+cp apps/server/.env.example .env
+docker run --env-file .env -p 3005:3005 happier-server
+```
+
 ### Full flavor (local files backend)
 
 If you don’t want S3/Minio, you can store public files on local disk:
@@ -137,7 +179,12 @@ docker run --rm -p 3005:3005 \
 
 ### Light flavor (PGlite, default)
 
-The default `server` image starts the **full** flavor. To run light in Docker, override the command and run the light migrations:
+The default `server` image starts the **full** flavor. To run light in Docker, you can either:
+
+- use the `relay-server` target (recommended for self-host), or
+- run the `server` target with `HAPPIER_SERVER_FLAVOR=light`.
+
+For PGlite specifically, you still need to run the light migrations helper script (PGlite’s connection string is created at runtime).
 
 ```bash
 docker run --rm -p 3005:3005 \
@@ -150,19 +197,26 @@ docker run --rm -p 3005:3005 \
 
 ### Light flavor (SQLite)
 
+SQLite is the recommended light-mode database for Docker because it is single-process and easy to back up. The server image entrypoint automatically runs `prisma migrate deploy` for SQLite when `RUN_MIGRATIONS=1` (default).
+
 ```bash
 docker run --rm -p 3005:3005 \
   -e PORT=3005 \
+  -e HAPPIER_SERVER_FLAVOR=light \
   -e HAPPIER_DB_PROVIDER=sqlite \
   -e HAPPIER_SERVER_LIGHT_DATA_DIR=/data/server-light \
   -v happier-server-light:/data/server-light \
-  happier-server \
-  sh -lc 'yarn --cwd apps/server migrate:sqlite:deploy && HAPPIER_DB_PROVIDER=sqlite yarn --cwd apps/server start:light'
+  happier-server
 ```
 
 ## Recommended: Docker Compose
 
 For most self-hosters, Docker Compose is the most reliable and reproducible way to run the server: it keeps env vars and volumes in one place and makes upgrades easier.
+
+You can either:
+
+- copy values from `/apps/server/.env.example` into `environment:`, or
+- use `env_file:` with a managed copy of that file.
 
 ### Full flavor (single process)
 

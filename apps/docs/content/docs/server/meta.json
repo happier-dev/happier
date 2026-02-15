@@ -2,7 +2,7 @@
   "title": "Server",
   "pages": [
     "index",
-    "auth"
+    "auth",
+    "auth-mtls"
   ]
 }
-
