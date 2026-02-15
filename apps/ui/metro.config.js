@@ -1,4 +1,5 @@
 const { getDefaultConfig } = require("expo/metro-config");
+const path = require("node:path");
 
 const config = getDefaultConfig(__dirname, {
   // Enable CSS support for web
@@ -29,5 +30,55 @@ config.resolver.blockList = Array.isArray(existingBlockList)
   : existingBlockList
     ? [existingBlockList, testRouteBlockList]
     : [testRouteBlockList];
+
+// Kokoro (kokoro-js) ships a `.web.js` prebundle that Metro cannot transform (it contains non-literal dynamic imports).
+// For Expo web, force Metro to resolve the package to its ESM entry and shim Node builtins that the ESM file imports
+// but never uses in browser mode.
+const kokoroEntryPoint = path.resolve(__dirname, "../../node_modules/kokoro-js/dist/kokoro.js");
+const nodePathShim = path.resolve(__dirname, "sources/platform/nodeShims/nodePathShim.ts");
+const nodeFsPromisesShim = path.resolve(__dirname, "sources/platform/nodeShims/nodeFsPromisesShim.ts");
+const nodeFsShim = path.resolve(__dirname, "sources/platform/nodeShims/nodeFsShim.ts");
+const nodeUrlShim = path.resolve(__dirname, "sources/platform/nodeShims/nodeUrlShim.ts");
+const onnxruntimeWebStub = path.resolve(__dirname, "sources/platform/stubs/onnxruntimeWebStub.ts");
+
+const defaultResolveRequest = config.resolver.resolveRequest;
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (moduleName === "kokoro-js" || moduleName.startsWith("kokoro-js/")) {
+    return { type: "sourceFile", filePath: kokoroEntryPoint };
+  }
+
+  // onnxruntime-web's bundle contains non-literal dynamic imports that Metro cannot parse.
+  // Use a stub on web so the UI can export/bundle; kokoro local TTS is not supported on web.
+  if (
+    platform === "web" &&
+    (moduleName === "onnxruntime-web" || moduleName.startsWith("onnxruntime-web/"))
+  ) {
+    return { type: "sourceFile", filePath: onnxruntimeWebStub };
+  }
+
+  if (moduleName === "path") {
+    return { type: "sourceFile", filePath: nodePathShim };
+  }
+  if (moduleName === "fs/promises") {
+    return { type: "sourceFile", filePath: nodeFsPromisesShim };
+  }
+  if (moduleName === "node:fs" || moduleName === "fs") {
+    return { type: "sourceFile", filePath: nodeFsShim };
+  }
+  if (moduleName === "node:path") {
+    return { type: "sourceFile", filePath: nodePathShim };
+  }
+  if (moduleName === "node:url") {
+    return { type: "sourceFile", filePath: nodeUrlShim };
+  }
+
+  if (typeof defaultResolveRequest === "function") {
+    return defaultResolveRequest(context, moduleName, platform);
+  }
+  if (typeof context.resolveRequest === "function") {
+    return context.resolveRequest(context, moduleName, platform);
+  }
+  return null;
+};
 
 module.exports = config;
