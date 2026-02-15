@@ -13,6 +13,7 @@ import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs'
 import { applyStackTauriOverrides } from './utils/tauri/stack_overrides.mjs';
 import { buildIntoTempThenReplace } from './utils/fs/atomic_dir_swap.mjs';
 import { pathExists } from './utils/fs/fs.mjs';
+import { buildStackTauriExportEnv, buildStackWebExportEnv } from './utils/ui/ui_export_env.mjs';
 
 /**
  * Build a lightweight static web UI bundle (no Expo dev server).
@@ -93,14 +94,7 @@ async function main() {
   console.log(`[local] exporting web UI to ${outDir}...`);
 
   // Build for root hosting (the server redirects /ui -> /).
-  const env = {
-    ...process.env,
-    NODE_ENV: 'production',
-    EXPO_PUBLIC_DEBUG: '0',
-    // Leave empty for web export so the app uses window.location.origin at runtime.
-    // (Important for Tailscale: a phone loading `http://100.x.y.z:3005` must not call `http://localhost:3005`.)
-    EXPO_PUBLIC_HAPPY_SERVER_URL: '',
-  };
+  const env = buildStackWebExportEnv({ baseEnv: process.env });
 
   // Expo CLI is available via node_modules/.bin once dependencies are installed.
   await buildIntoTempThenReplace(outDir, async (tmpOutDir) => {
@@ -171,16 +165,7 @@ async function main() {
 
   console.log(`[local] exporting web UI for Tauri to ${tauriDistDir}...`);
 
-  const tauriEnv = {
-    ...process.env,
-    NODE_ENV: 'production',
-    EXPO_PUBLIC_DEBUG: '0',
-    // In Tauri, window.location.origin is a tauri:// origin, so we must hardcode the API base.
-    EXPO_PUBLIC_HAPPY_SERVER_URL: tauriServerUrl,
-    // Some parts of the app use EXPO_PUBLIC_SERVER_URL; keep them aligned.
-    EXPO_PUBLIC_SERVER_URL: tauriServerUrl,
-    // For the Tauri bundle we want root-relative assets (no /ui baseUrl), so do not set EXPO_PUBLIC_WEB_BASE_URL
-  };
+  const tauriEnv = buildStackTauriExportEnv({ baseEnv: process.env, tauriServerUrl });
   delete tauriEnv.EXPO_PUBLIC_WEB_BASE_URL;
 
   {

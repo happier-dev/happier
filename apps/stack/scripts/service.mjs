@@ -3,9 +3,11 @@ import { run, runCapture } from './utils/proc/proc.mjs';
 import { getComponentDir, getDefaultAutostartPaths, getRootDir, getSystemdUnitInfo, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { getInternalServerUrl, getPublicServerUrlEnvOverride } from './utils/server/urls.mjs';
 import { ensureMacAutostartDisabled, ensureMacAutostartEnabled } from './utils/service/autostart_darwin.mjs';
+import { installService as installManagedService, uninstallService as uninstallManagedService } from './utils/service/service_manager.mjs';
 import { getCanonicalHomeDir } from './utils/env/config.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from './utils/env/sandbox.mjs';
 import { expandHome } from './utils/paths/canonical_home.mjs';
+import { resolveInstalledCliRoot, resolveInstalledPath } from './utils/paths/runtime.mjs';
 import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { existsSync } from 'node:fs';
@@ -109,6 +111,33 @@ function ensureLinuxSystemModeSupported({ mode }) {
   }
 }
 
+async function resolveStackAutostartProgramArgs({ rootDir, mode, systemUser }) {
+  const base = getCanonicalHomeDir();
+  const candidates =
+    process.platform === 'win32'
+      ? [join(base, 'bin', 'hstack.exe'), join(base, 'bin', 'hstack.cmd'), join(base, 'bin', 'hstack')]
+      : [join(base, 'bin', 'hstack')];
+
+  let shimPath = candidates.find((p) => existsSync(p)) ?? '';
+  if (mode === 'system' && systemUser) {
+    const home = await resolveHomeDirForUser(systemUser);
+    if (home) {
+      const systemCandidates =
+        process.platform === 'win32'
+          ? [
+              join(home, '.happier-stack', 'bin', 'hstack.exe'),
+              join(home, '.happier-stack', 'bin', 'hstack.cmd'),
+              join(home, '.happier-stack', 'bin', 'hstack'),
+            ]
+          : [join(home, '.happier-stack', 'bin', 'hstack')];
+      shimPath = systemCandidates.find((p) => existsSync(p)) ?? shimPath;
+    }
+  }
+
+  if (shimPath) return [shimPath, 'start'];
+  return [process.execPath, resolveInstalledPath(rootDir, 'bin/hstack.mjs'), 'start'];
+}
+
 export async function installService({ mode = 'user', systemUser = null } = {}) {
   if (isSandboxed() && !sandboxAllowsGlobalSideEffects()) {
     throw new Error(
@@ -118,11 +147,8 @@ export async function installService({ mode = 'user', systemUser = null } = {}) 
     );
   }
   ensureLinuxSystemModeSupported({ mode });
-  if (process.platform !== 'darwin' && process.platform !== 'linux') {
-    throw new Error('[local] service install is only supported on macOS (launchd) and Linux (systemd).');
-  }
   const rootDir = getRootDir(import.meta.url);
-  const { label } = getDefaultAutostartPaths();
+  const { label, stdoutPath, stderrPath, baseDir } = getDefaultAutostartPaths();
   const env = getAutostartEnv({ rootDir, mode });
   // Ensure the env file exists so the service never points at a missing path.
   try {
@@ -137,17 +163,43 @@ export async function installService({ mode = 'user', systemUser = null } = {}) 
   } catch {
     // ignore
   }
+  const programArgs = await resolveStackAutostartProgramArgs({ rootDir, mode, systemUser });
+  const workingDirectory =
+    process.platform === 'linux'
+      ? '%h'
+      : process.platform === 'darwin'
+        ? resolveInstalledCliRoot(rootDir)
+        : baseDir;
+
+  await installManagedService({
+    platform: process.platform,
+    mode,
+    homeDir: homedir(),
+    spec: {
+      label,
+      description: `Happier Stack (${label})`,
+      programArgs,
+      workingDirectory,
+      env,
+      runAsUser: mode === 'system' && systemUser ? systemUser : '',
+      stdoutPath,
+      stderrPath,
+    },
+    persistent: true,
+  });
+
+  if (process.platform === 'win32') {
+    console.log(`${green('✓')} service installed ${dim('(Windows scheduled task)')}`);
+    return;
+  }
   if (process.platform === 'darwin') {
-    await ensureMacAutostartEnabled({ rootDir, label, env });
     console.log(`${green('✓')} service installed ${dim('(macOS launchd)')}`);
     return;
   }
   if (mode === 'system') {
-    await ensureSystemdSystemServiceEnabled({ rootDir, label, env, systemUser });
     console.log(`${green('✓')} service installed ${dim('(Linux systemd system)')}`);
     return;
   }
-  await ensureSystemdUserServiceEnabled({ rootDir, label, env });
   console.log(`${green('✓')} service installed ${dim('(Linux systemd --user)')}`);
 }
 
@@ -157,25 +209,40 @@ export async function uninstallService({ mode = 'user' } = {}) {
     return;
   }
   ensureLinuxSystemModeSupported({ mode });
-  if (process.platform !== 'darwin' && process.platform !== 'linux') return;
+  const rootDir = getRootDir(import.meta.url);
+  const { label, stdoutPath, stderrPath, baseDir } = getDefaultAutostartPaths();
+  const env = getAutostartEnv({ rootDir, mode });
+  const programArgs = await resolveStackAutostartProgramArgs({ rootDir, mode, systemUser: null });
+  const workingDirectory =
+    process.platform === 'linux'
+      ? '%h'
+      : process.platform === 'darwin'
+        ? resolveInstalledCliRoot(rootDir)
+        : baseDir;
 
-  if (process.platform === 'linux') {
-    if (mode === 'system') {
-      await ensureSystemdSystemServiceDisabled({ remove: true });
-      console.log(`${green('✓')} service uninstalled ${dim('(systemd system unit removed)')}`);
-      return;
-    }
-    await ensureSystemdUserServiceDisabled({ remove: true });
-    console.log(`${green('✓')} service uninstalled ${dim('(systemd user unit removed)')}`);
+  await uninstallManagedService({
+    platform: process.platform,
+    mode,
+    homeDir: homedir(),
+    spec: {
+      label,
+      description: `Happier Stack (${label})`,
+      programArgs,
+      workingDirectory,
+      env,
+      stdoutPath,
+      stderrPath,
+    },
+    persistent: true,
+  });
+
+  if (process.platform === 'win32') {
+    console.log(`${green('✓')} service uninstalled ${dim('(Windows task removed)')}`);
     return;
   }
-  const { plistPath, label } = getDefaultAutostartPaths();
-
-  await ensureMacAutostartDisabled({ label });
-  try {
-    await rm(plistPath, { force: true });
-  } catch {
-    // ignore
+  if (process.platform === 'linux') {
+    console.log(`${green('✓')} service uninstalled ${dim('(systemd unit removed)')}`);
+    return;
   }
   console.log(`${green('✓')} service uninstalled ${dim('(plist removed)')}`);
 }
@@ -633,8 +700,8 @@ async function main() {
   const systemUser = resolveSystemUser(helpScopeArgv);
   ensureLinuxSystemModeSupported({ mode });
 
-  if (process.platform !== 'darwin' && process.platform !== 'linux') {
-    throw new Error('[local] service commands are only supported on macOS (launchd) and Linux (systemd).');
+  if (process.platform !== 'darwin' && process.platform !== 'linux' && process.platform !== 'win32') {
+    throw new Error('[local] service commands are only supported on macOS (launchd), Linux (systemd), and Windows (schtasks).');
   }
   const positionals = helpScopeArgv.filter((a) => a && a !== '--' && !a.startsWith('-'));
   const cmd = positionals[0] ?? 'help';
@@ -711,7 +778,17 @@ async function main() {
           health = { ok: false, status: null, body: null };
         }
 
-        if (process.platform === 'darwin') {
+        if (process.platform === 'win32') {
+          const { label, stdoutPath, stderrPath } = getDefaultAutostartPaths();
+          const taskName = `Happier\\${label}`;
+          let schtasksStatus = null;
+          try {
+            schtasksStatus = await runCapture('schtasks', ['/Query', '/TN', taskName, '/FO', 'LIST', '/V']);
+          } catch (e) {
+            schtasksStatus = e && typeof e === 'object' && 'out' in e ? e.out : null;
+          }
+          printResult({ json, data: { label, taskName, stdoutPath, stderrPath, internalUrl, schtasksStatus, health } });
+        } else if (process.platform === 'darwin') {
           const { plistPath, stdoutPath, stderrPath, label } = getDefaultAutostartPaths();
           let launchctlLine = null;
           try {
@@ -736,6 +813,11 @@ async function main() {
           printResult({ json, data: { mode, unitName, unitPath, internalUrl, systemctlStatus, health } });
         }
       } else {
+        if (process.platform === 'win32') {
+          const { label } = getDefaultAutostartPaths();
+          await run('schtasks', ['/Query', '/TN', `Happier\\${label}`]);
+          return;
+        }
         if (process.platform === 'darwin') {
           await showStatus();
         } else {
@@ -749,6 +831,13 @@ async function main() {
       }
       return;
     case 'start':
+      if (process.platform === 'win32') {
+        const { label } = getDefaultAutostartPaths();
+        await run('schtasks', ['/Run', '/TN', `Happier\\${label}`]).catch(() => {});
+        await postStartDiagnostics();
+        if (json) printResult({ json, data: { ok: true, action: 'start' } });
+        return;
+      }
       if (process.platform === 'darwin') {
         await startLaunchAgent({ persistent: false });
       } else {
@@ -763,6 +852,12 @@ async function main() {
       if (json) printResult({ json, data: { ok: true, action: 'start' } });
       return;
     case 'stop':
+      if (process.platform === 'win32') {
+        const { label } = getDefaultAutostartPaths();
+        await run('schtasks', ['/End', '/TN', `Happier\\${label}`]).catch(() => {});
+        if (json) printResult({ json, data: { ok: true, action: 'stop' } });
+        return;
+      }
       if (process.platform === 'darwin') {
         await stopLaunchAgent({ persistent: false });
       } else {
@@ -776,6 +871,14 @@ async function main() {
       if (json) printResult({ json, data: { ok: true, action: 'stop' } });
       return;
     case 'restart':
+      if (process.platform === 'win32') {
+        const { label } = getDefaultAutostartPaths();
+        await run('schtasks', ['/End', '/TN', `Happier\\${label}`]).catch(() => {});
+        await run('schtasks', ['/Run', '/TN', `Happier\\${label}`]).catch(() => {});
+        await postStartDiagnostics();
+        if (json) printResult({ json, data: { ok: true, action: 'restart' } });
+        return;
+      }
       if (process.platform === 'darwin') {
         if (!(await restartLaunchAgentBestEffort())) {
           await stopLaunchAgent({ persistent: false });
@@ -794,6 +897,14 @@ async function main() {
       if (json) printResult({ json, data: { ok: true, action: 'restart' } });
       return;
     case 'enable':
+      if (process.platform === 'win32') {
+        const { label } = getDefaultAutostartPaths();
+        await run('schtasks', ['/Change', '/TN', `Happier\\${label}`, '/Enable']).catch(() => {});
+        await run('schtasks', ['/Run', '/TN', `Happier\\${label}`]).catch(() => {});
+        await postStartDiagnostics();
+        if (json) printResult({ json, data: { ok: true, action: 'enable' } });
+        return;
+      }
       if (process.platform === 'darwin') {
         await startLaunchAgent({ persistent: true });
       } else {
@@ -808,6 +919,13 @@ async function main() {
       if (json) printResult({ json, data: { ok: true, action: 'enable' } });
       return;
     case 'disable':
+      if (process.platform === 'win32') {
+        const { label } = getDefaultAutostartPaths();
+        await run('schtasks', ['/End', '/TN', `Happier\\${label}`]).catch(() => {});
+        await run('schtasks', ['/Change', '/TN', `Happier\\${label}`, '/Disable']).catch(() => {});
+        if (json) printResult({ json, data: { ok: true, action: 'disable' } });
+        return;
+      }
       if (process.platform === 'darwin') {
         await stopLaunchAgent({ persistent: true });
       } else {
@@ -821,6 +939,15 @@ async function main() {
       if (json) printResult({ json, data: { ok: true, action: 'disable' } });
       return;
     case 'logs':
+      if (process.platform === 'win32') {
+        const { stdoutPath, stderrPath } = getDefaultAutostartPaths();
+        const out = await readLastLines(stdoutPath, 200).catch(() => '');
+        const err = await readLastLines(stderrPath, 200).catch(() => '');
+        console.log(bullets([kv('stdout:', stdoutPath), kv('stderr:', stderrPath)]));
+        if (out.trim()) console.log(out.trimEnd());
+        if (err.trim()) console.log(err.trimEnd());
+        return;
+      }
       if (process.platform === 'darwin') {
         await showLogs();
       } else {
@@ -834,6 +961,9 @@ async function main() {
       }
       return;
     case 'tail':
+      if (process.platform === 'win32') {
+        throw new Error('[local] service tail is not supported on Windows yet. Use: hstack service logs');
+      }
       if (process.platform === 'darwin') {
         await tailLogs();
       } else {

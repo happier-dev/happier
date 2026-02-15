@@ -96,7 +96,7 @@ COPY apps/ui ./apps/ui
 COPY packages/agents ./packages/agents
 COPY packages/protocol ./packages/protocol
 
-RUN yarn workspace @happier-dev/agents postinstall:real && yarn workspace @happier-dev/protocol postinstall:real
+RUN yarn workspace @happier-dev/protocol postinstall:real && yarn workspace @happier-dev/agents postinstall:real
 RUN yarn workspace @happier-dev/app postinstall:real
 RUN rm -rf apps/ui/dist
 RUN yarn workspace @happier-dev/app expo export --platform web --output-dir dist
@@ -184,7 +184,7 @@ ENV HAPPIER_BUILD_DB_PROVIDERS=$HAPPIER_BUILD_DB_PROVIDERS
 COPY apps/server ./apps/server
 COPY packages/agents ./packages/agents
 COPY packages/protocol ./packages/protocol
-RUN yarn workspace @happier-dev/agents postinstall:real && yarn workspace @happier-dev/protocol postinstall:real
+RUN yarn workspace @happier-dev/protocol postinstall:real && yarn workspace @happier-dev/agents postinstall:real
 RUN yarn workspace @happier-dev/server postinstall:real
 RUN yarn workspace @happier-dev/server build
 
@@ -207,6 +207,16 @@ CMD ["run-server"]
 # Convenience: worker image variant (same bits, different defaults)
 FROM server AS server-worker
 ENV SERVER_ROLE=worker
+
+# Relay server (self-host default: light + sqlite)
+FROM server AS relay-server
+ENV HAPPIER_SERVER_FLAVOR=light
+ENV HAPPY_SERVER_FLAVOR=light
+ENV HAPPIER_DB_PROVIDER=sqlite
+ENV HAPPY_DB_PROVIDER=sqlite
+ENV HAPPIER_SERVER_LIGHT_DATA_DIR=/data
+ENV HAPPY_SERVER_LIGHT_DATA_DIR=/data
+VOLUME ["/data"]
 
 # Default target when building without --target
 FROM server AS default

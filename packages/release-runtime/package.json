@@ -1,0 +1,52 @@
+{
+  "name": "@happier-dev/release-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./minisign": {
+      "types": "./dist/minisign.d.ts",
+      "default": "./dist/minisign.js"
+    },
+    "./checksums": {
+      "types": "./dist/checksums.d.ts",
+      "default": "./dist/checksums.js"
+    },
+    "./assets": {
+      "types": "./dist/assets.d.ts",
+      "default": "./dist/assets.js"
+    },
+    "./extractPlan": {
+      "types": "./dist/extractPlan.d.ts",
+      "default": "./dist/extractPlan.js"
+    },
+    "./verifiedDownload": {
+      "types": "./dist/verifiedDownload.d.ts",
+      "default": "./dist/verifiedDownload.js"
+    },
+    "./github": {
+      "types": "./dist/github.d.ts",
+      "default": "./dist/github.js"
+    }
+  },
+  "files": [
+    "dist",
+    "package.json",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "yarn -s build && node --test \"tests/*.test.mjs\"",
+    "postinstall:real": "yarn -s build",
+    "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');if(/(^|[\\\\\\\\/])node_modules([\\\\\\\\/]|$)/i.test(process.cwd()))process.exit(0);if(!fs.existsSync('tsconfig.json'))process.exit(0);const run=(cmd,args)=>cp.spawnSync(cmd,args,{stdio:'inherit'});const npmExec=process.env.npm_execpath;let r;if(npmExec){r=run(process.execPath,[npmExec,'run','-s','postinstall:real']);}else{r=run(process.platform==='win32'?'yarn.cmd':'yarn',['-s','postinstall:real']);if(r.error&&process.platform==='win32'){r=run('yarn',['-s','postinstall:real']);}}if(r.error){console.error(r.error.message);process.exit(1);}process.exit(r.status??1);\""
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

@@ -1,17 +1,27 @@
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import test from 'node:test';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   parseSelfHostInvocation,
   pickReleaseAsset,
-  resolveMinisignBootstrapAsset,
+  resolveMinisignPublicKeyText,
+  resolveSelfHostAutoUpdateDefault,
+  resolveSelfHostAutoUpdateIntervalMinutes,
   resolveSelfHostHealthTimeoutMs,
   resolveSelfHostDefaults,
   renderUpdaterLaunchdPlistXml,
   renderUpdaterScheduledTaskWrapperPs1,
   renderUpdaterSystemdUnit,
+  renderUpdaterSystemdTimerUnit,
   renderServerEnvFile,
   renderServerServiceUnit,
+  renderSelfHostStatusText,
+  buildSelfHostDoctorChecks,
+  normalizeSelfHostAutoUpdateState,
+  decideSelfHostAutoUpdateReconcile,
   mergeEnvTextWithDefaults,
 } from './self_host_runtime.mjs';
 
@@ -55,7 +65,7 @@ test('pickReleaseAsset rejects releases missing minisign signature assets', () =
       os: 'linux',
       arch: 'x64',
     });
-  }, /signature/i);
+  }, /minisig|signature/i);
 });
 
 test('pickReleaseAsset supports windows zip artifacts', () => {
@@ -109,19 +119,10 @@ test('resolveSelfHostDefaults uses user-mode paths by default', () => {
   assert.equal(cfg.configDir, '/home/me/.happier/self-host/config');
 });
 
-test('resolveMinisignBootstrapAsset maps platforms to trusted minisign assets', () => {
-  assert.deepEqual(resolveMinisignBootstrapAsset({ platform: 'linux' }), {
-    assetName: 'minisign-0.12-linux.tar.gz',
-    sha256: '9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73',
-  });
-  assert.deepEqual(resolveMinisignBootstrapAsset({ platform: 'darwin' }), {
-    assetName: 'minisign-0.12-macos.zip',
-    sha256: '89000b19535765f9cffc65a65d64a820f433ef6db8020667f7570e06bf6aac63',
-  });
-  assert.deepEqual(resolveMinisignBootstrapAsset({ platform: 'win32' }), {
-    assetName: 'minisign-0.12-win64.zip',
-    sha256: '37b600344e20c19314b2e82813db2bfdcc408b77b876f7727889dbd46d539479',
-  });
+test('resolveMinisignPublicKeyText prefers inline override and otherwise returns bundled key', () => {
+  const bundled = resolveMinisignPublicKeyText({});
+  assert.match(bundled, /minisign public key/i);
+  assert.equal(resolveMinisignPublicKeyText({ HAPPIER_MINISIGN_PUBKEY: 'hello' }), 'hello');
 });
 
 test('renderServerEnvFile emits sqlite/local defaults for self-host mode', () => {
@@ -142,6 +143,38 @@ test('renderServerEnvFile emits sqlite/local defaults for self-host mode', () =>
   assert.match(envText, /HAPPIER_SERVER_LIGHT_DATA_DIR=\/var\/lib\/happier/);
   assert.match(envText, /HAPPIER_SERVER_LIGHT_FILES_DIR=\/var\/lib\/happier\/files/);
   assert.match(envText, /HAPPIER_SERVER_LIGHT_DB_DIR=\/var\/lib\/happier\/pglite/);
+});
+
+test('renderServerEnvFile includes ui bundle directory when provided', () => {
+  const envText = renderServerEnvFile({
+    port: 3005,
+    host: '127.0.0.1',
+    dataDir: '/var/lib/happier',
+    filesDir: '/var/lib/happier/files',
+    dbDir: '/var/lib/happier/pglite',
+    uiDir: '/var/lib/happier/ui-web/current',
+  });
+  assert.match(envText, /HAPPIER_SERVER_UI_DIR=\/var\/lib\/happier\/ui-web\/current/);
+});
+
+test('renderServerEnvFile includes PRISMA_QUERY_ENGINE_LIBRARY when a packaged sqlite engine is present', async () => {
+  const serverBinDir = await mkdtemp(join(tmpdir(), 'happier-self-host-bin-'));
+  await mkdir(join(serverBinDir, 'generated', 'sqlite-client'), { recursive: true });
+  const enginePath = join(serverBinDir, 'generated', 'sqlite-client', 'libquery_engine-darwin-arm64.dylib.node');
+  await writeFile(enginePath, 'stub', 'utf-8');
+
+  const envText = renderServerEnvFile({
+    port: 3005,
+    host: '127.0.0.1',
+    platform: 'darwin',
+    arch: 'arm64',
+    serverBinDir,
+    dataDir: '/var/lib/happier',
+    filesDir: '/var/lib/happier/files',
+    dbDir: '/var/lib/happier/pglite',
+  });
+  assert.match(envText, /PRISMA_CLIENT_ENGINE_TYPE=library/);
+  assert.match(envText, new RegExp(`PRISMA_QUERY_ENGINE_LIBRARY=${enginePath.replaceAll('\\\\', '\\\\\\\\')}`));
 });
 
 test('renderServerEnvFile uses file URL semantics on Windows', () => {
@@ -169,6 +202,18 @@ test('resolveSelfHostHealthTimeoutMs ignores invalid or too-small values', () =>
   assert.equal(resolveSelfHostHealthTimeoutMs({ HAPPIER_SELF_HOST_HEALTH_TIMEOUT_MS: '5000' }), 90_000);
 });
 
+test('resolveSelfHostAutoUpdateDefault is opt-in (disabled by default)', () => {
+  assert.equal(resolveSelfHostAutoUpdateDefault({}), false);
+  assert.equal(resolveSelfHostAutoUpdateDefault({ HAPPIER_SELF_HOST_AUTO_UPDATE: '1' }), true);
+});
+
+test('resolveSelfHostAutoUpdateIntervalMinutes provides a safe default and bounds invalid values', () => {
+  assert.equal(resolveSelfHostAutoUpdateIntervalMinutes({}), 1440);
+  assert.equal(resolveSelfHostAutoUpdateIntervalMinutes({ HAPPIER_SELF_HOST_AUTO_UPDATE_INTERVAL_MINUTES: '60' }), 60);
+  assert.equal(resolveSelfHostAutoUpdateIntervalMinutes({ HAPPIER_SELF_HOST_AUTO_UPDATE_INTERVAL_MINUTES: '0' }), 1440);
+  assert.equal(resolveSelfHostAutoUpdateIntervalMinutes({ HAPPIER_SELF_HOST_AUTO_UPDATE_INTERVAL_MINUTES: 'abc' }), 1440);
+});
+
 test('renderUpdaterSystemdUnit runs self-host update without restart loops', () => {
   const unit = renderUpdaterSystemdUnit({
     updaterLabel: 'happier-server-updater',
@@ -191,12 +236,14 @@ test('renderUpdaterLaunchdPlistXml runs self-host update without keepalive loops
     hstackPath: '/Users/me/.happier/bin/hstack',
     channel: 'preview',
     mode: 'user',
+    intervalMinutes: 60,
     workingDirectory: '/Users/me/.happier/self-host',
     stdoutPath: '/Users/me/.happier/self-host/logs/updater.out.log',
     stderrPath: '/Users/me/.happier/self-host/logs/updater.err.log',
   });
 
   assert.match(plist, /<key>RunAtLoad<\/key>\s*<true\/>/);
+  assert.match(plist, /<key>StartInterval<\/key>\s*<integer>3600<\/integer>/);
   assert.doesNotMatch(plist, /<key>KeepAlive<\/key>/);
   assert.match(plist, /<key>PATH<\/key>/);
   assert.match(plist, /<string>\/Users\/me\/\.happier\/bin\/hstack<\/string>/);
@@ -205,6 +252,16 @@ test('renderUpdaterLaunchdPlistXml runs self-host update without keepalive loops
   assert.match(plist, /<string>--channel=preview<\/string>/);
   assert.match(plist, /<string>--mode=user<\/string>/);
   assert.match(plist, /<string>--non-interactive<\/string>/);
+});
+
+test('renderUpdaterSystemdTimerUnit schedules periodic updater runs', () => {
+  const timer = renderUpdaterSystemdTimerUnit({
+    updaterLabel: 'happier-server-updater',
+    intervalMinutes: 60,
+  });
+  assert.match(timer, /OnUnitActiveSec=60m/);
+  assert.match(timer, /Unit=happier-server-updater\.service/);
+  assert.match(timer, /WantedBy=timers\.target/);
 });
 
 test('renderUpdaterScheduledTaskWrapperPs1 runs self-host update without node dependencies', () => {
@@ -246,4 +303,140 @@ test('mergeEnvTextWithDefaults preserves overrides while backfilling new default
   assert.match(merged, /HAPPIER_SQLITE_AUTO_MIGRATE=1/);
   assert.match(merged, /HAPPIER_SQLITE_MIGRATIONS_DIR=\/var\/lib\/happier\/migrations\/sqlite/);
   assert.match(merged, /FOO=bar/);
+});
+
+test('renderSelfHostStatusText reports versions, health, and auto-update config separately from job state', () => {
+  const text = renderSelfHostStatusText(
+    {
+      channel: 'preview',
+      mode: 'user',
+      serviceName: 'happier-server',
+      serverUrl: 'http://127.0.0.1:3005',
+      healthy: true,
+      service: { active: true, enabled: true },
+      versions: { server: '1.2.3-preview.1', uiWeb: '9.9.9-preview.2' },
+      autoUpdate: {
+        label: 'happier-server-updater',
+        job: { active: true, enabled: true },
+        configured: { enabled: true, intervalMinutes: 60 },
+      },
+      updatedAt: '2026-02-15T00:00:00.000Z',
+    },
+    { colors: false },
+  );
+
+  assert.match(text, /channel:\s*preview/);
+  assert.match(text, /mode:\s*user/);
+  assert.match(text, /url:\s*http:\/\/127\.0\.0\.1:3005/);
+  assert.match(text, /health:\s*ok/);
+  assert.match(text, /server:\s*1\.2\.3-preview\.1/);
+  assert.match(text, /ui-web:\s*9\.9\.9-preview\.2/);
+  assert.match(text, /auto-update:\s*configured enabled \(every 60m\); job enabled, active/);
+  assert.match(text, /updated:\s*2026-02-15T00:00:00\.000Z/);
+});
+
+test('renderSelfHostStatusText shows disabled auto-update config even if job state is unknown', () => {
+  const text = renderSelfHostStatusText(
+    {
+      channel: 'stable',
+      mode: 'user',
+      serviceName: 'happier-server',
+      serverUrl: 'http://127.0.0.1:3005',
+      healthy: false,
+      service: { active: null, enabled: null },
+      versions: { server: null, uiWeb: null },
+      autoUpdate: {
+        label: 'happier-server-updater',
+        job: { active: null, enabled: null },
+        configured: { enabled: false, intervalMinutes: 1440 },
+      },
+      updatedAt: null,
+    },
+    { colors: false },
+  );
+
+  assert.match(text, /auto-update:\s*configured disabled; job unknown/);
+  assert.match(text, /health:\s*failed/);
+});
+
+test('buildSelfHostDoctorChecks does not require external minisign and includes ui-web checks when installed', () => {
+  const checks = buildSelfHostDoctorChecks(
+    {
+      platform: 'linux',
+      mode: 'user',
+      serverBinaryPath: '/home/me/.happier/self-host/bin/happier-server',
+      configEnvPath: '/home/me/.happier/self-host/config/server.env',
+      uiWebCurrentDir: '/home/me/.happier/self-host/ui-web/current',
+    },
+    {
+      state: { uiWeb: { installed: true } },
+      commandExists: (name) => new Set(['tar', 'systemctl']).has(name),
+      pathExists: (p) => p.endsWith('happier-server') || p.endsWith('server.env') || p.endsWith('index.html'),
+    },
+  );
+
+  assert.ok(checks.find((c) => c.name === 'tar')?.ok);
+  assert.ok(checks.find((c) => c.name === 'systemctl')?.ok);
+  assert.equal(checks.some((c) => c.name === 'minisign'), false);
+  assert.ok(checks.find((c) => c.name === 'ui-web')?.ok);
+});
+
+test('buildSelfHostDoctorChecks flags missing ui-web bundle when state expects ui-web installed', () => {
+  const checks = buildSelfHostDoctorChecks(
+    {
+      platform: 'linux',
+      mode: 'user',
+      serverBinaryPath: '/home/me/.happier/self-host/bin/happier-server',
+      configEnvPath: '/home/me/.happier/self-host/config/server.env',
+      uiWebCurrentDir: '/home/me/.happier/self-host/ui-web/current',
+    },
+    {
+      state: { uiWeb: { installed: true } },
+      commandExists: () => true,
+      pathExists: (p) => !p.endsWith('index.html'),
+    },
+  );
+
+  assert.equal(checks.find((c) => c.name === 'ui-web')?.ok, false);
+});
+
+test('normalizeSelfHostAutoUpdateState upgrades legacy boolean config to structured config', () => {
+  assert.deepEqual(
+    normalizeSelfHostAutoUpdateState({ autoUpdate: true }, { fallbackIntervalMinutes: 1440 }),
+    { enabled: true, intervalMinutes: 1440 },
+  );
+  assert.deepEqual(
+    normalizeSelfHostAutoUpdateState({ autoUpdate: false }, { fallbackIntervalMinutes: 1440 }),
+    { enabled: false, intervalMinutes: 1440 },
+  );
+});
+
+test('normalizeSelfHostAutoUpdateState preserves explicit interval and bounds invalid values', () => {
+  assert.deepEqual(
+    normalizeSelfHostAutoUpdateState({ autoUpdate: { enabled: true, intervalMinutes: 60 } }, { fallbackIntervalMinutes: 1440 }),
+    { enabled: true, intervalMinutes: 60 },
+  );
+  assert.deepEqual(
+    normalizeSelfHostAutoUpdateState({ autoUpdate: { enabled: true, intervalMinutes: 0 } }, { fallbackIntervalMinutes: 1440 }),
+    { enabled: true, intervalMinutes: 1440 },
+  );
+  assert.deepEqual(
+    normalizeSelfHostAutoUpdateState({}, { fallbackIntervalMinutes: 1440 }),
+    { enabled: false, intervalMinutes: 1440 },
+  );
+});
+
+test('decideSelfHostAutoUpdateReconcile maps configured state to an install/uninstall action', () => {
+  assert.deepEqual(
+    decideSelfHostAutoUpdateReconcile({ autoUpdate: true }, { fallbackIntervalMinutes: 1440 }),
+    { action: 'install', enabled: true, intervalMinutes: 1440 },
+  );
+  assert.deepEqual(
+    decideSelfHostAutoUpdateReconcile({ autoUpdate: false }, { fallbackIntervalMinutes: 1440 }),
+    { action: 'uninstall', enabled: false, intervalMinutes: 1440 },
+  );
+  assert.deepEqual(
+    decideSelfHostAutoUpdateReconcile({}, { fallbackIntervalMinutes: 1440 }),
+    { action: 'uninstall', enabled: false, intervalMinutes: 1440 },
+  );
 });

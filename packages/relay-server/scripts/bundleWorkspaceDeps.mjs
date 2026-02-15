@@ -7,18 +7,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export function bundleWorkspaceDeps(opts = {}) {
   const repoRoot = opts.repoRoot ?? findRepoRoot(__dirname);
-  const stackDir = opts.stackDir ?? resolve(repoRoot, 'apps', 'stack');
+  const relayDir = opts.relayDir ?? resolve(repoRoot, 'packages', 'relay-server');
 
   const bundles = [
     {
-      packageName: '@happier-dev/cli-common',
-      srcDir: resolve(repoRoot, 'packages', 'cli-common'),
-      destDir: resolve(stackDir, 'node_modules', '@happier-dev', 'cli-common'),
-    },
-    {
       packageName: '@happier-dev/release-runtime',
       srcDir: resolve(repoRoot, 'packages', 'release-runtime'),
-      destDir: resolve(stackDir, 'node_modules', '@happier-dev', 'release-runtime'),
+      destDir: resolve(relayDir, 'node_modules', '@happier-dev', 'release-runtime'),
     },
   ];
 
@@ -40,3 +35,4 @@ if (invokedAsMain) {
     process.exit(1);
   }
 }
+

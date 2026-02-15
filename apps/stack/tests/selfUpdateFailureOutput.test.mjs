@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync, chmodSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
 
 import { createTempDir } from './testkit/tempdir_testkit.mjs';
 
@@ -40,7 +41,10 @@ test('hstack self update prints a concise failure message without stack trace no
     cwd: stackRoot,
     env: {
       ...process.env,
-      PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
+      // scripts/utils/env/env.mjs may prepend dirname(process.execPath) onto PATH if missing, which
+      // can contain a real npm and shadow our fake npm. Include it explicitly (after our fake)
+      // so env bootstrap doesn't reorder the priority.
+      PATH: `${binDir}${delimiter}${dirname(process.execPath)}${delimiter}${process.env.PATH ?? ''}`,
       HAPPIER_STACK_HOME_DIR: join(tmp, 'home'),
     },
     encoding: 'utf-8',

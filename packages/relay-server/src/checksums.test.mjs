@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { lookupSha256 } from './checksums.mjs';
+import { lookupSha256 } from '@happier-dev/release-runtime/checksums';
 
 test('lookupSha256 returns sha256 for matching filename', () => {
   const text = [
@@ -15,4 +15,3 @@ test('lookupSha256 returns sha256 for matching filename', () => {
 test('lookupSha256 throws when filename not present', () => {
   assert.throws(() => lookupSha256({ checksumsText: 'aaaa  other', filename: 'missing' }));
 });
-

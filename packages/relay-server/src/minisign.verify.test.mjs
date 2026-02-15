@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
 
-import { verifyMinisign } from './minisign.mjs';
+import { verifyMinisign } from '@happier-dev/release-runtime/minisign';
 
 function b64(buf) {
   return Buffer.from(buf).toString('base64');
@@ -72,4 +72,3 @@ test('verifyMinisign rejects invalid signatures', () => {
 
   assert.equal(verifyMinisign({ message: Buffer.from('tampered', 'utf-8'), pubkeyFile, sigFile }), false);
 });
-

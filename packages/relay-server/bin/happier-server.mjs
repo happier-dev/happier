@@ -1,13 +1,15 @@
 #!/usr/bin/env node
-import { createHash } from 'node:crypto';
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat } from 'node:fs/promises';
 import { homedir, platform, arch, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 
-import { resolveServerReleaseAssets } from '../src/releaseAssets.mjs';
-import { lookupSha256 } from '../src/checksums.mjs';
-import { verifyMinisign } from '../src/minisign.mjs';
+import { resolveServerReleaseAssets, resolveUiWebReleaseAssets } from '../src/releaseAssets.mjs';
+import { resolveRunnerCacheRoot, resolveServerRunnerTarget } from '../src/target.mjs';
+import { parseRunnerInvocation } from '../src/runnerConfig.mjs';
+import { downloadVerifiedReleaseAssetBundle } from '@happier-dev/release-runtime/verifiedDownload';
+import { planArchiveExtraction } from '@happier-dev/release-runtime/extractPlan';
+import { fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
 
 const OWNER = 'happier-dev';
 const REPO = 'happier';
@@ -17,76 +19,16 @@ function fail(msg) {
   process.exit(1);
 }
 
-function parseArgs(argv) {
-  const kv = new Map();
-  const positionals = [];
-  for (let i = 0; i < argv.length; i += 1) {
-    const a = argv[i];
-    if (a === '--') {
-      positionals.push(...argv.slice(i + 1));
-      break;
-    }
-    if (!a.startsWith('--')) {
-      positionals.push(a);
-      continue;
-    }
-    const v = argv[i + 1];
-    if (v && !v.startsWith('--')) {
-      kv.set(a, v);
-      i += 1;
-    } else {
-      kv.set(a, 'true');
-    }
-  }
-  return { kv, positionals };
-}
-
 function resolveTarget() {
-  const os = platform();
-  const cpu = arch();
-  // Server binaries are currently built for Linux only in CI.
-  if (os !== 'linux') {
-    fail(`Unsupported platform '${os}'. Server runner currently supports linux only.`);
+  try {
+    return resolveServerRunnerTarget({ platform: platform(), arch: arch() });
+  } catch (e) {
+    fail(e instanceof Error ? e.message : String(e));
   }
-  if (cpu !== 'x64' && cpu !== 'arm64') {
-    fail(`Unsupported architecture '${cpu}'. Expected x64 or arm64.`);
-  }
-  return { os, arch: cpu };
 }
 
 function cacheRoot() {
-  const xdg = String(process.env.XDG_CACHE_HOME ?? '').trim();
-  if (xdg) return xdg;
-  return join(homedir(), '.cache');
-}
-
-async function fetchJson(url) {
-  const res = await fetch(url, {
-    headers: {
-      'user-agent': 'happier-server-runner',
-      accept: 'application/vnd.github+json',
-    },
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  return res.json();
-}
-
-async function fetchText(url) {
-  const res = await fetch(url, { headers: { 'user-agent': 'happier-server-runner' } });
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  return res.text();
-}
-
-async function downloadFile(url, destPath) {
-  const res = await fetch(url, { headers: { 'user-agent': 'happier-server-runner' } });
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  const ab = await res.arrayBuffer();
-  await writeFile(destPath, Buffer.from(ab));
-}
-
-async function sha256File(path) {
-  const bytes = await readFile(path);
-  return createHash('sha256').update(bytes).digest('hex');
+  return resolveRunnerCacheRoot({ platform: platform(), homedir: homedir(), env: process.env });
 }
 
 async function pathExists(p) {
@@ -99,17 +41,18 @@ async function pathExists(p) {
 }
 
 async function main() {
-  const { kv, positionals } = parseArgs(process.argv.slice(2));
-  const channel = String(kv.get('--channel') ?? '').trim() || 'stable';
-  if (channel !== 'stable' && channel !== 'preview') {
-    fail(`Invalid --channel '${channel}'. Expected stable|preview.`);
-  }
-  const tag = String(kv.get('--tag') ?? '').trim() || (channel === 'preview' ? 'server-preview' : 'server-stable');
+  const parsed = parseRunnerInvocation(process.argv.slice(2));
+  const { serverTag: tag, uiWebTag, withUiWeb, positionals } = parsed;
 
   const target = resolveTarget();
+  const githubRepo = `${OWNER}/${REPO}`;
 
-  const releaseUrl = `https://api.github.com/repos/${OWNER}/${REPO}/releases/tags/${encodeURIComponent(tag)}`;
-  const release = await fetchJson(releaseUrl);
+  const release = await fetchGitHubReleaseByTag({
+    githubRepo,
+    tag,
+    userAgent: 'happier-server-runner',
+    githubToken: String(process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? ''),
+  });
   const assets = resolveServerReleaseAssets({ release, os: target.os, arch: target.arch });
 
   const pubkeyPath = new URL('../assets/happier-release.pub', import.meta.url);
@@ -118,37 +61,37 @@ async function main() {
   const tmp = join(tmpdir(), `happier-server-${process.pid}-${Date.now()}`);
   await mkdir(tmp, { recursive: true });
   try {
-    const checksumsPath = join(tmp, assets.checksums.name);
-    const checksumsSigPath = join(tmp, assets.checksumsSig.name);
-    await downloadFile(assets.checksums.url, checksumsPath);
-    await downloadFile(assets.checksumsSig.url, checksumsSigPath);
-
-    const checksumsText = await readFile(checksumsPath, 'utf-8');
-    const sigFile = await readFile(checksumsSigPath, 'utf-8');
-    const ok = verifyMinisign({ message: Buffer.from(checksumsText, 'utf-8'), pubkeyFile, sigFile });
-    if (!ok) fail('Signature verification failed for checksums file.');
-
-    const expected = lookupSha256({ checksumsText, filename: assets.tarball.name });
-
     const cacheDir = join(cacheRoot(), 'happier', 'server', tag, assets.version, `${target.os}-${target.arch}`);
     await mkdir(cacheDir, { recursive: true });
     const artifactStem = `happier-server-v${assets.version}-${target.os}-${target.arch}`;
     const serverDir = join(cacheDir, artifactStem);
-    const serverBin = join(serverDir, 'happier-server');
+    const serverBin = join(serverDir, target.exeName);
 
     if (!(await pathExists(serverBin))) {
-      const tarballPath = join(tmp, assets.tarball.name);
-      await downloadFile(assets.tarball.url, tarballPath);
-      const actual = await sha256File(tarballPath);
-      if (actual !== expected) {
-        fail(`SHA256 mismatch for ${assets.tarball.name}: expected ${expected}, got ${actual}`);
-      }
+      const downloaded = await downloadVerifiedReleaseAssetBundle({
+        bundle: {
+          version: assets.version,
+          archive: assets.tarball,
+          checksums: assets.checksums,
+          checksumsSig: assets.checksumsSig,
+        },
+        destDir: tmp,
+        pubkeyFile,
+        userAgent: 'happier-server-runner',
+      });
+
+      const plan = planArchiveExtraction({
+        archiveName: downloaded.archiveName,
+        archivePath: downloaded.archivePath,
+        destDir: cacheDir,
+        os: target.os,
+      });
 
       // Extract archive into cache (archive root contains the artifactStem folder).
-      const extract = spawn('tar', ['-xzf', tarballPath, '-C', cacheDir], { stdio: 'inherit' });
+      const extract = spawn(plan.command.cmd, plan.command.args, { stdio: 'inherit' });
       await new Promise((resolve, reject) => {
         extract.on('error', reject);
-        extract.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`tar exited with ${code}`))));
+        extract.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`${plan.command.cmd} exited with ${code}`))));
       });
     }
 
@@ -156,7 +99,56 @@ async function main() {
       fail(`Extracted server binary not found at ${serverBin}`);
     }
 
-    const child = spawn(serverBin, positionals, { stdio: 'inherit' });
+    const childEnv = { ...process.env };
+    if (withUiWeb && !String(process.env.HAPPIER_SERVER_UI_DIR ?? '').trim()) {
+      const uiRelease = await fetchGitHubReleaseByTag({
+        githubRepo,
+        tag: uiWebTag,
+        userAgent: 'happier-server-runner',
+        githubToken: String(process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? ''),
+      });
+      const uiAssets = resolveUiWebReleaseAssets({ release: uiRelease });
+      const uiCacheDir = join(cacheRoot(), 'happier', 'ui-web', uiWebTag, uiAssets.version, 'web-any');
+      await mkdir(uiCacheDir, { recursive: true });
+      const uiStem = `happier-ui-web-v${uiAssets.version}-web-any`;
+      const uiDir = join(uiCacheDir, uiStem);
+      const uiIndex = join(uiDir, 'index.html');
+
+      if (!(await pathExists(uiIndex))) {
+        const uiDownloaded = await downloadVerifiedReleaseAssetBundle({
+          bundle: {
+            version: uiAssets.version,
+            archive: uiAssets.tarball,
+            checksums: uiAssets.checksums,
+            checksumsSig: uiAssets.checksumsSig,
+          },
+          destDir: tmp,
+          pubkeyFile,
+          userAgent: 'happier-server-runner',
+        });
+
+        const uiPlan = planArchiveExtraction({
+          archiveName: uiDownloaded.archiveName,
+          archivePath: uiDownloaded.archivePath,
+          destDir: uiCacheDir,
+          os: target.os,
+        });
+
+        const extractUi = spawn(uiPlan.command.cmd, uiPlan.command.args, { stdio: 'inherit' });
+        await new Promise((resolve, reject) => {
+          extractUi.on('error', reject);
+          extractUi.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`${uiPlan.command.cmd} exited with ${code}`))));
+        });
+      }
+
+      if (!(await pathExists(uiIndex))) {
+        fail(`Extracted ui web bundle not found at ${uiIndex}`);
+      }
+
+      childEnv.HAPPIER_SERVER_UI_DIR = uiDir;
+    }
+
+    const child = spawn(serverBin, positionals, { stdio: 'inherit', env: childEnv });
     child.on('exit', (code, signal) => {
       if (signal) process.kill(process.pid, signal);
       process.exit(code ?? 1);
@@ -169,4 +161,3 @@ async function main() {
 main().catch((err) => {
   fail(err instanceof Error ? err.message : String(err));
 });
-
