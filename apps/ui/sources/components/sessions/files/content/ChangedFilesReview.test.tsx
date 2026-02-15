@@ -519,4 +519,39 @@ describe('ChangedFilesReview', () => {
         const texts = tree!.root.findAllByType('Text' as any);
         expect(texts.some((n) => String(n.props?.children) === 'files.reviewDiffRequestFailed')).toBe(true);
     });
+
+    it('supports injecting per-file actions for commit/stage flows', async () => {
+        sessionScmDiffFileSpy.mockClear();
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: `diff:${req.path}:${req.area}`,
+            error: null,
+        }));
+
+        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+        const renderFileActions = vi.fn((_file: any) => React.createElement('Action'));
+
+        await act(async () => {
+            renderer.create(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={snapshot}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[fileA, fileB]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                    renderFileActions={renderFileActions as any}
+                />
+            );
+        });
+
+        const calledPaths = new Set(renderFileActions.mock.calls.map((call) => call[0]?.fullPath));
+        expect(Array.from(calledPaths).sort()).toEqual(['src/a.ts', 'src/b.ts']);
+    });
 });

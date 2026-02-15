@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { View, ActivityIndicator, Platform } from 'react-native';
+import { View, ActivityIndicator, Platform, Pressable } from 'react-native';
 import { useRoute } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { Text } from '@/components/ui/text/StyledText';
 import { ScmFileStatus } from '@/scm/scmStatusFiles';
 import { getDefaultChangedFilesViewMode } from '@/scm/scmAttribution';
 import { normalizeFilePath } from '@/components/sessions/files/filesUtils';
@@ -15,6 +16,7 @@ import { SearchResultsList } from '@/components/sessions/files/content/SearchRes
 import { ChangedFilesList } from '@/components/sessions/files/content/ChangedFilesList';
 import { ChangedFilesReview } from '@/components/sessions/files/content/ChangedFilesReview';
 import { RepositoryTreeList } from '@/components/sessions/files/content/RepositoryTreeList';
+import { Octicons } from '@expo/vector-icons';
 import {
     storage,
     useSession,
@@ -36,6 +38,7 @@ import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
 import { useScmCommitHistory } from '@/hooks/session/files/useScmCommitHistory';
+import { Typography } from '@/constants/Typography';
 import { useChangedFilesData } from '@/hooks/session/files/useChangedFilesData';
 import { useFilesScmOperations } from '@/hooks/session/files/useFilesScmOperations';
 import { shouldShowScmOperationsPanel } from '@/hooks/session/files/useScmOperationsVisibility';
@@ -46,6 +49,8 @@ import type { ChangedFilesPresentation } from '@/scm/scmAttribution';
 import { resolveSessionMachineReachability } from '@/components/sessions/model/resolveSessionMachineReachability';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import { allowsLiveStaging, isAtomicCommitStrategy } from '@/scm/settings/commitStrategy';
+import { applyFileStageAction } from '@/scm/operations/applyFileStageAction';
 
 export default function FilesScreen() {
     const route = useRoute();
@@ -71,8 +76,9 @@ export default function FilesScreen() {
     const [isSearching, setIsSearching] = React.useState(false);
     const [showAllRepositoryFiles, setShowAllRepositoryFiles] = React.useState(false);
     const [changedFilesViewMode, setChangedFilesViewMode] = React.useState(getDefaultChangedFilesViewMode);
-    const [changedFilesPresentation, setChangedFilesPresentation] = React.useState<ChangedFilesPresentation>('list');
+    const [changedFilesPresentation, setChangedFilesPresentation] = React.useState<ChangedFilesPresentation>('review');
     const [reviewFocusPath, setReviewFocusPath] = React.useState<string | null>(null);
+    const [sourceControlExpanded, setSourceControlExpanded] = React.useState(false);
 
     const deepLinkPresentation = React.useMemo(() => {
         const raw = (localSearchParams as any)?.presentation;
@@ -110,6 +116,9 @@ export default function FilesScreen() {
     const scmReviewMaxChangedLines = useSetting('scmReviewMaxChangedLines');
     const filesChangedFilesRowDensity = useSetting('filesChangedFilesRowDensity');
     const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
+    const executionRunsEnabled = useFeatureEnabled('execution.runs');
+    const scmCommitMessageGeneratorEnabledRaw = useSetting('scmCommitMessageGeneratorEnabled');
+    const scmCommitMessageGeneratorBackendIdRaw = useSetting('scmCommitMessageGeneratorBackendId');
     const sessionPath = session?.metadata?.path ?? null;
     const machineId = typeof session?.metadata?.machineId === 'string' ? session.metadata.machineId : '';
     const changedFilesRowDensity = filesChangedFilesRowDensity === 'compact' ? 'compact' : 'comfortable';
@@ -153,6 +162,12 @@ export default function FilesScreen() {
             setChangedFilesViewMode('repository');
         }
     }, [changedFilesViewMode, showSessionViewToggle]);
+
+    React.useEffect(() => {
+        if (searchQuery.trim()) {
+            setSourceControlExpanded(false);
+        }
+    }, [searchQuery]);
 
     const {
         historyEntries,
@@ -229,6 +244,11 @@ export default function FilesScreen() {
         scmCommitStrategy,
         scmRemoteConfirmPolicy,
         scmPushRejectPolicy,
+        executionRunsEnabled,
+        scmCommitMessageGeneratorEnabled: scmCommitMessageGeneratorEnabledRaw === true,
+        scmCommitMessageGeneratorBackendId: typeof scmCommitMessageGeneratorBackendIdRaw === 'string' && scmCommitMessageGeneratorBackendIdRaw.trim()
+            ? scmCommitMessageGeneratorBackendIdRaw.trim()
+            : 'claude',
         refreshScmData,
         loadCommitHistory,
     });
@@ -250,6 +270,112 @@ export default function FilesScreen() {
         }
         return uniquePaths.size;
     }, [commitSelectionPatches, commitSelectionPaths]);
+
+    const includeExcludeEnabled = allowsLiveStaging({ strategy: scmCommitStrategy, snapshot: scmSnapshot });
+    const atomicCommit = isAtomicCommitStrategy(scmCommitStrategy);
+    const atomicPathSelectionEnabled = atomicCommit && scmSnapshot?.capabilities?.writeCommitPathSelection === true;
+
+    const commitSelectionHints = React.useMemo(() => {
+        const selected = new Set<string>();
+        for (const path of commitSelectionPaths) {
+            const normalized = typeof path === 'string' ? path.trim() : '';
+            if (normalized) selected.add(normalized);
+        }
+        for (const patch of commitSelectionPatches) {
+            const normalized = typeof patch?.path === 'string' ? patch.path.trim() : '';
+            if (normalized) selected.add(normalized);
+        }
+        return selected;
+    }, [commitSelectionPatches, commitSelectionPaths]);
+
+    const scmEntryByPath = React.useMemo(() => {
+        const map = new Map<string, { hasIncludedDelta: boolean }>();
+        for (const entry of scmSnapshot?.entries ?? []) {
+            map.set(entry.path, { hasIncludedDelta: entry.hasIncludedDelta === true });
+        }
+        return map;
+    }, [scmSnapshot?.entries]);
+
+    const [stageBusyPath, setStageBusyPath] = React.useState<string | null>(null);
+
+    const handleToggleStage = React.useCallback(
+        async (filePath: string, stage: boolean) => {
+            if (!sessionId) return;
+            setStageBusyPath(filePath);
+            try {
+                await applyFileStageAction({
+                    sessionId,
+                    sessionPath,
+                    filePath,
+                    stage,
+                    scmSnapshot,
+                    scmWriteEnabled,
+                    scmCommitStrategy,
+                    includeExcludeEnabled,
+                    refreshAll: refreshScmData,
+                    surface: 'files',
+                });
+            } finally {
+                setStageBusyPath((prev) => (prev === filePath ? null : prev));
+            }
+        },
+        [includeExcludeEnabled, refreshScmData, scmCommitStrategy, scmSnapshot, scmWriteEnabled, sessionId, sessionPath]
+    );
+
+    const renderFileActions = React.useCallback(
+        (file: ScmFileStatus) => {
+            const filePath = file.fullPath;
+            const staged = atomicCommit
+                ? commitSelectionHints.has(filePath)
+                : (scmEntryByPath.get(filePath)?.hasIncludedDelta === true);
+            const disabled = stageBusyPath === filePath
+                || scmOperationBusy
+                || hasGlobalOperationInFlight
+                || (!atomicCommit && !includeExcludeEnabled)
+                || (atomicCommit && !atomicPathSelectionEnabled);
+
+            const iconName = staged ? 'check' : 'plus';
+            const color = staged ? theme.colors.success : theme.colors.textSecondary;
+
+            return (
+                <Pressable
+                    accessibilityRole="button"
+                    onPress={(event: any) => {
+                        event?.stopPropagation?.();
+                        void handleToggleStage(filePath, !staged);
+                    }}
+                    disabled={disabled}
+                    style={({ pressed }) => ({
+                        paddingHorizontal: 8,
+                        paddingVertical: 6,
+                        borderRadius: 10,
+                        borderWidth: 1,
+                        borderColor: theme.colors.divider,
+                        backgroundColor: staged ? theme.colors.surfaceHigh : theme.colors.surface,
+                        opacity: disabled ? 0.6 : pressed ? 0.85 : 1,
+                    })}
+                >
+                    <Octicons name={iconName as any} size={14} color={color} />
+                </Pressable>
+            );
+        },
+        [
+            atomicCommit,
+            atomicPathSelectionEnabled,
+            commitSelectionHints,
+            handleToggleStage,
+            hasGlobalOperationInFlight,
+            includeExcludeEnabled,
+            scmEntryByPath,
+            scmOperationBusy,
+            stageBusyPath,
+            theme.colors.divider,
+            theme.colors.success,
+            theme.colors.surface,
+            theme.colors.surfaceHigh,
+            theme.colors.textSecondary,
+        ]
+    );
 
     React.useEffect(() => {
         let cancelled = false;
@@ -324,12 +450,66 @@ export default function FilesScreen() {
                 showSessionViewToggle={showSessionViewToggle}
                 onChangedFilesViewMode={setChangedFilesViewMode}
                 onChangedFilesPresentationChange={setChangedFilesPresentation}
+                showSourceControlToggle={!isRefreshing && Boolean(scmStatusFiles) && !searchQuery.trim()}
+                sourceControlExpanded={sourceControlExpanded}
+                onToggleSourceControl={() => setSourceControlExpanded((prev) => !prev)}
             />
 
             <ItemList style={{ flex: 1 }}>
-                {!isRefreshing && scmStatusFiles && <SourceControlBranchSummary theme={theme} scmStatusFiles={scmStatusFiles} />}
+                {!isRefreshing && scmStatusFiles && !searchQuery.trim() && (
+                    <Pressable
+                        testID="scm-section-toggle"
+                        onPress={() => setSourceControlExpanded((prev) => !prev)}
+                        style={{
+                            paddingHorizontal: 16,
+                            paddingVertical: 10,
+                            borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
+                            borderBottomColor: theme.colors.divider,
+                            backgroundColor: theme.colors.surfaceHigh,
+                        }}
+                    >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                            <View style={{ flex: 1, minWidth: 0 }}>
+                                <Text
+                                    numberOfLines={1}
+                                    style={{
+                                        fontSize: 13,
+                                        color: theme.colors.text,
+                                        ...Typography.default('semiBold'),
+                                    }}
+                                >
+                                    {`${
+                                        scmStatusFiles.branch || t('files.detachedHead')
+                                    }`}
+                                </Text>
+                                <Text
+                                    numberOfLines={1}
+                                    style={{
+                                        marginTop: 2,
+                                        fontSize: 11,
+                                        color: theme.colors.textSecondary,
+                                        ...Typography.default(),
+                                    }}
+                                >
+                                    {`${t('files.summary', { staged: scmStatusFiles.totalIncluded, unstaged: scmStatusFiles.totalPending })} • Ahead ${scmStatusFiles.ahead ?? 0} • Behind ${scmStatusFiles.behind ?? 0}`}
+                                </Text>
+                            </View>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                <Octicons
+                                    name={sourceControlExpanded ? 'chevron-up' : 'chevron-down'}
+                                    size={16}
+                                    color={theme.colors.textSecondary}
+                                />
+                            </View>
+                        </View>
+                    </Pressable>
+                )}
 
-                {showScmOperationsPanel && (
+                {!isRefreshing && scmStatusFiles && sourceControlExpanded && !searchQuery.trim() && (
+                    <SourceControlBranchSummary theme={theme} scmStatusFiles={scmStatusFiles} />
+                )}
+
+                {showScmOperationsPanel && sourceControlExpanded && !searchQuery.trim() && (
                     <SourceControlOperationsPanel
                         theme={theme}
                         backendLabel={backendLabel}
@@ -462,6 +642,7 @@ export default function FilesScreen() {
                             maxFiles={typeof scmReviewMaxFiles === 'number' ? scmReviewMaxFiles : 25}
                             maxChangedLines={typeof scmReviewMaxChangedLines === 'number' ? scmReviewMaxChangedLines : 2000}
                             onFilePress={handleFilePress}
+                            renderFileActions={scmWriteEnabled ? renderFileActions : undefined}
                             focusPath={reviewFocusPath}
                             rowDensity={changedFilesRowDensity}
                         />
@@ -475,6 +656,7 @@ export default function FilesScreen() {
                             repositoryOnlyFiles={repositoryOnlyFiles}
                             suppressedInferredCount={suppressedInferredCount}
                             onFilePress={handleFilePress}
+                            renderFileActions={scmWriteEnabled ? renderFileActions : undefined}
                             rowDensity={changedFilesRowDensity}
                         />
                     )

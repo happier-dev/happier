@@ -1,4 +1,4 @@
-import { useSocketStatus, useFriendRequests, useSetting, useSyncError } from '@/sync/domains/state/storage';
+import { useSocketStatus, useFriendRequests, useLocalSettingMutable, useSetting, useSyncError } from '@/sync/domains/state/storage';
 import * as React from 'react';
 import { Platform, Text, View, Pressable, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -214,6 +214,7 @@ export const SidebarView = React.memo(() => {
     const inboxHasContent = useInboxHasContent();
     const showEnvironmentBadge = useSetting('showEnvironmentBadge');
     const inboxFriendsEnabled = useFriendsEnabled();
+    const [, setSidebarCollapsed] = useLocalSettingMutable('sidebarCollapsed');
 
     // Compute connection status once per render (theme-reactive, no stale memoization)
     const connectionStatus = (() => {
@@ -323,6 +324,15 @@ export const SidebarView = React.memo(() => {
 
                     {/* Navigation icons */}
                     <View style={styles.rightContainer}>
+                        <Pressable
+                            onPress={() => setSidebarCollapsed(true)}
+                            hitSlop={15}
+                            accessibilityRole="button"
+                            accessibilityLabel="Collapse sidebar"
+                            style={styles.iconButton}
+                        >
+                            <Ionicons name="chevron-back-outline" size={22} color={theme.colors.header.tint} />
+                        </Pressable>
                         {showZen && (
                             <Pressable
                                 onPress={() => router.push('/(app)/zen')}

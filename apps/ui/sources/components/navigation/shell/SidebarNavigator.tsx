@@ -3,20 +3,24 @@ import * as React from 'react';
 import { Drawer } from 'expo-router/drawer';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { SidebarView } from './SidebarView';
+import { CollapsedSidebarView } from './CollapsedSidebarView';
 import { Slot } from 'expo-router';
 import { useWindowDimensions } from 'react-native';
+import { useLocalSetting } from '@/sync/domains/state/storage';
 
 export const SidebarNavigator = React.memo(() => {
     const auth = useAuth();
     const isTablet = useIsTablet();
     const showPermanentDrawer = auth.isAuthenticated && isTablet;
     const { width: windowWidth } = useWindowDimensions();
+    const sidebarCollapsed = useLocalSetting('sidebarCollapsed');
 
     // Calculate drawer width only when needed
     const drawerWidth = React.useMemo(() => {
         if (!showPermanentDrawer) return 280; // Default width for hidden drawer
+        if (sidebarCollapsed) return 72;
         return Math.min(Math.max(Math.floor(windowWidth * 0.3), 250), 360);
-    }, [windowWidth, showPermanentDrawer]);
+    }, [windowWidth, showPermanentDrawer, sidebarCollapsed]);
 
     const drawerNavigationOptions = React.useMemo(() => {
         if (!showPermanentDrawer) {
@@ -53,8 +57,8 @@ export const SidebarNavigator = React.memo(() => {
 
     // Always render SidebarView but hide it when not needed
     const drawerContent = React.useCallback(
-        () => <SidebarView />,
-        []
+        () => (sidebarCollapsed ? <CollapsedSidebarView /> : <SidebarView />),
+        [sidebarCollapsed]
     );
 
     return (

@@ -6,6 +6,7 @@ import renderer, { act } from 'react-test-renderer';
 
 vi.mock('react-native', () => ({
     View: 'View',
+    useWindowDimensions: () => ({ width: 1024, height: 768 }),
     Platform: { select: (value: any) => value?.default ?? null },
 }));
 
@@ -100,5 +101,31 @@ describe('ChangedFilesList', () => {
             String(node.props.children).includes('Reliability limited: multiple sessions are active for this repository')
         );
         expect(messageExists).toBe(true);
+    });
+
+    it('supports injecting per-file actions without changing row selection behavior', async () => {
+        const { ChangedFilesList } = await import('./ChangedFilesList');
+        const renderFileActions = vi.fn((inputFile: any) => React.createElement('Action', { file: inputFile.fullPath }));
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <ChangedFilesList
+                    theme={{ colors: { surfaceHigh: '#111', divider: '#222', textLink: '#09f', textSecondary: '#999', text: '#fff', dark: false, surface: '#000' } } as any}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[file as any]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    onFilePress={vi.fn()}
+                    renderFileActions={renderFileActions as any}
+                />
+            );
+        });
+
+        expect(renderFileActions).toHaveBeenCalledTimes(1);
+        expect(renderFileActions.mock.calls[0]?.[0]?.fullPath).toBe('src/a.ts');
+        // Item is mocked in this unit test, so we validate via render callback rather than DOM structure.
     });
 });

@@ -200,6 +200,39 @@ export function normalizePathspec(rawPath: string, cwd: string): { ok: true; pat
     return { ok: true, pathspec: rel.split(sep).join('/') };
 }
 
+export function normalizeRepoRootPathspec(
+    rawPath: string
+): { ok: true; pathspec: string } | { ok: false; error: string } {
+    // For diff/read operations, the UI sends repo-root relative paths (from status snapshots).
+    // Git interprets pathspecs relative to the current working directory by default, which breaks
+    // when the session cwd is a subdirectory of the repo. Use `:(top)` to anchor at repo root.
+    const raw = rawPath ?? '';
+    let normalized = raw.split('\\').join('/');
+
+    if (normalized === '' || normalized === '.') {
+        return { ok: true, pathspec: ':(top).' };
+    }
+
+    if (normalized.startsWith('./')) {
+        normalized = normalized.slice(2);
+    }
+
+    if (normalized.startsWith('/')) {
+        return { ok: false, error: `Absolute paths are not supported: ${rawPath}` };
+    }
+
+    if (
+        normalized === '..' ||
+        normalized.startsWith('../') ||
+        normalized.endsWith('/..') ||
+        normalized.includes('/../')
+    ) {
+        return { ok: false, error: `Path traversal is not supported: ${rawPath}` };
+    }
+
+    return { ok: true, pathspec: `:(top)${normalized}` };
+}
+
 const SAFE_COMMIT_REF_REGEX = /^(?:[0-9a-fA-F]{7,64}|[A-Za-z0-9._/-]+)$/;
 
 export function normalizeCommitRef(rawCommit: string): { ok: true; commit: string } | { ok: false; error: string } {
