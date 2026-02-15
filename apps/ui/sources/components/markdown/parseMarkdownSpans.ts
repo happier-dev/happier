@@ -3,6 +3,45 @@ import type { MarkdownSpan } from "./parseMarkdown";
 // Updated pattern to handle nested markdown and asterisks
 const pattern = /(\*\*(.*?)(?:\*\*|$))|(\*(.*?)(?:\*|$))|(\[([^\]]+)\](?:\(([^)]+)\))?)|(`(.*?)(?:`|$))/g;
 
+const autoLinkPattern = /\b((?:https?:\/\/|www\.)[^\s<]+)/g;
+const trailingPunctuationPattern = /[.,)\]}]+$/;
+
+function splitPlainTextWithAutoLinks(text: string): MarkdownSpan[] {
+    const out: MarkdownSpan[] = [];
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = autoLinkPattern.exec(text)) !== null) {
+        const full = match[1] ?? '';
+        const start = match.index;
+
+        if (start > lastIndex) {
+            out.push({ styles: [], text: text.slice(lastIndex, start), url: null });
+        }
+
+        let urlText = full;
+        const trimmed = urlText.replace(trailingPunctuationPattern, '');
+        urlText = trimmed || urlText;
+
+        const trailing = full.slice(urlText.length);
+
+        const href = urlText.startsWith('www.') ? `https://${urlText}` : urlText;
+        out.push({ styles: [], text: urlText, url: href });
+
+        if (trailing) {
+            out.push({ styles: [], text: trailing, url: null });
+        }
+
+        lastIndex = start + full.length;
+    }
+
+    if (lastIndex < text.length) {
+        out.push({ styles: [], text: text.slice(lastIndex), url: null });
+    }
+
+    return out;
+}
+
 export function parseMarkdownSpans(markdown: string, header: boolean) {
     const spans: MarkdownSpan[] = [];
     let lastIndex = 0;
@@ -12,7 +51,7 @@ export function parseMarkdownSpans(markdown: string, header: boolean) {
         // Capture the text between the end of the last match and the start of this match as plain text
         const plainText = markdown.slice(lastIndex, match.index);
         if (plainText) {
-            spans.push({ styles: [], text: plainText, url: null });
+            spans.push(...splitPlainTextWithAutoLinks(plainText));
         }
 
         if (match[1]) {
@@ -47,7 +86,7 @@ export function parseMarkdownSpans(markdown: string, header: boolean) {
 
     // If there's any text remaining after the last match, treat it as plain
     if (lastIndex < markdown.length) {
-        spans.push({ styles: [], text: markdown.slice(lastIndex), url: null });
+        spans.push(...splitPlainTextWithAutoLinks(markdown.slice(lastIndex)));
     }
 
     return spans;

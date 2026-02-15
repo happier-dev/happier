@@ -1,5 +1,4 @@
 import { MarkdownSpan, parseMarkdown } from './parseMarkdown';
-import { Link } from 'expo-router';
 import * as React from 'react';
 import { Pressable, ScrollView, View, Platform } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -14,6 +13,7 @@ import { useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { MermaidRenderer } from './MermaidRenderer';
 import { t } from '@/text';
+import { MarkdownSpansView } from './MarkdownSpansView';
 
 // Option type for callback
 export type Option = {
@@ -100,13 +100,31 @@ export const MarkdownView = React.memo((props: {
 });
 
 function RenderTextBlock(props: { spans: MarkdownSpan[], first: boolean, last: boolean, selectable: boolean }) {
-    return <Text selectable={props.selectable} style={[style.text, props.first && style.first, props.last && style.last]}><RenderSpans spans={props.spans} baseStyle={style.text} /></Text>;
+    return (
+        <Text selectable={props.selectable} style={[style.text, props.first && style.first, props.last && style.last]}>
+            <MarkdownSpansView
+                spans={props.spans}
+                baseStyle={style.text}
+                linkStyle={style.link}
+                resolveSpanStyle={(s) => (style as any)[s]}
+            />
+        </Text>
+    );
 }
 
 function RenderHeaderBlock(props: { level: 1 | 2 | 3 | 4 | 5 | 6, spans: MarkdownSpan[], first: boolean, last: boolean, selectable: boolean }) {
     const s = (style as any)[`header${props.level}`];
     const headerStyle = [style.header, s, props.first && style.first, props.last && style.last];
-    return <Text selectable={props.selectable} style={headerStyle}><RenderSpans spans={props.spans} baseStyle={headerStyle} /></Text>;
+    return (
+        <Text selectable={props.selectable} style={headerStyle}>
+            <MarkdownSpansView
+                spans={props.spans}
+                baseStyle={headerStyle}
+                linkStyle={style.link}
+                resolveSpanStyle={(sn) => (style as any)[sn]}
+            />
+        </Text>
+    );
 }
 
 function RenderListBlock(props: { items: MarkdownSpan[][], first: boolean, last: boolean, selectable: boolean }) {
@@ -114,7 +132,15 @@ function RenderListBlock(props: { items: MarkdownSpan[][], first: boolean, last:
     return (
         <View style={{ flexDirection: 'column', marginBottom: 8, gap: 1 }}>
             {props.items.map((item, index) => (
-                <Text selectable={props.selectable} style={listStyle} key={index}>- <RenderSpans spans={item} baseStyle={listStyle} /></Text>
+                <Text selectable={props.selectable} style={listStyle} key={index}>
+                    -{' '}
+                    <MarkdownSpansView
+                        spans={item}
+                        baseStyle={listStyle}
+                        linkStyle={style.link}
+                        resolveSpanStyle={(sn) => (style as any)[sn]}
+                    />
+                </Text>
             ))}
         </View>
     );
@@ -125,7 +151,15 @@ function RenderNumberedListBlock(props: { items: { number: number, spans: Markdo
     return (
         <View style={{ flexDirection: 'column', marginBottom: 8, gap: 1 }}>
             {props.items.map((item, index) => (
-                <Text selectable={props.selectable} style={listStyle} key={index}>{item.number.toString()}. <RenderSpans spans={item.spans} baseStyle={listStyle} /></Text>
+                <Text selectable={props.selectable} style={listStyle} key={index}>
+                    {item.number.toString()}.{' '}
+                    <MarkdownSpansView
+                        spans={item.spans}
+                        baseStyle={listStyle}
+                        linkStyle={style.link}
+                        resolveSpanStyle={(sn) => (style as any)[sn]}
+                    />
+                </Text>
             ))}
         </View>
     );
@@ -213,17 +247,7 @@ function RenderOptionsBlock(props: {
     );
 }
 
-function RenderSpans(props: { spans: MarkdownSpan[], baseStyle?: any }) {
-    return (<>
-        {props.spans.map((span, index) => {
-            if (span.url) {
-                return <Link key={index} href={span.url as any} target="_blank" style={[style.link, span.styles.map(s => style[s])]}>{span.text}</Link>
-            } else {
-                return <Text key={index} selectable style={[props.baseStyle, span.styles.map(s => style[s])]}>{span.text}</Text>
-            }
-        })}
-    </>)
-}
+// NOTE: span rendering extracted into MarkdownSpansView for unit-testable link hardening.
 
 // Table rendering uses column-first layout to ensure consistent column widths.
 // Each column is rendered as a vertical container with all its cells (header + data).
