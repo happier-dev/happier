@@ -15,6 +15,9 @@
     "bin",
     "src"
   ],
+  "bundledDependencies": [
+    "@happier-dev/release-runtime"
+  ],
   "engines": {
     "node": ">=22"
   },
@@ -23,6 +26,7 @@
     "provenance": true
   },
   "scripts": {
+    "prepack": "node ./scripts/bundleWorkspaceDeps.mjs",
     "test": "node --test"
   }
 }

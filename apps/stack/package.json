@@ -18,7 +18,8 @@
     "scripts/"
   ],
   "bundledDependencies": [
-    "@happier-dev/cli-common"
+    "@happier-dev/cli-common",
+    "@happier-dev/release-runtime"
   ],
   "scripts": {
     "setup": "node ./scripts/setup.mjs",
@@ -71,6 +72,7 @@
   },
   "dependencies": {
     "@happier-dev/cli-common": "0.0.0",
+    "@happier-dev/release-runtime": "0.0.0",
     "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0"
   }
