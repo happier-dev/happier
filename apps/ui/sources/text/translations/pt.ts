@@ -1,4 +1,4 @@
-import type { TranslationStructure } from '../_types';
+import type { TranslationStructure } from "../_types";
 
 /**
  * Portuguese plural helper function
@@ -6,8 +6,16 @@ import type { TranslationStructure } from '../_types';
  * @param options - Object containing count, singular, and plural forms
  * @returns The appropriate form based on Portuguese plural rules
  */
-function plural({ count, singular, plural }: { count: number; singular: string; plural: string }): string {
-    return count === 1 ? singular : plural;
+function plural({
+  count,
+  singular,
+  plural,
+}: {
+  count: number;
+  singular: string;
+  plural: string;
+}): string {
+  return count === 1 ? singular : plural;
 }
 
 /**
@@ -15,2092 +23,2583 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * Must match the exact structure of the English translations
  */
 export const pt: TranslationStructure = {
-    tabs: {
-        // Tab navigation labels
-        inbox: 'Amigos',
-        sessions: 'Terminais',
-        settings: 'Configurações',
-    },
+  tabs: {
+    // Tab navigation labels
+    inbox: "Amigos",
+    sessions: "Terminais",
+    settings: "Configurações",
+  },
 
-    inbox: {
-        // Inbox screen
-        emptyTitle: 'Sem atividade de amigos',
-        emptyDescription: 'Adicione amigos para compartilhar sessões e ver atividade aqui.',
-        updates: 'Atividade',
-    },
+  inbox: {
+    // Inbox screen
+    emptyTitle: "Sem atividade de amigos",
+    emptyDescription:
+      "Adicione amigos para compartilhar sessões e ver atividade aqui.",
+    updates: "Atividade",
+  },
 
-    common: {
-        // Simple string constants
-        add: 'Adicionar',
-        actions: 'Ações',
-        cancel: 'Cancelar',
-        authenticate: 'Autenticar',
-        save: 'Salvar',
-        saveAs: 'Salvar como',
-        error: 'Erro',
-        success: 'Sucesso',
-        ok: 'OK',
-        continue: 'Continuar',
-        back: 'Voltar',
-        create: 'Criar',
-        rename: 'Renomear',
-        remove: 'Remove',
-        signOut: 'Sign out',
-        keep: 'Keep',
-        reset: 'Redefinir',
-        logout: 'Sair',
-        yes: 'Sim',
-        no: 'Não',
-        discard: 'Descartar',
-        discardChanges: 'Descartar alterações',
-        unsavedChangesWarning: 'Você tem alterações não salvas.',
-        keepEditing: 'Continuar editando',
-        version: 'Versão',
-        details: 'Detalhes',
-        copied: 'Copiado',
-        copy: 'Copiar',
-        scanning: 'Escaneando...',
-        urlPlaceholder: 'https://exemplo.com',
-        home: 'Início',
-        message: 'Mensagem',
-        files: 'Arquivos',
-        fileViewer: 'Visualizador de arquivos',
-        loading: 'Carregando...',
-        retry: 'Tentar novamente',
-        delete: 'Excluir',
-        optional: 'Opcional',
-        noMatches: 'Nenhuma correspondência',
-        all: 'Todos',
-        machine: 'máquina',
-        clearSearch: 'Limpar pesquisa',
-        refresh: 'Atualizar',
-    },
+  runs: {
+    title: "Runs",
+    empty: "No runs yet.",
+  },
 
-    dropdown: {
-        category: {
-            general: 'Geral',
-            results: 'Resultados',
+  common: {
+    // Simple string constants
+    add: "Adicionar",
+    actions: "Ações",
+    cancel: "Cancelar",
+    close: "Fechar",
+    authenticate: "Autenticar",
+    save: "Salvar",
+    saveAs: "Salvar como",
+    error: "Erro",
+    success: "Sucesso",
+    ok: "OK",
+    continue: "Continuar",
+    back: "Voltar",
+    create: "Criar",
+    rename: "Renomear",
+    remove: "Remove",
+    signOut: "Sign out",
+    keep: "Keep",
+    reset: "Redefinir",
+    logout: "Sair",
+    yes: "Sim",
+    no: "Não",
+    discard: "Descartar",
+    discardChanges: "Descartar alterações",
+    unsavedChangesWarning: "Você tem alterações não salvas.",
+    keepEditing: "Continuar editando",
+    version: "Versão",
+    details: "Detalhes",
+    copied: "Copiado",
+    copy: "Copiar",
+    scanning: "Escaneando...",
+    urlPlaceholder: "https://exemplo.com",
+    home: "Início",
+    message: "Mensagem",
+    send: "Enviar",
+    files: "Arquivos",
+    fileViewer: "Visualizador de arquivos",
+    loading: "Carregando...",
+    retry: "Tentar novamente",
+    delete: "Excluir",
+    optional: "Opcional",
+    noMatches: "Nenhuma correspondência",
+    all: "Todos",
+    machine: "máquina",
+    clearSearch: "Limpar pesquisa",
+    refresh: "Atualizar",
+  },
+
+  dropdown: {
+    category: {
+      general: "Geral",
+      results: "Resultados",
+    },
+  },
+
+  profile: {
+    userProfile: "Perfil do usuário",
+    details: "Detalhes",
+    firstName: "Nome",
+    lastName: "Sobrenome",
+    username: "Nome de usuário",
+    status: "Status",
+  },
+
+  status: {
+    connected: "conectado",
+    connecting: "conectando",
+    disconnected: "desconectado",
+    error: "erro",
+    online: "online",
+    offline: "offline",
+    lastSeen: ({ time }: { time: string }) => `visto por último ${time}`,
+    permissionRequired: "permissão necessária",
+    activeNow: "Ativo agora",
+    unknown: "desconhecido",
+  },
+
+  time: {
+    justNow: "agora mesmo",
+    minutesAgo: ({ count }: { count: number }) =>
+      `há ${count} minuto${count !== 1 ? "s" : ""}`,
+    hoursAgo: ({ count }: { count: number }) =>
+      `há ${count} hora${count !== 1 ? "s" : ""}`,
+  },
+
+  connect: {
+    restoreAccount: "Restaurar conta",
+    enterSecretKey: "Por favor, insira uma chave secreta",
+    invalidSecretKey: "Chave secreta inválida. Verifique e tente novamente.",
+    enterUrlManually: "Inserir URL manualmente",
+    openMachine: "Abrir máquina",
+    terminalUrlPlaceholder: "happier://terminal?...",
+    restoreQrInstructions:
+      '1. Abra o Happier no seu dispositivo móvel\n2. Vá em Configurações → Conta\n3. Toque em "Vincular novo dispositivo"\n4. Escaneie este código QR',
+    restoreWithSecretKeyInstead: "Restaurar com chave secreta",
+    restoreWithSecretKeyDescription:
+      "Digite sua chave secreta para recuperar o acesso à sua conta.",
+    lostAccessLink: "Sem acesso?",
+    lostAccessTitle: "Perdeu o acesso à sua conta?",
+    lostAccessBody:
+      "Se você não tem mais nenhum dispositivo associado a esta conta e perdeu a chave secreta, você pode redefinir sua conta com seu provedor de identidade. Isso cria uma nova conta Happier. O histórico criptografado antigo não pode ser recuperado.",
+    lostAccessContinue: ({ provider }: { provider: string }) =>
+      `Continuar com ${provider}`,
+    lostAccessConfirmTitle: "Redefinir conta?",
+    lostAccessConfirmBody:
+      "Isso criará uma nova conta e vinculará novamente sua identidade do provedor. O histórico criptografado antigo não pode ser recuperado.",
+    lostAccessConfirmButton: "Redefinir e continuar",
+    secretKeyPlaceholder: "XXXXX-XXXXX-XXXXX...",
+    unsupported: {
+      connectTitle: ({ name }: { name: string }) => `Conectar ${name}`,
+      runCommandInTerminal: "Execute o seguinte comando no terminal:",
+    },
+  },
+
+  settings: {
+    title: "Configurações",
+    connectedAccounts: "Contas conectadas",
+    connectAccount: "Conectar conta",
+    github: "GitHub",
+    machines: "Máquinas",
+    features: "Recursos",
+    social: "Social",
+    account: "Conta",
+    accountSubtitle: "Gerencie os detalhes da sua conta",
+    appearance: "Aparência",
+    appearanceSubtitle: "Personalize a aparência do aplicativo",
+    voiceAssistant: "Assistente de voz",
+    voiceAssistantSubtitle: "Configure as preferências de interação por voz",
+    featuresTitle: "Recursos",
+    featuresSubtitle: "Ativar ou desativar recursos do aplicativo",
+    developer: "Desenvolvedor",
+    developerTools: "Ferramentas de desenvolvedor",
+    about: "Sobre",
+    aboutFooter:
+      "Happier Coder é um cliente móvel para Codex e Claude Code. É totalmente criptografado ponta a ponta e sua conta é armazenada apenas no seu dispositivo. Não é afiliado à Anthropic.",
+    whatsNew: "Novidades",
+    whatsNewSubtitle: "Veja as atualizações e melhorias mais recentes",
+    reportIssue: "Relatar um problema",
+    privacyPolicy: "Política de privacidade",
+    termsOfService: "Termos de serviço",
+    eula: "EULA",
+    supportUs: "Nos apoie",
+    supportUsSubtitlePro: "Obrigado pelo seu apoio!",
+    supportUsSubtitle: "Apoie o desenvolvimento do projeto",
+    scanQrCodeToAuthenticate: "Escaneie o código QR para autenticar",
+    githubConnected: ({ login }: { login: string }) =>
+      `Conectado como @${login}`,
+    connectGithubAccount: "Conecte sua conta GitHub",
+    claudeAuthSuccess: "Conectado ao Claude com sucesso",
+    exchangingTokens: "Trocando tokens...",
+    usage: "Uso",
+    usageSubtitle: "Visualizar uso da API e custos",
+    profiles: "Perfis",
+    profilesSubtitle: "Gerenciar perfis de ambiente e variáveis",
+    secrets: "Segredos",
+    secretsSubtitle:
+      "Gerencie os segredos salvos (não serão exibidos novamente após o envio)",
+    terminal: "Terminal",
+    session: "Sessão",
+    sessionSubtitleTmuxEnabled: "Tmux ativado",
+    sessionSubtitleMessageSendingAndTmux: "Envio de mensagens e tmux",
+    servers: "Servidores",
+    serversSubtitle: "Servidores salvos, grupos e padrões",
+
+    // Dynamic settings messages
+    accountConnected: ({ service }: { service: string }) =>
+      `Conta ${service} conectada`,
+    machineStatus: ({
+      name,
+      status,
+    }: {
+      name: string;
+      status: "online" | "offline";
+    }) => `${name} está ${status === "online" ? "online" : "offline"}`,
+    featureToggled: ({
+      feature,
+      enabled,
+    }: {
+      feature: string;
+      enabled: boolean;
+    }) => `${feature} ${enabled ? "ativado" : "desativado"}`,
+  },
+
+  settingsProviders: {
+    title: "Configurações do provedor de IA",
+    entrySubtitle: "Configure opções específicas do provedor",
+    footer:
+      "Configure opções específicas do provedor. Essas configurações podem afetar o comportamento da sessão.",
+    providerSubtitle: "Configurações específicas do provedor",
+    stateEnabled: "Enabled",
+    stateDisabled: "Disabled",
+    channelStable: "Stable",
+    channelExperimental: "Experimental",
+    supported: "Supported",
+    notSupported: "Not supported",
+    allowed: "Allowed",
+    notAllowed: "Not allowed",
+    notAvailable: "Not available",
+    enabledTitle: "Enabled",
+    enabledSubtitle: "Use this backend in pickers, profiles, and sessions",
+    releaseChannelTitle: "Release channel",
+    capabilitiesTitle: "Capabilities",
+    resumeSupportTitle: "Resume support",
+    sessionModeSupportTitle: "Session mode support",
+    runtimeModeSwitchingTitle: "Runtime mode switching",
+    localControlTitle: "Local control",
+    resumeSupportSupported: "Supported",
+    resumeSupportSupportedExperimental: "Supported (experimental)",
+    resumeSupportRuntimeGatedAcpLoadSession:
+      "Runtime-gated via ACP loadSession",
+    resumeSupportNotSupported: "Not supported",
+    sessionModeNone: "No ACP modes",
+    sessionModeAcpPolicyPresets: "ACP policy presets",
+    sessionModeAcpAgentModes: "ACP agent modes",
+    runtimeSwitchNone: "No runtime switch",
+    runtimeSwitchMetadataGating: "Metadata-gated",
+    runtimeSwitchAcpSetSessionMode: "ACP setSessionMode",
+    runtimeSwitchProviderNative: "Provider native",
+    modelsTitle: "Models",
+    modelSelectionTitle: "Model selection",
+    freeformModelIdsTitle: "Freeform model IDs",
+    defaultModelTitle: "Default model",
+    catalogModelListTitle: "Catalog model list",
+    catalogModelListEmpty: "No catalog models available",
+    dynamicModelProbeTitle: "Dynamic model probing",
+    dynamicModelProbeAuto: "Auto",
+    dynamicModelProbeStaticOnly: "Static only",
+    nonAcpApplyScopeTitle: "Non-ACP model apply scope",
+    nonAcpApplyScopeSpawnOnly: "Apply on session start",
+    nonAcpApplyScopeNextPrompt: "Apply on next prompt",
+    acpApplyBehaviorTitle: "ACP model apply behavior",
+    acpApplyBehaviorSetModel: "Set model live",
+    acpApplyBehaviorRestartSession: "Restart session",
+    acpConfigOptionTitle: "ACP model config option id",
+    cliConnectionTitle: "CLI & Connection",
+    detectedCliTitle: "Detected CLI",
+    installSetupTitle: "Install / setup",
+    installInfoSeeSetupGuide: "See setup guide",
+    installInfoUseProviderCliInstaller: "Use the provider CLI installer",
+    setupGuideUrlTitle: "Setup guide URL",
+    connectedServiceTitle: "Connected service",
+    notFoundTitle: "Provedor não encontrado",
+    notFoundSubtitle: "Este provedor não tem tela de configurações.",
+    noOptionsAvailable: "Sem opções disponíveis",
+    invalidNumber: "Número inválido",
+    invalidJson: "JSON inválido",
+  },
+
+  settingsAppearance: {
+    // Appearance settings screen
+    theme: "Tema",
+    themeDescription: "Escolha seu esquema de cores preferido",
+    themeOptions: {
+      adaptive: "Adaptativo",
+      light: "Claro",
+      dark: "Escuro",
+    },
+    themeDescriptions: {
+      adaptive: "Usar configurações do sistema",
+      light: "Sempre usar tema claro",
+      dark: "Sempre usar tema escuro",
+    },
+    display: "Exibição",
+    displayDescription: "Controle layout e espaçamento",
+    inlineToolCalls: "Chamadas de ferramentas inline",
+    inlineToolCallsDescription:
+      "Exibir chamadas de ferramentas diretamente nas mensagens do chat",
+    expandTodoLists: "Expandir listas de tarefas",
+    expandTodoListsDescription:
+      "Mostrar todas as tarefas em vez de apenas as mudanças",
+    showLineNumbersInDiffs: "Mostrar números de linha nos diffs",
+    showLineNumbersInDiffsDescription:
+      "Exibir números de linha nos diffs de código",
+    showLineNumbersInToolViews:
+      "Mostrar números de linha nas visualizações de ferramentas",
+    showLineNumbersInToolViewsDescription:
+      "Exibir números de linha nos diffs das visualizações de ferramentas",
+    wrapLinesInDiffs: "Quebrar linhas nos diffs",
+    wrapLinesInDiffsDescription:
+      "Quebrar linhas longas ao invés de rolagem horizontal nas visualizações de diffs",
+    alwaysShowContextSize: "Sempre mostrar tamanho do contexto",
+    alwaysShowContextSizeDescription:
+      "Exibir uso do contexto mesmo quando não estiver próximo do limite",
+    agentInputActionBarLayout: "Barra de ações do input",
+    agentInputActionBarLayoutDescription:
+      "Escolha como os chips de ação são exibidos acima do campo de entrada",
+    agentInputActionBarLayoutOptions: {
+      auto: "Auto",
+      wrap: "Quebrar linha",
+      scroll: "Rolável",
+      collapsed: "Recolhido",
+    },
+    agentInputChipDensity: "Densidade dos chips de ação",
+    agentInputChipDensityDescription:
+      "Escolha se os chips de ação exibem rótulos ou ícones",
+    agentInputChipDensityOptions: {
+      auto: "Auto",
+      labels: "Rótulos",
+      icons: "Somente ícones",
+    },
+    avatarStyle: "Estilo do avatar",
+    avatarStyleDescription: "Escolha a aparência do avatar da sessão",
+    avatarOptions: {
+      pixelated: "Pixelizado",
+      gradient: "Gradiente",
+      brutalist: "Brutalista",
+    },
+    showFlavorIcons: "Mostrar ícones de provedores de IA",
+    showFlavorIconsDescription:
+      "Exibir ícones do provedor de IA nos avatares de sessão",
+    compactSessionView: "Visualização compacta de sessões",
+    compactSessionViewDescription:
+      "Mostrar sessões ativas em um layout mais compacto",
+  },
+
+  settingsFeatures: {
+    // Features settings screen
+    experiments: "Experimentos",
+    experimentsDescription:
+      "Ative recursos experimentais que ainda estão em desenvolvimento. Estes recursos podem ser instáveis ou mudar sem aviso.",
+    experimentalFeatures: "Recursos experimentais",
+    experimentalFeaturesEnabled: "Recursos experimentais ativados",
+    experimentalFeaturesDisabled: "Usando apenas recursos estáveis",
+    experimentalOptions: "Opções experimentais",
+    experimentalOptionsDescription:
+      "Escolha quais recursos experimentais estão ativados.",
+    expAutomations: "Automations",
+    expAutomationsSubtitle: "Enable automations UI surfaces and scheduling",
+    expExecutionRuns: "Execution runs",
+    expExecutionRunsSubtitle:
+      "Enable execution runs (sub-agents / reviews) control plane surfaces",
+    expUsageReporting: "Usage reporting",
+    expUsageReportingSubtitle: "Enable usage and token reporting screens",
+    expScmOperations: "Operações de controle de versão",
+    expScmOperationsSubtitle:
+      "Habilitar operações de escrita experimentais de controle de versão (stage/commit/push/pull)",
+    expFilesReviewComments: "File review comments",
+    expFilesReviewCommentsSubtitle:
+      "Add line-level review comments from file and diff views, then send them as a structured message",
+    expFilesDiffSyntaxHighlighting: "Diff syntax highlighting",
+    expFilesDiffSyntaxHighlightingSubtitle:
+      "Enable syntax highlighting in diff and code views (with performance limits)",
+    expFilesAdvancedSyntaxHighlighting: "Advanced syntax highlighting",
+    expFilesAdvancedSyntaxHighlightingSubtitle:
+      "Use heavier, higher-fidelity syntax highlighting (web only, may be slower)",
+    expFilesEditor: "Embedded file editor",
+    expFilesEditorSubtitle:
+      "Enable editing files directly from the file browser (Monaco on web/desktop, CodeMirror on native)",
+    expShowThinkingMessages: "Show thinking messages",
+    expShowThinkingMessagesSubtitle:
+      "Show assistant thinking/status messages in chat",
+    expSessionType: "Session type selector",
+    expSessionTypeSubtitle:
+      "Show the session type selector (simple vs worktree)",
+    expZen: "Zen",
+    expZenSubtitle: "Enable the Zen navigation entry",
+    expVoiceAuthFlow: "Voice auth flow",
+    expVoiceAuthFlowSubtitle:
+      "Use authenticated voice token flow (paywall-aware)",
+    expFriends: "Amigos",
+    expFriendsSubtitle: "Ative os recursos de amigos (aba Caixa de entrada e compartilhamento de sessões)",
+    webFeatures: "Recursos web",
+    webFeaturesDescription:
+      "Recursos disponíveis apenas na versão web do aplicativo.",
+    enterToSend: "Enter para enviar",
+    enterToSendEnabled:
+      "Pressione Enter para enviar (Shift+Enter para nova linha)",
+    enterToSendDisabled: "Enter insere uma nova linha",
+    historyScope: "Message history",
+    historyScopePerSession: "Cycle history per terminal",
+    historyScopeGlobal: "Cycle history across all terminals",
+    historyScopeModalTitle: "Message history",
+    historyScopeModalMessage:
+      "Choose whether ArrowUp/ArrowDown cycles through messages sent in this terminal only, or across all terminals.",
+    historyScopePerSessionOption: "Per terminal",
+    historyScopeGlobalOption: "Global",
+    commandPalette: "Paleta de comandos",
+    commandPaletteEnabled: "Pressione ⌘K para abrir",
+    commandPaletteDisabled: "Acesso rápido a comandos desativado",
+    markdownCopyV2: "Cópia de Markdown v2",
+    markdownCopyV2Subtitle: "Pressione e segure para abrir modal de cópia",
+    hideInactiveSessions: "Ocultar sessões inativas",
+    hideInactiveSessionsSubtitle: "Mostre apenas os chats ativos na sua lista",
+    groupInactiveSessionsByProject: "Agrupar sessões inativas por projeto",
+    groupInactiveSessionsByProjectSubtitle:
+      "Organize os chats inativos por projeto",
+    environmentBadge: "Environment badge",
+    environmentBadgeSubtitle:
+      "Show a small badge next to the Happier title indicating the current app environment",
+    enhancedSessionWizard: "Assistente de sessão aprimorado",
+    enhancedSessionWizardEnabled: "Lançador de sessão com perfil ativo",
+    enhancedSessionWizardDisabled: "Usando o lançador de sessão padrão",
+    profiles: "Perfis de IA",
+    profilesEnabled: "Seleção de perfis ativada",
+    profilesDisabled: "Seleção de perfis desativada",
+    pickerSearch: "Busca nos seletores",
+    pickerSearchSubtitle:
+      "Mostrar um campo de busca nos seletores de máquina e caminho",
+    machinePickerSearch: "Busca de máquinas",
+    machinePickerSearchSubtitle:
+      "Mostrar um campo de busca nos seletores de máquinas",
+    pathPickerSearch: "Busca de caminhos",
+    pathPickerSearchSubtitle:
+      "Mostrar um campo de busca nos seletores de caminhos",
+  },
+
+  errors: {
+    networkError: "Ocorreu um erro de rede",
+    serverError: "Ocorreu um erro do servidor",
+    unknownError: "Ocorreu um erro desconhecido",
+    connectionTimeout: "Tempo limite da conexão esgotado",
+    authenticationFailed: "Falha na autenticação",
+    permissionDenied: "Permissão negada",
+    fileNotFound: "Arquivo não encontrado",
+    invalidFormat: "Formato inválido",
+    operationFailed: "Operação falhou",
+    tryAgain: "Por favor, tente novamente",
+    contactSupport: "Entre em contato com o suporte se o problema persistir",
+    sessionNotFound: "Sessão não encontrada",
+    voiceSessionFailed: "Falha ao iniciar sessão de voz",
+    voiceServiceUnavailable: "Serviço de voz temporariamente indisponível",
+    voiceAlreadyStarting: "A voz já está iniciando em outra sessão",
+    oauthInitializationFailed: "Falha ao inicializar o fluxo OAuth",
+    tokenStorageFailed: "Falha ao armazenar tokens de autenticação",
+    oauthStateMismatch:
+      "Falha na validação de segurança. Por favor, tente novamente",
+    providerAlreadyLinked: ({ provider }: { provider: string }) =>
+      `${provider} já está vinculado a uma conta Happier existente. Para entrar neste dispositivo, vincule-o a partir de um dispositivo onde já esteja conectado.`,
+    tokenExchangeFailed: "Falha ao trocar código de autorização",
+    oauthAuthorizationDenied: "A autorização foi negada",
+    webViewLoadFailed: "Falha ao carregar a página de autenticação",
+    failedToLoadProfile: "Falha ao carregar o perfil do usuário",
+    userNotFound: "Usuário não encontrado",
+    sessionDeleted: "A sessão não está disponível",
+    sessionDeletedDescription:
+      "Ela pode ter sido excluída ou você pode não ter mais acesso.",
+
+    // Error functions with context
+    fieldError: ({ field, reason }: { field: string; reason: string }) =>
+      `${field}: ${reason}`,
+    validationError: ({
+      field,
+      min,
+      max,
+    }: {
+      field: string;
+      min: number;
+      max: number;
+    }) => `${field} deve estar entre ${min} e ${max}`,
+    retryIn: ({ seconds }: { seconds: number }) =>
+      `Tentar novamente em ${seconds} ${seconds === 1 ? "segundo" : "segundos"}`,
+    errorWithCode: ({
+      message,
+      code,
+    }: {
+      message: string;
+      code: number | string;
+    }) => `${message} (Erro ${code})`,
+    disconnectServiceFailed: ({ service }: { service: string }) =>
+      `Falha ao desconectar ${service}`,
+    connectServiceFailed: ({ service }: { service: string }) =>
+      `Falha ao conectar ${service}. Por favor, tente novamente.`,
+    failedToLoadFriends: "Falha ao carregar lista de amigos",
+    failedToAcceptRequest: "Falha ao aceitar solicitação de amizade",
+    failedToRejectRequest: "Falha ao rejeitar solicitação de amizade",
+    failedToRemoveFriend: "Falha ao remover amigo",
+    searchFailed: "A busca falhou. Por favor, tente novamente.",
+    failedToSendRequest: "Falha ao enviar solicitação de amizade",
+    failedToResumeSession: "Falha ao retomar a sessão",
+    failedToSendMessage: "Falha ao enviar a mensagem",
+    failedToSwitchControl: "Falha ao alternar o modo de controle",
+    cannotShareWithSelf: "Não é possível compartilhar consigo mesmo",
+    canOnlyShareWithFriends: "Só é possível compartilhar com amigos",
+    shareNotFound: "Compartilhamento não encontrado",
+    publicShareNotFound: "Link público não encontrado ou expirado",
+    consentRequired: "Consentimento necessário para acesso",
+    maxUsesReached: "Máximo de usos atingido",
+    invalidShareLink: "Link de compartilhamento inválido ou expirado",
+    missingPermissionId: "Falta o id de permissão",
+    codexResumeNotInstalledTitle:
+      "O Codex resume não está instalado nesta máquina",
+    codexResumeNotInstalledMessage:
+      "Para retomar uma conversa do Codex, instale o servidor de retomada do Codex na máquina de destino (Detalhes da máquina → Retomada do Codex).",
+    codexAcpNotInstalledTitle: "O Codex ACP não está instalado nesta máquina",
+    codexAcpNotInstalledMessage:
+      "Para usar o experimento Codex ACP, instale o codex-acp na máquina de destino (Detalhes da máquina → Codex ACP) ou desative o experimento.",
+  },
+
+  deps: {
+    installNotSupported:
+      "Atualize o Happier CLI para instalar esta dependência.",
+    installFailed: "Falha na instalação",
+    installed: "Instalado",
+    installLog: ({ path }: { path: string }) => `Log de instalação: ${path}`,
+    installable: {
+      codexResume: {
+        title: "Servidor de retomada do Codex",
+        installSpecTitle: "Fonte de instalação do Codex resume",
+      },
+      codexAcp: {
+        title: "Adaptador Codex ACP",
+        installSpecTitle: "Fonte de instalação do Codex ACP",
+      },
+      installSpecDescription:
+        "Especificação NPM/Git/arquivo passada para `npm install` (experimental). Deixe em branco para usar o padrão do daemon.",
+    },
+    ui: {
+      notAvailable: "Indisponível",
+      notAvailableUpdateCli: "Indisponível (atualize o CLI)",
+      errorRefresh: "Erro (atualizar)",
+      installed: "Instalado",
+      installedWithVersion: ({ version }: { version: string }) =>
+        `Instalado (v${version})`,
+      installedUpdateAvailable: ({
+        installedVersion,
+        latestVersion,
+      }: {
+        installedVersion: string;
+        latestVersion: string;
+      }) =>
+        `Instalado (v${installedVersion}) — atualização disponível (v${latestVersion})`,
+      notInstalled: "Não instalado",
+      latest: "Última",
+      latestSubtitle: ({ version, tag }: { version: string; tag: string }) =>
+        `${version} (tag: ${tag})`,
+      registryCheck: "Verificação do registro",
+      registryCheckFailed: ({ error }: { error: string }) => `Falhou: ${error}`,
+      installSource: "Fonte de instalação",
+      installSourceDefault: "(padrão)",
+      installSpecPlaceholder:
+        "ex.: file:/caminho/para/pkg ou github:owner/repo#branch",
+      lastInstallLog: "Último log de instalação",
+      installLogTitle: "Log de instalação",
+    },
+  },
+
+  newSession: {
+    // Used by new-session screen and launch flows
+    title: "Iniciar nova sessão",
+    selectAiProfileTitle: "Selecionar perfil de IA",
+    selectAiProfileDescription:
+      "Selecione um perfil de IA para aplicar variáveis de ambiente e padrões à sua sessão.",
+    changeProfile: "Trocar perfil",
+    aiBackendSelectedByProfile:
+      "O backend de IA é selecionado pelo seu perfil. Para alterar, selecione um perfil diferente.",
+    selectAiBackendTitle: "Selecionar backend de IA",
+    aiBackendLimitedByProfileAndMachineClis:
+      "Limitado pelo perfil selecionado e pelos CLIs disponíveis nesta máquina.",
+    aiBackendSelectWhichAiRuns: "Selecione qual IA roda sua sessão.",
+    aiBackendNotCompatibleWithSelectedProfile:
+      "Não compatível com o perfil selecionado.",
+    aiBackendCliNotDetectedOnMachine: ({ cli }: { cli: string }) =>
+      `CLI do ${cli} não detectado nesta máquina.`,
+    selectMachineTitle: "Selecionar máquina",
+    selectMachineDescription: "Escolha onde esta sessão será executada.",
+    selectPathTitle: "Selecionar caminho",
+    selectWorkingDirectoryTitle: "Selecionar diretório de trabalho",
+    selectWorkingDirectoryDescription:
+      "Escolha a pasta usada para comandos e contexto.",
+    selectPermissionModeTitle: "Selecionar modo de permissões",
+    selectPermissionModeDescription:
+      "Controle o quão estritamente as ações exigem aprovação.",
+    selectModelTitle: "Selecionar modelo de IA",
+    selectModelDescription: "Escolha o modelo usado por esta sessão.",
+    selectSessionTypeTitle: "Selecionar tipo de sessão",
+    selectSessionTypeDescription:
+      "Escolha uma sessão simples ou uma vinculada a um worktree do Git.",
+    searchPathsPlaceholder: "Pesquisar caminhos...",
+    noMachinesFound:
+      "Nenhuma máquina encontrada. Inicie uma sessão Happier no seu computador primeiro.",
+    allMachinesOffline: "Todas as máquinas estão offline",
+    machineDetails: "Ver detalhes da máquina →",
+    directoryDoesNotExist: "Diretório não encontrado",
+    createDirectoryConfirm: ({ directory }: { directory: string }) =>
+      `O diretório ${directory} não existe. Deseja criá-lo?`,
+    sessionStarted: "Sessão iniciada",
+    sessionStartedMessage: "A sessão foi iniciada com sucesso.",
+    sessionSpawningFailed:
+      "Falha ao criar sessão - nenhum ID de sessão foi retornado.",
+    failedToStart:
+      "Falha ao iniciar sessão. Certifique-se de que o daemon está rodando na máquina de destino.",
+    sessionTimeout:
+      "Tempo limite de inicialização da sessão esgotado. A máquina pode estar lenta ou o daemon pode não estar respondendo.",
+    notConnectedToServer:
+      "Não conectado ao servidor. Verifique sua conexão com a internet.",
+    startingSession: "Iniciando sessão...",
+    startNewSessionInFolder: "Nova sessão aqui",
+    noMachineSelected: "Por favor, selecione uma máquina para iniciar a sessão",
+    noPathSelected: "Por favor, selecione um diretório para iniciar a sessão",
+    machinePicker: {
+      searchPlaceholder: "Pesquisar máquinas...",
+      recentTitle: "Recentes",
+      favoritesTitle: "Favoritos",
+      allTitle: "Todas",
+      emptyMessage: "Nenhuma máquina disponível",
+    },
+    pathPicker: {
+      enterPathTitle: "Inserir caminho",
+      enterPathPlaceholder: "Insira um caminho...",
+      customPathTitle: "Caminho personalizado",
+      recentTitle: "Recentes",
+      favoritesTitle: "Favoritos",
+      suggestedTitle: "Sugeridos",
+      allTitle: "Todas",
+      emptyRecent: "Nenhum caminho recente",
+      emptyFavorites: "Nenhum caminho favorito",
+      emptySuggested: "Nenhum caminho sugerido",
+      emptyAll: "Nenhum caminho",
+    },
+    sessionType: {
+      title: "Tipo de sessão",
+      simple: "Simples",
+      worktree: "Árvore de trabalho",
+      comingSoon: "Em breve",
+    },
+    profileAvailability: {
+      requiresAgent: ({ agent }: { agent: string }) => `Requer ${agent}`,
+      cliNotDetected: ({ cli }: { cli: string }) =>
+        `CLI do ${cli} não detectado`,
+    },
+    cliBanners: {
+      cliNotDetectedTitle: ({ cli }: { cli: string }) =>
+        `CLI do ${cli} não detectado`,
+      dontShowFor: "Não mostrar este aviso para",
+      thisMachine: "esta máquina",
+      anyMachine: "qualquer máquina",
+      installCommand: ({ command }: { command: string }) =>
+        `Instalar: ${command} •`,
+      installCliIfAvailable: ({ cli }: { cli: string }) =>
+        `Instale o CLI do ${cli} se disponível •`,
+      viewInstallationGuide: "Ver guia de instalação →",
+      viewGeminiDocs: "Ver docs do Gemini →",
+    },
+    worktree: {
+      creating: ({ name }: { name: string }) => `Criando worktree '${name}'...`,
+      notGitRepo: "Worktrees requerem um repositório git",
+      failed: ({ error }: { error: string }) =>
+        `Falha ao criar worktree: ${error}`,
+      success: "Worktree criado com sucesso",
+    },
+    resume: {
+      title: "Retomar sessão",
+      optional: "Retomar: Opcional",
+      pickerTitle: "Retomar sessão",
+      subtitle: ({ agent }: { agent: string }) =>
+        `Cole um ID de sessão do ${agent} para retomar`,
+      placeholder: ({ agent }: { agent: string }) =>
+        `Cole o ID de sessão do ${agent}…`,
+      paste: "Colar",
+      save: "Salvar",
+      clearAndRemove: "Limpar",
+      helpText:
+        "Você pode encontrar os IDs de sessão na tela de informações da sessão.",
+      cannotApplyBody:
+        "Este ID de retomada não pode ser aplicado agora. O Happier iniciará uma nova sessão em vez disso.",
+    },
+    codexResumeBanner: {
+      title: "Codex resume",
+      updateAvailable: "Atualização disponível",
+      systemCodexVersion: ({ version }: { version: string }) =>
+        `Codex do sistema: ${version}`,
+      resumeServerVersion: ({ version }: { version: string }) =>
+        `Servidor do Codex resume: ${version}`,
+      notInstalled: "não instalado",
+      latestVersion: ({ version }: { version: string }) =>
+        `(mais recente ${version})`,
+      registryCheckFailed: ({ error }: { error: string }) =>
+        `Falha na verificação do registro: ${error}`,
+      install: "Instalar",
+      update: "Atualizar",
+      reinstall: "Reinstalar",
+    },
+    codexResumeInstallModal: {
+      installTitle: "Instalar Codex resume?",
+      updateTitle: "Atualizar Codex resume?",
+      reinstallTitle: "Reinstalar Codex resume?",
+      description:
+        "Isso instala um wrapper experimental de servidor MCP do Codex usado apenas para operações de retomada.",
+    },
+    codexAcpBanner: {
+      title: "Codex ACP",
+      install: "Instalar",
+      update: "Atualizar",
+      reinstall: "Reinstalar",
+    },
+    codexAcpInstallModal: {
+      installTitle: "Instalar Codex ACP?",
+      updateTitle: "Atualizar Codex ACP?",
+      reinstallTitle: "Reinstalar Codex ACP?",
+      description:
+        "Isso instala um adaptador ACP experimental em torno do Codex que oferece suporte a carregar/retomar threads.",
+    },
+  },
+
+  sessionHistory: {
+    // Used by session history screen
+    title: "Histórico de sessões",
+    empty: "Nenhuma sessão encontrada",
+    today: "Hoje",
+    yesterday: "Ontem",
+    daysAgo: ({ count }: { count: number }) =>
+      `há ${count} ${count === 1 ? "dia" : "dias"}`,
+    viewAll: "Ver todas as sessões",
+  },
+
+  session: {
+    inputPlaceholder: "Digite uma mensagem ...",
+    resuming: "Retomando...",
+    resumeFailed: "Falha ao retomar a sessão",
+    resumeSupportNoteChecking:
+      "Nota: o Happier ainda está verificando se esta máquina pode retomar a sessão do provedor.",
+    resumeSupportNoteUnverified:
+      "Nota: o Happier não conseguiu verificar o suporte de retomada para esta máquina.",
+    resumeSupportDetails: {
+      cliNotDetected: "CLI não detectado na máquina.",
+      capabilityProbeFailed: "Falha na verificação de capacidades.",
+      acpProbeFailed: "Falha na verificação ACP.",
+      loadSessionFalse: "O agente não oferece suporte para carregar sessões.",
+    },
+    inactiveResumable: "Inativa (retomável)",
+    inactiveMachineOffline: "Inativa (máquina offline)",
+    inactiveNotResumable: "Inativa",
+    inactiveNotResumableNoticeTitle: "Esta sessão não pode ser retomada",
+    inactiveNotResumableNoticeBody: ({ provider }: { provider: string }) =>
+      `Esta sessão terminou e não pode ser retomada porque ${provider} não oferece suporte para restaurar o contexto aqui. Inicie uma nova sessão para continuar.`,
+    machineOfflineNoticeTitle: "A máquina está offline",
+    machineOfflineNoticeBody: ({ machine }: { machine: string }) =>
+      `“${machine}” está offline, então o Happier ainda não consegue retomar esta sessão. Traga a máquina de volta online para continuar.`,
+    machineOfflineCannotResume:
+      "A máquina está offline. Traga-a de volta online para retomar esta sessão.",
+
+    sharing: {
+      title: "Compartilhamento",
+      directSharing: "Compartilhamento direto",
+      addShare: "Compartilhar com um amigo",
+      accessLevel: "Nível de acesso",
+      shareWith: "Compartilhar com",
+      sharedWith: "Compartilhado com",
+      noShares: "Não compartilhado",
+      viewOnly: "Somente visualizar",
+      viewOnlyDescription: "Pode ver a sessão, mas não enviar mensagens.",
+      viewOnlyMode: "Somente visualização (sessão compartilhada)",
+      noEditPermission: "Você tem acesso somente leitura a esta sessão.",
+      canEdit: "Pode editar",
+      canEditDescription: "Pode enviar mensagens.",
+      canManage: "Pode gerenciar",
+      canManageDescription: "Pode gerenciar o compartilhamento.",
+      manageSharingDenied:
+        "Você não tem permissão para gerenciar as configurações de compartilhamento desta sessão.",
+      stopSharing: "Parar de compartilhar",
+      recipientMissingKeys:
+        "Este usuário ainda não registrou chaves de criptografia.",
+      permissionApprovals: "Pode aprovar permissões",
+      allowPermissionApprovals: "Permitir aprovar permissões",
+      allowPermissionApprovalsDescription:
+        "Permite que este usuário aprove solicitações de permissão e execute ferramentas na sua máquina.",
+      permissionApprovalsDisabledTitle:
+        "A aprovação de permissões está desativada",
+      permissionApprovalsDisabledPublic:
+        "Links públicos são somente leitura. Não é possível aprovar permissões.",
+      permissionApprovalsDisabledReadOnly:
+        "Você tem acesso somente leitura a esta sessão.",
+      permissionApprovalsDisabledNotGranted:
+        "O proprietário não permitiu que você aprovasse permissões para esta sessão.",
+      publicReadOnlyTitle: "Link público (somente leitura)",
+      publicReadOnlyBody:
+        "Esta sessão é compartilhada por link público. Você pode ver mensagens e saídas das ferramentas, mas não pode interagir nem aprovar permissões.",
+
+      publicLink: "Link público",
+      publicLinkActive: "Link público ativo",
+      publicLinkDescription:
+        "Crie um link para que qualquer pessoa possa ver esta sessão.",
+      createPublicLink: "Criar link público",
+      regeneratePublicLink: "Regenerar link público",
+      deletePublicLink: "Excluir link público",
+      linkToken: "Token do link",
+      tokenNotRecoverable: "Token indisponível",
+      tokenNotRecoverableDescription:
+        "Por segurança, tokens de link público são armazenados como hash e não podem ser recuperados. Regere o link para criar um novo token.",
+
+      expiresIn: "Expira em",
+      expiresOn: "Expira em",
+      days7: "7 dias",
+      days30: "30 dias",
+      never: "Nunca",
+
+      maxUsesLabel: "Máximo de usos",
+      unlimited: "Ilimitado",
+      uses10: "10 usos",
+      uses50: "50 usos",
+      usageCount: "Contagem de usos",
+      usageCountWithMax: ({ used, max }: { used: number; max: number }) =>
+        `${used}/${max} usos`,
+      usageCountUnlimited: ({ used }: { used: number }) => `${used} usos`,
+
+      requireConsent: "Exigir consentimento",
+      requireConsentDescription:
+        "Peça consentimento antes de registrar o acesso.",
+      consentRequired: "Consentimento exigido",
+      consentDescription:
+        "Este link exige seu consentimento para registrar seu IP e agente de usuário.",
+      acceptAndView: "Aceitar e visualizar",
+      sharedBy: ({ name }: { name: string }) => `Compartilhado por ${name}`,
+
+      shareNotFound: "Link de compartilhamento não encontrado ou expirado",
+      failedToDecrypt: "Falha ao descriptografar a sessão",
+      noMessages: "Ainda não há mensagens",
+      session: "Sessão",
+    },
+  },
+
+  commandPalette: {
+    placeholder: "Digite um comando ou pesquise...",
+    noCommandsFound: "Nenhum comando encontrado",
+  },
+
+  commandView: {
+    completedWithNoOutput: "[Comando concluído sem saída]",
+  },
+
+  voiceAssistant: {
+    connecting: "Conectando...",
+    active: "Assistente de voz ativo",
+    connectionError: "Erro de conexão",
+    label: "Assistente de voz",
+    tapToEnd: "Toque para encerrar",
+  },
+
+  voiceSurface: {
+    start: "Iniciar",
+    stop: "Parar",
+    selectSessionToStart: "Selecione uma sessão para iniciar a voz",
+    targetSession: "Sessão alvo",
+    noTarget: "Nenhuma sessão selecionada",
+    clearTarget: "Limpar alvo",
+  },
+
+  voiceActivity: {
+    title: "Atividade de voz",
+    empty: "Nenhuma atividade de voz ainda.",
+    clear: "Limpar",
+  },
+
+  server: {
+    // Used by Server Configuration screen (app/(app)/server.tsx)
+    serverConfiguration: "Configuração do servidor",
+    enterServerUrl: "Por favor, insira uma URL do servidor",
+    notValidHappyServer: "Não é um servidor Happier válido",
+    changeServer: "Alterar servidor",
+    continueWithServer: "Continuar com este servidor?",
+    resetToDefault: "Redefinir para padrão",
+    resetServerDefault: "Redefinir servidor para padrão?",
+    validating: "Validando...",
+    validatingServer: "Validando servidor...",
+    serverReturnedError: "O servidor retornou um erro",
+    failedToConnectToServer: "Falha ao conectar com o servidor",
+    currentlyUsingCustomServer: "Atualmente usando servidor personalizado",
+    customServerUrlLabel: "URL do servidor personalizado",
+    advancedFeatureFooter:
+      "Este é um recurso avançado. Altere o servidor apenas se souber o que está fazendo. Você precisará sair e entrar novamente após alterar servidores.",
+    useThisServer: "Usar este servidor",
+    autoConfigHint:
+      "Se você está hospedando: configure o servidor primeiro, depois entre (ou crie uma conta) e, por fim, conecte seu terminal.",
+    renameServer: "Rename server",
+    renameServerPrompt: "Enter a new name for this server.",
+    renameServerGroup: "Rename server group",
+    renameServerGroupPrompt: "Enter a new name for this server group.",
+    serverNamePlaceholder: "Server name",
+    cannotRenameCloud: "You can’t rename the cloud server.",
+    removeServer: "Remove server",
+    removeServerConfirm: ({ name }: { name: string }) =>
+      `Remove "${name}" from saved servers?`,
+    removeServerGroup: "Remove server group",
+    removeServerGroupConfirm: ({ name }: { name: string }) =>
+      `Remove "${name}" from saved server groups?`,
+    cannotRemoveCloud: "You can’t remove the cloud server.",
+    signOutThisServer: "Also sign out from this server?",
+    signOutThisServerPrompt:
+      "Stored credentials were found for this server on this device.",
+    savedServersTitle: "Saved servers",
+    signedIn: "Signed in",
+    signedOut: "Signed out",
+    authStatusUnknown: "Auth status unknown",
+    switchToServer: "Switch to this server",
+    active: "Active",
+    default: "Default",
+    addServerTitle: "Add server",
+    switchForThisTab: "Switch for this tab",
+    makeDefaultOnDevice: "Make default on this device",
+    serverNameLabel: "Server name",
+    addAndUse: "Add and use",
+    addTargetsTitle: "Add",
+    addServerSubtitle: "Add a new server and switch to it",
+    addServerGroupTitle: "Add server group",
+    addServerGroupSubtitle: "Create a reusable group of servers",
+    serverGroupNameLabel: "Group name",
+    serverGroupNamePlaceholder: "My server group",
+    serverGroupServersLabel: "Servers",
+    saveServerGroup: "Save group",
+    serverGroupMustHaveServer: "A server group must include at least one server.",
+  },
+
+  sessionInfo: {
+    // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
+    killSession: "Encerrar sessão",
+    killSessionConfirm: "Tem certeza de que deseja encerrar esta sessão?",
+    archiveSession: "Arquivar sessão",
+    archiveSessionConfirm: "Tem certeza de que deseja arquivar esta sessão?",
+    happySessionIdCopied:
+      "ID da sessão Happier copiado para a área de transferência",
+    failedToCopySessionId: "Falha ao copiar ID da sessão Happier",
+    happySessionId: "ID da sessão Happier",
+    claudeCodeSessionId: "ID da sessão Claude Code",
+    claudeCodeSessionIdCopied:
+      "ID da sessão Claude Code copiado para a área de transferência",
+    aiProfile: "Perfil de IA",
+    aiProvider: "Provedor de IA",
+    failedToCopyClaudeCodeSessionId: "Falha ao copiar ID da sessão Claude Code",
+    codexSessionId: "ID da sessão Codex",
+    codexSessionIdCopied:
+      "ID da sessão Codex copiado para a área de transferência",
+    failedToCopyCodexSessionId: "Falha ao copiar ID da sessão Codex",
+    opencodeSessionId: "ID da sessão OpenCode",
+    opencodeSessionIdCopied:
+      "ID da sessão OpenCode copiado para a área de transferência",
+    auggieSessionId: "ID da sessão Auggie",
+    auggieSessionIdCopied:
+      "ID da sessão Auggie copiado para a área de transferência",
+    geminiSessionId: "ID da sessão Gemini",
+    geminiSessionIdCopied:
+      "ID da sessão Gemini copiado para a área de transferência",
+    qwenSessionId: "ID da sessão Qwen Code",
+    qwenSessionIdCopied:
+      "ID da sessão Qwen Code copiado para a área de transferência",
+    kimiSessionId: "ID da sessão Kimi",
+    kimiSessionIdCopied:
+      "ID da sessão Kimi copiado para a área de transferência",
+    kiloSessionId: "ID da sessão Kilo",
+    kiloSessionIdCopied:
+      "ID da sessão Kilo copiado para a área de transferência",
+    piSessionId: "ID da sessão Pi",
+    piSessionIdCopied: "ID da sessão Pi copiado para a área de transferência",
+    metadataCopied: "Metadados copiados para a área de transferência",
+    failedToCopyMetadata: "Falha ao copiar metadados",
+    failedToKillSession: "Falha ao encerrar sessão",
+    failedToArchiveSession: "Falha ao arquivar sessão",
+    connectionStatus: "Status da conexão",
+    created: "Criado",
+    lastUpdated: "Última atualização",
+    sequence: "Sequência",
+    quickActions: "Ações rápidas",
+    copyResumeCommand: "Copiar comando de retomada",
+    viewMachine: "Ver máquina",
+    viewMachineSubtitle: "Ver detalhes da máquina e sessões",
+    killSessionSubtitle: "Encerrar imediatamente a sessão",
+    archiveSessionSubtitle: "Arquivar esta sessão e pará-la",
+    metadata: "Metadados",
+    host: "Host",
+    path: "Caminho",
+    operatingSystem: "Sistema operacional",
+    processId: "ID do processo",
+    happyHome: "Diretório Happier",
+    attachFromTerminal: "Anexar pelo terminal",
+    tmuxTarget: "Alvo do tmux",
+    tmuxFallback: "Fallback do tmux",
+    copyMetadata: "Copiar metadados",
+    agentState: "Estado do agente",
+    rawJsonDevMode: "JSON bruto (modo dev)",
+    sessionStatus: "Status da sessão",
+    fullSessionObject: "Objeto completo da sessão",
+    controlledByUser: "Controlado pelo usuário",
+    pendingRequests: "Solicitações pendentes",
+    activity: "Atividade",
+    thinking: "Pensando",
+    thinkingSince: "Pensando desde",
+    thinkingLevel: "Nível de pensamento",
+    cliVersion: "Versão do CLI",
+    cliVersionOutdated: "Atualização do CLI necessária",
+    cliVersionOutdatedMessage: ({
+      currentVersion,
+      requiredVersion,
+    }: {
+      currentVersion: string;
+      requiredVersion: string;
+    }) =>
+      `Versão ${currentVersion} instalada. Atualize para ${requiredVersion} ou posterior`,
+    updateCliInstructions:
+      "Por favor execute npm install -g @happier-dev/cli@latest",
+    deleteSession: "Excluir sessão",
+    deleteSessionSubtitle: "Remover permanentemente esta sessão",
+    deleteSessionConfirm: "Excluir sessão permanentemente?",
+    deleteSessionWarning:
+      "Esta ação não pode ser desfeita. Todas as mensagens e dados associados a esta sessão serão excluídos permanentemente.",
+    failedToDeleteSession: "Falha ao excluir sessão",
+    sessionDeleted: "Sessão excluída com sucesso",
+    manageSharing: "Gerenciar compartilhamento",
+    manageSharingSubtitle:
+      "Compartilhe esta sessão com amigos ou crie um link público",
+    renameSession: "Renomear Sessão",
+    renameSessionSubtitle: "Alterar o nome de exibição desta sessão",
+    renameSessionPlaceholder: "Digite o nome da sessão...",
+    failedToRenameSession: "Falha ao renomear sessão",
+    sessionRenamed: "Sessão renomeada com sucesso",
+  },
+
+  components: {
+    emptyMainScreen: {
+      // Used by EmptyMainScreen component
+      readyToCode: "Pronto para programar?",
+      installCli: "Instale o Happier CLI",
+      runIt: "Execute",
+      scanQrCode: "Escaneie o código QR",
+      openCamera: "Abrir câmera",
+      installCommand: "$ npm i -g @happier-dev/cli",
+      runCommand: "$ happier",
+    },
+    emptyMessages: {
+      noMessagesYet: "Nenhuma mensagem ainda",
+      created: ({ time }: { time: string }) => `Criado ${time}`,
+    },
+    emptySessionsTablet: {
+      noActiveSessions: "Nenhuma sessão ativa",
+      startNewSessionDescription:
+        "Inicie uma nova sessão em qualquer uma das suas máquinas conectadas.",
+      startNewSessionButton: "Iniciar nova sessão",
+      openTerminalToStart:
+        "Abra um novo terminal no computador para iniciar uma sessão.",
+    },
+  },
+
+  zen: {
+    title: "Zen",
+    add: {
+      placeholder: "O que precisa ser feito?",
+    },
+    home: {
+      noTasksYet: "Ainda não há tarefas. Toque em + para adicionar.",
+    },
+    view: {
+      workOnTask: "Trabalhar na tarefa",
+      clarify: "Esclarecer",
+      delete: "Excluir",
+      linkedSessions: "Sessões vinculadas",
+      tapTaskTextToEdit: "Toque no texto da tarefa para editar",
+    },
+  },
+
+  agentInput: {
+    envVars: {
+      title: "Vars env",
+      titleWithCount: ({ count }: { count: number }) => `Vars env (${count})`,
+    },
+    resumeChip: {
+      withId: ({ title, id }: { title: string; id: string }) =>
+        `${title}: ${id}`,
+      withIdTruncated: ({
+        title,
+        prefix,
+        suffix,
+      }: {
+        title: string;
+        prefix: string;
+        suffix: string;
+      }) => `${title}: ${prefix}…${suffix}`,
+    },
+    permissionMode: {
+      title: "MODO DE PERMISSÃO",
+      default: "Padrão",
+      readOnly: "Somente leitura",
+      acceptEdits: "Aceitar edições",
+      safeYolo: "YOLO seguro",
+      yolo: "YOLO",
+      plan: "Modo de planejamento",
+      bypassPermissions: "Modo Yolo",
+      badgeAccept: "Aceitar",
+      badgePlan: "Plano",
+      badgeReadOnly: "Somente leitura",
+      badgeSafeYolo: "YOLO seguro",
+      badgeYolo: "YOLO",
+      badgeAcceptAllEdits: "Aceitar todas as edições",
+      badgeBypassAllPermissions: "Ignorar todas as permissões",
+      badgePlanMode: "Modo de planejamento",
+    },
+    agent: {
+      claude: "Claude",
+      codex: "Codex",
+      opencode: "OpenCode",
+      gemini: "Gemini",
+      auggie: "Auggie",
+      qwen: "Qwen Code",
+      kimi: "Kimi",
+      kilo: "Kilo",
+      pi: "Pi",
+    },
+    auggieIndexingChip: {
+      on: "Indexing on",
+      off: "Indexing off",
+    },
+    model: {
+      title: "MODELO",
+      configureInCli: "Configurar modelos nas configurações do CLI",
+    },
+    codexPermissionMode: {
+      title: "MODO DE PERMISSÃO CODEX",
+      default: "Configurações do CLI",
+      plan: "Modo de planejamento",
+      readOnly: "Modo somente leitura",
+      safeYolo: "YOLO seguro",
+      yolo: "YOLO",
+      badgePlan: "Plano",
+      badgeReadOnly: "Somente leitura",
+      badgeSafeYolo: "YOLO seguro",
+      badgeYolo: "YOLO",
+    },
+    codexModel: {
+      title: "MODELO CODEX",
+      gpt5CodexLow: "gpt-5-codex baixo",
+      gpt5CodexMedium: "gpt-5-codex médio",
+      gpt5CodexHigh: "gpt-5-codex alto",
+      gpt5Minimal: "GPT-5 Mínimo",
+      gpt5Low: "GPT-5 Baixo",
+      gpt5Medium: "GPT-5 Médio",
+      gpt5High: "GPT-5 Alto",
+    },
+    geminiPermissionMode: {
+      title: "MODO DE PERMISSÃO GEMINI",
+      default: "Padrão",
+      readOnly: "Somente leitura",
+      safeYolo: "YOLO seguro",
+      yolo: "YOLO",
+      badgeReadOnly: "Somente leitura",
+      badgeSafeYolo: "YOLO seguro",
+      badgeYolo: "YOLO",
+    },
+    geminiModel: {
+      title: "MODELO GEMINI",
+      gemini25Pro: {
+        label: "Gemini 2.5 Pro",
+        description: "Mais capaz",
+      },
+      gemini25Flash: {
+        label: "Gemini 2.5 Flash",
+        description: "Rápido e eficiente",
+      },
+      gemini25FlashLite: {
+        label: "Gemini 2.5 Flash Lite",
+        description: "Mais rápido",
+      },
+    },
+    context: {
+      remaining: ({ percent }: { percent: number }) => `${percent}% restante`,
+    },
+    suggestion: {
+      fileLabel: "ARQUIVO",
+      folderLabel: "PASTA",
+    },
+    actionMenu: {
+      title: "AÇÕES",
+      files: "Arquivos",
+      stop: "Parar",
+    },
+    noMachinesAvailable: "Sem máquinas",
+  },
+
+  machineLauncher: {
+    showLess: "Mostrar menos",
+    showAll: ({ count }: { count: number }) =>
+      `Mostrar todos (${count} caminhos)`,
+    enterCustomPath: "Inserir caminho personalizado",
+    offlineUnableToSpawn: "Não é possível criar nova sessão, você está offline",
+  },
+
+  sidebar: {
+    sessionsTitle: "Happier",
+  },
+
+  toolView: {
+    open: "Abrir detalhes",
+    expand: "Expandir/recolher",
+    input: "Entrada",
+    output: "Saída",
+  },
+
+  tools: {
+    fullView: {
+      description: "Descrição",
+      inputParams: "Parâmetros de entrada",
+      output: "Saída",
+      error: "Erro",
+      completed: "Ferramenta concluída com sucesso",
+      noOutput: "Nenhuma saída foi produzida",
+      running: "Ferramenta está executando...",
+      debug: "Depuração",
+      show: "Mostrar",
+      hide: "Ocultar",
+      rawJsonDevMode: "JSON bruto (modo desenvolvedor)",
+    },
+    taskView: {
+      initializing: "Inicializando agente...",
+      moreTools: ({ count }: { count: number }) =>
+        `+${count} mais ${plural({ count, singular: "ferramenta", plural: "ferramentas" })}`,
+    },
+    multiEdit: {
+      editNumber: ({ index, total }: { index: number; total: number }) =>
+        `Edição ${index} de ${total}`,
+      replaceAll: "Substituir tudo",
+    },
+    names: {
+      task: "Tarefa",
+      terminal: "Terminal",
+      searchFiles: "Buscar arquivos",
+      search: "Buscar",
+      searchContent: "Buscar conteúdo",
+      listFiles: "Listar arquivos",
+      planProposal: "Proposta de plano",
+      readFile: "Ler arquivo",
+      editFile: "Editar arquivo",
+      writeFile: "Escrever arquivo",
+      fetchUrl: "Buscar URL",
+      readNotebook: "Ler notebook",
+      editNotebook: "Editar notebook",
+      todoList: "Lista de tarefas",
+      webSearch: "Busca web",
+      reasoning: "Raciocínio",
+      applyChanges: "Atualizar arquivo",
+      viewDiff: "Alterações do arquivo atual",
+      question: "Pergunta",
+      changeTitle: "Alterar título",
+    },
+    geminiExecute: {
+      cwd: ({ cwd }: { cwd: string }) => `📁 ${cwd}`,
+    },
+    desc: {
+      terminalCmd: ({ cmd }: { cmd: string }) => `Terminal(cmd: ${cmd})`,
+      searchPattern: ({ pattern }: { pattern: string }) =>
+        `Buscar(padrão: ${pattern})`,
+      searchPath: ({ basename }: { basename: string }) =>
+        `Buscar(caminho: ${basename})`,
+      fetchUrlHost: ({ host }: { host: string }) => `Buscar URL(url: ${host})`,
+      editNotebookMode: ({ path, mode }: { path: string; mode: string }) =>
+        `Editar notebook(arquivo: ${path}, modo: ${mode})`,
+      todoListCount: ({ count }: { count: number }) =>
+        `Lista de tarefas(quantidade: ${count})`,
+      webSearchQuery: ({ query }: { query: string }) =>
+        `Busca web(consulta: ${query})`,
+      grepPattern: ({ pattern }: { pattern: string }) =>
+        `grep(padrão: ${pattern})`,
+      multiEditEdits: ({ path, count }: { path: string; count: number }) =>
+        `${path} (${count} edições)`,
+      readingFile: ({ file }: { file: string }) => `Lendo ${file}`,
+      writingFile: ({ file }: { file: string }) => `Escrevendo ${file}`,
+      modifyingFile: ({ file }: { file: string }) => `Modificando ${file}`,
+      modifyingFiles: ({ count }: { count: number }) =>
+        `Modificando ${count} arquivos`,
+      modifyingMultipleFiles: ({
+        file,
+        count,
+      }: {
+        file: string;
+        count: number;
+      }) => `${file} e ${count} mais`,
+      showingDiff: "Mostrando alterações",
+    },
+    askUserQuestion: {
+      submit: "Enviar resposta",
+      multipleQuestions: ({ count }: { count: number }) =>
+        `${count} ${plural({ count, singular: "pergunta", plural: "perguntas" })}`,
+      other: "Outro",
+      otherDescription: "Digite sua própria resposta",
+      otherPlaceholder: "Digite sua resposta...",
+    },
+    exitPlanMode: {
+      approve: "Aprovar plano",
+      reject: "Rejeitar",
+      requestChanges: "Solicitar alterações",
+      requestChangesPlaceholder:
+        "Diga ao Claude o que você quer mudar neste plano…",
+      requestChangesSend: "Enviar feedback",
+      requestChangesEmpty: "Escreva o que você quer mudar.",
+      requestChangesFailed: "Falha ao solicitar alterações. Tente novamente.",
+      responded: "Resposta enviada",
+      approvalMessage:
+        "Aprovo este plano. Por favor, prossiga com a implementação.",
+      rejectionMessage:
+        "Não aprovo este plano. Por favor, revise-o ou pergunte quais alterações eu gostaria.",
+    },
+  },
+
+  files: {
+    searchPlaceholder: "Buscar arquivos...",
+    detachedHead: "HEAD desanexado",
+    summary: ({ staged, unstaged }: { staged: number; unstaged: number }) =>
+      `${staged} preparados • ${unstaged} não preparados`,
+    repositoryChangedFiles: ({ count }: { count: number }) =>
+      `Repository changed files (${count})`,
+    sessionAttributedChanges: ({ count }: { count: number }) =>
+      `Session-attributed changes (${count})`,
+    otherRepositoryChanges: ({ count }: { count: number }) =>
+      `Other repository changes (${count})`,
+    attributionReliabilityHigh:
+      "Best effort attribution. Repository view remains the source of truth.",
+    attributionReliabilityLimited:
+      "Reliability limited: multiple sessions are active for this repository. Showing direct attribution only.",
+    attributionLegendFull:
+      "direct = from this session operations, inferred = snapshot-based attribution",
+    attributionLegendDirectOnly: "direct = from this session operations",
+    inferredSuppressed: ({ count }: { count: number }) =>
+      `${count} inferred file${count === 1 ? "" : "s"} kept in repository-only changes.`,
+    noSessionAttributedChanges:
+      "No session-attributed changes currently detected.",
+    notRepo: "Não é um repositório de controle de versão",
+    notUnderSourceControl: "Este diretório não está sob controle de versão",
+    searching: "Buscando arquivos...",
+	    noFilesFound: "Nenhum arquivo encontrado",
+	    noFilesInProject: "Nenhum arquivo no projeto",
+	    repositoryFolderLoadFailed: "Não foi possível carregar a pasta",
+	    repositoryCollapseAll: "Recolher tudo",
+	    reviewFilterPlaceholder: "Filtrar arquivos...",
+	    reviewNoMatches: "Sem correspondências",
+	    reviewLargeDiffOneAtATime: "Diff grande detectado; mostrando um arquivo por vez.",
+	    reviewDiffRequestFailed: "Não foi possível carregar o diff",
+	    reviewUnableToLoadDiff: "Não foi possível carregar o diff",
+	    tryDifferentTerm: "Tente um termo de busca diferente",
+	    searchResults: ({ count }: { count: number }) =>
+	      `Resultados da busca (${count})`,
+    projectRoot: "Raiz do projeto",
+    stagedChanges: ({ count }: { count: number }) =>
+      `Alterações preparadas (${count})`,
+    unstagedChanges: ({ count }: { count: number }) =>
+      `Alterações não preparadas (${count})`,
+    // File viewer strings
+    loadingFile: ({ fileName }: { fileName: string }) =>
+      `Carregando ${fileName}...`,
+    binaryFile: "Arquivo binário",
+    cannotDisplayBinary: "Não é possível exibir o conteúdo do arquivo binário",
+    diff: "Diferenças",
+    file: "Arquivo",
+    fileEmpty: "Arquivo está vazio",
+    noChanges: "Nenhuma alteração para exibir",
+  },
+
+  settingsSession: {
+    messageSending: {
+      title: "Message sending",
+      footer:
+        "Controls what happens when you send a message while the agent is running.",
+      queueInAgentTitle: "Queue in agent (current)",
+      queueInAgentSubtitle:
+        "Write to transcript immediately; agent processes when ready.",
+      interruptTitle: "Interrupt & send",
+      interruptSubtitle: "Abort current turn, then send immediately.",
+      pendingTitle: "Pending until ready",
+      pendingSubtitle:
+        "Keep messages in a pending queue; agent pulls when ready.",
+      busySteerPolicyTitle: "When the agent is busy (steer-capable)",
+      busySteerPolicyFooter:
+        "If the agent supports in-flight steering, choose whether messages steer immediately or go to Pending first.",
+      busySteerPolicy: {
+        steerImmediatelyTitle: "Steer immediately",
+        steerImmediatelySubtitle:
+          "Send right away and steer the current turn (no interrupt).",
+        queueForReviewTitle: "Queue in Pending",
+        queueForReviewSubtitle:
+          "Put messages into Pending first; send later using “Steer now”.",
+      },
+    },
+    toolRendering: {
+      title: "Tool rendering",
+      footer:
+        "Controls how much tool detail is shown in the session timeline. This is a UI preference; it does not change agent behavior.",
+      defaultToolDetailLevelTitle: "Default tool detail level",
+      localControlDefaultTitle: "Local-control default",
+      showDebugByDefaultTitle: "Show debug by default",
+      showDebugByDefaultSubtitle:
+        "Auto-expand raw tool payloads in the full tool view.",
+    },
+    toolDetailOverrides: {
+      title: "Tool detail overrides",
+      footer:
+        "Override the detail level for specific tools. Overrides apply to the canonical tool name (V2), after legacy normalization.",
+    },
+    defaultPermissions: {
+      title: "Default permissions",
+      footer:
+        "Applies when starting a new session. Profiles can optionally override this.",
+      applyPermissionChangesTitle: "Apply permission changes",
+      applyPermissionChangesImmediateSubtitle:
+        "Apply immediately for running sessions (updates session metadata).",
+      applyPermissionChangesNextPromptSubtitle: "Apply on next message only.",
+    },
+    replayResume: {
+      title: "Replay resume",
+      footer:
+        "When vendor resume is unavailable, optionally replay recent transcript messages into a new session as context.",
+      enabledTitle: "Enable replay resume",
+      enabledSubtitleOn:
+        "Offer replay-based resume when vendor resume is unavailable.",
+      enabledSubtitleOff: "Do not offer replay-based resume.",
+      strategyTitle: "Replay strategy",
+      strategy: {
+        recentTitle: "Recent messages",
+        recentSubtitle: "Use only the most recent transcript messages.",
+        summaryRecentTitle: "Summary + recent (experimental)",
+        summaryRecentSubtitle:
+          "Include a short summary and recent messages (best-effort).",
+      },
+      recentMessagesTitle: "Recent messages to include",
+      recentMessagesPlaceholder: "16",
+    },
+    toolDetailLevel: {
+      titleOnlyTitle: "Title only",
+      titleOnlySubtitle: "Show only the tool name (no body) in the timeline.",
+      summaryTitle: "Summary",
+      summarySubtitle: "Show a compact, safe summary in the timeline.",
+      fullTitle: "Full",
+      fullSubtitle: "Show full details inline in the timeline.",
+      defaultTitle: "Default",
+      defaultSubtitle: "Use the global default.",
+    },
+    terminalConnect: {
+      title: "Terminal connect",
+      legacySecretExportTitle: "Legacy secret export (compatibility)",
+      legacySecretExportEnabledSubtitle:
+        "Enabled: exports your legacy account secret to the terminal so older terminals can connect. Not recommended.",
+      legacySecretExportDisabledSubtitle:
+        "Disabled (recommended): provision terminals with the content key only (Terminal Connect V2).",
+    },
+  },
+  settingsVoice: {
+    // Voice settings screen
+    modeTitle: "Voz",
+    modeDescription:
+      "Configure os recursos de voz. Você pode desativar a voz por completo, usar Happier Voice (requer assinatura) ou usar sua própria conta ElevenLabs.",
+    mode: {
+      off: "Desativado",
+      offSubtitle: "Desativar todas as funcionalidades de voz",
+      happier: "Happier Voice",
+      happierSubtitle: "Usar Happier Voice (assinatura necessária)",
+      local: "Voz OSS local",
+      localSubtitle: "Usar endpoints STT/TTS locais compatíveis com OpenAI",
+      byo: "Usar meu ElevenLabs",
+      byoSubtitle: "Usar sua chave API e agente do ElevenLabs",
+    },
+    ui: {
+      title: "Superficie de voz",
+      footer: "Feed opcional na tela com eventos de voz (nao e escrito na sessao).",
+      activityFeedEnabled: "Ativar feed de atividade de voz",
+      activityFeedEnabledSubtitle: "Mostrar eventos recentes de voz na tela",
+      activityFeedAutoExpandOnStart: "Expandir automaticamente ao iniciar",
+      activityFeedAutoExpandOnStartSubtitle: "Expandir o feed automaticamente quando a voz iniciar",
+      scopeTitle: "Escopo padrao da voz",
+      scopeSubtitle: "Escolha se a voz e global (conta) ou por sessao por padrao.",
+      scopeGlobal: "Global (conta)",
+      scopeGlobalSubtitle: "A voz continua ativa enquanto voce navega",
+      scopeSession: "Sessao",
+      scopeSessionSubtitle: "A voz e controlada dentro da sessao onde foi iniciada",
+      surfaceLocationTitle: "Local",
+      surfaceLocationSubtitle: "Escolha onde a superfície de voz aparece.",
+      surfaceLocation: {
+        autoTitle: "Auto",
+        autoSubtitle: "Escopo global no sidebar; escopo de sessão na sessão.",
+        sidebarTitle: "Sidebar",
+        sidebarSubtitle: "Mostrar no sidebar.",
+        sessionTitle: "Sessão",
+        sessionSubtitle: "Mostrar acima do input na sessão.",
+      },
+      updates: {
+        title: "Atualizações de sessão",
+        footer: "Controle o que o assistente de voz recebe como contexto.",
+        activeSessionTitle: "Sessão alvo ativa",
+        activeSessionSubtitle: "O que enviar automaticamente para a sessão alvo.",
+        otherSessionsTitle: "Outras sessões",
+        otherSessionsSubtitle: "O que enviar automaticamente para sessões não alvo.",
+        level: {
+          noneTitle: "Nenhuma",
+          noneSubtitle: "Não enviar atualizações automáticas.",
+          activityTitle: "Apenas atividade",
+          activitySubtitle: "Apenas contadores e timestamps.",
+          summariesTitle: "Resumos",
+          summariesSubtitle: "Resumos curtos (sem texto de mensagens).",
+          snippetsTitle: "Trechos",
+          snippetsSubtitle: "Trechos curtos de mensagens (risco de privacidade).",
         },
+        snippetsMaxMessagesTitle: "Máx. mensagens",
+        snippetsMaxMessagesSubtitle: "Limita quantas mensagens são incluídas por atualização.",
+        includeUserMessagesInSnippetsTitle: "Incluir suas mensagens",
+        includeUserMessagesInSnippetsSubtitle: "Se ativado, trechos podem incluir suas mensagens.",
+        otherSessionsSnippetsModeTitle: "Trechos de outras sessões",
+        otherSessionsSnippetsModeSubtitle: "Controla quando trechos de outras sessões são permitidos.",
+        otherSessionsSnippetsMode: {
+          neverTitle: "Nunca",
+          neverSubtitle: "Desativar trechos para outras sessões.",
+          onDemandTitle: "Sob demanda",
+          onDemandSubtitle: "Permitir apenas quando o usuário pedir.",
+          autoTitle: "Auto",
+          autoSubtitle: "Permitir trechos automáticos (barulhento).",
+        },
+      },
     },
-
-    profile: {
-        userProfile: 'Perfil do usuário',
-        details: 'Detalhes',
-        firstName: 'Nome',
-        lastName: 'Sobrenome',
-        username: 'Nome de usuário',
-        status: 'Status',
+    byo: {
+      title: "Usar meu ElevenLabs",
+      configured:
+        "Configurado. A utilização de voz será cobrada na sua conta ElevenLabs.",
+      notConfigured:
+        "Digite sua chave API e o ID do agente do ElevenLabs para usar voz sem assinatura.",
+      createAccount: "Criar conta na ElevenLabs",
+      createAccountSubtitle:
+        "Cadastre-se (ou entre) antes de criar uma chave de API",
+      openApiKeys: "Open ElevenLabs API keys",
+      openApiKeysSubtitle: "ElevenLabs → Developers → API Keys → Create API key",
+      apiKeyHelp: "How to create an API key",
+      apiKeyHelpSubtitle:
+        "Step-by-step help for creating and copying your ElevenLabs API key",
+      apiKeyHelpDialogTitle: "Create an ElevenLabs API key",
+      apiKeyHelpDialogBody:
+        "Open ElevenLabs → Developers → API Keys → Create API key → Copy the key.",
+      autoprovCreate: "Criar agente Happier",
+      autoprovCreateSubtitle:
+        "Crie e configure um agente Happier na sua conta ElevenLabs usando sua chave API",
+      autoprovUpdate: "Atualizar agente",
+      autoprovUpdateSubtitle:
+        "Atualize seu agente para o template mais recente do Happier",
+      autoprovCreated: ({ agentId }: { agentId: string }) =>
+        `Agente criado: ${agentId}`,
+      autoprovUpdated: "Agente atualizado",
+      autoprovFailed: "Falha ao criar/atualizar agente. Tente novamente.",
+      agentId: "ID do agente",
+      agentIdSet: "Definido",
+      agentIdNotSet: "Não definido",
+      agentIdTitle: "ID do agente do ElevenLabs",
+      agentIdDescription: "Digite o ID do agente no seu painel do ElevenLabs.",
+      agentIdPlaceholder: "agent_...",
+      apiKey: "Chave API",
+      apiKeySet: "Definida",
+      apiKeyNotSet: "Não definida",
+      apiKeyTitle: "Chave API do ElevenLabs",
+      apiKeyDescription:
+        "Digite sua chave API do ElevenLabs. Ela é armazenada criptografada no dispositivo.",
+      apiKeyPlaceholder: "xi-api-key",
+      voiceSearchPlaceholder: "Search voices",
+      speakerBoostTitle: "Speaker boost",
+      speakerBoostSubtitle: "Improve clarity and presence (optional).",
+      speakerBoostAuto: "Auto",
+      speakerBoostAutoSubtitle: "Use ElevenLabs default.",
+      speakerBoostOn: "On",
+      speakerBoostOnSubtitle: "Force enable speaker boost.",
+      speakerBoostOff: "Off",
+      speakerBoostOffSubtitle: "Force disable speaker boost.",
+      voiceGroupTitle: "Voice",
+      voiceGroupFooter:
+        "Choose how your ElevenLabs agent speaks. Changes apply when you update the agent.",
+      provisioningGroupTitle: "Agent provisioning",
+      provisioningGroupFooter:
+        "If you change voice/tuning, tap Update Agent to apply it in ElevenLabs.",
+      apiKeySaveFailed: "Falha ao salvar a chave API. Tente novamente.",
+      disconnect: "Desconectar",
+      disconnectSubtitle:
+        "Remover as credenciais do ElevenLabs salvas neste dispositivo",
+      disconnectTitle: "Desconectar ElevenLabs",
+      disconnectDescription:
+        "Isso removerá sua chave API e o ID do agente do ElevenLabs salvos neste dispositivo.",
+      disconnectConfirm: "Desconectar",
     },
+    local: {
+      title: "Voz OSS local",
+      footer:
+        "Configure endpoints compatíveis com OpenAI para STT (speech-to-text) e TTS (text-to-speech).",
+      localhostWarning:
+        'Nota: "localhost" e "127.0.0.1" normalmente não funcionam em celulares. Use o IP LAN do computador ou um túnel.',
+      notSet: "Não definido",
+      apiKeySet: "Definida",
+      apiKeyNotSet: "Não definida",
+      baseUrlPlaceholder: "http://192.168.1.10:8000/v1",
+      apiKeyPlaceholder: "Opcional",
+      apiKeySaveFailed: "Falha ao salvar a chave API. Tente novamente.",
+      conversationMode: "Modo de conversa",
+      conversationModeSubtitle:
+        "Direto para a sessão ou mediador com commit explícito",
+      mediatorBackend: "Backend do mediador",
+      mediatorBackendSubtitle:
+        "Daemon (usa o backend do Happier) ou OpenAI-compatible HTTP",
+      mediatorBackendDaemon: "Daemon",
+      mediatorBackendOpenAi: "OpenAI-compatible HTTP",
+      mediatorAgentSource: "Fonte do agente do mediador",
+      mediatorAgentSourceSubtitle:
+        "Usar o backend da sessão ou forçar um agente específico",
+      mediatorAgentSourceSession: "Backend da sessão",
+      mediatorAgentSourceAgent: "Agente específico",
+      mediatorAgentId: "Agente do mediador",
+      mediatorAgentIdSubtitle:
+        "Qual backend de agente usar no mediador (quando não usa a sessão)",
+      mediatorPermissionPolicy: "Permissões do mediador",
+      mediatorPermissionPolicySubtitle:
+        "Restringe o uso de ferramentas durante a mediação",
+      mediatorPermissionReadOnly: "Somente leitura",
+      mediatorPermissionNoTools: "Sem ferramentas",
+      mediatorVerbosity: "Verbosidade do mediador",
+      mediatorVerbositySubtitle: "Quão detalhado o mediador deve ser",
+      mediatorVerbosityShort: "Curto",
+      mediatorVerbosityBalanced: "Equilibrado",
+      mediatorIdleTtl: "TTL de inatividade do mediador",
+      mediatorIdleTtlSubtitle:
+        "Parar automaticamente após inatividade (60–3600s)",
+      mediatorIdleTtlTitle: "TTL de inatividade do mediador (segundos)",
+      mediatorIdleTtlDescription: "Digite um número entre 60 e 3600.",
+      mediatorIdleTtlInvalid: "Digite um número entre 60 e 3600.",
+      mediatorChatModelSource: "Origem do modelo (chat)",
+      mediatorChatModelSourceSubtitle:
+        "Usar o modelo da sessão ou um modelo rápido personalizado",
+      mediatorChatModelSourceSession: "Modelo da sessão",
+      mediatorChatModelSourceCustom: "Modelo personalizado",
+      mediatorCommitModelSource: "Origem do modelo (commit)",
+      mediatorCommitModelSourceSubtitle:
+        "Usar o modelo do chat, da sessão ou um modelo personalizado",
+      mediatorCommitModelSourceChat: "Modelo do chat",
+      mediatorCommitModelSourceSession: "Modelo da sessão",
+      mediatorCommitModelSourceCustom: "Modelo personalizado",
+      chatBaseUrl: "Base URL Chat",
+      chatBaseUrlTitle: "Base URL Chat",
+      chatBaseUrlDescription:
+        "Base URL para o endpoint de chat completion compatível com OpenAI (normalmente termina com /v1).",
+      chatApiKey: "Chave API Chat",
+      chatApiKeyTitle: "Chave API Chat",
+      chatApiKeyDescription:
+        "Chave API opcional para o servidor de chat (armazenada criptografada). Deixe em branco para limpar.",
+      chatModel: "Modelo de chat",
+      chatModelSubtitle: "Modelo rápido usado na conversa de voz",
+      chatModelTitle: "Modelo de chat",
+      chatModelDescription:
+        "Nome do modelo a enviar para o servidor de chat (campo compatível com OpenAI).",
+      modelCustomTitle: "Personalizado…",
+      modelCustomSubtitle: "Digite um ID de modelo",
+      commitModel: "Modelo de commit",
+      commitModelSubtitle: "Modelo usado para gerar a instrução final",
+      commitModelTitle: "Modelo de commit",
+      commitModelDescription: "Nome do modelo ao gerar a mensagem final.",
+      chatTemperature: "Temperatura do chat",
+      chatTemperatureSubtitle: "Controla aleatoriedade (0–2)",
+      chatTemperatureTitle: "Temperatura do chat",
+      chatTemperatureDescription: "Digite um número entre 0 e 2.",
+      chatTemperatureInvalid: "Digite um número entre 0 e 2.",
+      chatMaxTokens: "Máx. tokens (chat)",
+      chatMaxTokensSubtitle: "Limita o tamanho da resposta (vazio = padrão)",
+      chatMaxTokensTitle: "Máx. tokens (chat)",
+      chatMaxTokensDescription:
+        "Digite um inteiro positivo ou deixe em branco para o padrão.",
+      chatMaxTokensPlaceholder: "Vazio = padrão",
+      chatMaxTokensUnlimited: "Padrão",
+      chatMaxTokensInvalid: "Digite um número positivo ou deixe em branco.",
+      sttBaseUrl: "Base URL STT",
+      sttBaseUrlTitle: "Base URL STT",
+      sttBaseUrlDescription:
+        "Base URL para o endpoint de transcrição compatível com OpenAI (normalmente termina com /v1).",
+      sttApiKey: "Chave API STT",
+      sttApiKeyTitle: "Chave API STT",
+      sttApiKeyDescription:
+        "Chave API opcional para o servidor STT (armazenada criptografada). Deixe em branco para limpar.",
+      sttModel: "Modelo STT",
+      sttModelSubtitle:
+        "Nome do modelo enviado nas solicitações de transcrição",
+      sttModelTitle: "Modelo STT",
+      sttModelDescription:
+        "Nome do modelo a enviar para o servidor STT (campo compatível com OpenAI).",
+      deviceStt: "Device STT (experimental)",
+      deviceSttSubtitle:
+        "Use on-device speech recognition instead of an OpenAI-compatible endpoint",
+      ttsBaseUrl: "Base URL TTS",
+      ttsBaseUrlTitle: "Base URL TTS",
+      ttsBaseUrlDescription:
+        "Base URL para o endpoint de fala compatível com OpenAI (normalmente termina com /v1).",
+      ttsApiKey: "Chave API TTS",
+      ttsApiKeyTitle: "Chave API TTS",
+      ttsApiKeyDescription:
+        "Chave API opcional para o servidor TTS (armazenada criptografada). Deixe em branco para limpar.",
+      ttsModel: "Modelo TTS",
+      ttsModelSubtitle: "Nome do modelo enviado nas solicitações de fala",
+      ttsModelTitle: "Modelo TTS",
+      ttsModelDescription:
+        "Nome do modelo a enviar para o servidor TTS (campo compatível com OpenAI).",
+      ttsVoice: "Voz TTS",
+      ttsVoiceSubtitle: "Nome/ID da voz enviado nas solicitações de fala",
+      ttsVoiceTitle: "Voz TTS",
+      ttsVoiceDescription:
+        "Nome/ID da voz a enviar para o servidor TTS (campo compatível com OpenAI).",
+      ttsFormat: "Formato TTS",
+      ttsFormatSubtitle: "Formato de áudio retornado pelo TTS",
+      testTts: "Test TTS",
+      testTtsSubtitle:
+        "Play a short sample using your configured local TTS (device TTS or endpoint)",
+      testTtsSample: "Hello from Happier. This is a test of your local TTS.",
+      testTtsMissingBaseUrl: "Set a TTS Base URL first.",
+      testTtsFailed:
+        "TTS test failed. Check your base URL, API key, model, and voice.",
+      deviceTts: "Device TTS (experimental)",
+      deviceTtsSubtitle:
+        "Use on-device speech synthesis instead of an OpenAI-compatible endpoint",
+      ttsProvider: "TTS Provider",
+      ttsProviderSubtitle:
+        "Choose device TTS, an OpenAI-compatible endpoint, or Kokoro (web/desktop)",
 
+      autoSpeak: "Auto-reproduzir respostas",
+      autoSpeakSubtitle:
+        "Reproduz a próxima resposta do assistente após enviar a mensagem de voz",
+    },
+    privacy: {
+      title: "Privacidade",
+      footer: "Os provedores de voz recebem o contexto de sessão selecionado.",
+      shareSessionSummary: "Compartilhar resumo da sessão",
+      shareSessionSummarySubtitle:
+        "Inclui o resumo da sessão no contexto de voz",
+      shareRecentMessages: "Compartilhar mensagens recentes",
+      shareRecentMessagesSubtitle:
+        "Inclui mensagens recentes no contexto de voz",
+      recentMessagesCount: "Quantidade de mensagens recentes",
+      recentMessagesCountSubtitle: "Quantas mensagens recentes incluir (0–50)",
+      recentMessagesCountTitle: "Quantidade de mensagens recentes",
+      recentMessagesCountDescription: "Digite um número entre 0 e 50.",
+      recentMessagesCountInvalid: "Digite um número entre 0 e 50.",
+      shareToolNames: "Compartilhar nomes de ferramentas",
+      shareToolNamesSubtitle: "Inclui nomes/descrições de ferramentas no contexto de voz",
+      shareToolArgs: "Compartilhar argumentos de ferramentas",
+      shareToolArgsSubtitle: "Inclui argumentos de ferramentas (pode incluir caminhos ou segredos)",
+      sharePermissionRequests: "Compartilhar solicitações de permissão",
+      sharePermissionRequestsSubtitle: "Encaminha solicitações de permissão para a voz",
+      shareFilePaths: "Compartilhar caminhos locais",
+      shareFilePathsSubtitle:
+        "Inclui caminhos locais no contexto de voz (não recomendado)",
+    },
+    languageTitle: "Idioma",
+    languageDescription:
+      "Escolha seu idioma preferido para interações com o assistente de voz. Esta configuração sincroniza em todos os seus dispositivos.",
+    preferredLanguage: "Idioma preferido",
+    preferredLanguageSubtitle:
+      "Idioma usado para respostas do assistente de voz",
+    language: {
+      searchPlaceholder: "Buscar idiomas...",
+      title: "Idiomas",
+      footer: ({ count }: { count: number }) =>
+        `${count} ${plural({ count, singular: "idioma", plural: "idiomas" })} disponíveis`,
+      autoDetect: "Detectar automaticamente",
+    },
+  },
 
+  settingsAccount: {
+    // Account settings screen
+    accountInformation: "Informações da conta",
+    status: "Status",
+    statusActive: "Ativo",
+    statusNotAuthenticated: "Não autenticado",
+    anonymousId: "ID anônimo",
+    publicId: "ID público",
+    notAvailable: "Não disponível",
+    linkNewDevice: "Vincular novo dispositivo",
+    linkNewDeviceSubtitle: "Escanear código QR para vincular dispositivo",
+    profile: "Perfil",
+    name: "Nome",
+    github: "GitHub",
+    showGitHubOnProfile: "Mostrar no perfil",
+    showProviderOnProfile: ({ provider }: { provider: string }) =>
+      `Mostrar ${provider} no perfil`,
+    tapToDisconnect: "Toque para desconectar",
+    server: "Servidor",
+    backup: "Backup",
+    backupDescription:
+      "Sua chave secreta é a única forma de recuperar sua conta. Salve-a em um local seguro como um gerenciador de senhas.",
+    secretKey: "Chave secreta",
+    tapToReveal: "Toque para revelar",
+    tapToHide: "Toque para ocultar",
+    secretKeyLabel: "CHAVE SECRETA (TOQUE PARA COPIAR)",
+    secretKeyCopied:
+      "Chave secreta copiada para a área de transferência. Guarde-a em um local seguro!",
+    secretKeyCopyFailed: "Falha ao copiar chave secreta",
+    privacy: "Privacidade",
+    privacyDescription:
+      "Ajude a melhorar o aplicativo compartilhando dados de uso anônimos. Nenhuma informação pessoal é coletada.",
+    analytics: "Análises",
+    analyticsDisabled: "Nenhum dado é compartilhado",
+    analyticsEnabled: "Dados de uso anônimos são compartilhados",
+    dangerZone: "Zona perigosa",
+    logout: "Sair",
+    logoutSubtitle: "Sair e limpar dados locais",
+    logoutConfirm:
+      "Tem certeza de que quer sair? Certifique-se de ter feito backup da sua chave secreta!",
+  },
+
+  settingsLanguage: {
+    // Language settings screen
+    title: "Idioma",
+    description:
+      "Escolher o idioma preferido para a interface do aplicativo. Isso vai ser sincronizado em todos os seus dispositivos.",
+    currentLanguage: "Idioma atual",
+    automatic: "Automático",
+    automaticSubtitle: "Detectar das configurações do dispositivo",
+    needsRestart: "Idioma alterado",
+    needsRestartMessage:
+      "O aplicativo precisa ser reiniciado para aplicar a nova configuração de idioma.",
+    restartNow: "Reiniciar agora",
+  },
+
+  connectButton: {
+    authenticate: "Autenticar terminal",
+    authenticateWithUrlPaste: "Autenticar terminal com colagem de URL",
+    pasteAuthUrl: "Cole a URL de autenticação do seu terminal",
+  },
+
+  updateBanner: {
+    updateAvailable: "Atualização disponível",
+    pressToApply: "Pressione para aplicar a atualização",
+    whatsNew: "Novidades",
+    seeLatest: "Veja as atualizações e melhorias mais recentes",
+    nativeUpdateAvailable: "Atualização do aplicativo disponível",
+    tapToUpdateAppStore: "Toque para atualizar na App Store",
+    tapToUpdatePlayStore: "Toque para atualizar na Play Store",
+  },
+
+  changelog: {
+    // Used by the changelog screen
+    version: ({ version }: { version: number }) => `Versão ${version}`,
+    noEntriesAvailable: "Nenhuma entrada de changelog disponível.",
+  },
+
+  terminal: {
+    // Used by terminal connection screens
+    webBrowserRequired: "Navegador web necessário",
+    webBrowserRequiredDescription:
+      "Links de conexão de terminal só podem ser abertos em um navegador web por questões de segurança. Use o leitor de código QR ou abra este link num computador.",
+    processingConnection: "Processando conexão...",
+    invalidConnectionLink: "Link de conexão inválido",
+    invalidConnectionLinkDescription:
+      "O link de conexão está ausente ou inválido. Verifique a URL e tente novamente.",
+    connectTerminal: "Conectar terminal",
+    terminalRequestDescription:
+      "Um terminal está solicitando conexão à sua conta Happier Coder. Isso permitirá que o terminal envie e receba mensagens com segurança.",
+    connectionDetails: "Detalhes da conexão",
+    publicKey: "Chave pública",
+    encryption: "Criptografia",
+    endToEndEncrypted: "Criptografia ponta a ponta",
+    acceptConnection: "Aceitar conexão",
+    connecting: "Conectando...",
+    reject: "Rejeitar",
+    security: "Segurança",
+    securityFooter:
+      "Este link de conexão foi processado com segurança no seu navegador e nunca foi enviado para nenhum servidor. Seus dados privados permanecerão seguros e apenas você pode descriptografar as mensagens.",
+    securityFooterDevice:
+      "Esta conexão foi processada com segurança no seu dispositivo e nunca foi enviada para nenhum servidor. Seus dados privados permanecerão seguros e apenas você pode descriptografar as mensagens.",
+    clientSideProcessing: "Processamento do lado cliente",
+    linkProcessedLocally: "Link processado localmente no navegador",
+    linkProcessedOnDevice: "Link processado localmente no dispositivo",
+    switchServerToConnectTerminal: ({ serverUrl }: { serverUrl: string }) =>
+      `Esta conexão é para ${serverUrl}. Trocar de servidor e continuar?`,
+  },
+
+  modals: {
+    // Used across connect flows and settings
+    authenticateTerminal: "Autenticar terminal",
+    pasteUrlFromTerminal: "Cole a URL de autenticação do seu terminal",
+    deviceLinkedSuccessfully: "Dispositivo vinculado com sucesso",
+    terminalConnectedSuccessfully: "Terminal conectado com sucesso",
+    pleaseSignInFirst: "Por favor, faça login (ou crie uma conta) primeiro.",
+    invalidAuthUrl: "URL de autenticação inválida",
+    microphoneAccessRequiredTitle: "É necessário acesso ao microfone",
+    microphoneAccessRequiredRequestPermission:
+      "O Happier precisa de acesso ao seu microfone para o chat por voz. Conceda a permissão quando solicitado.",
+    microphoneAccessRequiredEnableInSettings:
+      "O Happier precisa de acesso ao seu microfone para o chat por voz. Ative o acesso ao microfone nas configurações do seu dispositivo.",
+    microphoneAccessRequiredBrowserInstructions:
+      "Permita o acesso ao microfone nas configurações do navegador. Talvez seja necessário clicar no ícone de cadeado na barra de endereços e habilitar a permissão do microfone para este site.",
+    openSettings: "Abrir configurações",
+    developerMode: "Modo desenvolvedor",
+    developerModeEnabled: "Modo desenvolvedor ativado",
+    developerModeDisabled: "Modo desenvolvedor desativado",
+    disconnectGithub: "Desconectar GitHub",
+    disconnectGithubConfirm:
+      "Ao desconectar, Amigos e o compartilhamento entre amigos ficam desativados até você reconectar.",
+    disconnectService: ({ service }: { service: string }) =>
+      `Desconectar ${service}`,
+    disconnectServiceConfirm: ({ service }: { service: string }) =>
+      `Tem certeza de que deseja desconectar ${service} da sua conta?`,
+    disconnect: "Desconectar",
+    failedToConnectTerminal: "Falha ao conectar terminal",
+    cameraPermissionsRequiredToConnectTerminal:
+      "Permissões de câmera são necessárias para conectar terminal",
+    failedToLinkDevice: "Falha ao vincular dispositivo",
+    cameraPermissionsRequiredToScanQr:
+      "Permissões de câmera são necessárias para escanear códigos QR",
+  },
+
+  navigation: {
+    // Navigation titles and screen headers
+    connectTerminal: "Conectar terminal",
+    linkNewDevice: "Vincular novo dispositivo",
+    restoreWithSecretKey: "Restaurar com chave secreta",
+    whatsNew: "Novidades",
+    friends: "Amigos",
+  },
+
+  welcome: {
+    // Main welcome screen for unauthenticated users
+    title: "Cliente móvel Codex e Claude Code",
+    subtitle:
+      "Criptografado ponta a ponta e sua conta é armazenada apenas no seu dispositivo.",
+    createAccount: "Criar conta",
+    signUpWithProvider: ({ provider }: { provider: string }) =>
+      `Continuar com ${provider}`,
+    linkOrRestoreAccount: "Vincular ou restaurar conta",
+    loginWithMobileApp: "Fazer login com aplicativo móvel",
+  },
+
+  review: {
+    // Used by utils/requestReview.ts
+    enjoyingApp: "Curtindo o aplicativo?",
+    feedbackPrompt: "Adoraríamos ouvir seu feedback!",
+    yesILoveIt: "Sim, eu amo!",
+    notReally: "Não muito",
+  },
+
+  items: {
+    // Used by Item component for copy toast
+    copiedToClipboard: ({ label }: { label: string }) =>
+      `${label} copiado para a área de transferência`,
+  },
+
+  machine: {
+    offlineUnableToSpawn:
+      "Inicializador desativado enquanto a máquina está offline",
+    offlineHelp:
+      "• Verifique se seu computador está online\n• Execute `happier daemon status` para diagnosticar\n• Você está usando a versão mais recente do CLI? Atualize com `npm install -g @happier-dev/cli@latest`",
+    launchNewSessionInDirectory: "Iniciar nova sessão no diretório",
+    daemon: "Daemon",
+    status: "Status",
+    stopDaemon: "Parar daemon",
+    stopDaemonConfirmTitle: "Parar daemon?",
+    stopDaemonConfirmBody:
+      "Você não poderá iniciar novas sessões nesta máquina até reiniciar o daemon no seu computador. Suas sessões atuais continuarão ativas.",
+    daemonStoppedTitle: "Daemon parado",
+    stopDaemonFailed:
+      "Falha ao parar o daemon. Talvez ele não esteja em execução.",
+    renameTitle: "Renomear máquina",
+    renameDescription:
+      "Dê a esta máquina um nome personalizado. Deixe em branco para usar o hostname padrão.",
+    renamePlaceholder: "Digite o nome da máquina",
+    renamedSuccess: "Máquina renomeada com sucesso",
+    renameFailed: "Falha ao renomear a máquina",
+    lastKnownPid: "Último PID conhecido",
+    lastKnownHttpPort: "Última porta HTTP conhecida",
+    startedAt: "Iniciado em",
+    cliVersion: "Versão do CLI",
+    daemonStateVersion: "Versão do estado do daemon",
+    activeSessions: ({ count }: { count: number }) =>
+      `Sessões ativas (${count})`,
+    machineGroup: "Máquina",
+    host: "Host",
+    machineId: "ID da máquina",
+    username: "Nome de usuário",
+    homeDirectory: "Diretório home",
+    platform: "Plataforma",
+    architecture: "Arquitetura",
+    lastSeen: "Visto pela última vez",
+    never: "Nunca",
+    metadataVersion: "Versão dos metadados",
+    detectedClis: "CLIs detectados",
+    detectedCliNotDetected: "Não detectado",
+    detectedCliUnknown: "Desconhecido",
+    detectedCliNotSupported: "Não suportado (atualize o @happier-dev/cli)",
+    untitledSession: "Sessão sem título",
+    back: "Voltar",
+    notFound: "Máquina não encontrada",
+    unknownMachine: "máquina desconhecida",
+    unknownPath: "caminho desconhecido",
+    tmux: {
+      overrideTitle: "Substituir configurações globais do tmux",
+      overrideEnabledSubtitle:
+        "As configurações personalizadas do tmux se aplicam a novas sessões nesta máquina.",
+      overrideDisabledSubtitle:
+        "Novas sessões usam as configurações globais do tmux.",
+      notDetectedSubtitle: "tmux não foi detectado nesta máquina.",
+      notDetectedMessage:
+        "tmux não foi detectado nesta máquina. Instale o tmux e atualize a detecção.",
+    },
+    windows: {
+      title: "Windows",
+      remoteSessionConsoleTitle: "Mostrar console para sessões remotas",
+      remoteSessionConsoleVisibleSubtitle:
+        "Sessões remotas abrem em uma janela de console visível nesta máquina.",
+      remoteSessionConsoleHiddenSubtitle:
+        "Sessões remotas iniciam ocultas para evitar janelas abrindo/fechando.",
+      remoteSessionConsoleUpdateFailed:
+        "Falha ao atualizar a configuração do console de sessão no Windows.",
+    },
+  },
+
+  message: {
+    switchedToMode: ({ mode }: { mode: string }) => `Mudou para o modo ${mode}`,
+    discarded: "Descartado",
+    unknownEvent: "Evento desconhecido",
+    usageLimitUntil: ({ time }: { time: string }) =>
+      `Limite de uso atingido até ${time}`,
+    unknownTime: "horário desconhecido",
+  },
+
+  chatFooter: {
+    permissionsTerminalOnly:
+      "As permissões são mostradas apenas no terminal. Redefina ou envie uma mensagem para controlar pelo app.",
+    sessionRunningLocally:
+      "Esta sessão está sendo executada localmente neste computador. Você pode alternar para remoto para controlar pelo app.",
+    switchToRemote: "Alternar para remoto",
+    localModeAvailable: "O modo local está disponível para esta sessão.",
+    localModeUnavailableMachineOffline:
+      "O modo local não está disponível enquanto esta máquina estiver offline.",
+    localModeUnavailableDaemonStarted:
+      "O modo local não está disponível para sessões iniciadas pelo daemon.",
+    localModeUnavailableNeedsResume:
+      "O modo local requer suporte de retomada para este provedor.",
+    switchToLocal: "Alternar para local",
+  },
+
+  codex: {
+    // Codex permission dialog buttons
+    permissions: {
+      yesAlwaysAllowCommand: "Sim, permitir globalmente",
+      yesForSession: "Sim, e não perguntar para esta sessão",
+      stopAndExplain: "Parar, e explicar o que fazer",
+    },
+  },
+
+  claude: {
+    // Claude permission dialog buttons
+    permissions: {
+      yesAllowAllEdits: "Sim, permitir todas as edições durante esta sessão",
+      yesForTool: "Sim, não perguntar novamente para esta ferramenta",
+      yesForCommandPrefix:
+        "Sim, não perguntar novamente para este prefixo de comando",
+      yesForSubcommand: "Sim, não perguntar novamente para este subcomando",
+      yesForCommandName: "Sim, não perguntar novamente para este comando",
+      noTellClaude: "Não, fornecer feedback",
+    },
+  },
+
+  textSelection: {
+    // Text selection screen
+    selectText: "Selecionar intervalo de texto",
+    title: "Selecionar texto",
+    noTextProvided: "Nenhum texto fornecido",
+    textNotFound: "Texto não encontrado ou expirado",
+    textCopied: "Texto copiado para a área de transferência",
+    failedToCopy: "Falha ao copiar o texto para a área de transferência",
+    noTextToCopy: "Nenhum texto disponível para copiar",
+    failedToOpen: "Falha ao abrir a seleção de texto. Tente novamente.",
+  },
+
+  markdown: {
+    // Markdown copy functionality
+    codeCopied: "Código copiado",
+    copyFailed: "Falha ao copiar",
+    mermaidRenderFailed: "Falha ao renderizar diagrama mermaid",
+  },
+
+  artifacts: {
+    title: "Artefatos",
+    countSingular: "1 artefato",
+    countPlural: ({ count }: { count: number }) => `${count} artefatos`,
+    empty: "Ainda não há artefatos",
+    emptyDescription:
+      "Crie seu primeiro artefato para salvar e organizar conteúdo",
+    new: "Novo artefato",
+    edit: "Editar artefato",
+    delete: "Excluir",
+    updateError: "Falha ao atualizar artefato. Por favor, tente novamente.",
+    deleteError: "Falha ao excluir o artefato. Tente novamente.",
+    notFound: "Artefato não encontrado",
+    discardChanges: "Descartar alterações?",
+    discardChangesDescription:
+      "Você tem alterações não salvas. Tem certeza de que deseja descartá-las?",
+    deleteConfirm: "Excluir artefato?",
+    deleteConfirmDescription: "Este artefato será excluído permanentemente.",
+    noContent: "Sem conteúdo",
+    untitled: "Sem título",
+    titlePlaceholder: "Título do artefato",
+    bodyPlaceholder: "Digite o conteúdo aqui...",
+    save: "Salvar",
+    saving: "Salvando...",
+    loading: "Carregando...",
+    error: "Falha ao carregar artefatos",
+    titleLabel: "TÍTULO",
+    bodyLabel: "CONTEÚDO",
+    emptyFieldsError: "Por favor, insira um título ou conteúdo",
+    createError: "Falha ao criar artefato. Por favor, tente novamente.",
+  },
+
+  friends: {
+    // Friends feature
+    title: "Amigos",
+    sharedSessions: "Sessões compartilhadas",
+    noSharedSessions: "Ainda não há sessões compartilhadas",
+    manageFriends: "Gerencie seus amigos e conexões",
+    searchTitle: "Buscar amigos",
+    pendingRequests: "Solicitações de amizade",
+    myFriends: "Meus amigos",
+    noFriendsYet: "Você ainda não tem amigos",
+    findFriends: "Buscar amigos",
+    remove: "Remover",
+    pendingRequest: "Pendente",
+    sentOn: ({ date }: { date: string }) => `Enviado em ${date}`,
+    accept: "Aceitar",
+    reject: "Rejeitar",
+    addFriend: "Adicionar amigo",
+    alreadyFriends: "Já são amigos",
+    requestPending: "Solicitação pendente",
+    searchInstructions: "Digite um nome de usuário para buscar amigos",
+    searchPlaceholder: "Digite o nome de usuário...",
+    searching: "Buscando...",
+    userNotFound: "Usuário não encontrado",
+    noUserFound: "Nenhum usuário encontrado com esse nome",
+    checkUsername: "Por favor, verifique o nome de usuário e tente novamente",
+    howToFind: "Como encontrar amigos",
+    findInstructions:
+      "Procure amigos pelo nome de usuário. Dependendo do seu servidor, talvez seja necessário conectar um provedor ou escolher um nome de usuário para usar Amigos.",
+    requestSent: "Solicitação de amizade enviada!",
+    requestAccepted: "Solicitação de amizade aceita!",
+    requestRejected: "Solicitação de amizade rejeitada",
+    friendRemoved: "Amigo removido",
+    confirmRemove: "Remover amigo",
+    confirmRemoveMessage: "Tem certeza de que deseja remover este amigo?",
+    cannotAddYourself:
+      "Você não pode enviar uma solicitação de amizade para si mesmo",
+    bothMustHaveGithub:
+      "Ambos os usuários devem ter o provedor necessário conectado para serem amigos",
     status: {
-        connected: 'conectado',
-        connecting: 'conectando',
-        disconnected: 'desconectado',
-        error: 'erro',
-        online: 'online',
-        offline: 'offline',
-        lastSeen: ({ time }: { time: string }) => `visto por último ${time}`,
-        permissionRequired: 'permissão necessária',
-        activeNow: 'Ativo agora',
-        unknown: 'desconhecido',
+      none: "Não conectado",
+      requested: "Solicitação enviada",
+      pending: "Solicitação pendente",
+      friend: "Amigos",
+      rejected: "Rejeitada",
     },
-
-    time: {
-        justNow: 'agora mesmo',
-        minutesAgo: ({ count }: { count: number }) => `há ${count} minuto${count !== 1 ? 's' : ''}`,
-        hoursAgo: ({ count }: { count: number }) => `há ${count} hora${count !== 1 ? 's' : ''}`,
+    acceptRequest: "Aceitar solicitação",
+    removeFriend: "Remover dos amigos",
+    removeFriendConfirm: ({ name }: { name: string }) =>
+      `Tem certeza de que deseja remover ${name} dos seus amigos?`,
+    requestSentDescription: ({ name }: { name: string }) =>
+      `Sua solicitação de amizade foi enviada para ${name}`,
+    requestFriendship: "Solicitar amizade",
+    cancelRequest: "Cancelar solicitação de amizade",
+    cancelRequestConfirm: ({ name }: { name: string }) =>
+      `Cancelar sua solicitação de amizade para ${name}?`,
+    denyRequest: "Recusar solicitação",
+    nowFriendsWith: ({ name }: { name: string }) =>
+      `Agora você é amigo de ${name}`,
+    disabled: "O recurso Amigos está desativado neste servidor.",
+    username: {
+      required: "Escolha um nome de usuário para usar Amigos.",
+      taken: "Esse nome de usuário já está em uso.",
+      invalid: "Esse nome de usuário não é permitido.",
+      disabled:
+        "O recurso Amigos com nome de usuário não está habilitado neste servidor.",
+      preferredNotAvailable:
+        "Seu nome de usuário preferido não está disponível neste servidor. Escolha outro.",
+      preferredNotAvailableWithLogin: ({ login }: { login: string }) =>
+        `Seu nome de usuário preferido @${login} não está disponível neste servidor. Escolha outro.`,
     },
-
-    connect: {
-        restoreAccount: 'Restaurar conta',
-        enterSecretKey: 'Por favor, insira uma chave secreta',
-        invalidSecretKey: 'Chave secreta inválida. Verifique e tente novamente.',
-        enterUrlManually: 'Inserir URL manualmente',
-        openMachine: 'Abrir máquina',
-        terminalUrlPlaceholder: 'happier://terminal?...',
-        restoreQrInstructions: '1. Abra o Happier no seu dispositivo móvel\n2. Vá em Configurações → Conta\n3. Toque em "Vincular novo dispositivo"\n4. Escaneie este código QR',
-        restoreWithSecretKeyInstead: 'Restaurar com chave secreta',
-        restoreWithSecretKeyDescription: 'Digite sua chave secreta para recuperar o acesso à sua conta.',
-        lostAccessLink: 'Sem acesso?',
-        lostAccessTitle: 'Perdeu o acesso à sua conta?',
-        lostAccessBody:
-            'Se você não tem mais nenhum dispositivo associado a esta conta e perdeu a chave secreta, você pode redefinir sua conta com seu provedor de identidade. Isso cria uma nova conta Happier. O histórico criptografado antigo não pode ser recuperado.',
-        lostAccessContinue: ({ provider }: { provider: string }) => `Continuar com ${provider}`,
-        lostAccessConfirmTitle: 'Redefinir conta?',
-        lostAccessConfirmBody:
-            'Isso criará uma nova conta e vinculará novamente sua identidade do provedor. O histórico criptografado antigo não pode ser recuperado.',
-        lostAccessConfirmButton: 'Redefinir e continuar',
-        secretKeyPlaceholder: 'XXXXX-XXXXX-XXXXX...',
-        unsupported: {
-            connectTitle: ({ name }: { name: string }) => `Conectar ${name}`,
-            runCommandInTerminal: 'Execute o seguinte comando no terminal:',
-        },
+    githubGate: {
+      title: "Conecte o GitHub para usar Amigos",
+      body: "Amigos usa nomes de usuário do GitHub para descoberta e compartilhamento.",
+      connect: "Conectar GitHub",
+      notAvailable: "Não disponível?",
+      notConfigured: "GitHub OAuth não está configurado neste servidor.",
     },
-
-    settings: {
-        title: 'Configurações',
-        connectedAccounts: 'Contas conectadas',
-        connectAccount: 'Conectar conta',
-        github: 'GitHub',
-        machines: 'Máquinas',
-        features: 'Recursos',
-        social: 'Social',
-        account: 'Conta',
-        accountSubtitle: 'Gerencie os detalhes da sua conta',
-        appearance: 'Aparência',
-        appearanceSubtitle: 'Personalize a aparência do aplicativo',
-        voiceAssistant: 'Assistente de voz',
-        voiceAssistantSubtitle: 'Configure as preferências de interação por voz',
-        featuresTitle: 'Recursos',
-        featuresSubtitle: 'Ativar ou desativar recursos do aplicativo',
-        developer: 'Desenvolvedor',
-        developerTools: 'Ferramentas de desenvolvedor',
-        about: 'Sobre',
-        aboutFooter: 'Happier Coder é um cliente móvel para Codex e Claude Code. É totalmente criptografado ponta a ponta e sua conta é armazenada apenas no seu dispositivo. Não é afiliado à Anthropic.',
-        whatsNew: 'Novidades',
-        whatsNewSubtitle: 'Veja as atualizações e melhorias mais recentes',
-        reportIssue: 'Relatar um problema',
-        privacyPolicy: 'Política de privacidade',
-        termsOfService: 'Termos de serviço',
-        eula: 'EULA',
-        supportUs: 'Nos apoie',
-        supportUsSubtitlePro: 'Obrigado pelo seu apoio!',
-        supportUsSubtitle: 'Apoie o desenvolvimento do projeto',
-        scanQrCodeToAuthenticate: 'Escaneie o código QR para autenticar',
-        githubConnected: ({ login }: { login: string }) => `Conectado como @${login}`,
-        connectGithubAccount: 'Conecte sua conta GitHub',
-        claudeAuthSuccess: 'Conectado ao Claude com sucesso',
-        exchangingTokens: 'Trocando tokens...',
-        usage: 'Uso',
-        usageSubtitle: 'Visualizar uso da API e custos',
-        profiles: 'Perfis',
-        profilesSubtitle: 'Gerenciar perfis de ambiente e variáveis',
-        secrets: 'Segredos',
-        secretsSubtitle: 'Gerencie os segredos salvos (não serão exibidos novamente após o envio)',
-        terminal: 'Terminal',
-        session: 'Sessão',
-        sessionSubtitleTmuxEnabled: 'Tmux ativado',
-        sessionSubtitleMessageSendingAndTmux: 'Envio de mensagens e tmux',
-
-        // Dynamic settings messages
-        accountConnected: ({ service }: { service: string }) => `Conta ${service} conectada`,
-        machineStatus: ({ name, status }: { name: string; status: 'online' | 'offline' }) =>
-            `${name} está ${status === 'online' ? 'online' : 'offline'}`,
-        featureToggled: ({ feature, enabled }: { feature: string; enabled: boolean }) =>
-            `${feature} ${enabled ? 'ativado' : 'desativado'}`,
+    providerGate: {
+      title: ({ provider }: { provider: string }) =>
+        `Conecte ${provider} para usar Amigos`,
+      body: ({ provider }: { provider: string }) =>
+        `Amigos usa nomes de usuário do ${provider} para descoberta e compartilhamento.`,
+      connect: ({ provider }: { provider: string }) => `Conectar ${provider}`,
+      notAvailable: "Não disponível?",
+      notConfigured: ({ provider }: { provider: string }) =>
+        `${provider} OAuth não está configurado neste servidor.`,
     },
+  },
 
-    settingsProviders: {
-        title: 'Configurações do provedor de IA',
-        entrySubtitle: 'Configure opções específicas do provedor',
-        footer: 'Configure opções específicas do provedor. Essas configurações podem afetar o comportamento da sessão.',
-        providerSubtitle: 'Configurações específicas do provedor',
-        stateEnabled: 'Enabled',
-        stateDisabled: 'Disabled',
-        channelStable: 'Stable',
-        channelExperimental: 'Experimental',
-        supported: 'Supported',
-        notSupported: 'Not supported',
-        allowed: 'Allowed',
-        notAllowed: 'Not allowed',
-        notAvailable: 'Not available',
-        enabledTitle: 'Enabled',
-        enabledSubtitle: 'Use this backend in pickers, profiles, and sessions',
-        releaseChannelTitle: 'Release channel',
-        capabilitiesTitle: 'Capabilities',
-        resumeSupportTitle: 'Resume support',
-        sessionModeSupportTitle: 'Session mode support',
-        runtimeModeSwitchingTitle: 'Runtime mode switching',
-        localControlTitle: 'Local control',
-        resumeSupportSupported: 'Supported',
-        resumeSupportSupportedExperimental: 'Supported (experimental)',
-        resumeSupportRuntimeGatedAcpLoadSession: 'Runtime-gated via ACP loadSession',
-        resumeSupportNotSupported: 'Not supported',
-        sessionModeNone: 'No ACP modes',
-        sessionModeAcpPolicyPresets: 'ACP policy presets',
-        sessionModeAcpAgentModes: 'ACP agent modes',
-        runtimeSwitchNone: 'No runtime switch',
-        runtimeSwitchMetadataGating: 'Metadata-gated',
-        runtimeSwitchAcpSetSessionMode: 'ACP setSessionMode',
-        runtimeSwitchProviderNative: 'Provider native',
-        modelsTitle: 'Models',
-        modelSelectionTitle: 'Model selection',
-        freeformModelIdsTitle: 'Freeform model IDs',
-        defaultModelTitle: 'Default model',
-        catalogModelListTitle: 'Catalog model list',
-        catalogModelListEmpty: 'No catalog models available',
-        dynamicModelProbeTitle: 'Dynamic model probing',
-        dynamicModelProbeAuto: 'Auto',
-        dynamicModelProbeStaticOnly: 'Static only',
-        nonAcpApplyScopeTitle: 'Non-ACP model apply scope',
-        nonAcpApplyScopeSpawnOnly: 'Apply on session start',
-        nonAcpApplyScopeNextPrompt: 'Apply on next prompt',
-        acpApplyBehaviorTitle: 'ACP model apply behavior',
-        acpApplyBehaviorSetModel: 'Set model live',
-        acpApplyBehaviorRestartSession: 'Restart session',
-        acpConfigOptionTitle: 'ACP model config option id',
-        cliConnectionTitle: 'CLI & Connection',
-        detectedCliTitle: 'Detected CLI',
-        installSetupTitle: 'Install / setup',
-        installInfoSeeSetupGuide: 'See setup guide',
-        installInfoUseProviderCliInstaller: 'Use the provider CLI installer',
-        setupGuideUrlTitle: 'Setup guide URL',
-        connectedServiceTitle: 'Connected service',
-        notFoundTitle: 'Provedor não encontrado',
-        notFoundSubtitle: 'Este provedor não tem tela de configurações.',
-        noOptionsAvailable: 'Sem opções disponíveis',
-        invalidNumber: 'Número inválido',
-        invalidJson: 'JSON inválido',
+  usage: {
+    // Usage panel strings
+    today: "Hoje",
+    last7Days: "Últimos 7 dias",
+    last30Days: "Últimos 30 dias",
+    totalTokens: "Tokens totais",
+    totalCost: "Custo total",
+    tokens: "Tokens",
+    cost: "Custo",
+    usageOverTime: "Uso ao longo do tempo",
+    byModel: "Por modelo",
+    noData: "Nenhum dado de uso disponível",
+  },
+
+  profiles: {
+    title: "Perfis",
+    subtitle: "Gerencie seus perfis de configuração",
+    sessionUses: ({ profile }: { profile: string }) =>
+      `Esta sessão usa: ${profile}`,
+    profilesFixedPerSession:
+      "Os perfis são fixos por sessão. Para usar um perfil diferente, inicie uma nova sessão.",
+    noProfile: "Nenhum perfil",
+    noProfileDescription:
+      "Crie um perfil para gerenciar sua configuração de ambiente",
+    addProfile: "Adicionar perfil",
+    addProfileTitle: "Título do perfil de adição",
+    editProfile: "Editar perfil",
+    profileName: "Nome do perfil",
+    enterName: "Digite o nome do perfil",
+    baseURL: "URL base",
+    authToken: "Token de autenticação",
+    enterToken: "Digite o token de autenticação",
+    model: "Modelo",
+    defaultModel: "Modelo padrão",
+    tmuxSession: "Sessão tmux",
+    enterTmuxSession: "Digite o nome da sessão tmux",
+    tmuxTempDir: "Diretório temporário tmux",
+    enterTmuxTempDir: "Digite o diretório temporário tmux",
+    tmuxUpdateEnvironment: "Atualizar ambiente tmux",
+    deleteConfirm: ({ name }: { name: string }) =>
+      `Tem certeza de que deseja excluir o perfil "${name}"?`,
+    nameRequired: "O nome do perfil é obrigatório",
+    builtIn: "Integrado",
+    custom: "Personalizado",
+    builtInSaveAsHint:
+      "Salvar um perfil integrado cria um novo perfil personalizado.",
+    builtInNames: {
+      anthropic: "Anthropic (Padrão)",
+      deepseek: "DeepSeek (Raciocínio)",
+      zai: "Z.AI (GLM-4.6)",
+      codex: "Codex (Padrão)",
+      openai: "OpenAI (GPT-5)",
+      azureOpenai: "Azure OpenAI",
+      gemini: "Gemini (Padrão)",
+      geminiApiKey: "Gemini (Chave de API)",
+      geminiVertex: "Gemini (Vertex AI)",
     },
-
-    settingsAppearance: {
-        // Appearance settings screen
-        theme: 'Tema',
-        themeDescription: 'Escolha seu esquema de cores preferido',
-        themeOptions: {
-            adaptive: 'Adaptativo',
-            light: 'Claro', 
-            dark: 'Escuro',
-        },
-        themeDescriptions: {
-            adaptive: 'Usar configurações do sistema',
-            light: 'Sempre usar tema claro',
-            dark: 'Sempre usar tema escuro',
-        },
-        display: 'Exibição',
-        displayDescription: 'Controle layout e espaçamento',
-        inlineToolCalls: 'Chamadas de ferramentas inline',
-        inlineToolCallsDescription: 'Exibir chamadas de ferramentas diretamente nas mensagens do chat',
-        expandTodoLists: 'Expandir listas de tarefas',
-        expandTodoListsDescription: 'Mostrar todas as tarefas em vez de apenas as mudanças',
-        showLineNumbersInDiffs: 'Mostrar números de linha nos diffs',
-        showLineNumbersInDiffsDescription: 'Exibir números de linha nos diffs de código',
-        showLineNumbersInToolViews: 'Mostrar números de linha nas visualizações de ferramentas',
-        showLineNumbersInToolViewsDescription: 'Exibir números de linha nos diffs das visualizações de ferramentas',
-        wrapLinesInDiffs: 'Quebrar linhas nos diffs',
-        wrapLinesInDiffsDescription: 'Quebrar linhas longas ao invés de rolagem horizontal nas visualizações de diffs',
-        alwaysShowContextSize: 'Sempre mostrar tamanho do contexto',
-        alwaysShowContextSizeDescription: 'Exibir uso do contexto mesmo quando não estiver próximo do limite',
-        agentInputActionBarLayout: 'Barra de ações do input',
-        agentInputActionBarLayoutDescription: 'Escolha como os chips de ação são exibidos acima do campo de entrada',
-        agentInputActionBarLayoutOptions: {
-            auto: 'Auto',
-            wrap: 'Quebrar linha',
-            scroll: 'Rolável',
-            collapsed: 'Recolhido',
-        },
-        agentInputChipDensity: 'Densidade dos chips de ação',
-        agentInputChipDensityDescription: 'Escolha se os chips de ação exibem rótulos ou ícones',
-        agentInputChipDensityOptions: {
-            auto: 'Auto',
-            labels: 'Rótulos',
-            icons: 'Somente ícones',
-        },
-        avatarStyle: 'Estilo do avatar',
-        avatarStyleDescription: 'Escolha a aparência do avatar da sessão',
-        avatarOptions: {
-            pixelated: 'Pixelizado',
-            gradient: 'Gradiente',
-            brutalist: 'Brutalista',
-        },
-        showFlavorIcons: 'Mostrar ícones de provedores de IA',
-        showFlavorIconsDescription: 'Exibir ícones do provedor de IA nos avatares de sessão',
-        compactSessionView: 'Visualização compacta de sessões',
-        compactSessionViewDescription: 'Mostrar sessões ativas em um layout mais compacto',
+    groups: {
+      favorites: "Favoritos",
+      custom: "Seus perfis",
+      builtIn: "Perfis integrados",
     },
-
-    settingsFeatures: {
-        // Features settings screen
-        experiments: 'Experimentos',
-        experimentsDescription: 'Ative recursos experimentais que ainda estão em desenvolvimento. Estes recursos podem ser instáveis ou mudar sem aviso.',
-        experimentalFeatures: 'Recursos experimentais',
-        experimentalFeaturesEnabled: 'Recursos experimentais ativados',
-        experimentalFeaturesDisabled: 'Usando apenas recursos estáveis',
-        experimentalOptions: 'Opções experimentais',
-        experimentalOptionsDescription: 'Escolha quais recursos experimentais estão ativados.',
-        expUsageReporting: 'Usage reporting',
-        expUsageReportingSubtitle: 'Enable usage and token reporting screens',
-        expScmOperations: 'Operações de controle de versão',
-        expScmOperationsSubtitle: 'Habilitar operações de escrita experimentais de controle de versão (stage/commit/push/pull)',
-        expShowThinkingMessages: 'Show thinking messages',
-        expShowThinkingMessagesSubtitle: 'Show assistant thinking/status messages in chat',
-        expSessionType: 'Session type selector',
-        expSessionTypeSubtitle: 'Show the session type selector (simple vs worktree)',
-        expZen: 'Zen',
-        expZenSubtitle: 'Enable the Zen navigation entry',
-        expVoiceAuthFlow: 'Voice auth flow',
-        expVoiceAuthFlowSubtitle: 'Use authenticated voice token flow (paywall-aware)',
-            expInboxFriends: 'Caixa de entrada e amigos',
-            expInboxFriendsSubtitle: 'Ativar a aba Caixa de entrada e os recursos de amigos',
-            webFeatures: 'Recursos web',
-            webFeaturesDescription: 'Recursos disponíveis apenas na versão web do aplicativo.',
-        enterToSend: 'Enter para enviar',
-        enterToSendEnabled: 'Pressione Enter para enviar (Shift+Enter para nova linha)',
-        enterToSendDisabled: 'Enter insere uma nova linha',
-        historyScope: 'Message history',
-        historyScopePerSession: 'Cycle history per terminal',
-        historyScopeGlobal: 'Cycle history across all terminals',
-        historyScopeModalTitle: 'Message history',
-        historyScopeModalMessage: 'Choose whether ArrowUp/ArrowDown cycles through messages sent in this terminal only, or across all terminals.',
-        historyScopePerSessionOption: 'Per terminal',
-        historyScopeGlobalOption: 'Global',
-        commandPalette: 'Paleta de comandos',
-        commandPaletteEnabled: 'Pressione ⌘K para abrir',
-        commandPaletteDisabled: 'Acesso rápido a comandos desativado',
-        markdownCopyV2: 'Cópia de Markdown v2',
-        markdownCopyV2Subtitle: 'Pressione e segure para abrir modal de cópia',
-        hideInactiveSessions: 'Ocultar sessões inativas',
-        hideInactiveSessionsSubtitle: 'Mostre apenas os chats ativos na sua lista',
-        groupInactiveSessionsByProject: 'Agrupar sessões inativas por projeto',
-        groupInactiveSessionsByProjectSubtitle: 'Organize os chats inativos por projeto',
-        environmentBadge: 'Environment badge',
-        environmentBadgeSubtitle: 'Show a small badge next to the Happier title indicating the current app environment',
-        enhancedSessionWizard: 'Assistente de sessão aprimorado',
-        enhancedSessionWizardEnabled: 'Lançador de sessão com perfil ativo',
-        enhancedSessionWizardDisabled: 'Usando o lançador de sessão padrão',
-        profiles: 'Perfis de IA',
-        profilesEnabled: 'Seleção de perfis ativada',
-        profilesDisabled: 'Seleção de perfis desativada',
-        pickerSearch: 'Busca nos seletores',
-        pickerSearchSubtitle: 'Mostrar um campo de busca nos seletores de máquina e caminho',
-        machinePickerSearch: 'Busca de máquinas',
-        machinePickerSearchSubtitle: 'Mostrar um campo de busca nos seletores de máquinas',
-        pathPickerSearch: 'Busca de caminhos',
-        pathPickerSearchSubtitle: 'Mostrar um campo de busca nos seletores de caminhos',
+    actions: {
+      viewEnvironmentVariables: "Variáveis de ambiente",
+      addToFavorites: "Adicionar aos favoritos",
+      removeFromFavorites: "Remover dos favoritos",
+      editProfile: "Editar perfil",
+      duplicateProfile: "Duplicar perfil",
+      deleteProfile: "Excluir perfil",
     },
-
-    errors: {
-        networkError: 'Ocorreu um erro de rede',
-        serverError: 'Ocorreu um erro do servidor',
-        unknownError: 'Ocorreu um erro desconhecido',
-        connectionTimeout: 'Tempo limite da conexão esgotado',
-        authenticationFailed: 'Falha na autenticação',
-        permissionDenied: 'Permissão negada',
-        fileNotFound: 'Arquivo não encontrado',
-        invalidFormat: 'Formato inválido',
-        operationFailed: 'Operação falhou',
-        tryAgain: 'Por favor, tente novamente',
-        contactSupport: 'Entre em contato com o suporte se o problema persistir',
-        sessionNotFound: 'Sessão não encontrada',
-        voiceSessionFailed: 'Falha ao iniciar sessão de voz',
-        voiceServiceUnavailable: 'Serviço de voz temporariamente indisponível',
-        voiceAlreadyStarting: 'A voz já está iniciando em outra sessão',
-        voiceMediatorNotActive: 'Inicie primeiro uma conversa com o mediador e depois confirme.',
-        oauthInitializationFailed: 'Falha ao inicializar o fluxo OAuth',
-        tokenStorageFailed: 'Falha ao armazenar tokens de autenticação',
-        oauthStateMismatch: 'Falha na validação de segurança. Por favor, tente novamente',
-        providerAlreadyLinked: ({ provider }: { provider: string }) =>
-            `${provider} já está vinculado a uma conta Happier existente. Para entrar neste dispositivo, vincule-o a partir de um dispositivo onde já esteja conectado.`,
-        tokenExchangeFailed: 'Falha ao trocar código de autorização',
-        oauthAuthorizationDenied: 'A autorização foi negada',
-        webViewLoadFailed: 'Falha ao carregar a página de autenticação',
-        failedToLoadProfile: 'Falha ao carregar o perfil do usuário',
-        userNotFound: 'Usuário não encontrado',
-        sessionDeleted: 'A sessão não está disponível',
-        sessionDeletedDescription: 'Ela pode ter sido excluída ou você pode não ter mais acesso.',
-
-        // Error functions with context
-        fieldError: ({ field, reason }: { field: string; reason: string }) =>
-            `${field}: ${reason}`,
-        validationError: ({ field, min, max }: { field: string; min: number; max: number }) =>
-            `${field} deve estar entre ${min} e ${max}`,
-        retryIn: ({ seconds }: { seconds: number }) =>
-            `Tentar novamente em ${seconds} ${seconds === 1 ? 'segundo' : 'segundos'}`,
-        errorWithCode: ({ message, code }: { message: string; code: number | string }) =>
-            `${message} (Erro ${code})`,
-        disconnectServiceFailed: ({ service }: { service: string }) => 
-            `Falha ao desconectar ${service}`,
-        connectServiceFailed: ({ service }: { service: string }) =>
-            `Falha ao conectar ${service}. Por favor, tente novamente.`,
-        failedToLoadFriends: 'Falha ao carregar lista de amigos',
-        failedToAcceptRequest: 'Falha ao aceitar solicitação de amizade',
-        failedToRejectRequest: 'Falha ao rejeitar solicitação de amizade',
-        failedToRemoveFriend: 'Falha ao remover amigo',
-        searchFailed: 'A busca falhou. Por favor, tente novamente.',
-        failedToSendRequest: 'Falha ao enviar solicitação de amizade',
-        failedToResumeSession: 'Falha ao retomar a sessão',
-        failedToSendMessage: 'Falha ao enviar a mensagem',
-        failedToSwitchControl: 'Falha ao alternar o modo de controle',
-        cannotShareWithSelf: 'Não é possível compartilhar consigo mesmo',
-        canOnlyShareWithFriends: 'Só é possível compartilhar com amigos',
-        shareNotFound: 'Compartilhamento não encontrado',
-        publicShareNotFound: 'Link público não encontrado ou expirado',
-        consentRequired: 'Consentimento necessário para acesso',
-        maxUsesReached: 'Máximo de usos atingido',
-        invalidShareLink: 'Link de compartilhamento inválido ou expirado',
-            missingPermissionId: 'Falta o id de permissão',
-            codexResumeNotInstalledTitle: 'O Codex resume não está instalado nesta máquina',
-            codexResumeNotInstalledMessage:
-                'Para retomar uma conversa do Codex, instale o servidor de retomada do Codex na máquina de destino (Detalhes da máquina → Retomada do Codex).',
-            codexAcpNotInstalledTitle: 'O Codex ACP não está instalado nesta máquina',
-            codexAcpNotInstalledMessage:
-                'Para usar o experimento Codex ACP, instale o codex-acp na máquina de destino (Detalhes da máquina → Codex ACP) ou desative o experimento.',
+    copySuffix: "(Cópia)",
+    duplicateName: "Já existe um perfil com este nome",
+    setupInstructions: {
+      title: "Instruções de configuração",
+      viewCloudGuide: "Ver guia oficial de configuração",
     },
-
-    deps: {
-        installNotSupported: 'Atualize o Happier CLI para instalar esta dependência.',
-        installFailed: 'Falha na instalação',
-        installed: 'Instalado',
-        installLog: ({ path }: { path: string }) => `Log de instalação: ${path}`,
-        installable: {
-            codexResume: {
-                title: 'Servidor de retomada do Codex',
-                installSpecTitle: 'Fonte de instalação do Codex resume',
-            },
-            codexAcp: {
-                title: 'Adaptador Codex ACP',
-                installSpecTitle: 'Fonte de instalação do Codex ACP',
-            },
-            installSpecDescription: 'Especificação NPM/Git/arquivo passada para `npm install` (experimental). Deixe em branco para usar o padrão do daemon.',
-        },
-        ui: {
-            notAvailable: 'Indisponível',
-            notAvailableUpdateCli: 'Indisponível (atualize o CLI)',
-            errorRefresh: 'Erro (atualizar)',
-            installed: 'Instalado',
-            installedWithVersion: ({ version }: { version: string }) => `Instalado (v${version})`,
-            installedUpdateAvailable: ({ installedVersion, latestVersion }: { installedVersion: string; latestVersion: string }) =>
-                `Instalado (v${installedVersion}) — atualização disponível (v${latestVersion})`,
-            notInstalled: 'Não instalado',
-            latest: 'Última',
-            latestSubtitle: ({ version, tag }: { version: string; tag: string }) => `${version} (tag: ${tag})`,
-            registryCheck: 'Verificação do registro',
-            registryCheckFailed: ({ error }: { error: string }) => `Falhou: ${error}`,
-            installSource: 'Fonte de instalação',
-            installSourceDefault: '(padrão)',
-            installSpecPlaceholder: 'ex.: file:/caminho/para/pkg ou github:owner/repo#branch',
-            lastInstallLog: 'Último log de instalação',
-            installLogTitle: 'Log de instalação',
-        },
+    machineLogin: {
+      title: "Login necessário na máquina",
+      subtitle:
+        "Este perfil depende do cache de login do CLI na máquina selecionada.",
+      status: {
+        loggedIn: "Logado",
+        notLoggedIn: "Não logado",
+      },
+      claudeCode: {
+        title: "Claude Code",
+        instructions: "Execute `claude` e depois digite `/login` para entrar.",
+        warning:
+          "Obs.: definir `ANTHROPIC_AUTH_TOKEN` substitui o login do CLI.",
+      },
+      codex: {
+        title: "Codex",
+        instructions: "Execute `codex login` para entrar.",
+      },
+      geminiCli: {
+        title: "Gemini CLI",
+        instructions: "Execute `gemini auth` para entrar.",
+      },
     },
-
-    newSession: {
-        // Used by new-session screen and launch flows
-        title: 'Iniciar nova sessão',
-        selectAiProfileTitle: 'Selecionar perfil de IA',
-        selectAiProfileDescription: 'Selecione um perfil de IA para aplicar variáveis de ambiente e padrões à sua sessão.',
-        changeProfile: 'Trocar perfil',
-        aiBackendSelectedByProfile: 'O backend de IA é selecionado pelo seu perfil. Para alterar, selecione um perfil diferente.',
-        selectAiBackendTitle: 'Selecionar backend de IA',
-        aiBackendLimitedByProfileAndMachineClis: 'Limitado pelo perfil selecionado e pelos CLIs disponíveis nesta máquina.',
-        aiBackendSelectWhichAiRuns: 'Selecione qual IA roda sua sessão.',
-        aiBackendNotCompatibleWithSelectedProfile: 'Não compatível com o perfil selecionado.',
-        aiBackendCliNotDetectedOnMachine: ({ cli }: { cli: string }) => `CLI do ${cli} não detectado nesta máquina.`,
-        selectMachineTitle: 'Selecionar máquina',
-        selectMachineDescription: 'Escolha onde esta sessão será executada.',
-        selectPathTitle: 'Selecionar caminho',
-        selectWorkingDirectoryTitle: 'Selecionar diretório de trabalho',
-        selectWorkingDirectoryDescription: 'Escolha a pasta usada para comandos e contexto.',
-        selectPermissionModeTitle: 'Selecionar modo de permissões',
-        selectPermissionModeDescription: 'Controle o quão estritamente as ações exigem aprovação.',
-        selectModelTitle: 'Selecionar modelo de IA',
-        selectModelDescription: 'Escolha o modelo usado por esta sessão.',
-        selectSessionTypeTitle: 'Selecionar tipo de sessão',
-        selectSessionTypeDescription: 'Escolha uma sessão simples ou uma vinculada a um worktree do Git.',
-        searchPathsPlaceholder: 'Pesquisar caminhos...',
-        noMachinesFound: 'Nenhuma máquina encontrada. Inicie uma sessão Happier no seu computador primeiro.',
-        allMachinesOffline: 'Todas as máquinas estão offline',
-        machineDetails: 'Ver detalhes da máquina →',
-        directoryDoesNotExist: 'Diretório não encontrado',
-        createDirectoryConfirm: ({ directory }: { directory: string }) => `O diretório ${directory} não existe. Deseja criá-lo?`,
-        sessionStarted: 'Sessão iniciada',
-        sessionStartedMessage: 'A sessão foi iniciada com sucesso.',
-        sessionSpawningFailed: 'Falha ao criar sessão - nenhum ID de sessão foi retornado.',
-        failedToStart: 'Falha ao iniciar sessão. Certifique-se de que o daemon está rodando na máquina de destino.',
-        sessionTimeout: 'Tempo limite de inicialização da sessão esgotado. A máquina pode estar lenta ou o daemon pode não estar respondendo.',
-        notConnectedToServer: 'Não conectado ao servidor. Verifique sua conexão com a internet.',
-        startingSession: 'Iniciando sessão...',
-        startNewSessionInFolder: 'Nova sessão aqui',
-        noMachineSelected: 'Por favor, selecione uma máquina para iniciar a sessão',
-        noPathSelected: 'Por favor, selecione um diretório para iniciar a sessão',
-        machinePicker: {
-            searchPlaceholder: 'Pesquisar máquinas...',
-            recentTitle: 'Recentes',
-            favoritesTitle: 'Favoritos',
-            allTitle: 'Todas',
-            emptyMessage: 'Nenhuma máquina disponível',
-        },
-        pathPicker: {
-            enterPathTitle: 'Inserir caminho',
-            enterPathPlaceholder: 'Insira um caminho...',
-            customPathTitle: 'Caminho personalizado',
-            recentTitle: 'Recentes',
-            favoritesTitle: 'Favoritos',
-            suggestedTitle: 'Sugeridos',
-            allTitle: 'Todas',
-            emptyRecent: 'Nenhum caminho recente',
-            emptyFavorites: 'Nenhum caminho favorito',
-            emptySuggested: 'Nenhum caminho sugerido',
-            emptyAll: 'Nenhum caminho',
-        },
-        sessionType: {
-            title: 'Tipo de sessão',
-            simple: 'Simples',
-            worktree: 'Árvore de trabalho',
-            comingSoon: 'Em breve',
-        },
-        profileAvailability: {
-            requiresAgent: ({ agent }: { agent: string }) => `Requer ${agent}`,
-            cliNotDetected: ({ cli }: { cli: string }) => `CLI do ${cli} não detectado`,
-        },
-        cliBanners: {
-            cliNotDetectedTitle: ({ cli }: { cli: string }) => `CLI do ${cli} não detectado`,
-            dontShowFor: 'Não mostrar este aviso para',
-            thisMachine: 'esta máquina',
-            anyMachine: 'qualquer máquina',
-            installCommand: ({ command }: { command: string }) => `Instalar: ${command} •`,
-            installCliIfAvailable: ({ cli }: { cli: string }) => `Instale o CLI do ${cli} se disponível •`,
-            viewInstallationGuide: 'Ver guia de instalação →',
-            viewGeminiDocs: 'Ver docs do Gemini →',
-        },
-        worktree: {
-            creating: ({ name }: { name: string }) => `Criando worktree '${name}'...`,
-            notGitRepo: 'Worktrees requerem um repositório git',
-            failed: ({ error }: { error: string }) => `Falha ao criar worktree: ${error}`,
-            success: 'Worktree criado com sucesso',
-        },
-        resume: {
-            title: 'Retomar sessão',
-            optional: 'Retomar: Opcional',
-            pickerTitle: 'Retomar sessão',
-            subtitle: ({ agent }: { agent: string }) => `Cole um ID de sessão do ${agent} para retomar`,
-            placeholder: ({ agent }: { agent: string }) => `Cole o ID de sessão do ${agent}…`,
-            paste: 'Colar',
-            save: 'Salvar',
-            clearAndRemove: 'Limpar',
-            helpText: 'Você pode encontrar os IDs de sessão na tela de informações da sessão.',
-            cannotApplyBody: 'Este ID de retomada não pode ser aplicado agora. O Happier iniciará uma nova sessão em vez disso.',
-        },
-        codexResumeBanner: {
-            title: 'Codex resume',
-            updateAvailable: 'Atualização disponível',
-            systemCodexVersion: ({ version }: { version: string }) => `Codex do sistema: ${version}`,
-            resumeServerVersion: ({ version }: { version: string }) => `Servidor do Codex resume: ${version}`,
-            notInstalled: 'não instalado',
-            latestVersion: ({ version }: { version: string }) => `(mais recente ${version})`,
-            registryCheckFailed: ({ error }: { error: string }) => `Falha na verificação do registro: ${error}`,
-            install: 'Instalar',
-            update: 'Atualizar',
-            reinstall: 'Reinstalar',
-        },
-        codexResumeInstallModal: {
-            installTitle: 'Instalar Codex resume?',
-            updateTitle: 'Atualizar Codex resume?',
-            reinstallTitle: 'Reinstalar Codex resume?',
-            description: 'Isso instala um wrapper experimental de servidor MCP do Codex usado apenas para operações de retomada.',
-        },
-        codexAcpBanner: {
-            title: 'Codex ACP',
-            install: 'Instalar',
-            update: 'Atualizar',
-            reinstall: 'Reinstalar',
-        },
-        codexAcpInstallModal: {
-            installTitle: 'Instalar Codex ACP?',
-            updateTitle: 'Atualizar Codex ACP?',
-            reinstallTitle: 'Reinstalar Codex ACP?',
-            description: 'Isso instala um adaptador ACP experimental em torno do Codex que oferece suporte a carregar/retomar threads.',
-        },
-    },
-
-    sessionHistory: {
-        // Used by session history screen
-        title: 'Histórico de sessões',
-        empty: 'Nenhuma sessão encontrada',
-        today: 'Hoje',
-        yesterday: 'Ontem',
-        daysAgo: ({ count }: { count: number }) => `há ${count} ${count === 1 ? 'dia' : 'dias'}`,
-        viewAll: 'Ver todas as sessões',
-    },
-
-    session: {
-        inputPlaceholder: 'Digite uma mensagem ...',
-        resuming: 'Retomando...',
-        resumeFailed: 'Falha ao retomar a sessão',
-        resumeSupportNoteChecking: 'Nota: o Happier ainda está verificando se esta máquina pode retomar a sessão do provedor.',
-        resumeSupportNoteUnverified: 'Nota: o Happier não conseguiu verificar o suporte de retomada para esta máquina.',
-        resumeSupportDetails: {
-            cliNotDetected: 'CLI não detectado na máquina.',
-            capabilityProbeFailed: 'Falha na verificação de capacidades.',
-            acpProbeFailed: 'Falha na verificação ACP.',
-            loadSessionFalse: 'O agente não oferece suporte para carregar sessões.',
-        },
-        inactiveResumable: 'Inativa (retomável)',
-        inactiveMachineOffline: 'Inativa (máquina offline)',
-        inactiveNotResumable: 'Inativa',
-        inactiveNotResumableNoticeTitle: 'Esta sessão não pode ser retomada',
-        inactiveNotResumableNoticeBody: ({ provider }: { provider: string }) =>
-            `Esta sessão terminou e não pode ser retomada porque ${provider} não oferece suporte para restaurar o contexto aqui. Inicie uma nova sessão para continuar.`,
-        machineOfflineNoticeTitle: 'A máquina está offline',
-        machineOfflineNoticeBody: ({ machine }: { machine: string }) =>
-            `“${machine}” está offline, então o Happier ainda não consegue retomar esta sessão. Traga a máquina de volta online para continuar.`,
-        machineOfflineCannotResume: 'A máquina está offline. Traga-a de volta online para retomar esta sessão.',
-
-        sharing: {
-            title: 'Compartilhamento',
-            directSharing: 'Compartilhamento direto',
-            addShare: 'Compartilhar com um amigo',
-            accessLevel: 'Nível de acesso',
-            shareWith: 'Compartilhar com',
-            sharedWith: 'Compartilhado com',
-            noShares: 'Não compartilhado',
-            viewOnly: 'Somente visualizar',
-            viewOnlyDescription: 'Pode ver a sessão, mas não enviar mensagens.',
-            viewOnlyMode: 'Somente visualização (sessão compartilhada)',
-            noEditPermission: 'Você tem acesso somente leitura a esta sessão.',
-            canEdit: 'Pode editar',
-            canEditDescription: 'Pode enviar mensagens.',
-            canManage: 'Pode gerenciar',
-            canManageDescription: 'Pode gerenciar o compartilhamento.',
-            manageSharingDenied: 'Você não tem permissão para gerenciar as configurações de compartilhamento desta sessão.',
-            stopSharing: 'Parar de compartilhar',
-            recipientMissingKeys: 'Este usuário ainda não registrou chaves de criptografia.',
-            permissionApprovals: 'Pode aprovar permissões',
-            allowPermissionApprovals: 'Permitir aprovar permissões',
-            allowPermissionApprovalsDescription: 'Permite que este usuário aprove solicitações de permissão e execute ferramentas na sua máquina.',
-            permissionApprovalsDisabledTitle: 'A aprovação de permissões está desativada',
-            permissionApprovalsDisabledPublic: 'Links públicos são somente leitura. Não é possível aprovar permissões.',
-            permissionApprovalsDisabledReadOnly: 'Você tem acesso somente leitura a esta sessão.',
-            permissionApprovalsDisabledNotGranted: 'O proprietário não permitiu que você aprovasse permissões para esta sessão.',
-            publicReadOnlyTitle: 'Link público (somente leitura)',
-            publicReadOnlyBody: 'Esta sessão é compartilhada por link público. Você pode ver mensagens e saídas das ferramentas, mas não pode interagir nem aprovar permissões.',
-
-            publicLink: 'Link público',
-            publicLinkActive: 'Link público ativo',
-            publicLinkDescription: 'Crie um link para que qualquer pessoa possa ver esta sessão.',
-            createPublicLink: 'Criar link público',
-            regeneratePublicLink: 'Regenerar link público',
-            deletePublicLink: 'Excluir link público',
-            linkToken: 'Token do link',
-            tokenNotRecoverable: 'Token indisponível',
-            tokenNotRecoverableDescription: 'Por segurança, tokens de link público são armazenados como hash e não podem ser recuperados. Regere o link para criar um novo token.',
-
-            expiresIn: 'Expira em',
-            expiresOn: 'Expira em',
-            days7: '7 dias',
-            days30: '30 dias',
-            never: 'Nunca',
-
-            maxUsesLabel: 'Máximo de usos',
-            unlimited: 'Ilimitado',
-            uses10: '10 usos',
-            uses50: '50 usos',
-            usageCount: 'Contagem de usos',
-            usageCountWithMax: ({ used, max }: { used: number; max: number }) => `${used}/${max} usos`,
-            usageCountUnlimited: ({ used }: { used: number }) => `${used} usos`,
-
-            requireConsent: 'Exigir consentimento',
-            requireConsentDescription: 'Peça consentimento antes de registrar o acesso.',
-            consentRequired: 'Consentimento exigido',
-            consentDescription: 'Este link exige seu consentimento para registrar seu IP e agente de usuário.',
-            acceptAndView: 'Aceitar e visualizar',
-            sharedBy: ({ name }: { name: string }) => `Compartilhado por ${name}`,
-
-            shareNotFound: 'Link de compartilhamento não encontrado ou expirado',
-            failedToDecrypt: 'Falha ao descriptografar a sessão',
-            noMessages: 'Ainda não há mensagens',
-            session: 'Sessão',
-        },
-    },
-
-    commandPalette: {
-        placeholder: 'Digite um comando ou pesquise...',
-        noCommandsFound: 'Nenhum comando encontrado',
-    },
-
-    commandView: {
-        completedWithNoOutput: '[Comando concluído sem saída]',
-    },
-
-    voiceAssistant: {
-        connecting: 'Conectando...',
-        active: 'Assistente de voz ativo',
-        connectionError: 'Erro de conexão',
-        label: 'Assistente de voz',
-        tapToEnd: 'Toque para encerrar',
-    },
-
-    voiceMediator: {
-        commitChip: 'Confirmar',
-        commitTitle: 'Confirmar na sessão',
-        commitSend: 'Enviar',
-        commitEdit: 'Editar',
-    },
-
-    server: {
-        // Used by Server Configuration screen (app/(app)/server.tsx)
-        serverConfiguration: 'Configuração do servidor',
-        enterServerUrl: 'Por favor, insira uma URL do servidor',
-        notValidHappyServer: 'Não é um servidor Happier válido',
-        changeServer: 'Alterar servidor',
-        continueWithServer: 'Continuar com este servidor?',
-        resetToDefault: 'Redefinir para padrão',
-        resetServerDefault: 'Redefinir servidor para padrão?',
-        validating: 'Validando...',
-        validatingServer: 'Validando servidor...',
-        serverReturnedError: 'O servidor retornou um erro',
-        failedToConnectToServer: 'Falha ao conectar com o servidor',
-        currentlyUsingCustomServer: 'Atualmente usando servidor personalizado',
-        customServerUrlLabel: 'URL do servidor personalizado',
-        advancedFeatureFooter: 'Este é um recurso avançado. Altere o servidor apenas se souber o que está fazendo. Você precisará sair e entrar novamente após alterar servidores.',
-        useThisServer: 'Usar este servidor',
-        autoConfigHint: 'Se você está hospedando: configure o servidor primeiro, depois entre (ou crie uma conta) e, por fim, conecte seu terminal.',
-        renameServer: 'Rename server',
-        renameServerPrompt: 'Enter a new name for this server.',
-        serverNamePlaceholder: 'Server name',
-        cannotRenameCloud: 'You can’t rename the cloud server.',
-        removeServer: 'Remove server',
-        removeServerConfirm: ({ name }: { name: string }) => `Remove "${name}" from saved servers?`,
-        cannotRemoveCloud: 'You can’t remove the cloud server.',
-        signOutThisServer: 'Also sign out from this server?',
-        signOutThisServerPrompt: 'Stored credentials were found for this server on this device.',
-        savedServersTitle: 'Saved servers',
-        signedIn: 'Signed in',
-        signedOut: 'Signed out',
-        authStatusUnknown: 'Auth status unknown',
-        switchToServer: 'Switch to this server',
-        active: 'Active',
-        addServerTitle: 'Add server',
-        switchForThisTab: 'Switch for this tab',
-        makeDefaultOnDevice: 'Make default on this device',
-        serverNameLabel: 'Server name',
-        addAndUse: 'Add and use',
-    },
-
-    sessionInfo: {
-        // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
-        killSession: 'Encerrar sessão',
-        killSessionConfirm: 'Tem certeza de que deseja encerrar esta sessão?',
-        archiveSession: 'Arquivar sessão',
-        archiveSessionConfirm: 'Tem certeza de que deseja arquivar esta sessão?',
-        happySessionIdCopied: 'ID da sessão Happier copiado para a área de transferência',
-        failedToCopySessionId: 'Falha ao copiar ID da sessão Happier',
-        happySessionId: 'ID da sessão Happier',
-        claudeCodeSessionId: 'ID da sessão Claude Code',
-        claudeCodeSessionIdCopied: 'ID da sessão Claude Code copiado para a área de transferência',
-        aiProfile: 'Perfil de IA',
-        aiProvider: 'Provedor de IA',
-        failedToCopyClaudeCodeSessionId: 'Falha ao copiar ID da sessão Claude Code',
-        codexSessionId: 'ID da sessão Codex',
-        codexSessionIdCopied: 'ID da sessão Codex copiado para a área de transferência',
-        failedToCopyCodexSessionId: 'Falha ao copiar ID da sessão Codex',
-        opencodeSessionId: 'ID da sessão OpenCode',
-        opencodeSessionIdCopied: 'ID da sessão OpenCode copiado para a área de transferência',
-        auggieSessionId: 'ID da sessão Auggie',
-        auggieSessionIdCopied: 'ID da sessão Auggie copiado para a área de transferência',
-        geminiSessionId: 'ID da sessão Gemini',
-        geminiSessionIdCopied: 'ID da sessão Gemini copiado para a área de transferência',
-        qwenSessionId: 'ID da sessão Qwen Code',
-        qwenSessionIdCopied: 'ID da sessão Qwen Code copiado para a área de transferência',
-        kimiSessionId: 'ID da sessão Kimi',
-        kimiSessionIdCopied: 'ID da sessão Kimi copiado para a área de transferência',
-        kiloSessionId: 'ID da sessão Kilo',
-        kiloSessionIdCopied: 'ID da sessão Kilo copiado para a área de transferência',
-        piSessionId: 'ID da sessão Pi',
-        piSessionIdCopied: 'ID da sessão Pi copiado para a área de transferência',
-        metadataCopied: 'Metadados copiados para a área de transferência',
-        failedToCopyMetadata: 'Falha ao copiar metadados',
-        failedToKillSession: 'Falha ao encerrar sessão',
-        failedToArchiveSession: 'Falha ao arquivar sessão',
-        connectionStatus: 'Status da conexão',
-        created: 'Criado',
-        lastUpdated: 'Última atualização',
-        sequence: 'Sequência',
-        quickActions: 'Ações rápidas',
-        copyResumeCommand: 'Copiar comando de retomada',
-        viewMachine: 'Ver máquina',
-        viewMachineSubtitle: 'Ver detalhes da máquina e sessões',
-        killSessionSubtitle: 'Encerrar imediatamente a sessão',
-        archiveSessionSubtitle: 'Arquivar esta sessão e pará-la',
-        metadata: 'Metadados',
-        host: 'Host',
-        path: 'Caminho',
-        operatingSystem: 'Sistema operacional',
-        processId: 'ID do processo',
-        happyHome: 'Diretório Happier',
-        attachFromTerminal: 'Anexar pelo terminal',
-        tmuxTarget: 'Alvo do tmux',
-        tmuxFallback: 'Fallback do tmux',
-        copyMetadata: 'Copiar metadados',
-        agentState: 'Estado do agente',
-        rawJsonDevMode: 'JSON bruto (modo dev)',
-        sessionStatus: 'Status da sessão',
-        fullSessionObject: 'Objeto completo da sessão',
-        controlledByUser: 'Controlado pelo usuário',
-        pendingRequests: 'Solicitações pendentes',
-        activity: 'Atividade',
-        thinking: 'Pensando',
-        thinkingSince: 'Pensando desde',
-        thinkingLevel: 'Nível de pensamento',
-        cliVersion: 'Versão do CLI',
-        cliVersionOutdated: 'Atualização do CLI necessária',
-        cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>
-            `Versão ${currentVersion} instalada. Atualize para ${requiredVersion} ou posterior`,
-        updateCliInstructions: 'Por favor execute npm install -g @happier-dev/cli@latest',
-        deleteSession: 'Excluir sessão',
-        deleteSessionSubtitle: 'Remover permanentemente esta sessão',
-        deleteSessionConfirm: 'Excluir sessão permanentemente?',
-        deleteSessionWarning: 'Esta ação não pode ser desfeita. Todas as mensagens e dados associados a esta sessão serão excluídos permanentemente.',
-        failedToDeleteSession: 'Falha ao excluir sessão',
-        sessionDeleted: 'Sessão excluída com sucesso',
-        manageSharing: 'Gerenciar compartilhamento',
-        manageSharingSubtitle: 'Compartilhe esta sessão com amigos ou crie um link público',
-        renameSession: 'Renomear Sessão',
-        renameSessionSubtitle: 'Alterar o nome de exibição desta sessão',
-        renameSessionPlaceholder: 'Digite o nome da sessão...',
-        failedToRenameSession: 'Falha ao renomear sessão',
-        sessionRenamed: 'Sessão renomeada com sucesso',
-
-    },
-
-    components: {
-        emptyMainScreen: {
-            // Used by EmptyMainScreen component
-            readyToCode: 'Pronto para programar?',
-            installCli: 'Instale o Happier CLI',
-            runIt: 'Execute',
-            scanQrCode: 'Escaneie o código QR',
-            openCamera: 'Abrir câmera',
-            installCommand: '$ npm i -g @happier-dev/cli',
-            runCommand: '$ happier',
-        },
-        emptyMessages: {
-            noMessagesYet: 'Nenhuma mensagem ainda',
-            created: ({ time }: { time: string }) => `Criado ${time}`,
-        },
-        emptySessionsTablet: {
-            noActiveSessions: 'Nenhuma sessão ativa',
-            startNewSessionDescription: 'Inicie uma nova sessão em qualquer uma das suas máquinas conectadas.',
-            startNewSessionButton: 'Iniciar nova sessão',
-            openTerminalToStart: 'Abra um novo terminal no computador para iniciar uma sessão.',
-        },
-    },
-
-    zen: {
-        title: 'Zen',
-        add: {
-            placeholder: 'O que precisa ser feito?',
-        },
-        home: {
-            noTasksYet: 'Ainda não há tarefas. Toque em + para adicionar.',
-        },
-        view: {
-            workOnTask: 'Trabalhar na tarefa',
-            clarify: 'Esclarecer',
-            delete: 'Excluir',
-            linkedSessions: 'Sessões vinculadas',
-            tapTaskTextToEdit: 'Toque no texto da tarefa para editar',
-        },
-    },
-
-    agentInput: {
-        envVars: {
-            title: 'Vars env',
-            titleWithCount: ({ count }: { count: number }) => `Vars env (${count})`,
-        },
-        resumeChip: {
-            withId: ({ title, id }: { title: string; id: string }) => `${title}: ${id}`,
-            withIdTruncated: ({ title, prefix, suffix }: { title: string; prefix: string; suffix: string }) =>
-                `${title}: ${prefix}…${suffix}`,
-        },
-        permissionMode: {
-            title: 'MODO DE PERMISSÃO',
-            default: 'Padrão',
-            readOnly: 'Somente leitura',
-            acceptEdits: 'Aceitar edições',
-            safeYolo: 'YOLO seguro',
-            yolo: 'YOLO',
-            plan: 'Modo de planejamento',
-            bypassPermissions: 'Modo Yolo',
-            badgeAccept: 'Aceitar',
-            badgePlan: 'Plano',
-            badgeReadOnly: 'Somente leitura',
-            badgeSafeYolo: 'YOLO seguro',
-            badgeYolo: 'YOLO',
-            badgeAcceptAllEdits: 'Aceitar todas as edições',
-            badgeBypassAllPermissions: 'Ignorar todas as permissões',
-            badgePlanMode: 'Modo de planejamento',
-        },
-        agent: {
-            claude: 'Claude',
-            codex: 'Codex',
-            opencode: 'OpenCode',
-            gemini: 'Gemini',
-            auggie: 'Auggie',
-            qwen: 'Qwen Code',
-            kimi: 'Kimi',
-            kilo: 'Kilo',
-            pi: 'Pi',
-        },
-        auggieIndexingChip: {
-            on: 'Indexing on',
-            off: 'Indexing off',
-        },
-        model: {
-            title: 'MODELO',
-            configureInCli: 'Configurar modelos nas configurações do CLI',
-        },
-        codexPermissionMode: {
-            title: 'MODO DE PERMISSÃO CODEX',
-            default: 'Configurações do CLI',
-            plan: 'Modo de planejamento',
-            readOnly: 'Modo somente leitura',
-            safeYolo: 'YOLO seguro',
-            yolo: 'YOLO',
-            badgePlan: 'Plano',
-            badgeReadOnly: 'Somente leitura',
-            badgeSafeYolo: 'YOLO seguro',
-            badgeYolo: 'YOLO',
-        },
-        codexModel: {
-            title: 'MODELO CODEX',
-            gpt5CodexLow: 'gpt-5-codex baixo',
-            gpt5CodexMedium: 'gpt-5-codex médio',
-            gpt5CodexHigh: 'gpt-5-codex alto',
-            gpt5Minimal: 'GPT-5 Mínimo',
-            gpt5Low: 'GPT-5 Baixo',
-            gpt5Medium: 'GPT-5 Médio',
-            gpt5High: 'GPT-5 Alto',
-        },
-        geminiPermissionMode: {
-            title: 'MODO DE PERMISSÃO GEMINI',
-            default: 'Padrão',
-            readOnly: 'Somente leitura',
-            safeYolo: 'YOLO seguro',
-            yolo: 'YOLO',
-            badgeReadOnly: 'Somente leitura',
-            badgeSafeYolo: 'YOLO seguro',
-            badgeYolo: 'YOLO',
-        },
-        geminiModel: {
-            title: 'MODELO GEMINI',
-            gemini25Pro: {
-                label: 'Gemini 2.5 Pro',
-                description: 'Mais capaz',
-            },
-            gemini25Flash: {
-                label: 'Gemini 2.5 Flash',
-                description: 'Rápido e eficiente',
-            },
-            gemini25FlashLite: {
-                label: 'Gemini 2.5 Flash Lite',
-                description: 'Mais rápido',
-            },
-        },
-        context: {
-            remaining: ({ percent }: { percent: number }) => `${percent}% restante`,
-        },
-        suggestion: {
-            fileLabel: 'ARQUIVO',
-            folderLabel: 'PASTA',
-        },
-        actionMenu: {
-            title: 'AÇÕES',
-            files: 'Arquivos',
-            stop: 'Parar',
-        },
-        noMachinesAvailable: 'Sem máquinas',
-    },
-
-    machineLauncher: {
-        showLess: 'Mostrar menos',
-        showAll: ({ count }: { count: number }) => `Mostrar todos (${count} caminhos)`,
-        enterCustomPath: 'Inserir caminho personalizado',
-        offlineUnableToSpawn: 'Não é possível criar nova sessão, você está offline',
-    },
-
-    sidebar: {
-        sessionsTitle: 'Happier',
-    },
-
-    toolView: {
-        open: 'Abrir detalhes',
-        expand: 'Expandir/recolher',
-        input: 'Entrada',
-        output: 'Saída',
-    },
-
-    tools: {
-        fullView: {
-            description: 'Descrição',
-            inputParams: 'Parâmetros de entrada',
-            output: 'Saída',
-            error: 'Erro',
-            completed: 'Ferramenta concluída com sucesso',
-            noOutput: 'Nenhuma saída foi produzida',
-            running: 'Ferramenta está executando...',
-            debug: 'Depuração',
-            show: 'Mostrar',
-            hide: 'Ocultar',
-            rawJsonDevMode: 'JSON bruto (modo desenvolvedor)',
-        },
-        taskView: {
-            initializing: 'Inicializando agente...',
-            moreTools: ({ count }: { count: number }) => `+${count} mais ${plural({ count, singular: 'ferramenta', plural: 'ferramentas' })}`,
-        },
-        multiEdit: {
-            editNumber: ({ index, total }: { index: number; total: number }) => `Edição ${index} de ${total}`,
-            replaceAll: 'Substituir tudo',
-        },
-        names: {
-            task: 'Tarefa',
-            terminal: 'Terminal',
-            searchFiles: 'Buscar arquivos',
-            search: 'Buscar',
-            searchContent: 'Buscar conteúdo',
-            listFiles: 'Listar arquivos',
-            planProposal: 'Proposta de plano',
-            readFile: 'Ler arquivo',
-            editFile: 'Editar arquivo',
-            writeFile: 'Escrever arquivo',
-            fetchUrl: 'Buscar URL',
-            readNotebook: 'Ler notebook',
-            editNotebook: 'Editar notebook',
-            todoList: 'Lista de tarefas',
-            webSearch: 'Busca web',
-            reasoning: 'Raciocínio',
-            applyChanges: 'Atualizar arquivo',
-            viewDiff: 'Alterações do arquivo atual',
-            question: 'Pergunta',
-            changeTitle: 'Alterar título',
-        },
-        geminiExecute: {
-            cwd: ({ cwd }: { cwd: string }) => `📁 ${cwd}`,
-        },
-        desc: {
-            terminalCmd: ({ cmd }: { cmd: string }) => `Terminal(cmd: ${cmd})`,
-            searchPattern: ({ pattern }: { pattern: string }) => `Buscar(padrão: ${pattern})`,
-            searchPath: ({ basename }: { basename: string }) => `Buscar(caminho: ${basename})`,
-            fetchUrlHost: ({ host }: { host: string }) => `Buscar URL(url: ${host})`,
-            editNotebookMode: ({ path, mode }: { path: string; mode: string }) => `Editar notebook(arquivo: ${path}, modo: ${mode})`,
-            todoListCount: ({ count }: { count: number }) => `Lista de tarefas(quantidade: ${count})`,
-            webSearchQuery: ({ query }: { query: string }) => `Busca web(consulta: ${query})`,
-            grepPattern: ({ pattern }: { pattern: string }) => `grep(padrão: ${pattern})`,
-            multiEditEdits: ({ path, count }: { path: string; count: number }) => `${path} (${count} edições)`,
-            readingFile: ({ file }: { file: string }) => `Lendo ${file}`,
-            writingFile: ({ file }: { file: string }) => `Escrevendo ${file}`,
-            modifyingFile: ({ file }: { file: string }) => `Modificando ${file}`,
-            modifyingFiles: ({ count }: { count: number }) => `Modificando ${count} arquivos`,
-            modifyingMultipleFiles: ({ file, count }: { file: string; count: number }) => `${file} e ${count} mais`,
-            showingDiff: 'Mostrando alterações',
-        },
-        askUserQuestion: {
-            submit: 'Enviar resposta',
-            multipleQuestions: ({ count }: { count: number }) => `${count} ${plural({ count, singular: 'pergunta', plural: 'perguntas' })}`,
-            other: 'Outro',
-            otherDescription: 'Digite sua própria resposta',
-            otherPlaceholder: 'Digite sua resposta...',
-        },
-        exitPlanMode: {
-            approve: 'Aprovar plano',
-            reject: 'Rejeitar',
-            requestChanges: 'Solicitar alterações',
-            requestChangesPlaceholder: 'Diga ao Claude o que você quer mudar neste plano…',
-            requestChangesSend: 'Enviar feedback',
-            requestChangesEmpty: 'Escreva o que você quer mudar.',
-            requestChangesFailed: 'Falha ao solicitar alterações. Tente novamente.',
-            responded: 'Resposta enviada',
-            approvalMessage: 'Aprovo este plano. Por favor, prossiga com a implementação.',
-            rejectionMessage: 'Não aprovo este plano. Por favor, revise-o ou pergunte quais alterações eu gostaria.',
-        },
-    },
-
-    files: {
-        searchPlaceholder: 'Buscar arquivos...',
-        detachedHead: 'HEAD desanexado',
-        summary: ({ staged, unstaged }: { staged: number; unstaged: number }) => `${staged} preparados • ${unstaged} não preparados`,
-        repositoryChangedFiles: ({ count }: { count: number }) => `Repository changed files (${count})`,
-        sessionAttributedChanges: ({ count }: { count: number }) => `Session-attributed changes (${count})`,
-        otherRepositoryChanges: ({ count }: { count: number }) => `Other repository changes (${count})`,
-        attributionReliabilityHigh: 'Best effort attribution. Repository view remains the source of truth.',
-        attributionReliabilityLimited: 'Reliability limited: multiple sessions are active for this repository. Showing direct attribution only.',
-        attributionLegendFull: 'direct = from this session operations, inferred = snapshot-based attribution',
-        attributionLegendDirectOnly: 'direct = from this session operations',
-        inferredSuppressed: ({ count }: { count: number }) =>
-            `${count} inferred file${count === 1 ? '' : 's'} kept in repository-only changes.`,
-        noSessionAttributedChanges: 'No session-attributed changes currently detected.',
-        notRepo: 'Não é um repositório de controle de versão',
-        notUnderSourceControl: 'Este diretório não está sob controle de versão',
-        repositoryFolderLoadFailed: 'Não foi possível carregar a pasta',
-        repositoryCollapseAll: 'Recolher tudo',
-        reviewFilterPlaceholder: 'Filtrar arquivos...',
-        reviewNoMatches: 'Sem correspondências',
-        reviewLargeDiffOneAtATime: 'Diff grande detectado; mostrando um arquivo por vez.',
-        reviewDiffRequestFailed: 'Não foi possível carregar o diff',
-        reviewUnableToLoadDiff: 'Não foi possível carregar o diff',
-        searching: 'Buscando arquivos...',
-        noFilesFound: 'Nenhum arquivo encontrado',
-        noFilesInProject: 'Nenhum arquivo no projeto',
-        tryDifferentTerm: 'Tente um termo de busca diferente',
-        searchResults: ({ count }: { count: number }) => `Resultados da busca (${count})`,
-        projectRoot: 'Raiz do projeto',
-        stagedChanges: ({ count }: { count: number }) => `Alterações preparadas (${count})`,
-        unstagedChanges: ({ count }: { count: number }) => `Alterações não preparadas (${count})`,
-        // File viewer strings
-        loadingFile: ({ fileName }: { fileName: string }) => `Carregando ${fileName}...`,
-        binaryFile: 'Arquivo binário',
-        cannotDisplayBinary: 'Não é possível exibir o conteúdo do arquivo binário',
-        diff: 'Diferenças',
-        file: 'Arquivo',
-        fileEmpty: 'Arquivo está vazio',
-        noChanges: 'Nenhuma alteração para exibir',
-    },
-
-    settingsSession: {
-        messageSending: {
-            title: 'Message sending',
-            footer: 'Controls what happens when you send a message while the agent is running.',
-            queueInAgentTitle: 'Queue in agent (current)',
-            queueInAgentSubtitle: 'Write to transcript immediately; agent processes when ready.',
-            interruptTitle: 'Interrupt & send',
-            interruptSubtitle: 'Abort current turn, then send immediately.',
-            pendingTitle: 'Pending until ready',
-            pendingSubtitle: 'Keep messages in a pending queue; agent pulls when ready.',
-            busySteerPolicyTitle: 'When the agent is busy (steer-capable)',
-            busySteerPolicyFooter: 'If the agent supports in-flight steering, choose whether messages steer immediately or go to Pending first.',
-            busySteerPolicy: {
-                steerImmediatelyTitle: 'Steer immediately',
-                steerImmediatelySubtitle: 'Send right away and steer the current turn (no interrupt).',
-                queueForReviewTitle: 'Queue in Pending',
-                queueForReviewSubtitle: 'Put messages into Pending first; send later using “Steer now”.',
-            },
-        },
-        toolRendering: {
-            title: 'Tool rendering',
-            footer: 'Controls how much tool detail is shown in the session timeline. This is a UI preference; it does not change agent behavior.',
-            defaultToolDetailLevelTitle: 'Default tool detail level',
-            localControlDefaultTitle: 'Local-control default',
-            showDebugByDefaultTitle: 'Show debug by default',
-            showDebugByDefaultSubtitle: 'Auto-expand raw tool payloads in the full tool view.',
-        },
-        toolDetailOverrides: {
-            title: 'Tool detail overrides',
-            footer: 'Override the detail level for specific tools. Overrides apply to the canonical tool name (V2), after legacy normalization.',
-        },
-        defaultPermissions: {
-            title: 'Default permissions',
-            footer: 'Applies when starting a new session. Profiles can optionally override this.',
-            applyPermissionChangesTitle: 'Apply permission changes',
-            applyPermissionChangesImmediateSubtitle: 'Apply immediately for running sessions (updates session metadata).',
-            applyPermissionChangesNextPromptSubtitle: 'Apply on next message only.',
-        },
-        toolDetailLevel: {
-            titleOnlyTitle: 'Title only',
-            titleOnlySubtitle: 'Show only the tool name (no body) in the timeline.',
-            summaryTitle: 'Summary',
-            summarySubtitle: 'Show a compact, safe summary in the timeline.',
-            fullTitle: 'Full',
-            fullSubtitle: 'Show full details inline in the timeline.',
-            defaultTitle: 'Default',
-            defaultSubtitle: 'Use the global default.',
-        },
-        terminalConnect: {
-            title: 'Terminal connect',
-            legacySecretExportTitle: 'Legacy secret export (compatibility)',
-            legacySecretExportEnabledSubtitle:
-                'Enabled: exports your legacy account secret to the terminal so older terminals can connect. Not recommended.',
-            legacySecretExportDisabledSubtitle:
-                'Disabled (recommended): provision terminals with the content key only (Terminal Connect V2).',
-        },
-    },
-    settingsVoice: {
-        // Voice settings screen
-        modeTitle: 'Voz',
-        modeDescription: 'Configure os recursos de voz. Você pode desativar a voz por completo, usar Happier Voice (requer assinatura) ou usar sua própria conta ElevenLabs.',
-        mode: {
-            off: 'Desativado',
-            offSubtitle: 'Desativar todas as funcionalidades de voz',
-            happier: 'Happier Voice',
-            happierSubtitle: 'Usar Happier Voice (assinatura necessária)',
-            local: 'Voz OSS local',
-            localSubtitle: 'Usar endpoints STT/TTS locais compatíveis com OpenAI',
-            byo: 'Usar meu ElevenLabs',
-            byoSubtitle: 'Usar sua chave API e agente do ElevenLabs',
-        },
-	        byo: {
-	            title: 'Usar meu ElevenLabs',
-	            configured: 'Configurado. A utilização de voz será cobrada na sua conta ElevenLabs.',
-	            notConfigured: 'Digite sua chave API e o ID do agente do ElevenLabs para usar voz sem assinatura.',
-                createAccount: 'Criar conta na ElevenLabs',
-                createAccountSubtitle: 'Cadastre-se (ou entre) antes de criar uma chave de API',
-		            openApiKeys: 'Open ElevenLabs API keys',
-		            openApiKeysSubtitle: 'ElevenLabs → Settings → API keys → Create API key',
-                    apiKeyHelp: 'How to create an API key',
-                    apiKeyHelpSubtitle: 'Step-by-step help for creating and copying your ElevenLabs API key',
-                    apiKeyHelpDialogTitle: 'Create an ElevenLabs API key',
-                    apiKeyHelpDialogBody: 'Open ElevenLabs → Settings → API keys → Create API key → Copy the key.',
-		            autoprovCreate: 'Criar agente Happier',
-		            autoprovCreateSubtitle: 'Crie e configure um agente Happier na sua conta ElevenLabs usando sua chave API',
-		            autoprovUpdate: 'Atualizar agente',
-		            autoprovUpdateSubtitle: 'Atualize seu agente para o template mais recente do Happier',
-	            autoprovCreated: ({ agentId }: { agentId: string }) => `Agente criado: ${agentId}`,
-            autoprovUpdated: 'Agente atualizado',
-            autoprovFailed: 'Falha ao criar/atualizar agente. Tente novamente.',
-            agentId: 'ID do agente',
-            agentIdSet: 'Definido',
-            agentIdNotSet: 'Não definido',
-            agentIdTitle: 'ID do agente do ElevenLabs',
-            agentIdDescription: 'Digite o ID do agente no seu painel do ElevenLabs.',
-            agentIdPlaceholder: 'agent_...',
-            apiKey: 'Chave API',
-            apiKeySet: 'Definida',
-            apiKeyNotSet: 'Não definida',
-            apiKeyTitle: 'Chave API do ElevenLabs',
-            apiKeyDescription: 'Digite sua chave API do ElevenLabs. Ela é armazenada criptografada no dispositivo.',
-            apiKeyPlaceholder: 'xi-api-key',
-            apiKeySaveFailed: 'Falha ao salvar a chave API. Tente novamente.',
-            disconnect: 'Desconectar',
-            disconnectSubtitle: 'Remover as credenciais do ElevenLabs salvas neste dispositivo',
-            disconnectTitle: 'Desconectar ElevenLabs',
-            disconnectDescription: 'Isso removerá sua chave API e o ID do agente do ElevenLabs salvos neste dispositivo.',
-            disconnectConfirm: 'Desconectar',
-        },
-        local: {
-            title: 'Voz OSS local',
-            footer: 'Configure endpoints compatíveis com OpenAI para STT (speech-to-text) e TTS (text-to-speech).',
-            localhostWarning: 'Nota: "localhost" e "127.0.0.1" normalmente não funcionam em celulares. Use o IP LAN do computador ou um túnel.',
-            notSet: 'Não definido',
-            apiKeySet: 'Definida',
-            apiKeyNotSet: 'Não definida',
-            baseUrlPlaceholder: 'http://192.168.1.10:8000/v1',
-            apiKeyPlaceholder: 'Opcional',
-            apiKeySaveFailed: 'Falha ao salvar a chave API. Tente novamente.',
-            conversationMode: 'Modo de conversa',
-            conversationModeSubtitle: 'Direto para a sessão ou mediador com commit explícito',
-            mediatorBackend: 'Backend do mediador',
-            mediatorBackendSubtitle: 'Daemon (usa o backend do Happier) ou OpenAI-compatible HTTP',
-            mediatorBackendDaemon: 'Daemon',
-            mediatorBackendOpenAi: 'OpenAI-compatible HTTP',
-            mediatorAgentSource: 'Fonte do agente do mediador',
-            mediatorAgentSourceSubtitle: 'Usar o backend da sessão ou forçar um agente específico',
-            mediatorAgentSourceSession: 'Backend da sessão',
-            mediatorAgentSourceAgent: 'Agente específico',
-            mediatorAgentId: 'Agente do mediador',
-            mediatorAgentIdSubtitle: 'Qual backend de agente usar no mediador (quando não usa a sessão)',
-            mediatorPermissionPolicy: 'Permissões do mediador',
-            mediatorPermissionPolicySubtitle: 'Restringe o uso de ferramentas durante a mediação',
-            mediatorPermissionReadOnly: 'Somente leitura',
-            mediatorPermissionNoTools: 'Sem ferramentas',
-            mediatorVerbosity: 'Verbosidade do mediador',
-            mediatorVerbositySubtitle: 'Quão detalhado o mediador deve ser',
-            mediatorVerbosityShort: 'Curto',
-            mediatorVerbosityBalanced: 'Equilibrado',
-            mediatorIdleTtl: 'TTL de inatividade do mediador',
-            mediatorIdleTtlSubtitle: 'Parar automaticamente após inatividade (60–3600s)',
-            mediatorIdleTtlTitle: 'TTL de inatividade do mediador (segundos)',
-            mediatorIdleTtlDescription: 'Digite um número entre 60 e 3600.',
-            mediatorIdleTtlInvalid: 'Digite um número entre 60 e 3600.',
-            mediatorChatModelSource: 'Origem do modelo (chat)',
-            mediatorChatModelSourceSubtitle: 'Usar o modelo da sessão ou um modelo rápido personalizado',
-            mediatorChatModelSourceSession: 'Modelo da sessão',
-            mediatorChatModelSourceCustom: 'Modelo personalizado',
-            mediatorCommitModelSource: 'Origem do modelo (commit)',
-            mediatorCommitModelSourceSubtitle: 'Usar o modelo do chat, da sessão ou um modelo personalizado',
-            mediatorCommitModelSourceChat: 'Modelo do chat',
-            mediatorCommitModelSourceSession: 'Modelo da sessão',
-            mediatorCommitModelSourceCustom: 'Modelo personalizado',
-            chatBaseUrl: 'Base URL Chat',
-            chatBaseUrlTitle: 'Base URL Chat',
-            chatBaseUrlDescription: 'Base URL para o endpoint de chat completion compatível com OpenAI (normalmente termina com /v1).',
-            chatApiKey: 'Chave API Chat',
-            chatApiKeyTitle: 'Chave API Chat',
-            chatApiKeyDescription: 'Chave API opcional para o servidor de chat (armazenada criptografada). Deixe em branco para limpar.',
-            chatModel: 'Modelo de chat',
-            chatModelSubtitle: 'Modelo rápido usado na conversa de voz',
-            chatModelTitle: 'Modelo de chat',
-            chatModelDescription: 'Nome do modelo a enviar para o servidor de chat (campo compatível com OpenAI).',
-            modelCustomTitle: 'Personalizado…',
-            modelCustomSubtitle: 'Digite um ID de modelo',
-            commitModel: 'Modelo de commit',
-            commitModelSubtitle: 'Modelo usado para gerar a instrução final',
-            commitModelTitle: 'Modelo de commit',
-            commitModelDescription: 'Nome do modelo ao gerar a mensagem final.',
-            chatTemperature: 'Temperatura do chat',
-            chatTemperatureSubtitle: 'Controla aleatoriedade (0–2)',
-            chatTemperatureTitle: 'Temperatura do chat',
-            chatTemperatureDescription: 'Digite um número entre 0 e 2.',
-            chatTemperatureInvalid: 'Digite um número entre 0 e 2.',
-            chatMaxTokens: 'Máx. tokens (chat)',
-            chatMaxTokensSubtitle: 'Limita o tamanho da resposta (vazio = padrão)',
-            chatMaxTokensTitle: 'Máx. tokens (chat)',
-            chatMaxTokensDescription: 'Digite um inteiro positivo ou deixe em branco para o padrão.',
-            chatMaxTokensPlaceholder: 'Vazio = padrão',
-            chatMaxTokensUnlimited: 'Padrão',
-            chatMaxTokensInvalid: 'Digite um número positivo ou deixe em branco.',
-            deviceStt: 'Device STT (experimental)',
-            deviceSttSubtitle: 'Use on-device speech recognition instead of an OpenAI-compatible endpoint',
-            sttBaseUrl: 'Base URL STT',
-            sttBaseUrlTitle: 'Base URL STT',
-            sttBaseUrlDescription: 'Base URL para o endpoint de transcrição compatível com OpenAI (normalmente termina com /v1).',
-            sttApiKey: 'Chave API STT',
-            sttApiKeyTitle: 'Chave API STT',
-            sttApiKeyDescription: 'Chave API opcional para o servidor STT (armazenada criptografada). Deixe em branco para limpar.',
-            sttModel: 'Modelo STT',
-            sttModelSubtitle: 'Nome do modelo enviado nas solicitações de transcrição',
-            sttModelTitle: 'Modelo STT',
-            sttModelDescription: 'Nome do modelo a enviar para o servidor STT (campo compatível com OpenAI).',
-            deviceTts: 'Device TTS (experimental)',
-            deviceTtsSubtitle: 'Use on-device speech synthesis instead of an OpenAI-compatible endpoint',
-            ttsBaseUrl: 'Base URL TTS',
-            ttsBaseUrlTitle: 'Base URL TTS',
-            ttsBaseUrlDescription: 'Base URL para o endpoint de fala compatível com OpenAI (normalmente termina com /v1).',
-            ttsApiKey: 'Chave API TTS',
-            ttsApiKeyTitle: 'Chave API TTS',
-            ttsApiKeyDescription: 'Chave API opcional para o servidor TTS (armazenada criptografada). Deixe em branco para limpar.',
-            ttsModel: 'Modelo TTS',
-            ttsModelSubtitle: 'Nome do modelo enviado nas solicitações de fala',
-            ttsModelTitle: 'Modelo TTS',
-            ttsModelDescription: 'Nome do modelo a enviar para o servidor TTS (campo compatível com OpenAI).',
-            ttsVoice: 'Voz TTS',
-            ttsVoiceSubtitle: 'Nome/ID da voz enviado nas solicitações de fala',
-            ttsVoiceTitle: 'Voz TTS',
-            ttsVoiceDescription: 'Nome/ID da voz a enviar para o servidor TTS (campo compatível com OpenAI).',
-            ttsFormat: 'Formato TTS',
-            ttsFormatSubtitle: 'Formato de áudio retornado pelo TTS',
-            testTts: 'Test TTS',
-            testTtsSubtitle: 'Play a short sample using your configured local TTS (device TTS or endpoint)',
-            testTtsSample: 'Hello from Happier. This is a test of your local TTS.',
-            testTtsMissingBaseUrl: 'Set a TTS Base URL first.',
-            testTtsFailed: 'TTS test failed. Check your base URL, API key, model, and voice.',
-            autoSpeak: 'Auto-reproduzir respostas',
-            autoSpeakSubtitle: 'Reproduz a próxima resposta do assistente após enviar a mensagem de voz',
-        },
-        privacy: {
-            title: 'Privacidade',
-            footer: 'Os provedores de voz recebem o contexto de sessão selecionado.',
-            shareSessionSummary: 'Compartilhar resumo da sessão',
-            shareSessionSummarySubtitle: 'Inclui o resumo da sessão no contexto de voz',
-            shareRecentMessages: 'Compartilhar mensagens recentes',
-            shareRecentMessagesSubtitle: 'Inclui mensagens recentes no contexto de voz',
-            recentMessagesCount: 'Quantidade de mensagens recentes',
-            recentMessagesCountSubtitle: 'Quantas mensagens recentes incluir (0–50)',
-            recentMessagesCountTitle: 'Quantidade de mensagens recentes',
-            recentMessagesCountDescription: 'Digite um número entre 0 e 50.',
-            recentMessagesCountInvalid: 'Digite um número entre 0 e 50.',
-            shareToolNames: 'Compartilhar nomes de ferramentas',
-            shareToolNamesSubtitle: 'Inclui nomes/descrições de ferramentas (argumentos sempre são ocultados)',
-            sharePermissionRequests: 'Compartilhar solicitações de permissão',
-            sharePermissionRequestsSubtitle: 'Encaminha solicitações de permissão (argumentos sempre são ocultados)',
-            shareFilePaths: 'Compartilhar caminhos locais',
-            shareFilePathsSubtitle: 'Inclui caminhos locais no contexto de voz (não recomendado)',
-        },
-        languageTitle: 'Idioma',
-        languageDescription: 'Escolha seu idioma preferido para interações com o assistente de voz. Esta configuração sincroniza em todos os seus dispositivos.',
-        preferredLanguage: 'Idioma preferido',
-        preferredLanguageSubtitle: 'Idioma usado para respostas do assistente de voz',
-        language: {
-            searchPlaceholder: 'Buscar idiomas...',
-            title: 'Idiomas',
-            footer: ({ count }: { count: number }) => `${count} ${plural({ count, singular: 'idioma', plural: 'idiomas' })} disponíveis`,
-            autoDetect: 'Detectar automaticamente',
-        },
-    },
-
-    settingsAccount: {
-        // Account settings screen
-        accountInformation: 'Informações da conta',
-        status: 'Status',
-        statusActive: 'Ativo',
-        statusNotAuthenticated: 'Não autenticado',
-        anonymousId: 'ID anônimo',
-        publicId: 'ID público',
-        notAvailable: 'Não disponível',
-        linkNewDevice: 'Vincular novo dispositivo',
-        linkNewDeviceSubtitle: 'Escanear código QR para vincular dispositivo',
-        profile: 'Perfil',
-        name: 'Nome',
-        github: 'GitHub',
-        showGitHubOnProfile: 'Mostrar no perfil',
-        showProviderOnProfile: ({ provider }: { provider: string }) => `Mostrar ${provider} no perfil`,
-        tapToDisconnect: 'Toque para desconectar',
-        server: 'Servidor',
-        backup: 'Backup',
-        backupDescription: 'Sua chave secreta é a única forma de recuperar sua conta. Salve-a em um local seguro como um gerenciador de senhas.',
-        secretKey: 'Chave secreta',
-        tapToReveal: 'Toque para revelar',
-        tapToHide: 'Toque para ocultar',
-        secretKeyLabel: 'CHAVE SECRETA (TOQUE PARA COPIAR)',
-        secretKeyCopied: 'Chave secreta copiada para a área de transferência. Guarde-a em um local seguro!',
-        secretKeyCopyFailed: 'Falha ao copiar chave secreta',
-        privacy: 'Privacidade',
-        privacyDescription: 'Ajude a melhorar o aplicativo compartilhando dados de uso anônimos. Nenhuma informação pessoal é coletada.',
-        analytics: 'Análises',
-        analyticsDisabled: 'Nenhum dado é compartilhado',
-        analyticsEnabled: 'Dados de uso anônimos são compartilhados',
-        dangerZone: 'Zona perigosa',
-        logout: 'Sair',
-        logoutSubtitle: 'Sair e limpar dados locais',
-        logoutConfirm: 'Tem certeza de que quer sair? Certifique-se de ter feito backup da sua chave secreta!',
-    },
-
-    settingsLanguage: {
-        // Language settings screen
-        title: 'Idioma',
-        description: 'Escolher o idioma preferido para a interface do aplicativo. Isso vai ser sincronizado em todos os seus dispositivos.',
-        currentLanguage: 'Idioma atual',
-        automatic: 'Automático',
-        automaticSubtitle: 'Detectar das configurações do dispositivo',
-        needsRestart: 'Idioma alterado',
-        needsRestartMessage: 'O aplicativo precisa ser reiniciado para aplicar a nova configuração de idioma.',
-        restartNow: 'Reiniciar agora',
-    },
-
-    connectButton: {
-        authenticate: 'Autenticar terminal',
-        authenticateWithUrlPaste: 'Autenticar terminal com colagem de URL',
-        pasteAuthUrl: 'Cole a URL de autenticação do seu terminal',
-    },
-
-    updateBanner: {
-        updateAvailable: 'Atualização disponível',
-        pressToApply: 'Pressione para aplicar a atualização',
-        whatsNew: 'Novidades',
-        seeLatest: 'Veja as atualizações e melhorias mais recentes',
-        nativeUpdateAvailable: 'Atualização do aplicativo disponível',
-        tapToUpdateAppStore: 'Toque para atualizar na App Store',
-        tapToUpdatePlayStore: 'Toque para atualizar na Play Store',
-    },
-
-    changelog: {
-        // Used by the changelog screen
-        version: ({ version }: { version: number }) => `Versão ${version}`,
-        noEntriesAvailable: 'Nenhuma entrada de changelog disponível.',
-    },
-
-    terminal: {
-        // Used by terminal connection screens
-        webBrowserRequired: 'Navegador web necessário',
-        webBrowserRequiredDescription: 'Links de conexão de terminal só podem ser abertos em um navegador web por questões de segurança. Use o leitor de código QR ou abra este link num computador.',
-        processingConnection: 'Processando conexão...',
-        invalidConnectionLink: 'Link de conexão inválido',
-        invalidConnectionLinkDescription: 'O link de conexão está ausente ou inválido. Verifique a URL e tente novamente.',
-        connectTerminal: 'Conectar terminal',
-        terminalRequestDescription: 'Um terminal está solicitando conexão à sua conta Happier Coder. Isso permitirá que o terminal envie e receba mensagens com segurança.',
-        connectionDetails: 'Detalhes da conexão',
-        publicKey: 'Chave pública',
-        encryption: 'Criptografia',
-        endToEndEncrypted: 'Criptografia ponta a ponta',
-        acceptConnection: 'Aceitar conexão',
-        connecting: 'Conectando...',
-        reject: 'Rejeitar',
-        security: 'Segurança',
-        securityFooter: 'Este link de conexão foi processado com segurança no seu navegador e nunca foi enviado para nenhum servidor. Seus dados privados permanecerão seguros e apenas você pode descriptografar as mensagens.',
-        securityFooterDevice: 'Esta conexão foi processada com segurança no seu dispositivo e nunca foi enviada para nenhum servidor. Seus dados privados permanecerão seguros e apenas você pode descriptografar as mensagens.',
-        clientSideProcessing: 'Processamento do lado cliente',
-        linkProcessedLocally: 'Link processado localmente no navegador',
-        linkProcessedOnDevice: 'Link processado localmente no dispositivo',
-        switchServerToConnectTerminal: ({ serverUrl }: { serverUrl: string }) =>
-            `Esta conexão é para ${serverUrl}. Trocar de servidor e continuar?`,
-    },
-
-    modals: {
-        // Used across connect flows and settings
-        authenticateTerminal: 'Autenticar terminal',
-        pasteUrlFromTerminal: 'Cole a URL de autenticação do seu terminal',
-        deviceLinkedSuccessfully: 'Dispositivo vinculado com sucesso',
-        terminalConnectedSuccessfully: 'Terminal conectado com sucesso',
-        pleaseSignInFirst: 'Por favor, faça login (ou crie uma conta) primeiro.',
-        invalidAuthUrl: 'URL de autenticação inválida',
-        microphoneAccessRequiredTitle: 'É necessário acesso ao microfone',
-        microphoneAccessRequiredRequestPermission: 'O Happier precisa de acesso ao seu microfone para o chat por voz. Conceda a permissão quando solicitado.',
-        microphoneAccessRequiredEnableInSettings: 'O Happier precisa de acesso ao seu microfone para o chat por voz. Ative o acesso ao microfone nas configurações do seu dispositivo.',
-        microphoneAccessRequiredBrowserInstructions: 'Permita o acesso ao microfone nas configurações do navegador. Talvez seja necessário clicar no ícone de cadeado na barra de endereços e habilitar a permissão do microfone para este site.',
-        openSettings: 'Abrir configurações',
-        developerMode: 'Modo desenvolvedor',
-        developerModeEnabled: 'Modo desenvolvedor ativado',
-        developerModeDisabled: 'Modo desenvolvedor desativado',
-        disconnectGithub: 'Desconectar GitHub',
-        disconnectGithubConfirm: 'Ao desconectar, Amigos e o compartilhamento entre amigos ficam desativados até você reconectar.',
-        disconnectService: ({ service }: { service: string }) => 
-            `Desconectar ${service}`,
-        disconnectServiceConfirm: ({ service }: { service: string }) => 
-            `Tem certeza de que deseja desconectar ${service} da sua conta?`,
-        disconnect: 'Desconectar',
-        failedToConnectTerminal: 'Falha ao conectar terminal',
-        cameraPermissionsRequiredToConnectTerminal: 'Permissões de câmera são necessárias para conectar terminal',
-        failedToLinkDevice: 'Falha ao vincular dispositivo',
-        cameraPermissionsRequiredToScanQr: 'Permissões de câmera são necessárias para escanear códigos QR'
-    },
-
-    navigation: {
-        // Navigation titles and screen headers
-        connectTerminal: 'Conectar terminal',
-        linkNewDevice: 'Vincular novo dispositivo', 
-        restoreWithSecretKey: 'Restaurar com chave secreta',
-        whatsNew: 'Novidades',
-        friends: 'Amigos',
-    },
-
-    welcome: {
-        // Main welcome screen for unauthenticated users
-        title: 'Cliente móvel Codex e Claude Code',
-        subtitle: 'Criptografado ponta a ponta e sua conta é armazenada apenas no seu dispositivo.',
-        createAccount: 'Criar conta',
-        signUpWithProvider: ({ provider }: { provider: string }) => `Continuar com ${provider}`,
-        linkOrRestoreAccount: 'Vincular ou restaurar conta',
-        loginWithMobileApp: 'Fazer login com aplicativo móvel',
-    },
-
-    review: {
-        // Used by utils/requestReview.ts
-        enjoyingApp: 'Curtindo o aplicativo?',
-        feedbackPrompt: 'Adoraríamos ouvir seu feedback!',
-        yesILoveIt: 'Sim, eu amo!',
-        notReally: 'Não muito'
-    },
-
-    items: {
-        // Used by Item component for copy toast
-        copiedToClipboard: ({ label }: { label: string }) => `${label} copiado para a área de transferência`
-    },
-
-    machine: {
-        offlineUnableToSpawn: 'Inicializador desativado enquanto a máquina está offline',
-        offlineHelp: '• Verifique se seu computador está online\n• Execute `happier daemon status` para diagnosticar\n• Você está usando a versão mais recente do CLI? Atualize com `npm install -g @happier-dev/cli@latest`',
-        launchNewSessionInDirectory: 'Iniciar nova sessão no diretório',
-        daemon: 'Daemon',
-        status: 'Status',
-        stopDaemon: 'Parar daemon',
-        stopDaemonConfirmTitle: 'Parar daemon?',
-        stopDaemonConfirmBody: 'Você não poderá iniciar novas sessões nesta máquina até reiniciar o daemon no seu computador. Suas sessões atuais continuarão ativas.',
-        daemonStoppedTitle: 'Daemon parado',
-        stopDaemonFailed: 'Falha ao parar o daemon. Talvez ele não esteja em execução.',
-        renameTitle: 'Renomear máquina',
-        renameDescription: 'Dê a esta máquina um nome personalizado. Deixe em branco para usar o hostname padrão.',
-        renamePlaceholder: 'Digite o nome da máquina',
-        renamedSuccess: 'Máquina renomeada com sucesso',
-        renameFailed: 'Falha ao renomear a máquina',
-        lastKnownPid: 'Último PID conhecido',
-        lastKnownHttpPort: 'Última porta HTTP conhecida',
-        startedAt: 'Iniciado em',
-        cliVersion: 'Versão do CLI',
-        daemonStateVersion: 'Versão do estado do daemon',
-        activeSessions: ({ count }: { count: number }) => `Sessões ativas (${count})`,
-        machineGroup: 'Máquina',
-        host: 'Host',
-        machineId: 'ID da máquina',
-        username: 'Nome de usuário',
-        homeDirectory: 'Diretório home',
-        platform: 'Plataforma',
-        architecture: 'Arquitetura',
-        lastSeen: 'Visto pela última vez',
-        never: 'Nunca',
-        metadataVersion: 'Versão dos metadados',
-        detectedClis: 'CLIs detectados',
-        detectedCliNotDetected: 'Não detectado',
-        detectedCliUnknown: 'Desconhecido',
-        detectedCliNotSupported: 'Não suportado (atualize o @happier-dev/cli)',
-        untitledSession: 'Sessão sem título',
-        back: 'Voltar',
-        notFound: 'Máquina não encontrada',
-        unknownMachine: 'máquina desconhecida',
-        unknownPath: 'caminho desconhecido',
-        tmux: {
-            overrideTitle: 'Substituir configurações globais do tmux',
-            overrideEnabledSubtitle: 'As configurações personalizadas do tmux se aplicam a novas sessões nesta máquina.',
-            overrideDisabledSubtitle: 'Novas sessões usam as configurações globais do tmux.',
-            notDetectedSubtitle: 'tmux não foi detectado nesta máquina.',
-            notDetectedMessage: 'tmux não foi detectado nesta máquina. Instale o tmux e atualize a detecção.',
-        },
-        windows: {
-            title: 'Windows',
-            remoteSessionConsoleTitle: 'Mostrar console para sessões remotas',
-            remoteSessionConsoleVisibleSubtitle: 'Sessões remotas abrem em uma janela de console visível nesta máquina.',
-            remoteSessionConsoleHiddenSubtitle: 'Sessões remotas iniciam ocultas para evitar janelas abrindo/fechando.',
-            remoteSessionConsoleUpdateFailed: 'Falha ao atualizar a configuração do console de sessão no Windows.',
-        },
-    },
-
-    message: {
-        switchedToMode: ({ mode }: { mode: string }) => `Mudou para o modo ${mode}`,
-        discarded: 'Descartado',
-        unknownEvent: 'Evento desconhecido',
-        usageLimitUntil: ({ time }: { time: string }) => `Limite de uso atingido até ${time}`,
-        unknownTime: 'horário desconhecido',
-    },
-
-    chatFooter: {
-        permissionsTerminalOnly: 'As permissões são mostradas apenas no terminal. Redefina ou envie uma mensagem para controlar pelo app.',
-        switchToRemote: 'Alternar para remoto',
-        localModeAvailable: 'O modo local está disponível para esta sessão.',
-        localModeUnavailableMachineOffline: 'O modo local não está disponível enquanto esta máquina estiver offline.',
-        localModeUnavailableDaemonStarted: 'O modo local não está disponível para sessões iniciadas pelo daemon.',
-        localModeUnavailableNeedsResume: 'O modo local requer suporte de retomada para este provedor.',
-        switchToLocal: 'Alternar para local',
-    },
-
-    codex: {
-        // Codex permission dialog buttons
-        permissions: {
-            yesAlwaysAllowCommand: 'Sim, permitir globalmente',
-            yesForSession: 'Sim, e não perguntar para esta sessão',
-            stopAndExplain: 'Parar, e explicar o que fazer',
-        }
-    },
-
-    claude: {
-        // Claude permission dialog buttons
-        permissions: {
-            yesAllowAllEdits: 'Sim, permitir todas as edições durante esta sessão',
-            yesForTool: 'Sim, não perguntar novamente para esta ferramenta',
-            yesForCommandPrefix: 'Sim, não perguntar novamente para este prefixo de comando',
-            yesForSubcommand: 'Sim, não perguntar novamente para este subcomando',
-            yesForCommandName: 'Sim, não perguntar novamente para este comando',
-            noTellClaude: 'Não, fornecer feedback',
-        }
-    },
-
-    textSelection: {
-        // Text selection screen
-        selectText: 'Selecionar intervalo de texto',
-        title: 'Selecionar texto',
-        noTextProvided: 'Nenhum texto fornecido',
-        textNotFound: 'Texto não encontrado ou expirado',
-        textCopied: 'Texto copiado para a área de transferência',
-        failedToCopy: 'Falha ao copiar o texto para a área de transferência',
-        noTextToCopy: 'Nenhum texto disponível para copiar',
-        failedToOpen: 'Falha ao abrir a seleção de texto. Tente novamente.',
-    },
-
-    markdown: {
-        // Markdown copy functionality
-        codeCopied: 'Código copiado',
-        copyFailed: 'Falha ao copiar',
-        mermaidRenderFailed: 'Falha ao renderizar diagrama mermaid',
-    },
-
-    artifacts: {
-        title: 'Artefatos',
-        countSingular: '1 artefato',
-        countPlural: ({ count }: { count: number }) => `${count} artefatos`,
-        empty: 'Ainda não há artefatos',
-        emptyDescription: 'Crie seu primeiro artefato para salvar e organizar conteúdo',
-        new: 'Novo artefato',
-        edit: 'Editar artefato',
-        delete: 'Excluir',
-        updateError: 'Falha ao atualizar artefato. Por favor, tente novamente.',
-        deleteError: 'Falha ao excluir o artefato. Tente novamente.',
-        notFound: 'Artefato não encontrado',
-        discardChanges: 'Descartar alterações?',
-        discardChangesDescription: 'Você tem alterações não salvas. Tem certeza de que deseja descartá-las?',
-        deleteConfirm: 'Excluir artefato?',
-        deleteConfirmDescription: 'Este artefato será excluído permanentemente.',
-        noContent: 'Sem conteúdo',
-        untitled: 'Sem título',
-        titlePlaceholder: 'Título do artefato',
-        bodyPlaceholder: 'Digite o conteúdo aqui...',
-        save: 'Salvar',
-        saving: 'Salvando...',
-        loading: 'Carregando...',
-        error: 'Falha ao carregar artefatos',
-        titleLabel: 'TÍTULO',
-        bodyLabel: 'CONTEÚDO',
-        emptyFieldsError: 'Por favor, insira um título ou conteúdo',
-        createError: 'Falha ao criar artefato. Por favor, tente novamente.',
-    },
-
-    friends: {
-        // Friends feature
-        title: 'Amigos',
-        sharedSessions: 'Sessões compartilhadas',
-        noSharedSessions: 'Ainda não há sessões compartilhadas',
-        manageFriends: 'Gerencie seus amigos e conexões',
-        searchTitle: 'Buscar amigos',
-        pendingRequests: 'Solicitações de amizade',
-        myFriends: 'Meus amigos',
-        noFriendsYet: 'Você ainda não tem amigos',
-        findFriends: 'Buscar amigos',
-        remove: 'Remover',
-        pendingRequest: 'Pendente',
-        sentOn: ({ date }: { date: string }) => `Enviado em ${date}`,
-        accept: 'Aceitar',
-        reject: 'Rejeitar',
-        addFriend: 'Adicionar amigo',
-        alreadyFriends: 'Já são amigos',
-        requestPending: 'Solicitação pendente',
-        searchInstructions: 'Digite um nome de usuário para buscar amigos',
-        searchPlaceholder: 'Digite o nome de usuário...',
-        searching: 'Buscando...',
-        userNotFound: 'Usuário não encontrado',
-        noUserFound: 'Nenhum usuário encontrado com esse nome',
-        checkUsername: 'Por favor, verifique o nome de usuário e tente novamente',
-        howToFind: 'Como encontrar amigos',
-        findInstructions: 'Procure amigos pelo nome de usuário. Dependendo do seu servidor, talvez seja necessário conectar um provedor ou escolher um nome de usuário para usar Amigos.',
-        requestSent: 'Solicitação de amizade enviada!',
-        requestAccepted: 'Solicitação de amizade aceita!',
-        requestRejected: 'Solicitação de amizade rejeitada',
-        friendRemoved: 'Amigo removido',
-        confirmRemove: 'Remover amigo',
-        confirmRemoveMessage: 'Tem certeza de que deseja remover este amigo?',
-        cannotAddYourself: 'Você não pode enviar uma solicitação de amizade para si mesmo',
-        bothMustHaveGithub: 'Ambos os usuários devem ter o provedor necessário conectado para serem amigos',
-        status: {
-            none: 'Não conectado',
-            requested: 'Solicitação enviada',
-            pending: 'Solicitação pendente',
-            friend: 'Amigos',
-            rejected: 'Rejeitada',
-        },
-        acceptRequest: 'Aceitar solicitação',
-        removeFriend: 'Remover dos amigos',
-        removeFriendConfirm: ({ name }: { name: string }) => `Tem certeza de que deseja remover ${name} dos seus amigos?`,
-        requestSentDescription: ({ name }: { name: string }) => `Sua solicitação de amizade foi enviada para ${name}`,
-        requestFriendship: 'Solicitar amizade',
-        cancelRequest: 'Cancelar solicitação de amizade',
-        cancelRequestConfirm: ({ name }: { name: string }) => `Cancelar sua solicitação de amizade para ${name}?`,
-        denyRequest: 'Recusar solicitação',
-        nowFriendsWith: ({ name }: { name: string }) => `Agora você é amigo de ${name}`,
-        disabled: 'O recurso Amigos está desativado neste servidor.',
-        username: {
-            required: 'Escolha um nome de usuário para usar Amigos.',
-            taken: 'Esse nome de usuário já está em uso.',
-            invalid: 'Esse nome de usuário não é permitido.',
-            disabled: 'O recurso Amigos com nome de usuário não está habilitado neste servidor.',
-            preferredNotAvailable: 'Seu nome de usuário preferido não está disponível neste servidor. Escolha outro.',
-            preferredNotAvailableWithLogin: ({ login }: { login: string }) =>
-                `Seu nome de usuário preferido @${login} não está disponível neste servidor. Escolha outro.`,
-        },
-        githubGate: {
-            title: 'Conecte o GitHub para usar Amigos',
-            body: 'Amigos usa nomes de usuário do GitHub para descoberta e compartilhamento.',
-            connect: 'Conectar GitHub',
-            notAvailable: 'Não disponível?',
-            notConfigured: 'GitHub OAuth não está configurado neste servidor.',
-        },
-        providerGate: {
-            title: ({ provider }: { provider: string }) => `Conecte ${provider} para usar Amigos`,
-            body: ({ provider }: { provider: string }) =>
-                `Amigos usa nomes de usuário do ${provider} para descoberta e compartilhamento.`,
-            connect: ({ provider }: { provider: string }) => `Conectar ${provider}`,
-            notAvailable: 'Não disponível?',
-            notConfigured: ({ provider }: { provider: string }) => `${provider} OAuth não está configurado neste servidor.`,
-        },
-    },
-
-    usage: {
-        // Usage panel strings
-        today: 'Hoje',
-        last7Days: 'Últimos 7 dias',
-        last30Days: 'Últimos 30 dias',
-        totalTokens: 'Tokens totais',
-        totalCost: 'Custo total',
-        tokens: 'Tokens',
-        cost: 'Custo',
-        usageOverTime: 'Uso ao longo do tempo',
-        byModel: 'Por modelo',
-        noData: 'Nenhum dado de uso disponível',
-    },
-
-    profiles: {
-        title: 'Perfis',
-        subtitle: 'Gerencie seus perfis de configuração',
-        sessionUses: ({ profile }: { profile: string }) => `Esta sessão usa: ${profile}`,
-        profilesFixedPerSession: 'Os perfis são fixos por sessão. Para usar um perfil diferente, inicie uma nova sessão.',
-        noProfile: 'Nenhum perfil',
-        noProfileDescription: 'Crie um perfil para gerenciar sua configuração de ambiente',
-        addProfile: 'Adicionar perfil',
-        addProfileTitle: 'Título do perfil de adição',
-        editProfile: 'Editar perfil',
-        profileName: 'Nome do perfil',
-        enterName: 'Digite o nome do perfil',
-        baseURL: 'URL base',
-        authToken: 'Token de autenticação',
-        enterToken: 'Digite o token de autenticação',
-        model: 'Modelo',
-        defaultModel: 'Modelo padrão',
-        tmuxSession: 'Sessão tmux',
-        enterTmuxSession: 'Digite o nome da sessão tmux',
-        tmuxTempDir: 'Diretório temporário tmux',
-        enterTmuxTempDir: 'Digite o diretório temporário tmux',
-        tmuxUpdateEnvironment: 'Atualizar ambiente tmux',
-        deleteConfirm: ({ name }: { name: string }) => `Tem certeza de que deseja excluir o perfil "${name}"?`,
-        nameRequired: 'O nome do perfil é obrigatório',
-        builtIn: 'Integrado',
-        custom: 'Personalizado',
-        builtInSaveAsHint: 'Salvar um perfil integrado cria um novo perfil personalizado.',
-            builtInNames: {
-                anthropic: 'Anthropic (Padrão)',
-                deepseek: 'DeepSeek (Raciocínio)',
-                zai: 'Z.AI (GLM-4.6)',
-                codex: 'Codex (Padrão)',
-                openai: 'OpenAI (GPT-5)',
-                azureOpenai: 'Azure OpenAI',
-                gemini: 'Gemini (Padrão)',
-                geminiApiKey: 'Gemini (Chave de API)',
-                geminiVertex: 'Gemini (Vertex AI)',
-            },
-        groups: {
-            favorites: 'Favoritos',
-            custom: 'Seus perfis',
-            builtIn: 'Perfis integrados',
-        },
-        actions: {
-            viewEnvironmentVariables: 'Variáveis de ambiente',
-            addToFavorites: 'Adicionar aos favoritos',
-            removeFromFavorites: 'Remover dos favoritos',
-            editProfile: 'Editar perfil',
-            duplicateProfile: 'Duplicar perfil',
-            deleteProfile: 'Excluir perfil',
-        },
-        copySuffix: '(Cópia)',
-        duplicateName: 'Já existe um perfil com este nome',
-        setupInstructions: {
-            title: 'Instruções de configuração',
-            viewCloudGuide: 'Ver guia oficial de configuração',
+    requirements: {
+      secretRequired: "Segredo",
+      configured: "Configurada na máquina",
+      notConfigured: "Não configurada",
+      checking: "Verificando…",
+      missingConfigForProfile: ({ env }: { env: string }) =>
+        `Este perfil requer que ${env} esteja configurado na máquina.`,
+      modalTitle: "Segredo necessário",
+      modalBody:
+        "Este perfil requer um segredo.\n\nOpções disponíveis:\n• Usar ambiente da máquina (recomendado)\n• Usar um segredo salvo nas configurações do app\n• Inserir um segredo apenas para esta sessão",
+      sectionTitle: "Requisitos",
+      sectionSubtitle:
+        "Estes campos são usados para checar a prontidão e evitar falhas inesperadas.",
+      secretEnvVarPromptDescription:
+        "Digite o nome da variável de ambiente secreta necessária (ex.: OPENAI_API_KEY).",
+      modalHelpWithEnv: ({ env }: { env: string }) =>
+        `Este perfil precisa de ${env}. Escolha uma opção abaixo.`,
+      modalHelpGeneric:
+        "Este perfil precisa de um segredo. Escolha uma opção abaixo.",
+      chooseOptionTitle: "Escolha uma opção",
+      machineEnvStatus: {
+        theMachine: "a máquina",
+        checkFor: ({ env }: { env: string }) => `Verificar ${env}`,
+        checking: ({ env }: { env: string }) => `Verificando ${env}…`,
+        found: ({ env, machine }: { env: string; machine: string }) =>
+          `${env} encontrado em ${machine}`,
+        notFound: ({ env, machine }: { env: string; machine: string }) =>
+          `${env} não encontrado em ${machine}`,
+      },
+      machineEnvSubtitle: {
+        checking: "Verificando ambiente do daemon…",
+        found: "Encontrado no ambiente do daemon na máquina.",
+        notFound:
+          "Defina no ambiente do daemon na máquina e reinicie o daemon.",
+      },
+      options: {
+        none: {
+          title: "Nenhum",
+          subtitle: "Não requer segredo nem login via CLI.",
         },
         machineLogin: {
-            title: 'Login necessário na máquina',
-            subtitle: 'Este perfil depende do cache de login do CLI na máquina selecionada.',
-            status: {
-                loggedIn: 'Logado',
-                notLoggedIn: 'Não logado',
-            },
-            claudeCode: {
-                title: 'Claude Code',
-                instructions: 'Execute `claude` e depois digite `/login` para entrar.',
-                warning: 'Obs.: definir `ANTHROPIC_AUTH_TOKEN` substitui o login do CLI.',
-            },
-            codex: {
-                title: 'Codex',
-                instructions: 'Execute `codex login` para entrar.',
-            },
-            geminiCli: {
-                title: 'Gemini CLI',
-                instructions: 'Execute `gemini auth` para entrar.',
-            },
+          subtitle: "Requer estar logado via um CLI na máquina de destino.",
+          longSubtitle:
+            "Requer estar logado via o CLI do backend de IA escolhido na máquina de destino.",
         },
-        requirements: {
-            secretRequired: 'Segredo',
-            configured: 'Configurada na máquina',
-            notConfigured: 'Não configurada',
-            checking: 'Verificando…',
-            missingConfigForProfile: ({ env }: { env: string }) => `Este perfil requer que ${env} esteja configurado na máquina.`,
-            modalTitle: 'Segredo necessário',
-            modalBody: 'Este perfil requer um segredo.\n\nOpções disponíveis:\n• Usar ambiente da máquina (recomendado)\n• Usar um segredo salvo nas configurações do app\n• Inserir um segredo apenas para esta sessão',
-            sectionTitle: 'Requisitos',
-            sectionSubtitle: 'Estes campos são usados para checar a prontidão e evitar falhas inesperadas.',
-            secretEnvVarPromptDescription: 'Digite o nome da variável de ambiente secreta necessária (ex.: OPENAI_API_KEY).',
-            modalHelpWithEnv: ({ env }: { env: string }) => `Este perfil precisa de ${env}. Escolha uma opção abaixo.`,
-            modalHelpGeneric: 'Este perfil precisa de um segredo. Escolha uma opção abaixo.',
-            chooseOptionTitle: 'Escolha uma opção',
-            machineEnvStatus: {
-                theMachine: 'a máquina',
-                checkFor: ({ env }: { env: string }) => `Verificar ${env}`,
-                checking: ({ env }: { env: string }) => `Verificando ${env}…`,
-                found: ({ env, machine }: { env: string; machine: string }) => `${env} encontrado em ${machine}`,
-                notFound: ({ env, machine }: { env: string; machine: string }) => `${env} não encontrado em ${machine}`,
-            },
-            machineEnvSubtitle: {
-                checking: 'Verificando ambiente do daemon…',
-                found: 'Encontrado no ambiente do daemon na máquina.',
-                notFound: 'Defina no ambiente do daemon na máquina e reinicie o daemon.',
-            },
-            options: {
-                none: {
-                    title: 'Nenhum',
-                    subtitle: 'Não requer segredo nem login via CLI.',
-                },
-                machineLogin: {
-                    subtitle: 'Requer estar logado via um CLI na máquina de destino.',
-                    longSubtitle: 'Requer estar logado via o CLI do backend de IA escolhido na máquina de destino.',
-                },
-                useMachineEnvironment: {
-                    title: 'Usar ambiente da máquina',
-                    subtitleWithEnv: ({ env }: { env: string }) => `Usar ${env} do ambiente do daemon.`,
-                    subtitleGeneric: 'Usar o segredo do ambiente do daemon.',
-                },
-                useSavedSecret: {
-                    title: 'Usar um segredo salvo',
-                    subtitle: 'Selecione (ou adicione) um segredo salvo no app.',
-                },
-                enterOnce: {
-                    title: 'Inserir um segredo',
-                    subtitle: 'Cole um segredo apenas para esta sessão (não será salvo).',
-                },
-            },
-            secretEnvVar: {
-                title: 'Variável de ambiente do segredo',
-                subtitle: 'Digite o nome da variável de ambiente que este provedor espera para o segredo (ex.: OPENAI_API_KEY).',
-                label: 'Nome da variável de ambiente',
-            },
-            sections: {
-                machineEnvironment: 'Ambiente da máquina',
-                useOnceTitle: 'Usar uma vez',
-                useOnceLabel: 'Insira um segredo',
-                useOnceFooter: 'Cole um segredo apenas para esta sessão. Ele não será salvo.',
-            },
-            actions: {
-                useMachineEnvironment: {
-                    subtitle: 'Começar com a chave já presente na máquina.',
-                },
-                useOnceButton: 'Usar uma vez (apenas sessão)',
-            },
+        useMachineEnvironment: {
+          title: "Usar ambiente da máquina",
+          subtitleWithEnv: ({ env }: { env: string }) =>
+            `Usar ${env} do ambiente do daemon.`,
+          subtitleGeneric: "Usar o segredo do ambiente do daemon.",
         },
-        defaultSessionType: 'Tipo de sessão padrão',
-        defaultPermissionMode: {
-            title: 'Modo de permissão padrão',
-            descriptions: {
-                default: 'Solicitar permissões',
-                acceptEdits: 'Aprovar edições automaticamente',
-                plan: 'Planejar antes de executar',
-                bypassPermissions: 'Ignorar todas as permissões',
-            },
+        useSavedSecret: {
+          title: "Usar um segredo salvo",
+          subtitle: "Selecione (ou adicione) um segredo salvo no app.",
         },
-        aiBackend: {
-            title: 'Backend de IA',
-            selectAtLeastOneError: 'Selecione pelo menos um backend de IA.',
-            claudeSubtitle: 'CLI do Claude',
-            codexSubtitle: 'CLI do Codex',
-            opencodeSubtitle: 'CLI do OpenCode',
-            geminiSubtitleExperimental: 'CLI do Gemini (experimental)',
-            auggieSubtitle: 'CLI do Auggie',
-            qwenSubtitleExperimental: 'CLI do Qwen Code (experimental)',
-            kimiSubtitleExperimental: 'CLI do Kimi (experimental)',
-            kiloSubtitleExperimental: 'CLI do Kilo (experimental)',
-            piSubtitleExperimental: 'CLI do Pi (experimental)',
+        enterOnce: {
+          title: "Inserir um segredo",
+          subtitle: "Cole um segredo apenas para esta sessão (não será salvo).",
         },
-        tmux: {
-            title: 'Tmux',
-            spawnSessionsTitle: 'Iniciar sessões no Tmux',
-            spawnSessionsEnabledSubtitle: 'As sessões são iniciadas em novas janelas do tmux.',
-            spawnSessionsDisabledSubtitle: 'As sessões são iniciadas no shell comum (sem integração com tmux)',
-            isolatedServerTitle: 'Servidor tmux isolado',
-            isolatedServerEnabledSubtitle: 'Inicie sessões em um servidor tmux isolado (recomendado).',
-            isolatedServerDisabledSubtitle: 'Inicie sessões no seu servidor tmux padrão.',
-            sessionNamePlaceholder: 'Vazio = sessão atual/mais recente',
-            tempDirPlaceholder: 'Deixe em branco para gerar automaticamente',
+      },
+      secretEnvVar: {
+        title: "Variável de ambiente do segredo",
+        subtitle:
+          "Digite o nome da variável de ambiente que este provedor espera para o segredo (ex.: OPENAI_API_KEY).",
+        label: "Nome da variável de ambiente",
+      },
+      sections: {
+        machineEnvironment: "Ambiente da máquina",
+        useOnceTitle: "Usar uma vez",
+        useOnceLabel: "Insira um segredo",
+        useOnceFooter:
+          "Cole um segredo apenas para esta sessão. Ele não será salvo.",
+      },
+      actions: {
+        useMachineEnvironment: {
+          subtitle: "Começar com a chave já presente na máquina.",
         },
-        previewMachine: {
-            title: 'Pré-visualizar máquina',
-            itemTitle: 'Máquina de pré-visualização para variáveis de ambiente',
-            selectMachine: 'Selecionar máquina',
-            resolveSubtitle: 'Usada apenas para pré-visualizar os valores resolvidos abaixo (não altera o que é salvo).',
-            selectSubtitle: 'Selecione uma máquina para pré-visualizar os valores resolvidos abaixo.',
-        },
-        environmentVariables: {
-            title: 'Variáveis de ambiente',
-            addVariable: 'Adicionar variável',
-            namePlaceholder: 'Nome da variável (e.g., MY_CUSTOM_VAR)',
-            valuePlaceholder: 'Valor (e.g., my-value ou ${MY_VAR})',
-            validation: {
-                nameRequired: 'Digite um nome de variável.',
-                invalidNameFormat: 'Os nomes das variáveis devem conter letras maiúsculas, números e sublinhados, e não podem começar com um número.',
-                duplicateName: 'Essa variável já existe.',
-            },
-            card: {
-                valueLabel: 'Valor:',
-                fallbackValueLabel: 'Valor de fallback:',
-                valueInputPlaceholder: 'Valor',
-                defaultValueInputPlaceholder: 'Valor padrão',
-                fallbackDisabledForVault: 'Fallbacks ficam desativados ao usar o cofre de segredos.',
-                secretNotRetrieved: 'Valor secreto - não é recuperado por segurança',
-                secretToggleLabel: 'Ocultar valor na UI',
-                secretToggleSubtitle: 'Oculta o valor na interface e evita buscá-lo da máquina para pré-visualização.',
-                secretToggleEnforcedByDaemon: 'Imposto pelo daemon',
-                secretToggleEnforcedByVault: 'Imposto pelo cofre de segredos',
-                secretToggleResetToAuto: 'Redefinir para automático',
-                requirementRequiredLabel: 'Obrigatório',
-                requirementRequiredSubtitle: 'Bloqueia a criação da sessão quando a variável está ausente.',
-                requirementUseVaultLabel: 'Usar cofre de segredos',
-                requirementUseVaultSubtitle: 'Usar um segredo salvo (sem valores de fallback).',
-                defaultSecretLabel: 'Segredo padrão',
-                overridingDefault: ({ expectedValue }: { expectedValue: string }) =>
-                    `Substituindo o valor padrão documentado: ${expectedValue}`,
-                useMachineEnvToggle: 'Usar valor do ambiente da máquina',
-                resolvedOnSessionStart: 'Resolvido quando a sessão começa na máquina selecionada.',
-                sourceVariableLabel: 'Variável de origem',
-                sourceVariablePlaceholder: 'Nome da variável de origem (e.g., Z_AI_MODEL)',
-                checkingMachine: ({ machine }: { machine: string }) => `Verificando ${machine}...`,
-                emptyOnMachine: ({ machine }: { machine: string }) => `Vazio em ${machine}`,
-                emptyOnMachineUsingFallback: ({ machine }: { machine: string }) => `Vazio em ${machine} (usando fallback)`,
-                notFoundOnMachine: ({ machine }: { machine: string }) => `Não encontrado em ${machine}`,
-                notFoundOnMachineUsingFallback: ({ machine }: { machine: string }) => `Não encontrado em ${machine} (usando fallback)`,
-                valueFoundOnMachine: ({ machine }: { machine: string }) => `Valor encontrado em ${machine}`,
-                differsFromDocumented: ({ expectedValue }: { expectedValue: string }) =>
-                    `Diferente do valor documentado: ${expectedValue}`,
-            },
-            preview: {
-                secretValueHidden: ({ value }: { value: string }) => `${value} - oculto por segurança`,
-                hiddenValue: '***oculto***',
-                emptyValue: '(vazio)',
-                sessionWillReceive: ({ name, value }: { name: string; value: string }) =>
-                    `A sessão receberá: ${name} = ${value}`,
-            },
-            previewModal: {
-                titleWithProfile: ({ profileName }: { profileName: string }) => `Vars de ambiente · ${profileName}`,
-                descriptionPrefix: 'Estas variáveis de ambiente são enviadas ao iniciar a sessão. Os valores são resolvidos usando o daemon em',
-                descriptionFallbackMachine: 'a máquina selecionada',
-                descriptionSuffix: '.',
-                emptyMessage: 'Nenhuma variável de ambiente está definida para este perfil.',
-                checkingSuffix: '(verificando…)',
-                detail: {
-                    fixed: 'Fixo',
-                    machine: 'Máquina',
-                    checking: 'Verificando',
-                    fallback: 'Alternativa',
-                    missing: 'Ausente',
-                },
-            },
-        },
-        delete: {
-            title: 'Excluir Perfil',
-            message: ({ name }: { name: string }) => `Tem certeza de que deseja excluir "${name}"? Esta ação não pode ser desfeita.`,
-            confirm: 'Excluir',
-            cancel: 'Cancelar',
-        },
+        useOnceButton: "Usar uma vez (apenas sessão)",
+      },
     },
-
-    secrets: {
-        addTitle: 'Novo segredo',
-        savedTitle: 'Segredos salvos',
-        badgeReady: 'Segredo',
-        badgeRequired: 'Segredo necessário',
-        missingForProfile: ({ env }: { env: string | null }) =>
-            `Falta o segredo (${env ?? 'segredo'}). Configure na máquina ou selecione/insira um segredo.`,
-        defaultForProfileTitle: 'Segredo padrão',
-        defineDefaultForProfileTitle: 'Definir segredo padrão para este perfil',
-        addSubtitle: 'Adicionar um segredo salvo',
-        noneTitle: 'Nenhuma',
-        noneSubtitle: 'Use o ambiente da máquina ou insira um segredo para esta sessão',
-        emptyTitle: 'Nenhum segredo salvo',
-        emptySubtitle: 'Adicione um para usar perfis com segredo sem configurar variáveis de ambiente na máquina.',
-        savedHiddenSubtitle: 'Salva (valor oculto)',
-        defaultLabel: 'Padrão',
-        fields: {
-            name: 'Nome',
-            value: 'Valor',
-        },
-        placeholders: {
-            nameExample: 'ex.: Work OpenAI',
-        },
-        validation: {
-            nameRequired: 'Nome é obrigatório.',
-            valueRequired: 'Valor é obrigatório.',
-        },
-        actions: {
-            replace: 'Substituir',
-            replaceValue: 'Substituir valor',
-            setDefault: 'Definir como padrão',
-            unsetDefault: 'Remover padrão',
-        },
-        prompts: {
-            renameTitle: 'Renomear segredo',
-            renameDescription: 'Atualize o nome amigável deste segredo.',
-            replaceValueTitle: 'Substituir valor do segredo',
-            replaceValueDescription: 'Cole o novo valor do segredo. Este valor não será mostrado novamente após salvar.',
-            deleteTitle: 'Excluir segredo',
-            deleteConfirm: ({ name }: { name: string }) => `Excluir “${name}”? Esta ação não pode ser desfeita.`,
-        },
+    defaultSessionType: "Tipo de sessão padrão",
+    defaultPermissionMode: {
+      title: "Modo de permissão padrão",
+      descriptions: {
+        default: "Solicitar permissões",
+        acceptEdits: "Aprovar edições automaticamente",
+        plan: "Planejar antes de executar",
+        bypassPermissions: "Ignorar todas as permissões",
+      },
     },
+    aiBackend: {
+      title: "Backend de IA",
+      selectAtLeastOneError: "Selecione pelo menos um backend de IA.",
+      claudeSubtitle: "CLI do Claude",
+      codexSubtitle: "CLI do Codex",
+      opencodeSubtitle: "CLI do OpenCode",
+      geminiSubtitleExperimental: "CLI do Gemini (experimental)",
+      auggieSubtitle: "CLI do Auggie",
+      qwenSubtitleExperimental: "CLI do Qwen Code (experimental)",
+      kimiSubtitleExperimental: "CLI do Kimi (experimental)",
+      kiloSubtitleExperimental: "CLI do Kilo (experimental)",
+      piSubtitleExperimental: "CLI do Pi (experimental)",
+    },
+    tmux: {
+      title: "Tmux",
+      spawnSessionsTitle: "Iniciar sessões no Tmux",
+      spawnSessionsEnabledSubtitle:
+        "As sessões são iniciadas em novas janelas do tmux.",
+      spawnSessionsDisabledSubtitle:
+        "As sessões são iniciadas no shell comum (sem integração com tmux)",
+      isolatedServerTitle: "Servidor tmux isolado",
+      isolatedServerEnabledSubtitle:
+        "Inicie sessões em um servidor tmux isolado (recomendado).",
+      isolatedServerDisabledSubtitle:
+        "Inicie sessões no seu servidor tmux padrão.",
+      sessionNamePlaceholder: "Vazio = sessão atual/mais recente",
+      tempDirPlaceholder: "Deixe em branco para gerar automaticamente",
+    },
+    previewMachine: {
+      title: "Pré-visualizar máquina",
+      itemTitle: "Máquina de pré-visualização para variáveis de ambiente",
+      selectMachine: "Selecionar máquina",
+      resolveSubtitle:
+        "Usada apenas para pré-visualizar os valores resolvidos abaixo (não altera o que é salvo).",
+      selectSubtitle:
+        "Selecione uma máquina para pré-visualizar os valores resolvidos abaixo.",
+    },
+    environmentVariables: {
+      title: "Variáveis de ambiente",
+      addVariable: "Adicionar variável",
+      namePlaceholder: "Nome da variável (e.g., MY_CUSTOM_VAR)",
+      valuePlaceholder: "Valor (e.g., my-value ou ${MY_VAR})",
+      validation: {
+        nameRequired: "Digite um nome de variável.",
+        invalidNameFormat:
+          "Os nomes das variáveis devem conter letras maiúsculas, números e sublinhados, e não podem começar com um número.",
+        duplicateName: "Essa variável já existe.",
+      },
+      card: {
+        valueLabel: "Valor:",
+        fallbackValueLabel: "Valor de fallback:",
+        valueInputPlaceholder: "Valor",
+        defaultValueInputPlaceholder: "Valor padrão",
+        fallbackDisabledForVault:
+          "Fallbacks ficam desativados ao usar o cofre de segredos.",
+        secretNotRetrieved: "Valor secreto - não é recuperado por segurança",
+        secretToggleLabel: "Ocultar valor na UI",
+        secretToggleSubtitle:
+          "Oculta o valor na interface e evita buscá-lo da máquina para pré-visualização.",
+        secretToggleEnforcedByDaemon: "Imposto pelo daemon",
+        secretToggleEnforcedByVault: "Imposto pelo cofre de segredos",
+        secretToggleResetToAuto: "Redefinir para automático",
+        requirementRequiredLabel: "Obrigatório",
+        requirementRequiredSubtitle:
+          "Bloqueia a criação da sessão quando a variável está ausente.",
+        requirementUseVaultLabel: "Usar cofre de segredos",
+        requirementUseVaultSubtitle:
+          "Usar um segredo salvo (sem valores de fallback).",
+        defaultSecretLabel: "Segredo padrão",
+        overridingDefault: ({ expectedValue }: { expectedValue: string }) =>
+          `Substituindo o valor padrão documentado: ${expectedValue}`,
+        useMachineEnvToggle: "Usar valor do ambiente da máquina",
+        resolvedOnSessionStart:
+          "Resolvido quando a sessão começa na máquina selecionada.",
+        sourceVariableLabel: "Variável de origem",
+        sourceVariablePlaceholder:
+          "Nome da variável de origem (e.g., Z_AI_MODEL)",
+        checkingMachine: ({ machine }: { machine: string }) =>
+          `Verificando ${machine}...`,
+        emptyOnMachine: ({ machine }: { machine: string }) =>
+          `Vazio em ${machine}`,
+        emptyOnMachineUsingFallback: ({ machine }: { machine: string }) =>
+          `Vazio em ${machine} (usando fallback)`,
+        notFoundOnMachine: ({ machine }: { machine: string }) =>
+          `Não encontrado em ${machine}`,
+        notFoundOnMachineUsingFallback: ({ machine }: { machine: string }) =>
+          `Não encontrado em ${machine} (usando fallback)`,
+        valueFoundOnMachine: ({ machine }: { machine: string }) =>
+          `Valor encontrado em ${machine}`,
+        differsFromDocumented: ({ expectedValue }: { expectedValue: string }) =>
+          `Diferente do valor documentado: ${expectedValue}`,
+      },
+      preview: {
+        secretValueHidden: ({ value }: { value: string }) =>
+          `${value} - oculto por segurança`,
+        hiddenValue: "***oculto***",
+        emptyValue: "(vazio)",
+        sessionWillReceive: ({
+          name,
+          value,
+        }: {
+          name: string;
+          value: string;
+        }) => `A sessão receberá: ${name} = ${value}`,
+      },
+      previewModal: {
+        titleWithProfile: ({ profileName }: { profileName: string }) =>
+          `Vars de ambiente · ${profileName}`,
+        descriptionPrefix:
+          "Estas variáveis de ambiente são enviadas ao iniciar a sessão. Os valores são resolvidos usando o daemon em",
+        descriptionFallbackMachine: "a máquina selecionada",
+        descriptionSuffix: ".",
+        emptyMessage:
+          "Nenhuma variável de ambiente está definida para este perfil.",
+        checkingSuffix: "(verificando…)",
+        detail: {
+          fixed: "Fixo",
+          machine: "Máquina",
+          checking: "Verificando",
+          fallback: "Alternativa",
+          missing: "Ausente",
+        },
+      },
+    },
+    delete: {
+      title: "Excluir Perfil",
+      message: ({ name }: { name: string }) =>
+        `Tem certeza de que deseja excluir "${name}"? Esta ação não pode ser desfeita.`,
+      confirm: "Excluir",
+      cancel: "Cancelar",
+    },
+  },
 
-    feed: {
-        // Feed notifications for friend requests and acceptances
-        friendRequestFrom: ({ name }: { name: string }) => `${name} enviou-lhe um pedido de amizade`,
-        friendRequestGeneric: 'Novo pedido de amizade',
-        friendAccepted: ({ name }: { name: string }) => `Agora você é amigo de ${name}`,
-        friendAcceptedGeneric: 'Pedido de amizade aceito',
-    }
+  secrets: {
+    addTitle: "Novo segredo",
+    savedTitle: "Segredos salvos",
+    badgeReady: "Segredo",
+    badgeRequired: "Segredo necessário",
+    missingForProfile: ({ env }: { env: string | null }) =>
+      `Falta o segredo (${env ?? "segredo"}). Configure na máquina ou selecione/insira um segredo.`,
+    defaultForProfileTitle: "Segredo padrão",
+    defineDefaultForProfileTitle: "Definir segredo padrão para este perfil",
+    addSubtitle: "Adicionar um segredo salvo",
+    noneTitle: "Nenhuma",
+    noneSubtitle:
+      "Use o ambiente da máquina ou insira um segredo para esta sessão",
+    emptyTitle: "Nenhum segredo salvo",
+    emptySubtitle:
+      "Adicione um para usar perfis com segredo sem configurar variáveis de ambiente na máquina.",
+    savedHiddenSubtitle: "Salva (valor oculto)",
+    defaultLabel: "Padrão",
+    fields: {
+      name: "Nome",
+      value: "Valor",
+    },
+    placeholders: {
+      nameExample: "ex.: Work OpenAI",
+    },
+    validation: {
+      nameRequired: "Nome é obrigatório.",
+      valueRequired: "Valor é obrigatório.",
+    },
+    actions: {
+      replace: "Substituir",
+      replaceValue: "Substituir valor",
+      setDefault: "Definir como padrão",
+      unsetDefault: "Remover padrão",
+    },
+    prompts: {
+      renameTitle: "Renomear segredo",
+      renameDescription: "Atualize o nome amigável deste segredo.",
+      replaceValueTitle: "Substituir valor do segredo",
+      replaceValueDescription:
+        "Cole o novo valor do segredo. Este valor não será mostrado novamente após salvar.",
+      deleteTitle: "Excluir segredo",
+      deleteConfirm: ({ name }: { name: string }) =>
+        `Excluir “${name}”? Esta ação não pode ser desfeita.`,
+    },
+  },
+
+  feed: {
+    // Feed notifications for friend requests and acceptances
+    friendRequestFrom: ({ name }: { name: string }) =>
+      `${name} enviou-lhe um pedido de amizade`,
+    friendRequestGeneric: "Novo pedido de amizade",
+    friendAccepted: ({ name }: { name: string }) =>
+      `Agora você é amigo de ${name}`,
+    friendAcceptedGeneric: "Pedido de amizade aceito",
+  },
 } as const;
 
 export type TranslationsPt = typeof pt;
