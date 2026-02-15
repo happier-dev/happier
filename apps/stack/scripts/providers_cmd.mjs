@@ -9,13 +9,14 @@ function usageText() {
   return [
     '[providers] usage:',
     '  hstack providers list [--json]',
-    '  hstack providers install --providers=<id1,id2> [--dry-run] [--json]',
-    '  hstack providers install <id1> <id2> [--dry-run] [--json]',
+    '  hstack providers install --providers=<id1,id2> [--dry-run] [--force] [--json]',
+    '  hstack providers install <id1> <id2> [--dry-run] [--force] [--json]',
     '',
     'notes:',
     '  - Provider CLIs are external binaries used by Happier backends (claude/codex/gemini/etc).',
     '  - This command installs provider CLIs (best-effort). Some providers require manual installation.',
     '  - Claude install uses the upstream native installer by default (not npm).',
+    '  - Use --force to re-run the installer even if the binary is already present on PATH.',
   ].join('\n');
 }
 
@@ -76,6 +77,8 @@ async function cmdInstall({ argv }) {
   const { flags, kv } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
   const dryRun = flags.has('--dry-run') || flags.has('--plan');
+  const force = flags.has('--force') || flags.has('--reinstall');
+  const skipIfInstalled = !force;
 
   const positionals = argv.filter((a) => a && a !== '--' && !a.startsWith('-'));
   const inputFromFlag = kv.get('--providers') ?? '';
@@ -105,7 +108,7 @@ async function cmdInstall({ argv }) {
   }
 
   const results = resolved.map((providerId) =>
-    installProviderCli({ providerId, platform, dryRun, env: process.env }),
+    installProviderCli({ providerId, platform, dryRun, skipIfInstalled, env: process.env }),
   );
   const failures = results.filter((r) => !r.ok);
   if (failures.length > 0) {
@@ -122,6 +125,7 @@ async function cmdInstall({ argv }) {
       ok: true,
       providers: resolved,
       dryRun,
+      skipIfInstalled,
       plan,
       results: results.map((r) => (r.ok ? { ok: true, providerId: r.plan.providerId, alreadyInstalled: r.alreadyInstalled, logPath: r.logPath } : r)),
     },

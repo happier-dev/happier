@@ -40,6 +40,17 @@ test('hstack providers install accepts comma-separated positional list', () => {
   assert.deepEqual(data.providers, ['claude', 'codex']);
 });
 
+test('hstack providers install supports --force to reinstall even if already installed', () => {
+  const res = runProvidersCommand(['install', '--providers=codex', '--dry-run', '--force', '--json']);
+  assert.equal(res.status, 0, res.stderr);
+
+  const data = JSON.parse(res.stdout);
+  assert.equal(data.ok, true);
+  assert.deepEqual(data.providers, ['codex']);
+  assert.equal(data.dryRun, true);
+  assert.equal(data.skipIfInstalled, false);
+});
+
 test('hstack providers install rejects unknown provider id', () => {
   const res = runProvidersCommand(['install', '--providers=not-a-provider', '--dry-run', '--json']);
   assert.notEqual(res.status, 0);
