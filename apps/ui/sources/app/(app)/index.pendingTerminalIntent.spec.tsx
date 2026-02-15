@@ -23,33 +23,29 @@ vi.mock('@/auth/context/AuthContext', () => ({
     }),
 }));
 
-vi.mock('@/sync/api/capabilities/apiFeatures', async () => {
-    const actual = await vi.importActual<any>('@/sync/api/capabilities/apiFeatures');
-    return {
-        ...actual,
-        getServerFeatures: async () => ({
-            features: {
-                sharing: { session: { enabled: true }, public: { enabled: true }, contentKeys: { enabled: true }, pendingQueueV2: { enabled: true } },
-                voice: { enabled: false, configured: false, provider: null },
-                social: { friends: { enabled: false, allowUsername: false, requiredIdentityProviderId: null } },
-                oauth: { providers: { github: { enabled: true, configured: true } } },
-                auth: {
-                    signup: { methods: [{ id: 'anonymous', enabled: true }] },
-                    login: { requiredProviders: ['github'] },
-                    providers: {
-                        github: {
-                            enabled: true,
-                            configured: true,
-                            restrictions: { usersAllowlist: false, orgsAllowlist: false, orgMatch: 'any' },
-                            offboarding: { enabled: false, intervalSeconds: 600, mode: 'per-request-cache', source: 'github_app' },
-                        },
+vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
+    getReadyServerFeatures: async () => ({
+        features: {
+            sharing: { session: { enabled: true }, public: { enabled: true }, contentKeys: { enabled: true }, pendingQueueV2: { enabled: true } },
+            voice: { enabled: false, configured: false, provider: null },
+            social: { friends: { enabled: false, allowUsername: false, requiredIdentityProviderId: null } },
+            oauth: { providers: { github: { enabled: true, configured: true } } },
+            auth: {
+                signup: { methods: [{ id: 'anonymous', enabled: true }] },
+                login: { requiredProviders: ['github'] },
+                providers: {
+                    github: {
+                        enabled: true,
+                        configured: true,
+                        restrictions: { usersAllowlist: false, orgsAllowlist: false, orgMatch: 'any' },
+                        offboarding: { enabled: false, intervalSeconds: 600, mode: 'per-request-cache', source: 'github_app' },
                     },
-                    misconfig: [],
                 },
+                misconfig: [],
             },
-        }),
-    };
-});
+        },
+    }),
+}));
 
 vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
     getPendingTerminalConnect: () => ({ publicKeyB64Url: 'abc123', serverUrl: 'https://company.example.test' }),
@@ -80,4 +76,3 @@ describe('/ (welcome) terminal connect intent notice', () => {
         });
     });
 });
-

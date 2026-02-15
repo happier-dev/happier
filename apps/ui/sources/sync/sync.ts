@@ -16,7 +16,6 @@ import { resolveSentFrom } from './domains/messages/sentFrom';
 import { NormalizedMessage, normalizeRawMessage, RawRecord } from './typesRaw';
 import { applySettings, Settings, settingsDefaults, settingsParse, SUPPORTED_SCHEMA_VERSION } from './domains/settings/settings';
 import { Profile, profileDefaults } from './domains/profiles/profile';
-import { getCurrentRealtimeSessionId, getVoiceSession } from '@/realtime/RealtimeSession';
 import {
     loadPendingSettings,
     savePendingSettings,
@@ -35,16 +34,29 @@ import { config } from '@/config';
 import { log } from '@/log';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { projectManager } from './runtime/orchestration/projectManager';
-import { voiceHooks } from '@/realtime/hooks/voiceHooks';
+import { voiceHooks } from '@/voice/context/voiceHooks';
 import { Message } from './domains/messages/messageTypes';
 import { EncryptionCache } from './encryption/encryptionCache';
-import { systemPrompt } from '../agents/prompt/systemPrompt';
+import { buildSessionAppendSystemPrompt } from '../agents/prompt/buildSessionAppendSystemPrompt';
 import { nowServerMs } from './runtime/time';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { computeNextReadStateV1 } from './domains/state/readStateV1';
 import { updateSessionMetadataWithRetry as updateSessionMetadataWithRetryRpc, type UpdateMetadataAck } from './domains/session/metadata/updateSessionMetadataWithRetry';
 import type { DecryptedArtifact } from './domains/artifacts/artifactTypes';
-import { getFriendsList, getUserProfile } from './api/social/apiFriends';
+import type { Automation, AutomationRun } from './domains/automations/automationTypes';
+import { getUserProfile } from './api/social/apiFriends';
+import {
+    createAutomation as createAutomationApi,
+    deleteAutomation as deleteAutomationApi,
+    pauseAutomation as pauseAutomationApi,
+    replaceAutomationAssignments as replaceAutomationAssignmentsApi,
+    resumeAutomation as resumeAutomationApi,
+    runAutomationNow as runAutomationNowApi,
+    type AutomationAssignmentInput,
+    type AutomationCreateInput,
+    type AutomationPatchInput,
+    updateAutomation as updateAutomationApi,
+} from './api/automations/apiAutomations';
 import { kvBulkGet } from './api/account/apiKv';
 import { FeedItem } from './domains/social/feedTypes';
 import { UserProfile } from './domains/social/friendTypes';
@@ -70,8 +82,10 @@ import {
     updateArtifactViaApi,
 } from './engine/artifacts/syncArtifacts';
 import { fetchAndApplyFeed, handleNewFeedPostUpdate, handleRelationshipUpdatedSocketUpdate, handleTodoKvBatchUpdate } from './engine/social/syncFeed';
+import { fetchAndApplyFriends } from './engine/social/syncFriends';
 import { fetchAndApplyProfile, handleUpdateAccountSocketUpdate, registerPushTokenIfAvailable } from './engine/account/syncAccount';
 import { buildMachineFromMachineActivityEphemeralUpdate, buildUpdatedMachineFromSocketUpdate, fetchAndApplyMachines } from './engine/machines/syncMachines';
+import { fetchAndApplyAutomationRuns, fetchAndApplyAutomations } from './engine/automations/syncAutomations';
 import { applyTodoSocketUpdates as applyTodoSocketUpdatesEngine, fetchTodos as fetchTodosEngine } from './engine/todos/syncTodos';
 import { planSyncActionsFromChanges } from './runtime/orchestration/changesPlanner';
 import { applyPlannedChangeActions } from './runtime/orchestration/changesApplier';
@@ -162,6 +176,7 @@ class Sync {
     private feedSync: InvalidateSync;
     private pendingMessageCommitRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
     private todosSync: InvalidateSync;
+    private automationsSync: InvalidateSync;
     private activityAccumulator: ActivityUpdateAccumulator;
     private pendingSettings: Partial<Settings> = loadPendingSettings();
     private pendingSettingsFlushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -218,6 +233,7 @@ class Sync {
         this.friendRequestsSync = new InvalidateSync(this.fetchFriendRequests);
         this.feedSync = new InvalidateSync(this.fetchFeed);
         this.todosSync = new InvalidateSync(this.fetchTodos);
+        this.automationsSync = new InvalidateSync(this.fetchAutomations);
 
         const registerPushToken = async () => {
             if (__DEV__ && config.enableDevPushTokenRegistration !== true) {
@@ -244,6 +260,7 @@ class Sync {
                 this.friendRequestsSync.invalidate();
                 this.feedSync.invalidate();
                 this.todosSync.invalidate();
+                this.automationsSync.invalidate();
             } else {
                 log.log(`📱 App state changed to: ${nextAppState}`);
                 // Reliability: ensure we persist any pending settings immediately when backgrounding.
@@ -403,7 +420,7 @@ class Sync {
                 state.sessionListViewDataByServerId,
                 null,
             ),
-            sessionGitStatus: {},
+            sessionScmStatus: {},
             machines: {},
             sessionMessages: {},
             sessionPending: {},
@@ -491,6 +508,7 @@ class Sync {
         this.artifactsSync.invalidate();
         this.feedSync.invalidate();
         this.todosSync.invalidate();
+        this.automationsSync.invalidate();
         log.log('🔄 #init: All syncs invalidated, including artifacts and todos');
 
         // Wait for both sessions and machines to load, then mark as ready
@@ -556,6 +574,7 @@ class Sync {
             const localId = randomUUID();
 
             const sentFrom = resolveSentFrom();
+            const appendSystemPrompt = buildSessionAppendSystemPrompt({ settings: storage.getState().settings });
 
             const model = agentId && getAgentCore(agentId).model.supportsSelection && modelMode !== 'default' ? modelMode : undefined;
             // Create user message content with metadata
@@ -569,11 +588,12 @@ class Sync {
                     sentFrom,
                     permissionMode: permissionMode || 'default',
                     model,
-                    appendSystemPrompt: systemPrompt,
+                    appendSystemPrompt,
                     displayText,
                     agentId,
                     settings: storage.getState().settings,
                     session,
+                    metaOverrides: metaOverrides as any,
                 })
             };
             const encryptedRawRecord = await encryption.encryptRawRecord(content);
@@ -1218,6 +1238,7 @@ class Sync {
         this.friendRequestsSync.invalidate();
         this.feedSync.invalidate();
         this.todosSync.invalidate();
+        this.automationsSync.invalidate();
     }
 
     public refreshMachinesThrottled = async (params?: { staleMs?: number; force?: boolean }) => {
@@ -1247,6 +1268,96 @@ class Sync {
 
     public refreshSessions = async () => {
         return this.sessionsSync.invalidateAndAwait();
+    }
+
+    /**
+     * Generic session metadata patching surface for feature modules that need to
+     * atomically update encrypted metadata (with version-mismatch retries).
+     */
+    public patchSessionMetadataWithRetry = async (sessionId: string, updater: (metadata: Metadata) => Metadata): Promise<void> => {
+        await this.updateSessionMetadataWithRetry(sessionId, updater);
+    }
+
+    public refreshAutomations = async () => {
+        return this.automationsSync.invalidateAndAwait();
+    }
+
+    public async fetchAutomationRuns(automationId: string, limit: number = 20): Promise<{ nextCursor: string | null }> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+
+        return await fetchAndApplyAutomationRuns({
+            credentials: this.credentials,
+            automationId,
+            limit,
+            setAutomationRuns: (id, runs) => storage.getState().setAutomationRuns(id, runs),
+        });
+    }
+
+    public async createAutomation(input: AutomationCreateInput): Promise<Automation> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+        const created = await createAutomationApi(this.credentials, input);
+        storage.getState().upsertAutomation(created);
+        return created;
+    }
+
+    public async updateAutomation(automationId: string, input: AutomationPatchInput): Promise<Automation> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+        const updated = await updateAutomationApi(this.credentials, automationId, input);
+        storage.getState().upsertAutomation(updated);
+        return updated;
+    }
+
+    public async replaceAutomationAssignments(
+        automationId: string,
+        assignments: ReadonlyArray<AutomationAssignmentInput>,
+    ): Promise<Automation> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+        const updated = await replaceAutomationAssignmentsApi(this.credentials, automationId, assignments);
+        storage.getState().upsertAutomation(updated);
+        return updated;
+    }
+
+    public async pauseAutomation(automationId: string): Promise<Automation> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+        const updated = await pauseAutomationApi(this.credentials, automationId);
+        storage.getState().upsertAutomation(updated);
+        return updated;
+    }
+
+    public async resumeAutomation(automationId: string): Promise<Automation> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+        const updated = await resumeAutomationApi(this.credentials, automationId);
+        storage.getState().upsertAutomation(updated);
+        return updated;
+    }
+
+    public async deleteAutomation(automationId: string): Promise<void> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+        await deleteAutomationApi(this.credentials, automationId);
+        storage.getState().removeAutomation(automationId);
+    }
+
+    public async runAutomationNow(automationId: string): Promise<AutomationRun> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+        const run = await runAutomationNowApi(this.credentials, automationId);
+        storage.getState().upsertAutomationRun(run);
+        return run;
     }
 
     public getCredentials() {
@@ -1334,12 +1445,14 @@ class Sync {
 
     private fetchFriends = async () => {
         if (!this.credentials) return;
-        
+
         try {
             log.log('👥 Fetching friends list...');
-            const friendsList = await getFriendsList(this.credentials);
-            storage.getState().applyFriends(friendsList);
-            log.log(`👥 fetchFriends completed - processed ${friendsList.length} friends`);
+            await fetchAndApplyFriends({
+                credentials: this.credentials,
+                applyFriends: (friends) => storage.getState().applyFriends(friends),
+            });
+            log.log('👥 fetchFriends completed');
         } catch (error) {
             console.error('Failed to fetch friends:', error);
             // Silently handle error - UI will show appropriate state
@@ -1355,6 +1468,13 @@ class Sync {
     private fetchTodos = async () => {
         if (!this.credentials) return;
         await fetchTodosEngine({ credentials: this.credentials });
+    }
+
+    private fetchAutomations = async () => {
+        await fetchAndApplyAutomations({
+            credentials: this.credentials,
+            applyAutomations: (automations) => storage.getState().applyAutomations(automations),
+        });
     }
 
     private applyTodoSocketUpdates = async (changes: any[]) => {
@@ -1681,6 +1801,7 @@ class Sync {
                         invalidateFriends: () => this.friendsSync.invalidate(),
                         invalidateFriendRequests: () => this.friendRequestsSync.invalidate(),
                         invalidateFeed: () => this.feedSync.invalidate(),
+                        invalidateAutomations: () => this.automationsSync.invalidate(),
                         getLoadedSessionIdsForMessages: () => {
                             const loadedSessionIds: string[] = []
                             const sessions = storage.getState().sessionMessages
@@ -1692,7 +1813,7 @@ class Sync {
                             return loadedSessionIds
                         },
                         invalidateMessagesForSession: (sessionId) => this.messagesSync.get(sessionId)?.invalidate(),
-                        invalidateGitStatusForSession: (sessionId) => scmStatusSync.invalidate(sessionId),
+                        invalidateScmStatusForSession: (sessionId) => scmStatusSync.invalidate(sessionId),
                     });
                 },
             });
@@ -1780,6 +1901,7 @@ class Sync {
                     await Promise.all([
                         this.artifactsSync.invalidateAndAwait(),
                         this.machinesSync.invalidateAndAwait(),
+                        this.automationsSync.invalidateAndAwait(),
                     ]);
 
                     // Refresh kv-backed/UI lists last.
@@ -1805,11 +1927,12 @@ class Sync {
                             friends: () => this.friendsSync.invalidateAndAwait(),
                             friendRequests: () => this.friendRequestsSync.invalidateAndAwait(),
                             feed: () => this.feedSync.invalidateAndAwait(),
+                            automations: () => this.automationsSync.invalidateAndAwait(),
                             sessions: () => this.sessionsSync.invalidateAndAwait(),
                             todos: () => this.todosSync.invalidateAndAwait(),
                         },
                         invalidateMessagesForSession: (sessionId) => this.getOrCreateMessagesSync(sessionId).invalidateAndAwait(),
-                        invalidateGitStatusForSession: (sessionId) => scmStatusSync.invalidate(sessionId),
+                        invalidateScmStatusForSession: (sessionId) => scmStatusSync.invalidate(sessionId),
                         applyTodoSocketUpdates: (changes) => this.applyTodoSocketUpdates(changes),
                         kvBulkGet,
                     });
@@ -1867,6 +1990,7 @@ class Sync {
             invalidateFriends: () => this.friendsSync.invalidate(),
             invalidateFriendRequests: () => this.friendRequestsSync.invalidate(),
             invalidateFeed: () => this.feedSync.invalidate(),
+            invalidateAutomations: () => this.automationsSync.invalidate(),
             invalidateTodos: () => this.todosSync.invalidate(),
             onTaskLifecycleEvent: (sessionId, event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
             log,
@@ -1967,34 +2091,6 @@ class Sync {
         presence?: "online" | number;
     })[]) => {
         const active = storage.getState().getActiveSessions();
-
-        const currentRealtimeSessionId = getCurrentRealtimeSessionId();
-        const voiceSession = getVoiceSession();
-        if (voiceSession && currentRealtimeSessionId) {
-            for (const nextSession of sessions) {
-                if (!nextSession?.id || nextSession.id !== currentRealtimeSessionId) continue;
-                if (storage.getState().sessionMessages[nextSession.id]?.isLoaded !== true) continue;
-                if (!nextSession.agentState) continue;
-
-                const prevSession = storage.getState().sessions[nextSession.id] ?? null;
-                const prevVersion = prevSession?.agentStateVersion ?? 0;
-                if (nextSession.agentStateVersion <= prevVersion) continue;
-
-                const oldRequests = prevSession?.agentState?.requests ?? {};
-                const newRequests = nextSession.agentState?.requests ?? {};
-                const agentId = resolveAgentIdFromFlavor(nextSession.metadata?.flavor);
-                const agentLabel = agentId ?? 'Agent';
-
-                for (const [requestId, request] of Object.entries(newRequests)) {
-                    if ((oldRequests as any)[requestId]) continue;
-                    const toolName = (request as any)?.tool;
-                    if (typeof toolName !== 'string' || !toolName.trim()) continue;
-                    voiceSession.sendTextMessage(
-                        `${agentLabel} is requesting permission to use the ${toolName} tool`,
-                    );
-                }
-            }
-        }
 
         // When multi-server mode is enabled, we use `activeServerSessionIds` as a conservative
         // guard to avoid cross-server message fetches after the initial session snapshot. Ensure

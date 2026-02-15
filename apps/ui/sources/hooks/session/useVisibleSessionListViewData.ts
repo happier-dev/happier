@@ -1,41 +1,21 @@
 import * as React from 'react';
 import { SessionListViewItem, useSessionListViewData, useSessionListViewDataByServerId, useSetting } from '@/sync/domains/state/storage';
 import { applySessionListPresentation, resolveSessionListSourceData } from '@/sync/domains/session/listing/sessionListPresentation';
-import { getEffectiveServerSelection } from '@/sync/domains/server/multiServer';
-import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
-import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { useResolvedActiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
 
 export function useVisibleSessionListViewData(): SessionListViewItem[] | null {
     const activeData = useSessionListViewData();
     const dataByServerId = useSessionListViewDataByServerId();
     const hideInactiveSessions = useSetting('hideInactiveSessions');
-    const settingsMultiServerEnabled = useSetting('multiServerEnabled');
-    const settingsMultiServerSelectedServerIds = useSetting('multiServerSelectedServerIds');
-    const settingsMultiServerPresentation = useSetting('multiServerPresentation');
-    const settingsMultiServerProfiles = useSetting('multiServerProfiles');
-    const settingsMultiServerActiveProfileId = useSetting('multiServerActiveProfileId');
+    const selection = useResolvedActiveServerSelection();
 
     return React.useMemo(() => {
-        const availableServerIds = listServerProfiles().map((profile) => profile.id);
-        const activeServerId = getActiveServerSnapshot().serverId;
-        const selection = getEffectiveServerSelection({
-            activeServerId,
-            availableServerIds,
-            settings: {
-                multiServerEnabled: settingsMultiServerEnabled,
-                multiServerSelectedServerIds: settingsMultiServerSelectedServerIds,
-                multiServerPresentation: settingsMultiServerPresentation,
-                multiServerProfiles: settingsMultiServerProfiles,
-                multiServerActiveProfileId: settingsMultiServerActiveProfileId,
-            },
-        });
-
         const source = resolveSessionListSourceData({
             enabled: selection.enabled,
-            activeServerId,
+            activeServerId: selection.activeServerId,
             activeData,
             byServerId: dataByServerId,
-            selectedServerIds: selection.serverIds,
+            selectedServerIds: selection.allowedServerIds,
         });
         if (!source) {
             return source;
@@ -77,16 +57,12 @@ export function useVisibleSessionListViewData(): SessionListViewItem[] | null {
         return applySessionListPresentation(visible, {
             enabled: selection.enabled,
             presentation: selection.presentation,
-            selectedServerIds: selection.serverIds,
+            selectedServerIds: selection.allowedServerIds,
         });
     }, [
         activeData,
         dataByServerId,
         hideInactiveSessions,
-        settingsMultiServerEnabled,
-        settingsMultiServerActiveProfileId,
-        settingsMultiServerProfiles,
-        settingsMultiServerSelectedServerIds,
-        settingsMultiServerPresentation,
+        selection,
     ]);
 }

@@ -100,6 +100,31 @@ describe('pendingQueueV2 optimistic thinking', () => {
         expect(metadata?.claudeRemoteSettingSources).toBe('project');
     });
 
+    it('includes metaOverrides (e.g. meta.happier) for queued sends', async () => {
+        const sessionId = 's_test_meta_overrides';
+        storage.getState().applySessions([buildSession({ sessionId })]);
+
+        const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 7 });
+
+        await enqueuePendingMessageV2({
+            sessionId,
+            text: 'hello',
+            encryption,
+            metaOverrides: {
+                happier: {
+                    kind: 'review_comments.v1',
+                    payload: { sessionId, comments: [] },
+                },
+            },
+            request: async () => new Response(null, { status: 200 }),
+        });
+
+        const pending = storage.getState().sessionPending[sessionId]?.messages ?? [];
+        expect(pending.length).toBe(1);
+        const metadata = pending[0]?.rawRecord?.meta as Record<string, unknown> | undefined;
+        expect((metadata as any)?.happier?.kind).toBe('review_comments.v1');
+    });
+
     it('removes queued pending message and clears optimistic thinking when enqueue request fails', async () => {
         const sessionId = 's_test_request_fail';
         storage.getState().applySessions([buildSession({ sessionId })]);

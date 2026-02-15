@@ -7,7 +7,10 @@ import { SelectableRow } from './SelectableRow';
 export type ActionListItem = Readonly<{
     id: string;
     label: string;
+    subtitle?: string;
     icon?: React.ReactNode;
+    right?: React.ReactNode;
+    selected?: boolean;
     onPress?: () => void;
     disabled?: boolean;
 }>;
@@ -69,8 +72,11 @@ export function ActionListSection(props: {
                     disabled={action.disabled}
                     onPress={action.onPress}
                     left={action.icon ? <View>{renderActionIcon(action.icon)}</View> : null}
+                    right={action.right ?? null}
                     title={action.label}
+                    subtitle={action.subtitle}
                     titleStyle={styles.label}
+                    selected={action.selected}
                     variant="slim"
                 />
             ))}

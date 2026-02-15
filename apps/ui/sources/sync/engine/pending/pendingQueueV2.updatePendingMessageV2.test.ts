@@ -77,6 +77,66 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
         expect(decrypted?.meta?.displayText).toBe('Old display');
     });
 
+    it('injects execution-run guidance into appendSystemPrompt when enabled in settings', async () => {
+        const sessionId = 's_test_guidance';
+        const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 6 });
+
+        storage.setState(
+            {
+                ...storage.getState(),
+                settings: {
+                    ...storage.getState().settings,
+                    executionRunsGuidanceEnabled: true,
+                    executionRunsGuidanceMaxChars: 10_000,
+                    executionRunsGuidanceEntries: [
+                        { id: 'g1', title: 'Rule 1', description: 'Always use execution runs for code reviews.', enabled: true },
+                    ],
+                },
+                sessions: {
+                    ...storage.getState().sessions,
+                    [sessionId]: {
+                        ...buildSession({ sessionId }),
+                        metadata: { path: '/tmp', host: 'h', flavor: 'claude' },
+                        permissionMode: 'default',
+                        modelMode: 'default',
+                    } as Session,
+                },
+            },
+            true,
+        );
+
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'p_guidance_1',
+            localId: 'p_guidance_1',
+            createdAt: 1,
+            updatedAt: 1,
+            text: 'old',
+            displayText: 'Old display',
+            rawRecord: null,
+        });
+
+        let capturedCiphertext: string | null = null;
+        const request = async (_path: string, init?: RequestInit) => {
+            const parsed = JSON.parse(String(init?.body ?? 'null'));
+            capturedCiphertext = typeof parsed?.ciphertext === 'string' ? parsed.ciphertext : null;
+            return new Response('{}', { status: 200 });
+        };
+
+        await updatePendingMessageV2({
+            sessionId,
+            pendingId: 'p_guidance_1',
+            text: 'new text',
+            encryption,
+            request,
+        });
+
+        const sessionEncryption = getSessionEncryptionOrThrow({ encryption, sessionId });
+        const decrypted = await sessionEncryption.decryptRaw(capturedCiphertext!);
+        expect(typeof decrypted?.meta?.appendSystemPrompt).toBe('string');
+        expect(String(decrypted?.meta?.appendSystemPrompt)).toContain(systemPrompt);
+        expect(String(decrypted?.meta?.appendSystemPrompt)).toContain('Always use execution runs for code reviews.');
+    });
+
     it('throws when pending message does not exist', async () => {
         const sessionId = 's_test_not_found';
         const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 8 });

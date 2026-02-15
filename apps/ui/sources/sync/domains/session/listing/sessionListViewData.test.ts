@@ -49,6 +49,40 @@ function makeMachine(partial: Partial<Machine> & Pick<Machine, 'id'>): Machine {
 }
 
 describe('buildSessionListViewData', () => {
+    it('excludes hidden system sessions from the list view data', () => {
+        const machine = makeMachine({
+            id: 'm1',
+            metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' },
+        });
+
+        const sessions: Record<string, Session> = {
+            sys: makeSession({
+                id: 'sys',
+                createdAt: 1,
+                updatedAt: 200,
+                metadata: {
+                    machineId: 'm1',
+                    path: '/home/u/repoSys',
+                    homeDir: '/home/u',
+                    host: 'm1',
+                    version: '0.0.0',
+                    flavor: 'claude',
+                    systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true },
+                } as any,
+            }),
+            user: makeSession({
+                id: 'user',
+                createdAt: 2,
+                updatedAt: 100,
+                metadata: { machineId: 'm1', path: '/home/u/repoA', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+            }),
+        };
+
+        const data = buildSessionListViewData(sessions, { [machine.id]: machine }, { groupInactiveSessionsByProject: false });
+        const sessionIds = data.filter((i) => i.type === 'session').map((i: any) => i.session.id);
+        expect(sessionIds).toEqual(['user']);
+    });
+
     it('groups inactive sessions by machine+path when enabled', () => {
         const machineA = makeMachine({ id: 'm1', metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' } });
         const machineB = makeMachine({ id: 'm2', metadata: { host: 'm2', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' } });

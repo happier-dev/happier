@@ -16,6 +16,8 @@ import { UpdateBanner } from '@/components/ui/feedback/UpdateBanner';
 import { RecoveryKeyReminderBanner } from '@/components/account/RecoveryKeyReminderBanner';
 import { layout } from '@/components/ui/layout/layout';
 import { SessionItem } from './SessionItem';
+import { getEffectiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
+import { getActiveServerSnapshot, listServerProfiles } from '@/sync/domains/server/serverProfiles';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -260,8 +262,22 @@ export function SessionsList() {
     const pathname = usePathname();
     const isTablet = useIsTablet();
     const compactSessionView = useSetting('compactSessionView');
-    const multiServerEnabled = useSetting('multiServerEnabled');
-    const multiServerPresentation = useSetting('multiServerPresentation');
+    const serverSelectionGroups = useSetting('serverSelectionGroups');
+    const serverSelectionActiveTargetKind = useSetting('serverSelectionActiveTargetKind');
+    const serverSelectionActiveTargetId = useSetting('serverSelectionActiveTargetId');
+    const showServerBadge = React.useMemo(() => {
+        const activeSnapshot = getActiveServerSnapshot();
+        const selection = getEffectiveServerSelectionFromRawSettings({
+            activeServerId: activeSnapshot.serverId,
+            availableServerIds: listServerProfiles().map((profile) => profile.id),
+            settings: {
+                serverSelectionGroups,
+                serverSelectionActiveTargetKind,
+                serverSelectionActiveTargetId,
+            },
+        });
+        return selection.enabled && selection.presentation === 'flat-with-badge';
+    }, [serverSelectionActiveTargetId, serverSelectionActiveTargetKind, serverSelectionGroups]);
     const selectable = isTablet;
     const dataWithSelected = selectable ? React.useMemo(() => {
         return data?.map(item => ({
@@ -348,7 +364,7 @@ export function SessionsList() {
                             session={item.session}
                             serverId={item.serverId}
                             serverName={item.serverName}
-                            showServerBadge={multiServerEnabled && multiServerPresentation === 'flat-with-badge'}
+                            showServerBadge={showServerBadge}
                             selected={item.selected}
                             isFirst={isFirst}
                             isLast={isLast}
@@ -358,7 +374,7 @@ export function SessionsList() {
                         />
                     );
             }
-        }, [pathname, dataWithSelected, compactSessionView, multiServerEnabled, multiServerPresentation]);
+        }, [pathname, dataWithSelected, compactSessionView, showServerBadge]);
 
 
     // Remove this section as we'll use FlatList for all items now

@@ -6,6 +6,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 
 export interface MachinePreviewModalProps {
     machines: Machine[];
@@ -20,6 +21,7 @@ export function MachinePreviewModal(props: MachinePreviewModalProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const { height: windowHeight } = useWindowDimensions();
+    const activeServerId = getActiveServerId();
 
     const selectedMachine = React.useMemo(() => {
         if (!props.selectedMachineId) return null;
@@ -50,6 +52,7 @@ export function MachinePreviewModal(props: MachinePreviewModalProps) {
             <View style={{ flex: 1 }}>
                 <MachineSelector
                     machines={props.machines}
+                    serverId={activeServerId}
                     selectedMachine={selectedMachine}
                     favoriteMachines={favoriteMachines}
                     showRecent={false}

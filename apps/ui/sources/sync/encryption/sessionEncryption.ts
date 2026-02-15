@@ -38,7 +38,12 @@ export class SessionEncryption {
             // Check cache first
             const cached = this.cache.getCachedMessage(message.id);
             if (cached) {
-                results[i] = cached;
+                // Encrypted messages that previously failed to decrypt (content: null) must be
+                // re-tried, because the session key/encryptor may become available later.
+                if (cached.content !== null || message.content.t !== 'encrypted') {
+                    results[i] = cached;
+                    continue;
+                }
             } else if (message.content.t === 'encrypted') {
                 toDecrypt.push({ index: i, message });
             } else {
@@ -84,7 +89,9 @@ export class SessionEncryption {
                         content: null,
                         createdAt: message.createdAt,
                     };
-                    this.cache.setCachedMessage(message.id, result);
+                    // Do not cache failed decrypts for encrypted messages.
+                    // Otherwise a transient failure (wrong key, delayed key init, etc) can
+                    // permanently poison the message cache and make sessions look empty.
                     results[index] = result;
                 }
             }

@@ -6,9 +6,9 @@ import { sync } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';
 import { machineSpawnNewSession } from '@/sync/ops';
 import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
-import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
-import { getActiveServerSnapshot, setActiveServer } from '@/sync/domains/server/serverRuntime';
-import { resolveNewSessionServerTarget } from '@/sync/domains/server/multiServer';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { resolveNewSessionServerTarget } from '@/sync/domains/server/selection/serverSelectionResolver';
+import { resolveLocalFeaturePolicyEnabled } from '@/sync/domains/features/featureLocalPolicy';
 import { createWorktree } from '@/utils/worktree/createWorktree';
 import { getMissingRequiredConfigEnvVarNames } from '@/utils/profiles/profileConfigRequirements';
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
@@ -16,6 +16,7 @@ import type { SecretChoiceByProfileIdByEnvVarName } from '@/utils/secrets/secret
 import { clearNewSessionDraft } from '@/sync/domains/state/persistence';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import type { AIBackendProfile, SavedSecret, Settings } from '@/sync/domains/settings/settings';
+import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import { resolveWindowsRemoteSessionConsoleFromMachineMetadata } from '@/sync/domains/session/spawn/windowsRemoteSessionConsole';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { buildResumeCapabilityOptionsFromUiState, buildSpawnEnvironmentVariablesFromUiState, buildSpawnSessionExtrasFromUiState, getAgentResumeExperimentsFromSettings, getNewSessionPreflightIssues, getResumeRuntimeSupportPrefetchPlan } from '@/agents/catalog/catalog';
@@ -29,6 +30,14 @@ import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permi
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { nowServerMs } from '@/sync/runtime/time';
+import { buildAutomationTemplate } from '@/components/sessions/new/modules/buildAutomationTemplate';
+import { sealAutomationTemplateForTransport } from '@/sync/domains/automations/automationTemplateTransport';
+import {
+    buildAutomationScheduleFromDraft,
+    normalizeAutomationDescription,
+    normalizeAutomationName,
+    validateAutomationTemplateTarget,
+} from '@/sync/domains/automations/automationValidation';
 
 export function useCreateNewSession(params: Readonly<{
     router: { push: (options: any) => void; replace: (path: any, options?: any) => void };
@@ -55,6 +64,7 @@ export function useCreateNewSession(params: Readonly<{
     sessionPrompt: string;
     resumeSessionId: string;
     agentNewSessionOptions?: Record<string, unknown> | null;
+    automationDraft?: NewSessionAutomationDraft | null;
 
     machineEnvPresence: UseMachineEnvPresenceResult;
     secrets: SavedSecret[];
@@ -93,22 +103,10 @@ export function useCreateNewSession(params: Readonly<{
             });
             const resolvedTargetServerId = targetResolution.targetServerId ?? snapshot.serverId;
 
-            if (snapshot.serverId !== resolvedTargetServerId) {
-                    setActiveServer({ serverId: resolvedTargetServerId, scope: 'device' });
-                    await switchConnectionToActiveServer();
-                    await sync.refreshMachines();
-            }
-            const machineMap = (storage.getState() as { machines?: Record<string, unknown> }).machines;
-            if (machineMap && !machineMap[params.selectedMachineId]) {
-                Modal.alert(t('common.error'), t('newSession.noMachineSelected'));
-                params.setIsCreating(false);
-                return;
-            }
-
             let actualPath = params.selectedPath;
 
             // Handle worktree creation
-            if (params.sessionType === 'worktree' && params.settings.experiments === true) {
+            if (params.sessionType === 'worktree' && resolveLocalFeaturePolicyEnabled('session.typeSelector', params.settings) === true) {
                 const worktreeResult = await createWorktree(params.selectedMachineId, params.selectedPath);
 
                 if (!worktreeResult.success) {
@@ -222,7 +220,7 @@ export function useCreateNewSession(params: Readonly<{
                 machineId: params.selectedMachineId,
             });
 
-            const machineCapsSnapshot = getMachineCapabilitiesSnapshot(params.selectedMachineId);
+            const machineCapsSnapshot = getMachineCapabilitiesSnapshot(params.selectedMachineId, resolvedTargetServerId);
             const machineCapsResults = machineCapsSnapshot?.response.results as any;
             const experiments = getAgentResumeExperimentsFromSettings(params.agentType, params.settings);
             const preflightIssues = getNewSessionPreflightIssues({
@@ -251,7 +249,7 @@ export function useCreateNewSession(params: Readonly<{
 
                 const computeOptions = (results: any) => buildResumeCapabilityOptionsFromUiState({ settings: params.settings, results });
 
-                const snapshot = getMachineCapabilitiesSnapshot(params.selectedMachineId!);
+                const snapshot = getMachineCapabilitiesSnapshot(params.selectedMachineId!, resolvedTargetServerId);
                 const results = snapshot?.response.results as any;
                 let options = computeOptions(results);
 
@@ -262,6 +260,7 @@ export function useCreateNewSession(params: Readonly<{
                         try {
                             await prefetchMachineCapabilities({
                                 machineId: params.selectedMachineId!,
+                                serverId: resolvedTargetServerId,
                                 request: plan.request,
                                 timeoutMs: plan.timeoutMs,
                             });
@@ -271,7 +270,7 @@ export function useCreateNewSession(params: Readonly<{
                             params.setIsResumeSupportChecking(false);
                         }
 
-                        const snapshot2 = getMachineCapabilitiesSnapshot(params.selectedMachineId!);
+                        const snapshot2 = getMachineCapabilitiesSnapshot(params.selectedMachineId!, resolvedTargetServerId);
                         const results2 = snapshot2?.response.results as any;
                         options = computeOptions(results2);
                     }
@@ -279,7 +278,7 @@ export function useCreateNewSession(params: Readonly<{
 
                 if (canAgentResume(params.agentType, options)) return { resume: wanted };
 
-                const snapshotFinal = getMachineCapabilitiesSnapshot(params.selectedMachineId!);
+                const snapshotFinal = getMachineCapabilitiesSnapshot(params.selectedMachineId!, resolvedTargetServerId);
                 const resultsFinal = snapshotFinal?.response.results as any;
                 const desc = describeAcpLoadSessionSupport(params.agentType, resultsFinal);
                 const detailLines: string[] = [];
@@ -315,9 +314,56 @@ export function useCreateNewSession(params: Readonly<{
                         ? params.modelMode
                         : undefined;
                 const spawnModelUpdatedAt = spawnModelId ? spawnPermissionModeUpdatedAt : undefined;
+                const windowsRemoteSessionConsole = resolveWindowsRemoteSessionConsoleFromMachineMetadata(params.selectedMachine?.metadata);
+
+                if (params.automationDraft?.enabled === true) {
+                    const schedule = buildAutomationScheduleFromDraft(params.automationDraft);
+
+                    const template = buildAutomationTemplate({
+                        directory: actualPath,
+                        agentType: params.agentType,
+                        ...(params.sessionPrompt.trim().length > 0 ? { prompt: params.sessionPrompt.trim() } : {}),
+                        ...(profilesActive ? { profileId: params.selectedProfileId ?? '' } : {}),
+                        ...(environmentVariables ? { environmentVariables } : {}),
+                        ...(resumeDecision.resume ? { resume: resumeDecision.resume } : {}),
+                        permissionMode: spawnPermissionMode,
+                        permissionModeUpdatedAt: spawnPermissionModeUpdatedAt,
+                        ...(spawnModelId ? { modelId: spawnModelId, modelUpdatedAt: spawnModelUpdatedAt } : {}),
+                        ...(terminal ? { terminal } : {}),
+                        ...(windowsRemoteSessionConsole ? { windowsRemoteSessionConsole } : {}),
+                        ...buildSpawnSessionExtrasFromUiState({
+                            agentId: params.agentType,
+                            settings: params.settings,
+                            resumeSessionId: params.resumeSessionId,
+                        }),
+                    });
+                    validateAutomationTemplateTarget({
+                        targetType: 'new_session',
+                        template,
+                    });
+                    const templateCiphertext = await sealAutomationTemplateForTransport({
+                        template,
+                        encryptRaw: (value) => sync.encryption.encryptAutomationTemplateRaw(value),
+                    });
+
+                    await sync.createAutomation({
+                        name: normalizeAutomationName(params.automationDraft.name),
+                        description: normalizeAutomationDescription(params.automationDraft.description),
+                        enabled: true,
+                        schedule,
+                        targetType: 'new_session',
+                        templateCiphertext,
+                        assignments: [{ machineId: params.selectedMachineId, enabled: true, priority: 100 }],
+                    });
+                    clearNewSessionDraft();
+                    await sync.refreshAutomations();
+                    params.router.replace('/automations' as any);
+                    return;
+                }
 
 	            const result = await machineSpawnNewSession({
 	                machineId: params.selectedMachineId,
+                    serverId: resolvedTargetServerId,
 	                directory: actualPath,
 	                approvedNewDirectoryCreation: true,
 	                agent: params.agentType,
@@ -333,7 +379,7 @@ export function useCreateNewSession(params: Readonly<{
 	                    resumeSessionId: params.resumeSessionId,
 	                }),
 	                terminal,
-	                windowsRemoteSessionConsole: resolveWindowsRemoteSessionConsoleFromMachineMetadata(params.selectedMachine?.metadata),
+	                windowsRemoteSessionConsole,
 	            });
 
             if (result.type === 'success' && result.sessionId) {

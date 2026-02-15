@@ -4,7 +4,7 @@ import { Encryption } from '@/sync/encryption/encryption';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { fetchAndApplyMachines } from '@/sync/engine/machines/syncMachines';
 import { fetchAndApplySessions } from '@/sync/engine/sessions/sessionSnapshot';
-import { getEffectiveServerSelection } from '@/sync/domains/server/multiServer';
+import { getEffectiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { buildSessionListViewData, type SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
@@ -12,6 +12,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { setServerSessionListCache } from '@/sync/store/sessionListCache';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
+import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 
 type ConcurrentTarget = Readonly<{
     id: string;
@@ -21,11 +22,9 @@ type ConcurrentTarget = Readonly<{
 
 type ConcurrentSelectionSettings = Pick<
     Settings,
-    | 'multiServerEnabled'
-    | 'multiServerSelectedServerIds'
-    | 'multiServerPresentation'
-    | 'multiServerProfiles'
-    | 'multiServerActiveProfileId'
+    | 'serverSelectionGroups'
+    | 'serverSelectionActiveTargetKind'
+    | 'serverSelectionActiveTargetId'
 >;
 
 type ManagedConcurrentServer = {
@@ -65,7 +64,7 @@ let periodicRefreshTimer: ReturnType<typeof setInterval> | null = null;
 let reconcileTimer: ReturnType<typeof setTimeout> | null = null;
 
 function normalizeServerUrl(url: string): string {
-    return String(url ?? '').trim().replace(/\/+$/, '');
+    return canonicalizeServerUrl(String(url ?? ''));
 }
 
 function createServerRequest(serverUrl: string): (path: string, init: RequestInit) => Promise<Response> {
@@ -81,11 +80,14 @@ export function resolveConcurrentTargets(params: Readonly<{
     profiles: ReadonlyArray<Readonly<{ id: string; serverUrl: string; name: string }>>;
     settings: ConcurrentSelectionSettings;
 }>): ConcurrentTarget[] {
-    const selection = getEffectiveServerSelection({
+    const selection = getEffectiveServerSelectionFromRawSettings({
         activeServerId: params.activeServerId,
         availableServerIds: params.profiles.map((profile) => profile.id),
         settings: params.settings,
     });
+    if (!selection.enabled) {
+        return [];
+    }
     const selected = new Set(selection.serverIds);
     selected.delete(params.activeServerId);
     if (selected.size === 0) {
@@ -120,6 +122,59 @@ function updateConcurrentSessionListCache(serverId: string, sessionListViewData:
             sessionListViewData,
         ),
     }));
+}
+
+function updateConcurrentMachineListCache(input: {
+    serverId: string;
+    machines: Machine[] | null;
+    status: 'idle' | 'loading' | 'signedOut' | 'error';
+}): void {
+    storage.setState((state) => ({
+        ...state,
+        machineListByServerId: {
+            ...state.machineListByServerId,
+            [input.serverId]: input.machines,
+        },
+        machineListStatusByServerId: {
+            ...state.machineListStatusByServerId,
+            [input.serverId]: input.status,
+        },
+    }));
+}
+
+function clearConcurrentSessionListCache(serverIdRaw: string): void {
+    const serverId = String(serverIdRaw ?? '').trim();
+    if (!serverId) return;
+    storage.setState((state) => {
+        if (!(serverId in state.sessionListViewDataByServerId)) return state;
+        const next = { ...state.sessionListViewDataByServerId };
+        delete next[serverId];
+        return {
+            ...state,
+            sessionListViewDataByServerId: next,
+        };
+    });
+}
+
+function clearConcurrentMachineListCache(serverIdRaw: string): void {
+    const serverId = String(serverIdRaw ?? '').trim();
+    if (!serverId) return;
+    storage.setState((state) => {
+        if (!(serverId in state.machineListByServerId) && !(serverId in state.machineListStatusByServerId)) {
+            return state;
+        }
+
+        const nextMachines = { ...state.machineListByServerId };
+        const nextStatuses = { ...state.machineListStatusByServerId };
+        delete nextMachines[serverId];
+        delete nextStatuses[serverId];
+
+        return {
+            ...state,
+            machineListByServerId: nextMachines,
+            machineListStatusByServerId: nextStatuses,
+        };
+    });
 }
 
 async function refreshServerSnapshot(entry: ManagedConcurrentServer): Promise<void> {
@@ -162,6 +217,11 @@ async function refreshServerSnapshot(entry: ManagedConcurrentServer): Promise<vo
         machinesById[machine.id] = machine;
     }
 
+    // Guard against late async writes: a refresh can finish after this server is removed.
+    if (managedServers.get(entry.id) !== entry) {
+        return;
+    }
+
     const sessionListViewData = buildSessionListViewData(
         sessionsById,
         machinesById,
@@ -174,10 +234,20 @@ async function refreshServerSnapshot(entry: ManagedConcurrentServer): Promise<vo
         },
     );
 
+    updateConcurrentMachineListCache({
+        serverId: entry.id,
+        machines,
+        status: 'idle',
+    });
     updateConcurrentSessionListCache(entry.id, sessionListViewData);
 }
 
+function isManagedServerActive(entry: ManagedConcurrentServer): boolean {
+    return managedServers.get(entry.id) === entry;
+}
+
 function queueRefresh(entry: ManagedConcurrentServer): void {
+    if (!isManagedServerActive(entry)) return;
     if (entry.refreshTimer) return;
     entry.refreshTimer = setTimeout(() => {
         entry.refreshTimer = null;
@@ -186,6 +256,7 @@ function queueRefresh(entry: ManagedConcurrentServer): void {
 }
 
 async function runRefresh(entry: ManagedConcurrentServer): Promise<void> {
+    if (!isManagedServerActive(entry)) return;
     if (entry.refreshInFlight) {
         entry.refreshQueued = true;
         return;
@@ -201,7 +272,7 @@ async function runRefresh(entry: ManagedConcurrentServer): Promise<void> {
         await entry.refreshInFlight;
     } finally {
         entry.refreshInFlight = null;
-        if (entry.refreshQueued) {
+        if (entry.refreshQueued && isManagedServerActive(entry)) {
             entry.refreshQueued = false;
             queueRefresh(entry);
         }
@@ -269,15 +340,16 @@ async function reconcileConcurrentServers(): Promise<void> {
             name: profile.name,
         })),
         settings: {
-            multiServerEnabled: Boolean(settings.multiServerEnabled),
-            multiServerSelectedServerIds: Array.isArray(settings.multiServerSelectedServerIds)
-                ? settings.multiServerSelectedServerIds
+            serverSelectionGroups: Array.isArray(settings.serverSelectionGroups)
+                ? (settings.serverSelectionGroups as any)
                 : [],
-            multiServerPresentation:
-                settings.multiServerPresentation === 'flat-with-badge' ? 'flat-with-badge' : 'grouped',
-            multiServerProfiles: Array.isArray(settings.multiServerProfiles) ? (settings.multiServerProfiles as any) : [],
-            multiServerActiveProfileId: typeof settings.multiServerActiveProfileId === 'string'
-                ? settings.multiServerActiveProfileId
+            serverSelectionActiveTargetKind:
+                settings.serverSelectionActiveTargetKind === 'server'
+                || settings.serverSelectionActiveTargetKind === 'group'
+                    ? settings.serverSelectionActiveTargetKind
+                    : null,
+            serverSelectionActiveTargetId: typeof settings.serverSelectionActiveTargetId === 'string'
+                ? settings.serverSelectionActiveTargetId
                 : null,
         },
     });
@@ -287,6 +359,8 @@ async function reconcileConcurrentServers(): Promise<void> {
     for (const existingId of Array.from(managedServers.keys())) {
         if (!desiredById.has(existingId)) {
             stopManagedServer(existingId);
+            clearConcurrentSessionListCache(existingId);
+            clearConcurrentMachineListCache(existingId);
         }
     }
 
@@ -295,6 +369,11 @@ async function reconcileConcurrentServers(): Promise<void> {
         if (!credentials) {
             stopManagedServer(target.id);
             updateConcurrentSessionListCache(target.id, null);
+            updateConcurrentMachineListCache({
+                serverId: target.id,
+                machines: null,
+                status: 'signedOut',
+            });
             continue;
         }
 
@@ -333,13 +412,11 @@ export function startConcurrentSessionCacheSync(): void {
     let lastConfigKey = '';
     storageUnsubscribe = storage.subscribe((state) => {
         const key = JSON.stringify({
-            multiServerEnabled: Boolean(state.settings.multiServerEnabled),
-            multiServerSelectedServerIds: Array.isArray(state.settings.multiServerSelectedServerIds)
-                ? state.settings.multiServerSelectedServerIds
+            serverSelectionGroups: Array.isArray(state.settings.serverSelectionGroups)
+                ? state.settings.serverSelectionGroups
                 : [],
-            multiServerPresentation: state.settings.multiServerPresentation,
-            multiServerProfiles: Array.isArray(state.settings.multiServerProfiles) ? state.settings.multiServerProfiles : [],
-            multiServerActiveProfileId: state.settings.multiServerActiveProfileId ?? null,
+            serverSelectionActiveTargetKind: state.settings.serverSelectionActiveTargetKind ?? null,
+            serverSelectionActiveTargetId: state.settings.serverSelectionActiveTargetId ?? null,
         });
         if (key === lastConfigKey) return;
         lastConfigKey = key;

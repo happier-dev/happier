@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { isSessionSharingSupported } from '@/sync/api/capabilities/apiFeatures';
+import { isSessionSharingSupported } from '@/sync/api/capabilities/sessionSharingSupport';
 
 export function useSessionSharingSupport(): boolean {
     const [supported, setSupported] = useState(false);
@@ -18,4 +18,3 @@ export function useSessionSharingSupport(): boolean {
 
     return supported;
 }
-

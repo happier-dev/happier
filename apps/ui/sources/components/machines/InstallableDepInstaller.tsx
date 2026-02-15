@@ -4,10 +4,10 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { useMachineCapabilityInvokeWithAlerts } from '@/hooks/machine/useMachineCapabilityInvokeWithAlerts';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useSettingMutable } from '@/sync/domains/state/storage';
-import { machineCapabilitiesInvoke } from '@/sync/ops';
 import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 import type { KnownSettings } from '@/sync/domains/settings/settings';
 import { compareVersions, parseVersion } from '@/utils/system/versionUtils';
@@ -40,6 +40,7 @@ function computeUpdateAvailable(data: InstallableDepData | null): boolean {
 
 export type InstallableDepInstallerProps = {
     machineId: string;
+    serverId?: string | null;
     enabled: boolean;
     groupTitle: string;
     depId: Extract<CapabilityId, `dep.${string}`>;
@@ -59,7 +60,7 @@ export type InstallableDepInstallerProps = {
 export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
     const { theme } = useUnistyles();
     const [installSpec, setInstallSpec] = useSettingMutable(props.installSpecSettingKey);
-    const [isInstalling, setIsInstalling] = React.useState(false);
+    const { isInvoking: isInstalling, invokeWithAlerts } = useMachineCapabilityInvokeWithAlerts();
 
     if (!props.enabled) return null;
 
@@ -112,32 +113,29 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
         const method = isInstalled ? (updateAvailable ? 'upgrade' : 'install') : 'install';
         const spec = typeof installSpec === 'string' && installSpec.trim().length > 0 ? installSpec.trim() : undefined;
 
-        setIsInstalling(true);
         try {
-            const invoke = await machineCapabilitiesInvoke(
-                props.machineId,
-                {
+            await invokeWithAlerts({
+                machineId: props.machineId,
+                request: {
                     id: props.depId,
                     method,
                     ...(spec ? { params: { installSpec: spec } } : {}),
                 },
-                { timeoutMs: 5 * 60_000 },
-            );
-            if (!invoke.supported) {
-                Modal.alert(t('common.error'), invoke.reason === 'not-supported' ? t('deps.installNotSupported') : t('deps.installFailed'));
-            } else if (!invoke.response.ok) {
-                Modal.alert(t('common.error'), invoke.response.error.message);
-            } else {
-                const logPath = (invoke.response.result as any)?.logPath;
-                Modal.alert(t('common.success'), typeof logPath === 'string' ? t('deps.installLog', { path: logPath }) : t('deps.installed'));
-            }
-
+                timeoutMs: 5 * 60_000,
+                serverId: props.serverId,
+                alerts: {
+                    errorTitle: t('common.error'),
+                    successTitle: t('common.success'),
+                    unsupportedMessage: (reason) =>
+                        reason === 'not-supported' ? t('deps.installNotSupported') : t('deps.installFailed'),
+                    successMessage: t('deps.installed'),
+                    successWithLogPath: (logPath) => t('deps.installLog', { path: logPath }),
+                },
+            });
             props.refreshStatus();
             props.refreshRegistry?.();
         } catch (e) {
             Modal.alert(t('common.error'), e instanceof Error ? e.message : t('deps.installFailed'));
-        } finally {
-            setIsInstalling(false);
         }
     };
 

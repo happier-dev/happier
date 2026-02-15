@@ -53,6 +53,7 @@ export class Encryption {
 
     // Session and machine encryption management
     private sessionEncryptions = new Map<string, SessionEncryption>();
+    private sessionKeyFingerprints = new Map<string, string>();
     private machineEncryptions = new Map<string, MachineEncryption>();
     private cache: EncryptionCache;
 
@@ -97,8 +98,11 @@ export class Encryption {
      */
     async initializeSessions(sessions: Map<string, Uint8Array | null>): Promise<void> {
         for (const [sessionId, dataKey] of sessions) {
-            // Skip if already initialized
-            if (this.sessionEncryptions.has(sessionId)) {
+            const fingerprint = dataKey ? encodeBase64(dataKey, 'base64') : '__no_key__';
+            const existing = this.sessionEncryptions.get(sessionId);
+            const existingFingerprint = this.sessionKeyFingerprints.get(sessionId);
+            // Skip if already initialized with the same key (or both missing).
+            if (existing && existingFingerprint === fingerprint) {
                 continue;
             }
 
@@ -112,6 +116,15 @@ export class Encryption {
                 this.cache
             );
             this.sessionEncryptions.set(sessionId, sessionEnc);
+            this.sessionKeyFingerprints.set(sessionId, fingerprint);
+
+            // If the session key changed (often due to decryptEncryptionKey becoming available later),
+            // clear cached decrypted session data so future reads use the updated encryptor.
+            // Note: message cache is keyed only by messageId; encrypted messages that previously
+            // failed to decrypt must not be permanently cached (handled in SessionEncryption).
+            if (existing) {
+                this.cache.clearSessionCache(sessionId);
+            }
         }
     }
 
@@ -128,6 +141,7 @@ export class Encryption {
      */
     removeSessionEncryption(sessionId: string): void {
         this.sessionEncryptions.delete(sessionId);
+        this.sessionKeyFingerprints.delete(sessionId);
         // Also clear any cached data for this session
         this.cache.clearSessionCache(sessionId);
     }

@@ -83,7 +83,7 @@ vi.mock('@/hooks/server/useFriendsAllowUsernameSupport', () => ({
 
 vi.mock('@/sync/domains/state/storage', () => ({
     storage: {
-        getState: () => ({ settings: { voiceProviderId: 'off' } }),
+        getState: () => ({ settings: { voice: { providerId: 'off' } } }),
     },
     useProfile: () => ({ linkedProviders: [], username: 'u' }),
 }));
@@ -101,6 +101,13 @@ vi.mock('@/sync/sync', () => ({
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerUrl: () => activeServerUrl,
+    getActiveServerSnapshot: () => ({
+        serverId: 'server-1',
+        serverUrl: activeServerUrl,
+        kind: 'custom',
+        generation: 1,
+    }),
+    subscribeActiveServer: () => () => {},
 }));
 
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
@@ -125,9 +132,8 @@ vi.mock('@/sync/domains/pending/pendingNotificationNav', () => ({
     },
 }));
 
-vi.mock('@/sync/api/capabilities/apiFeatures', () => ({
-    getCachedServerFeatures: () => null,
-    getServerFeatures: async () =>
+vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
+    getReadyServerFeatures: async () =>
         createRootLayoutFeaturesResponse({
             voice: { enabled: false, configured: false, provider: null },
         }),
@@ -138,7 +144,9 @@ afterEach(() => {
     pendingTerminalConnectValue = null;
     pendingNotificationNavValue = null;
     try {
-        lastRenderer?.unmount();
+        act(() => {
+            lastRenderer?.unmount();
+        });
     } catch {
         // ignore
     }
@@ -161,6 +169,11 @@ async function renderRootLayout() {
         }
         lastRenderer = renderer.create(React.createElement(RootLayout));
         await Promise.resolve();
+    });
+    // RootLayout triggers async feature/capability probes that may schedule state updates after mount.
+    // Flush one more turn to keep React act warnings out of test output.
+    await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
     });
 }
 

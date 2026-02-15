@@ -10,7 +10,7 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { authChallenge } from '@/auth/flows/challenge';
 import { serverFetch } from '@/sync/http/client';
-import { isSessionSharingSupported } from '@/sync/api/capabilities/apiFeatures';
+import { isSessionSharingSupported } from '@/sync/api/capabilities/sessionSharingSupport';
 import { getAuthProvider } from '@/auth/providers/registry';
 import { buildContentKeyBinding } from '@/auth/oauth/contentKeyBinding';
 

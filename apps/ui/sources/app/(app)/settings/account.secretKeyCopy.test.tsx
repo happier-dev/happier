@@ -79,7 +79,12 @@ describe('Settings → Account (secret key copy)', () => {
             await act(async () => {});
 
             const secretKeyItems =
-                tree?.root.findAll((n) => n.props?.title === 'Secret Key' && typeof n.props?.onPress === 'function') ?? [];
+                tree?.root.findAll((n) => {
+                    if (typeof n.props?.onPress !== 'function') return false;
+                    if (!n.props?.rightElement) return false;
+                    const iconName = n.props?.icon?.props?.name;
+                    return typeof iconName === 'string' && iconName.startsWith('eye');
+                }) ?? [];
             expect(secretKeyItems.length).toBeGreaterThan(0);
 
             const secretKeyItem = secretKeyItems[0]!;

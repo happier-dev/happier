@@ -67,9 +67,9 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         borderRadius: Platform.select({ ios: 10, default: 16 }),
         // IMPORTANT: allow popovers to overflow this rounded container.
         overflow: 'visible',
-        shadowColor: theme.colors.shadow.color,
+        shadowColor: theme.colors.shadow?.color ?? '#000000',
         shadowOffset: { width: 0, height: 0.33 },
-        shadowOpacity: theme.colors.shadow.opacity,
+        shadowOpacity: theme.colors.shadow?.opacity ?? 0.1,
         shadowRadius: 0,
         elevation: 1
     },

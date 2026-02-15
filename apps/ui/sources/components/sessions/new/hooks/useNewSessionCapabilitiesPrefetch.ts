@@ -3,6 +3,7 @@ import { InteractionManager } from 'react-native';
 
 export function useNewSessionCapabilitiesPrefetch(params: Readonly<{
     enabled: boolean;
+    serverId?: string | null;
     machines: ReadonlyArray<{ id: string }>;
     favoriteMachineItems: ReadonlyArray<{ id: string }>;
     recentMachines: ReadonlyArray<{ id: string }>;
@@ -10,7 +11,7 @@ export function useNewSessionCapabilitiesPrefetch(params: Readonly<{
     isMachineOnline: (machine: any) => boolean;
     staleMs: number;
     request: any;
-    prefetchMachineCapabilitiesIfStale: (args: { machineId: string; staleMs: number; request: any }) => Promise<any> | void;
+    prefetchMachineCapabilitiesIfStale: (args: { machineId: string; serverId?: string | null; staleMs: number; request: any }) => Promise<any> | void;
 }>): void {
     // One-time prefetch of machine capabilities for the wizard machine list.
     // This keeps machine glyphs responsive (cache-only in the list) without
@@ -43,6 +44,7 @@ export function useNewSessionCapabilitiesPrefetch(params: Readonly<{
                     if (!params.isMachineOnline(machine)) continue;
                     void params.prefetchMachineCapabilitiesIfStale({
                         machineId,
+                        serverId: params.serverId,
                         staleMs: params.staleMs,
                         request: params.request,
                     });
@@ -65,10 +67,10 @@ export function useNewSessionCapabilitiesPrefetch(params: Readonly<{
         InteractionManager.runAfterInteractions(() => {
             void params.prefetchMachineCapabilitiesIfStale({
                 machineId: params.selectedMachineId!,
+                serverId: params.serverId,
                 staleMs: params.staleMs,
                 request: params.request,
             });
         });
     }, [params.machines, params.selectedMachineId]);
 }
-

@@ -5,6 +5,7 @@
 export * from './ops/machines';
 export * from './ops/capabilities';
 export * from './ops/sessions';
+export * from './ops/machineExecutionRuns';
 
 
 export type { SpawnHappySessionRpcParams, SpawnSessionOptions } from './domains/session/spawn/spawnSessionPayload';

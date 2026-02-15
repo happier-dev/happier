@@ -18,7 +18,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import { getProfileEnvironmentVariables, isProfileCompatibleWithAgent, type AIBackendProfile } from '@/sync/domains/settings/settings';
-import { useSetting } from '@/sync/domains/state/storage';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
@@ -87,6 +87,7 @@ export interface NewSessionWizardAgentProps {
 
 export interface NewSessionWizardMachineProps {
     machines: Machine[];
+    serverId?: string | null;
     selectedMachine: Machine | null;
     recentMachines: Machine[];
     favoriteMachineItems: Machine[];
@@ -208,9 +209,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         getSecretMachineEnvOverride,
     } = props.profiles;
 
-    const expSessionType = useSetting('expSessionType');
-    const experimentsEnabled = useSetting('experiments');
-    const showSessionTypeSelector = experimentsEnabled && expSessionType;
+    const showSessionTypeSelector = useFeatureEnabled('session.typeSelector');
 
     const {
         cliAvailability,
@@ -234,6 +233,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
 
     const {
         machines,
+        serverId,
         selectedMachine,
         recentMachines,
         favoriteMachineItems,
@@ -516,6 +516,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                 <View style={{ marginBottom: 24 }}>
                                     <MachineSelector
                                         machines={machines}
+                                        serverId={serverId}
                                         selectedMachine={selectedMachine || null}
                                         recentMachines={recentMachines}
                                         favoriteMachines={favoriteMachineItems}

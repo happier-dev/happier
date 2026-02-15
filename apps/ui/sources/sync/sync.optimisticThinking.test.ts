@@ -35,7 +35,7 @@ vi.mock('@/log', () => ({
     log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock('@/realtime/hooks/voiceHooks', () => ({
+vi.mock('@/voice/context/voiceHooks', () => ({
     voiceHooks: {
         onSessionFocus: vi.fn(),
         onSessionOffline: vi.fn(),
@@ -115,6 +115,37 @@ describe('sync.sendMessage optimistic thinking', () => {
         await promise;
 
         expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
+    });
+
+    it('includes metaOverrides (e.g. meta.happier) in the outbound rawRecord meta', async () => {
+        const sessionId = 's_meta_overrides';
+        storage.getState().applySessions([createSession({ sessionId })]);
+
+        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await encryption.initializeSessions(new Map([[sessionId, null]]));
+
+        const { sync } = await import('./sync');
+        sync.encryption = encryption;
+        sync.setMessageTransport({
+            emitWithAck: vi.fn(async () => ({
+                ok: true,
+                id: 'm1',
+                seq: 1,
+                localId: null,
+                didWrite: true,
+            })) as any,
+            send: vi.fn(),
+        });
+
+        await sync.sendMessage(sessionId, 'hello', 'Review comments (0)', {
+            happier: { kind: 'review_comments.v1', payload: { sessionId, comments: [] } },
+        } as any);
+
+        const pending = storage.getState().sessionPending[sessionId]?.messages ?? [];
+        expect(pending.length).toBe(0);
+        const transcript = storage.getState().sessionMessages[sessionId]?.messages ?? [];
+        const user = transcript.find((m) => m.kind === 'user-text') as any;
+        expect(user?.meta?.happier?.kind).toBe('review_comments.v1');
     });
 
     it('clears optimistic thinking when a turn is aborted even if session.thinking is already false', async () => {

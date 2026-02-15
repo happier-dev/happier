@@ -21,6 +21,7 @@ import { Modal } from '@/modal';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { OptionTiles } from '@/components/ui/forms/OptionTiles';
 import { useCLIDetection } from '@/hooks/auth/useCLIDetection';
+import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { layout } from '@/components/ui/layout/layout';
 import { SecretRequirementModal, type SecretRequirementModalResult } from '@/components/secrets/requirements';
 import { parseEnvVarTemplate } from '@/utils/profiles/envVarTemplate';
@@ -84,7 +85,11 @@ export function ProfileEditForm({
 
     const resolvedMachineId = routeMachine ?? previewMachineId;
     const resolvedMachine = useMachine(resolvedMachineId ?? '');
-    const cliDetection = useCLIDetection(resolvedMachineId, { includeLoginStatus: Boolean(resolvedMachineId) });
+    const activeServerId = getActiveServerId();
+    const cliDetection = useCLIDetection(resolvedMachineId, {
+        includeLoginStatus: Boolean(resolvedMachineId),
+        serverId: activeServerId,
+    });
 
     const toggleFavoriteMachineId = React.useCallback((machineIdToToggle: string) => {
         if (favoriteMachines.includes(machineIdToToggle)) {

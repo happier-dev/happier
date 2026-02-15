@@ -45,6 +45,24 @@ function buildToolCallMessage(params: {
 }
 
 describe('buildChatListItems', () => {
+    it('includes local-only action drafts before transcript messages', () => {
+        const messages: Message[] = [
+            { kind: 'agent-text', id: 'm2', localId: null, createdAt: 2, text: 'agent' },
+            { kind: 'user-text', id: 'm1', localId: 'u1', createdAt: 1, text: 'user' },
+        ];
+        const pending: PendingMessage[] = [
+            buildPending({ id: 'p1', localId: 'p1', createdAt: 10, text: 'pending 1' }),
+        ];
+        const drafts = [
+            { id: 'd1', sessionId: 's1', actionId: 'review.start', createdAt: 20, status: 'editing', input: {} },
+        ] as any[];
+
+        const items = buildChatListItems({ messages, pendingMessages: pending, actionDrafts: drafts as any });
+
+        expect(items.map((item) => item.kind)).toEqual(['action-draft', 'pending-user-text', 'message', 'message']);
+        expect(items[0]?.kind === 'action-draft' && items[0].draft.id).toBe('d1');
+    });
+
     it('prepends pending messages before transcript messages', () => {
         const messages: Message[] = [
             { kind: 'agent-text', id: 'm2', localId: null, createdAt: 2, text: 'agent' },
@@ -77,7 +95,13 @@ describe('buildChatListItems', () => {
         ];
 
         const items = buildChatListItems({ messages, pendingMessages: pending });
-        const ids = items.map((item) => (item.kind === 'pending-user-text' ? item.pending.localId : item.message.id));
+        const ids = items.map((item) =>
+            item.kind === 'pending-user-text'
+                ? item.pending.localId
+                : item.kind === 'message'
+                    ? item.message.id
+                    : item.draft.id
+        );
         expect(ids).toEqual(['p3', 'm-user', 'm-tool', 'm-event']);
     });
 

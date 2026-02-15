@@ -4,6 +4,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const machineCapabilitiesInvokeMock = vi.fn(async () => ({
+    supported: true,
+    response: { ok: true, result: { plan: null } },
+}));
+
 vi.mock('react-native', () => ({
     View: 'View',
     TextInput: 'TextInput',
@@ -81,33 +86,42 @@ vi.mock('@/hooks/auth/useCLIDetection', () => ({
     }),
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
-    isAgentId: (v: any) => v === 'codex',
-    getAgentCore: () => ({
-        displayNameKey: 'Codex',
-        subtitleKey: 'subtitle',
-        availability: { experimental: false },
-        resume: { supportsVendorResume: false, experimental: false, runtimeGate: null },
-        sessionModes: { kind: 'none' },
-        model: {
-            supportsSelection: true,
-            supportsFreeform: true,
-            defaultMode: 'default',
-            allowedModes: ['default'],
-            dynamicProbe: 'static-only',
-            nonAcpApplyScope: 'spawn_only',
-            acpApplyBehavior: 'set_model',
-            acpModelConfigOptionId: null,
-        },
-        cli: {
-            detectKey: 'codex',
-            installBanner: { installKind: 'installer', installCommand: null, guideUrl: null },
-        },
-        connectedService: { name: 'cloud' },
-        localControl: { supported: false },
-        ui: { agentPickerIconName: 'code-slash' },
-    }),
-}));
+vi.mock('@/sync/ops', async (importOriginal) => {
+    const actual: any = await importOriginal();
+    return { ...actual, machineCapabilitiesInvoke: machineCapabilitiesInvokeMock };
+});
+
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
+    const actual: any = await importOriginal();
+    return {
+        ...actual,
+        isAgentId: (v: any) => v === 'codex',
+        getAgentCore: () => ({
+            displayNameKey: 'Codex',
+            subtitleKey: 'subtitle',
+            availability: { experimental: false },
+            resume: { supportsVendorResume: false, experimental: false, runtimeGate: null },
+            sessionModes: { kind: 'none' },
+            model: {
+                supportsSelection: true,
+                supportsFreeform: true,
+                defaultMode: 'default',
+                allowedModes: ['default'],
+                dynamicProbe: 'static-only',
+                nonAcpApplyScope: 'spawn_only',
+                acpApplyBehavior: 'set_model',
+                acpModelConfigOptionId: null,
+            },
+            cli: {
+                detectKey: 'codex',
+                installBanner: { installKind: 'installer', installCommand: null, guideUrl: null },
+            },
+            connectedService: { name: 'cloud' },
+            localControl: { supported: false },
+            ui: { agentPickerIconName: 'code-slash' },
+        }),
+    };
+});
 
 vi.mock('@/agents/providers/_registry/providerSettingsRegistry', () => ({
     getProviderSettingsPlugin: () => null,
@@ -117,9 +131,10 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
-vi.mock('@happier-dev/agents', () => ({
-    getAgentAdvancedModeCapabilities: () => ({ supportsRuntimeModeSwitch: false }),
-}));
+vi.mock('@happier-dev/agents', async (importOriginal) => {
+    const actual: any = await importOriginal();
+    return { ...actual, getAgentAdvancedModeCapabilities: () => ({ supportsRuntimeModeSwitch: false }) };
+});
 
 vi.mock('@/components/settings/providers/ProviderCliInstallItem', () => ({
     ProviderCliInstallItem: (props: any) => React.createElement('ProviderCliInstallItem', props),
@@ -133,10 +148,14 @@ describe('ProviderSettingsScreen', () => {
         await act(async () => {
             tree = renderer.create(React.createElement(Screen));
         });
+        await act(async () => {
+            await Promise.resolve();
+        });
 
         const installer = tree!.root.findByType('ProviderCliInstallItem' as any);
         expect(installer.props.machineId).toBe('m1');
         expect(installer.props.capabilityId).toBe('cli.codex');
         expect(installer.props.installed).toBe(false);
+        expect(installer.props.installability).toMatchObject({ kind: 'installable' });
     });
 });

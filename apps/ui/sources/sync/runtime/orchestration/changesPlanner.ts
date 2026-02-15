@@ -15,6 +15,7 @@ export type PlannedChangeActions = {
         profile: boolean;
         friends: boolean;
         feed: boolean;
+        automations: boolean;
     };
     kv: PlannedKvAction;
 };
@@ -32,6 +33,7 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
     let invalidateProfile = false;
     let invalidateFriends = false;
     let invalidateFeed = false;
+    let invalidateAutomations = false;
 
     let kvFull = false;
     const kvKeys = new Set<string>();
@@ -69,6 +71,11 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
 
         if (kind === 'feed') {
             invalidateFeed = true;
+            continue;
+        }
+
+        if (kind === 'automation') {
+            invalidateAutomations = true;
             continue;
         }
 
@@ -115,6 +122,7 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
             profile: invalidateProfile,
             friends: invalidateFriends,
             feed: invalidateFeed,
+            automations: invalidateAutomations,
         },
         kv,
     };

@@ -136,6 +136,37 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 }
             }
         });
+
+        it('preserves provider-emitted sidechainId on agent output records', () => {
+            const message = {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: {
+                        type: 'assistant',
+                        uuid: 'test-uuid',
+                        isSidechain: true,
+                        sidechainId: 'tool_task_1',
+                        message: {
+                            role: 'assistant',
+                            model: 'claude-3',
+                            content: [{ type: 'text', text: 'Hello from sidechain' }],
+                        },
+                    },
+                },
+            };
+
+            const result = RawRecordSchema.safeParse(message);
+
+            expect(result.success).toBe(true);
+            if (result.success) {
+                const content = result.data.content;
+                if (content.type === 'output') {
+                    expect((content.data as any).sidechainId).toBe('tool_task_1');
+                    expect((content.data as any).isSidechain).toBe(true);
+                }
+            }
+        });
     });
 
     describe('Accepts canonical underscore types without transformation (idempotency)', () => {

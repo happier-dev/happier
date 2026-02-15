@@ -39,7 +39,17 @@ export function installVitestRnShim(options: VitestRnShimOptions = {}): void {
 
     const traceFile = options.traceFile ?? process.env.VITEST_TRACE_LOAD ?? null;
     const nodeRequire = createRequire(import.meta.url);
-    const sourcesDir = fileURLToPath(new URL('..', import.meta.url));
+    const sourcesDir = (() => {
+        try {
+            const url = new URL('..', import.meta.url);
+            if (url.protocol === 'file:') return fileURLToPath(url);
+        } catch {
+            // ignore
+        }
+        // Some Vitest environments (for example jsdom) can evaluate modules with non-file URLs.
+        // Fall back to the UI workspace root.
+        return resolve(process.cwd(), 'sources');
+    })();
     const Module = nodeRequire('node:module') as NodeModuleWithLoader;
     const recentLoads: string[] = [];
 

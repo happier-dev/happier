@@ -94,6 +94,7 @@ describe('settings', () => {
                 }
             });
         });
+
         it('defaults featureToggles to empty even when experiments is true', () => {
             const parsed = settingsParse({
                 experiments: true,
@@ -111,6 +112,7 @@ describe('settings', () => {
                 expScmOperations: true,
                 expShowThinkingMessages: true,
                 expSessionType: true,
+                expAutomations: true,
                 expZen: true,
                 expInboxFriends: true,
             } as any);
@@ -120,6 +122,7 @@ describe('settings', () => {
             expect((parsed as any).expScmOperations).toBeUndefined();
             expect((parsed as any).expShowThinkingMessages).toBeUndefined();
             expect((parsed as any).expSessionType).toBeUndefined();
+            expect((parsed as any).expAutomations).toBeUndefined();
             expect((parsed as any).expZen).toBeUndefined();
             expect((parsed as any).expInboxFriends).toBeUndefined();
         });
@@ -149,6 +152,16 @@ describe('settings', () => {
             expect((parsed as any).featureToggles?.['social.friends']).toBe(true);
         });
 
+        it('drops legacy experimentalFeatureToggles', () => {
+            const parsed = settingsParse({
+                experiments: true,
+                experimentalFeatureToggles: { automations: true },
+            } as any);
+
+            expect((parsed as any).experimentalFeatureToggles).toBeUndefined();
+            expect((parsed as any).featureToggles).toEqual({});
+        });
+
         it('defaults per-agent new-session permission modes', () => {
             const parsed = settingsParse({} as any);
             expect((parsed as any).sessionDefaultPermissionModeByAgent?.claude).toBe('default');
@@ -169,7 +182,32 @@ describe('settings', () => {
             expect((parsed as any).scmDefaultDiffModeByBackend).toEqual({});
             expect((parsed as any).scmReviewMaxFiles).toBe(25);
             expect((parsed as any).scmReviewMaxChangedLines).toBe(2000);
+            expect((parsed as any).scmCommitMessageGeneratorEnabled).toBe(false);
+            expect((parsed as any).scmCommitMessageGeneratorBackendId).toBe('claude');
+            expect((parsed as any).scmCommitMessageGeneratorInstructions).toBe('');
             expect((parsed as any).scmIncludeCoAuthoredBy).toBe(false);
+        });
+
+        it('defaults actions settings', () => {
+            const parsed = settingsParse({} as any);
+            expect((parsed as any).actionsSettingsV1).toEqual({ v: 1, disabledActionIds: [] });
+        });
+
+        it('keeps valid actions settings action ids when one entry is invalid', () => {
+            const parsed = settingsParse({
+                actionsSettingsV1: { v: 1, disabledActionIds: ['review.start', 'unknown.action'] },
+            } as any);
+            expect((parsed as any).actionsSettingsV1).toEqual({ v: 1, disabledActionIds: ['review.start'] });
+        });
+
+        it('defaults files diff syntax highlighting and editor settings', () => {
+            const parsed = settingsParse({} as any);
+            expect((parsed as any).filesDiffSyntaxHighlightingMode).toBe('simple');
+            expect((parsed as any).filesChangedFilesRowDensity).toBe('comfortable');
+            expect((parsed as any).filesDiffTokenizationMaxBytes).toBeGreaterThan(0);
+            expect((parsed as any).filesDiffTokenizationMaxLines).toBeGreaterThan(0);
+            expect((parsed as any).filesEditorChangeDebounceMs).toBeGreaterThan(0);
+            expect((parsed as any).filesEditorMaxFileBytes).toBeGreaterThan(0);
         });
 
         it('defaults permission mode apply timing to immediate', () => {
@@ -182,47 +220,63 @@ describe('settings', () => {
             expect((parsed as any).agentInputHistoryScope).toBe('perSession');
         });
 
+        it('defaults app-level replay resume settings', () => {
+            const parsed = settingsParse({} as any);
+            expect((parsed as any).sessionReplayEnabled).toBe(false);
+            expect((parsed as any).sessionReplayStrategy).toBe('recent_messages');
+            expect((parsed as any).sessionReplayRecentMessagesCount).toBeGreaterThan(0);
+        });
+
         it('defaults voice settings', () => {
             const parsed = settingsParse({} as any);
-            expect((parsed as any).voiceProviderId).toBe('happier_elevenlabs_agents');
-            expect((parsed as any).voiceMode).toBe('happier');
-            expect((parsed as any).voiceShareSessionSummary).toBe(true);
-            expect((parsed as any).voiceShareRecentMessages).toBe(true);
-            expect((parsed as any).voiceRecentMessagesCount).toBe(10);
-            expect((parsed as any).voiceShareToolNames).toBe(true);
-            expect((parsed as any).voiceSharePermissionRequests).toBe(true);
-            expect((parsed as any).voiceShareFilePaths).toBe(false);
-            // Safety: tool args are never shared with voice providers.
-            expect((parsed as any).voiceShareToolArgs).toBe(false);
+            expect((parsed as any).voice.providerId).toBe('realtime_elevenlabs');
 
-            expect((parsed as any).voiceLocalConversationMode).toBe('direct_session');
-            expect((parsed as any).voiceLocalMediatorBackend).toBe('daemon');
-            expect((parsed as any).voiceMediatorPermissionPolicy).toBe('read_only');
-            expect((parsed as any).voiceMediatorIdleTtlSeconds).toBe(300);
-            expect((parsed as any).voiceMediatorChatModelSource).toBe('custom');
-            expect((parsed as any).voiceMediatorChatModelId).toBe('default');
-            expect((parsed as any).voiceMediatorCommitModelSource).toBe('chat');
-            expect((parsed as any).voiceMediatorVerbosity).toBe('short');
+            expect((parsed as any).voice.privacy.shareSessionSummary).toBe(true);
+            expect((parsed as any).voice.privacy.shareRecentMessages).toBe(true);
+            expect((parsed as any).voice.privacy.recentMessagesCount).toBe(3);
+            expect((parsed as any).voice.privacy.shareToolNames).toBe(true);
+            expect((parsed as any).voice.privacy.sharePermissionRequests).toBe(true);
+            expect((parsed as any).voice.privacy.shareFilePaths).toBe(false);
+            expect((parsed as any).voice.privacy.shareToolArgs).toBe(false);
+
+            expect((parsed as any).voice.adapters.local_conversation.conversationMode).toBe('direct_session');
+            expect((parsed as any).voice.adapters.local_conversation.agent.backend).toBe('daemon');
+            expect((parsed as any).voice.adapters.local_conversation.handsFree.enabled).toBe(false);
+            expect((parsed as any).voice.adapters.local_conversation.handsFree.endpointing.silenceMs).toBe(450);
+            expect((parsed as any).voice.adapters.local_conversation.handsFree.endpointing.minSpeechMs).toBe(120);
+            expect((parsed as any).voice.adapters.local_conversation.tts.bargeInEnabled).toBe(true);
+            expect((parsed as any).voice.adapters.local_conversation.agent.permissionPolicy).toBe('read_only');
+            expect((parsed as any).voice.adapters.local_conversation.agent.idleTtlSeconds).toBe(300);
+            expect((parsed as any).voice.adapters.local_conversation.agent.chatModelSource).toBe('custom');
+            expect((parsed as any).voice.adapters.local_conversation.agent.chatModelId).toBe('default');
+            expect((parsed as any).voice.adapters.local_conversation.agent.commitModelSource).toBe('chat');
+            expect((parsed as any).voice.adapters.local_conversation.streaming.enabled).toBe(false);
+            expect((parsed as any).voice.adapters.local_conversation.streaming.ttsEnabled).toBe(false);
+            expect((parsed as any).voice.adapters.local_conversation.streaming.ttsChunkChars).toBe(200);
+            expect((parsed as any).voice.adapters.local_conversation.agent.verbosity).toBe('short');
         });
 
         it('does not mutate voice defaults while parsing a partial voice config', () => {
             const parsed1 = settingsParse({
-                voiceShareFilePaths: true,
+                voice: {
+                    privacy: {
+                        shareFilePaths: true,
+                    },
+                },
             } as any);
-            expect((parsed1 as any).voiceShareFilePaths).toBe(true);
+            // Privacy hardening: shareFilePaths is forced off even if persisted true.
+            expect((parsed1 as any).voice.privacy.shareFilePaths).toBe(false);
 
             const parsed2 = settingsParse({} as any);
             // Defaults must remain stable across calls.
-            expect((parsed2 as any).voiceShareFilePaths).toBe(false);
+            expect((parsed2 as any).voice.privacy.shareFilePaths).toBe(false);
         });
 
-        it('defaults multi-server settings to disabled grouped mode', () => {
+        it('defaults server-selection settings', () => {
             const parsed = settingsParse({} as any);
-            expect((parsed as any).multiServerEnabled).toBe(false);
-            expect((parsed as any).multiServerSelectedServerIds).toEqual([]);
-            expect((parsed as any).multiServerPresentation).toBe('grouped');
-            expect((parsed as any).multiServerProfiles).toEqual([]);
-            expect((parsed as any).multiServerActiveProfileId).toBeNull();
+            expect((parsed as any).serverSelectionGroups).toEqual([]);
+            expect((parsed as any).serverSelectionActiveTargetKind).toBeNull();
+            expect((parsed as any).serverSelectionActiveTargetId).toBeNull();
         });
 
         it('defaults environment badge visibility to enabled', () => {
@@ -237,11 +291,43 @@ describe('settings', () => {
             expect((parsed as any).showEnvironmentBadge).toBe(false);
         });
 
-        it('parses multi-server settings values when provided', () => {
+        it('parses server-selection settings values when provided', () => {
             const parsed = settingsParse({
-                multiServerEnabled: true,
-                multiServerSelectedServerIds: ['server-a', 'server-b'],
-                multiServerPresentation: 'flat-with-badge',
+                serverSelectionGroups: [
+                    {
+                        id: 'dev-work',
+                        name: 'Dev Work',
+                        serverIds: ['server-a', 'server-b'],
+                        presentation: 'flat-with-badge',
+                    },
+                ],
+                serverSelectionActiveTargetKind: 'group',
+                serverSelectionActiveTargetId: 'dev-work',
+            } as any);
+            expect((parsed as any).serverSelectionGroups).toEqual([
+                {
+                    id: 'dev-work',
+                    name: 'Dev Work',
+                    serverIds: ['server-a', 'server-b'],
+                    presentation: 'flat-with-badge',
+                },
+            ]);
+            expect((parsed as any).serverSelectionActiveTargetKind).toBe('group');
+            expect((parsed as any).serverSelectionActiveTargetId).toBe('dev-work');
+        });
+
+        it('parses active server target fields when provided', () => {
+            const parsed = settingsParse({
+                serverSelectionActiveTargetKind: 'group',
+                serverSelectionActiveTargetId: 'dev-work',
+            } as any);
+
+            expect((parsed as any).serverSelectionActiveTargetKind).toBe('group');
+            expect((parsed as any).serverSelectionActiveTargetId).toBe('dev-work');
+        });
+
+        it('ignores legacy multi-server settings keys (hard cutover)', () => {
+            const parsed = settingsParse({
                 multiServerProfiles: [
                     {
                         id: 'dev-work',
@@ -251,19 +337,17 @@ describe('settings', () => {
                     },
                 ],
                 multiServerActiveProfileId: 'dev-work',
+                activeServerTargetKind: 'group',
+                activeServerTargetId: 'dev-work',
             } as any);
-            expect((parsed as any).multiServerEnabled).toBe(true);
-            expect((parsed as any).multiServerSelectedServerIds).toEqual(['server-a', 'server-b']);
-            expect((parsed as any).multiServerPresentation).toBe('flat-with-badge');
-            expect((parsed as any).multiServerProfiles).toEqual([
-                {
-                    id: 'dev-work',
-                    name: 'Dev Work',
-                    serverIds: ['server-a', 'server-b'],
-                    presentation: 'grouped',
-                },
-            ]);
-            expect((parsed as any).multiServerActiveProfileId).toBe('dev-work');
+
+            expect((parsed as any).serverSelectionGroups).toEqual([]);
+            expect((parsed as any).serverSelectionActiveTargetKind).toBeNull();
+            expect((parsed as any).serverSelectionActiveTargetId).toBeNull();
+            expect((parsed as any).multiServerProfiles).toBeUndefined();
+            expect((parsed as any).multiServerActiveProfileId).toBeUndefined();
+            expect((parsed as any).activeServerTargetKind).toBeUndefined();
+            expect((parsed as any).activeServerTargetId).toBeUndefined();
         });
 
         it('migrates legacy sessionBusySteerSendPolicy=queue_for_review to server_pending', () => {
@@ -283,34 +367,6 @@ describe('settings', () => {
             // Non-Claude agents clamp unsupported modes to defaults when seeding.
             expect((parsed as any).sessionDefaultPermissionModeByAgent?.codex).toBe('default');
             expect((parsed as any).sessionDefaultPermissionModeByAgent?.gemini).toBe('default');
-        });
-
-        it('should preserve explicit per-experiment toggles when present (no forced override)', () => {
-            const parsed = settingsParse({
-                experiments: true,
-                expUsageReporting: true,
-                expFileViewer: false,
-                expShowThinkingMessages: true,
-                expSessionType: false,
-                expZen: true,
-                expInboxFriends: false,
-                expScmOperations: true,
-            } as any);
-
-            expect((parsed as any).expUsageReporting).toBe(true);
-            expect((parsed as any).expFileViewer).toBe(false);
-            expect((parsed as any).expShowThinkingMessages).toBe(true);
-            expect((parsed as any).expSessionType).toBe(false);
-            expect((parsed as any).expZen).toBe(true);
-            expect((parsed as any).expInboxFriends).toBe(false);
-            expect((parsed as any).expScmOperations).toBe(true);
-        });
-
-        it('keeps expFileViewer parse-compatible when explicitly present', () => {
-            const parsed = settingsParse({
-                expFileViewer: true,
-            } as any);
-            expect((parsed as any).expFileViewer).toBe(true);
         });
 
         it('should keep valid secrets when one secret entry is invalid', () => {
@@ -337,6 +393,39 @@ describe('settings', () => {
 
             expect(parsed.viewInline).toBe(true);
             expect(parsed.secrets).toEqual([validSecret]);
+        });
+
+        it('should keep valid execution runs guidance entries when one entry is invalid', () => {
+            const parsed = settingsParse({
+                viewInline: true,
+                executionRunsGuidanceEntries: [
+                    {
+                        id: 'rule-1',
+                        description: 'Prefer Claude for UI work',
+                        enabled: true,
+                        suggestedBackendId: 'claude',
+                        suggestedModelId: 'claude-sonnet-4-5',
+                        suggestedIntent: 'delegate',
+                    },
+                    {
+                        id: 'rule-2',
+                        description: 'Invalid backend id should be dropped',
+                        enabled: true,
+                        suggestedBackendId: 'not-a-real-agent',
+                    },
+                ],
+            } as any);
+
+            expect(parsed.viewInline).toBe(true);
+            expect(parsed.executionRunsGuidanceEntries).toEqual([
+                expect.objectContaining({
+                    id: 'rule-1',
+                    description: 'Prefer Claude for UI work',
+                    suggestedBackendId: 'claude',
+                    suggestedModelId: 'claude-sonnet-4-5',
+                    suggestedIntent: 'delegate',
+                }),
+            ]);
         });
     });
 
@@ -444,6 +533,7 @@ describe('settings', () => {
             expect((settingsDefaults as any).toolViewExpandedDetailLevelDefault).toBe('full');
             expect((settingsDefaults as any).toolViewExpandedDetailLevelByToolName).toEqual({});
             expect(settingsDefaults.toolViewShowDebugByDefault).toBe(false);
+            expect(settingsDefaults.terminalConnectLegacySecretExportEnabled).toBe(false);
             expect((settingsDefaults as any).expGemini).toBeUndefined();
             expect((settingsDefaults as any).sessionDefaultPermissionModeClaude).toBeUndefined();
             expect((settingsDefaults as any).sessionDefaultPermissionModeCodex).toBeUndefined();
@@ -729,9 +819,9 @@ describe('settings', () => {
     // Voice settings intentionally do not migrate legacy flat voice keys.
 
     describe('voice privacy settings', () => {
-        it('forces voiceShareToolArgs to false even if persisted true', () => {
-            const parsed = settingsParse({ voiceShareToolArgs: true } as any);
-            expect((parsed as any).voiceShareToolArgs).toBe(false);
+        it('forces voice.privacy.shareToolArgs to false even if persisted true', () => {
+            const parsed = settingsParse({ voice: { privacy: { shareToolArgs: true } } } as any);
+            expect((parsed as any).voice.privacy.shareToolArgs).toBe(false);
         });
     });
 

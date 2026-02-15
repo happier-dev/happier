@@ -10,6 +10,7 @@ import {
     storage,
     useSessionProjectScmCommitSelectionPatches,
     useSessionProjectScmCommitSelectionPaths,
+    useSetting,
 } from '@/sync/domains/state/storage';
 import { executeScmCommit } from './executeScmCommit';
 import { Modal } from '@/modal';
@@ -31,6 +32,8 @@ import { withSessionProjectScmOperationLock } from '@/scm/operations/withOperati
 import { reportSessionScmOperation, trackBlockedScmOperation } from '@/scm/operations/reporting';
 import { tracking } from '@/track';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import { showScmCommitMessageEditorModal } from '@/components/sessions/files/commit/showScmCommitMessageEditorModal';
+import { generateScmCommitMessage } from '@/scm/operations/commitMessageGenerator';
 
 export function useFilesScmOperations(input: {
     sessionId: string;
@@ -59,6 +62,9 @@ export function useFilesScmOperations(input: {
     const [scmOperationStatus, setScmOperationStatus] = React.useState<string | null>(null);
     const commitSelectionPaths = useSessionProjectScmCommitSelectionPaths(sessionId);
     const commitSelectionPatches = useSessionProjectScmCommitSelectionPatches(sessionId);
+    const scmCommitMessageGeneratorEnabled = useSetting('scmCommitMessageGeneratorEnabled');
+    const scmCommitMessageGeneratorBackendId = useSetting('scmCommitMessageGeneratorBackendId');
+    const scmCommitMessageGeneratorInstructions = useSetting('scmCommitMessageGeneratorInstructions');
     const commitSelectionPathHints = React.useMemo(() => {
         const selected = new Set<string>();
         for (const path of commitSelectionPaths) {
@@ -285,7 +291,28 @@ export function useFilesScmOperations(input: {
             return;
         }
         if (!sessionPath) return;
-        const rawMessage = await Modal.prompt('Create commit', 'Enter commit message');
+
+        const backendId =
+            typeof scmCommitMessageGeneratorBackendId === 'string' && scmCommitMessageGeneratorBackendId.trim().length > 0
+                ? scmCommitMessageGeneratorBackendId.trim()
+                : 'claude';
+
+        const rawMessage = await showScmCommitMessageEditorModal({
+            title: 'Create commit',
+            canGenerate: scmCommitMessageGeneratorEnabled === true,
+            onGenerate: async () => {
+                const res = await generateScmCommitMessage({
+                    sessionId,
+                    backendId,
+                    instructions: typeof scmCommitMessageGeneratorInstructions === 'string'
+                        ? scmCommitMessageGeneratorInstructions
+                        : undefined,
+                    scopePaths: commitSelectionPathHints,
+                });
+                if (!res.ok) return { ok: false, error: res.error };
+                return { ok: true, message: res.message };
+            },
+        });
         const validation = validateCommitMessage(rawMessage ?? '');
         if (!validation.ok) {
             Modal.alert(t('common.error'), validation.message);
@@ -304,6 +331,9 @@ export function useFilesScmOperations(input: {
             tracking,
         });
     }, [
+        scmCommitMessageGeneratorBackendId,
+        scmCommitMessageGeneratorEnabled,
+        scmCommitMessageGeneratorInstructions,
         commitSelectionPathHints,
         commitSelectionPatches,
         commitSelectionPaths,

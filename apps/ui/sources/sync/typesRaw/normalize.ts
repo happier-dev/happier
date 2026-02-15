@@ -134,6 +134,13 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
         }
     };
 
+    const isClaudeTaskNotificationText = (text: string): boolean => {
+        const raw = String(text ?? '');
+        // Claude Code emits these as user-text messages; they are redundant with task sidechain transcripts
+        // and make the main session transcript unreadable.
+        return /^\s*<task-notification>/i.test(raw);
+    };
+
     const maybeParseJsonString = (value: unknown): unknown => {
         if (typeof value !== 'string') return value;
         const trimmed = value.trim();
@@ -171,11 +178,24 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                 return null;
             }
 
+            // Progress records are transport-level status updates and are not rendered in transcript.
+            if (raw.content.data.type === 'progress') {
+                return null;
+            }
+
             // Handle Assistant messages (including sidechains)
             if (raw.content.data.type === 'assistant') {
                 if (!raw.content.data.uuid) {
                     return null;
                 }
+
+                // Claude's streaming API encodes sidechains via parent_tool_use_id.
+                // Map that to the provider-agnostic `sidechainId` so reducer sidechain linking can attach
+                // sub-agent transcripts to the originating tool call and keep them out of the main transcript.
+                const claudeParentToolUseId =
+                    typeof (raw.content.data as any).parent_tool_use_id === 'string'
+                        ? String((raw.content.data as any).parent_tool_use_id)
+                        : undefined;
                 let content: NormalizedAgentContent[] = [];
                 for (let c of raw.content.data.message.content) {
                     if (c.type === 'text') {
@@ -205,7 +225,9 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                     }
                 }
                 const sidechainId =
-                    typeof (raw.content.data as any).sidechainId === 'string' ? (raw.content.data as any).sidechainId : undefined;
+                    typeof (raw.content.data as any).sidechainId === 'string'
+                        ? (raw.content.data as any).sidechainId
+                        : claudeParentToolUseId;
                 const legacyIsSidechain = raw.content.data.isSidechain ?? false;
                 return {
                     id,
@@ -223,6 +245,16 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                     return null;
                 }
 
+                const claudeParentToolUseId =
+                    typeof (raw.content.data as any).parent_tool_use_id === 'string'
+                        ? String((raw.content.data as any).parent_tool_use_id)
+                        : undefined;
+                const sidechainId =
+                    typeof (raw.content.data as any).sidechainId === 'string'
+                        ? (raw.content.data as any).sidechainId
+                        : claudeParentToolUseId;
+                const isSidechain = Boolean(sidechainId) || (raw.content.data.isSidechain ?? false);
+
                 // Handle sidechain user messages
                 if (raw.content.data.isSidechain && raw.content.data.message && typeof raw.content.data.message.content === 'string') {
                     // Return as a special agent message with sidechain content
@@ -232,7 +264,7 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                         createdAt,
                         role: 'agent',
                         isSidechain: true,
-                        sidechainId: typeof (raw.content.data as any).sidechainId === 'string' ? (raw.content.data as any).sidechainId : undefined,
+                        sidechainId,
                         content: [{
                             type: 'sidechain',
                             uuid: raw.content.data.uuid,
@@ -243,12 +275,16 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
 
                 // Handle regular user messages
                 if (raw.content.data.message && typeof raw.content.data.message.content === 'string') {
+                    if (isClaudeTaskNotificationText(raw.content.data.message.content)) {
+                        return null;
+                    }
                     return {
                         id,
                         localId,
                         createdAt,
                         role: 'user',
-                        isSidechain: false,
+                        sidechainId,
+                        isSidechain,
                         content: {
                             type: 'text',
                             text: raw.content.data.message.content
@@ -292,7 +328,8 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                     localId,
                     createdAt,
                     role: 'agent',
-                    isSidechain: raw.content.data.isSidechain ?? false,
+                    sidechainId,
+                    isSidechain,
                     content,
                     meta: raw.meta
                 };

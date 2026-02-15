@@ -4,6 +4,8 @@ import renderer, { act } from 'react-test-renderer';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const useSelectableMenuSpy = vi.fn();
+
 vi.mock('react-native', () => {
     const React = require('react');
     return {
@@ -55,15 +57,18 @@ vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
 }));
 
 vi.mock('@/components/ui/forms/dropdown/useSelectableMenu', () => ({
-    useSelectableMenu: () => ({
-        searchQuery: '',
-        selectedIndex: 0,
-        filteredCategories: [],
-        inputRef: { current: null },
-        setSelectedIndex: () => {},
-        handleSearchChange: () => {},
-        handleKeyPress: () => {},
-    }),
+    useSelectableMenu: (args: any) => {
+        useSelectableMenuSpy(args);
+        return {
+            searchQuery: '',
+            selectedIndex: 0,
+            filteredCategories: [],
+            inputRef: { current: null },
+            setSelectedIndex: () => {},
+            handleSearchChange: () => {},
+            handleKeyPress: () => {},
+        };
+    },
 }));
 
 vi.mock('@/components/ui/forms/dropdown/SelectableMenuResults', () => ({
@@ -79,6 +84,7 @@ vi.mock('@/text', () => ({
 
 describe('DropdownMenu', () => {
     beforeEach(() => {
+        useSelectableMenuSpy.mockReset();
         vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
             cb();
             return 0 as any;
@@ -191,5 +197,28 @@ describe('DropdownMenu', () => {
         const selectableResults = tree?.root.findByType('SelectableMenuResults' as any);
         expect(selectableResults?.props?.showCategoryTitles).toBe(false);
         expect(selectableResults?.props?.rowKind).toBe('item');
+    });
+
+    it('does not add a default chevron right element to selectable items', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+
+        act(() => {
+            renderer.create(
+                React.createElement(DropdownMenu, {
+                    open: true,
+                    onOpenChange: vi.fn(),
+                    items: [{ id: 'a', title: 'A' }],
+                    onSelect: () => {},
+                    trigger: React.createElement('View'),
+                }),
+            );
+        });
+
+        expect(useSelectableMenuSpy).toHaveBeenCalled();
+        const args = useSelectableMenuSpy.mock.calls[0]?.[0];
+        expect(args).toBeTruthy();
+        expect(Array.isArray(args.items)).toBe(true);
+        expect(args.items[0]?.id).toBe('a');
+        expect(args.items[0]?.right).toBe(null);
     });
 });

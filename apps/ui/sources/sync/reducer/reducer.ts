@@ -260,6 +260,19 @@ export type ReducerResult = {
 };
 
 export function reducer(state: ReducerState, messages: NormalizedMessage[], agentState?: AgentState | null): ReducerResult {
+    const DEBUG_SIDECHAINS =
+        typeof globalThis !== 'undefined' &&
+        // Enable in browser devtools via: `window.__HAPPIER_DEBUG_SIDECHAINS__ = true`
+        // (kept off by default to avoid noisy logs for users).
+        (globalThis as any).__HAPPIER_DEBUG_SIDECHAINS__ === true;
+
+    const DEBUG_MESSAGE_DECRYPT =
+        typeof globalThis !== 'undefined'
+        && (
+            (globalThis as any).__HAPPIER_DEBUG_MESSAGE_DECRYPT__ === true
+            || (typeof localStorage !== 'undefined' && localStorage.getItem('happier.debug.messageDecrypt') === '1')
+        );
+
     if (ENABLE_LOGGING) {
         console.log(`[REDUCER] Called with ${messages.length} messages, agentState: ${agentState ? 'YES' : 'NO'}`);
         if (agentState?.requests) {
@@ -303,9 +316,24 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
     // First, trace all messages to identify sidechains
     const tracedMessages = traceMessages(state.tracerState, messages);
 
-    // Separate sidechain and non-sidechain messages
-    let nonSidechainMessages = tracedMessages.filter(msg => !msg.sidechainId);
+    // Separate sidechain and non-sidechain messages.
+    // Important: sidechain messages must never appear in the main transcript, even if sidechainId
+    // isn't resolved yet (otherwise subagent tool execution leaks into the main timeline).
+    let nonSidechainMessages = tracedMessages.filter(msg => !msg.sidechainId && !msg.isSidechain);
     const sidechainMessages = tracedMessages.filter(msg => msg.sidechainId);
+
+    if (DEBUG_MESSAGE_DECRYPT) {
+        const isSidechainCount = tracedMessages.filter((m) => m.isSidechain).length;
+        const hasSidechainIdCount = tracedMessages.filter((m) => Boolean(m.sidechainId)).length;
+        // eslint-disable-next-line no-console
+        console.log(
+            `[debug][reducer] traced=${tracedMessages.length} `
+                + `incoming=${messages.length} `
+                + `nonSidechain=${nonSidechainMessages.length} `
+                + `sidechain=${sidechainMessages.length} `
+                + `flags={isSidechain:${isSidechainCount},sidechainId:${hasSidechainIdCount}}`
+        );
+    }
 
     //
     const conversion = runMessageToEventConversion({
@@ -392,7 +420,21 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
     // Collect changed messages (only root-level messages)
     //
 
+    // Sidechain children should never be emitted as top-level transcript updates.
+    // The owning tool-call is marked as changed by the sidechains phase, and it will re-serialize
+    // updated children for both the main session transcript and the tool/task full view.
+    const sidechainChildIds = new Set<string>();
+    for (const chain of state.sidechains.values()) {
+        for (const m of chain) sidechainChildIds.add(m.id);
+    }
+
+    const filteredSidechainChildIds: string[] = [];
     for (let id of changed) {
+        if (sidechainChildIds.has(id)) {
+            if (DEBUG_SIDECHAINS) filteredSidechainChildIds.push(id);
+            continue;
+        }
+
         let existing = state.messages.get(id);
         if (!existing) continue;
 
@@ -400,6 +442,13 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
         if (message) {
             newMessages.push(message);
         }
+    }
+
+    if (DEBUG_SIDECHAINS && filteredSidechainChildIds.length > 0) {
+        console.debug('[REDUCER][sidechains] filtered sidechain child messages from root transcript update', {
+            count: filteredSidechainChildIds.length,
+            ids: filteredSidechainChildIds,
+        });
     }
 
     //

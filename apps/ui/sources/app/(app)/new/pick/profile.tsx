@@ -18,13 +18,21 @@ import { ProfilesList } from '@/components/profiles/ProfilesList';
 import { SecretRequirementModal, type SecretRequirementModalResult } from '@/components/secrets/requirements';
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 import { useMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';
+import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { PopoverPortalTargetProvider } from '@/components/ui/popover';
+import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 
 export default React.memo(function ProfilePickerScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
     const navigation = useNavigation();
-    const params = useLocalSearchParams<{ selectedId?: string; machineId?: string; profileId?: string | string[]; secretRequirementResultId?: string }>();
+    const params = useLocalSearchParams<{
+        selectedId?: string;
+        machineId?: string;
+        profileId?: string | string[];
+        secretRequirementResultId?: string;
+        spawnServerId?: string;
+    }>();
     const useProfiles = useSetting('useProfiles');
     const [secrets, setSecrets] = useSettingMutable('secrets');
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
@@ -35,6 +43,7 @@ export default React.memo(function ProfilePickerScreen() {
     const machineId = typeof params.machineId === 'string' ? params.machineId : undefined;
     const profileId = Array.isArray(params.profileId) ? params.profileId[0] : params.profileId;
     const secretRequirementResultId = typeof params.secretRequirementResultId === 'string' ? params.secretRequirementResultId : '';
+    const spawnServerId = resolveSpawnServerRouteParam(params.spawnServerId);
     const setParamsOnPreviousAndClose = React.useCallback((next: { profileId: string; secretId?: string; secretSessionOnlyId?: string }) => {
         const state = navigation.getState();
         const previousRoute = state?.routes?.[state.index - 1];
@@ -127,6 +136,7 @@ export default React.memo(function ProfilePickerScreen() {
                 params: {
                     profileId: profile.id,
                     machineId: machineId ?? undefined,
+                    spawnServerId: spawnServerId ?? undefined,
                     secretEnvVarName: requiredSecretName,
                     secretEnvVarNames: requiredSecretNames.join(','),
                     revertOnCancel: '0',
@@ -184,7 +194,7 @@ export default React.memo(function ProfilePickerScreen() {
             },
             closeOnBackdrop: true,
         });
-    }, [machineId, router, secretBindingsByProfileId, secrets, setParamsOnPreviousAndClose, setSecretBindingsByProfileId, setSecrets]);
+    }, [machineId, router, secretBindingsByProfileId, secrets, setParamsOnPreviousAndClose, setSecretBindingsByProfileId, setSecrets, spawnServerId]);
 
     const handleProfilePress = React.useCallback(async (profile: AIBackendProfile) => {
         const profileId = profile.id;
@@ -197,6 +207,8 @@ export default React.memo(function ProfilePickerScreen() {
                 keys: requiredSecretNames,
                 extraEnv: getProfileEnvironmentVariables(profile),
                 sensitiveKeys: requiredSecretNames,
+            }, {
+                serverId: spawnServerId,
             });
             if (preview.supported) {
                 for (const name of requiredSecretNames) {
@@ -236,7 +248,7 @@ export default React.memo(function ProfilePickerScreen() {
         }
 
         setParamsOnPreviousAndClose({ profileId });
-    }, [machineId, openSecretModal, secretBindingsByProfileId, secrets, setParamsOnPreviousAndClose]);
+    }, [machineId, openSecretModal, secretBindingsByProfileId, secrets, setParamsOnPreviousAndClose, spawnServerId]);
 
     const allRequiredSecretNames = React.useMemo(() => {
         const names = new Set<string>();
@@ -248,7 +260,9 @@ export default React.memo(function ProfilePickerScreen() {
         return Array.from(names);
     }, [profiles]);
 
-    const machineEnvPresence = useMachineEnvPresence(machineId ?? null, allRequiredSecretNames, { ttlMs: 5 * 60_000 });
+    const activeServerId = getActiveServerId();
+    const machineEnvPresenceServerId = spawnServerId ?? activeServerId;
+    const machineEnvPresence = useMachineEnvPresence(machineId ?? null, allRequiredSecretNames, { ttlMs: 5 * 60_000, serverId: machineEnvPresenceServerId });
 
     const getSecretMachineEnvOverride = React.useCallback((profile: AIBackendProfile) => {
         const required = getRequiredSecretEnvVarNames(profile);
@@ -274,23 +288,34 @@ export default React.memo(function ProfilePickerScreen() {
     const openProfileCreate = React.useCallback(() => {
         router.push({
             pathname: '/new/pick/profile-edit',
-            params: machineId ? { machineId } : {},
+            params: {
+                ...(machineId ? { machineId } : {}),
+                ...(spawnServerId ? { spawnServerId } : {}),
+            },
         });
-    }, [machineId, router]);
+    }, [machineId, router, spawnServerId]);
 
     const openProfileEdit = React.useCallback((profileId: string) => {
         router.push({
             pathname: '/new/pick/profile-edit',
-            params: machineId ? { profileId, machineId } : { profileId },
+            params: {
+                profileId,
+                ...(machineId ? { machineId } : {}),
+                ...(spawnServerId ? { spawnServerId } : {}),
+            },
         });
-    }, [machineId, router]);
+    }, [machineId, router, spawnServerId]);
 
     const openProfileDuplicate = React.useCallback((cloneFromProfileId: string) => {
         router.push({
             pathname: '/new/pick/profile-edit',
-            params: machineId ? { cloneFromProfileId, machineId } : { cloneFromProfileId },
+            params: {
+                cloneFromProfileId,
+                ...(machineId ? { machineId } : {}),
+                ...(spawnServerId ? { spawnServerId } : {}),
+            },
         });
-    }, [machineId, router]);
+    }, [machineId, router, spawnServerId]);
 
     const handleAddProfile = React.useCallback(() => {
         openProfileCreate();

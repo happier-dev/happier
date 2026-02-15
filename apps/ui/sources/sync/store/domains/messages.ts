@@ -113,6 +113,13 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
             let changed = new Set<string>();
             let hasReadyEvent = false;
             set((state) => {
+                const DEBUG_MESSAGE_DECRYPT =
+                    typeof globalThis !== 'undefined'
+                    && (
+                        (globalThis as any).__HAPPIER_DEBUG_MESSAGE_DECRYPT__ === true
+                        || (typeof localStorage !== 'undefined' && localStorage.getItem('happier.debug.messageDecrypt') === '1')
+                    );
+
                 // Resolve session messages state
                 const existingSession = state.sessionMessages[sessionId] || {
                     messages: [],
@@ -136,6 +143,20 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 }
                 if (reducerResult.hasReadyEvent) {
                     hasReadyEvent = true;
+                }
+
+                if (DEBUG_MESSAGE_DECRYPT) {
+                    const byKind: Record<string, number> = {};
+                    for (const m of processedMessages) {
+                        byKind[m.kind] = (byKind[m.kind] ?? 0) + 1;
+                    }
+                    // eslint-disable-next-line no-console
+                    console.log(
+                        `[debug] applyMessages ${sessionId}: `
+                            + `normalized=${normalizedMessages.length} `
+                            + `reducerOut=${processedMessages.length} `
+                            + `kinds=${Object.entries(byKind).map(([k, v]) => `${k}:${v}`).join(',') || 'none'}`
+                    );
                 }
 
                 // Merge messages

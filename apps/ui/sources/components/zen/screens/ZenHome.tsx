@@ -10,7 +10,7 @@ import { storage, useRealtimeStatus } from '@/sync/domains/state/storage';
 import { toggleTodo as toggleTodoSync, reorderTodos as reorderTodosSync } from '@/sync/domains/todos/todoOps';
 import { useAuth } from '@/auth/context/AuthContext';
 import { useShallow } from 'zustand/react/shallow';
-import { VoiceAssistantStatusBar } from '@/components/voice/shell/VoiceAssistantStatusBar';
+import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { t } from '@/text';
 
 export const ZenHome = () => {
@@ -87,7 +87,7 @@ export const ZenHome = () => {
         <>
             <ZenHeader />
             {realtimeStatus !== 'disconnected' && (
-                <VoiceAssistantStatusBar variant="full" />
+                <VoiceSurface variant="sidebar" />
             )}
             <ScrollView
                 style={{ flex: 1 }}

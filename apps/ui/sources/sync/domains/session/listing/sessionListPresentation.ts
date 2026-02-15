@@ -1,9 +1,9 @@
-import type { MultiServerPresentation } from '@/sync/domains/server/multiServer';
+import type { ServerSelectionPresentation } from '@/sync/domains/server/selection/serverSelectionTypes';
 import type { SessionListViewItem } from './sessionListViewData';
 
 type ApplySessionListPresentationParams = Readonly<{
     enabled: boolean;
-    presentation: MultiServerPresentation;
+    presentation: ServerSelectionPresentation;
     selectedServerIds?: ReadonlyArray<string>;
 }>;
 

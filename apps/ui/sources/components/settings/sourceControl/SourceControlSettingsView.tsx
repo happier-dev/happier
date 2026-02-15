@@ -1,4 +1,5 @@
 import React from 'react';
+import { TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -9,6 +10,7 @@ import { useSettingMutable } from '@/sync/domains/state/storage';
 import { scmBackendSettingsRegistry } from '@/scm/settings/scmBackendSettingsRegistry';
 import type { ScmCommitStrategy } from '@/scm/settings/commitStrategy';
 import type { ScmDiffArea } from '@happier-dev/protocol';
+import { Modal } from '@/modal';
 import { useUnistyles } from 'react-native-unistyles';
 import type {
     ScmGitRepoPreferredBackend,
@@ -175,11 +177,21 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
     const [scmDefaultDiffModeByBackend, setScmDefaultDiffModeByBackend] = useSettingMutable('scmDefaultDiffModeByBackend');
     const [filesDiffSyntaxHighlightingMode, setFilesDiffSyntaxHighlightingMode] = useSettingMutable('filesDiffSyntaxHighlightingMode');
     const [filesChangedFilesRowDensity, setFilesChangedFilesRowDensity] = useSettingMutable('filesChangedFilesRowDensity');
+    const [scmCommitMessageGeneratorEnabled, setScmCommitMessageGeneratorEnabled] = useSettingMutable('scmCommitMessageGeneratorEnabled');
+    const [scmCommitMessageGeneratorBackendId, setScmCommitMessageGeneratorBackendId] = useSettingMutable('scmCommitMessageGeneratorBackendId');
+    const [scmCommitMessageGeneratorInstructions, setScmCommitMessageGeneratorInstructions] = useSettingMutable('scmCommitMessageGeneratorInstructions');
     const [scmIncludeCoAuthoredBy, setScmIncludeCoAuthoredBy] = useSettingMutable('scmIncludeCoAuthoredBy');
     const backendPlugins = scmBackendSettingsRegistry.listPlugins();
     const currentDiffModeByBackend = scmDefaultDiffModeByBackend ?? {};
     const effectiveFilesDiffSyntaxHighlightingMode = (filesDiffSyntaxHighlightingMode ?? 'off') as 'off' | 'simple' | 'advanced';
     const effectiveFilesChangedFilesRowDensity = filesChangedFilesRowDensity === 'compact' ? 'compact' : 'comfortable';
+    const effectiveCommitMessageGeneratorEnabled = scmCommitMessageGeneratorEnabled === true;
+    const effectiveCommitMessageGeneratorBackendId = typeof scmCommitMessageGeneratorBackendId === 'string' && scmCommitMessageGeneratorBackendId.trim()
+        ? scmCommitMessageGeneratorBackendId.trim()
+        : 'claude';
+    const effectiveCommitMessageGeneratorInstructions = typeof scmCommitMessageGeneratorInstructions === 'string'
+        ? scmCommitMessageGeneratorInstructions
+        : '';
     const effectiveIncludeCoAuthoredBy = scmIncludeCoAuthoredBy === true;
 
     const renderIcon = React.useCallback((iconName: IoniconName) => (
@@ -254,6 +266,57 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                         showChevron={false}
                     />
                 ))}
+            </ItemGroup>
+
+            <ItemGroup
+                title="Commit message generator"
+                footer="Optional: generate commit message suggestions using a one-shot LLM task. Requires execution runs support on the daemon."
+            >
+                <Item
+                    title="Commit message generator"
+                    subtitle={effectiveCommitMessageGeneratorEnabled ? 'Enabled' : 'Disabled'}
+                    icon={renderIcon('sparkles-outline')}
+                    rightElement={effectiveCommitMessageGeneratorEnabled ? <Ionicons name="checkmark" size={20} color="#007AFF" /> : null}
+                    onPress={() => setScmCommitMessageGeneratorEnabled(!effectiveCommitMessageGeneratorEnabled)}
+                    showChevron={false}
+                />
+                <Item
+                    title={`Generator backend: ${effectiveCommitMessageGeneratorBackendId}`}
+                    subtitle="Backend id used for one-shot commit message generation."
+                    icon={renderIcon('server-outline')}
+                    onPress={async () => {
+                        const next = await Modal.prompt('Commit message backend', 'Enter backend id', {
+                            defaultValue: effectiveCommitMessageGeneratorBackendId,
+                            placeholder: 'claude',
+                            confirmText: 'Save',
+                            cancelText: 'Cancel',
+                        });
+                        if (typeof next === 'string' && next.trim()) {
+                            setScmCommitMessageGeneratorBackendId(next.trim());
+                        }
+                    }}
+                    showChevron={false}
+                />
+
+                <View style={{ paddingHorizontal: 16, paddingTop: 0, gap: 6 }}>
+                    <TextInput
+                        style={{
+                            borderWidth: 1,
+                            borderColor: theme.colors.divider,
+                            borderRadius: 10,
+                            paddingHorizontal: 12,
+                            paddingVertical: 10,
+                            height: 110,
+                            textAlignVertical: 'top' as any,
+                            color: theme.colors.text,
+                        }}
+                        placeholder="Commit message instructions"
+                        placeholderTextColor={theme.colors.textSecondary}
+                        value={effectiveCommitMessageGeneratorInstructions}
+                        multiline={true}
+                        onChangeText={(value) => setScmCommitMessageGeneratorInstructions(String(value))}
+                    />
+                </View>
             </ItemGroup>
 
             <ItemGroup

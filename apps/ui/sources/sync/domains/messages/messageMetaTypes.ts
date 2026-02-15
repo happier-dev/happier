@@ -29,7 +29,12 @@ export const MessageMetaSchema = z.object({
     appendSystemPrompt: z.string().nullable().optional(), // Append to system prompt for this message (null = reset)
     allowedTools: z.array(z.string()).nullable().optional(), // Allowed tools for this message (null = reset)
     disallowedTools: z.array(z.string()).nullable().optional(), // Disallowed tools for this message (null = reset)
-    displayText: z.string().optional() // Optional text to display in UI instead of actual message text
+    displayText: z.string().optional(), // Optional text to display in UI instead of actual message text
+    // Structured UI-only metadata (versioned envelope). Unknown payload shapes are validated by renderers.
+    happier: z.object({
+        kind: z.string(),
+        payload: z.unknown(),
+    }).optional(),
 }).passthrough().transform((meta) => sanitizeMessageMetaObject(meta as Record<string, unknown>));
 
 export type MessageMeta = z.infer<typeof MessageMetaSchema>;

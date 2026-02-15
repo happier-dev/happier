@@ -81,7 +81,9 @@ describe('scmUiBackendRegistry', () => {
         const gitPlugin = scmUiBackendRegistry.getPlugin('git');
         const saplingPlugin = scmUiBackendRegistry.getPlugin('sapling');
 
-        expect(gitPlugin.diffModeConfig(null).availableModes).toEqual(['included', 'pending', 'both']);
-        expect(saplingPlugin.diffModeConfig(null).availableModes).toEqual(['pending', 'both']);
+        // Be conservative when capabilities are unknown so older daemons don't get a "both" diff request
+        // that they can't satisfy.
+        expect(gitPlugin.diffModeConfig(null).availableModes).toEqual(['included', 'pending']);
+        expect(saplingPlugin.diffModeConfig(null).availableModes).toEqual(['pending']);
     });
 });

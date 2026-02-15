@@ -97,5 +97,24 @@ describe('ProviderCliInstallItem', () => {
             expect.any(Object),
         );
     });
-});
 
+    it('disables install action when auto-install is not available for the selected machine', async () => {
+        const { ProviderCliInstallItem } = await import('./ProviderCliInstallItem');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(ProviderCliInstallItem, {
+                    machineId: 'm1',
+                    capabilityId: 'cli.opencode',
+                    providerTitle: 'OpenCode',
+                    installed: false,
+                    installability: { kind: 'not-installable' },
+                }),
+            );
+        });
+
+        const item = tree!.root.findByType('Item' as any);
+        expect(item.props.disabled).toBe(true);
+    });
+});

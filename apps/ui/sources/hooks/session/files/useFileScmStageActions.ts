@@ -16,6 +16,7 @@ import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
 import { withSessionProjectScmOperationLock } from '@/scm/operations/withOperationLock';
 import { reportSessionScmOperation, trackBlockedScmOperation } from '@/scm/operations/reporting';
 import { tracking } from '@/track';
+import { applyFileStageAction } from '@/scm/operations/applyFileStageAction';
 
 type DiffMode = 'included' | 'pending' | 'both';
 
@@ -55,114 +56,34 @@ export function useFileScmStageActions(input: {
     const handleStage = React.useCallback(async (stage: boolean) => {
         if (!sessionId) return;
         if (isAtomicCommitStrategy(scmCommitStrategy)) {
-            if (!stage) {
-                storage.getState().unmarkSessionProjectScmCommitSelectionPaths(sessionId, [filePath]);
-                storage.getState().removeSessionProjectScmCommitSelectionPatch(sessionId, filePath);
-                reportSessionScmOperation({
-                    state: storage.getState(),
-                    sessionId,
-                    operation: 'unstage',
-                    status: 'success',
-                    path: filePath,
-                    detail: `${filePath} removed from commit selection`,
-                    surface: 'file',
-                    tracking,
-                });
-                return;
-            }
-
-            storage.getState().markSessionProjectScmCommitSelectionPaths(sessionId, [filePath]);
-            storage.getState().removeSessionProjectScmCommitSelectionPatch(sessionId, filePath);
-            reportSessionScmOperation({
-                state: storage.getState(),
+            await applyFileStageAction({
                 sessionId,
-                operation: 'stage',
-                status: 'success',
-                path: filePath,
-                detail: `${filePath} selected for commit`,
+                sessionPath,
+                filePath,
+                snapshot: scmSnapshot,
+                scmWriteEnabled,
+                commitStrategy: scmCommitStrategy,
+                stage,
                 surface: 'file',
-                tracking,
             });
             return;
         }
 
-        const preflight = evaluateScmOperationPreflight({
-            intent: stage ? 'stage' : 'unstage',
-            scmWriteEnabled,
-            sessionPath,
-            snapshot: scmSnapshot,
-            commitStrategy: scmCommitStrategy,
-        });
-        if (!preflight.allowed) {
-            trackBlockedScmOperation({
-                operation: stage ? 'stage' : 'unstage',
-                reason: 'preflight',
-                message: preflight.message,
+        setIsApplyingStage(true);
+        try {
+            await applyFileStageAction({
+                sessionId,
+                sessionPath,
+                filePath,
+                snapshot: scmSnapshot,
+                scmWriteEnabled,
+                commitStrategy: scmCommitStrategy,
+                stage,
                 surface: 'file',
-                tracking,
+                refreshAll,
             });
-            Modal.alert(t('common.error'), preflight.message);
-            return;
-        }
-
-        const lockResult = await withSessionProjectScmOperationLock({
-            state: storage.getState(),
-            sessionId,
-            operation: stage ? 'stage' : 'unstage',
-            run: async () => {
-                setIsApplyingStage(true);
-                try {
-                    const response = stage
-                        ? await sessionScmChangeInclude(sessionId, { paths: [filePath] })
-                        : await sessionScmChangeExclude(sessionId, { paths: [filePath] });
-
-                    if (!response.success) {
-                        const errorMessage = getScmUserFacingError({
-                            errorCode: response.errorCode,
-                            error: response.error,
-                            fallback: response.error || 'Source-control operation failed',
-                        });
-                        reportSessionScmOperation({
-                            state: storage.getState(),
-                            sessionId,
-                            operation: stage ? 'stage' : 'unstage',
-                            status: 'failed',
-                            path: filePath,
-                            detail: errorMessage,
-                            errorCode: response.errorCode,
-                            surface: 'file',
-                            tracking,
-                        });
-                        Modal.alert(t('common.error'), errorMessage);
-                        return;
-                    }
-
-                    reportSessionScmOperation({
-                        state: storage.getState(),
-                        sessionId,
-                        operation: stage ? 'stage' : 'unstage',
-                        status: 'success',
-                        path: filePath,
-                        detail: filePath,
-                        surface: 'file',
-                        tracking,
-                    });
-                    await scmStatusSync.invalidateFromMutationAndAwait(sessionId);
-                    await refreshAll();
-                } finally {
-                    setIsApplyingStage(false);
-                }
-            },
-        });
-        if (!lockResult.started) {
-            trackBlockedScmOperation({
-                operation: stage ? 'stage' : 'unstage',
-                reason: 'lock',
-                message: lockResult.message,
-                surface: 'file',
-                tracking,
-            });
-            Modal.alert(t('common.error'), lockResult.message);
+        } finally {
+            setIsApplyingStage(false);
         }
     }, [filePath, scmCommitStrategy, scmSnapshot, scmWriteEnabled, refreshAll, sessionId, sessionPath]);
 

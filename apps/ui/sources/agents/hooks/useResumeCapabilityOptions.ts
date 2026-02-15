@@ -12,6 +12,7 @@ const NOOP_REQUEST: CapabilitiesDetectRequest = { requests: [] };
 export function useResumeCapabilityOptions(opts: {
     agentId: AgentId;
     machineId: string | null | undefined;
+    serverId?: string | null;
     settings: Settings;
     enabled?: boolean;
 }): {
@@ -25,6 +26,7 @@ export function useResumeCapabilityOptions(opts: {
     // machine snapshot is fresh but missing those fields.
     const { state, refresh } = useMachineCapabilitiesCache({
         machineId,
+        serverId: opts.serverId,
         enabled: enabled && machineId !== null,
         request: NOOP_REQUEST,
         timeoutMs: undefined,

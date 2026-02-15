@@ -24,6 +24,8 @@ function withCleanEnv<T>(fn: () => T): T {
         'EXPO_UPDATES_CHANNEL',
         'EXPO_APP_OWNER',
         'EXPO_APP_SLUG',
+        'EXPO_PUBLIC_IOS_BACKGROUND_AUDIO',
+        'EXPO_IOS_BACKGROUND_AUDIO',
     ] as const;
 
     const previous: Partial<Record<(typeof keys)[number], string | undefined>> = {};
@@ -109,5 +111,36 @@ describe('app.config.js', () => {
         expect(exp.owner).toBe('example-owner');
         expect(exp.slug).toBe('example-slug');
         expect(exp.extra?.eas?.projectId).toBe(DEFAULT_EAS_PROJECT_ID);
+    });
+
+    it('enables iOS background audio by default in development', () => {
+        const exp = withCleanEnv(() => {
+            process.env.APP_ENV = 'development';
+            return getPublicConfig();
+        });
+
+        const plugin = (exp.plugins ?? []).find((entry: any) => Array.isArray(entry) && entry[0] === 'react-native-audio-api');
+        expect(plugin).toEqual(['react-native-audio-api', expect.objectContaining({ iosBackgroundMode: true })]);
+    });
+
+    it('enables iOS background audio by default in preview', () => {
+        const exp = withCleanEnv(() => {
+            process.env.APP_ENV = 'preview';
+            return getPublicConfig();
+        });
+
+        const plugin = (exp.plugins ?? []).find((entry: any) => Array.isArray(entry) && entry[0] === 'react-native-audio-api');
+        expect(plugin).toEqual(['react-native-audio-api', expect.objectContaining({ iosBackgroundMode: true })]);
+    });
+
+    it('allows overriding iOS background audio via env', () => {
+        const exp = withCleanEnv(() => {
+            process.env.APP_ENV = 'preview';
+            process.env.EXPO_PUBLIC_IOS_BACKGROUND_AUDIO = 'false';
+            return getPublicConfig();
+        });
+
+        const plugin = (exp.plugins ?? []).find((entry: any) => Array.isArray(entry) && entry[0] === 'react-native-audio-api');
+        expect(plugin).toEqual(['react-native-audio-api', expect.objectContaining({ iosBackgroundMode: false })]);
     });
 });

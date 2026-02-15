@@ -129,7 +129,7 @@ describe('useScmCommitHistory integration', () => {
         });
     });
 
-    it('stops pagination when backend ignores skip (legacy daemon)', async () => {
+    it('falls back to limit expansion when backend ignores skip (legacy daemon)', async () => {
         const workspace = createRepoWithCommits(25);
         const harness = createGitSessionRpcHarness(workspace);
 
@@ -160,9 +160,8 @@ describe('useScmCommitHistory integration', () => {
         });
 
         const secondPage = hook.getCurrent();
-        // Still the first page because pagination was ignored.
-        expect(secondPage.historyEntries).toHaveLength(20);
-        // The hook should recognize that pagination made no progress and stop offering "load more".
+        // Should still make progress by expanding limit while keeping skip=0.
+        expect(secondPage.historyEntries).toHaveLength(25);
         expect(secondPage.historyHasMore).toBe(false);
 
         act(() => {

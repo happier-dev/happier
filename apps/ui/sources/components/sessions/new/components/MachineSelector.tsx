@@ -29,6 +29,7 @@ export interface MachineSelectorProps {
      * You can still refresh from the Detected CLIs modal by tapping the glyphs.
      */
     autoDetectCliGlyphs?: boolean;
+    serverId?: string | null;
     searchPlacement?: 'header' | 'recent' | 'favorites' | 'all';
     searchPlaceholder?: string;
     recentSectionTitle?: string;
@@ -49,6 +50,7 @@ export function MachineSelector({
     showSearch = true,
     showCliGlyphs = true,
     autoDetectCliGlyphs = true,
+    serverId,
     searchPlacement = 'header',
     searchPlaceholder: searchPlaceholderProp,
     recentSectionTitle: recentSectionTitleProp,
@@ -97,6 +99,7 @@ export function MachineSelector({
                     getItemStatusExtra: (machine: Machine) => (
                         <MachineCliGlyphs
                             machineId={machine.id}
+                            serverId={serverId}
                             isOnline={isMachineOnline(machine)}
                             autoDetect={autoDetectCliGlyphs}
                         />

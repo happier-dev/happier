@@ -7,12 +7,13 @@ import type { Encryption } from '@/sync/encryption/encryption';
 import type { Profile } from '@/sync/domains/profiles/profile';
 import { profileParse } from '@/sync/domains/profiles/profile';
 import { settingsParse, SUPPORTED_SCHEMA_VERSION } from '@/sync/domains/settings/settings';
+import { pickLocalOnlyServerSelectionSettings } from '@/sync/domains/settings/localOnlyServerSelectionSettings';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { HappyError } from '@/utils/errors/errors';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { serverFetch } from '@/sync/http/client';
-import { openAccountSettingsCiphertext } from '@/sync/domains/settings/accountSettingsCipher';
+import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 
 export async function handleUpdateAccountSocketUpdate(params: {
     accountUpdate: any;
@@ -21,9 +22,10 @@ export async function handleUpdateAccountSocketUpdate(params: {
     encryption: Encryption;
     applyProfile: (profile: Profile) => void;
     applySettings: (settings: any, version: number) => void;
+    getLocalSettings?: () => unknown;
     log: { log: (message: string) => void };
 }): Promise<void> {
-    const { accountUpdate, updateCreatedAt, currentProfile, encryption, applyProfile, applySettings, log } = params;
+    const { accountUpdate, updateCreatedAt, currentProfile, encryption, applyProfile, applySettings, getLocalSettings, log } = params;
 
     // Build updated profile with new data
     const updatedProfile: Profile = {
@@ -48,15 +50,13 @@ export async function handleUpdateAccountSocketUpdate(params: {
     if (accountUpdate.settings?.value) {
         try {
             const machineKey = encryption.getContentPrivateKey();
-            const opened = await openAccountSettingsCiphertext({
-                machineKey,
+            const opened = openAccountScopedBlobCiphertext({
+                kind: 'account_settings',
+                material: { type: 'dataKey', machineKey },
                 ciphertext: accountUpdate.settings.value,
-                fallbackDecryptRaw: (ciphertext) => encryption.decryptRaw(ciphertext),
             });
-            if (!opened) {
-                throw new Error('Failed to decrypt account settings');
-            }
-            const parsedSettings = settingsParse(opened.value);
+            const decryptedSettings = opened?.value ?? (await encryption.decryptRaw(accountUpdate.settings.value));
+            const parsedSettings = settingsParse(decryptedSettings);
 
             // Version compatibility check
             const settingsSchemaVersion = parsedSettings.schemaVersion ?? 1;
@@ -67,7 +67,14 @@ export async function handleUpdateAccountSocketUpdate(params: {
                 );
             }
 
-            applySettings(parsedSettings, accountUpdate.settings.version);
+            const localSettings = settingsParse(getLocalSettings ? getLocalSettings() : {});
+            const localServerSelectionSettings = pickLocalOnlyServerSelectionSettings(localSettings);
+            const mergedSettings = {
+                ...parsedSettings,
+                ...localServerSelectionSettings,
+            };
+
+            applySettings(mergedSettings, accountUpdate.settings.version);
             log.log(
                 `📋 Settings synced from server (schema v${settingsSchemaVersion}, version ${accountUpdate.settings.version})`,
             );

@@ -19,6 +19,7 @@ export interface ItemListProps extends ScrollViewProps {
 const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
         flex: 1,
+        ...(Platform.OS === 'web' ? { minHeight: 0 } : {}),
         backgroundColor: theme.colors.groupped.background,
     },
     contentContainer: {

@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
 import { useAllMachines, useSettingMutable } from '@/sync/domains/state/storage';
+import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -19,6 +20,7 @@ export default React.memo(function PreviewMachinePickerScreen() {
 
     const selectedMachineId = typeof params.selectedId === 'string' ? params.selectedId : null;
     const selectedMachine = machines.find((m) => m.id === selectedMachineId) ?? null;
+    const activeServerId = getActiveServerId();
 
     const headerLeft = React.useCallback(() => (
         <Pressable
@@ -75,6 +77,7 @@ export default React.memo(function PreviewMachinePickerScreen() {
             <ItemList>
                 <MachineSelector
                     machines={machines}
+                    serverId={activeServerId}
                     selectedMachine={selectedMachine}
                     favoriteMachines={favoriteMachineList}
                     showRecent={false}

@@ -50,7 +50,7 @@ function stubRootLayoutFeaturesFetch() {
 }
 
 async function flushMicrotasks(limit = 20) {
-    // `useServerFeatureValue` resolves via async/await chains (no timers), so yielding a few
+    // Feature probe hooks resolve via async/await chains (no timers), so yielding a few
     // microtasks is the most deterministic way to let effects settle.
     for (let i = 0; i < limit; i += 1) {
         // eslint-disable-next-line no-await-in-loop
@@ -59,7 +59,7 @@ async function flushMicrotasks(limit = 20) {
 }
 
 async function flushEffects(): Promise<void> {
-    // `useServerFeatureValue` performs an async fetch inside a `useEffect`, which React flushes
+    // Feature probe hooks perform async fetches inside a `useEffect`, which React flushes
     // on the next tick in these test environments. Matching other hook tests, yield a macrotask.
     await new Promise((r) => setTimeout(r, 0));
 }
@@ -121,7 +121,7 @@ describe('RootLayout', () => {
             });
 
             const tree = await renderRootLayout();
-            // Let `useServerFeatureValue` fetch + apply server features so the headerRight opacity
+            // Let feature probing fetch + apply server features so the headerRight opacity
             // reflects the computed friends identity readiness.
             await act(async () => {
                 await flushEffects();

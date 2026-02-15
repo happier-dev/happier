@@ -12,10 +12,8 @@ import type { AgentId } from '@/agents/catalog/catalog';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { encodeBase64 } from '@/encryption/base64';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
-import type {
-    SpawnSessionResult
-} from '@happier-dev/protocol';
-import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import type { SessionContinueWithReplayRpcResult, SpawnSessionResult } from '@happier-dev/protocol';
+import { SessionContinueWithReplayRpcResultSchema, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { normalizeSpawnSessionResult } from './_shared';
 export {
@@ -187,10 +185,6 @@ export interface ResumeSessionOptions {
     agent: AgentId;
     /** Optional vendor resume id (e.g. Claude/Codex session id). */
     resume?: string;
-    /** Session encryption key (dataKey mode) encoded as base64. */
-    sessionEncryptionKeyBase64: string;
-    /** Session encryption variant (only dataKey supported for resume). */
-    sessionEncryptionVariant: 'dataKey';
     /** Optional explicit server scope for resume spawn routing. */
     serverId?: string;
     /**
@@ -224,7 +218,7 @@ export interface ResumeSessionOptions {
  * to the existing Happy session and resumes the agent.
  */
 export async function resumeSession(options: ResumeSessionOptions): Promise<ResumeSessionResult> {
-    const { sessionId, machineId, directory, agent, resume, sessionEncryptionKeyBase64, sessionEncryptionVariant, permissionMode, permissionModeUpdatedAt, modelId, modelUpdatedAt, experimentalCodexResume, experimentalCodexAcp } = options;
+    const { sessionId, machineId, directory, agent, resume, permissionMode, permissionModeUpdatedAt, modelId, modelUpdatedAt, experimentalCodexResume, experimentalCodexAcp } = options;
     const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
 
     try {
@@ -233,8 +227,6 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
             directory,
             agent,
             ...(resume ? { resume } : {}),
-            sessionEncryptionKeyBase64,
-            sessionEncryptionVariant,
             ...(permissionMode ? { permissionMode } : {}),
             ...(typeof permissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt } : {}),
             ...(modelId ? { modelId } : {}),
@@ -255,6 +247,61 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
             type: 'error',
             errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
             errorMessage: error instanceof Error ? error.message : 'Failed to resume session'
+        };
+    }
+}
+
+export type ContinueSessionWithReplayOptions = Readonly<{
+    machineId: string;
+    serverId?: string | null;
+    directory: string;
+    agent: AgentId;
+    approvedNewDirectoryCreation?: boolean;
+    permissionMode?: PermissionMode;
+    permissionModeUpdatedAt?: number;
+    modelId?: string;
+    modelUpdatedAt?: number;
+    replay: Readonly<{
+        previousSessionId: string;
+        strategy?: 'recent_messages' | 'summary_plus_recent';
+        recentMessagesCount?: number;
+        seedMode?: 'draft' | 'daemon_initial_prompt';
+    }>;
+}>;
+
+export async function continueSessionWithReplay(options: ContinueSessionWithReplayOptions): Promise<SessionContinueWithReplayRpcResult> {
+    const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
+    try {
+        const raw = await machineRpcWithServerScope<unknown, unknown>({
+            machineId: options.machineId,
+            method: RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY,
+            payload: {
+                directory: options.directory,
+                agent: options.agent,
+                approvedNewDirectoryCreation: options.approvedNewDirectoryCreation,
+                permissionMode: options.permissionMode,
+                permissionModeUpdatedAt: options.permissionModeUpdatedAt,
+                modelId: options.modelId,
+                modelUpdatedAt: options.modelUpdatedAt,
+                replay: options.replay,
+            },
+            serverId,
+        });
+
+        const parsed = SessionContinueWithReplayRpcResultSchema.safeParse(raw);
+        if (!parsed.success) {
+            return {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+                errorMessage: 'Unsupported replay response from daemon',
+            };
+        }
+        return parsed.data;
+    } catch (error) {
+        return {
+            type: 'error',
+            errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+            errorMessage: error instanceof Error ? error.message : 'Failed to continue session with replay',
         };
     }
 }
@@ -361,20 +408,8 @@ export async function sessionSwitch(sessionId: string, to: 'remote' | 'local'): 
 /**
  * Push provider meta updates to the CLI session without sending a user message.
  *
- * Used for session-scoped toggles that must take effect in local mode (e.g. Claude local permission bridge).
+ * Deprecated: provider meta updates should be driven by account settings sync instead of ad-hoc session RPCs.
  */
-export async function sessionApplyProviderMeta(sessionId: string, payload: Record<string, unknown>): Promise<boolean> {
-    try {
-        const response = await apiSocket.sessionRPC<boolean, Record<string, unknown>>(
-            sessionId,
-            'providerMeta',
-            payload,
-        );
-        return response === true;
-    } catch {
-        return false;
-    }
-}
 
 /**
  * Execute a bash command in the session
@@ -429,7 +464,12 @@ export async function sessionWriteFile(
 ): Promise<SessionWriteFileResponse> {
     try {
         const contentBase64 = encodeBase64(new TextEncoder().encode(content), 'base64');
-        const request: SessionWriteFileRequest = { path, content: contentBase64, expectedHash };
+        // Important: do not include `expectedHash: undefined` in the payload.
+        // Some serialization/encryption layers can coerce `undefined` to `null`,
+        // which changes semantics on the daemon (null means "must be a new file").
+        const request: SessionWriteFileRequest = expectedHash === undefined
+            ? { path, content: contentBase64 }
+            : { path, content: contentBase64, expectedHash };
         const response = await apiSocket.sessionRPC<SessionWriteFileResponse, SessionWriteFileRequest>(
             sessionId,
             'writeFile',

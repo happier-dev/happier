@@ -31,6 +31,9 @@ describe('extractShellCommand', () => {
     it('returns null for malformed or non-object inputs', () => {
         expect(extractShellCommand('{not-json')).toBeNull();
         expect(extractShellCommand('hello')).toBeNull();
-        expect(extractShellCommand(['echo', 'hi'])).toBeNull();
+    });
+
+    it('extracts a command from raw argv arrays', () => {
+        expect(extractShellCommand(['echo', 'hi'])).toBe('echo hi');
     });
 });

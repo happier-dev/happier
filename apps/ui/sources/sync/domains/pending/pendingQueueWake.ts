@@ -5,10 +5,7 @@ import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilitie
 import type { PermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
 import { buildResumeSessionBaseOptionsFromSession } from '@/sync/domains/session/resume/resumeSessionBase';
 
-export type PendingQueueWakeResumeOptions = Omit<
-    ResumeSessionOptions,
-    'sessionEncryptionKeyBase64' | 'sessionEncryptionVariant'
->;
+export type PendingQueueWakeResumeOptions = ResumeSessionOptions;
 
 export function getPendingQueueWakeResumeOptions(opts: {
     sessionId: string;

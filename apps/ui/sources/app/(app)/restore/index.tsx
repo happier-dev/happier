@@ -12,7 +12,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { QRCode } from '@/components/qr/QRCode';
-import { getServerFeatures } from '@/sync/api/capabilities/apiFeatures';
+import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {
@@ -82,7 +82,7 @@ export default function Restore() {
     useEffect(() => {
         let mounted = true;
         void (async () => {
-            const features = await getServerFeatures({ timeoutMs: 800 });
+            const features = await getReadyServerFeatures({ timeoutMs: 800 });
             const enabled = features?.features?.auth?.recovery?.providerReset?.enabled === true;
             if (mounted) setProviderResetEnabled(enabled);
         })();

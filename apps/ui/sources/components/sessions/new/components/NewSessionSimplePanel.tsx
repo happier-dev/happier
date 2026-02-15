@@ -18,8 +18,7 @@ export function NewSessionSimplePanel(props: Readonly<{
     newSessionSidePadding: number;
     newSessionBottomPadding: number;
     containerStyle: ViewStyle;
-    experimentsEnabled: boolean;
-    expSessionType: boolean;
+    showSessionTypeSelector: boolean;
     sessionType: 'simple' | 'worktree';
     setSessionType: (t: 'simple' | 'worktree') => void;
     sessionPrompt: string;
@@ -93,7 +92,7 @@ export function NewSessionSimplePanel(props: Readonly<{
                             }}
                         >
                             {/* Session type selector only if enabled via experiments */}
-                            {props.experimentsEnabled && props.expSessionType && (
+                            {props.showSessionTypeSelector && (
                                 <View style={{ paddingHorizontal: props.newSessionSidePadding, marginBottom: 16 }}>
                                     <View style={{ width: '100%', alignSelf: 'center' }}>
                                         <ItemGroup title={t('newSession.sessionType.title')} containerStyle={{ marginHorizontal: 0 }}>

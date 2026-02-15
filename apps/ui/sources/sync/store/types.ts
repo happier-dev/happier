@@ -18,6 +18,8 @@ import type { CustomerInfo } from '../domains/purchases/types';
 import type { SessionMessages } from './domains/messages';
 import type { SessionPending } from './domains/pending';
 import type { NativeUpdateStatus, RealtimeMode, RealtimeStatus, SocketStatus, SyncError } from './domains/realtime';
+import type { SessionActionDraft } from '../domains/sessionActions/sessionActionDraftTypes';
+import type { SessionActionDraftStatus } from '../domains/sessionActions/sessionActionDraftTypes';
 
 export type KnownEntitlements = 'voice' | 'pro';
 export type SessionListItem = string | Session;
@@ -52,6 +54,7 @@ export interface SessionsDomainSlice {
     sessionLastViewed: Record<string, number>;
     sessionRepositoryTreeExpandedPathsBySessionId: Record<string, string[]>;
     reviewCommentsDraftsBySessionId: Record<string, ReviewCommentDraft[]>;
+    actionDraftsBySessionId: Record<string, SessionActionDraft[]>;
     applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: 'online' | number })[]) => void;
     applyScmStatus: (sessionId: string, status: ScmStatus | null) => void;
     getActiveSessions: () => Session[];
@@ -62,6 +65,18 @@ export interface SessionsDomainSlice {
     upsertSessionReviewCommentDraft: (sessionId: string, draft: ReviewCommentDraft) => void;
     deleteSessionReviewCommentDraft: (sessionId: string, commentId: string) => void;
     clearSessionReviewCommentDrafts: (sessionId: string) => void;
+    createSessionActionDraft: (
+        sessionId: string,
+        draft: Readonly<{ actionId: string; input?: Record<string, unknown> }>,
+    ) => SessionActionDraft;
+    updateSessionActionDraftInput: (
+        sessionId: string,
+        draftId: string,
+        patch: Record<string, unknown>,
+    ) => void;
+    setSessionActionDraftStatus: (sessionId: string, draftId: string, status: SessionActionDraftStatus, error?: string | null) => void;
+    deleteSessionActionDraft: (sessionId: string, draftId: string) => void;
+    clearSessionActionDrafts: (sessionId: string) => void;
     markSessionOptimisticThinking: (sessionId: string) => void;
     clearSessionOptimisticThinking: (sessionId: string) => void;
     markSessionViewed: (sessionId: string) => void;

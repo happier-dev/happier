@@ -69,8 +69,8 @@ const getServerFeatures = vi.fn(async () => ({
         },
     },
 }));
-vi.mock('@/sync/api/capabilities/apiFeatures', () => ({
-    getServerFeatures: () => getServerFeatures(),
+vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
+    getReadyServerFeatures: () => getServerFeatures(),
 }));
 
 const getRecoveryKeyReminderDismissed = vi.fn(async () => false);

@@ -10,6 +10,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Modal } from '@/modal';
 import { sync } from '@/sync/sync';
 import { getTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
+import {
+    DEFAULT_NEW_SESSION_AUTOMATION_DRAFT,
+    sanitizeNewSessionAutomationDraft,
+    type NewSessionAutomationDraft,
+} from '@/sync/domains/automations/automationDraft';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { normalizePermissionModeForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import { readAccountPermissionDefaults, resolveNewSessionDefaultPermissionMode } from '@/sync/domains/permissions/permissionDefaults';
@@ -24,7 +29,6 @@ import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { loadNewSessionDraft, saveNewSessionDraft } from '@/sync/domains/state/persistence';
 import { EnvironmentVariablesPreviewModal } from '@/components/sessions/new/components/EnvironmentVariablesPreviewModal';
 import { consumeProfileIdParam, consumeSecretIdParam } from '@/profileRouteParams';
-import { getModelOptionsForAgentTypeOrPreflight, type PreflightModelList } from '@/sync/domains/models/modelOptions';
 import { useFocusEffect } from '@react-navigation/native';
 import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
 import { useMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';
@@ -34,7 +38,6 @@ import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
 import { getInstallableDepRegistryEntries } from '@/capabilities/installableDepsRegistry';
 import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
 import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
-import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
 import {
     buildResumeCapabilityOptionsFromUiState,
     getAgentResumeExperimentsFromSettings,
@@ -55,10 +58,19 @@ import { useNewSessionCapabilitiesPrefetch } from '@/components/sessions/new/hoo
 import { useNewSessionDraftAutoPersist } from '@/components/sessions/new/hooks/useNewSessionDraftAutoPersist';
 import { useCreateNewSession } from '@/components/sessions/new/hooks/useCreateNewSession';
 import { useNewSessionWizardProps } from '@/components/sessions/new/hooks/useNewSessionWizardProps';
+import { getAutomationChipLabel } from '@/components/sessions/new/modules/automationChipModel';
+import { resolveNewSessionCapabilityServerId } from '@/components/sessions/new/modules/resolveNewSessionCapabilityServerId';
+import { resolveEffectiveAutomationDraft, shouldShowAutomationActionChips } from '@/components/sessions/new/modules/automationFeatureGate';
+import { useAutomationPickerAutoOpen } from '@/components/sessions/new/modules/useAutomationPickerAutoOpen';
+import { buildMachinePickerRouteParams, buildProfilePickerRouteParams, buildServerPickerRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/AgentInput';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
-import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
-import { getNewSessionServerTargeting, resolveNewSessionServerTarget } from '@/sync/domains/server/multiServer';
+import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useNewSessionServerTargetState } from '@/components/sessions/new/hooks/serverTarget/useNewSessionServerTargetState';
+import { useNewSessionAgentTypeState } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentTypeState';
+import { useNewSessionMachinePathState } from '@/components/sessions/new/hooks/screenModel/useNewSessionMachinePathState';
+import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
 
 // Configuration constants
 const RECENT_PATHS_DEFAULT_VISIBLE = 5;
@@ -108,7 +120,16 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         machineId: machineIdParam,
         path: pathParam,
         profileId: profileIdParam,
-        serverId: serverIdParam,
+        spawnServerId: spawnServerIdParam,
+        automation: automationParam,
+        automationEnabled: automationEnabledParam,
+        automationName: automationNameParam,
+        automationDescription: automationDescriptionParam,
+        automationScheduleKind: automationScheduleKindParam,
+        automationEveryMinutes: automationEveryMinutesParam,
+        automationCronExpr: automationCronExprParam,
+        automationTimezone: automationTimezoneParam,
+        automationPicker: automationPickerParam,
         resumeSessionId: resumeSessionIdParam,
         secretId: secretIdParam,
         secretSessionOnlyId,
@@ -119,7 +140,16 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         machineId?: string;
         path?: string;
         profileId?: string;
-        serverId?: string;
+        spawnServerId?: string;
+        automation?: string;
+        automationEnabled?: string;
+        automationName?: string;
+        automationDescription?: string;
+        automationScheduleKind?: string;
+        automationEveryMinutes?: string;
+        automationCronExpr?: string;
+        automationTimezone?: string;
+        automationPicker?: string;
         resumeSessionId?: string;
         secretId?: string;
         secretSessionOnlyId?: string;
@@ -215,8 +245,35 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             setActiveServerSnapshot(snapshot);
         });
     }, []);
-    const experimentsEnabled = settings.experiments;
-    const expSessionType = useSetting('expSessionType');
+    const {
+        serverProfiles,
+        serverTargets,
+        resolvedSettingsTarget,
+        allowedTargetServerIds,
+        targetServerId,
+        targetServerProfile,
+        targetServerName,
+        showServerPickerChip,
+    } = useNewSessionServerTargetState({
+        settings,
+        activeServerSnapshot,
+        request: {
+            spawnServerIdParam,
+        },
+    });
+
+    // New-session capability gating should be evaluated in spawn scope (target server),
+    // not in main selection scope (which can be a multi-server group).
+    const automationsSupport = useAutomationsSupport({ scopeKind: 'spawn', serverId: targetServerId });
+    const automationFeatureEnabled = automationsSupport?.enabled === true;
+
+    const capabilityServerId = React.useMemo(() => {
+        return resolveNewSessionCapabilityServerId({
+            targetServerId,
+            activeServerId: activeServerSnapshot.serverId,
+        });
+    }, [activeServerSnapshot.serverId, targetServerId]);
+    const showSessionTypeSelector = useFeatureEnabled('session.typeSelector');
     const resumeCapabilityOptions = React.useMemo(() => {
         return buildResumeCapabilityOptionsFromUiState({
             settings,
@@ -363,40 +420,11 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const emptyAutocompletePrefixes = React.useMemo(() => [], []);
     const emptyAutocompleteSuggestions = React.useCallback(async () => [], []);
 
-    const [agentType, setAgentType] = React.useState<AgentId>(() => {
-        const fromTemp = tempSessionData?.agentType;
-        if (isAgentId(fromTemp) && enabledAgentIds.includes(fromTemp)) {
-            return fromTemp;
-        }
-        if (isAgentId(lastUsedAgent) && enabledAgentIds.includes(lastUsedAgent)) {
-            return lastUsedAgent;
-        }
-        return enabledAgentIds[0] ?? DEFAULT_AGENT_ID;
+    const { agentType, setAgentType, handleAgentCycle } = useNewSessionAgentTypeState({
+        enabledAgentIds,
+        lastUsedAgent,
+        tempAgentType: tempSessionData?.agentType,
     });
-
-    React.useEffect(() => {
-        if (enabledAgentIds.includes(agentType)) return;
-        setAgentType(enabledAgentIds[0] ?? DEFAULT_AGENT_ID);
-    }, [agentType, enabledAgentIds]);
-
-    // Agent cycling handler (cycles through enabled agents)
-    // Note: Does NOT persist immediately - persistence is handled by useEffect below
-    const handleAgentCycle = React.useCallback(() => {
-        setAgentType(prev => {
-            const enabled = enabledAgentIds;
-            if (enabled.length === 0) return prev;
-            const idx = enabled.indexOf(prev);
-            if (idx < 0) return enabled[0] ?? prev;
-            return enabled[(idx + 1) % enabled.length] ?? prev;
-        });
-    }, [enabledAgentIds]);
-
-    // Persist agent selection changes, but avoid no-op writes (especially on initial mount).
-    // `sync.applySettings()` triggers a server POST, so only write when it actually changed.
-    React.useEffect(() => {
-        if (lastUsedAgent === agentType) return;
-        sync.applySettings({ lastUsedAgent: agentType });
-    }, [agentType, lastUsedAgent]);
 
     const [sessionType, setSessionType] = React.useState<'simple' | 'worktree'>('simple');
     const [permissionMode, setPermissionMode] = React.useState<PermissionMode>(() => {
@@ -426,81 +454,23 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         return core.model.defaultMode;
     });
 
-    // Session details state
-    const [selectedMachineId, setSelectedMachineId] = React.useState<string | null>(() => {
-        if (machines.length > 0) {
-            if (recentMachinePaths.length > 0) {
-                for (const recent of recentMachinePaths) {
-                    if (machines.find(m => m.id === recent.machineId)) {
-                        return recent.machineId;
-                    }
-                }
-            }
-            return machines[0].id;
-        }
-        return null;
+    const {
+        selectedMachineId,
+        setSelectedMachineId,
+        selectedPath,
+        setSelectedPath,
+        getBestPathForMachine,
+    } = useNewSessionMachinePathState({
+        machines,
+        recentMachinePaths,
+        machineIdParam,
+        pathParam,
     });
-
-    const [preflightModels, setPreflightModels] = React.useState<PreflightModelList | null>(null);
-    const preflightModelsCacheRef = React.useRef(new Map<string, PreflightModelList>());
-
-    const preflightModelsKey = React.useMemo(() => {
-        if (!selectedMachineId) return null;
-        return `${selectedMachineId}:${agentType}`;
-    }, [selectedMachineId, agentType]);
-
-    React.useEffect(() => {
-        if (!preflightModelsKey) {
-            setPreflightModels(null);
-            return;
-        }
-
-        const cached = preflightModelsCacheRef.current.get(preflightModelsKey) ?? null;
-        setPreflightModels(cached);
-
-        let cancelled = false;
-        const run = async () => {
-            const core = getAgentCore(agentType);
-            if (core.model.supportsSelection !== true) return;
-            if (!selectedMachineId) return;
-
-            const res = await machineCapabilitiesInvoke(selectedMachineId, {
-                id: `cli.${agentType}` as any,
-                method: 'probeModels',
-                params: { timeoutMs: 3500 },
-            });
-            if (cancelled) return;
-            if (!res.supported) return;
-            if (!res.response.ok) return;
-
-            const raw = res.response.result as any;
-            const modelsRaw = raw?.availableModels;
-            const supportsFreeformRaw = raw?.supportsFreeform;
-            if (!Array.isArray(modelsRaw)) return;
-
-            const list: PreflightModelList = {
-                availableModels: modelsRaw
-                    .filter((m: any) => m && typeof m.id === 'string' && typeof m.name === 'string')
-                    .map((m: any) => ({
-                        id: String(m.id),
-                        name: String(m.name),
-                        ...(typeof m.description === 'string' ? { description: m.description } : {}),
-                    })),
-                supportsFreeform: Boolean(supportsFreeformRaw),
-            };
-
-            preflightModelsCacheRef.current.set(preflightModelsKey, list);
-            setPreflightModels(list);
-        };
-
-        void run();
-        return () => { cancelled = true; };
-    }, [preflightModelsKey, agentType, selectedMachineId]);
-
-    const modelOptions = React.useMemo(
-        () => getModelOptionsForAgentTypeOrPreflight({ agentType, preflight: preflightModels }),
-        [agentType, preflightModels],
-    );
+    const { preflightModels, modelOptions } = useNewSessionPreflightModelsState({
+        agentType,
+        selectedMachineId,
+        capabilityServerId,
+    });
 
     const allProfilesRequirementNames = React.useMemo(() => {
         const names = new Set<string>();
@@ -516,21 +486,9 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const machineEnvPresence = useMachineEnvPresence(
         selectedMachineId ?? null,
         allProfilesRequirementNames,
-        { ttlMs: 5 * 60_000 },
+        { ttlMs: 5 * 60_000, serverId: capabilityServerId },
     );
     const refreshMachineEnvPresence = machineEnvPresence.refresh;
-
-    const getBestPathForMachine = React.useCallback((machineId: string | null): string => {
-        if (!machineId) return '';
-        const recent = getRecentPathsForMachine({
-            machineId,
-            recentMachinePaths,
-            sessions: null,
-        });
-        if (recent.length > 0) return recent[0]!;
-        const machine = machines.find((m) => m.id === machineId);
-        return machine?.metadata?.homeDir ?? '';
-    }, [machines, recentMachinePaths]);
 
     const hasUserSelectedPermissionModeRef = React.useRef(false);
     const permissionModeRef = React.useRef(permissionMode);
@@ -554,66 +512,73 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     // Path selection
     //
 
-    const [selectedPath, setSelectedPath] = React.useState<string>(() => {
-        return getBestPathForMachine(selectedMachineId);
-    });
     const [sessionPrompt, setSessionPrompt] = React.useState(() => {
         return tempSessionData?.prompt || prompt || persistedDraft?.input || '';
     });
+    const [automationDraft, setAutomationDraft] = React.useState<NewSessionAutomationDraft>(() => {
+        return sanitizeNewSessionAutomationDraft(persistedDraft?.automationDraft);
+    });
+    const effectiveAutomationDraft = React.useMemo(
+        () => resolveEffectiveAutomationDraft({ draft: automationDraft, automationsEnabled: automationFeatureEnabled }),
+        [automationDraft, automationFeatureEnabled],
+    );
     const [isCreating, setIsCreating] = React.useState(false);
     const [isResumeSupportChecking, setIsResumeSupportChecking] = React.useState(false);
 
-    // Handle machineId route param from picker screens (main's navigation pattern)
     React.useEffect(() => {
-        if (typeof machineIdParam !== 'string' || machines.length === 0) {
-            return;
-        }
-        if (!machines.some(m => m.id === machineIdParam)) {
-            return;
-        }
-        if (machineIdParam !== selectedMachineId) {
-            setSelectedMachineId(machineIdParam);
-            const bestPath = getBestPathForMachine(machineIdParam);
-            setSelectedPath(bestPath);
-        }
-    }, [machineIdParam, machines, recentMachinePaths, selectedMachineId]);
+        if (!automationFeatureEnabled) return;
+        const requested = typeof automationParam === 'string'
+            && ['1', 'true', 'yes', 'on'].includes(automationParam.trim().toLowerCase());
+        if (!requested) return;
+        setAutomationDraft((prev) => ({
+            ...DEFAULT_NEW_SESSION_AUTOMATION_DRAFT,
+            ...prev,
+            enabled: true,
+            everyMinutes: Math.max(1, prev.everyMinutes),
+        }));
+    }, [automationFeatureEnabled, automationParam]);
 
-    // Ensure a machine is pre-selected once machines have loaded (wizard expects this).
     React.useEffect(() => {
-        if (selectedMachineId !== null) {
-            return;
-        }
-        if (machines.length === 0) {
-            return;
-        }
+        if (!automationFeatureEnabled) return;
 
-        let machineIdToUse: string | null = null;
-        if (recentMachinePaths.length > 0) {
-            for (const recent of recentMachinePaths) {
-                if (machines.find(m => m.id === recent.machineId)) {
-                    machineIdToUse = recent.machineId;
-                    break;
-                }
-            }
-        }
-        if (!machineIdToUse) {
-            machineIdToUse = machines[0].id;
-        }
+        const hasAnyAutomationParam =
+            typeof automationEnabledParam === 'string'
+            || typeof automationNameParam === 'string'
+            || typeof automationDescriptionParam === 'string'
+            || typeof automationScheduleKindParam === 'string'
+            || typeof automationEveryMinutesParam === 'string'
+            || typeof automationCronExprParam === 'string'
+            || typeof automationTimezoneParam === 'string';
 
-        setSelectedMachineId(machineIdToUse);
-        setSelectedPath(getBestPathForMachine(machineIdToUse));
-    }, [machines, recentMachinePaths, selectedMachineId]);
+        if (!hasAnyAutomationParam) return;
 
-    // Handle path route param from picker screens (main's navigation pattern)
-    React.useEffect(() => {
-        if (typeof pathParam !== 'string') {
-            return;
-        }
-        const trimmedPath = pathParam.trim();
-        if (trimmedPath && trimmedPath !== selectedPath) {
-            setSelectedPath(trimmedPath);
-        }
-    }, [pathParam, selectedPath]);
+        setAutomationDraft((prev) => {
+            const parsed = sanitizeNewSessionAutomationDraft({
+                enabled: typeof automationEnabledParam === 'string'
+                    ? ['1', 'true', 'yes', 'on'].includes(automationEnabledParam.trim().toLowerCase())
+                    : prev.enabled,
+                name: typeof automationNameParam === 'string' ? automationNameParam : prev.name,
+                description: typeof automationDescriptionParam === 'string' ? automationDescriptionParam : prev.description,
+                scheduleKind: typeof automationScheduleKindParam === 'string' ? automationScheduleKindParam : prev.scheduleKind,
+                everyMinutes: typeof automationEveryMinutesParam === 'string'
+                    ? Number.parseInt(automationEveryMinutesParam, 10)
+                    : prev.everyMinutes,
+                cronExpr: typeof automationCronExprParam === 'string' ? automationCronExprParam : prev.cronExpr,
+                timezone: typeof automationTimezoneParam === 'string' ? automationTimezoneParam : prev.timezone,
+            });
+
+            return { ...prev, ...parsed };
+        });
+    }, [
+        automationCronExprParam,
+        automationDescriptionParam,
+        automationEnabledParam,
+        automationEveryMinutesParam,
+        automationFeatureEnabled,
+        automationNameParam,
+        automationScheduleKindParam,
+        automationTimezoneParam,
+    ]);
 
     // Handle resumeSessionId param from the resume picker screen
     React.useEffect(() => {
@@ -626,9 +591,10 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     // Path selection state - initialize with formatted selected path
 
     // CLI Detection - automatic, non-blocking detection of installed CLIs on selected machine
-    const cliAvailability = useCLIDetection(selectedMachineId, { autoDetect: false });
+    const cliAvailability = useCLIDetection(selectedMachineId, { autoDetect: false, serverId: capabilityServerId });
     const { state: selectedMachineCapabilities } = useMachineCapabilitiesCache({
         machineId: selectedMachineId,
+        serverId: capabilityServerId,
         enabled: false,
         request: CAPABILITIES_REQUEST_NEW_SESSION,
     });
@@ -713,11 +679,12 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         InteractionManager.runAfterInteractions(() => {
             void prefetchMachineCapabilities({
                 machineId: selectedMachineId,
+                serverId: capabilityServerId,
                 request: { requests },
                 timeoutMs: 12_000,
             });
         });
-    }, [machines, selectedMachineId, wizardInstallableDeps]);
+    }, [capabilityServerId, machines, selectedMachineId, wizardInstallableDeps]);
 
     React.useEffect(() => {
         const results = selectedMachineCapabilitiesSnapshot?.response.results as any;
@@ -730,11 +697,12 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         InteractionManager.runAfterInteractions(() => {
             void prefetchMachineCapabilities({
                 machineId: selectedMachineId,
+                serverId: capabilityServerId,
                 request: plan.request,
                 timeoutMs: plan.timeoutMs,
             });
         });
-    }, [agentType, machines, selectedMachineCapabilitiesSnapshot, selectedMachineId, settings]);
+    }, [agentType, capabilityServerId, machines, selectedMachineCapabilitiesSnapshot, selectedMachineId, settings]);
 
     // Auto-correct invalid agent selection after CLI detection completes
     // This handles the case where lastUsedAgent was 'codex' but codex is not installed
@@ -937,9 +905,13 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         refreshMachineEnvPresence();
 
         if (selectedMachineId) {
-            void prefetchMachineCapabilities({ machineId: selectedMachineId, request: CAPABILITIES_REQUEST_NEW_SESSION });
+            void prefetchMachineCapabilities({
+                machineId: selectedMachineId,
+                serverId: capabilityServerId,
+                request: CAPABILITIES_REQUEST_NEW_SESSION,
+            });
         }
-    }, [refreshMachineEnvPresence, selectedMachineId, sync]);
+    }, [capabilityServerId, refreshMachineEnvPresence, selectedMachineId, sync]);
 
     const selectedSavedSecret = React.useMemo(() => {
         if (!selectedSecretId) return null;
@@ -977,6 +949,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             permissionMode,
             modelMode,
             sessionType,
+            automationDraft: effectiveAutomationDraft,
             updatedAt: Date.now(),
         };
 
@@ -995,6 +968,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         agentType,
         getSessionOnlySecretValueEncByProfileIdByEnvVarName,
         modelMode,
+        effectiveAutomationDraft,
         permissionMode,
         router,
         selectedMachineId,
@@ -1064,6 +1038,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const CLI_DETECT_REVALIDATE_STALE_MS = 2 * 60 * 1000; // 2 minutes
     useNewSessionCapabilitiesPrefetch({
         enabled: useEnhancedSessionWizard,
+        serverId: capabilityServerId,
         machines,
         favoriteMachineItems,
         recentMachines,
@@ -1343,28 +1318,23 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             props: {
                 environmentVariables: getProfileEnvironmentVariables(profile),
                 machineId: selectedMachineId,
+                serverId: capabilityServerId,
                 machineName: selectedMachine?.metadata?.displayName || selectedMachine?.metadata?.host,
                 profileName: profile.name,
             },
         });
-    }, [selectedMachine, selectedMachineId]);
-
-    const handleMachineClick = React.useCallback(() => {
-        router.push({
-            pathname: '/new/pick/machine',
-            params: selectedMachineId ? { selectedId: selectedMachineId } : {},
-        });
-    }, [router, selectedMachineId]);
+    }, [capabilityServerId, selectedMachine, selectedMachineId]);
 
     const handleProfileClick = React.useCallback(() => {
         router.push({
             pathname: '/new/pick/profile',
-            params: {
-                ...(selectedProfileId ? { selectedId: selectedProfileId } : {}),
-                ...(selectedMachineId ? { machineId: selectedMachineId } : {}),
-            },
+            params: buildProfilePickerRouteParams({
+                selectedProfileId,
+                selectedMachineId,
+                targetServerId,
+            }),
         });
-    }, [router, selectedMachineId, selectedProfileId]);
+    }, [router, selectedMachineId, selectedProfileId, targetServerId]);
 
     const handleAgentClick = React.useCallback(() => {
         if (useProfiles && selectedProfileId !== null) {
@@ -1452,85 +1422,22 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         });
     }, [selectedMachine, selectedMachineId, selectedProfileEnvVars, selectedProfileForEnvVars]);
 
-    const serverProfiles = React.useMemo(() => {
-        try {
-            return listServerProfiles()
-                .slice()
-                .sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0));
-        } catch {
-            return [];
-        }
-    }, [activeServerSnapshot.generation]);
-
-    const availableServerIds = React.useMemo(() => {
-        return serverProfiles.map((profile) => profile.id);
-    }, [serverProfiles]);
-    const multiServerSelectedServerIds = Array.isArray(settings.multiServerSelectedServerIds)
-        ? settings.multiServerSelectedServerIds
-        : [];
-    const multiServerProfiles = Array.isArray(settings.multiServerProfiles)
-        ? settings.multiServerProfiles
-        : [];
-    const multiServerActiveProfileId = typeof settings.multiServerActiveProfileId === 'string'
-        ? settings.multiServerActiveProfileId
-        : null;
-    const multiServerSelectedServerIdsSignature = React.useMemo(() => {
-        return multiServerSelectedServerIds.map((id) => String(id ?? '').trim()).join('|');
-    }, [multiServerSelectedServerIds]);
-    const multiServerProfilesSignature = React.useMemo(() => {
-        return JSON.stringify(multiServerProfiles);
-    }, [multiServerProfiles]);
-    const availableServerIdsSignature = React.useMemo(() => {
-        return availableServerIds.map((id) => String(id ?? '').trim()).join('|');
-    }, [availableServerIds]);
-
-    const newSessionServerTargeting = React.useMemo(() => {
-        return getNewSessionServerTargeting({
-            activeServerId: activeServerSnapshot.serverId,
-            availableServerIds,
-            settings: {
-                multiServerEnabled: Boolean(settings.multiServerEnabled),
-                multiServerSelectedServerIds,
-                multiServerPresentation:
-                    settings.multiServerPresentation === 'flat-with-badge' ? 'flat-with-badge' : 'grouped',
-                multiServerProfiles,
-                multiServerActiveProfileId,
-            },
+    const handleMachineClick = React.useCallback(() => {
+        router.push({
+            pathname: '/new/pick/machine',
+            params: buildMachinePickerRouteParams({
+                selectedMachineId,
+                targetServerId,
+            }),
         });
-    }, [
-        activeServerSnapshot.serverId,
-        availableServerIds,
-        availableServerIdsSignature,
-        multiServerActiveProfileId,
-        multiServerProfiles,
-        multiServerProfilesSignature,
-        multiServerSelectedServerIds,
-        multiServerSelectedServerIdsSignature,
-        settings.multiServerEnabled,
-        settings.multiServerPresentation,
-    ]);
-
-    const requestedServerId = typeof serverIdParam === 'string' ? serverIdParam : null;
-    const newSessionServerTarget = React.useMemo(() => {
-        return resolveNewSessionServerTarget({
-            requestedServerId,
-            activeServerId: activeServerSnapshot.serverId,
-            allowedServerIds: newSessionServerTargeting.allowedServerIds,
-        });
-    }, [activeServerSnapshot.serverId, newSessionServerTargeting.allowedServerIds, requestedServerId]);
-
-    const targetServerId = newSessionServerTarget.targetServerId ?? activeServerSnapshot.serverId;
-    const targetServerProfile = React.useMemo(() => {
-        return serverProfiles.find((profile) => profile.id === targetServerId) ?? null;
-    }, [serverProfiles, targetServerId]);
-    const targetServerName = targetServerProfile?.name ?? targetServerId;
-    const showServerPickerChip = newSessionServerTargeting.pickerEnabled
-        && newSessionServerTargeting.allowedServerIds.length > 1;
+    }, [router, selectedMachineId, targetServerId]);
 
     const handleServerClick = React.useCallback(() => {
         router.push({
             pathname: '/new/pick/server',
-            params: targetServerId ? { selectedId: targetServerId } : {},
+            params: buildServerPickerRouteParams({
+                targetServerId,
+            }),
         });
     }, [router, targetServerId]);
 
@@ -1556,6 +1463,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         permissionMode,
         modelMode,
         sessionPrompt,
+        automationDraft: effectiveAutomationDraft,
         resumeSessionId,
         agentNewSessionOptions,
         machineEnvPresence,
@@ -1565,7 +1473,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         sessionOnlySecretValueByProfileIdByEnvVarName,
         selectedMachineCapabilities,
         targetServerId,
-        allowedTargetServerIds: newSessionServerTargeting.allowedServerIds,
+        allowedTargetServerIds: allowedTargetServerIds.length > 0 ? allowedTargetServerIds : resolvedSettingsTarget.allowedServerIds,
     });
 
     const handleCloseModal = React.useCallback(() => {
@@ -1624,15 +1532,90 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         };
     }, [handleServerClick, showServerPickerChip, targetServerName]);
 
+    const handleAutomationOpen = React.useCallback(() => {
+        if (!automationFeatureEnabled) return;
+        router.push({
+            pathname: '/new/pick/automation',
+            params: {
+                automationEnabled: automationDraft.enabled ? '1' : '0',
+                automationName: automationDraft.name,
+                automationDescription: automationDraft.description,
+                automationScheduleKind: automationDraft.scheduleKind,
+                automationEveryMinutes: String(automationDraft.everyMinutes),
+                automationCronExpr: automationDraft.cronExpr,
+                automationTimezone: automationDraft.timezone ?? '',
+            },
+        } as any);
+    }, [
+        automationDraft.cronExpr,
+        automationDraft.description,
+        automationDraft.enabled,
+        automationDraft.everyMinutes,
+        automationDraft.name,
+        automationDraft.scheduleKind,
+        automationDraft.timezone,
+        automationFeatureEnabled,
+        router,
+    ]);
+
+    const requestedAutomationForScreen = React.useMemo(() => {
+        if (typeof automationParam !== 'string') return false;
+        const normalized = automationParam.trim().toLowerCase();
+        return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+    }, [automationParam]);
+
+    useAutomationPickerAutoOpen({
+        automationsEnabled: automationFeatureEnabled,
+        openPickerParam: automationPickerParam,
+        readyToOpen: !requestedAutomationForScreen || automationDraft.enabled,
+        onOpenPicker: handleAutomationOpen,
+        clearOpenPickerParam: () => {
+            router.setParams({ automationPicker: undefined });
+        },
+    });
+
+    const automationActionChip = React.useMemo<AgentInputExtraActionChip>(() => {
+        const label = getAutomationChipLabel(automationDraft);
+
+        return {
+            key: 'new-session-automate',
+            render: ({ chipStyle, iconColor, showLabel, textStyle }) => (
+                <Pressable
+                    onPress={handleAutomationOpen}
+                    hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
+                    style={(p) => chipStyle(p.pressed)}
+                >
+                    <Ionicons name="timer-outline" size={16} color={iconColor} />
+                    {showLabel ? (
+                        <Text numberOfLines={1} style={textStyle}>
+                            {label}
+                        </Text>
+                    ) : null}
+                </Pressable>
+            ),
+        };
+    }, [automationDraft, handleAutomationOpen]);
+
     const agentInputExtraActionChips = React.useMemo(() => {
         const baseChips = getNewSessionAgentInputExtraActionChips({
             agentId: agentType,
             agentOptionState,
             setAgentOptionState: setAgentOptionStateForCurrentAgent,
         }) ?? [];
-        if (!serverPickerActionChip) return baseChips;
-        return [serverPickerActionChip, ...baseChips];
-    }, [agentOptionState, agentType, serverPickerActionChip, setAgentOptionStateForCurrentAgent]);
+        const chips: AgentInputExtraActionChip[] = [];
+        if (shouldShowAutomationActionChips({ automationsEnabled: automationFeatureEnabled })) {
+            chips.push(automationActionChip);
+        }
+        if (serverPickerActionChip) chips.push(serverPickerActionChip);
+        return [...chips, ...baseChips];
+    }, [
+        agentOptionState,
+        agentType,
+        automationFeatureEnabled,
+        automationActionChip,
+        serverPickerActionChip,
+        setAgentOptionStateForCurrentAgent,
+    ]);
 
     const persistDraftNow = React.useCallback(() => {
         saveNewSessionDraft({
@@ -1649,6 +1632,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             sessionType,
             resumeSessionId,
             agentNewSessionOptionStateByAgentId,
+            automationDraft: effectiveAutomationDraft,
             updatedAt: Date.now(),
         });
     }, [
@@ -1658,6 +1642,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         modelMode,
         permissionMode,
         resumeSessionId,
+        effectiveAutomationDraft,
         selectedSecretId,
         selectedSecretIdByProfileIdByEnvVarName,
         selectedMachineId,
@@ -1689,8 +1674,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 	                newSessionSidePadding: simpleNewSessionSidePadding,
 	                newSessionBottomPadding: simpleNewSessionBottomPadding,
 	                containerStyle: styles.container as any,
-	                experimentsEnabled: experimentsEnabled === true,
-	                expSessionType: expSessionType === true,
+	                showSessionTypeSelector,
 	                sessionType,
                 setSessionType,
                 sessionPrompt,
@@ -1772,6 +1756,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 
         wizardInstallableDeps,
         selectedMachineCapabilities,
+        targetServerId,
 
         cliAvailability,
         tmuxRequested,

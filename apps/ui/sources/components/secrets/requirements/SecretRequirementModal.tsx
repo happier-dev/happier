@@ -8,6 +8,7 @@ import type { AIBackendProfile, SavedSecret } from '@/sync/domains/settings/sett
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';
+import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { SecretsList } from '@/components/secrets/SecretsList';
 import { ItemListStatic } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -132,10 +133,11 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
     }, [normalizedSecretEnvVarName, props.secretEnvVarNames]);
 
     const [activeEnvVarName, setActiveEnvVarName] = React.useState(() => normalizedSecretEnvVarName);
+    const activeServerId = getActiveServerId();
     const envPresence = useMachineEnvPresence(
         props.machineId,
         secretEnvVarNames,
-        { ttlMs: 2 * 60_000 },
+        { ttlMs: 2 * 60_000, serverId: activeServerId },
     );
     const machine = useMachine(props.machineId ?? '');
 

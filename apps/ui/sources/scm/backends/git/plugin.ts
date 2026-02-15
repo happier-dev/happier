@@ -19,9 +19,10 @@ export const gitScmUiPlugin: ScmUiBackendPlugin = {
     diffModeConfig(snapshot) {
         const availableModes = snapshot?.capabilities
             ? resolveSupportedDiffAreas(snapshot.capabilities)
-            : (['included', 'pending', 'both'] as const);
+            : (['included', 'pending'] as const);
+        const defaultMode = availableModes.includes('pending') ? 'pending' : (availableModes[0] ?? 'pending');
         return {
-            defaultMode: 'both',
+            defaultMode,
             availableModes: [...availableModes],
             labels: {
                 included: 'Included',

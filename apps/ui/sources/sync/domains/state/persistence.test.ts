@@ -37,6 +37,10 @@ import {
     saveChangesCursor,
     loadLastChangesCursorByAccountId,
     saveLastChangesCursorByAccountId,
+    loadSessionReviewCommentsDrafts,
+    saveSessionReviewCommentsDrafts,
+    loadSessionActionDrafts,
+    saveSessionActionDrafts,
 } from './persistence';
 
 describe('persistence', () => {
@@ -234,6 +238,55 @@ describe('persistence', () => {
         });
     });
 
+    describe('session action drafts', () => {
+        it('returns an empty object when nothing is persisted', () => {
+            expect(loadSessionActionDrafts()).toEqual({});
+        });
+
+        it('roundtrips session action drafts and drops invalid entries', () => {
+            saveSessionActionDrafts({
+                s1: [{
+                    id: 'd1',
+                    sessionId: 's1',
+                    actionId: 'review.start',
+                    createdAt: 1,
+                    status: 'editing',
+                    input: { a: 1 },
+                    error: null,
+                }],
+            });
+
+            // Inject invalid session id and invalid draft shape alongside the valid one.
+            store.set('session-action-drafts-v1', JSON.stringify({
+                s1: [
+                    {
+                        id: 'd1',
+                        sessionId: 's1',
+                        actionId: 'review.start',
+                        createdAt: 1,
+                        status: 'editing',
+                        input: { a: 1 },
+                        error: null,
+                    },
+                    { id: '', sessionId: 's1' },
+                ],
+                '   ': [{ id: 'x', sessionId: 'x', actionId: 'a', createdAt: 1, status: 'editing', input: {} }],
+            }));
+
+            expect(loadSessionActionDrafts()).toEqual({
+                s1: [{
+                    id: 'd1',
+                    sessionId: 's1',
+                    actionId: 'review.start',
+                    createdAt: 1,
+                    status: 'editing',
+                    input: { a: 1 },
+                    error: null,
+                }],
+            });
+        });
+    });
+
     describe('new session draft', () => {
         it('preserves valid non-session modelMode values', () => {
             store.set(
@@ -386,6 +439,52 @@ describe('persistence', () => {
             expect(draft?.automationDraft?.enabled).toBe(true);
             expect(draft?.automationDraft?.name).toBe('Nightly');
             expect(draft?.automationDraft?.everyMinutes).toBe(30);
+        });
+    });
+
+    describe('session review comment drafts', () => {
+        it('returns an empty object when nothing is persisted', () => {
+            expect(loadSessionReviewCommentsDrafts()).toEqual({});
+        });
+
+        it('roundtrips persisted drafts', () => {
+            saveSessionReviewCommentsDrafts({
+                s1: [
+                    {
+                        id: 'c1',
+                        filePath: 'src/a.ts',
+                        source: 'file',
+                        anchor: { kind: 'fileLine', startLine: 1 },
+                        snapshot: { selectedLines: ['x'], beforeContext: [], afterContext: [] },
+                        body: 'nit',
+                        createdAt: 1,
+                    },
+                ],
+            });
+            expect(loadSessionReviewCommentsDrafts().s1).toHaveLength(1);
+        });
+
+        it('salvages valid drafts when persisted data contains invalid entries', () => {
+            store.set('session-review-comments-draft-v1', JSON.stringify({
+                s1: [
+                    {
+                        id: 'c1',
+                        filePath: 'src/a.ts',
+                        source: 'file',
+                        anchor: { kind: 'fileLine', startLine: 1 },
+                        snapshot: { selectedLines: ['x'], beforeContext: [], afterContext: [] },
+                        body: 'nit',
+                        createdAt: 1,
+                    },
+                    null,
+                    { nope: true },
+                ],
+                bad: 'nope',
+            }));
+            const loaded = loadSessionReviewCommentsDrafts();
+            expect(Object.keys(loaded)).toEqual(['s1']);
+            expect(loaded.s1).toHaveLength(1);
+            expect(loaded.s1[0].id).toBe('c1');
         });
     });
 });

@@ -16,15 +16,14 @@ const routerMock = createRouterMock();
 const navigationMock = createNavigationMock();
 const stackOptionsCapture = createStackOptionsCapture();
 
-vi.mock('react-native', () => {
-    const React = require('react');
-    type NativeChildrenProps = React.PropsWithChildren<Record<string, unknown>>;
+vi.mock('react-native', async (importOriginal) => {
+    const actual = await importOriginal<any>();
     return {
-        Platform: { OS: 'ios' },
-        ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props),
-        Pressable: (props: NativeChildrenProps) => React.createElement('Pressable', props, props.children),
-        Text: (props: NativeChildrenProps) => React.createElement('Text', props, props.children),
-        View: (props: NativeChildrenProps) => React.createElement('View', props, props.children),
+        ...actual,
+        Platform: {
+            ...(actual.Platform ?? {}),
+            OS: 'ios',
+        },
     };
 });
 
@@ -67,12 +66,16 @@ vi.mock('@react-navigation/native', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useAllMachines: () => [],
-    useSessions: () => [],
-    useSetting: () => false,
-    useSettingMutable: () => [[], vi.fn()],
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const actual = await importOriginal<any>();
+    return {
+        ...actual,
+        useAllMachines: () => [],
+        useSessions: () => [],
+        useSetting: () => false,
+        useSettingMutable: () => [[], vi.fn()],
+    };
+});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: React.PropsWithChildren<Record<string, never>>) => React.createElement(React.Fragment, null, children),

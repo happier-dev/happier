@@ -30,6 +30,10 @@ interface UseEnvironmentVariablesOptions {
      * based on name heuristics (TOKEN/KEY/etc).
      */
     sensitiveKeys?: string[];
+    /**
+     * Optional routing metadata for server-scoped RPC calls.
+     */
+    serverId?: string | null;
 }
 
 /**
@@ -119,6 +123,8 @@ export function useEnvironmentVariables(
                 keys: validVarNames,
                 extraEnv: options?.extraEnv,
                 sensitiveKeys: options?.sensitiveKeys,
+            }, {
+                serverId: options?.serverId,
             });
 
             if (cancelled) return;
@@ -218,7 +224,7 @@ export function useEnvironmentVariables(
                     return;
                 }
 
-                const result = await machineBash(machineId, command, '/');
+                const result = await machineBash(machineId, command, '/', { serverId: options?.serverId });
 
                 if (cancelled) return;
 

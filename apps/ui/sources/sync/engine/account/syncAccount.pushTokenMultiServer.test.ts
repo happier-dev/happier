@@ -46,29 +46,30 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         vi.stubGlobal('fetch', fetchSpy as any);
 
         const { upsertServerProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
+        const defaultServer = upsertServerProfile({ serverUrl: 'https://remote-a.example.test', name: 'Primary' });
         const company = upsertServerProfile({ serverUrl: 'https://company.example.test', name: 'Company' });
 
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 
-        setActiveServerId('cloud', { scope: 'device' });
-        await TokenStorage.setCredentials({ token: 't_cloud', secret: 's' });
+        setActiveServerId(defaultServer.id, { scope: 'device' });
+        await TokenStorage.setCredentials({ token: 't_primary', secret: 's' });
 
         setActiveServerId(company.id, { scope: 'device' });
         await TokenStorage.setCredentials({ token: 't_company', secret: 's' });
 
-        setActiveServerId('cloud', { scope: 'device' });
+        setActiveServerId(defaultServer.id, { scope: 'device' });
 
         const messages: string[] = [];
         const log = { log: (message: string) => messages.push(message) };
 
         const { registerPushTokenIfAvailable } = await import('./syncAccount');
         await registerPushTokenIfAvailable({
-            credentials: { token: 't_cloud', secret: 's' } as any,
+            credentials: { token: 't_primary', secret: 's' } as any,
             log,
         });
 
         const urls = fetchSpy.mock.calls.map((call) => String(call[0]));
-        expect(urls).toContain('https://api.happier.dev/v1/push-tokens');
+        expect(urls).toContain('https://remote-a.example.test/v1/push-tokens');
         expect(urls).toContain('https://company.example.test/v1/push-tokens');
         expect(messages.join('\n')).not.toContain('ExponentPushToken[secret-token]');
     });

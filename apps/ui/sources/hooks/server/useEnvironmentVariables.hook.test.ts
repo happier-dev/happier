@@ -81,4 +81,57 @@ describe('useEnvironmentVariables (hook)', () => {
         expect(latestRef.current.variables).toEqual({});
         expect(latestRef.current.meta).toEqual({});
     });
+
+    it('forwards serverId routing metadata to preview-env RPC', async () => {
+        const { useEnvironmentVariables } = await import('./useEnvironmentVariables');
+        const ops = await import('@/sync/ops');
+
+        function Test() {
+            useEnvironmentVariables('m1', ['OPENAI_API_KEY'], { serverId: 'server-b' });
+            return React.createElement('View');
+        }
+
+        await act(async () => {
+            renderer.create(React.createElement(Test));
+            await flushHookEffects(2);
+        });
+
+        expect(ops.machinePreviewEnv).toHaveBeenCalledWith(
+            'm1',
+            expect.objectContaining({ keys: ['OPENAI_API_KEY'] }),
+            { serverId: 'server-b' },
+        );
+    });
+
+    it('forwards serverId routing metadata to bash fallback when preview-env is unsupported', async () => {
+        const { useEnvironmentVariables } = await import('./useEnvironmentVariables');
+        const ops = await import('@/sync/ops');
+
+        const previewMock = vi.mocked(ops.machinePreviewEnv);
+        const bashMock = vi.mocked(ops.machineBash);
+        previewMock.mockResolvedValueOnce({ supported: false });
+        bashMock.mockResolvedValueOnce({
+            success: false,
+            stdout: '',
+            stderr: 'unsupported',
+            exitCode: 1,
+        });
+
+        function Test() {
+            useEnvironmentVariables('m1', ['FOO'], { serverId: 'server-b' });
+            return React.createElement('View');
+        }
+
+        await act(async () => {
+            renderer.create(React.createElement(Test));
+            await flushHookEffects(4);
+        });
+
+        expect(ops.machineBash).toHaveBeenCalledWith(
+            'm1',
+            expect.any(String),
+            '/',
+            { serverId: 'server-b' },
+        );
+    });
 });

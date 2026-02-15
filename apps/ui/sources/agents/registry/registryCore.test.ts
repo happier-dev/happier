@@ -70,6 +70,12 @@ describe('agents/registryCore', () => {
         expect(kilo.cli.detectKey).toBeTruthy();
     });
 
+    it('provides core config for pi', () => {
+        const pi = getAgentCore('pi');
+        expect(pi.id).toBe('pi');
+        expect(pi.cli.detectKey).toBeTruthy();
+    });
+
     it('reads model selection config from @happier-dev/agents', () => {
         const claude = getAgentModelConfig('claude');
         expect(claude.supportsSelection).toBe(true);
@@ -95,5 +101,8 @@ describe('agents/registryCore', () => {
 
         const kimi = getAgentModelConfig('kimi');
         expect(kimi.supportsSelection).toBe(true);
+
+        const pi = getAgentModelConfig('pi');
+        expect(pi.supportsSelection).toBe(true);
     });
 });

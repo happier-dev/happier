@@ -57,7 +57,11 @@ export function resolveSupportedDiffAreas(capabilities: ScmCapabilities | null |
     if (capabilities?.supportedDiffAreas?.length) {
         return capabilities.supportedDiffAreas;
     }
+
+    // Conservative fallback for legacy daemons.
+    // Older CLI/daemon versions often support "included" and "pending" (or just "pending") but do NOT
+    // implement a server-side "both" diff. Only surface "both" when explicitly advertised.
     return resolveChangeSetModel(capabilities) === 'index'
-        ? ['included', 'pending', 'both']
-        : ['pending', 'both'];
+        ? ['included', 'pending']
+        : ['pending'];
 }

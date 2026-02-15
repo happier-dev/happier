@@ -9,7 +9,7 @@ function createHarness() {
         sessionsData: null,
         sessionListViewData: null,
         sessionListViewDataByServerId: {},
-        sessionGitStatus: {},
+        sessionScmStatus: {},
         sessionLastViewed: {},
         isDataReady: false,
         machines: {},

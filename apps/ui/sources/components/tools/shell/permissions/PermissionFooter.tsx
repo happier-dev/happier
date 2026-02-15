@@ -51,6 +51,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     const copy = getPermissionFooterCopy(agentId);
     const isCodexDecision = copy.protocol === 'codexDecision';
     const isNativeCodexAgent = agentId === 'codex';
+    const shouldForceReadOnlyAfterStop = !isCodexDecision;
     // Codex always provides proposed_execpolicy_amendment
     const execPolicyCommand = (() => {
         const proposedAmendment = toolInput?.proposedExecpolicyAmendment ?? toolInput?.proposed_execpolicy_amendment;
@@ -218,9 +219,10 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             // Denying a single tool call is not always enough to stop the agent from continuing.
             // Also abort the current session run so the agent stops and waits for the user.
             await sessionAbort(sessionId);
-            // Enforce a tool-free explanation turn. Without this, some agents will immediately
-            // attempt tools again and re-trigger permission prompts.
-            storage.getState().updateSessionPermissionMode(sessionId, 'read-only');
+            // Only legacy/non-Codex decision flows should force read-only mode on stop.
+            if (shouldForceReadOnlyAfterStop) {
+                storage.getState().updateSessionPermissionMode(sessionId, 'read-only');
+            }
             // Codex can deadlock the turn when we auto-send a synthetic follow-up immediately
             // after an abort decision. Leave Codex ready for the next user-authored message.
             if (!isNativeCodexAgent) {
@@ -288,9 +290,6 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             // Codex `abort` decisions can leave the in-flight turn unresolved in MCP mode.
             // Use an explicit denial decision instead so the turn completes cleanly.
             await sessionDeny(sessionId, permission.id, undefined, undefined, 'denied');
-            // Enforce a tool-free explanation turn. Without this, some agents will immediately
-            // attempt tools again and re-trigger permission prompts.
-            storage.getState().updateSessionPermissionMode(sessionId, 'read-only');
             // Avoid synthetic follow-up prompts for Codex; they can leave the turn waiting forever
             // after an abort and block subsequent user-authored prompts.
         } catch (error) {

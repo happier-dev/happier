@@ -179,6 +179,10 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         (toolViewExpandedDetailLevelByToolName as any)?.[normalizedToolName] ?? toolViewExpandedDetailLevelDefault;
 
     const effectiveDetailLevel = isExpanded ? expandedDetailLevel : collapsedDetailLevel;
+    const inlineDetailLevel =
+        normalizedToolName === 'Task' && effectiveDetailLevel === 'full'
+            ? 'summary'
+            : effectiveDetailLevel;
 
     // Apply the per-tool detail level preference for the timeline card.
     // - title: hide the tool body
@@ -345,7 +349,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                                 metadata={props.metadata}
                                 messages={props.messages ?? []}
                                 sessionId={sessionId}
-                                detailLevel={effectiveDetailLevel}
+                                detailLevel={inlineDetailLevel}
                                 interaction={props.interaction}
                             />
                             {toolForRendering.state === 'error' && toolForRendering.result &&

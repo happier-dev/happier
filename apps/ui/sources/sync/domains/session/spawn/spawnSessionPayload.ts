@@ -5,6 +5,7 @@ import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes'
 // Options for spawning a session
 export interface SpawnSessionOptions {
     machineId: string;
+    serverId?: string | null;
     directory: string;
     approvedNewDirectoryCreation?: boolean;
     token?: string;

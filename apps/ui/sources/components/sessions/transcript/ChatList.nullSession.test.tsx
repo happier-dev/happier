@@ -20,6 +20,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useSession: () => null,
     useSessionMessages: () => ({ messages: [], isLoaded: true }),
     useSessionPendingMessages: () => ({ messages: [] }),
+    useSessionActionDrafts: () => ([]),
 }));
 
 vi.mock('@/components/sessions/chatListItems', () => ({
@@ -36,6 +37,10 @@ vi.mock('./MessageView', () => ({
 
 vi.mock('@/components/sessions/pending/PendingUserTextMessageView', () => ({
     PendingUserTextMessageView: () => React.createElement('PendingUserTextMessageView'),
+}));
+
+vi.mock('@/components/sessions/actions/SessionActionDraftCard', () => ({
+    SessionActionDraftCard: () => React.createElement('SessionActionDraftCard'),
 }));
 
 vi.mock('@/sync/domains/state/agentStateCapabilities', () => ({

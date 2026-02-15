@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useAcceptedFriends, useFriendRequests, useRequestedFriends, useFeedItems, useFeedLoaded, useFriendsLoaded, useRealtimeStatus, useAllSessions } from '@/sync/domains/state/storage';
+import { useAcceptedFriends, useFriendRequests, useRequestedFriends, useFeedItems, useFeedLoaded, useFriendsLoaded, useAllSessions } from '@/sync/domains/state/storage';
 import { storage as syncStorage } from '@/sync/domains/state/storageStore';
 import { UserCard } from '@/components/ui/cards/UserCard';
 import { t } from '@/text';
@@ -18,7 +18,7 @@ import { Header } from '@/components/navigation/Header';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { FeedItemCard } from '@/components/inbox/cards/FeedItemCard';
-import { VoiceAssistantStatusBar } from '@/components/voice/shell/VoiceAssistantStatusBar';
+import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { RequireFriendsIdentityForFriends } from '@/components/friends/RequireFriendsIdentityForFriends';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
 
@@ -118,7 +118,6 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
     const friendsLoaded = useFriendsLoaded();
     const { theme } = useUnistyles();
     const isTablet = useIsTablet();
-    const realtimeStatus = useRealtimeStatus();
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
     const myId = syncStorage((state) => state.profile.id);
@@ -149,9 +148,7 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                             headerShadowVisible={false}
                             headerTransparent={true}
                         />
-                        {realtimeStatus !== 'disconnected' && (
-                            <VoiceAssistantStatusBar variant="full" />
-                        )}
+                        <VoiceSurface variant="sidebar" />
                     </View>
                 )}
                 <RequireFriendsIdentityForFriends>
@@ -173,9 +170,7 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                             headerShadowVisible={false}
                             headerTransparent={true}
                         />
-                        {realtimeStatus !== 'disconnected' && (
-                            <VoiceAssistantStatusBar variant="full" />
-                        )}
+                        <VoiceSurface variant="sidebar" />
                     </View>
                 )}
                 <RecoveryKeyReminderBanner />
@@ -199,9 +194,7 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                             headerShadowVisible={false}
                             headerTransparent={true}
                         />
-                        {realtimeStatus !== 'disconnected' && (
-                            <VoiceAssistantStatusBar variant="full" />
-                        )}
+                        <VoiceSurface variant="sidebar" />
                     </View>
                 )}
                 <RecoveryKeyReminderBanner />
@@ -231,9 +224,7 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                         headerShadowVisible={false}
                         headerTransparent={true}
                     />
-                    {realtimeStatus !== 'disconnected' && (
-                        <VoiceAssistantStatusBar variant="full" />
-                    )}
+                    <VoiceSurface variant="sidebar" />
                 </View>
             )}
             <ScrollView contentContainerStyle={{

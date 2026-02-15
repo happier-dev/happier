@@ -25,6 +25,8 @@ import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { getProfileDisplayName } from '@/components/profiles/profileDisplay';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { useSessionSharingSupport } from '@/hooks/session/useSessionSharingSupport';
+import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
 // Animated status dot component
 function StatusDot({ color, isPulsing, size = 8 }: { color: string; isPulsing?: boolean; size?: number }) {
@@ -71,10 +73,12 @@ function SessionInfoContent({ session }: { session: Session }) {
     const devModeEnabled = __DEV__;
     const sessionName = getSessionName(session);
     const sessionStatus = useSessionStatus(session);
+    const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const useProfiles = useSetting('useProfiles');
     const profiles = useSetting('profiles');
-    const experimentsEnabled = useSetting('experiments');
     const sharingSupported = useSessionSharingSupport();
+    const automationsSupport = useAutomationsSupport();
+    const showAutomations = automationsSupport?.enabled !== false;
     // Check if CLI version is outdated
     const isCliOutdated = session.metadata?.version && !isVersionSupported(session.metadata.version, MINIMUM_CLI_VERSION);
     const canManageSharing = !session.accessLevel || session.accessLevel === 'admin';
@@ -333,6 +337,22 @@ function SessionInfoContent({ session }: { session: Session }) {
                         icon={<Ionicons name="pencil-outline" size={29} color="#007AFF" />}
                         onPress={handleRenameSession}
                     />
+                    {executionRunsEnabled ? (
+                        <Item
+                            title={t('runs.title') ?? 'Runs'}
+                            subtitle={'See execution runs for this session'}
+                            icon={<Ionicons name="play-outline" size={29} color="#007AFF" />}
+                            onPress={() => router.push(`/session/${session.id}/runs`)}
+                        />
+                    ) : null}
+                    {showAutomations ? (
+                        <Item
+                            title="Automations"
+                            subtitle="Manage scheduled messages for this session"
+                            icon={<Ionicons name="timer-outline" size={29} color="#007AFF" />}
+                            onPress={() => router.push(`/session/${session.id}/automations`)}
+                        />
+                    ) : null}
                     {!session.active && Boolean(vendorResumeId) && (
                         <Item
                             title={t('sessionInfo.copyResumeCommand')}

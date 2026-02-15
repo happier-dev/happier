@@ -24,10 +24,10 @@ export function handleDeleteSessionSocketUpdate(params: {
     deleteSession: (sessionId: string) => void;
     removeSessionEncryption: (sessionId: string) => void;
     removeProjectManagerSession: (sessionId: string) => void;
-    clearGitStatusForSession: (sessionId: string) => void;
+    clearScmStatusForSession: (sessionId: string) => void;
     log: { log: (message: string) => void };
 }) {
-    const { sessionId, deleteSession, removeSessionEncryption, removeProjectManagerSession, clearGitStatusForSession, log } = params;
+    const { sessionId, deleteSession, removeSessionEncryption, removeProjectManagerSession, clearScmStatusForSession, log } = params;
 
     // Remove session from storage
     deleteSession(sessionId);
@@ -39,7 +39,7 @@ export function handleDeleteSessionSocketUpdate(params: {
     removeProjectManagerSession(sessionId);
 
     // Clear any cached git status
-    clearGitStatusForSession(sessionId);
+    clearScmStatusForSession(sessionId);
 
     log.log(`🗑️ Session ${sessionId} deleted from local storage`);
 }
@@ -144,6 +144,13 @@ export async function fetchAndApplyMessages(params: {
 
     log.log(`💬 fetchMessages starting for session ${sessionId} - acquiring lock`);
 
+    const DEBUG_MESSAGE_DECRYPT =
+        typeof globalThis !== 'undefined'
+        && (
+            (globalThis as any).__HAPPIER_DEBUG_MESSAGE_DECRYPT__ === true
+            || (typeof localStorage !== 'undefined' && localStorage.getItem('happier.debug.messageDecrypt') === '1')
+        );
+
     // Get encryption - may not be ready yet if session was just created
     // Throwing an error triggers backoff retry in InvalidateSync
     const encryption = getSessionEncryption(sessionId);
@@ -188,9 +195,22 @@ export async function fetchAndApplyMessages(params: {
     const decryptedMessages = await encryption.decryptMessages(messagesToDecrypt);
 
     // Process decrypted messages
+    const debugDecryptStats = DEBUG_MESSAGE_DECRYPT
+        ? {
+            fetched: data.messages.length,
+            toDecrypt: messagesToDecrypt.length,
+            decryptedEntries: decryptedMessages.length,
+            decryptedWithContent: 0,
+            normalized: 0,
+        }
+        : null;
+
     for (let i = 0; i < decryptedMessages.length; i++) {
         const decrypted = decryptedMessages[i];
         if (decrypted) {
+            if (debugDecryptStats && decrypted.content !== null) {
+                debugDecryptStats.decryptedWithContent++;
+            }
             eixstingMessages.add(decrypted.id);
             const lifecycleEvent = getTaskLifecycleEventFromRawContent(decrypted.content, decrypted.createdAt);
             if (lifecycleEvent) {
@@ -204,8 +224,79 @@ export async function fetchAndApplyMessages(params: {
         }
     }
 
+    if (debugDecryptStats) {
+        debugDecryptStats.normalized = normalizedMessages.length;
+        const sample = messagesToDecrypt[0];
+        const sampleCipherPreview =
+            sample && sample.content?.t === 'encrypted' && typeof sample.content.c === 'string'
+                ? `${sample.content.c.slice(0, 24)}…(${sample.content.c.length})`
+                : null;
+
+        log.log(
+            `[debug] fetchMessages decrypt stats for ${sessionId}: `
+                + `fetched=${debugDecryptStats.fetched} `
+                + `toDecrypt=${debugDecryptStats.toDecrypt} `
+                + `decryptedWithContent=${debugDecryptStats.decryptedWithContent} `
+                + `normalized=${debugDecryptStats.normalized}`
+                + (sample ? ` sample={id:${sample.id} seq:${sample.seq} cipher:${sampleCipherPreview}}` : '')
+        );
+    }
+
     // Apply to storage
     applyMessages(sessionId, normalizedMessages);
+
+    // Backfill parents for sidechain-only pages.
+    // If we only fetched sidechain child messages (common when the latest page contains subagent/tool
+    // chatter), the main/root tool-call messages that own those sidechains can be outside the page
+    // window. In that case we must fetch older pages until we see at least one non-sidechain message,
+    // otherwise the reducer will correctly hide sidechain children and the transcript will look empty.
+    const initialHasNonSidechain = normalizedMessages.some((m) => !m.isSidechain);
+    const hasSidechainMessages = normalizedMessages.some((m) => m.isSidechain);
+    if (!initialHasNonSidechain && hasSidechainMessages) {
+        const MAX_PARENT_BACKFILL_PAGES = 8;
+        const PAGE_LIMIT = 150;
+        let beforeSeq: number | null =
+            typeof (data as any).nextBeforeSeq === 'number' && Number.isFinite((data as any).nextBeforeSeq)
+                ? (data as any).nextBeforeSeq
+                : null;
+
+        for (let page = 0; page < MAX_PARENT_BACKFILL_PAGES && beforeSeq !== null; page++) {
+            let pageHasNonSidechain = false;
+            const result = await fetchAndApplyOlderMessages({
+                sessionId,
+                beforeSeq,
+                limit: PAGE_LIMIT,
+                getSessionEncryption,
+                isSessionKnown: params.isSessionKnown,
+                request,
+                sessionReceivedMessages,
+                applyMessages,
+                log,
+                onNormalizedMessages: (msgs) => {
+                    if (msgs.some((m) => !m.isSidechain)) {
+                        pageHasNonSidechain = true;
+                    }
+                },
+            });
+
+            // Continue paging using server cursor when available.
+            const nextBeforeSeq =
+                typeof (result.page as any)?.nextBeforeSeq === 'number' && Number.isFinite((result.page as any).nextBeforeSeq)
+                    ? (result.page as any).nextBeforeSeq
+                    : null;
+
+            if (pageHasNonSidechain) {
+                break;
+            }
+
+            // Stop if server indicates no more pages or cursor doesn't move.
+            if (nextBeforeSeq === null || nextBeforeSeq === beforeSeq) {
+                break;
+            }
+            beforeSeq = nextBeforeSeq;
+        }
+    }
+
     markMessagesLoaded(sessionId);
     log.log(`💬 fetchMessages completed for session ${sessionId} - processed ${normalizedMessages.length} messages`);
 }
@@ -221,6 +312,7 @@ export async function fetchAndApplyOlderMessages(params: {
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
     onTaskLifecycleEvent?: (event: TaskLifecycleEvent) => void;
     onMessagesPage?: (page: ApiSessionMessagesResponse) => void;
+    onNormalizedMessages?: (messages: NormalizedMessage[]) => void;
     log: { log: (message: string) => void };
 }): Promise<{ applied: number; page: ApiSessionMessagesResponse }> {
     const { sessionId, beforeSeq, limit, getSessionEncryption, request, sessionReceivedMessages, applyMessages, log } = params;
@@ -282,6 +374,7 @@ export async function fetchAndApplyOlderMessages(params: {
         }
     }
 
+    params.onNormalizedMessages?.(normalizedMessages);
     applyMessages(sessionId, normalizedMessages);
     log.log(`💬 fetchOlderMessages completed for session ${sessionId} - applied ${normalizedMessages.length} messages`);
     return { applied: normalizedMessages.length, page: data };

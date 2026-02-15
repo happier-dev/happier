@@ -26,6 +26,7 @@ import { ChangeTitleView } from '../workflow/ChangeTitleView';
 import { DeleteView } from '../fileOps/DeleteView';
 import { MCPToolView } from '../system/MCPToolView';
 import { UnknownToolView } from '../system/UnknownToolView';
+import { SubAgentRunView } from '../workflow/SubAgentRunView';
 import { KnownCanonicalToolNameV2Schema, type KnownCanonicalToolNameV2 } from '@happier-dev/protocol';
 
 export type ToolViewDetailLevel = 'title' | 'summary' | 'full';
@@ -72,6 +73,7 @@ export const toolViewRegistry: Record<KnownCanonicalToolNameV2, ToolViewComponen
     AcpHistoryImport: AcpHistoryImportView,
     WorkspaceIndexingPermission: WorkspaceIndexingPermissionView,
     change_title: ChangeTitleView,
+    SubAgentRun: SubAgentRunView,
 };
 
 const legacyToolNameToCanonical: Record<string, KnownCanonicalToolNameV2> = {
@@ -137,3 +139,4 @@ export { ChangeTitleView } from '../workflow/ChangeTitleView';
 export { DeleteView } from '../fileOps/DeleteView';
 export { MCPToolView } from '../system/MCPToolView';
 export { UnknownToolView } from '../system/UnknownToolView';
+export { SubAgentRunView } from '../workflow/SubAgentRunView';

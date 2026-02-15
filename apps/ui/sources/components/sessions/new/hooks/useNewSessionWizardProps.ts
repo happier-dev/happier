@@ -88,6 +88,7 @@ export function useNewSessionWizardProps(params: Readonly<{
 
     // Machine section
     machines: Machine[];
+    targetServerId?: string | null;
     selectedMachine: Machine | null;
     recentMachines: Machine[];
     favoriteMachineItems: Machine[];
@@ -248,6 +249,7 @@ export function useNewSessionWizardProps(params: Readonly<{
 
         return params.wizardInstallableDeps.map(({ entry, depStatus }) => ({
             machineId: params.selectedMachineId!,
+            serverId: params.targetServerId,
             enabled: true,
             groupTitle: `${tNoParams(entry.groupTitleKey)}${entry.experimental ? ' (experimental)' : ''}`,
             depId: entry.depId,
@@ -270,13 +272,22 @@ export function useNewSessionWizardProps(params: Readonly<{
                 description: tNoParams(entry.installModal.descriptionKey),
             },
             refreshStatus: () => {
-                void prefetchMachineCapabilities({ machineId: params.selectedMachineId!, request: CAPABILITIES_REQUEST_NEW_SESSION });
+                void prefetchMachineCapabilities({
+                    machineId: params.selectedMachineId!,
+                    serverId: params.targetServerId,
+                    request: CAPABILITIES_REQUEST_NEW_SESSION,
+                });
             },
             refreshRegistry: () => {
-                void prefetchMachineCapabilities({ machineId: params.selectedMachineId!, request: entry.buildRegistryDetectRequest(), timeoutMs: 12_000 });
+                void prefetchMachineCapabilities({
+                    machineId: params.selectedMachineId!,
+                    serverId: params.targetServerId,
+                    request: entry.buildRegistryDetectRequest(),
+                    timeoutMs: 12_000,
+                });
             },
         }));
-    }, [params.selectedMachineCapabilities.status, params.selectedMachineId, params.wizardInstallableDeps]);
+    }, [params.selectedMachineCapabilities.status, params.selectedMachineId, params.targetServerId, params.wizardInstallableDeps]);
 
     const wizardAgentProps = React.useMemo((): NewSessionWizardAgentProps => {
         return {
@@ -321,6 +332,7 @@ export function useNewSessionWizardProps(params: Readonly<{
     const wizardMachineProps = React.useMemo((): NewSessionWizardMachineProps => {
         return {
             machines: params.machines,
+            serverId: params.targetServerId,
             selectedMachine: params.selectedMachine || null,
             recentMachines: params.recentMachines,
             favoriteMachineItems: params.favoriteMachineItems,
@@ -343,6 +355,7 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.favoriteMachines,
         params.getBestPathForMachine,
         params.machines,
+        params.targetServerId,
         params.recentMachines,
         params.recentPaths,
         params.refreshMachineData,

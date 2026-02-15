@@ -1,25 +1,27 @@
-import { useRouter } from "expo-router"
-import { getActiveServerSnapshot, setActiveServer } from "@/sync/domains/server/serverRuntime";
+import * as React from 'react';
+import { useRouter } from 'expo-router';
+
+import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
+import { useAuth } from '@/auth/context/AuthContext';
 
 export function useNavigateToSession() {
     const router = useRouter();
-    return (sessionId: string, opts?: Readonly<{ serverId?: string }>) => {
+    const auth = useAuth();
+
+    return React.useCallback(async (sessionId: string, opts?: Readonly<{ serverId?: string }>) => {
         const targetServerId = String(opts?.serverId ?? '').trim();
         if (targetServerId) {
-            const active = String(getActiveServerSnapshot().serverId ?? '').trim();
-            if (active && active !== targetServerId) {
-                try {
-                    setActiveServer({ serverId: targetServerId, scope: 'device' });
-                } catch {
-                    // If the profile is missing for some reason, still attempt navigation.
-                }
+            try {
+                await setActiveServerAndSwitch({ serverId: targetServerId, scope: 'device', refreshAuth: auth.refreshFromActiveServer });
+            } catch {
+                // If switching fails, still try navigation so users can recover in-session.
             }
         }
 
         router.navigate(`/session/${sessionId}`, {
             dangerouslySingular(name, params) {
-                return 'session'
+                return 'session';
             },
         });
-    }
+    }, [auth.refreshFromActiveServer, router]);
 }

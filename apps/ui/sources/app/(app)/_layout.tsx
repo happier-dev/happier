@@ -13,7 +13,6 @@ import { t } from '@/text';
 import { useAuth } from '@/auth/context/AuthContext';
 import { isPublicRouteForUnauthenticated } from '@/auth/routing/authRouting';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
-import { VOICE_PROVIDER_IDS } from '@/voice/voiceProviders';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
 import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
 import { clearPendingNotificationNav, getPendingNotificationNav, setPendingNotificationNav } from '@/sync/domains/pending/pendingNotificationNav';
@@ -267,20 +266,22 @@ export default function RootLayout() {
             try {
                 // Defer loading sync/storage modules until needed to keep module evaluation light
                 // (important for test environments and faster route transitions).
-                const [{ getServerFeatures }, { storage }, { sync }] = await Promise.all([
-                    import('@/sync/api/capabilities/apiFeatures'),
+                const [{ getReadyServerFeatures }, { storage }, { sync }] = await Promise.all([
+                    import('@/sync/api/capabilities/getReadyServerFeatures'),
                     import('@/sync/domains/state/storage'),
                     import('@/sync/sync'),
                 ]);
 
-                const features = await getServerFeatures();
+                const features = await getReadyServerFeatures();
                 if (cancelled) return;
                 if (!features) return;
                 if (features.features.voice.enabled !== false) return;
-                const currentProviderId =
-                    storage.getState().settings.voiceProviderId ?? VOICE_PROVIDER_IDS.HAPPIER_ELEVENLABS_AGENTS;
-                if (currentProviderId !== VOICE_PROVIDER_IDS.HAPPIER_ELEVENLABS_AGENTS) return;
-                sync.applySettings({ voiceProviderId: VOICE_PROVIDER_IDS.OFF });
+                const voice = (storage.getState().settings as any)?.voice ?? null;
+                const providerId = voice?.providerId ?? 'off';
+                const billingMode = voice?.adapters?.realtime_elevenlabs?.billingMode ?? 'happier';
+                if (providerId !== 'realtime_elevenlabs') return;
+                if (billingMode !== 'happier') return;
+                sync.applySettings({ voice: { ...voice, providerId: 'off' } });
             } catch {
                 // Non-fatal: feature gating should never crash the root layout.
             }
@@ -357,6 +358,30 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="automations/index"
+                options={{
+                    headerShown: true,
+                    headerTitle: 'Automations',
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
+                name="automations/[id]"
+                options={{
+                    headerShown: true,
+                    headerTitle: 'Automation',
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
+                name="automations/new"
+                options={{
+                    headerShown: true,
+                    headerTitle: 'New Automation',
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
                 name="session/[id]"
                 options={{
                     headerShown: false
@@ -418,6 +443,18 @@ export default function RootLayout() {
                 name="settings/features"
                 options={{
                     headerTitle: t('settings.features'),
+                }}
+            />
+            <Stack.Screen
+                name="settings/source-control"
+                options={{
+                    headerTitle: 'Source control',
+                }}
+            />
+            <Stack.Screen
+                name="settings/report-issue"
+                options={{
+                    headerTitle: t('settings.reportIssue'),
                 }}
             />
             <Stack.Screen

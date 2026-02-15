@@ -12,12 +12,11 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { useConnectTerminal } from '@/hooks/session/useConnectTerminal';
 import { useAuth } from '@/auth/context/AuthContext';
-import { useEntitlement, useLocalSettingMutable, useSetting, useAllMachines, useProfile } from '@/sync/domains/state/storage';
+import { useEntitlement, useLocalSettingMutable, useSetting, useAllMachines, useProfile, useMachineListByServerId, useMachineListStatusByServerId } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { trackPaywallButtonClicked, trackWhatsNewClicked } from '@/track';
 import { Modal } from '@/modal';
 import { useMultiClick } from '@/hooks/ui/useMultiClick';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { useUnistyles } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
@@ -25,10 +24,14 @@ import { disconnectVendorToken } from '@/sync/api/account/apiVendorTokens';
 import { getDisplayName, getAvatarUrl, getBio } from '@/sync/domains/profiles/profile';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { t } from '@/text';
-import { MachineCliGlyphs } from '@/components/sessions/new/components/MachineCliGlyphs';
 import { DEFAULT_AGENT_ID, getAgentCore, getAgentIconSource, getAgentIconTintColor, resolveAgentIdFromConnectedServiceId } from '@/agents/catalog/catalog';
 import { resolveSupportUsAction } from '@/components/settings/supportUsBehavior';
 import { recordBugReportUserAction } from '@/utils/system/bugReportActionTrail';
+import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { getActiveServerSnapshot, listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import { useActiveSelectionMachineGroups } from '@/components/settings/server/hooks/useActiveSelectionMachineGroups';
+import { ActiveSelectionMachinesSection } from '@/components/settings/server/sections/ActiveSelectionMachinesSection';
 
 export const SettingsView = React.memo(function SettingsView() {
     const { theme } = useUnistyles();
@@ -38,15 +41,46 @@ export const SettingsView = React.memo(function SettingsView() {
     const [devModeEnabled, setDevModeEnabled] = useLocalSettingMutable('devModeEnabled');
     const voiceEntitlement = useEntitlement('voice');
     const isPro = __DEV__ || voiceEntitlement;
-    const experiments = useSetting('experiments');
-    const expUsageReporting = useSetting('expUsageReporting');
+    const usageReportingEnabled = useFeatureEnabled('usage.reporting');
+    const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const useProfiles = useSetting('useProfiles');
     const terminalUseTmux = useSetting('sessionUseTmux');
+    const automationsSupport = useAutomationsSupport();
+    const showAutomations = automationsSupport?.enabled !== false;
     const allMachines = useAllMachines();
+    const machineListByServerId = useMachineListByServerId();
+    const machineListStatusByServerId = useMachineListStatusByServerId();
+    const settingsServerSelectionGroups = useSetting('serverSelectionGroups');
+    const settingsServerSelectionActiveTargetKind = useSetting('serverSelectionActiveTargetKind');
+    const settingsServerSelectionActiveTargetId = useSetting('serverSelectionActiveTargetId');
+    const activeServerSnapshot = getActiveServerSnapshot();
+    const activeServerId = activeServerSnapshot.serverId;
     const profile = useProfile();
     const displayName = getDisplayName(profile);
     const avatarUrl = getAvatarUrl(profile);
     const bio = getBio(profile);
+
+    const serverProfiles = React.useMemo(() => {
+        try {
+            return listServerProfiles()
+                .slice();
+        } catch {
+            return [];
+        }
+    }, [activeServerSnapshot.generation]);
+
+    const activeSelectionMachineGroups = useActiveSelectionMachineGroups({
+        activeServerSnapshot,
+        allMachines,
+        serverProfiles,
+        machineListByServerId,
+        machineListStatusByServerId,
+        settings: {
+            serverSelectionGroups: settingsServerSelectionGroups,
+            serverSelectionActiveTargetKind: settingsServerSelectionActiveTargetKind,
+            serverSelectionActiveTargetId: settingsServerSelectionActiveTargetId,
+        },
+    });
 
     const anthropicAgentId = resolveAgentIdFromConnectedServiceId('anthropic') ?? DEFAULT_AGENT_ID;
     const anthropicAgentCore = getAgentCore(anthropicAgentId);
@@ -285,69 +319,26 @@ export const SettingsView = React.memo(function SettingsView() {
                 />
             </ItemGroup> */}
 
-            {/* Machines (sorted: online first, then last seen desc) */}
-            {allMachines.length > 0 && (
-                <ItemGroup title={machinesTitle}>
-                    {[...allMachines].map((machine) => {
-                        const isOnline = isMachineOnline(machine);
-                        const host = machine.metadata?.host || 'Unknown';
-                        const displayName = machine.metadata?.displayName;
-                        const platform = machine.metadata?.platform || '';
-
-                        // Use displayName if available, otherwise use host
-                        const title = displayName || host;
-
-                        // Build subtitle: show hostname if different from title, plus platform and status
-                        let subtitleTop = '';
-                        if (displayName && displayName !== host) {
-                            subtitleTop = host;
-                        }
-                        const statusText = isOnline ? t('status.online') : t('status.offline');
-                        const statusLineText = platform ? `${platform} • ${statusText}` : statusText;
-
-                        const subtitle = (
-                            <View style={{ gap: 2 }}>
-                                {subtitleTop ? (
-                                    <RNText style={[Typography.default(), { fontSize: 14, color: theme.colors.textSecondary, lineHeight: 20 }]}>
-                                        {subtitleTop}
-                                    </RNText>
-                                ) : null}
-                                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                    <RNText
-                                        style={[
-                                            Typography.default(),
-                                            { fontSize: 14, color: theme.colors.textSecondary, lineHeight: 20, flexShrink: 1 }
-                                        ]}
-                                        numberOfLines={1}
-                                    >
-                                        {statusLineText}
-                                    </RNText>
-                                    <RNText style={[Typography.default(), { fontSize: 14, color: theme.colors.textSecondary, lineHeight: 20, opacity: 0.8 }]}>
-                                        {' • '}
-                                    </RNText>
-                                    <MachineCliGlyphs machineId={machine.id} isOnline={isOnline} />
-                                </View>
-                            </View>
-                        );
-
-                        return (
-                            <Item
-                                key={machine.id}
-                                title={title}
-                                subtitle={subtitle}
-                                icon={
-                                    <Ionicons
-                                        name="desktop-outline"
-                                        size={29}
-                                        color={isOnline ? theme.colors.status.connected : theme.colors.status.disconnected}
-                                    />
-                                }
-                                onPress={() => router.push(`/machine/${machine.id}`)}
-                            />
-                        );
-                    })}
-                </ItemGroup>
-            )}
+            {/* Machines (grouped by server in multi-server mode) */}
+            <ActiveSelectionMachinesSection
+                hasAnyVisibleMachines={activeSelectionMachineGroups.hasAnyVisibleMachines}
+                showMachinesGroupedByServer={activeSelectionMachineGroups.showMachinesGroupedByServer}
+                visibleMachineGroups={activeSelectionMachineGroups.visibleMachineGroups}
+                allMachines={allMachines}
+                activeServerId={activeServerId}
+                machinesTitle={machinesTitle}
+                themeColors={{
+                    textSecondary: theme.colors.textSecondary,
+                    status: {
+                        connected: theme.colors.status.connected,
+                        disconnected: theme.colors.status.disconnected,
+                    },
+                }}
+                onOpenMachine={(machineId, serverId) => {
+                    const query = serverId ? `?serverId=${encodeURIComponent(serverId)}` : '';
+                    router.push(`/machine/${machineId}${query}`);
+                }}
+            />
 
             {/* Features */}
             <ItemGroup title={t('settings.features')}>
@@ -382,6 +373,34 @@ export const SettingsView = React.memo(function SettingsView() {
                     onPress={() => router.push('/(app)/settings/session')}
                 />
                 <Item
+                    title={t('settings.servers')}
+                    subtitle={t('settings.serversSubtitle')}
+                    icon={<Ionicons name="server-outline" size={29} color="#0A84FF" />}
+                    onPress={() => router.push('/server')}
+                />
+                <Item
+                    title="Source control"
+                    subtitle="Commit strategy and backend behavior"
+                    icon={<Ionicons name="git-branch-outline" size={29} color="#34C759" />}
+                    onPress={() => router.push('/(app)/settings/source-control')}
+                />
+                {showAutomations ? (
+                    <Item
+                        title="Automations"
+                        subtitle="Manage scheduled sessions and recurring runs"
+                        icon={<Ionicons name="timer-outline" size={29} color="#0A84FF" />}
+                        onPress={() => router.push('/automations')}
+                    />
+                ) : null}
+                {executionRunsEnabled ? (
+                    <Item
+                        title={t('runs.title') ?? 'Runs'}
+                        subtitle="Execution runs across machines"
+                        icon={<Ionicons name="play-outline" size={29} color="#34C759" />}
+                        onPress={() => router.push('/runs')}
+                    />
+                ) : null}
+                <Item
                     title={t('settingsProviders.title')}
                     subtitle={t('settingsProviders.entrySubtitle')}
                     icon={<Ionicons name="sparkles-outline" size={29} color="#FF9500" />}
@@ -403,7 +422,7 @@ export const SettingsView = React.memo(function SettingsView() {
                         onPress={() => router.push('/(app)/settings/secrets')}
                     />
                 )}
-                {experiments && expUsageReporting && (
+                {usageReportingEnabled && (
                     <Item
                         title={t('settings.usage')}
                         subtitle={t('settings.usageSubtitle')}

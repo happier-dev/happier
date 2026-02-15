@@ -12,6 +12,7 @@ import { formatEnvVarTemplate, parseEnvVarTemplate } from '@/utils/profiles/envV
 export interface EnvironmentVariablesPreviewModalProps {
     environmentVariables: Record<string, string>;
     machineId: string | null;
+    serverId?: string | null;
     machineName?: string | null;
     profileName?: string | null;
     onClose: () => void;
@@ -145,7 +146,7 @@ export function EnvironmentVariablesPreviewModal(props: EnvironmentVariablesPrev
     const { meta: machineEnv, policy: machineEnvPolicy } = useEnvironmentVariables(
         props.machineId,
         refsToQuery,
-        { extraEnv: props.environmentVariables, sensitiveKeys },
+        { extraEnv: props.environmentVariables, sensitiveKeys, serverId: props.serverId },
     );
 
     const title = props.profileName

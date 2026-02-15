@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View, ActivityIndicator, Text, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useFriendRequests, useSocketStatus, useRealtimeStatus } from '@/sync/domains/state/storage';
+import { useFriendRequests, useSocketStatus } from '@/sync/domains/state/storage';
 import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { useRouter } from 'expo-router';
@@ -14,7 +14,7 @@ import { SettingsViewWrapper } from '@/components/settings/shell/SettingsViewWra
 import { SessionsListWrapper } from '@/components/sessions/shell/SessionsListWrapper';
 import { Header } from '@/components/navigation/Header';
 import { HeaderLogo } from '@/components/ui/navigation/HeaderLogo';
-import { VoiceAssistantStatusBar } from '@/components/voice/shell/VoiceAssistantStatusBar';
+import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
@@ -24,6 +24,7 @@ import { trackFriendsSearch } from '@/track';
 import { ConnectionStatusControl } from '@/components/navigation/ConnectionStatusControl';
 import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
+import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useTabState } from '@/hooks/ui/useTabState';
 
 interface MainViewProps {
@@ -37,15 +38,15 @@ const styles = StyleSheet.create((theme) => ({
     phoneContainer: {
         flex: 1,
     },
-    sidebarContentContainer: {
-        flex: 1,
-        flexBasis: 0,
-        flexGrow: 1,
-    },
-    loadingContainerWrapper: {
-        flex: 1,
-        flexBasis: 0,
-        flexGrow: 1,
+	    sidebarContentContainer: {
+	        flex: 1,
+	        flexBasis: 0,
+	        flexGrow: 1,
+	    },
+	    loadingContainerWrapper: {
+	        flex: 1,
+	        flexBasis: 0,
+	        flexGrow: 1,
         backgroundColor: theme.colors.groupped.background,
     },
     loadingContainer: {
@@ -100,6 +101,11 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
     },
+    headerButtonsRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 2,
+    },
 }));
 
 // Tab header configuration (zen excluded as that tab is disabled)
@@ -133,16 +139,29 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
     const isCustomServer = isUsingCustomServer();
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
+    const automationsSupport = useAutomationsSupport();
+    const showAutomations = automationsSupport?.enabled !== false;
 
     if (activeTab === 'sessions') {
         return (
-            <Pressable
-                onPress={() => router.push('/new')}
-                hitSlop={15}
-                style={styles.headerButton}
-            >
-                <Ionicons name="add-outline" size={28} color={theme.colors.header.tint} />
-            </Pressable>
+            <View style={styles.headerButtonsRow}>
+                {showAutomations ? (
+                    <Pressable
+                        onPress={() => router.push('/automations')}
+                        hitSlop={15}
+                        style={styles.headerButton}
+                    >
+                        <Ionicons name="timer-outline" size={22} color={theme.colors.header.tint} />
+                    </Pressable>
+                ) : null}
+                <Pressable
+                    onPress={() => router.push('/new')}
+                    hitSlop={15}
+                    style={styles.headerButton}
+                >
+                    <Ionicons name="add-outline" size={28} color={theme.colors.header.tint} />
+                </Pressable>
+            </View>
         );
     }
 
@@ -188,9 +207,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     const isTablet = useIsTablet();
     const router = useRouter();
     const friendRequests = useFriendRequests();
-    const realtimeStatus = useRealtimeStatus();
     const inboxFriendsEnabled = useFriendsEnabled();
-
     // Tab state management
     // NOTE: Zen tab removed - the feature never got to a useful state
     const { activeTab, setActiveTab } = useTabState();
@@ -282,9 +299,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
                         headerShadowVisible={false}
                         headerTransparent={true}
                     />
-                    {realtimeStatus !== 'disconnected' && (
-                        <VoiceAssistantStatusBar variant="full" />
-                    )}
+                    <VoiceSurface variant="sidebar" />
                 </View>
                 {renderTabContent()}
             </View>

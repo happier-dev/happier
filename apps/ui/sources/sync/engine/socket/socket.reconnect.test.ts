@@ -12,9 +12,10 @@ describe('handleSocketReconnected', () => {
         const invalidateFriends = vi.fn()
         const invalidateFriendRequests = vi.fn()
         const invalidateFeed = vi.fn()
+        const invalidateAutomations = vi.fn()
 
         const invalidateMessagesForSession = vi.fn()
-        const invalidateGitStatusForSession = vi.fn()
+        const invalidateScmStatusForSession = vi.fn()
 
         handleSocketReconnected({
             log,
@@ -24,9 +25,10 @@ describe('handleSocketReconnected', () => {
             invalidateFriends,
             invalidateFriendRequests,
             invalidateFeed,
+            invalidateAutomations,
             getLoadedSessionIdsForMessages: () => ['s1', 's2'],
             invalidateMessagesForSession,
-            invalidateGitStatusForSession,
+            invalidateScmStatusForSession,
         })
 
         expect(invalidateSessions).toHaveBeenCalledTimes(1)
@@ -35,14 +37,15 @@ describe('handleSocketReconnected', () => {
         expect(invalidateFriends).toHaveBeenCalledTimes(1)
         expect(invalidateFriendRequests).toHaveBeenCalledTimes(1)
         expect(invalidateFeed).toHaveBeenCalledTimes(1)
+        expect(invalidateAutomations).toHaveBeenCalledTimes(1)
 
         expect(invalidateMessagesForSession).toHaveBeenCalledTimes(2)
         expect(invalidateMessagesForSession).toHaveBeenCalledWith('s1')
         expect(invalidateMessagesForSession).toHaveBeenCalledWith('s2')
 
-        expect(invalidateGitStatusForSession).toHaveBeenCalledTimes(2)
-        expect(invalidateGitStatusForSession).toHaveBeenCalledWith('s1')
-        expect(invalidateGitStatusForSession).toHaveBeenCalledWith('s2')
+        expect(invalidateScmStatusForSession).toHaveBeenCalledTimes(2)
+        expect(invalidateScmStatusForSession).toHaveBeenCalledWith('s1')
+        expect(invalidateScmStatusForSession).toHaveBeenCalledWith('s2')
     })
 
     it('does not invalidate per-session messages when no loaded session ids exist', () => {
@@ -54,9 +57,10 @@ describe('handleSocketReconnected', () => {
         const invalidateFriends = vi.fn()
         const invalidateFriendRequests = vi.fn()
         const invalidateFeed = vi.fn()
+        const invalidateAutomations = vi.fn()
 
         const invalidateMessagesForSession = vi.fn()
-        const invalidateGitStatusForSession = vi.fn()
+        const invalidateScmStatusForSession = vi.fn()
 
         handleSocketReconnected({
             log,
@@ -66,9 +70,10 @@ describe('handleSocketReconnected', () => {
             invalidateFriends,
             invalidateFriendRequests,
             invalidateFeed,
+            invalidateAutomations,
             getLoadedSessionIdsForMessages: () => [],
             invalidateMessagesForSession,
-            invalidateGitStatusForSession,
+            invalidateScmStatusForSession,
         })
 
         expect(invalidateSessions).toHaveBeenCalledTimes(1)
@@ -77,13 +82,14 @@ describe('handleSocketReconnected', () => {
         expect(invalidateFriends).toHaveBeenCalledTimes(1)
         expect(invalidateFriendRequests).toHaveBeenCalledTimes(1)
         expect(invalidateFeed).toHaveBeenCalledTimes(1)
+        expect(invalidateAutomations).toHaveBeenCalledTimes(1)
         expect(invalidateMessagesForSession).not.toHaveBeenCalled()
-        expect(invalidateGitStatusForSession).not.toHaveBeenCalled()
+        expect(invalidateScmStatusForSession).not.toHaveBeenCalled()
     })
 
     it('applies per-session invalidation for each loaded id entry including duplicates', () => {
         const invalidateMessagesForSession = vi.fn()
-        const invalidateGitStatusForSession = vi.fn()
+        const invalidateScmStatusForSession = vi.fn()
 
         handleSocketReconnected({
             log: { log: vi.fn() },
@@ -93,18 +99,19 @@ describe('handleSocketReconnected', () => {
             invalidateFriends: vi.fn(),
             invalidateFriendRequests: vi.fn(),
             invalidateFeed: vi.fn(),
+            invalidateAutomations: vi.fn(),
             getLoadedSessionIdsForMessages: () => ['s1', 's1', 's2'],
             invalidateMessagesForSession,
-            invalidateGitStatusForSession,
+            invalidateScmStatusForSession,
         })
 
         expect(invalidateMessagesForSession).toHaveBeenCalledTimes(3)
         expect(invalidateMessagesForSession).toHaveBeenNthCalledWith(1, 's1')
         expect(invalidateMessagesForSession).toHaveBeenNthCalledWith(2, 's1')
         expect(invalidateMessagesForSession).toHaveBeenNthCalledWith(3, 's2')
-        expect(invalidateGitStatusForSession).toHaveBeenCalledTimes(3)
-        expect(invalidateGitStatusForSession).toHaveBeenNthCalledWith(1, 's1')
-        expect(invalidateGitStatusForSession).toHaveBeenNthCalledWith(2, 's1')
-        expect(invalidateGitStatusForSession).toHaveBeenNthCalledWith(3, 's2')
+        expect(invalidateScmStatusForSession).toHaveBeenCalledTimes(3)
+        expect(invalidateScmStatusForSession).toHaveBeenNthCalledWith(1, 's1')
+        expect(invalidateScmStatusForSession).toHaveBeenNthCalledWith(2, 's1')
+        expect(invalidateScmStatusForSession).toHaveBeenNthCalledWith(3, 's2')
     })
 })

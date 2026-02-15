@@ -10,6 +10,7 @@ const {
     modalAlert,
     modalConfirm,
     modalPrompt,
+    showScmCommitMessageEditorModal,
     invalidateFromMutationAndAwait,
     trackingCapture,
 } = vi.hoisted(() => ({
@@ -17,6 +18,7 @@ const {
     modalAlert: vi.fn(),
     modalConfirm: vi.fn(),
     modalPrompt: vi.fn(),
+    showScmCommitMessageEditorModal: vi.fn(),
     invalidateFromMutationAndAwait: vi.fn(async () => {}),
     trackingCapture: vi.fn(),
 }));
@@ -45,6 +47,10 @@ vi.mock('@/modal', () => ({
     },
 }));
 
+vi.mock('@/components/sessions/files/commit/showScmCommitMessageEditorModal', () => ({
+    showScmCommitMessageEditorModal,
+}));
+
 vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: {
         invalidateFromMutationAndAwait,
@@ -66,6 +72,7 @@ import { normalizeWorkingSnapshotForUi } from '@/scm/scmRepositoryService';
 import { useFilesScmOperations } from './useFilesScmOperations';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -133,12 +140,14 @@ describe('useFilesScmOperations integration', () => {
         modalAlert.mockReset();
         modalConfirm.mockReset();
         modalPrompt.mockReset();
+        showScmCommitMessageEditorModal.mockReset();
         invalidateFromMutationAndAwait.mockReset();
         invalidateFromMutationAndAwait.mockImplementation(async () => {});
         trackingCapture.mockReset();
 
         modalConfirm.mockResolvedValue(true);
         modalPrompt.mockResolvedValue('feat: hook integration commit');
+        showScmCommitMessageEditorModal.mockResolvedValue('feat: hook integration commit');
     });
 
     it('creates a commit then pushes successfully against a real remote', async () => {
@@ -206,6 +215,60 @@ describe('useFilesScmOperations integration', () => {
         const operationLog = storage.getState().getSessionProjectScmOperationLog(sessionId);
         expect(operationLog.some((entry) => entry.operation === 'commit' && entry.status === 'success')).toBe(true);
         expect(operationLog.some((entry) => entry.operation === 'push' && entry.status === 'success')).toBe(true);
+
+        act(() => {
+            hook.unmount();
+        });
+    });
+
+    it('does not auto-run commit message generation when opening commit editor (Generate must be explicit)', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-hook-commitgen-'));
+        initRepo(workspace);
+        writeFileSync(join(workspace, 'a.txt'), 'base\n');
+        git(workspace, ['add', 'a.txt']);
+        git(workspace, ['commit', '-m', 'base']);
+
+        writeFileSync(join(workspace, 'a.txt'), 'base\nupdate\n');
+        git(workspace, ['add', 'a.txt']);
+
+        const sessionId = 'session-hook-commitgen';
+        storage.getState().applySessions([createSession(sessionId, workspace) as any]);
+        storage.getState().applySettingsLocal({
+            scmCommitMessageGeneratorEnabled: true,
+            scmCommitMessageGeneratorBackendId: 'claude',
+        });
+
+        const gitHarness = createGitSessionRpcHarness(workspace);
+        mockSessionRPC.mockImplementation(async (sid: string, method: string, request: any) => {
+            return await gitHarness(sid, method, request);
+        });
+
+        const snapshotResponse = await sessionScmStatusSnapshot(sessionId, {});
+        expect(snapshotResponse.success).toBe(true);
+        if (!snapshotResponse.success || !snapshotResponse.snapshot) {
+            throw new Error('expected git snapshot');
+        }
+
+        showScmCommitMessageEditorModal.mockResolvedValue('chore: typed commit message');
+
+        const hook = mountHook({
+            sessionId,
+            sessionPath: workspace,
+            scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
+            scmWriteEnabled: true,
+            scmCommitStrategy: 'git_staging',
+            scmRemoteConfirmPolicy: 'always',
+            scmPushRejectPolicy: 'prompt_fetch',
+            refreshScmData: vi.fn(async () => {}),
+            loadCommitHistory: vi.fn(async () => {}),
+        });
+
+        await act(async () => {
+            await hook.getCurrent().createCommit();
+        });
+
+        expect(mockSessionRPC.mock.calls.some((call) => call[1] === SESSION_RPC_METHODS.EPHEMERAL_TASK_RUN)).toBe(false);
+        expect(git(workspace, ['log', '-1', '--pretty=%s'])).toBe('chore: typed commit message');
 
         act(() => {
             hook.unmount();

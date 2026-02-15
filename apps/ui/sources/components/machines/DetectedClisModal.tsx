@@ -13,6 +13,7 @@ import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
 type Props = CustomModalInjectedProps & {
     machineId: string;
     isOnline: boolean;
+    serverId?: string | null;
 };
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -55,12 +56,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-export function DetectedClisModal({ onClose, machineId, isOnline }: Props) {
+export function DetectedClisModal({ onClose, machineId, isOnline, serverId }: Props) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
 
     const { state, refresh } = useMachineCapabilitiesCache({
         machineId,
+        serverId,
         // Cache-first: never auto-fetch on mount; user can explicitly refresh.
         enabled: false,
         request: CAPABILITIES_REQUEST_NEW_SESSION,

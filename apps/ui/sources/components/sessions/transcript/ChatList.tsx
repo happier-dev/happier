@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useSession, useSessionMessages, useSessionPendingMessages } from "@/sync/domains/state/storage";
+import { useSession, useSessionActionDrafts, useSessionMessages, useSessionPendingMessages } from "@/sync/domains/state/storage";
 import { ActivityIndicator, FlatList, Platform, View } from 'react-native';
 import { useCallback } from 'react';
 import { useHeaderHeight } from '@/utils/platform/responsive';
@@ -9,6 +9,7 @@ import { Metadata, Session } from '@/sync/domains/state/storageTypes';
 import { ChatFooter } from './ChatFooter';
 import { buildChatListItems, type ChatListItem } from '@/components/sessions/chatListItems';
 import { PendingUserTextMessageView } from '@/components/sessions/pending/PendingUserTextMessageView';
+import { SessionActionDraftCard } from '@/components/sessions/actions/SessionActionDraftCard';
 import { sync } from '@/sync/sync';
 import { getPermissionsInUiWhileLocal } from '@/sync/domains/state/agentStateCapabilities';
 
@@ -24,7 +25,11 @@ export const ChatList = React.memo((props: {
 }) => {
     const { messages, isLoaded } = useSessionMessages(props.session.id);
     const { messages: pendingMessages } = useSessionPendingMessages(props.session.id);
-    const items = React.useMemo(() => buildChatListItems({ messages, pendingMessages }), [messages, pendingMessages]);
+    const actionDrafts = useSessionActionDrafts(props.session.id);
+    const items = React.useMemo(
+        () => buildChatListItems({ messages, pendingMessages, actionDrafts }),
+        [actionDrafts, messages, pendingMessages],
+    );
 
     const interaction = React.useMemo(() => {
         const isOwner = !props.session.accessLevel;
@@ -107,6 +112,9 @@ const ChatListInternal = React.memo((props: {
 
     const keyExtractor = useCallback((item: ChatListItem) => item.id, []);
     const renderItem = useCallback(({ item }: { item: ChatListItem }) => {
+        if (item.kind === 'action-draft') {
+            return <SessionActionDraftCard sessionId={props.sessionId} draft={item.draft} />;
+        }
         if (item.kind === 'pending-user-text') {
             return (
                 <PendingUserTextMessageView

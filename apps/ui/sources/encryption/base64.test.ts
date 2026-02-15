@@ -19,6 +19,23 @@ function computeChecksum(bytes: Uint8Array): number {
 }
 
 describe('base64 helpers', () => {
+    it('works without atob/btoa globals (node compat)', () => {
+        const prevAtob = (globalThis as any).atob;
+        const prevBtoa = (globalThis as any).btoa;
+        (globalThis as any).atob = undefined;
+        (globalThis as any).btoa = undefined;
+
+        try {
+            const bytes = createDeterministicBytes(512);
+            const encoded = encodeBase64(bytes, 'base64');
+            const decoded = decodeBase64(encoded, 'base64');
+            expect(Array.from(decoded)).toEqual(Array.from(bytes));
+        } finally {
+            (globalThis as any).atob = prevAtob;
+            (globalThis as any).btoa = prevBtoa;
+        }
+    });
+
     it('round-trips small payloads', () => {
         const bytes = createDeterministicBytes(256);
         const encoded = encodeBase64(bytes, 'base64');

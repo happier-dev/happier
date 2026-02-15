@@ -3,28 +3,17 @@ import { AgentInput } from '@/components/sessions/agentInput';
 import type { AgentInputExtraActionChip, AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/AgentInput';
 import { getSuggestions } from '@/components/autocomplete/suggestions';
 import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView';
+import { SessionHeaderActionMenu } from '@/components/sessions/actions/SessionHeaderActionMenu';
 import { ChatList } from '@/components/sessions/transcript/ChatList';
 import { Deferred } from '@/components/ui/forms/Deferred';
 import { EmptyMessages } from '@/components/ui/empty/EmptyMessages';
-import { VoiceAssistantStatusBar } from '@/components/voice/shell/VoiceAssistantStatusBar';
+import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { useDraft } from '@/hooks/session/useDraft';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { Modal } from '@/modal';
-import { voiceHooks } from '@/realtime/hooks/voiceHooks';
-import { startRealtimeSession, stopRealtimeSession } from '@/realtime/RealtimeSession';
-import {
-    commitLocalVoiceMediator,
-    getLocalVoiceState,
-    isLocalVoiceMediatorActive,
-    toggleLocalVoiceTurn,
-    useLocalVoiceStatus,
-} from '@/voice/local/localVoiceEngine';
-import { toggleLocalVoiceTurnWithTracking } from '@/voice/local/localVoiceTelemetry';
-import { runVoiceMediatorCommitFlow } from '@/voice/mediator/commitFlow';
-import { getVoiceMediatorExtraActionChips } from '@/voice/mediator/extraActionChips';
-import { scmStatusSync } from '@/scm/scmStatusSync';
-import { sessionAbort, resumeSession } from '@/sync/ops';
-import { storage, useIsDataReady, useLocalSetting, useMachine, useRealtimeStatus, useSessionMessages, useSessionPendingMessages, useSessionReviewCommentsDrafts, useSessionUsage, useSetting, useSettings } from '@/sync/domains/state/storage';
+	import { Modal } from '@/modal';
+	import { scmStatusSync } from '@/scm/scmStatusSync';
+	import { continueSessionWithReplay, sessionAbort, resumeSession } from '@/sync/ops';
+import { storage, useAutomations, useIsDataReady, useLocalSetting, useMachine, useRealtimeStatus, useSessionMessages, useSessionPendingMessages, useSessionReviewCommentsDrafts, useSessionUsage, useSetting, useSettings } from '@/sync/domains/state/storage';
 import { canResumeSessionWithOptions, getAgentVendorResumeId } from '@/agents/runtime/resumeCapabilities';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, buildResumeSessionExtrasFromUiState, getAgentResumeExperimentsFromSettings, getResumePreflightIssues, getResumePreflightPrefetchPlan } from '@/agents/catalog/catalog';
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
@@ -33,6 +22,7 @@ import { Session } from '@/sync/domains/state/storageTypes';
 import { sync } from '@/sync/sync';
 import { buildReviewCommentsDisplayText, buildReviewCommentsPromptText } from '@/sync/domains/input/reviewComments/reviewCommentPrompt';
 import { buildReviewCommentsV1MetaPayload } from '@/sync/domains/input/reviewComments/reviewCommentMeta';
+import { resolveSessionComposerSend } from '@/sync/domains/input/slashCommands/resolveSessionComposerSend';
 import { applyPermissionModeSelection } from '@/sync/domains/permissions/permissionModeApply';
 import { supportsAcpAgentModeOverrides } from '@/sync/acp/sessionModeControl';
 import { t } from '@/text';
@@ -47,9 +37,10 @@ import type { ModelMode, PermissionMode } from '@/sync/domains/permissions/permi
 import { getPendingQueueWakeResumeOptions } from '@/sync/domains/pending/pendingQueueWake';
 import { getPermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
 import { getModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
-import { nowServerMs } from '@/sync/runtime/time';
-import { buildResumeSessionBaseOptionsFromSession } from '@/sync/domains/session/resume/resumeSessionBase';
-import { chooseSubmitMode } from '@/sync/domains/session/control/submitMode';
+	import { nowServerMs } from '@/sync/runtime/time';
+	import { buildResumeSessionBaseOptionsFromSession } from '@/sync/domains/session/resume/resumeSessionBase';
+	import { resolveHappierReplayConfig } from '@/sync/domains/session/resume/happierReplayPrompt';
+	import { chooseSubmitMode } from '@/sync/domains/session/control/submitMode';
 import { isModelSelectableForSession } from '@/sync/domains/models/modelOptions';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { getInactiveSessionUiState } from '@/components/sessions/model/inactiveSessionUi';
@@ -64,6 +55,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUnistyles } from 'react-native-unistyles';
 import { sessionSwitch } from '@/sync/ops';
 import { shouldRenderChatTimelineForSession, shouldRequestRemoteControlAfterPendingEnqueue } from '@/sync/domains/session/control/localControlSwitch';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { useVoiceSessionSnapshot, voiceSessionManager } from '@/voice/session/voiceSession';
+import { countEnabledAutomationsLinkedToSession } from '@/sync/domains/automations/automationSessionLink';
+import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { executeSessionComposerResolution } from '@/sync/domains/input/slashCommands/executeSessionComposerResolution';
 
 function formatResumeSupportDetailCode(code: 'cliNotDetected' | 'capabilityProbeFailed' | 'acpProbeFailed' | 'loadSessionFalse'): string {
     switch (code) {
@@ -84,12 +81,23 @@ export const SessionView = React.memo((props: { id: string }) => {
     const session = useSession(sessionId);
     const isDataReady = useIsDataReady();
     const { theme } = useUnistyles();
+    const automations = useAutomations();
+    const automationsSupport = useAutomationsSupport();
+    const showAutomations = automationsSupport?.enabled !== false;
+    const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const safeArea = useSafeAreaInsets();
     const isLandscape = useIsLandscape();
     const deviceType = useDeviceType();
     const headerHeight = useHeaderHeight();
     const realtimeStatus = useRealtimeStatus();
     const isTablet = useIsTablet();
+    const voiceSnap = useVoiceSessionSnapshot();
+    const showTopHeader = !(isLandscape && deviceType === 'phone' && Platform.OS !== 'web');
+
+    const sessionAutomationsEnabledCount = React.useMemo(() => {
+        if (!showAutomations) return 0;
+        return countEnabledAutomationsLinkedToSession(automations, sessionId);
+    }, [automations, sessionId, showAutomations]);
 
     // Compute header props based on session state
     const headerProps = useMemo(() => {
@@ -100,6 +108,7 @@ export const SessionView = React.memo((props: { id: string }) => {
                 subtitle: undefined,
                 avatarId: undefined,
                 onAvatarPress: undefined,
+                rightElement: undefined,
                 isConnected: false,
                 flavor: null
             };
@@ -112,6 +121,7 @@ export const SessionView = React.memo((props: { id: string }) => {
                 subtitle: undefined,
                 avatarId: undefined,
                 onAvatarPress: undefined,
+                rightElement: undefined,
                 isConnected: false,
                 flavor: null
             };
@@ -119,16 +129,82 @@ export const SessionView = React.memo((props: { id: string }) => {
 
         // Normal state - show session info
         const isConnected = session.presence === 'online';
+        const badgeLabel =
+            sessionAutomationsEnabledCount > 99 ? '99+' : String(sessionAutomationsEnabledCount);
+        const rightElement = (showAutomations || executionRunsEnabled) ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <SessionHeaderActionMenu sessionId={sessionId} session={session} />
+                {executionRunsEnabled ? (
+                    <Pressable
+                        onPress={() => router.push(`/session/${sessionId}/runs` as any)}
+                        hitSlop={15}
+                        style={({ pressed }) => ({
+                            width: 44,
+                            height: 44,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            opacity: pressed ? 0.7 : 1,
+                        })}
+                        accessibilityRole="button"
+                        accessibilityLabel="Open session runs"
+                    >
+                        <Ionicons name="play-outline" size={22} color={theme.colors.header.tint} />
+                    </Pressable>
+                ) : null}
+                {showAutomations ? (
+                    <Pressable
+                        onPress={() => router.push(`/session/${sessionId}/automations` as any)}
+                        hitSlop={15}
+                        style={({ pressed }) => ({
+                            width: 44,
+                            height: 44,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            opacity: pressed ? 0.7 : 1,
+                        })}
+                        accessibilityRole="button"
+                        accessibilityLabel="Open session automations"
+                    >
+                        <View style={{ position: 'relative', width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                            <Ionicons name="timer-outline" size={22} color={theme.colors.header.tint} />
+                            {sessionAutomationsEnabledCount > 0 ? (
+                                <View style={{
+                                    position: 'absolute',
+                                    top: -2,
+                                    right: -6,
+                                    backgroundColor: theme.colors.status.error,
+                                    borderRadius: 8,
+                                    minWidth: 16,
+                                    height: 16,
+                                    paddingHorizontal: 4,
+                                    justifyContent: 'center',
+                                    alignItems: 'center',
+                                }}>
+                                    <Text style={{
+                                        color: '#FFFFFF',
+                                        fontSize: 10,
+                                        fontWeight: '600',
+                                    }}>
+                                        {badgeLabel}
+                                    </Text>
+                                </View>
+                            ) : null}
+                        </View>
+                    </Pressable>
+                ) : null}
+            </View>
+        ) : undefined;
         return {
             title: getSessionName(session),
             subtitle: session.metadata?.path ? formatPathRelativeToHome(session.metadata.path, session.metadata?.homeDir) : undefined,
             avatarId: getSessionAvatarId(session),
             onAvatarPress: () => router.push(`/session/${sessionId}/info`),
+            rightElement,
             isConnected: isConnected,
             flavor: session.metadata?.flavor || null,
             tintColor: isConnected ? '#000' : '#8E8E93'
         };
-    }, [session, isDataReady, sessionId, router]);
+    }, [executionRunsEnabled, isDataReady, router, session, sessionAutomationsEnabledCount, sessionId, showAutomations, theme.colors.header.tint, theme.colors.status.error]);
 
     return (
         <>
@@ -154,7 +230,7 @@ export const SessionView = React.memo((props: { id: string }) => {
             )}
 
             {/* Header - always shown on desktop/Mac, hidden in landscape mode only on actual phones */}
-            {!(isLandscape && deviceType === 'phone' && Platform.OS !== 'web') && (
+            {showTopHeader && (
                 <View style={{
                     position: 'absolute',
                     top: 0,
@@ -166,15 +242,11 @@ export const SessionView = React.memo((props: { id: string }) => {
                         {...headerProps}
                         onBackPress={() => router.back()}
                     />
-                    {/* Voice status bar below header - not on tablet (shown in sidebar) */}
-                    {!isTablet && realtimeStatus !== 'disconnected' && (
-                        <VoiceAssistantStatusBar variant="full" />
-                    )}
                 </View>
             )}
 
             {/* Content based on state */}
-            <View style={{ flex: 1, paddingTop: !(isLandscape && deviceType === 'phone' && Platform.OS !== 'web') ? safeArea.top + headerHeight + (!isTablet && realtimeStatus !== 'disconnected' ? 48 : 0) : 0 }}>
+            <View style={{ flex: 1, paddingTop: showTopHeader ? safeArea.top + headerHeight : 0 }}>
                 {!isDataReady ? (
                     // Loading state
                     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
@@ -221,39 +293,36 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
     const modelMode = session.modelMode || getAgentCore(agentId).model.defaultMode;
     const sessionStatus = useSessionStatus(session);
     const sessionUsage = useSessionUsage(sessionId);
+    const activeServerId = getActiveServerSnapshot().serverId;
+    const capabilityServerId = activeServerId;
     const alwaysShowContextSize = useSetting('alwaysShowContextSize');
-    const voiceProviderId = useSetting('voiceProviderId');
-    const localVoiceStatus = useLocalVoiceStatus();
+    const voice = useSetting('voice') as any;
+    const voiceProviderId = voice?.providerId ?? 'off';
+    const voiceSnap = useVoiceSessionSnapshot();
     const { messages: pendingMessages } = useSessionPendingMessages(sessionId);
     const settings = useSettings();
+    const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments');
+    const executionRunsEnabled = useFeatureEnabled('execution.runs');
+    const reviewCommentDrafts = useSessionReviewCommentsDrafts(sessionId);
+    const hasReviewCommentDrafts = reviewCommentsEnabled && reviewCommentDrafts.length > 0;
 
-    const handleVoiceMediatorCommit = React.useCallback(async () => {
-        await runVoiceMediatorCommitFlow({
-            isActive: () => isLocalVoiceMediatorActive(sessionId),
-            commit: async () => commitLocalVoiceMediator(sessionId),
-            confirmSend: async (previewText) =>
-                Modal.confirm(
-                    t('voiceMediator.commitTitle'),
-                    previewText,
-                    { cancelText: t('voiceMediator.commitEdit'), confirmText: t('voiceMediator.commitSend') },
-                ),
-            applyToComposer: (text) => setMessage(text),
-            sendToSession: async (text) => {
-                await sync.submitMessage(sessionId, text, displayText, metaOverrides);
-            },
-            alert: async (_title, message) => Modal.alert(t('common.error'), message),
-            notActiveTitle: t('common.error'),
-            notActiveMessage: t('errors.voiceMediatorNotActive'),
-        });
-    }, [sessionId]);
+    const resolveServerIdForSessionId = React.useCallback((sid: string): string | null => {
+        const state: any = storage.getState();
+        const byServer = state?.sessionListViewDataByServerId ?? {};
+        for (const [serverId, items] of Object.entries(byServer)) {
+            if (!Array.isArray(items)) continue;
+            for (const item of items as any[]) {
+                if (!item || item.type !== 'session') continue;
+                if (item?.session?.id === sid) return String(serverId);
+            }
+        }
+        return null;
+    }, []);
 
-    const voiceExtraActionChips = React.useMemo(() => getVoiceMediatorExtraActionChips({
-        voiceProviderId,
-        voiceLocalConversationMode: settings.voiceLocalConversationMode,
-        onCommitPress: handleVoiceMediatorCommit,
-        label: t('voiceMediator.commitChip'),
-        accessibilityLabel: t('voiceMediator.commitTitle'),
-    }), [handleVoiceMediatorCommit, settings.voiceLocalConversationMode, voiceProviderId]);
+    const actionExecutor = React.useMemo(
+        () => createDefaultActionExecutor({ resolveServerIdForSessionId }),
+        [resolveServerIdForSessionId]
+    );
 
     // Inactive session resume state
     const isSessionActive = session.presence === 'online';
@@ -261,12 +330,14 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
     const { resumeCapabilityOptions } = useResumeCapabilityOptions({
         agentId,
         machineId: typeof machineId === 'string' ? machineId : null,
+        serverId: capabilityServerId,
         settings,
         enabled: !isSessionActive || supportsLocalControl,
     });
 
     const { state: machineCapabilitiesState } = useMachineCapabilitiesCache({
         machineId: typeof machineId === 'string' ? machineId : null,
+        serverId: capabilityServerId,
         enabled: false,
         request: { requests: [] },
     });
@@ -414,17 +485,64 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
     }, [agentId, sessionId, session.metadata]);
 
     // Handle resuming an inactive session
-    const handleResumeSession = React.useCallback(async (): Promise<boolean> => {
-        if (!session.metadata?.machineId || !session.metadata?.path || !session.metadata?.flavor) {
-            Modal.alert(t('common.error'), t('session.resumeFailed'));
-            return false;
-        }
-        if (!canResumeSessionWithOptions(session.metadata, resumeCapabilityOptions)) {
-            if (acpLoadSessionSupport?.kind === 'error' || acpLoadSessionSupport?.kind === 'unknown') {
-                const detailLines: string[] = [];
-                if (acpLoadSessionSupport?.code) {
-                    detailLines.push(formatResumeSupportDetailCode(acpLoadSessionSupport.code));
-                }
+	    const handleResumeSession = React.useCallback(async (): Promise<boolean> => {
+	        if (!session.metadata?.machineId || !session.metadata?.path || !session.metadata?.flavor) {
+	            Modal.alert(t('common.error'), t('session.resumeFailed'));
+	            return false;
+	        }
+	        if (!canResumeSessionWithOptions(session.metadata, resumeCapabilityOptions)) {
+		            const replayCfg = resolveHappierReplayConfig(settings);
+	            if (replayCfg.enabled) {
+	                if (!isMachineReachable) {
+	                    Modal.alert(t('common.error'), t('session.machineOfflineCannotResume'));
+	                    return false;
+	                }
+	
+	                const wantsReplay = await Modal.confirm(
+	                    t('session.resumeFailed'),
+	                    t('settingsSession.replayResume.footer'),
+	                    { confirmText: t('common.continue') },
+	                );
+	                if (wantsReplay) {
+	                    try {
+	                        const permissionOverride = getPermissionModeOverrideForSpawn(session);
+	                        const modelOverride = getModelOverrideForSpawn(session);
+	                        const spawnResult: any = await continueSessionWithReplay({
+	                            machineId: session.metadata.machineId,
+	                            serverId: capabilityServerId,
+	                            directory: session.metadata.path,
+	                            approvedNewDirectoryCreation: true,
+	                            agent: agentId,
+	                            ...(permissionOverride ? permissionOverride : {}),
+	                            ...(modelOverride ? modelOverride : {}),
+	                            replay: {
+	                                previousSessionId: sessionId,
+	                                strategy: replayCfg.strategy,
+	                                recentMessagesCount: replayCfg.recentMessagesCount,
+	                                seedMode: 'draft',
+	                            },
+	                        });
+	                        if (spawnResult.type !== 'success' || !spawnResult.sessionId || !spawnResult.seedDraft) {
+	                            Modal.alert(t('common.error'), t('session.resumeFailed'));
+	                            return false;
+	                        }
+	
+	                        await sync.refreshSessions();
+	                        storage.getState().updateSessionDraft(spawnResult.sessionId, spawnResult.seedDraft);
+	                        router.push(`/session/${spawnResult.sessionId}` as any);
+	                        return true;
+	                    } catch (e) {
+	                        Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.resumeFailed'));
+	                        return false;
+	                    }
+	                }
+	            }
+
+	            if (acpLoadSessionSupport?.kind === 'error' || acpLoadSessionSupport?.kind === 'unknown') {
+	                const detailLines: string[] = [];
+	                if (acpLoadSessionSupport?.code) {
+	                    detailLines.push(formatResumeSupportDetailCode(acpLoadSessionSupport.code));
+	                }
                 if (acpLoadSessionSupport?.rawMessage) {
                     detailLines.push(acpLoadSessionSupport.rawMessage);
                 }
@@ -437,12 +555,6 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
         }
         if (!isMachineReachable) {
             Modal.alert(t('common.error'), t('session.machineOfflineCannotResume'));
-            return false;
-        }
-
-        const sessionEncryptionKeyBase64 = sync.getSessionEncryptionKeyBase64ForResume(sessionId);
-        if (!sessionEncryptionKeyBase64) {
-            Modal.alert(t('common.error'), t('session.resumeFailed'));
             return false;
         }
 
@@ -462,13 +574,14 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                 return false;
             }
 
-            const snapshotBefore = getMachineCapabilitiesSnapshot(base.machineId);
+            const snapshotBefore = getMachineCapabilitiesSnapshot(base.machineId, capabilityServerId);
             const resultsBefore = snapshotBefore?.response.results as any;
             const preflightPlan = getResumePreflightPrefetchPlan({ agentId, settings, results: resultsBefore });
             if (preflightPlan) {
                 try {
                     await prefetchMachineCapabilities({
                         machineId: base.machineId,
+                        serverId: capabilityServerId,
                         request: preflightPlan.request,
                         timeoutMs: preflightPlan.timeoutMs,
                     });
@@ -477,7 +590,7 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                 }
             }
 
-            const snapshot = getMachineCapabilitiesSnapshot(base.machineId);
+            const snapshot = getMachineCapabilitiesSnapshot(base.machineId, capabilityServerId);
             const results = snapshot?.response.results as any;
             const issues = getResumePreflightIssues({
                 agentId,
@@ -500,8 +613,7 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
 
             const result = await resumeSession({
                 ...base,
-                sessionEncryptionKeyBase64,
-                sessionEncryptionVariant: 'dataKey',
+                serverId: capabilityServerId,
                 ...buildResumeSessionExtrasFromUiState({
                     agentId,
                     settings,
@@ -520,7 +632,7 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
         } finally {
             setIsResuming(false);
         }
-    }, [agentId, resumeCapabilityOptions, router, session, sessionId, settings]);
+    }, [agentId, capabilityServerId, resumeCapabilityOptions, router, session, sessionId, settings]);
 
     // Memoize header-dependent styles to prevent re-renders
     const headerDependentStyles = React.useMemo(() => ({
@@ -535,60 +647,29 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
 
     // Handle microphone button press - memoized to prevent button flashing
     const handleMicrophonePress = React.useCallback(async () => {
-        if (voiceProviderId === 'off') {
-            return;
+        try {
+            await voiceSessionManager.toggle(sessionId);
+            tracking?.capture('voice_session_toggled', { sessionId, providerId: voiceProviderId });
+        } catch (error) {
+            Modal.alert(t('common.error'), t('errors.voiceSessionFailed'));
+            tracking?.capture('voice_session_error', {
+                sessionId,
+                providerId: voiceProviderId,
+                error: error instanceof Error ? error.message : 'Unknown error',
+            });
         }
-        if (voiceProviderId === 'local_openai_stt_tts') {
-            try {
-                await toggleLocalVoiceTurnWithTracking({
-                    sessionId,
-                    toggleLocalVoiceTurn,
-                    getStatus: () => getLocalVoiceState().status,
-                    tracking,
-                });
-            } catch (error) {
-                Modal.alert(t('common.error'), t('errors.voiceSessionFailed'));
-                tracking?.capture('voice_local_turn_error', {
-                    sessionId,
-                    error: error instanceof Error ? error.message : 'Unknown error',
-                });
-            }
-            return;
-        }
-        if (realtimeStatus === 'connecting') {
-            return; // Prevent actions during transitions
-        }
-        if (realtimeStatus === 'disconnected' || realtimeStatus === 'error') {
-            try {
-                const initialPrompt = voiceHooks.onVoiceStarted(sessionId);
-                await startRealtimeSession(sessionId, initialPrompt);
-                tracking?.capture('voice_session_started', { sessionId });
-            } catch (error) {
-                Modal.alert(t('common.error'), t('errors.voiceSessionFailed'));
-                tracking?.capture('voice_session_error', {
-                    sessionId,
-                    error: error instanceof Error ? error.message : 'Unknown error',
-                });
-            }
-        } else if (realtimeStatus === 'connected') {
-            await stopRealtimeSession();
-            tracking?.capture('voice_session_stopped');
-
-            // Notify voice assistant about voice session stop
-            voiceHooks.onVoiceStopped();
-        }
-    }, [localVoiceStatus, realtimeStatus, sessionId, voiceProviderId]);
+    }, [sessionId, voiceProviderId]);
 
     // Memoize mic button state to prevent flashing during chat transitions
     const micButtonState = useMemo(
         () => ({
-            onMicPress: voiceProviderId === 'off' ? undefined : handleMicrophonePress,
-            isMicActive:
-                voiceProviderId === 'local_openai_stt_tts'
-                    ? localVoiceStatus !== 'idle'
-                    : voiceProviderId !== 'off' && (realtimeStatus === 'connected' || realtimeStatus === 'connecting'),
+            onMicPress:
+                voiceProviderId !== 'off' || voiceSnap.status !== 'disconnected'
+                    ? handleMicrophonePress
+                    : undefined,
+            isMicActive: voiceSnap.status !== 'disconnected',
         }),
-        [handleMicrophonePress, localVoiceStatus, realtimeStatus, voiceProviderId],
+        [handleMicrophonePress, voiceProviderId, voiceSnap.status],
     );
 
     // Trigger session visibility and initialize git status sync
@@ -596,7 +677,6 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
 
         // Trigger session sync
         sync.onSessionVisible(sessionId);
-
 
         // Initialize git status sync for this session
         scmStatusSync.getSync(sessionId);
@@ -693,52 +773,54 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
     const inactiveStatusText = inactiveUi.inactiveStatusTextKey ? t(inactiveUi.inactiveStatusTextKey) : null;
 
     const shouldShowInput = inactiveUi.shouldShowInput;
-
-    const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments');
-    const reviewCommentDrafts = useSessionReviewCommentsDrafts(sessionId);
-    const hasReviewCommentDrafts = reviewCommentsEnabled && reviewCommentDrafts.length > 0;
-
+    const reviewCommentDraftCount = reviewCommentDrafts.length;
     const extraActionChips: ReadonlyArray<AgentInputExtraActionChip> | undefined = React.useMemo(() => {
-        const base = voiceExtraActionChips ?? [];
-        if (!hasReviewCommentDrafts) return base.length > 0 ? base : undefined;
-        const chip: AgentInputExtraActionChip = {
-            key: 'review-comments',
-            render: (ctx: AgentInputExtraActionChipRenderContext) => (
-                <Pressable
-                    onPress={() => {
-                        const preview = reviewCommentDrafts
-                            .slice(0, 12)
-                            .map((d, idx) => `${idx + 1}) ${d.filePath}: ${d.body}`)
-                            .join('\n');
-                        Modal.alert(
-                            buildReviewCommentsDisplayText({ drafts: reviewCommentDrafts }),
-                            preview.length > 0 ? preview : undefined,
-                            [
-                                { text: t('common.cancel'), style: 'cancel' },
-                                {
-                                    text: t('common.discard'),
-                                    style: 'destructive',
-                                    onPress: () => storage.getState().clearSessionReviewCommentDrafts(sessionId),
-                                },
-                            ],
-                        );
-                    }}
-                    style={({ pressed }) => ctx.chipStyle(Boolean(pressed))}
-                >
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Ionicons name="chatbox-ellipses-outline" size={14} color={ctx.iconColor} />
-                        {ctx.showLabel ? (
-                            <Text style={ctx.textStyle}>{`Review (${reviewCommentDrafts.length})`}</Text>
-                        ) : null}
-                    </View>
-                </Pressable>
-            ),
-        };
-        return [...base, chip];
-    }, [hasReviewCommentDrafts, reviewCommentDrafts, sessionId, voiceExtraActionChips]);
+        if (!reviewCommentsEnabled) return undefined;
+        if (reviewCommentDraftCount === 0) return undefined;
+
+        return [
+            {
+                key: 'review-comments',
+                render: (ctx: AgentInputExtraActionChipRenderContext) => (
+                    <Pressable
+                        onPress={() => {
+                            const preview = reviewCommentDrafts
+                                .slice(0, 12)
+                                .map((d, idx) => `${idx + 1}) ${d.filePath}: ${d.body}`)
+                                .join('\n');
+                            Modal.alert(
+                                buildReviewCommentsDisplayText({ drafts: reviewCommentDrafts }),
+                                preview.length > 0 ? preview : undefined,
+                                [
+                                    {
+                                        text: t('common.cancel'),
+                                        style: 'cancel',
+                                    },
+                                    {
+                                        text: t('common.discard'),
+                                        style: 'destructive',
+                                        onPress: () => storage.getState().clearSessionReviewCommentDrafts(sessionId),
+                                    },
+                                ],
+                            );
+                        }}
+                        style={({ pressed }) => ctx.chipStyle(Boolean(pressed))}
+                    >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Ionicons name="chatbox-ellipses-outline" size={14} color={ctx.iconColor} />
+                            {ctx.showLabel ? (
+                                <Text style={ctx.textStyle}>{`Review (${reviewCommentDraftCount})`}</Text>
+                            ) : null}
+                        </View>
+                    </Pressable>
+                ),
+            },
+        ];
+    }, [reviewCommentDraftCount, reviewCommentDrafts, reviewCommentsEnabled, sessionId]);
 
     const input = shouldShowInput ? (
         <View>
+            {voiceProviderId !== 'off' ? <VoiceSurface variant="session" sessionId={sessionId} /> : null}
             <AgentInput
                 placeholder={isReadOnly ? t('session.sharing.viewOnlyMode') : t('session.inputPlaceholder')}
                 value={message}
@@ -752,17 +834,17 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                 modelMode={modelMode}
                 onModelModeChange={updateModelMode}
                 metadata={session.metadata}
-                    profileId={session.metadata?.profileId ?? undefined}
-                    onProfileClick={session.metadata?.profileId !== undefined ? () => {
-                        const profileId = session.metadata?.profileId;
-                        const profileInfo = (profileId === null || (typeof profileId === 'string' && profileId.trim() === ''))
-                            ? t('profiles.noProfile')
-                            : (typeof profileId === 'string' ? profileId : t('status.unknown'));
-                        Modal.alert(
-                            t('profiles.title'),
-                            `${t('profiles.sessionUses', { profile: profileInfo })}\n\n${t('profiles.profilesFixedPerSession')}`,
-                        );
-                    } : undefined}
+                profileId={session.metadata?.profileId ?? undefined}
+                onProfileClick={session.metadata?.profileId !== undefined ? () => {
+                    const profileId = session.metadata?.profileId;
+                    const profileInfo = (profileId === null || (typeof profileId === 'string' && profileId.trim() === ''))
+                        ? t('profiles.noProfile')
+                        : (typeof profileId === 'string' ? profileId : t('status.unknown'));
+                    Modal.alert(
+                        t('profiles.title'),
+                        `${t('profiles.sessionUses', { profile: profileInfo })}\n\n${t('profiles.profilesFixedPerSession')}`,
+                    );
+                } : undefined}
                 connectionStatus={{
                     text: isResuming ? t('session.resuming') : (inactiveStatusText || sessionStatus.statusText),
                     color: sessionStatus.statusColor,
@@ -774,13 +856,57 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                         Modal.alert(t('common.error'), t('session.sharing.noEditPermission'));
                         return;
                     }
-                    const additionalMessage = message;
-                    const trimmedText = message.trim();
+
+                    const resolved = resolveSessionComposerSend({ input: message, executionRunsEnabled });
+                    if (resolved.kind === 'client.clear_input') {
+                        setMessage('');
+                        return;
+                    }
+                    if (resolved.kind === 'noop') {
+                        return;
+                    }
+
+	                    if (
+	                        resolved.kind === 'action' &&
+	                        (
+	                            resolved.actionId === 'ui.voice_global.reset' ||
+	                            resolved.actionId === 'execution.run.list' ||
+	                            resolved.actionId === 'review.start' ||
+	                            resolved.actionId === 'plan.start' ||
+	                            resolved.actionId === 'delegate.start'
+	                        )
+	                    ) {
+	                        const previousMessage = message;
+	                        void executeSessionComposerResolution({
+	                            resolved,
+	                            sessionId,
+                            agentId,
+                            permissionMode,
+                            actionExecutor,
+                            previousMessage,
+                            setMessage,
+                            clearDraft,
+                            trackMessageSent,
+                            navigateToRuns: () => router.push(`/session/${sessionId}/runs` as any),
+                            modalAlert: (_title, msg) => Modal.alert(t('common.error'), msg),
+	                        });
+	                        return;
+	                    }
+
+	                    if (resolved.kind !== 'send') return;
+	                    const messageToSend = resolved.text;
+
+                    const additionalMessage = messageToSend;
+                    const trimmedText = messageToSend.trim();
                     const shouldSendReviewComments = hasReviewCommentDrafts;
 
                     const outbound = shouldSendReviewComments
                         ? {
-                            text: buildReviewCommentsPromptText({ sessionId, drafts: reviewCommentDrafts, additionalMessage }),
+                            text: buildReviewCommentsPromptText({
+                                sessionId,
+                                drafts: reviewCommentDrafts,
+                                additionalMessage,
+                            }),
                             displayText: buildReviewCommentsDisplayText({ drafts: reviewCommentDrafts }),
                             metaOverrides: {
                                 happier: {
@@ -800,10 +926,6 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                     clearDraft();
                     trackMessageSent();
 
-                    const text = outbound.text;
-                    const displayText = outbound.displayText;
-                    const metaOverrides = outbound.metaOverrides;
-
                     const configuredMode = storage.getState().settings.sessionMessageSendMode;
                     const busySteerSendPolicy = storage.getState().settings.sessionBusySteerSendPolicy;
                     const submitMode = chooseSubmitMode({ configuredMode, busySteerSendPolicy, session });
@@ -811,14 +933,15 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                     if (submitMode === 'server_pending') {
                         void (async () => {
                             try {
-                                await sync.enqueuePendingMessage(sessionId, text, displayText, metaOverrides);
-                                if (shouldSendReviewComments) {
-                                    storage.getState().clearSessionReviewCommentDrafts(sessionId);
-                                }
+                                await sync.enqueuePendingMessage(sessionId, outbound.text, outbound.displayText, outbound.metaOverrides);
                             } catch (e) {
                                 setMessage(previousMessage);
                                 Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToSendMessage'));
                                 return;
+                            }
+
+                            if (shouldSendReviewComments) {
+                                storage.getState().clearSessionReviewCommentDrafts(sessionId);
                             }
 
                             const wakeOpts = getPendingQueueWakeResumeOptions({
@@ -833,16 +956,9 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                             if (!wakeOpts) return;
 
                             try {
-                                const sessionEncryptionKeyBase64 = sync.getSessionEncryptionKeyBase64ForResume(sessionId);
-                                if (!sessionEncryptionKeyBase64) {
-                                    Modal.alert(t('common.error'), t('session.resumeFailed'));
-                                    return;
-                                }
-
                                 const result = await resumeSession({
                                     ...wakeOpts,
-                                    sessionEncryptionKeyBase64,
-                                    sessionEncryptionVariant: 'dataKey',
+                                    serverId: capabilityServerId,
                                 });
                                 if (result.type === 'error') {
                                     Modal.alert(t('common.error'), result.errorMessage);
@@ -870,7 +986,10 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                                 // even if spawning/resume fails.
                                 const supportsPendingQueueV2 = typeof session.pendingVersion === 'number';
                                 if (supportsPendingQueueV2) {
-                                    await sync.enqueuePendingMessage(sessionId, text, displayText, metaOverrides);
+                                    await sync.enqueuePendingMessage(sessionId, outbound.text, outbound.displayText, outbound.metaOverrides);
+                                    if (shouldSendReviewComments) {
+                                        storage.getState().clearSessionReviewCommentDrafts(sessionId);
+                                    }
                                     await handleResumeSession();
                                     return;
                                 }
@@ -881,10 +1000,10 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                                     setMessage(previousMessage);
                                     return;
                                 }
-                                await sync.submitMessage(sessionId, text, displayText, metaOverrides);
-                            if (shouldSendReviewComments) {
-                                storage.getState().clearSessionReviewCommentDrafts(sessionId);
-                            }
+                                await sync.submitMessage(sessionId, outbound.text, outbound.displayText, outbound.metaOverrides);
+                                if (shouldSendReviewComments) {
+                                    storage.getState().clearSessionReviewCommentDrafts(sessionId);
+                                }
                             } catch (e) {
                                 setMessage(previousMessage);
                                 Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToResumeSession'));
@@ -895,7 +1014,10 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
 
                     void (async () => {
                         try {
-                            await sync.submitMessage(sessionId, text, displayText, metaOverrides);
+                            await sync.submitMessage(sessionId, outbound.text, outbound.displayText, outbound.metaOverrides);
+                            if (shouldSendReviewComments) {
+                                storage.getState().clearSessionReviewCommentDrafts(sessionId);
+                            }
                         } catch (e) {
                             setMessage(previousMessage);
                             Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToSendMessage'));
@@ -905,7 +1027,6 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                 isSendDisabled={!shouldShowInput || isResuming || isReadOnly}
                 onMicPress={micButtonState.onMicPress}
                 isMicActive={micButtonState.isMicActive}
-                extraActionChips={extraActionChips}
                 onAbort={() => sessionAbort(sessionId)}
                 showAbortButton={shouldShowAbortButtonForSessionState(sessionStatus.state)}
                 onFileViewerPress={() => router.push(`/session/${sessionId}/files`)}
@@ -927,6 +1048,7 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                     contextSize: session.latestUsage.contextSize
                 } : undefined}
                 alwaysShowContextSize={alwaysShowContextSize}
+                extraActionChips={extraActionChips}
             />
         </View>
     ) : null;

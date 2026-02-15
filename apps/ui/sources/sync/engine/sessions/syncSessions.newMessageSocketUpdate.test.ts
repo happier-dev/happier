@@ -88,7 +88,7 @@ function buildHarness(overrides: Partial<Parameters<typeof handleNewMessageSocke
         fetchSessions,
         applyMessages,
         isMutableToolCall: () => false,
-        invalidateGitStatus: () => {},
+        invalidateScmStatus: () => {},
         isSessionMessagesLoaded: () => true,
         getSessionMaterializedMaxSeq: () => 1,
         markSessionMaterializedMaxSeq,

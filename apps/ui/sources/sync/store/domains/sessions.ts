@@ -15,6 +15,7 @@ import {
     loadSessionModelModes,
     loadSessionPermissionModeUpdatedAts,
     loadSessionPermissionModes,
+    loadSessionActionDrafts,
     loadSessionReviewCommentsDrafts,
     saveSessionDrafts,
     saveSessionLastViewed,
@@ -22,6 +23,7 @@ import {
     saveSessionModelModes,
     saveSessionPermissionModeUpdatedAts,
     saveSessionPermissionModes,
+    saveSessionActionDrafts,
     saveSessionReviewCommentsDrafts,
 } from '../../domains/state/persistence';
 import { projectManager } from '../../runtime/orchestration/projectManager';
@@ -32,6 +34,8 @@ import { parsePermissionIntentAlias, resolveMetadataStringOverrideV1, resolvePer
 import { buildSessionListViewDataWithServerScope } from '../buildSessionListViewDataWithServerScope';
 import { setActiveServerSessionListCache } from '../sessionListCache';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
+import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
+import type { SessionActionDraftStatus } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
 
 import type { StoreGet, StoreSet } from './_shared';
 import { applyAgentStateUpdateToSessionMessages } from './messages';
@@ -53,6 +57,7 @@ export type SessionsDomain = {
     sessionLastViewed: Record<string, number>;
     sessionRepositoryTreeExpandedPathsBySessionId: Record<string, string[]>;
     reviewCommentsDraftsBySessionId: Record<string, ReviewCommentDraft[]>;
+    actionDraftsBySessionId: Record<string, SessionActionDraft[]>;
     isDataReady: boolean;
 
     getActiveSessions: () => Session[];
@@ -73,6 +78,14 @@ export type SessionsDomain = {
     upsertSessionReviewCommentDraft: (sessionId: string, draft: ReviewCommentDraft) => void;
     deleteSessionReviewCommentDraft: (sessionId: string, commentId: string) => void;
     clearSessionReviewCommentDrafts: (sessionId: string) => void;
+    createSessionActionDraft: (
+        sessionId: string,
+        draft: Readonly<{ actionId: string; input?: Record<string, unknown> }>,
+    ) => SessionActionDraft;
+    updateSessionActionDraftInput: (sessionId: string, draftId: string, patch: Record<string, unknown>) => void;
+    setSessionActionDraftStatus: (sessionId: string, draftId: string, status: SessionActionDraftStatus, error?: string | null) => void;
+    deleteSessionActionDraft: (sessionId: string, draftId: string) => void;
+    clearSessionActionDrafts: (sessionId: string) => void;
 
     getProjects: () => import('../../runtime/orchestration/projectManager').Project[];
     getProject: (projectId: string) => import('../../runtime/orchestration/projectManager').Project | null;
@@ -128,6 +141,12 @@ type SessionsDomainDependencies = {
 const OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS = 15_000;
 const optimisticThinkingTimeoutBySessionId = new Map<string, ReturnType<typeof setTimeout>>();
 
+let actionDraftIdCounter = 0;
+function createActionDraftId(nowMs: number): string {
+    actionDraftIdCounter += 1;
+    return `action_draft_${nowMs}_${actionDraftIdCounter}`;
+}
+
 /**
  * Centralized session online state resolver
  * Returns either "online" (string) or a timestamp (number) for last seen
@@ -160,6 +179,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
     let sessionLastViewed = loadSessionLastViewed();
     let reviewCommentsDraftsBySessionId = loadSessionReviewCommentsDrafts();
     let sessionRepositoryTreeExpandedPathsBySessionId: Record<string, string[]> = {};
+    let actionDraftsBySessionId: Record<string, SessionActionDraft[]> = loadSessionActionDrafts();
 
     return {
         sessions: {},
@@ -170,6 +190,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
         sessionLastViewed,
         sessionRepositoryTreeExpandedPathsBySessionId,
         reviewCommentsDraftsBySessionId,
+        actionDraftsBySessionId,
         isDataReady: false,
         getActiveSessions: () => {
             const state = get();
@@ -501,6 +522,81 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             saveSessionReviewCommentsDrafts(merged);
             return { ...state, reviewCommentsDraftsBySessionId: merged };
         }),
+
+        createSessionActionDraft: (sessionId: string, draft) => {
+            const nowMs = nowServerMs();
+            const created: SessionActionDraft = {
+                id: createActionDraftId(nowMs),
+                sessionId,
+                actionId: String(draft.actionId),
+                createdAt: nowMs,
+                status: 'editing',
+                input: { ...(draft.input ?? {}) },
+                error: null,
+            };
+            set((state) => {
+                const existing = state.actionDraftsBySessionId[sessionId] ?? [];
+                const next = [...existing, created];
+                const merged = { ...state.actionDraftsBySessionId, [sessionId]: next };
+                actionDraftsBySessionId = merged;
+                saveSessionActionDrafts(merged);
+                return { ...state, actionDraftsBySessionId: merged };
+            });
+            return created;
+        },
+        updateSessionActionDraftInput: (sessionId: string, draftId: string, patch: Record<string, unknown>) =>
+            set((state) => {
+                const existing = state.actionDraftsBySessionId[sessionId] ?? [];
+                const idx = existing.findIndex((d) => d.id === draftId);
+                if (idx < 0) return state;
+                const prev = existing[idx]!;
+                const updated: SessionActionDraft = {
+                    ...prev,
+                    input: { ...(prev.input ?? {}), ...(patch ?? {}) },
+                };
+                const next = [...existing.slice(0, idx), updated, ...existing.slice(idx + 1)];
+                const merged = { ...state.actionDraftsBySessionId, [sessionId]: next };
+                actionDraftsBySessionId = merged;
+                saveSessionActionDrafts(merged);
+                return { ...state, actionDraftsBySessionId: merged };
+            }),
+        setSessionActionDraftStatus: (sessionId: string, draftId: string, status: SessionActionDraftStatus, error?: string | null) =>
+            set((state) => {
+                const existing = state.actionDraftsBySessionId[sessionId] ?? [];
+                const idx = existing.findIndex((d) => d.id === draftId);
+                if (idx < 0) return state;
+                const prev = existing[idx]!;
+                const updated: SessionActionDraft = {
+                    ...prev,
+                    status,
+                    ...(typeof error !== 'undefined' ? { error: error ?? null } : {}),
+                };
+                const next = [...existing.slice(0, idx), updated, ...existing.slice(idx + 1)];
+                const merged = { ...state.actionDraftsBySessionId, [sessionId]: next };
+                actionDraftsBySessionId = merged;
+                saveSessionActionDrafts(merged);
+                return { ...state, actionDraftsBySessionId: merged };
+            }),
+        deleteSessionActionDraft: (sessionId: string, draftId: string) =>
+            set((state) => {
+                const existing = state.actionDraftsBySessionId[sessionId] ?? [];
+                const next = existing.filter((d) => d.id !== draftId);
+                const merged = { ...state.actionDraftsBySessionId };
+                if (next.length > 0) merged[sessionId] = next;
+                else delete merged[sessionId];
+                actionDraftsBySessionId = merged;
+                saveSessionActionDrafts(merged);
+                return { ...state, actionDraftsBySessionId: merged };
+            }),
+        clearSessionActionDrafts: (sessionId: string) =>
+            set((state) => {
+                if (!(sessionId in state.actionDraftsBySessionId)) return state;
+                const merged = { ...state.actionDraftsBySessionId };
+                delete merged[sessionId];
+                actionDraftsBySessionId = merged;
+                saveSessionActionDrafts(merged);
+                return { ...state, actionDraftsBySessionId: merged };
+            }),
         markSessionOptimisticThinking: (sessionId: string) => set((state) => {
             const session = state.sessions[sessionId];
             if (!session) return state;
@@ -804,6 +900,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             sessionRepositoryTreeExpandedPathsBySessionId = remainingTreeState;
             const { [sessionId]: _deletedReviewDrafts, ...remainingReviewDrafts } = state.reviewCommentsDraftsBySessionId;
             reviewCommentsDraftsBySessionId = remainingReviewDrafts;
+            const { [sessionId]: _deletedActionDrafts, ...remainingActionDrafts } = state.actionDraftsBySessionId;
+            actionDraftsBySessionId = remainingActionDrafts;
             
             // Clear drafts and permission modes from persistent storage
             const drafts = loadSessionDrafts();
@@ -813,6 +911,10 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             const reviewDrafts = loadSessionReviewCommentsDrafts();
             delete reviewDrafts[sessionId];
             saveSessionReviewCommentsDrafts(reviewDrafts);
+
+            const actionDrafts = loadSessionActionDrafts();
+            delete actionDrafts[sessionId];
+            saveSessionActionDrafts(actionDrafts);
             
             const modes = loadSessionPermissionModes();
             delete modes[sessionId];
@@ -851,6 +953,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 sessionScmStatus: remainingScmStatus,
                 sessionRepositoryTreeExpandedPathsBySessionId: remainingTreeState,
                 reviewCommentsDraftsBySessionId: remainingReviewDrafts,
+                actionDraftsBySessionId: remainingActionDrafts,
                 sessionLastViewed: { ...sessionLastViewed },
                 sessionListViewData,
                 sessionListViewDataByServerId: setActiveServerSessionListCache(

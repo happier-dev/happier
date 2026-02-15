@@ -18,7 +18,7 @@ export const saplingScmUiPlugin: ScmUiBackendPlugin = {
     diffModeConfig(snapshot) {
         const availableModes = snapshot?.capabilities
             ? resolveSupportedDiffAreas(snapshot.capabilities)
-            : (['pending', 'both'] as const);
+            : (['pending'] as const);
         return {
             defaultMode: 'pending',
             availableModes: [...availableModes],

@@ -21,15 +21,42 @@ type CacheEntry = {
 const cache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<CacheEntry>>();
 
-export function invalidateMachineEnvPresence(params?: { machineId?: string }) {
-    const prefix = params?.machineId ? `${params.machineId}::` : null;
+function parseScopedMachineKey(cacheKey: string): { serverId: string | null; machineId: string } | null {
+    const firstSep = cacheKey.indexOf('::');
+    if (firstSep <= 0) return null;
+
+    const secondSep = cacheKey.indexOf('::', firstSep + 2);
+    if (secondSep <= 0) {
+        return {
+            serverId: null,
+            machineId: cacheKey.slice(0, firstSep),
+        };
+    }
+
+    return {
+        serverId: cacheKey.slice(0, firstSep),
+        machineId: cacheKey.slice(firstSep + 2, secondSep),
+    };
+}
+
+function matchesInvalidationTarget(cacheKey: string, machineId: string, serverId?: string | null): boolean {
+    const parsed = parseScopedMachineKey(cacheKey);
+    if (!parsed) return false;
+    if (parsed.machineId !== machineId) return false;
+    const normalizedServerId = String(serverId ?? '').trim();
+    if (!normalizedServerId) return true;
+    return parsed.serverId === normalizedServerId;
+}
+
+export function invalidateMachineEnvPresence(params?: { machineId?: string; serverId?: string | null }) {
+    const machineId = typeof params?.machineId === 'string' ? params.machineId.trim() : '';
     for (const key of cache.keys()) {
-        if (!prefix || key.startsWith(prefix)) {
+        if (!machineId || matchesInvalidationTarget(key, machineId, params?.serverId)) {
             cache.delete(key);
         }
     }
     for (const key of inflight.keys()) {
-        if (!prefix || key.startsWith(prefix)) {
+        if (!machineId || matchesInvalidationTarget(key, machineId, params?.serverId)) {
             inflight.delete(key);
         }
     }
@@ -38,6 +65,12 @@ export function invalidateMachineEnvPresence(params?: { machineId?: string }) {
 function makeCacheKey(machineId: string, keys: string[]): string {
     const sorted = [...keys].sort((a, b) => a.localeCompare(b)).join(',');
     return `${machineId}::${sorted}`;
+}
+
+function makeServerScopedMachineKey(machineId: string, serverId?: string | null): string {
+    const sid = String(serverId ?? '').trim();
+    if (!sid) return machineId;
+    return `${sid}::${machineId}`;
 }
 
 function normalizeKeys(keys: string[]): string[] {
@@ -61,16 +94,19 @@ export function useMachineEnvPresence(
     keys: string[],
     opts?: {
         ttlMs?: number;
+        serverId?: string | null;
     },
 ): UseMachineEnvPresenceResult {
     const ttlMs = opts?.ttlMs ?? 2 * 60_000;
+    const serverId = opts?.serverId ?? null;
     const [refreshNonce, setRefreshNonce] = React.useState(0);
 
     const normalizedKeys = React.useMemo(() => normalizeKeys(keys), [keys]);
     const cacheKey = React.useMemo(() => {
         if (!machineId || normalizedKeys.length === 0) return null;
-        return makeCacheKey(machineId, normalizedKeys);
-    }, [machineId, normalizedKeys]);
+        const scopedMachineId = makeServerScopedMachineKey(machineId, serverId);
+        return makeCacheKey(scopedMachineId, normalizedKeys);
+    }, [machineId, normalizedKeys, serverId]);
 
     const [state, setState] = React.useState<{
         isLoading: boolean;
@@ -128,6 +164,8 @@ export function useMachineEnvPresence(
                 keys: normalizedKeys,
                 // Never fetch secret values for presence-only checks.
                 sensitiveKeys: normalizedKeys,
+            }, {
+                serverId,
             });
 
             if (!preview.supported) {
@@ -181,4 +219,3 @@ export function useMachineEnvPresence(
         refresh,
     };
 }
-

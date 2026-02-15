@@ -89,9 +89,16 @@ describe('concurrent session cache socket routing', () => {
             settings: {
                 ...state.settings,
                 ...settingsDefaults,
-                multiServerEnabled: true,
-                multiServerSelectedServerIds: ['server-a', 'server-b'],
-                multiServerPresentation: 'grouped',
+                serverSelectionGroups: [
+                    {
+                        id: 'group-main',
+                        name: 'Main',
+                        serverIds: ['server-a', 'server-b'],
+                        presentation: 'grouped',
+                    },
+                ],
+                serverSelectionActiveTargetKind: 'group',
+                serverSelectionActiveTargetId: 'group-main',
             },
         }));
 
@@ -269,9 +276,16 @@ describe('concurrent session cache socket routing', () => {
             settings: {
                 ...state.settings,
                 ...settingsDefaults,
-                multiServerEnabled: true,
-                multiServerSelectedServerIds: ['server-a', 'server-b', 'server-c'],
-                multiServerPresentation: 'grouped',
+                serverSelectionGroups: [
+                    {
+                        id: 'group-main',
+                        name: 'Main',
+                        serverIds: ['server-a', 'server-b', 'server-c'],
+                        presentation: 'grouped',
+                    },
+                ],
+                serverSelectionActiveTargetKind: 'group',
+                serverSelectionActiveTargetId: 'group-main',
             },
         }));
 
@@ -295,6 +309,143 @@ describe('concurrent session cache socket routing', () => {
         expect(serverBSessionIds).not.toContain('session-c');
         expect(serverCSessionIds).toContain('session-c');
         expect(serverCSessionIds).not.toContain('session-b');
+
+        const machinesByServer = (storage.getState() as any).machineListByServerId as undefined | Record<string, any>;
+        expect(machinesByServer).toBeDefined();
+        expect(Array.isArray(machinesByServer?.['server-b'])).toBe(true);
+        expect(Array.isArray(machinesByServer?.['server-c'])).toBe(true);
+        expect((machinesByServer?.['server-b'] ?? []).map((m: any) => m.id)).toContain('machine-b');
+        expect((machinesByServer?.['server-c'] ?? []).map((m: any) => m.id)).toContain('machine-c');
+
+        stopConcurrentSessionCacheSync();
+    });
+
+    it('clears stale non-active server cache entries when a server is removed from the concurrent selection', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
+
+        const fakeSocketB = {
+            on: vi.fn(),
+            onAny: vi.fn(),
+            disconnect: vi.fn(),
+        };
+        const fakeSocketC = {
+            on: vi.fn(),
+            onAny: vi.fn(),
+            disconnect: vi.fn(),
+        };
+        ioSpy.mockImplementation((serverUrl: string) => {
+            if (serverUrl === 'https://stack-b.example.test') return fakeSocketB;
+            if (serverUrl === 'https://stack-c.example.test') return fakeSocketC;
+            return {
+                on: vi.fn(),
+                onAny: vi.fn(),
+                disconnect: vi.fn(),
+            };
+        });
+
+        getCredentialsForServerUrlSpy.mockImplementation(async (serverUrl: string) => {
+            if (serverUrl === 'https://stack-b.example.test') return { token: 'token-b', secret: 'secret-b' };
+            if (serverUrl === 'https://stack-c.example.test') return { token: 'token-c', secret: 'secret-c' };
+            return null;
+        });
+
+        listServerProfilesSpy.mockReturnValue([
+            { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
+            { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
+            { id: 'server-c', serverUrl: 'https://stack-c.example.test', name: 'Server C' },
+        ]);
+        getActiveServerSnapshotSpy.mockReturnValue({
+            serverId: 'server-a',
+            serverUrl: 'https://stack-a.example.test',
+            kind: 'stack',
+            generation: 1,
+        });
+
+        vi.doMock('socket.io-client', () => ({
+            io: (...args: unknown[]) => ioSpy(...args),
+        }));
+        vi.doMock('@/auth/storage/tokenStorage', () => ({
+            TokenStorage: {
+                getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlSpy(...args),
+            },
+            isLegacyAuthCredentials: (credentials: any) =>
+                Boolean(credentials && typeof credentials === 'object' && typeof credentials.secret === 'string'),
+        }));
+        vi.doMock('@/sync/domains/server/serverProfiles', () => ({
+            listServerProfiles: () => listServerProfilesSpy(),
+        }));
+        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
+            getActiveServerSnapshot: () => getActiveServerSnapshotSpy(),
+            subscribeActiveServer: () => () => {},
+        }));
+        vi.doMock('@/sync/encryption/encryption', () => ({
+            Encryption: {
+                create: async () => ({}) as unknown,
+            },
+        }));
+        vi.doMock('@/encryption/base64', () => ({
+            decodeBase64: () => new Uint8Array(32),
+        }));
+        vi.doMock('@/sync/engine/sessions/sessionSnapshot', () => ({
+            fetchAndApplySessions: async ({ applySessions }: { applySessions: (sessions: unknown[]) => void }) => {
+                applySessions([]);
+            },
+        }));
+        vi.doMock('@/sync/engine/machines/syncMachines', () => ({
+            fetchAndApplyMachines: async ({ applyMachines }: { applyMachines: (machines: unknown[]) => void }) => {
+                applyMachines([]);
+            },
+        }));
+
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+        storage.setState((state) => ({
+            ...state,
+            settings: {
+                ...state.settings,
+                ...settingsDefaults,
+                serverSelectionGroups: [
+                    {
+                        id: 'group-main',
+                        name: 'Main',
+                        serverIds: ['server-a', 'server-b', 'server-c'],
+                        presentation: 'grouped',
+                    },
+                ],
+                serverSelectionActiveTargetKind: 'group',
+                serverSelectionActiveTargetId: 'group-main',
+            },
+        }));
+
+        const { startConcurrentSessionCacheSync, stopConcurrentSessionCacheSync } = await import('./concurrentSessionCache');
+        startConcurrentSessionCacheSync();
+        await vi.runOnlyPendingTimersAsync();
+        await vi.runOnlyPendingTimersAsync();
+
+        expect(Object.keys(storage.getState().sessionListViewDataByServerId)).toEqual(
+            expect.arrayContaining(['server-b', 'server-c']),
+        );
+
+        storage.setState((state) => ({
+            ...state,
+            settings: {
+                ...state.settings,
+                serverSelectionGroups: [
+                    {
+                        id: 'group-main',
+                        name: 'Main',
+                        serverIds: ['server-a', 'server-b'],
+                        presentation: 'grouped',
+                    },
+                ],
+            },
+        }));
+
+        await vi.runOnlyPendingTimersAsync();
+        await vi.runOnlyPendingTimersAsync();
+
+        expect(storage.getState().sessionListViewDataByServerId['server-c']).toBeUndefined();
+        expect((storage.getState() as any).machineListByServerId?.['server-c']).toBeUndefined();
 
         stopConcurrentSessionCacheSync();
     });
@@ -368,9 +519,16 @@ describe('concurrent session cache socket routing', () => {
             settings: {
                 ...state.settings,
                 ...settingsDefaults,
-                multiServerEnabled: true,
-                multiServerSelectedServerIds: ['server-a', 'server-b'],
-                multiServerPresentation: 'grouped',
+                serverSelectionGroups: [
+                    {
+                        id: 'group-main',
+                        name: 'Main',
+                        serverIds: ['server-a', 'server-b'],
+                        presentation: 'grouped',
+                    },
+                ],
+                serverSelectionActiveTargetKind: 'group',
+                serverSelectionActiveTargetId: 'group-main',
             },
         }));
 

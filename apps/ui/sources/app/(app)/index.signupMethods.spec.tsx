@@ -46,13 +46,9 @@ const getServerFeaturesMock = vi.fn(async () =>
     }),
 );
 
-vi.mock('@/sync/api/capabilities/apiFeatures', async () => {
-    const actual = await vi.importActual<typeof import('@/sync/api/capabilities/apiFeatures')>('@/sync/api/capabilities/apiFeatures');
-    return {
-        ...actual,
-        getServerFeatures: getServerFeaturesMock,
-    };
-});
+vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
+    getReadyServerFeatures: getServerFeaturesMock,
+}));
 
 describe('/ (welcome) signup methods', () => {
     it('hides Create account when anonymous signup is disabled and shows provider option', async () => {

@@ -15,6 +15,7 @@ import { inferToolNameForRendering } from '@/components/tools/normalization/poli
 import { knownTools } from '@/components/tools/catalog';
 import { PermissionFooter } from '../permissions/PermissionFooter';
 import { useSetting } from '@/sync/domains/state/storage';
+import { MessageView } from '@/components/sessions/transcript/MessageView';
 
 const KNOWN_TOOL_KEYS = Object.keys(knownTools);
 
@@ -52,12 +53,34 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], interac
     const [showDebug, setShowDebug] = React.useState<boolean>(toolViewShowDebugByDefault);
     const isWaitingForPermission =
         toolForRendering.permission?.status === 'pending' && toolForRendering.state !== 'completed';
+    const canRenderTaskTranscript =
+        normalizedToolName === 'Task' &&
+        messages.length > 0 &&
+        typeof sessionId === 'string' &&
+        sessionId.length > 0;
 
     return (
         <ScrollView style={[styles.container, { paddingHorizontal: screenWidth > 700 ? 16 : 0 }]}>
             <View style={styles.contentWrapper}>
                 {/* Tool-specific content or generic fallback */}
-                {SpecializedFullView ? (
+                {canRenderTaskTranscript ? (
+                    <View style={styles.sectionFullWidth}>
+                        {messages.map((message) => (
+                            <MessageView
+                                key={message.id}
+                                message={message}
+                                metadata={metadata || null}
+                                sessionId={sessionId}
+                                interaction={{
+                                    canSendMessages: interaction?.canSendMessages ?? true,
+                                    canApprovePermissions: interaction?.canApprovePermissions ?? true,
+                                    permissionDisabledReason: interaction?.permissionDisabledReason,
+                                    disableToolNavigation: true,
+                                }}
+                            />
+                        ))}
+                    </View>
+                ) : SpecializedFullView ? (
                     <SpecializedFullView
                         tool={toolForRendering}
                         metadata={metadata || null}

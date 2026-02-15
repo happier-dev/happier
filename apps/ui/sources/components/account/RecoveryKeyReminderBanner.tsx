@@ -6,7 +6,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useAuth } from '@/auth/context/AuthContext';
 import { TokenStorage, isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
-import { getServerFeatures } from '@/sync/api/capabilities/apiFeatures';
+import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { SecretKeyBackupModal } from '@/components/account/SecretKeyBackupModal';
@@ -22,7 +22,7 @@ export const RecoveryKeyReminderBanner = React.memo(() => {
         void (async () => {
             const [isDismissed, features] = await Promise.all([
                 TokenStorage.getRecoveryKeyReminderDismissed().catch(() => true),
-                getServerFeatures({ timeoutMs: 800 }).catch(() => null),
+                getReadyServerFeatures({ timeoutMs: 800 }).catch(() => null),
             ]);
 
             const featureEnabled = features?.features?.auth?.ui?.recoveryKeyReminder?.enabled === true;

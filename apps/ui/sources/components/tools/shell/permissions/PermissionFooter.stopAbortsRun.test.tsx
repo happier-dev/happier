@@ -6,9 +6,9 @@ import { PermissionFooter } from '../permissions/PermissionFooter';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const runtime = vi.hoisted(() => ({
-    flavor: 'opencode' as 'codex' | 'opencode',
+    flavor: 'opencode' as 'codex' | 'opencode' | 'gemini',
     protocol: 'claude' as 'codexDecision' | 'claude',
-    setProtocol(protocol: 'codexDecision' | 'claude', flavor: 'codex' | 'opencode') {
+    setProtocol(protocol: 'codexDecision' | 'claude', flavor: 'codex' | 'opencode' | 'gemini') {
         this.protocol = protocol;
         this.flavor = flavor;
     },
@@ -130,9 +130,21 @@ describe('PermissionFooter stop action', () => {
             toolInput: { filepath: '/etc/hosts' },
             shouldSendFollowupPrompt: true,
             shouldAbortRun: true,
+            shouldSetReadOnlyMode: true,
             expectedDecision: 'abort' as const,
         },
-    ])('Stop denies permission and handles run control for $name', async ({ protocol, flavor, toolName, toolInput, shouldSendFollowupPrompt, shouldAbortRun, expectedDecision }) => {
+        {
+            name: 'gemini stop/explain should not force read-only mode',
+            protocol: 'codexDecision' as const,
+            flavor: 'gemini' as const,
+            toolName: 'execute',
+            toolInput: { command: "bash -lc 'echo hi > /tmp/x'" },
+            shouldSendFollowupPrompt: true,
+            shouldAbortRun: true,
+            shouldSetReadOnlyMode: false,
+            expectedDecision: 'abort' as const,
+        },
+    ])('Stop denies permission and handles run control for $name', async ({ protocol, flavor, toolName, toolInput, shouldSendFollowupPrompt, shouldAbortRun, shouldSetReadOnlyMode, expectedDecision }) => {
         runtime.setProtocol(protocol, flavor);
         ops.sessionDeny.mockClear();
         ops.sessionAbort.mockClear();
@@ -167,13 +179,19 @@ describe('PermissionFooter stop action', () => {
         } else {
             expect(ops.sessionAbort).not.toHaveBeenCalled();
         }
-        expect(sessionStore.updateSessionPermissionMode).toHaveBeenCalledTimes(1);
-        expect(sessionStore.updateSessionPermissionMode).toHaveBeenCalledWith('s1', 'read-only');
+        if (shouldSetReadOnlyMode) {
+            expect(sessionStore.updateSessionPermissionMode).toHaveBeenCalledTimes(1);
+            expect(sessionStore.updateSessionPermissionMode).toHaveBeenCalledWith('s1', 'read-only');
+        } else {
+            expect(sessionStore.updateSessionPermissionMode).not.toHaveBeenCalled();
+        }
         if (shouldSendFollowupPrompt) {
             expect(syncMock.sendMessage).toHaveBeenCalledTimes(1);
-            expect(sessionStore.updateSessionPermissionMode.mock.invocationCallOrder[0]).toBeLessThan(
-                syncMock.sendMessage.mock.invocationCallOrder[0],
-            );
+            if (shouldSetReadOnlyMode) {
+                expect(sessionStore.updateSessionPermissionMode.mock.invocationCallOrder[0]).toBeLessThan(
+                    syncMock.sendMessage.mock.invocationCallOrder[0],
+                );
+            }
             expect(syncMock.sendMessage.mock.calls[0]?.[0]).toBe('s1');
             expect(String(syncMock.sendMessage.mock.calls[0]?.[1] ?? '')).toMatch(/explain/i);
         } else {

@@ -1,10 +1,10 @@
 import * as React from 'react';
-import { useRoute } from "@react-navigation/native";
+import { useLocalSearchParams } from 'expo-router';
 import { SessionView } from '@/components/sessions/shell/SessionView';
 
 
 export default React.memo(() => {
-    const route = useRoute();
-    const sessionId = (route.params! as any).id as string;
+    const { id: sessionIdParam } = useLocalSearchParams<{ id?: string | string[] }>();
+    const sessionId = typeof sessionIdParam === 'string' ? sessionIdParam : Array.isArray(sessionIdParam) ? (sessionIdParam[0] ?? '') : '';
     return (<SessionView id={sessionId} />);
 });

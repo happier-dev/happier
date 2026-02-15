@@ -5,17 +5,21 @@ import { Ionicons } from '@expo/vector-icons';
 import { t } from '@/text';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Popover } from '@/components/ui/popover';
-import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
-import { useSocketStatus, useSyncError, useLastSyncAt } from '@/sync/domains/state/storage';
+import { useSocketStatus, useSyncError, useLastSyncAt, useSettingMutable } from '@/sync/domains/state/storage';
 import { getServerUrl } from '@/sync/domains/server/serverConfig';
 import { getActiveServerId, listServerProfiles, setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { useAuth } from '@/auth/context/AuthContext';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { useRouter } from 'expo-router';
-import { sync } from '@/sync/sync';
 import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { Typography } from '@/constants/Typography';
-import { CLOUD_SERVER_ID } from '@/sync/domains/server/serverIdentity';
+import { listServerSelectionTargets } from '@/sync/domains/server/selection/serverSelectionResolver';
+import { resolveActiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
+import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
+import { useConnectionTargetActions } from '@/components/navigation/connection/useConnectionTargetActions';
+import { ConnectionTargetList } from '@/components/navigation/connection/ConnectionTargetList';
+import { promptSignedOutServerSwitchConfirmation } from '@/components/settings/server/modals/ServerSwitchAuthPrompt';
 
 type Variant = 'sidebar' | 'header';
 
@@ -97,9 +101,13 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     const socketStatus = useSocketStatus();
     const syncError = useSyncError();
     const lastSyncAt = useLastSyncAt();
+    const [serverSelectionGroups] = useSettingMutable('serverSelectionGroups');
+    const [serverSelectionActiveTargetKind, setServerSelectionActiveTargetKind] = useSettingMutable('serverSelectionActiveTargetKind');
+    const [serverSelectionActiveTargetId, setServerSelectionActiveTargetId] = useSettingMutable('serverSelectionActiveTargetId');
 
     const [open, setOpen] = React.useState(false);
     const anchorRef = React.useRef<any>(null);
+    const [authStatusByServerId, setAuthStatusByServerId] = React.useState<Record<string, 'signedIn' | 'signedOut' | 'unknown'>>({});
 
     const connectionStatus = React.useMemo(() => {
         switch (socketStatus.status) {
@@ -125,8 +133,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     const servers = React.useMemo(() => {
         try {
             return listServerProfiles()
-                .slice()
-                .sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0));
+                .slice();
         } catch {
             return [];
         }
@@ -136,9 +143,30 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
         try {
             return getActiveServerId();
         } catch {
-            return CLOUD_SERVER_ID;
+            return '';
         }
     }, [open]);
+
+    React.useEffect(() => {
+        let cancelled = false;
+        void (async () => {
+            const entries = await Promise.all(servers.map(async (profile) => {
+                try {
+                    const creds = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl);
+                    return [profile.id, creds ? 'signedIn' : 'signedOut'] as const;
+                } catch {
+                    return [profile.id, 'unknown'] as const;
+                }
+            }));
+            if (cancelled) return;
+            const next: Record<string, 'signedIn' | 'signedOut' | 'unknown'> = {};
+            for (const [id, status] of entries) next[id] = status;
+            setAuthStatusByServerId(next);
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [servers]);
 
     const switchServer = React.useCallback(async (serverId: string, scope: 'tab' | 'device' = 'device') => {
         setActiveServerId(serverId, { scope });
@@ -146,6 +174,112 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
         await switchConnectionToActiveServer();
         await auth.refreshFromActiveServer();
     }, [auth]);
+
+    const serverTargets = React.useMemo(() => {
+        return listServerSelectionTargets({
+            serverProfiles: servers,
+            groupProfiles: serverSelectionGroups as any,
+        });
+    }, [serverSelectionGroups, servers]);
+
+    const resolvedTarget = React.useMemo(() => {
+        return resolveActiveServerSelectionFromRawSettings({
+            activeServerId,
+            availableServerIds: servers.map((server) => server.id),
+            settings: {
+                serverSelectionGroups,
+                serverSelectionActiveTargetKind,
+                serverSelectionActiveTargetId,
+            },
+        });
+    }, [
+        activeServerId,
+        serverSelectionActiveTargetId,
+        serverSelectionActiveTargetKind,
+        serverSelectionGroups,
+        servers,
+    ]);
+
+    const activeTargetKey = React.useMemo(() => {
+        return `${resolvedTarget.activeTarget.kind}:${resolvedTarget.activeTarget.id}`;
+    }, [resolvedTarget.activeTarget.id, resolvedTarget.activeTarget.kind]);
+
+    const serverById = React.useMemo(() => {
+        const map = new Map<string, (typeof servers)[number]>();
+        for (const server of servers) {
+            map.set(server.id, server);
+        }
+        return map;
+    }, [servers]);
+
+    const switchTarget = React.useCallback(async (target: (typeof serverTargets)[number]) => {
+        const confirmSignedOutSwitch = async (serverId: string): Promise<boolean> => {
+            let status = authStatusByServerId[serverId] ?? 'unknown';
+            if (status === 'unknown') {
+                const profile = serverById.get(serverId);
+                if (profile) {
+                    try {
+                        const creds = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl);
+                        status = creds ? 'signedIn' : 'signedOut';
+                    } catch {
+                        status = 'unknown';
+                    }
+                }
+            }
+            if (status !== 'signedOut') return true;
+            const shouldContinue = await promptSignedOutServerSwitchConfirmation();
+            return shouldContinue;
+        };
+
+        if (target.kind === 'server') {
+            const server = serverById.get(target.serverId);
+            if (!server) return;
+            const shouldSwitch = await confirmSignedOutSwitch(server.id);
+            if (!shouldSwitch) return;
+            setServerSelectionActiveTargetKind('server');
+            setServerSelectionActiveTargetId(target.id);
+            await switchServer(target.serverId, 'device');
+            if ((authStatusByServerId[target.serverId] ?? 'unknown') === 'signedOut') {
+                router.replace('/');
+            }
+            return;
+        }
+
+        const nextServerId = target.serverIds.includes(activeServerId) ? activeServerId : (target.serverIds[0] ?? '');
+        if (nextServerId) {
+            const shouldSwitch = await confirmSignedOutSwitch(nextServerId);
+            if (!shouldSwitch) return;
+        }
+
+        setServerSelectionActiveTargetKind('group');
+        setServerSelectionActiveTargetId(target.groupId);
+
+        if (nextServerId && nextServerId !== activeServerId) {
+            await switchServer(nextServerId, 'device');
+        }
+        if (nextServerId && (authStatusByServerId[nextServerId] ?? 'unknown') === 'signedOut') {
+            router.replace('/');
+            return;
+        }
+        setOpen(false);
+    }, [
+        activeServerId,
+        authStatusByServerId,
+        router,
+        setServerSelectionActiveTargetId,
+        setServerSelectionActiveTargetKind,
+        serverById,
+        switchServer,
+    ]);
+    const targetActions = useConnectionTargetActions({
+        targets: serverTargets,
+        activeTargetKey,
+        onSelectTarget: (target) => {
+            void switchTarget(target);
+        },
+        selectedColor: theme.colors.status.connected,
+        iconColor: theme.colors.text,
+    });
 
     return (
         <>
@@ -206,7 +340,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
 
                                 <View style={styles.popoverRow}>
                                     <Text style={styles.popoverLabel}>Server</Text>
-                                    <Text style={styles.popoverValue} numberOfLines={2}>{getServerUrl()}</Text>
+                                    <Text style={styles.popoverValue} numberOfLines={2}>{toServerUrlDisplay(getServerUrl())}</Text>
                                 </View>
 
                                 <View style={styles.popoverRow}>
@@ -238,78 +372,13 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                                     </View>
                                 ) : null}
 
-                                {servers.length > 1 ? (
-                                    <ActionListSection
-                                        title={t('server.serverConfiguration')}
-                                        actions={[
-                                            ...servers.flatMap((s) => {
-                                                return [
-                                                    {
-                                                        id: `server-use-${s.id}`,
-                                                        label: `${s.name} · ${t('server.makeDefaultOnDevice')}`,
-                                                        icon: <Ionicons name="phone-portrait-outline" size={18} color={theme.colors.text} />,
-                                                        disabled: s.id === activeServerId,
-                                                        onPress: () => {
-                                                            void switchServer(s.id, 'device');
-                                                        },
-                                                    },
-                                                ];
-                                            }),
-                                            {
-                                                id: 'server-manage',
-                                                label: 'Manage servers…',
-                                                icon: <Ionicons name="server-outline" size={18} color={theme.colors.text} />,
-                                                onPress: () => {
-                                                    setOpen(false);
-                                                    router.push('/server');
-                                                },
-                                            }
-                                        ]}
+                                {serverTargets.length > 0 ? (
+                                    <ConnectionTargetList
+                                        title={t('server.switchToServer')}
+                                        actions={targetActions}
                                     />
                                 ) : null}
 
-                                <ActionListSection
-                                    title="Actions"
-                                    actions={[
-                                        {
-                                            id: 'retry',
-                                            label: t('common.retry'),
-                                            icon: <Ionicons name="refresh-outline" size={18} color={theme.colors.text} />,
-                                            disabled: syncError?.retryable === false,
-                                            onPress: () => {
-                                                sync.retryNow();
-                                                setOpen(false);
-                                            }
-                                        },
-                                        syncError?.kind === 'auth' ? {
-                                            id: 'restore',
-                                            label: t('connect.restoreAccount'),
-                                            icon: <Ionicons name="key-outline" size={18} color={theme.colors.text} />,
-                                            onPress: () => {
-                                                setOpen(false);
-                                                router.push('/restore');
-                                            }
-                                        } : null,
-                                        {
-                                            id: 'server',
-                                            label: t('server.serverConfiguration'),
-                                            icon: <Ionicons name="server-outline" size={18} color={theme.colors.text} />,
-                                            onPress: () => {
-                                                setOpen(false);
-                                                router.push('/server');
-                                            }
-                                        },
-                                        {
-                                            id: 'account',
-                                            label: t('settings.account'),
-                                            icon: <Ionicons name="person-outline" size={18} color={theme.colors.text} />,
-                                            onPress: () => {
-                                                setOpen(false);
-                                                router.push('/settings/account');
-                                            }
-                                        },
-                                    ]}
-                                />
                             </View>
                         </FloatingOverlay>
                     )}

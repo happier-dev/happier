@@ -1,11 +1,17 @@
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import type { Message } from '@/sync/domains/messages/messageTypes';
+import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
 
 export type ChatListItem =
     | {
         kind: 'message';
         id: string;
         message: Message;
+    }
+    | {
+        kind: 'action-draft';
+        id: string;
+        draft: SessionActionDraft;
     }
     | {
         kind: 'pending-user-text';
@@ -17,6 +23,7 @@ export type ChatListItem =
 export function buildChatListItems(opts: {
     messages: Message[];
     pendingMessages: PendingMessage[];
+    actionDrafts?: SessionActionDraft[] | null;
 }): ChatListItem[] {
     const localIdsInTranscript = new Set<string>();
     for (const m of opts.messages) {
@@ -27,6 +34,15 @@ export function buildChatListItems(opts: {
 
     const pending = opts.pendingMessages.filter((p) => !p.localId || !localIdsInTranscript.has(p.localId));
     const items: ChatListItem[] = [];
+
+    const drafts = Array.isArray(opts.actionDrafts) ? opts.actionDrafts : [];
+    for (const d of drafts) {
+        items.push({
+            kind: 'action-draft',
+            id: `draft:${d.id}`,
+            draft: d,
+        });
+    }
 
     for (let i = 0; i < pending.length; i++) {
         const p = pending[i]!;

@@ -17,6 +17,7 @@ vi.mock('react-native', () => ({
     View: 'View',
     Text: 'Text',
     ScrollView: 'ScrollView',
+    AppState: { currentState: 'active', addEventListener: () => ({ remove: () => {} }) },
     Dimensions: { get: () => ({ width: 800, height: 600, scale: 2, fontScale: 2 }) },
     Platform: { OS: 'ios', select: (v: any) => v.ios },
     useWindowDimensions: () => ({ width: 800, height: 600 }),

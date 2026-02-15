@@ -15,6 +15,8 @@ import {
     SCM_REMOTE_CONFIRM_POLICIES,
 } from '@/scm/settings/preferences';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
+import { ActionIdSchema } from '@happier-dev/protocol';
+import { VoiceSettingsSchema, voiceSettingsDefaults, voiceSettingsParse } from './voiceSettings';
 
 //
 // Configuration Profile Schema (for environment variable profiles)
@@ -122,7 +124,7 @@ const SessionTmuxMachineOverrideSchema = z.object({
     tmpDir: z.string().nullable(),
 });
 
-const MultiServerProfileSchema = z.object({
+const ServerSelectionGroupSchema = z.object({
     id: z.string().min(1),
     name: z.string().min(1).max(100),
     serverIds: z.array(z.string()).default([]),
@@ -268,6 +270,22 @@ const PROVIDER_SETTINGS_SHAPE: z.ZodRawShape = Object.assign(
     ...PROVIDER_SETTINGS_PLUGINS.map((p) => p.settingsShape),
 );
 
+const ExecutionRunsGuidanceEntrySchema = z.object({
+    id: z.string().min(1),
+    title: z.string().max(200).optional(),
+    description: z.string().min(1).max(10_000),
+    enabled: z.boolean().default(true),
+    suggestedBackendId: z.enum(AGENT_IDS).optional(),
+    suggestedModelId: z.string().min(1).max(200).optional(),
+    suggestedIntent: z.enum(['review', 'plan', 'delegate']).optional(),
+    exampleToolCalls: z.array(z.string()).optional(),
+});
+
+const ActionsSettingsV1SettingsSchema = z.object({
+    v: z.literal(1),
+    disabledActionIds: z.array(z.string()).default([]),
+}).passthrough();
+
 const SettingsSchemaBase = z.object({
     // Schema version for compatibility detection
     schemaVersion: z.number().default(SUPPORTED_SCHEMA_VERSION).describe('Settings schema version for compatibility checks'),
@@ -293,9 +311,13 @@ const SettingsSchemaBase = z.object({
     scmDefaultDiffModeByBackend: z.record(z.string(), z.enum(SCM_DIFF_MODE_OPTIONS)).default({}).describe('Preferred default diff mode by backend id'),
     scmReviewMaxFiles: z.number().describe('Maximum file count for unified SCM diff review mode before falling back to single-file review'),
     scmReviewMaxChangedLines: z.number().describe('Maximum total changed lines for unified SCM diff review mode before falling back to single-file review'),
+    scmCommitMessageGeneratorEnabled: z.boolean().describe('Enable one-shot LLM commit message generation in the source-control commit flow'),
+    scmCommitMessageGeneratorBackendId: z.string().describe('Backend id used for one-shot LLM commit message generation'),
+    scmCommitMessageGeneratorInstructions: z.string().describe('User instructions appended to SCM commit message generation prompts'),
     scmIncludeCoAuthoredBy: z.boolean().describe('Whether to include Co-Authored-By credits in generated commit messages'),
+    actionsSettingsV1: ActionsSettingsV1SettingsSchema.describe('Global actions enable/disable settings'),
 
-    // Files/diff rendering options (flat; used by CodeLines surfaces).
+    // Files/diff rendering options (flat; used by CodeLines surfaces)
     filesDiffSyntaxHighlightingMode: z.enum(['off', 'simple', 'advanced']).describe('Diff/file syntax highlighting mode'),
     filesChangedFilesRowDensity: z.enum(['comfortable', 'compact']).describe('Row density for changed files list and review'),
     filesDiffTokenizationMaxBytes: z.number().describe('Maximum bytes to tokenize before falling back to plain text'),
@@ -303,13 +325,14 @@ const SettingsSchemaBase = z.object({
     filesDiffTokenizationMaxLineLength: z.number().describe('Maximum per-line length to tokenize before falling back to plain text for that line'),
     filesDiffTokenizationMaxTimeMs: z.number().describe('Maximum tokenization time budget per render cycle (best-effort)'),
 
-    // Embedded editor options (flat; experimental).
+    // Embedded editor options (flat; experimental)
     filesEditorAutoSave: z.boolean().describe('Whether to auto-save in the embedded editor'),
     filesEditorChangeDebounceMs: z.number().describe('Debounce milliseconds for editor change propagation'),
     filesEditorMaxFileBytes: z.number().describe('Maximum file size supported for editing in UI'),
     filesEditorBridgeMaxChunkBytes: z.number().describe('Maximum chunk size for editor WebView bridge payloads'),
     filesEditorWebMonacoEnabled: z.boolean().describe('Kill switch: enable Monaco editor surface on web/desktop'),
     filesEditorNativeCodeMirrorEnabled: z.boolean().describe('Kill switch: enable CodeMirror WebView surface on native'),
+
     useProfiles: z.boolean().describe('Whether to enable AI backend profiles feature'),
     useEnhancedSessionWizard: z.boolean().describe('A/B test flag: Use enhanced profile-based session wizard UI'),
     // Default permission modes for new sessions (account-level; per agent).
@@ -318,6 +341,16 @@ const SettingsSchemaBase = z.object({
     // Whether permission mode changes should be pushed to session metadata immediately (for live CLI updates),
     // or only applied when the next user message is sent.
     sessionPermissionModeApplyTiming: z.enum(['immediate', 'next_prompt']).describe('When to apply permission mode changes for a running session'),
+    // App-level fallback resume: when a provider cannot resume, optionally "replay" recent transcript turns
+    // into a new session as context (user-controlled; does not depend on provider vendor resume).
+    sessionReplayEnabled: z.boolean().describe('Enable app-level transcript replay for sessions that cannot be vendor-resumed'),
+    sessionReplayStrategy: z.enum(['recent_messages', 'summary_plus_recent']).describe('Replay strategy used for app-level transcript replay'),
+    sessionReplayRecentMessagesCount: z.number().describe('Number of recent transcript messages included in app-level replay context'),
+    // Execution runs guidance: optionally inject user-configured "rules" into the session system prompt
+    // to help the parent agent decide when/how to use execution runs.
+    executionRunsGuidanceEnabled: z.boolean().describe('Enable execution-run guidance injection into the session system prompt'),
+    executionRunsGuidanceMaxChars: z.number().describe('Max character budget for execution-run guidance injection'),
+    executionRunsGuidanceEntries: z.array(ExecutionRunsGuidanceEntrySchema).describe('User-configured execution-run guidance entries'),
     sessionUseTmux: z.boolean().describe('Whether new sessions should start in tmux by default'),
     sessionTmuxSessionName: z.string().describe('Default tmux session name for new sessions'),
     sessionTmuxIsolated: z.boolean().describe('Whether to use an isolated tmux server for new sessions'),
@@ -338,53 +371,12 @@ const SettingsSchemaBase = z.object({
     hideInactiveSessions: z.boolean().describe('Hide inactive sessions in the main list'),
     groupInactiveSessionsByProject: z.boolean().describe('Group inactive sessions by project in the main list'),
     showEnvironmentBadge: z.boolean().describe('Show current app environment badge near the sidebar title'),
-    multiServerEnabled: z.boolean().describe('Whether concurrent multi-server view is enabled'),
-    multiServerSelectedServerIds: z.array(z.string()).describe('Server IDs selected for concurrent multi-server view'),
-    multiServerPresentation: z.enum(['grouped', 'flat-with-badge']).describe('Session list presentation when concurrent multi-server view is enabled'),
-    multiServerProfiles: z.array(MultiServerProfileSchema).describe('Saved concurrent multi-server groups/profiles'),
-    multiServerActiveProfileId: z.string().nullable().describe('Active concurrent multi-server profile ID'),
+    serverSelectionGroups: z.array(ServerSelectionGroupSchema).describe('Saved server selection groups'),
+    serverSelectionActiveTargetKind: z.enum(['server', 'group']).nullable().describe('Explicit active server selection target kind (server/group)'),
+    serverSelectionActiveTargetId: z.string().nullable().describe('Explicit active server selection target id'),
 	    reviewPromptAnswered: z.boolean().describe('Whether the review prompt has been answered'),
 	    reviewPromptLikedApp: z.boolean().nullish().describe('Whether user liked the app when asked'),
-	    voiceMode: z.enum(['off', 'happier', 'byo_elevenlabs']).describe('Voice mode: off, Happier Voice (server billed), or Bring Your Own ElevenLabs'),
-	    voiceProviderId: z.enum(['off', 'happier_elevenlabs_agents', 'byo_elevenlabs_agents', 'local_openai_stt_tts']).describe('Voice provider id (new)'),
-	    voiceByoElevenLabsAgentId: z.string().nullable().describe('BYO ElevenLabs: agent id'),
-	    voiceByoElevenLabsApiKey: SecretStringSchema.nullable().describe('BYO ElevenLabs: API key (encrypted-at-rest settings secret)'),
-	    voiceAssistantLanguage: z.string().nullable().describe('Preferred language for voice assistant (null for auto-detect)'),
-	    voiceShareSessionSummary: z.boolean().describe('Voice context: include session summary'),
-	    voiceShareRecentMessages: z.boolean().describe('Voice context: include recent messages'),
-	    voiceRecentMessagesCount: z.number().int().min(0).max(50).describe('Voice context: number of recent messages to include'),
-	    voiceShareToolNames: z.boolean().describe('Voice context: include tool names/descriptions'),
-	    voiceSharePermissionRequests: z.boolean().describe('Voice context: include permission request prompts (args are always redacted)'),
-	    voiceShareFilePaths: z.boolean().describe('Voice context: include local file paths (discouraged)'),
-	    voiceShareToolArgs: z.boolean().describe('Voice context: include tool arguments (always forced off)'),
-	    voiceLocalSttBaseUrl: z.string().nullable().describe('Local voice STT base URL (OpenAI-compatible, e.g. http://host:port/v1)'),
-	    voiceLocalUseDeviceStt: z.boolean().describe('Local voice STT: use device speech recognition (experimental; may be unsupported on some platforms)'),
-	    voiceLocalSttApiKey: SecretStringSchema.nullable().describe('Local voice STT API key (optional; encrypted-at-rest settings secret)'),
-	    voiceLocalSttModel: z.string().describe('Local voice STT model name (OpenAI-compatible payload field)'),
-	    voiceLocalTtsBaseUrl: z.string().nullable().describe('Local voice TTS base URL (OpenAI-compatible, e.g. http://host:port/v1)'),
-	    voiceLocalUseDeviceTts: z.boolean().describe('Local voice TTS: use device speech synthesis (experimental; may be unsupported on some platforms)'),
-	    voiceLocalTtsApiKey: SecretStringSchema.nullable().describe('Local voice TTS API key (optional; encrypted-at-rest settings secret)'),
-	    voiceLocalTtsModel: z.string().describe('Local voice TTS model name (OpenAI-compatible payload field)'),
-	    voiceLocalTtsVoice: z.string().describe('Local voice TTS voice id/name (OpenAI-compatible payload field)'),
-	    voiceLocalTtsFormat: z.enum(['mp3', 'wav']).describe('Local voice TTS response format'),
-	    voiceLocalAutoSpeakReplies: z.boolean().describe('Whether to automatically speak assistant replies for local voice provider'),
-	    voiceLocalConversationMode: z.enum(['direct_session', 'mediator']).describe('Local voice: conversation mode (direct-to-session vs mediator)'),
-	    voiceLocalMediatorBackend: z.enum(['daemon', 'openai_compat']).describe('Local voice mediator backend: daemon (sessionRPC) or OpenAI-compatible HTTP'),
-	    voiceMediatorAgentSource: z.enum(['session', 'agent']).describe('Voice mediator backend source: use the current session backend or a specific agent backend'),
-	    voiceMediatorAgentId: z.enum(AGENT_IDS).describe('Voice mediator agent id (when source=agent)'),
-	    voiceMediatorPermissionPolicy: z.enum(['no_tools', 'read_only']).describe('Voice mediator permission policy'),
-	    voiceMediatorIdleTtlSeconds: z.number().int().min(60).max(3600).describe('Voice mediator idle TTL (seconds)'),
-	    voiceMediatorChatModelSource: z.enum(['session', 'custom']).describe('Voice mediator chat model source'),
-	    voiceMediatorChatModelId: z.string().describe('Voice mediator chat model id (when source=custom)'),
-	    voiceMediatorCommitModelSource: z.enum(['chat', 'session', 'custom']).describe('Voice mediator commit model source'),
-	    voiceMediatorCommitModelId: z.string().describe('Voice mediator commit model id (when source=custom)'),
-	    voiceLocalChatBaseUrl: z.string().nullable().describe('Local voice mediator (OpenAI-compatible) chat base URL (e.g. http://host:port/v1)'),
-	    voiceLocalChatApiKey: SecretStringSchema.nullable().describe('Local voice mediator (OpenAI-compatible) chat API key (optional; encrypted-at-rest settings secret)'),
-	    voiceLocalChatChatModel: z.string().describe('Local voice mediator (OpenAI-compatible) chat model name'),
-	    voiceLocalChatCommitModel: z.string().describe('Local voice mediator (OpenAI-compatible) commit model name'),
-	    voiceLocalChatTemperature: z.number().min(0).max(2).describe('Local voice mediator (OpenAI-compatible) chat temperature'),
-	    voiceLocalChatMaxTokens: z.number().int().nullable().describe('Local voice mediator (OpenAI-compatible) max tokens (null = default)'),
-	    voiceMediatorVerbosity: z.enum(['short', 'balanced']).describe('Voice mediator verbosity preference'),
+	    voice: VoiceSettingsSchema.describe('Voice settings'),
 	    preferredLanguage: z.string().nullable().describe('Preferred UI language (null for auto-detect from device locale)'),
     recentMachinePaths: z.array(z.object({
         machineId: z.string(),
@@ -468,7 +460,11 @@ export const settingsDefaults: Settings = {
     scmDefaultDiffModeByBackend: {},
     scmReviewMaxFiles: 25,
     scmReviewMaxChangedLines: 2000,
+    scmCommitMessageGeneratorEnabled: false,
+    scmCommitMessageGeneratorBackendId: 'claude',
+    scmCommitMessageGeneratorInstructions: '',
     scmIncludeCoAuthoredBy: false,
+    actionsSettingsV1: { v: 1, disabledActionIds: [] },
 
     filesDiffSyntaxHighlightingMode: 'simple',
     filesChangedFilesRowDensity: 'comfortable',
@@ -483,9 +479,16 @@ export const settingsDefaults: Settings = {
     filesEditorBridgeMaxChunkBytes: 64_000,
     filesEditorWebMonacoEnabled: true,
     filesEditorNativeCodeMirrorEnabled: true,
+
     useProfiles: false,
     sessionDefaultPermissionModeByAgent: DEFAULT_SESSION_PERMISSION_MODE_BY_AGENT,
     sessionPermissionModeApplyTiming: 'immediate',
+    sessionReplayEnabled: false,
+    sessionReplayStrategy: 'recent_messages',
+    sessionReplayRecentMessagesCount: 16,
+    executionRunsGuidanceEnabled: false,
+    executionRunsGuidanceMaxChars: 4_000,
+    executionRunsGuidanceEntries: [],
     sessionUseTmux: false,
     sessionTmuxSessionName: 'happy',
     sessionTmuxIsolated: true,
@@ -506,53 +509,12 @@ export const settingsDefaults: Settings = {
     hideInactiveSessions: false,
     groupInactiveSessionsByProject: false,
     showEnvironmentBadge: true,
-    multiServerEnabled: false,
-    multiServerSelectedServerIds: [],
-    multiServerPresentation: 'grouped',
-    multiServerProfiles: [],
-    multiServerActiveProfileId: null,
+    serverSelectionGroups: [],
+    serverSelectionActiveTargetKind: null,
+    serverSelectionActiveTargetId: null,
 	    reviewPromptAnswered: false,
 	    reviewPromptLikedApp: null,
-	    voiceMode: 'happier',
-	    voiceProviderId: 'happier_elevenlabs_agents',
-	    voiceByoElevenLabsAgentId: null,
-	    voiceByoElevenLabsApiKey: null,
-	    voiceAssistantLanguage: null,
-	    voiceShareSessionSummary: true,
-	    voiceShareRecentMessages: true,
-	    voiceRecentMessagesCount: 10,
-	    voiceShareToolNames: true,
-	    voiceSharePermissionRequests: true,
-		    voiceShareFilePaths: false,
-		    voiceShareToolArgs: false,
-		    voiceLocalSttBaseUrl: null,
-		    voiceLocalUseDeviceStt: false,
-		    voiceLocalSttApiKey: null,
-		    voiceLocalSttModel: 'whisper-1',
-		    voiceLocalTtsBaseUrl: null,
-		    voiceLocalUseDeviceTts: false,
-		    voiceLocalTtsApiKey: null,
-		    voiceLocalTtsModel: 'tts-1',
-		    voiceLocalTtsVoice: 'alloy',
-		    voiceLocalTtsFormat: 'mp3',
-		    voiceLocalAutoSpeakReplies: true,
-	    voiceLocalConversationMode: 'direct_session',
-	    voiceLocalMediatorBackend: 'daemon',
-	    voiceMediatorAgentSource: 'session',
-	    voiceMediatorAgentId: 'claude',
-	    voiceMediatorPermissionPolicy: 'read_only',
-	    voiceMediatorIdleTtlSeconds: 300,
-	    voiceMediatorChatModelSource: 'custom',
-	    voiceMediatorChatModelId: 'default',
-	    voiceMediatorCommitModelSource: 'chat',
-	    voiceMediatorCommitModelId: 'default',
-	    voiceLocalChatBaseUrl: null,
-	    voiceLocalChatApiKey: null,
-	    voiceLocalChatChatModel: 'default',
-	    voiceLocalChatCommitModel: 'default',
-	    voiceLocalChatTemperature: 0.4,
-	    voiceLocalChatMaxTokens: null,
-	    voiceMediatorVerbosity: 'short',
+	    voice: voiceSettingsDefaults,
 	    preferredLanguage: null,
 	    recentMachinePaths: [],
 	    lastUsedAgent: null,
@@ -573,7 +535,6 @@ export const settingsDefaults: Settings = {
     favoriteProfiles: [],
     // Dismissed CLI warnings (empty by default)
     dismissedCLIWarnings: { perMachine: {}, global: {} },
-
     terminalConnectLegacySecretExportEnabled: false,
 
     toolViewDetailLevelDefault: 'summary',
@@ -645,6 +606,52 @@ export function settingsParse(settings: unknown): Settings {
             return;
         }
 
+        // Special-case execution runs guidance entries: validate per entry, keep valid ones.
+        if (key === 'executionRunsGuidanceEntries') {
+            const entriesValue = input[key];
+            if (Array.isArray(entriesValue)) {
+                const parsedEntries: Array<z.infer<typeof ExecutionRunsGuidanceEntrySchema>> = [];
+                for (const rawEntry of entriesValue) {
+                    const parsedEntry = ExecutionRunsGuidanceEntrySchema.safeParse(rawEntry);
+                    if (parsedEntry.success) {
+                        parsedEntries.push(parsedEntry.data);
+                    } else if (isDev || debug) {
+                        console.warn('[settingsParse] Dropping invalid executionRunsGuidance entry', parsedEntry.error.issues);
+                    }
+                }
+                result.executionRunsGuidanceEntries = parsedEntries;
+            }
+            return;
+        }
+
+        // Special-case actions settings: validate per action id, keep valid ones.
+        if (key === 'actionsSettingsV1') {
+            const parsedSettings = ActionsSettingsV1SettingsSchema.safeParse(input[key]);
+            if (parsedSettings.success) {
+                const rawIds = Array.isArray(parsedSettings.data.disabledActionIds)
+                    ? parsedSettings.data.disabledActionIds
+                    : [];
+                const out: string[] = [];
+                const seen = new Set<string>();
+                for (const rawId of rawIds) {
+                    const parsedId = ActionIdSchema.safeParse(rawId);
+                    if (!parsedId.success) continue;
+                    const id = parsedId.data;
+                    if (seen.has(id)) continue;
+                    seen.add(id);
+                    out.push(id);
+                }
+                result.actionsSettingsV1 = { v: 1, disabledActionIds: out };
+            }
+            return;
+        }
+
+        // Special-case voice: tolerate partially-invalid nested objects.
+        if (key === 'voice') {
+            result.voice = voiceSettingsParse(input[key]);
+            return;
+        }
+
         const schema = SettingsSchema.shape[key];
         const parsedField = schema.safeParse(input[key]);
         if (parsedField.success) {
@@ -667,6 +674,19 @@ export function settingsParse(settings: unknown): Settings {
     // Migration: Convert old 'zh' language code to 'zh-Hans'
     if (result.preferredLanguage === 'zh') {
         result.preferredLanguage = 'zh-Hans';
+    }
+
+    if (result.serverSelectionActiveTargetKind !== "server" && result.serverSelectionActiveTargetKind !== "group") {
+        result.serverSelectionActiveTargetKind = null;
+    }
+    if (result.serverSelectionActiveTargetKind === null) {
+        result.serverSelectionActiveTargetId = null;
+    } else if (
+        typeof result.serverSelectionActiveTargetId !== "string"
+        || result.serverSelectionActiveTargetId.trim().length === 0
+    ) {
+        result.serverSelectionActiveTargetKind = null;
+        result.serverSelectionActiveTargetId = null;
     }
 
     // Migration: Convert legacy combined picker-search toggle into per-picker toggles.
@@ -744,17 +764,8 @@ export function settingsParse(settings: unknown): Settings {
 
         result.sessionDefaultPermissionModeByAgent = byAgent as any;
     }
-	    // Migration: derive `voiceProviderId` from legacy `voiceMode` when missing.
-	    // This keeps older clients (that only persisted voiceMode) working with the new provider selector.
-	    if (!('voiceProviderId' in input)) {
-	        if (result.voiceMode === 'off') result.voiceProviderId = 'off';
-	        if (result.voiceMode === 'happier') result.voiceProviderId = 'happier_elevenlabs_agents';
-	        if (result.voiceMode === 'byo_elevenlabs') result.voiceProviderId = 'byo_elevenlabs_agents';
-	    }
 
-	    // Safety: tool arguments are never shared with voice providers.
-	    // Even if a persisted settings blob contains `voiceShareToolArgs: true`, force it off.
-	    result.voiceShareToolArgs = false;
+    // Voice settings intentionally do not migrate legacy flat voice keys.
 
     // Migration: hard cutover from legacy `inbox.friends` feature id to `social.friends`.
     // Preserve explicit user choice when present.
@@ -785,15 +796,23 @@ export function settingsParse(settings: unknown): Settings {
         'expScmOperations',
         'expShowThinkingMessages',
         'expSessionType',
+        'expAutomations',
         'expZen',
         'expInboxFriends',
         // Hard cutover: experimentalFeatureToggles was replaced by featureToggles.
         'experimentalFeatureToggles',
     ]);
 
+    function isDroppedLegacyServerSelectionKey(key: string): boolean {
+        if (key.startsWith('multiServer')) return true;
+        if (!key.startsWith('activeServerTarget')) return false;
+        return key.endsWith('Kind') || key.endsWith('Id');
+    }
+
     // Preserve unknown fields (forward compatibility).
     for (const [key, value] of Object.entries(input)) {
         if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+        if (isDroppedLegacyServerSelectionKey(key)) continue;
         if (DROPPED_KEYS.has(key)) continue;
         if (!Object.prototype.hasOwnProperty.call(SettingsSchema.shape, key)) {
             Object.defineProperty(result, key, {

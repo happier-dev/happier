@@ -32,6 +32,10 @@ vi.mock('react-native', () => {
     return {
         View: 'View',
         ActivityIndicator: 'ActivityIndicator',
+        Pressable: 'Pressable',
+        AppState: {
+            addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+        },
         Platform: platform,
     };
 });
@@ -55,7 +59,27 @@ vi.mock('react-native-unistyles', () => ({
             dark: false,
         },
     }),
-    StyleSheet: { create: (value: any) => (typeof value === 'function' ? value() : value) },
+    StyleSheet: {
+        create: (value: any) => {
+            const theme = {
+                colors: {
+                    surface: '#111',
+                    surfaceHigh: '#222',
+                    divider: '#333',
+                    text: '#eee',
+                    textSecondary: '#aaa',
+                    textLink: '#08f',
+                    warning: '#f80',
+                    input: {
+                        background: '#222',
+                        placeholder: '#666',
+                    },
+                },
+                dark: false,
+            };
+            return typeof value === 'function' ? value(theme, {}) : value;
+        },
+    },
 }));
 
 vi.mock('@react-navigation/native', () => ({
@@ -97,6 +121,13 @@ vi.mock('@/constants/Typography', () => ({
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
+}));
+
+vi.mock('@/modal', () => ({
+    Modal: {
+        alert: vi.fn(),
+        confirm: vi.fn(async () => true),
+    },
 }));
 
 vi.mock('@/scm/scmAttribution', () => ({
@@ -298,6 +329,13 @@ describe('FilesScreen', () => {
         });
         await act(async () => {});
 
+        const toolbarProps = filesToolbarSpy.mock.calls.at(-1)?.[0];
+        expect(typeof toolbarProps?.onToggleScmPanel).toBe('function');
+        await act(async () => {
+            toolbarProps.onToggleScmPanel();
+        });
+        await act(async () => {});
+
         expect(sourceControlOperationsPanelProps).toBeTruthy();
 
         sourceControlOperationsPanelProps.onOpenCommit('\n32a2a2aba05750117ad36d9386b396fdd5416a2e');
@@ -341,6 +379,13 @@ describe('FilesScreen', () => {
         });
         await act(async () => {});
 
+        const toolbarProps = filesToolbarSpy.mock.calls.at(-1)?.[0];
+        expect(typeof toolbarProps?.onToggleScmPanel).toBe('function');
+        await act(async () => {
+            toolbarProps.onToggleScmPanel();
+        });
+        await act(async () => {});
+
         expect(sourceControlOperationsPanelProps).toBeTruthy();
 
         // Defensive: Some UIs may pass "oneline" strings by accident; only the first token is a valid ref.
@@ -363,9 +408,9 @@ describe('FilesScreen', () => {
         });
         await act(async () => {});
 
-        expect(changedFilesListProps).toBeTruthy();
+        expect(changedFilesReviewProps).toBeTruthy();
 
-        changedFilesListProps.onFilePress({
+        changedFilesReviewProps.onFilePress({
             fileName: 'hello world.txt',
             fullPath: 'dir/hello world.txt',
             status: 'modified',
@@ -380,24 +425,11 @@ describe('FilesScreen', () => {
         });
     });
 
-    it('switches to review mode when the toolbar requests it', async () => {
+    it('defaults to review mode for changed files', async () => {
         const Screen = (await import('./files')).default;
 
         await act(async () => {
             renderer.create(<Screen />);
-        });
-        await act(async () => {});
-
-        expect(changedFilesListProps).toBeTruthy();
-        expect(changedFilesReviewProps).toBeNull();
-
-        const toolbarProps = filesToolbarSpy.mock.calls
-            .map((call) => call[0])
-            .find((props) => typeof props?.onChangedFilesPresentationChange === 'function');
-        expect(typeof toolbarProps?.onChangedFilesPresentationChange).toBe('function');
-
-        await act(async () => {
-            toolbarProps.onChangedFilesPresentationChange('review');
         });
         await act(async () => {});
 
@@ -409,6 +441,13 @@ describe('FilesScreen', () => {
 
         await act(async () => {
             renderer.create(<Screen />);
+        });
+        await act(async () => {});
+
+        const toolbarProps = filesToolbarSpy.mock.calls.at(-1)?.[0];
+        expect(typeof toolbarProps?.onToggleScmPanel).toBe('function');
+        await act(async () => {
+            toolbarProps.onToggleScmPanel();
         });
         await act(async () => {});
 
@@ -526,6 +565,13 @@ describe('FilesScreen', () => {
         let tree: renderer.ReactTestRenderer;
         await act(async () => {
             tree = renderer.create(<Screen />);
+        });
+        await act(async () => {});
+
+        const toolbarProps = filesToolbarSpy.mock.calls.at(-1)?.[0];
+        expect(typeof toolbarProps?.onToggleScmPanel).toBe('function');
+        await act(async () => {
+            toolbarProps.onToggleScmPanel();
         });
         await act(async () => {});
 

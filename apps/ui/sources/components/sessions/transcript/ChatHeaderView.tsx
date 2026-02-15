@@ -15,6 +15,7 @@ interface ChatHeaderViewProps {
     onBackPress?: () => void;
     onAvatarPress?: () => void;
     avatarId?: string;
+    rightElement?: React.ReactNode;
     backgroundColor?: string;
     tintColor?: string;
     isConnected?: boolean;
@@ -27,6 +28,7 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
     onBackPress,
     onAvatarPress,
     avatarId,
+    rightElement,
     isConnected = true,
     flavor,
 }) => {
@@ -86,7 +88,13 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
                         </Text>
                     )}
                 </View>
-                
+
+                {rightElement ? (
+                    <View style={styles.rightElementContainer}>
+                        {rightElement}
+                    </View>
+                ) : null}
+
                 {avatarId && onAvatarPress && (
                     <Pressable
                         onPress={onAvatarPress}
@@ -152,5 +160,9 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         marginRight: Platform.select({ ios: -8, default: -8 }),
+    },
+    rightElementContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
     },
 });

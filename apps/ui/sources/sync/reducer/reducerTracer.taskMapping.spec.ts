@@ -42,6 +42,27 @@ describe('reducerTracer task mapping', () => {
         expect(state.processedIds.size).toBe(2);
     });
 
+    it('treats explicit sidechainId as authoritative even when isSidechain is false', () => {
+        const state = createTracer();
+        const messages: NormalizedMessage[] = [
+            {
+                id: 'msg-sidechain-explicit',
+                localId: null,
+                createdAt: 1000,
+                role: 'agent',
+                isSidechain: false,
+                sidechainId: 'tool_task_1',
+                content: [{ type: 'text', text: 'child', uuid: 'uuid-child', parentUUID: null }],
+            },
+        ];
+
+        const traced = traceMessages(state, messages);
+
+        expect(traced).toHaveLength(1);
+        expect(traced[0].sidechainId).toBe('tool_task_1');
+        expect(state.uuidToSidechainId.get('uuid-child')).toBe('tool_task_1');
+    });
+
     it('tracks Task tool calls by prompt and tool id', () => {
         const state = createTracer();
         const messages: NormalizedMessage[] = [

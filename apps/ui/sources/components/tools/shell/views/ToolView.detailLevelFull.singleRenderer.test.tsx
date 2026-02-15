@@ -104,4 +104,23 @@ describe('ToolView (detail level: full)', () => {
         expect(tree.root.findAllByType('SpecificToolView' as any)).toHaveLength(1);
         expect(renderedToolViewSpy).toHaveBeenCalledWith(expect.objectContaining({ detailLevel: 'full' }));
     });
+
+    it('keeps inline Task renderer in summary detail level', async () => {
+        renderedToolViewSpy.mockReset();
+
+        const { ToolView } = await import('./ToolView');
+        const taskTool = makeToolCall({
+            name: 'Task',
+            input: { operation: 'run', description: 'Explore' },
+            result: null,
+        });
+
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(ToolView, { tool: taskTool, metadata: null }));
+        });
+
+        expect(tree.root.findAllByType('SpecificToolView' as any)).toHaveLength(1);
+        expect(renderedToolViewSpy).toHaveBeenCalledWith(expect.objectContaining({ detailLevel: 'summary' }));
+    });
 });

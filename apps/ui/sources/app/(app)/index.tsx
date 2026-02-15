@@ -14,7 +14,7 @@ import { trackAccountCreated, trackAccountRestored } from '@/track';
 import { HomeHeaderNotAuth } from "@/components/navigation/shell/HomeHeader";
 import { MainView } from "@/components/navigation/shell/MainView";
 import { t } from '@/text';
-import { getServerFeatures } from "@/sync/api/capabilities/apiFeatures";
+import { getReadyServerFeatures } from "@/sync/api/capabilities/getReadyServerFeatures";
 import { TokenStorage } from "@/auth/storage/tokenStorage";
 import sodium from '@/encryption/libsodium.lib';
 import { getAuthProvider } from "@/auth/providers/registry";
@@ -54,7 +54,7 @@ function NotAuthenticated() {
         let mounted = true;
         void (async () => {
             try {
-                const features = await getServerFeatures();
+                const features = await getReadyServerFeatures();
                 const methods = features?.features?.auth?.signup?.methods ?? [];
                 const enabled = methods
                     .filter((m) => m.enabled === true)

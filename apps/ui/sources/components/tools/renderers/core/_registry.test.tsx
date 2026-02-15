@@ -22,6 +22,7 @@ vi.mock('../web/WebFetchView', () => ({ WebFetchView: () => null }));
 vi.mock('../web/WebSearchView', () => ({ WebSearchView: () => null }));
 vi.mock('../fileOps/CodeSearchView', () => ({ CodeSearchView: () => null }));
 vi.mock('../workflow/ReasoningView', () => ({ ReasoningView: () => null }));
+vi.mock('../workflow/SubAgentRunView', () => ({ SubAgentRunView: () => null }));
 vi.mock('../system/WorkspaceIndexingPermissionView', () => ({ WorkspaceIndexingPermissionView: () => null }));
 vi.mock('../fileOps/DeleteView', () => ({ DeleteView: () => null }));
 vi.mock('../system/UnknownToolView', () => ({ UnknownToolView: () => null }));
@@ -68,6 +69,11 @@ describe('toolViewRegistry', () => {
     it('returns a renderer for canonical Patch tools', async () => {
         const { getToolViewComponent } = await loadRegistry();
         expect(getToolViewComponent('Patch')).not.toBeNull();
+    });
+
+    it('maps SubAgentRun to its dedicated view', async () => {
+        const [{ getToolViewComponent, toolViewRegistry }] = await Promise.all([import('./_registry')]);
+        expect(getToolViewComponent('SubAgentRun')).toBe(toolViewRegistry.SubAgentRun);
     });
 
     it('uses the MCP tool renderer for any mcp__* tool name', async () => {

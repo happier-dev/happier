@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, Text, TextInput, View, type ViewStyle } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Popover, type PopoverPlacement } from '@/components/ui/popover';
@@ -18,6 +17,7 @@ export type DropdownMenuItem = Readonly<{
     category?: string;
     icon?: React.ReactNode;
     shortcut?: string;
+    rightElement?: React.ReactNode;
     disabled?: boolean;
 }>;
 
@@ -105,22 +105,17 @@ export function DropdownMenu(props: DropdownMenuProps) {
             category: item.category,
             disabled: item.disabled,
             left: item.icon ?? null,
-            right: item.shortcut
-                ? (
-                    <View style={{ paddingHorizontal: 10, paddingVertical: 5, backgroundColor: 'rgba(0, 0, 0, 0.04)', borderRadius: 6 }}>
-                        <Text style={{ fontSize: 12, color: '#666', fontWeight: '500' }}>
-                            {item.shortcut}
-                        </Text>
-                    </View>
-                )
-                : (
-                    <Ionicons
-                        name="chevron-forward"
-                        size={18}
-                        color={theme.colors.textSecondary}
-                        style={{ opacity: rowVariant === 'slim' ? 0 : 1 }}
-                    />
-                ),
+            right: item.rightElement
+                ? item.rightElement
+                : item.shortcut
+                    ? (
+                        <View style={{ paddingHorizontal: 10, paddingVertical: 5, backgroundColor: 'rgba(0, 0, 0, 0.04)', borderRadius: 6 }}>
+                            <Text style={{ fontSize: 12, color: '#666', fontWeight: '500' }}>
+                                {item.shortcut}
+                            </Text>
+                        </View>
+                    )
+                    : null,
         }));
     }, [props.items, rowVariant, theme.colors.textSecondary]);
 

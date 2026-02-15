@@ -10,6 +10,7 @@ import { getServerInfo } from '@/sync/domains/server/serverConfig';
 import { Image } from 'expo-image';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
+import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
     headerButton: {
@@ -85,13 +86,15 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
 
 export const HomeHeader = React.memo(() => {
     const { theme } = useUnistyles();
+    const automationsSupport = useAutomationsSupport();
+    const showAutomations = automationsSupport?.enabled !== false;
 
     return (
         <View style={{ backgroundColor: theme.colors.groupped.background }}>
             <Header
                 title={<HeaderTitleWithSubtitle />}
                 headerRight={() => <HeaderRight />}
-                headerLeft={() => <HeaderLeft />}
+                headerLeft={() => <HeaderLeft showAutomations={showAutomations} />}
                 headerShadowVisible={false}
                 headerTransparent={true}
             />
@@ -107,7 +110,7 @@ export const HomeHeaderNotAuth = React.memo(() => {
         <Header
             title={<HeaderTitleWithSubtitle subtitle={serverInfo.isCustom ? serverInfo.hostname + (serverInfo.port ? `:${serverInfo.port}` : '') : undefined} />}
             headerRight={() => <HeaderRightNotAuth />}
-            headerLeft={() => <HeaderLeft />}
+            headerLeft={() => <HeaderLeft showAutomations={false} />}
             headerShadowVisible={false}
             headerBackgroundColor={theme.colors.groupped.background}
         />
@@ -147,17 +150,31 @@ function HeaderRightNotAuth() {
     );
 }
 
-function HeaderLeft() {
+function HeaderLeft(props: { showAutomations: boolean }) {
+    const router = useRouter();
     const styles = stylesheet;
     const { theme } = useUnistyles();
     return (
-        <View style={styles.logoContainer}>
-            <Image
-                source={require('@/assets/images/logo-black.png')}
-                contentFit="contain"
-                style={[{ width: 24, height: 24 }]}
-                tintColor={theme.colors.header.tint}
-            />
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <View style={styles.logoContainer}>
+                <Image
+                    source={require('@/assets/images/logo-black.png')}
+                    contentFit="contain"
+                    style={[{ width: 24, height: 24 }]}
+                    tintColor={theme.colors.header.tint}
+                />
+            </View>
+            {props.showAutomations ? (
+                <Pressable
+                    onPress={() => router.push('/automations')}
+                    hitSlop={15}
+                    style={styles.headerButton}
+                    accessibilityRole="button"
+                    accessibilityLabel="Open automations"
+                >
+                    <Ionicons name="timer-outline" size={22} color={theme.colors.header.tint} />
+                </Pressable>
+            ) : null}
         </View>
     );
 }

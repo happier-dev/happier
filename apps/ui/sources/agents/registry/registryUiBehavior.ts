@@ -7,6 +7,7 @@ import type { Settings } from '@/sync/domains/settings/settings';
 import { buildAcpLoadSessionPrefetchRequest, readAcpLoadSessionSupport, shouldPrefetchAcpCapabilities } from '@/agents/runtime/acpRuntimeResume';
 import { CODEX_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/codex/uiBehavior';
 import { AUGGIE_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/auggie/uiBehavior';
+import { PI_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/pi/uiBehavior';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput';
 
 type CapabilityResults = Partial<Record<CapabilityId, CapabilityDetectResult>>;
@@ -132,6 +133,7 @@ function buildDefaultAgentUiBehavior(agentId: AgentId): AgentUiBehavior {
 const AGENTS_UI_BEHAVIOR_OVERRIDES: Readonly<Partial<Record<AgentId, AgentUiBehavior>>> = Object.freeze({
     codex: CODEX_UI_BEHAVIOR_OVERRIDE,
     auggie: AUGGIE_UI_BEHAVIOR_OVERRIDE,
+    pi: PI_UI_BEHAVIOR_OVERRIDE,
 });
 
 export const AGENTS_UI_BEHAVIOR: Readonly<Record<AgentId, AgentUiBehavior>> = Object.freeze(

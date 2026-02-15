@@ -19,6 +19,25 @@ function extractCommandArrayLike(value: unknown): string[] | null {
 
 export function extractShellCommand(input: unknown): string | null {
     const parsed = maybeParseJson(input);
+
+    // Sometimes we get raw argv arrays directly (e.g. ['echo', 'hi']).
+    const rawArgvArray = extractCommandArrayLike(parsed);
+    if (rawArgvArray && rawArgvArray.length > 0) {
+        // Remove shell wrapper prefix if present (bash/zsh with -lc flag)
+        if (
+            rawArgvArray.length >= 3
+            && (rawArgvArray[0] === 'bash'
+                || rawArgvArray[0] === '/bin/bash'
+                || rawArgvArray[0] === 'zsh'
+                || rawArgvArray[0] === '/bin/zsh')
+            && rawArgvArray[1] === '-lc'
+            && typeof rawArgvArray[2] === 'string'
+        ) {
+            return rawArgvArray[2];
+        }
+        return rawArgvArray.join(' ');
+    }
+
     const obj = asRecord(parsed);
     if (!obj) return null;
 

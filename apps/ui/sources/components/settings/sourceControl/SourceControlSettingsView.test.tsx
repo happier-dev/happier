@@ -13,8 +13,15 @@ const setFilesDiffSyntaxHighlightingMode = vi.fn();
 const setFilesChangedFilesRowDensity = vi.fn();
 const setScmCommitMessageGeneratorEnabled = vi.fn();
 const setScmCommitMessageGeneratorBackendId = vi.fn();
+const setScmCommitMessageGeneratorInstructions = vi.fn();
 
 const modalPrompt = vi.fn();
+
+vi.mock('react-native', () => ({
+    View: 'View',
+    Text: 'Text',
+    TextInput: 'TextInput',
+}));
 
 vi.mock('react-native-unistyles', () => ({
     useUnistyles: () => ({
@@ -41,6 +48,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (name === 'filesChangedFilesRowDensity') return ['comfortable', setFilesChangedFilesRowDensity];
         if (name === 'scmCommitMessageGeneratorEnabled') return [false, setScmCommitMessageGeneratorEnabled];
         if (name === 'scmCommitMessageGeneratorBackendId') return ['claude', setScmCommitMessageGeneratorBackendId];
+        if (name === 'scmCommitMessageGeneratorInstructions') return ['', setScmCommitMessageGeneratorInstructions];
         return [null, vi.fn()];
     },
 }));
@@ -164,5 +172,26 @@ describe('SourceControlSettingsView', () => {
         });
 
         expect(setScmCommitMessageGeneratorEnabled).toHaveBeenCalledWith(true);
+    });
+
+    it('allows editing commit message generator instructions', async () => {
+        setScmCommitMessageGeneratorInstructions.mockClear();
+
+        const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(SourceControlSettingsView));
+        });
+
+        const inputs = tree!.root.findAllByType('TextInput' as any);
+        const instructions = inputs.find((n: any) => n.props.placeholder === 'Commit message instructions');
+        expect(instructions).toBeTruthy();
+
+        await act(async () => {
+            instructions!.props.onChangeText?.('Use imperative mood');
+        });
+
+        expect(setScmCommitMessageGeneratorInstructions).toHaveBeenCalledWith('Use imperative mood');
     });
 });

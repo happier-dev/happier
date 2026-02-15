@@ -6,7 +6,8 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { scmStatusSync } from '@/scm/scmStatusSync';
-import { voiceHooks } from '@/realtime/hooks/voiceHooks';
+import { voiceHooks } from '@/voice/context/voiceHooks';
+import { deriveNewPermissionRequests } from '@/sync/domains/permissions/deriveNewPermissionRequests';
 import { didControlReturnToMobile } from '@/sync/domains/session/control/controlledByUserTransitions';
 import {
     buildUpdatedSessionFromSocketUpdate,
@@ -28,6 +29,7 @@ import {
     handleRelationshipUpdatedSocketUpdate,
     handleTodoKvBatchUpdate,
 } from '@/sync/engine/social/syncFeed';
+import { applyAutomationSocketUpdate } from '@/sync/engine/automations/automationSocketApply';
 import { normalizeRelationshipUpdatedUpdateBody } from '@/sync/engine/social/relationshipUpdate';
 import { parseEphemeralUpdate, parseUpdateContainer } from './socketParse';
 import { FeedBodySchema } from '@/sync/domains/social/feedTypes';
@@ -55,6 +57,7 @@ export async function handleSocketUpdate(params: {
     invalidateFriends: () => void;
     invalidateFriendRequests: () => void;
     invalidateFeed: () => void;
+    invalidateAutomations: () => void;
     invalidateTodos: () => void;
     onTaskLifecycleEvent?: (sessionId: string, event: import('@/sync/engine/sessions/taskLifecycle').TaskLifecycleEvent) => void;
     log: { log: (message: string) => void };
@@ -78,6 +81,7 @@ export async function handleSocketUpdate(params: {
         invalidateFriends,
         invalidateFriendRequests,
         invalidateFeed,
+        invalidateAutomations,
         invalidateTodos,
         onTaskLifecycleEvent,
         log,
@@ -105,6 +109,7 @@ export async function handleSocketUpdate(params: {
         invalidateFriends,
         invalidateFriendRequests,
         invalidateFeed,
+        invalidateAutomations,
         invalidateTodos,
         onTaskLifecycleEvent,
         log,
@@ -130,6 +135,7 @@ export async function handleUpdateContainer(params: {
     invalidateFriends: () => void;
     invalidateFriendRequests: () => void;
     invalidateFeed: () => void;
+    invalidateAutomations: () => void;
     invalidateTodos: () => void;
     onTaskLifecycleEvent?: (sessionId: string, event: import('@/sync/engine/sessions/taskLifecycle').TaskLifecycleEvent) => void;
     log: { log: (message: string) => void };
@@ -153,6 +159,7 @@ export async function handleUpdateContainer(params: {
         invalidateFriends,
         invalidateFriendRequests,
         invalidateFeed,
+        invalidateAutomations,
         invalidateTodos,
         onTaskLifecycleEvent,
         log,
@@ -167,7 +174,7 @@ export async function handleUpdateContainer(params: {
             fetchSessions,
             applyMessages,
             isMutableToolCall: (sessionId, toolUseId) => storage.getState().isMutableToolCall(sessionId, toolUseId),
-            invalidateGitStatus: (sessionId) => scmStatusSync.invalidate(sessionId),
+            invalidateScmStatus: (sessionId) => scmStatusSync.invalidate(sessionId),
             isSessionMessagesLoaded,
             getSessionMaterializedMaxSeq,
             markSessionMaterializedMaxSeq,
@@ -184,7 +191,7 @@ export async function handleUpdateContainer(params: {
             deleteSession: (sessionId) => storage.getState().deleteSession(sessionId),
             removeSessionEncryption: (sessionId) => encryption.removeSessionEncryption(sessionId),
             removeProjectManagerSession: (sessionId) => projectManager.removeSession(sessionId),
-            clearGitStatusForSession: (sessionId) => scmStatusSync.clearForSession(sessionId),
+            clearScmStatusForSession: (sessionId) => scmStatusSync.clearForSession(sessionId),
             log,
         });
     } else if (updateData.body.t === 'pending-changed') {
@@ -226,15 +233,12 @@ export async function handleUpdateContainer(params: {
                 scmStatusSync.invalidate(updateData.body.id);
 
                 // Check for new permission requests and notify voice assistant
-                if (agentState?.requests && Object.keys(agentState.requests).length > 0) {
-                    const requestIds = Object.keys(agentState.requests);
-                    const firstRequest = agentState.requests[requestIds[0]];
-                    const toolName = firstRequest?.tool;
+                for (const nextRequest of deriveNewPermissionRequests(session.agentState?.requests, agentState?.requests)) {
                     voiceHooks.onPermissionRequested(
                         updateData.body.id,
-                        requestIds[0],
-                        toolName,
-                        firstRequest?.arguments,
+                        nextRequest.requestId,
+                        nextRequest.toolName,
+                        nextRequest.toolArgs,
                     );
                 }
 
@@ -259,6 +263,7 @@ export async function handleUpdateContainer(params: {
             encryption,
             applyProfile: (profile) => storage.getState().applyProfile(profile),
             applySettings: (settings, version) => storage.getState().applySettings(settings, version),
+            getLocalSettings: () => storage.getState().settings,
             log,
         });
     } else if (updateData.body.t === 'update-machine') {
@@ -372,6 +377,11 @@ export async function handleUpdateContainer(params: {
             invalidateTodosSync: invalidateTodos,
             log,
         });
+    } else if (applyAutomationSocketUpdate({
+        updateType: updateData.body.t,
+        invalidateAutomations,
+    })) {
+        // handled by automation domain
     } else if (
         updateData.body.t === 'session-shared' ||
         updateData.body.t === 'session-share-updated' ||

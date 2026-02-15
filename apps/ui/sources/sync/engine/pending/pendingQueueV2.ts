@@ -3,7 +3,7 @@ import type { Encryption } from '@/sync/encryption/encryption';
 import { nowServerMs } from '@/sync/runtime/time';
 import { RawRecordSchema, type RawRecord } from '@/sync/typesRaw';
 import { randomUUID } from '@/platform/randomUUID';
-import { systemPrompt } from '@/agents/prompt/systemPrompt';
+import { buildSessionAppendSystemPrompt } from '@/agents/prompt/buildSessionAppendSystemPrompt';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { resolveSentFrom } from '@/sync/domains/messages/sentFrom';
 import { buildSendMessageMeta } from '@/sync/domains/messages/buildSendMessageMeta';
@@ -186,6 +186,7 @@ export async function enqueuePendingMessageV2(params: {
     const agentId = resolveAgentIdFromFlavor(flavor);
     const modelMode = session.modelMode || (agentId ? getAgentCore(agentId).model.defaultMode : 'default');
     const model = agentId && getAgentCore(agentId).model.supportsSelection && modelMode !== 'default' ? modelMode : undefined;
+    const appendSystemPrompt = buildSessionAppendSystemPrompt({ settings: storage.getState().settings });
 
     const localId = randomUUID();
     const rawRecord: RawRecord = {
@@ -195,7 +196,7 @@ export async function enqueuePendingMessageV2(params: {
             sentFrom: resolveSentFrom(),
             permissionMode: permissionMode || 'default',
             model,
-            appendSystemPrompt: systemPrompt,
+            appendSystemPrompt,
             displayText,
             agentId,
             settings: storage.getState().settings,
@@ -260,6 +261,8 @@ export async function updatePendingMessageV2(params: {
         throw new Error('Pending message not found');
     }
 
+    const appendSystemPrompt = buildSessionAppendSystemPrompt({ settings: storage.getState().settings });
+
     const rawRecord: RawRecord = (() => {
         if (existing.rawRecord) {
             const record = existing.rawRecord as any;
@@ -267,7 +270,7 @@ export async function updatePendingMessageV2(params: {
             return {
                 ...record,
                 content: { type: 'text', text },
-                meta: { ...existingMeta, appendSystemPrompt: systemPrompt },
+                meta: { ...existingMeta, appendSystemPrompt },
             };
         }
 
@@ -285,7 +288,7 @@ export async function updatePendingMessageV2(params: {
                 sentFrom: resolveSentFrom(),
                 permissionMode: permissionMode || 'default',
                 model,
-                appendSystemPrompt: systemPrompt,
+                appendSystemPrompt,
                 displayText: typeof existing.displayText === 'string' ? existing.displayText : undefined,
                 agentId,
                 settings: storage.getState().settings,

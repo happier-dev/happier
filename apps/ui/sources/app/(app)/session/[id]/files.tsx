@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, ActivityIndicator, Platform } from 'react-native';
+import { View, ActivityIndicator, Platform, Pressable } from 'react-native';
 import { useRoute } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -46,6 +46,9 @@ import type { ChangedFilesPresentation } from '@/scm/scmAttribution';
 import { resolveSessionMachineReachability } from '@/components/sessions/model/resolveSessionMachineReachability';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import { Octicons } from '@expo/vector-icons';
+import { applyFileStageAction } from '@/scm/operations/applyFileStageAction';
+import { isAtomicCommitStrategy } from '@/scm/settings/commitStrategy';
 
 export default function FilesScreen() {
     const route = useRoute();
@@ -71,8 +74,10 @@ export default function FilesScreen() {
     const [isSearching, setIsSearching] = React.useState(false);
     const [showAllRepositoryFiles, setShowAllRepositoryFiles] = React.useState(false);
     const [changedFilesViewMode, setChangedFilesViewMode] = React.useState(getDefaultChangedFilesViewMode);
-    const [changedFilesPresentation, setChangedFilesPresentation] = React.useState<ChangedFilesPresentation>('list');
+    const [changedFilesPresentation, setChangedFilesPresentation] = React.useState<ChangedFilesPresentation>('review');
     const [reviewFocusPath, setReviewFocusPath] = React.useState<string | null>(null);
+    const [scmPanelExpanded, setScmPanelExpanded] = React.useState(false);
+    const [stageBusyPath, setStageBusyPath] = React.useState<string | null>(null);
 
     const deepLinkPresentation = React.useMemo(() => {
         const raw = (localSearchParams as any)?.presentation;
@@ -153,6 +158,12 @@ export default function FilesScreen() {
             setChangedFilesViewMode('repository');
         }
     }, [changedFilesViewMode, showSessionViewToggle]);
+
+    React.useEffect(() => {
+        if (searchQuery.trim()) {
+            setScmPanelExpanded(false);
+        }
+    }, [searchQuery]);
 
     const {
         historyEntries,
@@ -250,6 +261,18 @@ export default function FilesScreen() {
         }
         return uniquePaths.size;
     }, [commitSelectionPatches, commitSelectionPaths]);
+    const commitSelectionSet = React.useMemo(() => {
+        const out = new Set<string>();
+        for (const path of commitSelectionPaths) {
+            const normalized = path.trim();
+            if (normalized) out.add(normalized);
+        }
+        for (const patchSelection of commitSelectionPatches) {
+            const normalized = patchSelection.path.trim();
+            if (normalized) out.add(normalized);
+        }
+        return out;
+    }, [commitSelectionPatches, commitSelectionPaths]);
 
     React.useEffect(() => {
         let cancelled = false;
@@ -307,6 +330,69 @@ export default function FilesScreen() {
         storage.getState().setSessionRepositoryTreeExpandedPaths(sessionId, paths);
     }, [sessionId]);
 
+    const renderFileActions = React.useCallback((file: ScmFileStatus) => {
+        const busy = stageBusyPath === file.fullPath;
+        const atomic = isAtomicCommitStrategy(scmCommitStrategy);
+        const selectedForCommit = atomic ? commitSelectionSet.has(file.fullPath) : file.isIncluded === true;
+
+        const iconName = selectedForCommit ? 'check' : 'plus';
+        const iconColor = selectedForCommit ? theme.colors.success : theme.colors.textSecondary;
+
+        return (
+            <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={selectedForCommit ? 'Remove from commit' : 'Add to commit'}
+                disabled={busy || !scmWriteEnabled}
+                onPress={(e: any) => {
+                    e?.stopPropagation?.();
+                    void (async () => {
+                        setStageBusyPath(file.fullPath);
+                        try {
+                            await applyFileStageAction({
+                                sessionId,
+                                sessionPath,
+                                filePath: file.fullPath,
+                                snapshot: scmSnapshot,
+                                scmWriteEnabled,
+                                commitStrategy: scmCommitStrategy,
+                                stage: !selectedForCommit,
+                                surface: 'files',
+                            });
+                        } finally {
+                            setStageBusyPath((prev) => (prev === file.fullPath ? null : prev));
+                        }
+                    })();
+                }}
+                style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: theme.colors.divider,
+                    backgroundColor: theme.colors.surface,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    opacity: (!scmWriteEnabled || busy) ? 0.55 : 1,
+                }}
+            >
+                {busy ? (
+                    <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                ) : (
+                    <Octicons name={iconName as any} size={14} color={iconColor} />
+                )}
+            </Pressable>
+        );
+    }, [
+        commitSelectionSet,
+        scmCommitStrategy,
+        scmSnapshot,
+        scmWriteEnabled,
+        sessionId,
+        sessionPath,
+        stageBusyPath,
+        theme.colors,
+    ]);
+
     return (
         <View style={[styles.container, { backgroundColor: theme.colors.surface }]}>
             <FilesToolbar
@@ -324,12 +410,16 @@ export default function FilesScreen() {
                 showSessionViewToggle={showSessionViewToggle}
                 onChangedFilesViewMode={setChangedFilesViewMode}
                 onChangedFilesPresentationChange={setChangedFilesPresentation}
+                scmPanelExpanded={scmPanelExpanded}
+                onToggleScmPanel={() => setScmPanelExpanded((prev) => !prev)}
             />
 
             <ItemList style={{ flex: 1 }}>
-                {!isRefreshing && scmStatusFiles && <SourceControlBranchSummary theme={theme} scmStatusFiles={scmStatusFiles} />}
+                {scmPanelExpanded && !isRefreshing && scmStatusFiles && (
+                    <SourceControlBranchSummary theme={theme} scmStatusFiles={scmStatusFiles} />
+                )}
 
-                {showScmOperationsPanel && (
+                {scmPanelExpanded && showScmOperationsPanel && (
                     <SourceControlOperationsPanel
                         theme={theme}
                         backendLabel={backendLabel}
@@ -464,6 +554,7 @@ export default function FilesScreen() {
                             onFilePress={handleFilePress}
                             focusPath={reviewFocusPath}
                             rowDensity={changedFilesRowDensity}
+                            renderFileActions={renderFileActions}
                         />
                     ) : (
                         <ChangedFilesList
@@ -476,6 +567,7 @@ export default function FilesScreen() {
                             suppressedInferredCount={suppressedInferredCount}
                             onFilePress={handleFilePress}
                             rowDensity={changedFilesRowDensity}
+                            renderFileActions={renderFileActions}
                         />
                     )
                 ) : null}

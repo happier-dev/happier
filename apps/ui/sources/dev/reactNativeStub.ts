@@ -12,6 +12,7 @@ export const FlatList = 'FlatList' as any;
 export const SectionList = 'SectionList' as any;
 export const Pressable = 'Pressable' as any;
 export const TouchableOpacity = 'TouchableOpacity' as any;
+export const TouchableWithoutFeedback = 'TouchableWithoutFeedback' as any;
 export const TextInput = 'TextInput' as any;
 export const ActivityIndicator = 'ActivityIndicator' as any;
 export const Switch = 'Switch' as any;
@@ -31,9 +32,31 @@ export const PixelRatio = {
 export const Platform = { OS: 'node', select: (x: any) => x?.default ?? x?.web ?? x?.ios ?? x?.android } as const;
 export const AppState = { addEventListener: () => ({ remove: () => {} }) } as const;
 export const InteractionManager = { runAfterInteractions: (fn: () => void) => fn() } as const;
+export const Linking = {
+    canOpenURL: async () => true,
+    openURL: async () => {},
+} as const;
 export const StyleSheet = { create: (styles: any) => styles } as const;
 export const TurboModuleRegistry = { getEnforcing: () => ({}) } as const;
 export const registerCallableModule = () => {};
+
+class AnimatedValue {
+    // Minimal stub for tests. Consumers generally call `interpolate` and pass the object through.
+    constructor(public _value: number) { }
+    interpolate() {
+        return this as any;
+    }
+}
+
+export const Animated = {
+    Value: AnimatedValue as any,
+    timing: (_value: any, _config: any) => ({
+        start: (cb?: any) => {
+            cb?.();
+        },
+    }),
+    View: 'Animated.View' as any,
+} as const;
 
 export function useWindowDimensions() {
     return { width: 800, height: 600 };

@@ -20,9 +20,10 @@ const fallbackPlugin: ScmUiBackendPlugin = {
     diffModeConfig(snapshot) {
         const supportsIncludeExclude = snapshot?.capabilities?.writeInclude === true
             && snapshot?.capabilities?.writeExclude === true;
+        const availableModes = supportsIncludeExclude ? (['included', 'pending'] as const) : (['pending'] as const);
         return {
-            defaultMode: supportsIncludeExclude ? 'both' : 'pending',
-            availableModes: supportsIncludeExclude ? ['included', 'pending', 'both'] : ['pending', 'both'],
+            defaultMode: availableModes.includes('pending') ? 'pending' : (availableModes[0] ?? 'pending'),
+            availableModes: [...availableModes],
             labels: {
                 included: 'Included',
                 pending: 'Pending',

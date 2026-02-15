@@ -61,6 +61,10 @@ export function buildSessionListViewData(
     const inactiveSessions: Session[] = [];
 
     Object.values(sessions).forEach((session) => {
+        // Hide system sessions from user-facing lists by default.
+        if (session.metadata?.systemSessionV1?.hidden === true) {
+            return;
+        }
         if (isSessionActive(session)) {
             activeSessions.push(session);
         } else {

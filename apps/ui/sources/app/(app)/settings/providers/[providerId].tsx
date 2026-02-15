@@ -24,6 +24,7 @@ import {
     describeResumeSupportKind,
 } from '@/agents/catalog/providerDetailsInfo';
 import { useCLIDetection } from '@/hooks/auth/useCLIDetection';
+import { useCapabilityInstallability } from '@/hooks/machine/useCapabilityInstallability';
 import { ProviderCliInstallItem } from '@/components/settings/providers/ProviderCliInstallItem';
 
 const ProviderSettingsNumberField = React.memo(function ProviderSettingsNumberField(props: {
@@ -239,7 +240,12 @@ export default React.memo(function ProviderSettingsScreen() {
     const primaryMachine = machines[0] ?? null;
     const cliAvailability = useCLIDetection(primaryMachine?.id ?? null, { autoDetect: true });
     const providerCliAvailable = cliAvailability.available[providerId];
-    const primaryMachineLabel = primaryMachine?.metadata?.name ?? primaryMachine?.metadata?.host ?? primaryMachine?.id ?? null;
+    const cliInstallability = useCapabilityInstallability({
+        machineId: primaryMachine?.id ?? null,
+        capabilityId: `cli.${core.cli.detectKey}` as any,
+        timeoutMs: 5000,
+    });
+    const primaryMachineLabel = primaryMachine?.metadata?.displayName ?? primaryMachine?.metadata?.host ?? primaryMachine?.id ?? null;
     const detectedCliStatus = providerCliAvailable === true
         ? 'Detected'
         : providerCliAvailable === false
@@ -247,6 +253,11 @@ export default React.memo(function ProviderSettingsScreen() {
             : cliAvailability.isDetecting
                 ? t('common.loading')
                 : t('machine.detectedCliUnknown');
+    const installSetupSubtitle = cliInstallability.kind === 'checking'
+        ? `${installInfo} • ${t('common.loading')}`
+        : cliInstallability.kind === 'not-installable'
+            ? `${installInfo} • ${t('settingsProviders.notAvailable')}`
+            : installInfo;
 
     return (
         <View ref={popoverBoundaryRef} style={{ flex: 1 }}>
@@ -450,7 +461,7 @@ export default React.memo(function ProviderSettingsScreen() {
                     />
                     <Item
                         title={t('settingsProviders.installSetupTitle')}
-                        subtitle={installInfo}
+                        subtitle={installSetupSubtitle}
                         icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.textSecondary} />}
                         showChevron={false}
                     />
@@ -459,6 +470,7 @@ export default React.memo(function ProviderSettingsScreen() {
                         capabilityId={`cli.${core.cli.detectKey}` as any}
                         providerTitle={t(core.displayNameKey)}
                         installed={providerCliAvailable}
+                        installability={cliInstallability}
                     />
                     {core.cli.installBanner.guideUrl ? (
                         <Item

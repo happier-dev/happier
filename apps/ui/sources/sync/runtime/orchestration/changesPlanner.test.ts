@@ -40,6 +40,7 @@ describe('planSyncActionsFromChanges', () => {
             profile: true,
             friends: true,
             feed: true,
+            automations: false,
         });
         expect(planned.kv).toEqual({ type: 'none' });
     });
@@ -74,7 +75,17 @@ describe('planSyncActionsFromChanges', () => {
 
         expect(planned.sessionIdsToCatchUp).toEqual(['s1']);
         expect(planned.invalidate.sessions).toBe(true);
+        expect(planned.invalidate.automations).toBe(false);
         expect(planned.kv).toEqual({ type: 'none' });
+    });
+
+    it('plans automation invalidation when automation change kind is present', () => {
+        const planned = planSyncActionsFromChanges([
+            buildChange({ cursor: 1, kind: 'automation', entityId: 'a1' }),
+        ]);
+
+        expect(planned.invalidate.automations).toBe(true);
+        expect(planned.invalidate.sessions).toBe(false);
     });
 
     it('plans deduplicated KV keys and upgrades to full refresh when any KV change requires it', () => {

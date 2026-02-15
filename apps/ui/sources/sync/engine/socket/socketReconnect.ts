@@ -6,9 +6,10 @@ export function handleSocketReconnected(params: {
     invalidateFriends: () => void
     invalidateFriendRequests: () => void
     invalidateFeed: () => void
+    invalidateAutomations: () => void
     getLoadedSessionIdsForMessages: () => string[]
     invalidateMessagesForSession: (sessionId: string) => void
-    invalidateGitStatusForSession: (sessionId: string) => void
+    invalidateScmStatusForSession: (sessionId: string) => void
 }) {
     const {
         log,
@@ -18,9 +19,10 @@ export function handleSocketReconnected(params: {
         invalidateFriends,
         invalidateFriendRequests,
         invalidateFeed,
+        invalidateAutomations,
         getLoadedSessionIdsForMessages,
         invalidateMessagesForSession,
-        invalidateGitStatusForSession,
+        invalidateScmStatusForSession,
     } = params
 
     log.log('🔌 Socket reconnected')
@@ -31,12 +33,12 @@ export function handleSocketReconnected(params: {
     invalidateFriends()
     invalidateFriendRequests()
     invalidateFeed()
+    invalidateAutomations()
 
     // Prefer incremental message catch-up (afterSeq) only for sessions whose transcripts have been loaded.
     // Avoid triggering transcript fetches for every session in the list on each reconnect.
     for (const sessionId of getLoadedSessionIdsForMessages()) {
         invalidateMessagesForSession(sessionId)
-        invalidateGitStatusForSession(sessionId)
+        invalidateScmStatusForSession(sessionId)
     }
 }
-

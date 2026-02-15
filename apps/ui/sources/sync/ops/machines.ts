@@ -12,6 +12,8 @@ import type { MachineMetadata } from '../domains/state/storageTypes';
 import { buildSpawnHappySessionRpcParams, type SpawnHappySessionRpcParams, type SpawnSessionOptions } from '../domains/session/spawn/spawnSessionPayload';
 import { isPlainObject, normalizeSpawnSessionResult } from './_shared';
 import { mergeMachineMetadataForVersionMismatch } from './machineMetadataMerge';
+import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 export type { SpawnHappySessionRpcParams, SpawnSessionOptions } from '../domains/session/spawn/spawnSessionPayload';
 export { buildSpawnHappySessionRpcParams } from '../domains/session/spawn/spawnSessionPayload';
@@ -23,10 +25,16 @@ export { buildSpawnHappySessionRpcParams } from '../domains/session/spawn/spawnS
  */
 export async function machineSpawnNewSession(options: SpawnSessionOptions): Promise<SpawnSessionResult> {
     const { machineId } = options;
+    const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
 
     try {
         const params = buildSpawnHappySessionRpcParams(options);
-        const result = await apiSocket.machineRPC<unknown, SpawnHappySessionRpcParams>(machineId, RPC_METHODS.SPAWN_HAPPY_SESSION, params);
+        const result = await machineRpcWithServerScope<unknown, SpawnHappySessionRpcParams>({
+            machineId,
+            method: RPC_METHODS.SPAWN_HAPPY_SESSION,
+            payload: params,
+            serverId,
+        });
         return normalizeSpawnSessionResult(result);
     } catch (error) {
         // Handle RPC errors
@@ -50,13 +58,49 @@ export async function machineStopDaemon(machineId: string): Promise<{ message: s
     return result;
 }
 
+export type MachineStopSessionResult =
+    | { ok: true }
+    | { ok: false; error: string; errorCode?: string };
+
+/**
+ * Stop an existing remote session process on a specific machine.
+ *
+ * This is intentionally destructive and should be used only as a last resort
+ * when session-scoped RPC (for example, execution run stop) is unavailable.
+ */
+export async function machineStopSession(
+    machineId: string,
+    sessionId: string,
+    options?: Readonly<{ serverId?: string | null }>,
+): Promise<MachineStopSessionResult> {
+    try {
+        const response = await machineRpcWithServerScope<unknown, { sessionId: string }>({
+            machineId,
+            method: RPC_METHODS.STOP_SESSION,
+            payload: { sessionId },
+            serverId: options?.serverId,
+        });
+        if (!response || typeof response !== 'object' || typeof (response as any).message !== 'string') {
+            return { ok: false, error: 'Unsupported response from machine RPC' };
+        }
+        return { ok: true };
+    } catch (error) {
+        return {
+            ok: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            errorCode: readRpcErrorCode(error),
+        };
+    }
+}
+
 /**
  * Execute a bash command on a specific machine
  */
 export async function machineBash(
     machineId: string,
     command: string,
-    cwd: string
+    cwd: string,
+    options?: { serverId?: string | null }
 ): Promise<{
     success: boolean;
     stdout: string;
@@ -64,7 +108,7 @@ export async function machineBash(
     exitCode: number;
 }> {
     try {
-        const result = await apiSocket.machineRPC<{
+        const result = await machineRpcWithServerScope<{
             success: boolean;
             stdout: string;
             stderr: string;
@@ -72,11 +116,12 @@ export async function machineBash(
         }, {
             command: string;
             cwd: string;
-        }>(
+        }>({
             machineId,
-            'bash',
-            { command, cwd }
-        );
+            method: 'bash',
+            payload: { command, cwd },
+            serverId: options?.serverId,
+        });
         return result;
     } catch (error) {
         return {
@@ -152,14 +197,16 @@ export type BugReportLogTailResult =
  */
 export async function machinePreviewEnv(
     machineId: string,
-    params: PreviewEnvRequest
+    params: PreviewEnvRequest,
+    options?: { serverId?: string | null },
 ): Promise<MachinePreviewEnvResult> {
     try {
-        const result = await apiSocket.machineRPC<unknown, PreviewEnvRequest>(
+        const result = await machineRpcWithServerScope<unknown, PreviewEnvRequest>({
             machineId,
-            RPC_METHODS.PREVIEW_ENV,
-            params
-        );
+            method: RPC_METHODS.PREVIEW_ENV,
+            payload: params,
+            serverId: options?.serverId,
+        });
 
         // Older daemons (or errors) return an encrypted `{ error: ... }` payload.
         // Treat method-not-found as “unsupported” and fallback to bash-based probing.

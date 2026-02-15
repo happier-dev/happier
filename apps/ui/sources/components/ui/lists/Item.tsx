@@ -33,6 +33,7 @@ export interface ItemProps {
     loading?: boolean;
     selected?: boolean;
     destructive?: boolean;
+    density?: 'comfortable' | 'compact';
     style?: StyleProp<ViewStyle>;
     titleStyle?: StyleProp<TextStyle>;
     subtitleStyle?: StyleProp<TextStyle>;
@@ -51,11 +52,21 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingHorizontal: 16,
         minHeight: Platform.select({ ios: 44, default: 56 }),
     },
+    containerCompact: {
+        paddingHorizontal: 12,
+        minHeight: Platform.select({ ios: 38, default: 40 }),
+    },
     containerWithSubtitle: {
         paddingVertical: Platform.select({ ios: 11, default: 16 }),
     },
+    containerWithSubtitleCompact: {
+        paddingVertical: Platform.select({ ios: 7, default: 8 }),
+    },
     containerWithoutSubtitle: {
         paddingVertical: Platform.select({ ios: 12, default: 16 }),
+    },
+    containerWithoutSubtitleCompact: {
+        paddingVertical: Platform.select({ ios: 8, default: 8 }),
     },
     iconContainer: {
         marginRight: 12,
@@ -63,6 +74,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         height: Platform.select({ ios: 29, default: 32 }),
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    iconContainerCompact: {
+        marginRight: 10,
+        width: Platform.select({ ios: 18, default: 20 }),
+        height: Platform.select({ ios: 18, default: 20 }),
     },
     centerContent: {
         flex: 1,
@@ -73,6 +89,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         fontSize: Platform.select({ ios: 17, default: 16 }),
         lineHeight: Platform.select({ ios: 22, default: 24 }),
         letterSpacing: Platform.select({ ios: -0.41, default: 0.15 }),
+    },
+    titleCompact: {
+        fontSize: Platform.select({ ios: 14, default: 13 }),
+        lineHeight: Platform.select({ ios: 18, default: 18 }),
+        letterSpacing: Platform.select({ ios: -0.24, default: 0.1 }),
     },
     titleNormal: {
         color: theme.colors.text,
@@ -90,6 +111,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         lineHeight: 20,
         letterSpacing: Platform.select({ ios: -0.24, default: 0.1 }),
         marginTop: Platform.select({ ios: 2, default: 0 }),
+    },
+    subtitleCompact: {
+        fontSize: Platform.select({ ios: 12, default: 12 }),
+        lineHeight: 16,
+        marginTop: Platform.select({ ios: 1, default: 0 }),
     },
     rightSection: {
         flexDirection: 'row',
@@ -142,6 +168,7 @@ export const Item = React.memo<ItemProps>((props) => {
         loading,
         selected,
         destructive,
+        density = 'comfortable',
         style,
         titleStyle,
         subtitleStyle,
@@ -213,7 +240,14 @@ export const Item = React.memo<ItemProps>((props) => {
     const groupCornerRadius = Platform.select({ ios: 10, default: 16 });
 
     const titleColor = destructive ? styles.titleDestructive : (selected ? styles.titleSelected : styles.titleNormal);
-    const containerPadding = subtitle ? styles.containerWithSubtitle : styles.containerWithoutSubtitle;
+    const isCompact = density === 'compact';
+    const containerPadding = subtitle
+        ? (isCompact ? styles.containerWithSubtitleCompact : styles.containerWithSubtitle)
+        : (isCompact ? styles.containerWithoutSubtitleCompact : styles.containerWithoutSubtitle);
+    const containerCore = isCompact ? [styles.container, styles.containerCompact] : styles.container;
+    const iconContainerStyle = isCompact ? [styles.iconContainer, styles.iconContainerCompact] : styles.iconContainer;
+    const titleSizeStyle = isCompact ? styles.titleCompact : null;
+    const subtitleSizeStyle = isCompact ? styles.subtitleCompact : null;
 
     const isSelectableRow = React.useMemo(() => {
         // Only show hover for "selection lists" (where rows participate in a selected-state group).
@@ -231,10 +265,10 @@ export const Item = React.memo<ItemProps>((props) => {
     
     const content = (
         <>
-            <View style={[styles.container, containerPadding, style]}>
+            <View style={[containerCore, containerPadding, style]}>
                 {/* Left Section */}
                 {(icon || leftElement) && (
-                    <View style={styles.iconContainer}>
+                    <View style={iconContainerStyle}>
                         {leftElement || icon}
                     </View>
                 )}
@@ -242,7 +276,7 @@ export const Item = React.memo<ItemProps>((props) => {
                 {/* Center Section */}
                 <View style={styles.centerContent}>
                     <Text 
-                        style={[styles.title, titleColor, titleStyle]}
+                        style={[styles.title, titleSizeStyle, titleColor, titleStyle]}
                         numberOfLines={subtitle ? 1 : 2}
                     >
                         {title}
@@ -259,7 +293,7 @@ export const Item = React.memo<ItemProps>((props) => {
 
                                 return (
                                     <Text
-                                        style={[styles.subtitle, subtitleStyle]}
+                                        style={[styles.subtitle, subtitleSizeStyle, subtitleStyle]}
                                         numberOfLines={effectiveLines}
                                     >
                                         {asText}
@@ -293,7 +327,7 @@ export const Item = React.memo<ItemProps>((props) => {
 
                         return (
                             <Text
-                                style={[styles.subtitle, subtitleStyle]}
+                                style={[styles.subtitle, subtitleSizeStyle, subtitleStyle]}
                                 numberOfLines={effectiveLines}
                             >
                                 {subtitle}

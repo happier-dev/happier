@@ -28,7 +28,7 @@ export async function handleNewMessageSocketUpdate(params: {
     fetchSessions: () => void;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
     isMutableToolCall: (sessionId: string, toolUseId: string) => boolean;
-    invalidateGitStatus: (sessionId: string) => void;
+    invalidateScmStatus: (sessionId: string) => void;
     isSessionMessagesLoaded: (sessionId: string) => boolean;
     getSessionMaterializedMaxSeq: (sessionId: string) => number;
     markSessionMaterializedMaxSeq: (sessionId: string, seq: number) => void;
@@ -43,7 +43,7 @@ export async function handleNewMessageSocketUpdate(params: {
         fetchSessions,
         applyMessages,
         isMutableToolCall,
-        invalidateGitStatus,
+        invalidateScmStatus,
         isSessionMessagesLoaded,
         getSessionMaterializedMaxSeq,
         markSessionMaterializedMaxSeq,
@@ -120,7 +120,7 @@ export async function handleNewMessageSocketUpdate(params: {
                     hasMutableTool = isMutableToolCall(sessionId, (lastMessage.content[0] as any).tool_use_id);
                 }
                 if (hasMutableTool) {
-                    invalidateGitStatus(sessionId);
+                    invalidateScmStatus(sessionId);
                 }
             }
 

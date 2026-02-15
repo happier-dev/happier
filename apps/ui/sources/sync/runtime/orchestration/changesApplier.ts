@@ -13,11 +13,12 @@ export async function applyPlannedChangeActions(params: {
         friends?: () => Promise<void>;
         friendRequests?: () => Promise<void>;
         feed?: () => Promise<void>;
+        automations?: () => Promise<void>;
         sessions?: () => Promise<void>;
         todos?: () => Promise<void>;
     };
     invalidateMessagesForSession: (sessionId: string) => Promise<void>;
-    invalidateGitStatusForSession: (sessionId: string) => void;
+    invalidateScmStatusForSession: (sessionId: string) => void;
     applyTodoSocketUpdates: (changes: any[]) => Promise<void>;
     kvBulkGet: (credentials: AuthCredentials, keys: string[]) => Promise<{ values: Array<{ key: string; value: string | null; version: number }> }>;
 }): Promise<void> {
@@ -33,6 +34,7 @@ export async function applyPlannedChangeActions(params: {
         refreshTasks.push(params.invalidate.friendRequests?.() ?? Promise.resolve());
     }
     if (planned.invalidate.feed) refreshTasks.push(params.invalidate.feed?.() ?? Promise.resolve());
+    if (planned.invalidate.automations) refreshTasks.push(params.invalidate.automations?.() ?? Promise.resolve());
     if (planned.invalidate.sessions) refreshTasks.push(params.invalidate.sessions?.() ?? Promise.resolve());
 
     for (const sessionId of planned.sessionIdsToCatchUp) {
@@ -40,7 +42,7 @@ export async function applyPlannedChangeActions(params: {
             continue;
         }
         refreshTasks.push(params.invalidateMessagesForSession(sessionId));
-        params.invalidateGitStatusForSession(sessionId);
+        params.invalidateScmStatusForSession(sessionId);
     }
 
     if (planned.kv.type === 'refresh-feature' && planned.kv.feature === 'todos') {

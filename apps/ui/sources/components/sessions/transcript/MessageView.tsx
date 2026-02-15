@@ -130,6 +130,36 @@ function UserTextBlock(props: {
   const showCopyButton = shouldShowMessageCopyButton({ platformOS: Platform.OS, isMessageHovered, isCopyButtonHovered });
   const copyText = isStructuredOnly ? props.message.text : (props.message.displayText || props.message.text);
 
+  // Structured user messages should render as standalone blocks (tool-card style),
+  // not inside a chat bubble background, and without echoing displayText fallback.
+  if (isStructuredOnly) {
+    return (
+      <View style={styles.structuredUserMessageContainer}>
+        <View style={styles.structuredUserMessageContent}>
+          {structuredNode}
+          {isDiscarded ? (
+            <Text style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
+          ) : null}
+        </View>
+        <View
+          pointerEvents={showCopyButton ? 'auto' : 'none'}
+          accessibilityElementsHidden={!showCopyButton}
+          importantForAccessibility={showCopyButton ? 'auto' : 'no-hide-descendants'}
+          style={[
+            styles.messageActionContainer,
+            !showCopyButton && styles.messageActionContainerHidden,
+          ]}
+        >
+          <CopyMessageButton
+            markdown={copyText}
+            onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
+            onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
+          />
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.userMessageContainer}>
       <Pressable
@@ -137,36 +167,27 @@ function UserTextBlock(props: {
         onHoverIn={isWeb ? () => setIsMessageHovered(true) : undefined}
         onHoverOut={isWeb ? () => setIsMessageHovered(false) : undefined}
       >
-        {isStructuredOnly ? (
-          <View style={styles.userStructuredMessageWrapper}>
-            {structuredNode}
-            {isDiscarded ? (
-              <Text style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
-            ) : null}
-          </View>
-        ) : (
-          <View style={[styles.userMessageBubble, isDiscarded && styles.userMessageBubbleDiscarded]}>
-            <StructuredMessageBlock
-              message={props.message as any}
-              sessionId={props.sessionId}
-              onJumpToAnchor={(target) => {
-                router.push(buildSessionFileDeepLink({
-                  sessionId: props.sessionId,
-                  filePath: target.filePath,
-                  source: target.source,
-                  anchor: target.anchor,
-                }));
-              }}
-            />
-            <MarkdownView markdown={props.message.displayText || props.message.text} onOptionPress={handleOptionPress} />
-            {isDiscarded && (
-              <Text style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
-            )}
-            {/* {__DEV__ && (
-              <Text style={styles.debugText}>{JSON.stringify(props.message.meta)}</Text>
-            )} */}
-          </View>
-        )}
+        <View style={[styles.userMessageBubble, isDiscarded && styles.userMessageBubbleDiscarded]}>
+          <StructuredMessageBlock
+            message={props.message as any}
+            sessionId={props.sessionId}
+            onJumpToAnchor={(target) => {
+              router.push(buildSessionFileDeepLink({
+                sessionId: props.sessionId,
+                filePath: target.filePath,
+                source: target.source,
+                anchor: target.anchor,
+              }));
+            }}
+          />
+          <MarkdownView markdown={props.message.displayText || props.message.text} onOptionPress={handleOptionPress} />
+          {isDiscarded && (
+            <Text style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
+          )}
+          {/* {__DEV__ && (
+            <Text style={styles.debugText}>{JSON.stringify(props.message.meta)}</Text>
+          )} */}
+        </View>
         <View
           pointerEvents={showCopyButton ? 'auto' : 'none'}
           accessibilityElementsHidden={!showCopyButton}
@@ -424,6 +445,17 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'flex-end',
     justifyContent: 'flex-end',
     paddingHorizontal: 16,
+  },
+  structuredUserMessageContainer: {
+    maxWidth: '100%',
+    flexDirection: 'column',
+    alignSelf: 'stretch',
+    paddingHorizontal: 16,
+    paddingBottom: 18,
+    position: 'relative',
+  },
+  structuredUserMessageContent: {
+    maxWidth: '100%',
   },
   userMessageWrapper: {
     maxWidth: '100%',

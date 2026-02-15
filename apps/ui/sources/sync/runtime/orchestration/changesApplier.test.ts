@@ -20,6 +20,7 @@ function buildPlanned(partial: {
             profile: false,
             friends: false,
             feed: false,
+            automations: false,
             ...(partial.invalidate ?? {}),
         },
         kv: partial.kv ?? { type: 'none' },
@@ -40,7 +41,7 @@ describe('changesApplier', () => {
                 friendRequests: invalidateFriendRequests,
             },
             invalidateMessagesForSession: async () => {},
-            invalidateGitStatusForSession: () => {},
+            invalidateScmStatusForSession: () => {},
             applyTodoSocketUpdates: async () => {},
             kvBulkGet: async () => ({ values: [] }),
         });
@@ -51,7 +52,7 @@ describe('changesApplier', () => {
 
     it('only catches up messages for sessions that are already loaded', async () => {
         const invalidateMessagesForSession = vi.fn(async () => {});
-        const invalidateGitStatusForSession = vi.fn(() => {});
+        const invalidateScmStatusForSession = vi.fn(() => {});
 
         await applyPlannedChangeActions({
             planned: buildPlanned({ sessionIdsToCatchUp: ['s1', 's2'] }),
@@ -59,15 +60,15 @@ describe('changesApplier', () => {
             isSessionMessagesLoaded: (sessionId) => sessionId === 's1',
             invalidate: {},
             invalidateMessagesForSession,
-            invalidateGitStatusForSession,
+            invalidateScmStatusForSession,
             applyTodoSocketUpdates: async () => {},
             kvBulkGet: async () => ({ values: [] }),
         });
 
         expect(invalidateMessagesForSession).toHaveBeenCalledTimes(1);
         expect(invalidateMessagesForSession).toHaveBeenCalledWith('s1');
-        expect(invalidateGitStatusForSession).toHaveBeenCalledTimes(1);
-        expect(invalidateGitStatusForSession).toHaveBeenCalledWith('s1');
+        expect(invalidateScmStatusForSession).toHaveBeenCalledTimes(1);
+        expect(invalidateScmStatusForSession).toHaveBeenCalledWith('s1');
     });
 
     it('applies todo KV updates when all requested keys are present', async () => {
@@ -87,7 +88,7 @@ describe('changesApplier', () => {
                 todos: invalidateTodos,
             },
             invalidateMessagesForSession: async () => {},
-            invalidateGitStatusForSession: () => {},
+            invalidateScmStatusForSession: () => {},
             applyTodoSocketUpdates,
             kvBulkGet,
         });
@@ -119,7 +120,7 @@ describe('changesApplier', () => {
                 todos: invalidateTodos,
             },
             invalidateMessagesForSession: async () => {},
-            invalidateGitStatusForSession: () => {},
+            invalidateScmStatusForSession: () => {},
             applyTodoSocketUpdates,
             kvBulkGet,
         });
@@ -134,9 +135,10 @@ describe('changesApplier', () => {
         const invalidateMachines = vi.fn(async () => {});
         const invalidateArtifacts = vi.fn(async () => {});
         const invalidateFeed = vi.fn(async () => {});
+        const invalidateAutomations = vi.fn(async () => {});
         const invalidateSessions = vi.fn(async () => {});
         const invalidateMessagesForSession = vi.fn(async () => {});
-        const invalidateGitStatusForSession = vi.fn(() => {});
+        const invalidateScmStatusForSession = vi.fn(() => {});
 
         await applyPlannedChangeActions({
             planned: buildPlanned({
@@ -147,6 +149,7 @@ describe('changesApplier', () => {
                     machines: true,
                     artifacts: true,
                     feed: true,
+                    automations: true,
                     sessions: true,
                 },
             }),
@@ -158,10 +161,11 @@ describe('changesApplier', () => {
                 machines: invalidateMachines,
                 artifacts: invalidateArtifacts,
                 feed: invalidateFeed,
+                automations: invalidateAutomations,
                 sessions: invalidateSessions,
             },
             invalidateMessagesForSession,
-            invalidateGitStatusForSession,
+            invalidateScmStatusForSession,
             applyTodoSocketUpdates: async () => {},
             kvBulkGet: async () => ({ values: [] }),
         });
@@ -171,11 +175,12 @@ describe('changesApplier', () => {
         expect(invalidateMachines).toHaveBeenCalledTimes(1);
         expect(invalidateArtifacts).toHaveBeenCalledTimes(1);
         expect(invalidateFeed).toHaveBeenCalledTimes(1);
+        expect(invalidateAutomations).toHaveBeenCalledTimes(1);
         expect(invalidateSessions).toHaveBeenCalledTimes(1);
         expect(invalidateMessagesForSession).toHaveBeenCalledTimes(1);
         expect(invalidateMessagesForSession).toHaveBeenCalledWith('s2');
-        expect(invalidateGitStatusForSession).toHaveBeenCalledTimes(1);
-        expect(invalidateGitStatusForSession).toHaveBeenCalledWith('s2');
+        expect(invalidateScmStatusForSession).toHaveBeenCalledTimes(1);
+        expect(invalidateScmStatusForSession).toHaveBeenCalledWith('s2');
     });
 
     it('invalidates todos for refresh-feature KV plan', async () => {
@@ -190,7 +195,7 @@ describe('changesApplier', () => {
             isSessionMessagesLoaded: () => false,
             invalidate: { todos: invalidateTodos },
             invalidateMessagesForSession: async () => {},
-            invalidateGitStatusForSession: () => {},
+            invalidateScmStatusForSession: () => {},
             applyTodoSocketUpdates: async () => {},
             kvBulkGet,
         });
@@ -211,7 +216,7 @@ describe('changesApplier', () => {
             isSessionMessagesLoaded: () => false,
             invalidate: { todos: invalidateTodos },
             invalidateMessagesForSession: async () => {},
-            invalidateGitStatusForSession: () => {},
+            invalidateScmStatusForSession: () => {},
             applyTodoSocketUpdates: async () => {},
             kvBulkGet,
         });
@@ -235,7 +240,7 @@ describe('changesApplier', () => {
             isSessionMessagesLoaded: () => false,
             invalidate: { todos: invalidateTodos },
             invalidateMessagesForSession: async () => {},
-            invalidateGitStatusForSession: () => {},
+            invalidateScmStatusForSession: () => {},
             applyTodoSocketUpdates,
             kvBulkGet,
         });

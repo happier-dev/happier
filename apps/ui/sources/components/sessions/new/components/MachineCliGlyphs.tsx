@@ -13,6 +13,7 @@ import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol'
 type Props = {
     machineId: string;
     isOnline: boolean;
+    serverId?: string | null;
     /**
      * When true, the component may trigger capabilities detection fetches.
      * When false, it will render cached results only (no automatic fetching).
@@ -39,13 +40,14 @@ const stylesheet = StyleSheet.create((theme) => ({
 }));
 
 // iOS can render some dingbat glyphs as emoji; force text presentation (U+FE0E).
-export const MachineCliGlyphs = React.memo(({ machineId, isOnline, autoDetect = true }: Props) => {
+export const MachineCliGlyphs = React.memo(({ machineId, isOnline, serverId, autoDetect = true }: Props) => {
     useUnistyles(); // re-render on theme changes
     const styles = stylesheet;
     const enabledAgents = useEnabledAgentIds();
 
     const { state } = useMachineCapabilitiesCache({
         machineId,
+        serverId,
         enabled: autoDetect && isOnline,
         request: CAPABILITIES_REQUEST_NEW_SESSION,
     });
@@ -58,9 +60,10 @@ export const MachineCliGlyphs = React.memo(({ machineId, isOnline, autoDetect = 
             props: {
                 machineId,
                 isOnline,
+                serverId,
             },
         });
-    }, [isOnline, machineId]);
+    }, [isOnline, machineId, serverId]);
 
     const glyphs = React.useMemo(() => {
         if (state.status !== 'loaded') {

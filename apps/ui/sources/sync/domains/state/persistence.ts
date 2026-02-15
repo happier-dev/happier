@@ -14,6 +14,7 @@ import {
     type NewSessionAutomationDraft,
 } from '@/sync/domains/automations/automationDraft';
 import { ReviewCommentDraftSchema } from '@/sync/domains/input/reviewComments/reviewCommentMeta';
+import { SessionActionDraftSchema } from '@/sync/domains/sessionActions/sessionActionDraftMeta';
 
 const isWebRuntime = typeof window !== 'undefined' && typeof document !== 'undefined';
 const storageScope = isWebRuntime ? null : readStorageScopeFromEnv();
@@ -25,6 +26,7 @@ const CHANGES_CURSOR_BY_ACCOUNT_ID_PREFIX = 'changes-cursor-by-account-id-v1:';
 const CHANGES_CURSOR_BY_SERVER_SCOPE_AND_ACCOUNT_ID_PREFIX = 'changes-cursor-by-server-scope-and-account-id-v1:';
 const SESSION_MODEL_MODE_UPDATED_ATS_KEY = 'session-model-mode-updated-ats-v1';
 const SESSION_REVIEW_COMMENTS_DRAFT_KEY = 'session-review-comments-draft-v1';
+const SESSION_ACTION_DRAFTS_KEY = 'session-action-drafts-v1';
 
 export type NewSessionSessionType = 'simple' | 'worktree';
 export type NewSessionAgentType = AgentId;
@@ -311,6 +313,42 @@ export function saveSessionReviewCommentsDrafts(drafts: SessionReviewCommentDraf
         return;
     }
     mmkv.set(SESSION_REVIEW_COMMENTS_DRAFT_KEY, JSON.stringify(drafts));
+}
+
+export type SessionActionDraftsBySessionId = Record<string, z.infer<typeof SessionActionDraftSchema>[]>;
+
+export function loadSessionActionDrafts(): SessionActionDraftsBySessionId {
+    const raw = mmkv.getString(SESSION_ACTION_DRAFTS_KEY);
+    if (!raw) return {};
+    try {
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+
+        const out: SessionActionDraftsBySessionId = {};
+        for (const [rawSessionId, rawDrafts] of Object.entries(parsed as Record<string, unknown>)) {
+            if (typeof rawSessionId !== 'string' || !rawSessionId.trim()) continue;
+            if (!Array.isArray(rawDrafts)) continue;
+
+            const drafts: z.infer<typeof SessionActionDraftSchema>[] = [];
+            for (const entry of rawDrafts) {
+                const entryParsed = SessionActionDraftSchema.safeParse(entry);
+                if (entryParsed.success) drafts.push(entryParsed.data);
+            }
+            if (drafts.length > 0) out[rawSessionId] = drafts;
+        }
+        return out;
+    } catch (e) {
+        console.error('Failed to parse session action drafts', e);
+        return {};
+    }
+}
+
+export function saveSessionActionDrafts(drafts: SessionActionDraftsBySessionId): void {
+    if (!drafts || typeof drafts !== 'object' || Object.keys(drafts).length === 0) {
+        mmkv.delete(SESSION_ACTION_DRAFTS_KEY);
+        return;
+    }
+    mmkv.set(SESSION_ACTION_DRAFTS_KEY, JSON.stringify(drafts));
 }
 
 export function loadNewSessionDraft(): NewSessionDraft | null {

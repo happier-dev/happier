@@ -27,6 +27,7 @@ describe('addProviderMessageMetaExtras', () => {
             claudeRemoteAgentSdkEnabled: true,
             claudeRemoteSettingSources: 'project',
             claudeRemoteIncludePartialMessages: true,
+            claudeLocalPermissionBridgeEnabled: true,
         });
 
         const base = buildOutgoingMessageMeta({
@@ -45,6 +46,7 @@ describe('addProviderMessageMetaExtras', () => {
         expect((merged as any).claudeRemoteAgentSdkEnabled).toBe(true);
         expect((merged as any).claudeRemoteSettingSources).toBe('project');
         expect((merged as any).claudeRemoteIncludePartialMessages).toBe(true);
+        expect((merged as any).claudeLocalPermissionBridgeEnabled).toBe(true);
     });
 
     it('drops oversized provider advanced options JSON payloads before meta merge', () => {
