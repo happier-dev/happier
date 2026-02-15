@@ -9,91 +9,108 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { t } from '@/text';
 import { useSetting } from '@/sync/domains/state/storage';
-import { getActiveServerSnapshot, listServerProfiles, type ServerProfile } from '@/sync/domains/server/serverProfiles';
-import { getNewSessionServerTargeting } from '@/sync/domains/server/multiServer';
+import { getActiveServerSnapshot, listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import { resolveActiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
 import { useUnistyles } from 'react-native-unistyles';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { promptSignedOutServerSwitchConfirmation } from '@/components/settings/server/modals/ServerSwitchAuthPrompt';
+
+type ServerPickerParams = {
+    selectedId?: string;
+};
 
 export default React.memo(function ServerPickerScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
     const navigation = useNavigation();
-    const params = useLocalSearchParams<{ selectedId?: string }>();
+    const params = useLocalSearchParams<ServerPickerParams>();
 
-    const multiServerEnabled = useSetting('multiServerEnabled');
-    const multiServerSelectedServerIds = useSetting('multiServerSelectedServerIds');
-    const multiServerPresentation = useSetting('multiServerPresentation');
-    const multiServerProfiles = useSetting('multiServerProfiles');
-    const multiServerActiveProfileId = useSetting('multiServerActiveProfileId');
+    const serverSelectionGroups = useSetting('serverSelectionGroups');
+    const serverSelectionActiveTargetKind = useSetting('serverSelectionActiveTargetKind');
+    const serverSelectionActiveTargetId = useSetting('serverSelectionActiveTargetId');
 
     const activeServer = getActiveServerSnapshot();
-    const allProfiles = React.useMemo(() => {
+    const serverProfiles = React.useMemo(() => {
         return listServerProfiles()
-            .slice()
-            .sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0));
+            .slice();
     }, [
         activeServer.generation,
-        multiServerActiveProfileId,
-        multiServerEnabled,
-        multiServerPresentation,
-        multiServerProfiles,
-        multiServerSelectedServerIds,
+        serverSelectionGroups,
+        serverSelectionActiveTargetKind,
+        serverSelectionActiveTargetId,
     ]);
 
-    const availableServerIds = React.useMemo(() => allProfiles.map((profile) => profile.id), [allProfiles]);
-    const targeting = React.useMemo(() => {
-        return getNewSessionServerTargeting({
+    const resolvedTarget = React.useMemo(() => {
+        return resolveActiveServerSelectionFromRawSettings({
             activeServerId: activeServer.serverId,
-            availableServerIds,
+            availableServerIds: serverProfiles.map((profile) => profile.id),
             settings: {
-                multiServerEnabled: Boolean(multiServerEnabled),
-                multiServerSelectedServerIds: Array.isArray(multiServerSelectedServerIds)
-                    ? multiServerSelectedServerIds
-                    : [],
-                multiServerPresentation: multiServerPresentation === 'flat-with-badge' ? 'flat-with-badge' : 'grouped',
-                multiServerProfiles: Array.isArray(multiServerProfiles) ? multiServerProfiles : [],
-                multiServerActiveProfileId: typeof multiServerActiveProfileId === 'string'
-                    ? multiServerActiveProfileId
-                    : null,
+                serverSelectionGroups,
+                serverSelectionActiveTargetKind,
+                serverSelectionActiveTargetId,
             },
         });
     }, [
         activeServer.serverId,
-        availableServerIds,
-        multiServerActiveProfileId,
-        multiServerEnabled,
-        multiServerPresentation,
-        multiServerProfiles,
-        multiServerSelectedServerIds,
+        serverSelectionActiveTargetId,
+        serverSelectionActiveTargetKind,
+        serverSelectionGroups,
+        serverProfiles,
     ]);
 
-    const profileById = React.useMemo(() => {
-        return new Map(allProfiles.map((profile) => [profile.id, profile]));
-    }, [allProfiles]);
-    const eligibleProfiles = React.useMemo(() => {
-        const fromPolicy = targeting.allowedServerIds
-            .map((serverId) => profileById.get(serverId) ?? null)
-            .filter((profile): profile is ServerProfile => profile !== null);
-        if (fromPolicy.length > 0) return fromPolicy;
-        const fallback = profileById.get(activeServer.serverId);
-        return fallback ? [fallback] : [];
-    }, [activeServer.serverId, profileById, targeting.allowedServerIds]);
+    const allowedServerIds = React.useMemo(() => {
+        const seen = new Set<string>();
+        const ids: string[] = [];
+        for (const id of resolvedTarget.allowedServerIds) {
+            const normalized = String(id ?? '').trim();
+            if (!normalized || seen.has(normalized)) continue;
+            seen.add(normalized);
+            ids.push(normalized);
+        }
+        return ids;
+    }, [resolvedTarget.allowedServerIds]);
 
-    const selectedIdFromParams = typeof params.selectedId === 'string' ? params.selectedId : '';
-    const selectedId = eligibleProfiles.find((profile) => profile.id === selectedIdFromParams)?.id
-        ?? eligibleProfiles[0]?.id
-        ?? '';
+    const filteredServers = React.useMemo(() => {
+        const allowed = new Set(allowedServerIds);
+        return serverProfiles.filter((profile) => allowed.has(profile.id));
+    }, [allowedServerIds, serverProfiles]);
+
+    const selectedServerId = React.useMemo(() => {
+        const selectedServerId = typeof params.selectedId === 'string' ? params.selectedId : '';
+        if (selectedServerId && allowedServerIds.includes(selectedServerId)) return selectedServerId;
+        if (allowedServerIds.includes(activeServer.serverId)) return activeServer.serverId;
+        return allowedServerIds[0] ?? activeServer.serverId;
+    }, [activeServer.serverId, allowedServerIds, params.selectedId]);
 
     const setParamsOnPreviousAndClose = React.useCallback((serverId: string) => {
         const state = navigation.getState();
         const previousRoute = state?.routes?.[state.index - 1];
         if (state && state.index > 0 && previousRoute) {
             navigation.dispatch({
-                ...CommonActions.setParams({ serverId }),
+                ...CommonActions.setParams({
+                    spawnServerId: serverId,
+                }),
                 source: previousRoute.key,
             });
         }
         router.back();
     }, [navigation, router]);
+
+    const confirmSignedOutTarget = React.useCallback(async (serverId: string): Promise<{ allowed: boolean; signedOut: boolean }> => {
+        const nextServerId = String(serverId ?? '').trim();
+        if (!nextServerId) return { allowed: true, signedOut: false };
+        const profile = serverProfiles.find((srv) => srv.id === nextServerId) ?? null;
+        if (!profile) return { allowed: true, signedOut: false };
+        try {
+            const creds = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl);
+            if (creds) return { allowed: true, signedOut: false };
+        } catch {
+            // If auth status cannot be determined, allow selection without blocking.
+            return { allowed: true, signedOut: false };
+        }
+        const allowed = await promptSignedOutServerSwitchConfirmation();
+        return { allowed, signedOut: true };
+    }, [serverProfiles]);
 
     const headerLeft = React.useCallback(() => (
         <Pressable
@@ -120,16 +137,31 @@ export default React.memo(function ServerPickerScreen() {
             <Stack.Screen options={screenOptions} />
             <ItemList>
                 <ItemGroup title={t('server.switchToServer')}>
-                    {eligibleProfiles.map((profile) => (
-                        <Item
-                            key={profile.id}
-                            title={profile.name}
-                            subtitle={profile.serverUrl}
-                            icon={<Ionicons name="server-outline" size={18} color={theme.colors.textSecondary} />}
-                            selected={profile.id === selectedId}
-                            onPress={() => setParamsOnPreviousAndClose(profile.id)}
-                        />
-                    ))}
+                    {filteredServers.map((target) => {
+                        const isSelected = target.id === selectedServerId;
+                        return (
+                            <Item
+                                key={target.id}
+                                title={target.name}
+                                subtitle={target.serverUrl}
+                                icon={<Ionicons name="server-outline" size={18} color={theme.colors.textSecondary} />}
+                                selected={isSelected}
+                                onPress={() => {
+                                    void (async () => {
+                                        const auth = await confirmSignedOutTarget(target.id);
+                                        if (!auth.allowed) return;
+
+                                        if (auth.signedOut) {
+                                            router.replace('/');
+                                            return;
+                                        }
+
+                                        setParamsOnPreviousAndClose(target.id);
+                                    })();
+                                }}
+                            />
+                        );
+                    })}
                 </ItemGroup>
             </ItemList>
         </>

@@ -123,8 +123,8 @@ afterEach(() => {
 describe('ServerConfigScreen (web row actions)', () => {
     it('adds per-row device switch action for server rows on web', async () => {
         const { upsertServerProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
-        upsertServerProfile({ serverUrl: 'https://company.example.test', name: 'Company' });
-        setActiveServerId('cloud', { scope: 'device' });
+        const company = upsertServerProfile({ serverUrl: 'https://company.example.test', name: 'Company' });
+        setActiveServerId(company.id, { scope: 'device' });
 
         const Screen = (await import('./server')).default;
         await act(async () => {

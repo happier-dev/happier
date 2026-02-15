@@ -22,10 +22,18 @@ vi.mock('@react-navigation/native', () => ({
     CommonActions: { setParams: (params: any) => ({ type: 'SET_PARAMS', payload: params }) },
 }));
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-}));
+vi.mock('react-native', async (importOriginal) => {
+    const actual = await importOriginal<any>();
+    return {
+        ...actual,
+        Platform: {
+            ...(actual.Platform ?? {}),
+            OS: 'web',
+            select: (options: Record<string, unknown>) => options.web ?? options.default,
+        },
+        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+    };
+});
 
 vi.mock('react-native-unistyles', () => ({
     useUnistyles: () => ({
@@ -36,6 +44,9 @@ vi.mock('react-native-unistyles', () => ({
             },
         },
     }),
+    StyleSheet: {
+        create: () => ({}),
+    },
 }));
 
 vi.mock('@expo/vector-icons', () => ({
@@ -56,9 +67,13 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props, props.children),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: () => null,
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const actual = await importOriginal<any>();
+    return {
+        ...actual,
+        useSetting: () => null,
+    };
+});
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerSnapshot: () => ({ generation: 1, serverId: 'server-a' }),
@@ -66,10 +81,6 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
         { id: 'server-a', name: 'A', serverUrl: 'http://a', lastUsedAt: 2 },
         { id: 'server-b', name: 'B', serverUrl: 'http://b', lastUsedAt: 1 },
     ],
-}));
-
-vi.mock('@/sync/domains/server/multiServer', () => ({
-    getNewSessionServerTargeting: () => ({ allowedServerIds: ['server-a', 'server-b'] }),
 }));
 
 import ServerPickerScreen from './server';

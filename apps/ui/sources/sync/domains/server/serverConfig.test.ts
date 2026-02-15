@@ -24,6 +24,7 @@ async function importFreshServerConfig() {
 describe('getServerUrl', () => {
     const previousEnv = process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
     const previousContext = process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT;
+    const previousPreconfigured = process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
     const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
 
     afterEach(() => {
@@ -31,6 +32,8 @@ describe('getServerUrl', () => {
         process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = previousEnv;
         if (previousContext === undefined) delete process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT;
         else process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = previousContext;
+        if (previousPreconfigured === undefined) delete process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
+        else process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS = previousPreconfigured;
         if (previousScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
         else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousScope;
     });
@@ -44,13 +47,13 @@ describe('getServerUrl', () => {
         expect(getServerUrl()).toBe('https://stack.example.test');
     });
 
-    it('falls back to default when EXPO_PUBLIC_HAPPY_SERVER_URL is empty but origin is null', async () => {
+    it('falls back to an empty value when no server can be resolved', async () => {
         process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = '';
         stubWebRuntime('null');
 
         const { getServerUrl } = await importFreshServerConfig();
 
-        expect(getServerUrl()).toBe('https://api.happier.dev');
+        expect(getServerUrl()).toBe('');
     });
 
     it('uses window.location.origin on web when EXPO_PUBLIC_HAPPY_SERVER_URL is unset', async () => {
@@ -62,12 +65,13 @@ describe('getServerUrl', () => {
         expect(getServerUrl()).toBe('https://stack.example.test');
     });
 
-    it('falls back to default on native when EXPO_PUBLIC_HAPPY_SERVER_URL is unset', async () => {
+    it('falls back to an empty value on native when no server is configured', async () => {
         delete process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
+        delete process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
 
         const { getServerUrl } = await importFreshServerConfig();
 
-        expect(getServerUrl()).toBe('https://api.happier.dev');
+        expect(getServerUrl()).toBe('');
     });
 
     it('trims EXPO_PUBLIC_HAPPY_SERVER_URL to avoid whitespace issues', async () => {
@@ -92,7 +96,21 @@ describe('getServerUrl', () => {
         }
     });
 
-    it('respects sessionStorage activeServerId override on web', async () => {
+    it('canonicalizes custom server URL by stripping query/hash while preserving userinfo', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = '';
+        stubWebRuntime('https://stack.example.test');
+
+        const { getServerUrl, setServerUrl } = await importFreshServerConfig();
+        try {
+            setServerUrl('https://admin:secret@custom.example.test:9443/path/?token=abc#frag');
+            expect(getServerUrl()).toBe('https://admin:secret@custom.example.test:9443/path');
+        } finally {
+            setServerUrl(null);
+        }
+    });
+
+    it('ignores stale sessionStorage server id override when that id is missing', async () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = '';
         stubWebRuntime('https://stack.example.test');
@@ -104,13 +122,13 @@ describe('getServerUrl', () => {
 
         const created = profiles.upsertServerProfile({ serverUrl: 'https://device.example.test', name: 'Device' });
         profiles.setActiveServerId(created.id, { scope: 'device' });
-        profiles.setActiveServerId('cloud', { scope: 'tab' });
+        profiles.setActiveServerId('missing-server', { scope: 'tab' });
 
         const { getServerUrl } = await importFreshServerConfig();
-        expect(getServerUrl()).toBe('https://api.happier.dev');
+        expect(getServerUrl()).toBe('https://device.example.test');
     });
 
-    it('resetting a custom server returns to the stack default server (no cloud profile in stack context)', async () => {
+    it('resetting a custom server returns to the stack default server (no built-in remote profile in stack context)', async () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
         process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'http://localhost:3013/';
@@ -124,12 +142,12 @@ describe('getServerUrl', () => {
         expect(getServerUrl()).toBe('https://custom.example.test');
         expect(isUsingCustomServer()).toBe(true);
 
-        // This must not attempt to select the cloud server id in stack context unless explicitly saved.
+        // Reset should return to the stack default server.
         setServerUrl(null);
         expect(getServerUrl()).toBe('http://localhost:3013');
         expect(isUsingCustomServer()).toBe(false);
 
         const profiles = await import('./serverProfiles');
-        expect(profiles.listServerProfiles().some((p) => p.id === 'cloud')).toBe(false);
+        expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'http://localhost:3013')).toBe(true);
     });
 });

@@ -5,9 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerNavigateSpy = vi.fn();
-const setActiveServerSpy = vi.fn();
-
-let activeServerId = 'active';
+const setActiveServerAndSwitchSpy = vi.fn(async () => false);
+const refreshFromActiveServerSpy = vi.fn(async () => {});
 
 vi.mock('expo-router', () => ({
     useRouter: () => ({
@@ -15,21 +14,19 @@ vi.mock('expo-router', () => ({
     }),
 }));
 
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({
-        serverId: activeServerId,
-        serverUrl: 'http://example.test',
-        kind: 'stack',
-        generation: 1,
-    }),
-    setActiveServer: setActiveServerSpy,
+vi.mock('@/auth/context/AuthContext', () => ({
+    useAuth: () => ({ refreshFromActiveServer: refreshFromActiveServerSpy }),
+}));
+
+vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
+    setActiveServerAndSwitch: setActiveServerAndSwitchSpy,
 }));
 
 describe('useNavigateToSession (multi-server)', () => {
     it('switches active server when passed a different serverId', async () => {
         routerNavigateSpy.mockClear();
-        setActiveServerSpy.mockClear();
-        activeServerId = 'active';
+        setActiveServerAndSwitchSpy.mockClear();
+        setActiveServerAndSwitchSpy.mockResolvedValue(true);
 
         const { useNavigateToSession } = await import('./useNavigateToSession');
 
@@ -44,19 +41,23 @@ describe('useNavigateToSession (multi-server)', () => {
         });
 
         await act(async () => {
-            navigateToSession!('sess_123', { serverId: 'other' });
+            await navigateToSession!('sess_123', { serverId: 'other' });
         });
 
-        expect(setActiveServerSpy).toHaveBeenCalledTimes(1);
-        expect(setActiveServerSpy).toHaveBeenCalledWith({ serverId: 'other', scope: 'device' });
+        expect(setActiveServerAndSwitchSpy).toHaveBeenCalledTimes(1);
+        expect(setActiveServerAndSwitchSpy).toHaveBeenCalledWith({
+            serverId: 'other',
+            scope: 'device',
+            refreshAuth: expect.any(Function),
+        });
         expect(routerNavigateSpy).toHaveBeenCalledTimes(1);
         expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_123', expect.any(Object));
     });
 
-    it('does not switch active server when the serverId matches', async () => {
+    it('requests switch orchestration when serverId is provided', async () => {
         routerNavigateSpy.mockClear();
-        setActiveServerSpy.mockClear();
-        activeServerId = 'same';
+        setActiveServerAndSwitchSpy.mockClear();
+        setActiveServerAndSwitchSpy.mockResolvedValue(false);
 
         const { useNavigateToSession } = await import('./useNavigateToSession');
 
@@ -71,11 +72,14 @@ describe('useNavigateToSession (multi-server)', () => {
         });
 
         await act(async () => {
-            navigateToSession!('sess_456', { serverId: 'same' });
+            await navigateToSession!('sess_456', { serverId: 'same' });
         });
 
-        expect(setActiveServerSpy).not.toHaveBeenCalled();
+        expect(setActiveServerAndSwitchSpy).toHaveBeenCalledWith({
+            serverId: 'same',
+            scope: 'device',
+            refreshAuth: expect.any(Function),
+        });
         expect(routerNavigateSpy).toHaveBeenCalledTimes(1);
     });
 });
-

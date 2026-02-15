@@ -12,7 +12,13 @@ function stubWebRuntime(origin: string) {
         removeItem: (k: string) => void store.delete(k),
         clear: () => void store.clear(),
     });
-    vi.stubGlobal('window', { location: { origin } });
+    let hostname = '';
+    try {
+        hostname = new URL(origin).hostname;
+    } catch {
+        hostname = '';
+    }
+    vi.stubGlobal('window', { location: { origin, hostname } });
     vi.stubGlobal('document', {});
 }
 
@@ -25,6 +31,7 @@ describe('serverProfiles', () => {
     const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
     const previousServerContext = process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT;
     const previousServerUrl = process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
+    const previousPreconfigured = process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
 
     afterEach(() => {
         vi.unstubAllGlobals();
@@ -34,6 +41,8 @@ describe('serverProfiles', () => {
         else process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = previousServerContext;
         if (previousServerUrl === undefined) delete process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
         else process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = previousServerUrl;
+        if (previousPreconfigured === undefined) delete process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
+        else process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS = previousPreconfigured;
     });
 
     it('prefers sessionStorage activeServerId on web over the device default', async () => {
@@ -47,19 +56,45 @@ describe('serverProfiles', () => {
             serverUrl: 'https://device.example.test',
             name: 'Device',
         });
+        const tabProfile = profiles.upsertServerProfile({
+            serverUrl: 'https://tab.example.test',
+            name: 'Tab',
+        });
         profiles.setActiveServerId(created.id, { scope: 'device' });
-        profiles.setActiveServerId('cloud', { scope: 'tab' });
+        profiles.setActiveServerId(tabProfile.id, { scope: 'tab' });
 
-        expect(profiles.getActiveServerUrl()).toBe('https://api.happier.dev');
+        expect(profiles.getActiveServerUrl()).toBe('https://tab.example.test');
     });
 
-    it('refuses to remove the Happier Cloud server profile', async () => {
+    it('exposes device default and tab override server ids separately on web', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        stubWebRuntime('https://origin.example.test');
+
+        const profiles = await importFresh();
+
+        const device = profiles.upsertServerProfile({
+            serverUrl: 'https://device.example.test',
+            name: 'Device',
+        });
+        const tab = profiles.upsertServerProfile({
+            serverUrl: 'https://tab.example.test',
+            name: 'Tab',
+        });
+        profiles.setActiveServerId(device.id, { scope: 'device' });
+        profiles.setActiveServerId(tab.id, { scope: 'tab' });
+
+        expect(profiles.getActiveServerId()).toBe(tab.id);
+        expect(profiles.getDeviceDefaultServerId()).toBe(device.id);
+        expect(profiles.getTabActiveServerId()).toBe(tab.id);
+    });
+
+    it('does not auto-seed any built-in remote server profile when no preconfigured env exists', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
 
         const profiles = await importFresh();
-
-        expect(() => profiles.removeServerProfile('cloud')).toThrow(/happier cloud/i);
+        expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(false);
     });
 
     it('derives deterministic filesystem-safe ids from server URLs', async () => {
@@ -87,63 +122,101 @@ describe('serverProfiles', () => {
         expect(updated?.name).toBe('After');
     });
 
-    it('does not auto-seed Happier Cloud in stack context', async () => {
+    it('seeds a preconfigured server from EXPO_PUBLIC_HAPPY_SERVER_URL', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
-        process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'http://localhost:3999';
 
         const profiles = await importFresh();
-        const created = profiles.upsertServerProfile({
-            serverUrl: 'https://stack.example.test',
-            name: 'Stack',
-            kind: 'stack',
-            managed: true,
-            stableKey: 'dev-stack',
-        });
-        profiles.setActiveServerId(created.id, { scope: 'device' });
-
         const all = profiles.listServerProfiles();
-        expect(all.some((p) => p.id === 'cloud')).toBe(false);
-        expect(profiles.getActiveServerUrl()).toBe('https://stack.example.test');
+
+        expect(all.some((p) => p.serverUrl === 'http://localhost:3999')).toBe(true);
+        expect(profiles.getActiveServerUrl()).toBe('http://localhost:3999');
     });
 
-    it('allows manually adding the Happier Cloud server in stack context', async () => {
+    it('seeds multiple preconfigured servers from EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
-        process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
+        delete process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
+        process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS = JSON.stringify([
+            { name: 'Local 3013', url: 'http://localhost:3013' },
+            { name: 'Cloud Alt', url: 'https://api.happier.dev' },
+        ]);
 
         const profiles = await importFresh();
-        const cloud = profiles.upsertServerProfile({ serverUrl: 'https://api.happier.dev', name: 'Whatever' });
+        const all = profiles.listServerProfiles();
 
-        // Stack context should not auto-seed Cloud, but if the user explicitly adds it, we keep it and normalize to cloud id.
-        expect(cloud.id).toBe('cloud');
-        expect(cloud.name).toBe('Happier Cloud');
-        expect(profiles.listServerProfiles().some((p) => p.id === 'cloud')).toBe(true);
+        expect(all.some((p) => p.serverUrl === 'http://localhost:3013')).toBe(true);
+        expect(all.some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(true);
     });
 
-    it('updates managed stack profile in-place when stableKey is reused', async () => {
+    it('treats a remote URL added manually as a normal removable profile', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
 
         const profiles = await importFresh();
-        const first = profiles.upsertServerProfile({
-            serverUrl: 'http://127.0.0.1:3010',
-            name: 'dev',
-            kind: 'stack',
-            managed: true,
-            stableKey: 'dev-stack',
-        });
-        const second = profiles.upsertServerProfile({
-            serverUrl: 'http://127.0.0.1:4010',
-            name: 'dev',
-            kind: 'stack',
-            managed: true,
-            stableKey: 'dev-stack',
-        });
+        const remote = profiles.upsertServerProfile({ serverUrl: 'https://api.happier.dev', name: 'remote-manual' });
+        expect(profiles.listServerProfiles().some((p) => p.id === remote.id)).toBe(true);
+        expect(() => profiles.removeServerProfile(remote.id)).not.toThrow();
+        expect(profiles.listServerProfiles().some((p) => p.id === remote.id)).toBe(false);
+    });
 
-        expect(second.id).toBe(first.id);
-        expect(second.serverUrl).toBe('http://127.0.0.1:4010');
-        expect(profiles.listServerProfiles().filter((p) => p.stableKey === 'dev-stack')).toHaveLength(1);
+    it('treats a happier-*.localhost web origin as stack context even if EXPO_PUBLIC_HAPPY_SERVER_CONTEXT is unset', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        delete process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT;
+        delete process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
+
+        stubWebRuntime('http://happier-qa-agent-2.localhost:8085');
+
+        const profiles = await importFresh();
+        const all = profiles.listServerProfiles();
+        expect(all.some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(false);
+    });
+
+    it('treats a happier-*.localhost web origin as stack context even if EXPO_PUBLIC_HAPPY_SERVER_CONTEXT is an unknown value', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'dev';
+        delete process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
+
+        stubWebRuntime('http://happier-qa-agent-2.localhost:8085');
+
+        const profiles = await importFresh();
+        const all = profiles.listServerProfiles();
+        expect(all.some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(false);
+    });
+
+    it('does not let an unknown EXPO_PUBLIC_HAPPY_SERVER_CONTEXT disable localhost stack inference', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'custom-env';
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'http://localhost:3013';
+
+        stubWebRuntime('http://happier-qa-agent-2.localhost:8085');
+
+        const profiles = await importFresh();
+        const seeded = profiles.listServerProfiles().find((p) => p.serverUrl === 'http://localhost:3013');
+        expect(seeded?.source).toBe('stack-env');
+    });
+
+    it('does not re-seed removed preconfigured servers after initial load', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS = JSON.stringify([
+            { name: 'Cloud Embedded', url: 'https://api.happier.dev' },
+        ]);
+
+        const profiles = await importFresh();
+        const seeded = profiles.listServerProfiles().find((p) => p.serverUrl === 'https://api.happier.dev');
+        expect(seeded).toBeTruthy();
+
+        profiles.removeServerProfile(seeded!.id);
+        expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(false);
+
+        expect(profiles.getActiveServerUrl()).toBe('');
+        expect(profiles.getResetToDefaultServerId()).toBe('');
+        expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(false);
     });
 
     it('dedupes localhost and 127.0.0.1 loopback URLs into one profile', async () => {
@@ -160,7 +233,26 @@ describe('serverProfiles', () => {
         expect(profiles.listServerProfiles().filter((p) => p.id === first.id)).toHaveLength(1);
     });
 
-    it('reset-to-default targets the stack env server in stack context (no cloud profile)', async () => {
+    it('dedupes equivalent URLs that differ only by query/hash and stores canonical URL', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+
+        const profiles = await importFresh();
+        const first = profiles.upsertServerProfile({
+            serverUrl: 'https://admin:secret@example.com:8443/path/?token=abc#frag',
+            name: 'Query Hash Server',
+        });
+        const second = profiles.upsertServerProfile({
+            serverUrl: 'https://admin:secret@example.com:8443/path',
+            name: 'Canonical Server',
+        });
+
+        expect(second.id).toBe(first.id);
+        expect(second.serverUrl).toBe('https://admin:secret@example.com:8443/path');
+        expect(profiles.listServerProfiles().filter((p) => p.id === first.id)).toHaveLength(1);
+    });
+
+    it('reset-to-default targets the stack env server in stack context', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
         process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
@@ -171,22 +263,25 @@ describe('serverProfiles', () => {
         profiles.setActiveServerId(other.id, { scope: 'device' });
 
         const resetId = profiles.getResetToDefaultServerId();
-        expect(resetId).not.toBe('cloud');
+        expect(resetId).toBeTruthy();
 
         profiles.setActiveServerId(resetId, { scope: 'device' });
         expect(profiles.getActiveServerUrl()).toBe('http://localhost:3013');
     });
 
-    it('reset-to-default targets the cloud profile outside stack context', async () => {
+    it('reset-to-default targets the first saved profile outside stack context when no preconfigured env exists', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
-        process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = '';
+        delete process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT;
 
         const profiles = await importFresh();
-        expect(profiles.getResetToDefaultServerId()).toBe('cloud');
+        const one = profiles.upsertServerProfile({ serverUrl: 'https://one.example.test', name: 'one' });
+        const two = profiles.upsertServerProfile({ serverUrl: 'https://two.example.test', name: 'two' });
+        profiles.setActiveServerId(two.id, { scope: 'device' });
+        expect(profiles.getResetToDefaultServerId()).toBe(one.id);
     });
 
-    it('seeds the stack env server profile on load in stack context (and does not include Happier Cloud)', async () => {
+    it('seeds the stack env server profile on load in stack context', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
         process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
@@ -194,21 +289,8 @@ describe('serverProfiles', () => {
 
         const profiles = await importFresh();
         const all = profiles.listServerProfiles();
-        expect(all.some((p) => p.id === 'cloud')).toBe(false);
         expect(all.some((p) => p.serverUrl === 'http://localhost:3013')).toBe(true);
         expect(profiles.getActiveServerUrl()).toBe('http://localhost:3013');
-    });
-
-    it('detects the Happier Cloud server id via isCloudServerProfileId', async () => {
-        const scope = randomScope();
-        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
-
-        const profiles = await importFresh();
-        expect(profiles.isCloudServerProfileId('cloud')).toBe(true);
-        expect(profiles.isCloudServerProfileId(' cloud ')).toBe(true);
-        expect(profiles.isCloudServerProfileId('legacy')).toBe(false);
-        expect(profiles.isCloudServerProfileId('not-cloud')).toBe(false);
-        expect(profiles.isCloudServerProfileId('')).toBe(false);
     });
 
     it('does not throw when setting active server id to an unknown value (ignores request)', async () => {

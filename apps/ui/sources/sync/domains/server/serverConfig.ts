@@ -1,33 +1,29 @@
 import { getActiveServerUrl } from './serverProfiles';
 import { getResetToDefaultServerId } from './serverProfiles';
 import { setActiveServer, upsertAndActivateServer } from './serverRuntime';
-import { CLOUD_SERVER_URL } from './serverIdentity';
+import { isStackContext } from './serverContext';
+import { canonicalizeServerUrl } from './url/serverUrlCanonical';
 
 function isWebRuntime(): boolean {
     return typeof window !== 'undefined' && typeof document !== 'undefined';
 }
 
-function isStackContext(): boolean {
-    const raw = String(process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT ?? '').trim().toLowerCase();
-    return raw === 'stack';
-}
-
 function normalizeUrl(raw: string): string {
-    return String(raw ?? '').trim().replace(/\/+$/, '');
+    return canonicalizeServerUrl(raw);
 }
 
 function getDefaultServerUrl(): string {
-    if (isStackContext()) {
-        const envUrl = normalizeUrl(String(process.env.EXPO_PUBLIC_HAPPY_SERVER_URL ?? ''));
-        if (envUrl) return envUrl;
+    const envUrl = normalizeUrl(String(process.env.EXPO_PUBLIC_HAPPY_SERVER_URL ?? ''));
+    if (envUrl) return envUrl;
 
+    if (isStackContext()) {
         if (isWebRuntime()) {
             const origin = normalizeUrl(String(window.location?.origin ?? ''));
             if (origin && origin !== 'null') return origin;
         }
     }
 
-    return CLOUD_SERVER_URL;
+    return '';
 }
 
 export function getServerUrl(): string {
@@ -74,14 +70,10 @@ export function validateServerUrl(url: string): { valid: boolean; error?: string
     if (!url || !url.trim()) {
         return { valid: false, error: 'Server URL cannot be empty' };
     }
-    
-    try {
-        const parsed = new URL(url);
-        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-            return { valid: false, error: 'Server URL must use HTTP or HTTPS protocol' };
-        }
-        return { valid: true };
-    } catch {
+
+    const normalized = normalizeUrl(url);
+    if (!normalized) {
         return { valid: false, error: 'Invalid URL format' };
     }
+    return { valid: true };
 }

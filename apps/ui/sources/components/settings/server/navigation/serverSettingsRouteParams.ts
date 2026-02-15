@@ -11,7 +11,7 @@ function parseBoolean(value: string): boolean {
     return v === '1' || v === 'true' || v === 'yes' || v === 'on';
 }
 
-export function parseServerConfigRouteParams(params: Readonly<{ url?: ParamValue; auto?: ParamValue }>): Readonly<{ url: string | null; auto: boolean }> {
+export function parseServerSettingsRouteParams(params: Readonly<{ url?: ParamValue; auto?: ParamValue }>): Readonly<{ url: string | null; auto: boolean }> {
     const url = firstString(params.url).trim();
     const autoRaw = firstString(params.auto);
     return {

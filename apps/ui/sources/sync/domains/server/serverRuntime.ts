@@ -25,9 +25,6 @@ export function upsertAndActivateServer(
     params: Readonly<{
         serverUrl: string;
         name?: string;
-        kind?: ServerProfile['kind'];
-        managed?: boolean;
-        stableKey?: string;
         source?: ServerProfile['source'];
         scope?: 'device' | 'tab';
     }>,
@@ -35,9 +32,6 @@ export function upsertAndActivateServer(
     const profile = upsertServerProfile({
         serverUrl: params.serverUrl,
         name: params.name,
-        kind: params.kind,
-        managed: params.managed,
-        stableKey: params.stableKey,
         source: params.source,
     });
     setActiveServerId(profile.id, { scope: params.scope ?? 'device' });

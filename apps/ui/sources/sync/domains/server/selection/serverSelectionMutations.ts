@@ -1,13 +1,6 @@
-export type MultiServerGroupPresentation = 'grouped' | 'flat-with-badge';
+import type { ServerSelectionGroup, ServerSelectionPresentation } from './serverSelectionTypes';
 
-export type MultiServerGroupProfile = Readonly<{
-    id: string;
-    name: string;
-    serverIds: string[];
-    presentation: MultiServerGroupPresentation;
-}>;
-
-export type ToggleMultiServerGroupServerIdResult = Readonly<{
+export type ToggleServerSelectionGroupServerIdResult = Readonly<{
     nextServerIds: string[];
     preventedEmpty: boolean;
 }>;
@@ -20,7 +13,7 @@ function normalizeName(raw: unknown): string {
     return String(raw ?? '').trim();
 }
 
-function normalizePresentation(raw: unknown): MultiServerGroupPresentation {
+function normalizePresentation(raw: unknown): ServerSelectionPresentation {
     return raw === 'flat-with-badge' ? 'flat-with-badge' : 'grouped';
 }
 
@@ -38,10 +31,10 @@ function normalizeServerIds(raw: unknown): string[] {
     return result;
 }
 
-export function toggleMultiServerGroupServerIdEnsuringNonEmpty(
+export function toggleServerSelectionGroupServerIdEnsuringNonEmpty(
     currentServerIds: ReadonlyArray<string>,
     serverIdRaw: string,
-): ToggleMultiServerGroupServerIdResult {
+): ToggleServerSelectionGroupServerIdResult {
     const serverId = normalizeId(serverIdRaw);
     const normalizedCurrent = normalizeServerIds(currentServerIds);
     if (!serverId) {
@@ -63,12 +56,10 @@ export function toggleMultiServerGroupServerIdEnsuringNonEmpty(
     };
 }
 
-// Storage normalization must not depend on currently-known server profiles.
-// Otherwise, transiently missing servers can permanently erase saved group membership.
-export function normalizeStoredMultiServerGroupProfiles(raw: unknown): MultiServerGroupProfile[] {
+export function normalizeStoredServerSelectionGroups(raw: unknown): ServerSelectionGroup[] {
     if (!Array.isArray(raw)) return [];
     const seenIds = new Set<string>();
-    const result: MultiServerGroupProfile[] = [];
+    const result: ServerSelectionGroup[] = [];
 
     for (const item of raw) {
         if (!item || typeof item !== 'object') continue;
@@ -90,16 +81,13 @@ export function normalizeStoredMultiServerGroupProfiles(raw: unknown): MultiServ
     return result;
 }
 
-export function filterMultiServerGroupProfilesToAvailable(
-    profiles: ReadonlyArray<MultiServerGroupProfile>,
+export function filterServerSelectionGroupsToAvailableServers(
+    groups: ReadonlyArray<ServerSelectionGroup>,
     availableServerIds: ReadonlySet<string>,
-): MultiServerGroupProfile[] {
-    // An empty available set is ambiguous (it can happen transiently while profiles load or
-    // if an exception prevented reading server profiles). Filtering in that state would
-    // permanently erase group membership if persisted.
-    if (availableServerIds.size === 0) return profiles.slice();
-    return profiles.map((profile) => {
-        const serverIds = profile.serverIds.filter((id) => availableServerIds.has(id));
-        return serverIds.length === profile.serverIds.length ? profile : { ...profile, serverIds };
+): ServerSelectionGroup[] {
+    if (availableServerIds.size === 0) return groups.slice();
+    return groups.map((group) => {
+        const serverIds = group.serverIds.filter((id) => availableServerIds.has(id));
+        return serverIds.length === group.serverIds.length ? group : { ...group, serverIds };
     });
 }

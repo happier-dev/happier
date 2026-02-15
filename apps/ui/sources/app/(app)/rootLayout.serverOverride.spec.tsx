@@ -104,8 +104,8 @@ vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     upsertActivateAndSwitchServer: upsertActivateAndSwitchServerSpy,
 }));
 
-vi.mock('@/sync/api/capabilities/apiFeatures', () => ({
-    getServerFeatures: async () => null,
+vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
+    getReadyServerFeatures: async () => null,
 }));
 
 afterEach(() => {
