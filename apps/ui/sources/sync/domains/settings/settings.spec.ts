@@ -177,6 +177,11 @@ describe('settings', () => {
             expect((parsed as any).sessionPermissionModeApplyTiming).toBe('immediate');
         });
 
+        it('defaults agent input history scope to perSession', () => {
+            const parsed = settingsParse({} as any);
+            expect((parsed as any).agentInputHistoryScope).toBe('perSession');
+        });
+
         it('defaults voice settings', () => {
             const parsed = settingsParse({} as any);
             expect((parsed as any).voiceProviderId).toBe('happier_elevenlabs_agents');

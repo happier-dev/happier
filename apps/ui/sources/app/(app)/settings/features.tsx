@@ -8,6 +8,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { useSettingMutable, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { Switch } from '@/components/ui/forms/Switch';
 import { t } from '@/text';
+import { Modal } from '@/modal';
 import { FeatureDiagnosticsPanel } from '@/components/settings/features/FeatureDiagnosticsPanel';
 import {
     buildUiFeatureToggleDefaults,
@@ -20,6 +21,7 @@ export default React.memo(function FeaturesSettingsScreen() {
     const [featureToggles, setFeatureToggles] = useSettingMutable('featureToggles');
     const [useProfiles, setUseProfiles] = useSettingMutable('useProfiles');
     const [agentInputEnterToSend, setAgentInputEnterToSend] = useSettingMutable('agentInputEnterToSend');
+    const [agentInputHistoryScope, setAgentInputHistoryScope] = useSettingMutable('agentInputHistoryScope');
     const [commandPaletteEnabled, setCommandPaletteEnabled] = useLocalSettingMutable('commandPaletteEnabled');
     const [markdownCopyV2, setMarkdownCopyV2] = useLocalSettingMutable('markdownCopyV2');
     const [hideInactiveSessions, setHideInactiveSessions] = useSettingMutable('hideInactiveSessions');
@@ -120,6 +122,25 @@ export default React.memo(function FeaturesSettingsScreen() {
                         icon={<Ionicons name="return-down-forward-outline" size={29} color="#007AFF" />}
                         rightElement={<Switch value={agentInputEnterToSend} onValueChange={setAgentInputEnterToSend} />}
                         showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsFeatures.historyScope')}
+                        subtitle={agentInputHistoryScope === 'global'
+                            ? t('settingsFeatures.historyScopeGlobal')
+                            : t('settingsFeatures.historyScopePerSession')}
+                        icon={<Ionicons name="time-outline" size={29} color="#007AFF" />}
+                        showChevron={true}
+                        onPress={async () => {
+                            const wantsGlobal = await Modal.confirm(
+                                t('settingsFeatures.historyScopeModalTitle'),
+                                t('settingsFeatures.historyScopeModalMessage'),
+                                {
+                                    cancelText: t('settingsFeatures.historyScopePerSessionOption'),
+                                    confirmText: t('settingsFeatures.historyScopeGlobalOption'),
+                                }
+                            );
+                            setAgentInputHistoryScope(wantsGlobal ? 'global' : 'perSession');
+                        }}
                     />
                     <Item
                         title={t('settingsFeatures.commandPalette')}

@@ -35,6 +35,7 @@ import { SourceControlStatusBadge, useHasMeaningfulScmStatus } from '@/component
 import { ModelPickerOverlay } from '@/components/model/ModelPickerOverlay';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSetting } from '@/sync/domains/state/storage';
+import { useUserMessageHistory } from '@/hooks/session/useUserMessageHistory';
 import { Theme } from '@/theme';
 import { t } from '@/text';
 import { Metadata } from '@/sync/domains/state/storageTypes';
@@ -496,9 +497,20 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         : null;
 
     const agentInputEnterToSend = useSetting('agentInputEnterToSend');
+    const agentInputHistoryScope = useSetting('agentInputHistoryScope');
     const agentInputActionBarLayout = useSetting('agentInputActionBarLayout');
     const agentInputChipDensity = useSetting('agentInputChipDensity');
     const sessionPermissionModeApplyTiming = useSetting('sessionPermissionModeApplyTiming');
+
+    const messageHistory = useUserMessageHistory({
+        scope: agentInputHistoryScope === 'global' ? 'global' : 'perSession',
+        sessionId: props.sessionId ?? null,
+    });
+
+    const handleSend = React.useCallback(() => {
+        messageHistory.reset();
+        props.onSend();
+    }, [messageHistory, props.onSend]);
 
     const effectiveChipDensity = React.useMemo<'labels' | 'icons'>(() => {
         if (agentInputChipDensity === 'labels' || agentInputChipDensity === 'icons') {
@@ -801,9 +813,37 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
         // Original key handling
         if (Platform.OS === 'web') {
+            // Shell-like history: only when suggestions are not visible and cursor is at the boundary.
+            const isCollapsedSelection = inputState.selection.start === inputState.selection.end;
+            if (isCollapsedSelection && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+                if (event.key === 'ArrowUp' && inputState.selection.start === 0) {
+                    const next = messageHistory.moveUp(inputState.text);
+                    if (next !== null) {
+                        if (inputRef.current?.setTextAndSelection) {
+                            inputRef.current.setTextAndSelection(next, { start: next.length, end: next.length });
+                        } else {
+                            props.onChangeText(next);
+                        }
+                        return true;
+                    }
+                }
+
+                if (event.key === 'ArrowDown' && inputState.selection.end === inputState.text.length) {
+                    const next = messageHistory.moveDown();
+                    if (next !== null) {
+                        if (inputRef.current?.setTextAndSelection) {
+                            inputRef.current.setTextAndSelection(next, { start: next.length, end: next.length });
+                        } else {
+                            props.onChangeText(next);
+                        }
+                        return true;
+                    }
+                }
+            }
+
             if (agentInputEnterToSend && event.key === 'Enter' && !event.shiftKey) {
                 if (props.value.trim()) {
-                    props.onSend();
+                    handleSend();
                     return true; // Key was handled
                 }
             }
@@ -821,7 +861,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
         }
         return false; // Key was not handled
-		    }, [suggestions, moveUp, moveDown, selected, handleSuggestionSelect, inputState.text, inputState.selection.start, inputState.selection.end, props.showAbortButton, props.onAbort, isAborting, handleAbortPress, agentInputEnterToSend, props.value, props.onSend, props.onPermissionModeChange, agentId, permissionModeOrder, effectivePermissionPolicy.effectiveMode]);
+		    }, [suggestions, moveUp, moveDown, selected, handleSuggestionSelect, inputState.text, inputState.selection.start, inputState.selection.end, props.showAbortButton, props.onAbort, isAborting, handleAbortPress, agentInputEnterToSend, props.value, handleSend, props.onPermissionModeChange, agentId, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, props.onChangeText]);
 
 
 
@@ -1605,7 +1645,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     onPress={() => {
                                         hapticsLight();
                                         if (hasSendableContent) {
-                                            props.onSend();
+                                            handleSend();
                                         } else {
                                             props.onMicPress?.();
                                         }
