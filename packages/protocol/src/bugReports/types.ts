@@ -15,16 +15,15 @@ export type BugReportEnvironmentPayload = {
 export type BugReportFormPayload = {
   title: string;
   summary: string;
-  currentBehavior: string;
-  expectedBehavior: string;
-  reproductionSteps: string[];
-  frequency: BugReportFrequency;
-  severity: BugReportSeverity;
+  currentBehavior?: string;
+  expectedBehavior?: string;
+  reproductionSteps?: string[];
+  frequency?: BugReportFrequency;
+  severity?: BugReportSeverity;
   whatChangedRecently?: string;
   environment: BugReportEnvironmentPayload;
   consent: {
     includeDiagnostics: boolean;
-    allowMaintainerFollowUp?: boolean;
     acceptedPrivacyNotice: boolean;
   };
 };
@@ -44,7 +43,6 @@ export type BugReportServiceSubmitInput = {
   maxArtifactBytes?: number;
   issueOwner: string;
   issueRepo: string;
-  labels?: string[];
   clientPrefix?: string;
   existingIssueNumber?: number;
 };

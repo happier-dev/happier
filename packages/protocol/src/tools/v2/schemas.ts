@@ -246,6 +246,52 @@ export const AskUserQuestionResultV2Schema = BaseEnvelopeSchema.extend({
   answers: z.record(z.string()).optional(),
 }).passthrough();
 
+export const SubAgentRunInputV2Schema = BaseEnvelopeSchema.extend({
+  intent: z.string().optional(),
+  backendId: z.string().optional(),
+  label: z.string().optional(),
+  policy: z.unknown().optional(),
+}).passthrough();
+
+export const SubAgentRunResultV2Schema = BaseEnvelopeSchema.extend({
+  status: z.string().optional(),
+  summary: z.string().optional(),
+  runId: z.string().optional(),
+  callId: z.string().optional(),
+  sidechainId: z.string().optional(),
+  backendId: z.string().optional(),
+  intent: z.string().optional(),
+  startedAtMs: z.number().int().nonnegative().optional(),
+  finishedAtMs: z.number().int().nonnegative().optional(),
+  findingsDigest: z.object({
+    total: z.number().int().nonnegative(),
+    items: z.array(z.object({
+      id: z.string().min(1),
+      title: z.string().min(1),
+      severity: z.string().min(1),
+      category: z.string().min(1),
+      filePath: z.string().min(1).optional(),
+      startLine: z.number().int().min(1).optional(),
+      endLine: z.number().int().min(1).optional(),
+    }).passthrough()),
+  }).passthrough().optional(),
+  triage: z.object({
+    findings: z.array(z.object({
+      id: z.string().min(1),
+      status: z.string().min(1),
+      comment: z.string().min(1).optional(),
+    }).passthrough()),
+  }).passthrough().optional(),
+  limits: z.object({
+    findingsTruncated: z.boolean().optional(),
+    patchesTruncated: z.boolean().optional(),
+  }).passthrough().optional(),
+  error: z.object({
+    code: z.string().min(1),
+    message: z.string().optional(),
+  }).passthrough().optional(),
+}).passthrough();
+
 export const AcpHistoryImportInputV2Schema = BaseEnvelopeSchema.extend({
   provider: z.string().optional(),
   remoteSessionId: z.string().optional(),
@@ -301,6 +347,7 @@ const TOOL_INPUT_SCHEMAS: Record<KnownCanonicalToolNameV2, z.ZodTypeAny> = {
   AcpHistoryImport: AcpHistoryImportInputV2Schema,
   WorkspaceIndexingPermission: WorkspaceIndexingPermissionInputV2Schema,
   change_title: ChangeTitleInputV2Schema,
+  SubAgentRun: SubAgentRunInputV2Schema,
 };
 
 const TOOL_RESULT_SCHEMAS: Record<KnownCanonicalToolNameV2, z.ZodTypeAny> = {
@@ -328,6 +375,7 @@ const TOOL_RESULT_SCHEMAS: Record<KnownCanonicalToolNameV2, z.ZodTypeAny> = {
   AcpHistoryImport: BaseEnvelopeSchema.passthrough(),
   WorkspaceIndexingPermission: BaseEnvelopeSchema.passthrough(),
   change_title: ChangeTitleResultV2Schema,
+  SubAgentRun: SubAgentRunResultV2Schema,
 };
 
 export function getToolInputSchemaV2(toolName: KnownCanonicalToolNameV2): z.ZodTypeAny {

@@ -6,8 +6,12 @@ export const ACTION_IDS = [
   'session.spawn_new',
   // Session messaging
   'session.message.send',
+  // Intent start actions (first-class)
+  'review.start',
+  'plan.start',
+  'delegate.start',
+  'voice_agent.start',
   // Execution runs control plane (RPC-backed)
-  'execution.run.start',
   'execution.run.list',
   'execution.run.get',
   'execution.run.send',

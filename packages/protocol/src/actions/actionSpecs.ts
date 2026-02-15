@@ -2,7 +2,8 @@ import { z } from 'zod';
 
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import { ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';
-import { ExecutionRunIntentSchema } from '../executionRuns.js';
+import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
+import { ActionInputPredicateSchema, type ActionInputPredicate } from './actionInputPredicates.js';
 
 const ZodSchemaLike = z.custom<z.ZodTypeAny>((value) => {
   if (!value || typeof value !== 'object') return false;
@@ -22,6 +23,82 @@ export type ActionSurfaces = z.infer<typeof ActionSurfaceSchema>;
 
 export const ActionSafetySchema = z.enum(['safe', 'danger']);
 export type ActionSafety = z.infer<typeof ActionSafetySchema>;
+
+export const ActionInputWidgetSchema = z.enum(['text', 'textarea', 'text_list', 'select', 'multiselect', 'toggle', 'checkbox']);
+export type ActionInputWidget = z.infer<typeof ActionInputWidgetSchema>;
+
+export const ActionInputOptionSchema = z
+  .object({
+    value: z.string().min(1),
+    label: z.string().min(1),
+    description: z.string().min(1).optional(),
+  })
+  .strict();
+export type ActionInputOption = z.infer<typeof ActionInputOptionSchema>;
+
+export const ActionInputFieldHintSchema = z
+  .object({
+    /**
+     * Dot-path in the action input object, e.g. `engineIds` or `base.kind`.
+     *
+     * This is UI/elicitation metadata only; the canonical validation remains the action `inputSchema`.
+     */
+    path: z.string().min(1),
+    title: z.string().min(1),
+    description: z.string().min(1).optional(),
+    widget: ActionInputWidgetSchema,
+    /**
+     * Only used for `widget='text_list'`.
+     *
+     * This is UI/elicitation metadata only; canonical validation remains the action `inputSchema`.
+     */
+    listSeparator: z.enum(['comma', 'newline']).optional(),
+    required: z.boolean().optional(),
+    options: z.array(ActionInputOptionSchema).optional(),
+    optionsSourceId: z.string().min(1).optional(),
+    visibleWhen: ActionInputPredicateSchema.optional(),
+    requiredWhen: ActionInputPredicateSchema.optional(),
+    disabledWhen: ActionInputPredicateSchema.optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const widget = (value as any).widget as string;
+    const options = Array.isArray((value as any).options) ? (value as any).options : null;
+    const optionsSourceId = typeof (value as any).optionsSourceId === 'string' ? (value as any).optionsSourceId.trim() : '';
+
+    if (widget === 'select' || widget === 'multiselect') {
+      const hasOptions = Array.isArray(options) && options.length > 0;
+      const hasSource = Boolean(optionsSourceId);
+      if (!hasOptions && !hasSource) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${widget} requires options or optionsSourceId`,
+          path: ['options'],
+        });
+      }
+    }
+
+    if (widget === 'text_list') {
+      const listSeparator = (value as any).listSeparator;
+      if (listSeparator !== 'comma' && listSeparator !== 'newline') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'text_list requires listSeparator',
+          path: ['listSeparator'],
+        });
+      }
+    }
+  });
+export type ActionInputFieldHint = z.infer<typeof ActionInputFieldHintSchema>;
+
+export const ActionInputHintsSchema = z
+  .object({
+    title: z.string().min(1).optional(),
+    description: z.string().min(1).optional(),
+    fields: z.array(ActionInputFieldHintSchema).default([]),
+  })
+  .strict();
+export type ActionInputHints = z.infer<typeof ActionInputHintsSchema>;
 
 export const ActionSpecSchema = z.object({
   id: ActionIdSchema,
@@ -58,6 +135,7 @@ export const ActionSpecSchema = z.object({
     .optional(),
   surfaces: ActionSurfaceSchema,
   inputSchema: ZodSchemaLike,
+  inputHints: ActionInputHintsSchema.optional(),
 }).passthrough();
 
 export type ActionSpec = z.infer<typeof ActionSpecSchema> & Readonly<{
@@ -66,20 +144,44 @@ export type ActionSpec = z.infer<typeof ActionSpecSchema> & Readonly<{
 
 const EmptyObjectSchema = z.object({}).strict();
 
-const ExecutionRunStartInputSchema = z.object({
+const IntentStartCommonSchema = z.object({
   sessionId: z.string().min(1).optional(),
-  intent: ExecutionRunIntentSchema,
-  backendId: z.string().min(1),
-  instructions: z.string().optional(),
-  permissionMode: z.string().optional(),
+  backendIds: z.array(z.string().min(1)).min(1),
+  instructions: z.string().trim().min(1),
+  permissionMode: z.string().min(1).optional(),
   retentionPolicy: z.enum(['ephemeral', 'resumable']).optional(),
   runClass: z.enum(['bounded', 'long_lived']).optional(),
   ioMode: z.enum(['request_response', 'streaming']).optional(),
 }).passthrough();
 
+const PlanStartInputSchema = IntentStartCommonSchema.extend({
+  permissionMode: z.string().min(1).default('read_only'),
+  retentionPolicy: z.enum(['ephemeral', 'resumable']).default('ephemeral'),
+  runClass: z.enum(['bounded', 'long_lived']).default('bounded'),
+  ioMode: z.enum(['request_response', 'streaming']).default('request_response'),
+}).passthrough();
+
+const DelegateStartInputSchema = IntentStartCommonSchema.extend({
+  permissionMode: z.string().min(1).default('workspace_write'),
+  retentionPolicy: z.enum(['ephemeral', 'resumable']).default('ephemeral'),
+  runClass: z.enum(['bounded', 'long_lived']).default('bounded'),
+  ioMode: z.enum(['request_response', 'streaming']).default('request_response'),
+}).passthrough();
+
+const VoiceAgentStartInputSchema = IntentStartCommonSchema.extend({
+  permissionMode: z.string().min(1).default('read_only'),
+  retentionPolicy: z.enum(['ephemeral', 'resumable']).default('ephemeral'),
+  runClass: z.enum(['bounded', 'long_lived']).default('long_lived'),
+  ioMode: z.enum(['request_response', 'streaming']).default('streaming'),
+}).passthrough();
+
 const ExecutionRunIdInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
   runId: z.string().min(1),
+}).passthrough();
+
+const ExecutionRunGetInputSchema = ExecutionRunIdInputSchema.extend({
+  includeStructured: z.boolean().optional(),
 }).passthrough();
 
 const ExecutionRunSendInputSchema = ExecutionRunIdInputSchema.extend({
@@ -144,14 +246,83 @@ const SessionRecentMessagesInputSchema = z.object({
 
 export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
   {
-    id: 'execution.run.start',
-    title: 'Start execution run',
+    id: 'review.start',
+    title: 'Start review',
     safety: 'safe',
     placements: ['session_action_menu', 'command_palette', 'slash_command', 'voice_panel'],
-    slash: { tokens: ['/h.review', '/h.plan', '/h.delegate', '/h.voice'] },
-    bindings: { voiceClientToolName: 'startExecutionRun', mcpToolName: 'execution_run_start' },
+    slash: { tokens: ['/h.review'] },
+    bindings: { voiceClientToolName: 'startReview', mcpToolName: 'review_start' },
+    inputHints: {
+      title: 'Start a code review',
+      description: 'Start one or more parallel review runs against the current worktree.',
+      fields: [
+        {
+          path: 'engineIds',
+          title: 'Review engines',
+          description: 'Select one or more engines. Each engine runs as its own execution run.',
+          widget: 'multiselect',
+          required: true,
+          optionsSourceId: 'review.engines.available',
+        },
+        {
+          path: 'instructions',
+          title: 'Instructions',
+          description: 'What you want the reviewers to focus on.',
+          widget: 'textarea',
+          required: true,
+        },
+        {
+          path: 'changeType',
+          title: 'Change type',
+          description: 'Which changes to review.',
+          widget: 'select',
+          required: true,
+          options: [
+            { value: 'committed', label: 'Committed' },
+            { value: 'uncommitted', label: 'Uncommitted' },
+            { value: 'all', label: 'All' },
+          ],
+        },
+        {
+          path: 'base.kind',
+          title: 'Base selection',
+          description: 'How to define the review base for tools that need it (e.g. CodeRabbit).',
+          widget: 'select',
+          required: true,
+          options: [
+            { value: 'none', label: 'None' },
+            { value: 'branch', label: 'Base branch' },
+            { value: 'commit', label: 'Base commit' },
+          ],
+        },
+        {
+          path: 'base.baseBranch',
+          title: 'Base branch',
+          description: 'Branch name to diff against (when base.kind=branch).',
+          widget: 'text',
+          visibleWhen: { op: 'eq', path: 'base.kind', value: 'branch' },
+          requiredWhen: { op: 'eq', path: 'base.kind', value: 'branch' },
+        },
+        {
+          path: 'base.baseCommit',
+          title: 'Base commit',
+          description: 'Commit SHA to diff against (when base.kind=commit).',
+          widget: 'text',
+          visibleWhen: { op: 'eq', path: 'base.kind', value: 'commit' },
+          requiredWhen: { op: 'eq', path: 'base.kind', value: 'commit' },
+        },
+        {
+          path: 'engines.coderabbit.configFiles',
+          title: 'CodeRabbit config files',
+          description: 'Optional extra config file(s) to pass to CodeRabbit via --config.',
+          widget: 'text_list',
+          listSeparator: 'comma',
+          visibleWhen: { op: 'includes', path: 'engineIds', value: 'coderabbit' },
+        },
+      ],
+    },
     examples: {
-      voice: { argsExample: '{"sessionId":"{{sessionId}}","intent":"review","backendId":"claude","instructions":"..."}' },
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","engineIds":["codex"],"instructions":"Review this.","changeType":"committed","base":{"kind":"none"}}' },
     },
     surfaces: {
       ui_button: true,
@@ -161,7 +332,130 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       mcp: true,
       session_control_cli: true,
     },
-    inputSchema: ExecutionRunStartInputSchema,
+    inputSchema: ReviewStartInputSchema,
+  },
+  {
+    id: 'plan.start',
+    title: 'Start plan run',
+    safety: 'safe',
+    placements: ['session_action_menu', 'command_palette', 'slash_command', 'voice_panel'],
+    slash: { tokens: ['/h.plan'] },
+    bindings: { voiceClientToolName: 'startPlan', mcpToolName: 'plan_start' },
+    inputHints: {
+      title: 'Start a planning run',
+      description: 'Start one or more parallel planning runs using selected backends.',
+      fields: [
+        {
+          path: 'backendIds',
+          title: 'Backends',
+          description: 'Select one or more backends. Each backend runs as its own execution run.',
+          widget: 'multiselect',
+          required: true,
+          optionsSourceId: 'execution.backends.enabled',
+        },
+        {
+          path: 'instructions',
+          title: 'Instructions',
+          description: 'What you want the planner(s) to do.',
+          widget: 'textarea',
+          required: true,
+        },
+      ],
+    },
+    examples: {
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","backendIds":["codex"],"instructions":"Plan the changes."}' },
+    },
+    surfaces: {
+      ui_button: true,
+      ui_slash_command: true,
+      voice_tool: true,
+      voice_action_block: true,
+      mcp: true,
+      session_control_cli: true,
+    },
+    inputSchema: PlanStartInputSchema,
+  },
+  {
+    id: 'delegate.start',
+    title: 'Start delegate run',
+    safety: 'safe',
+    placements: ['session_action_menu', 'command_palette', 'slash_command', 'voice_panel'],
+    slash: { tokens: ['/h.delegate'] },
+    bindings: { voiceClientToolName: 'startDelegate', mcpToolName: 'delegate_start' },
+    inputHints: {
+      title: 'Start a delegation run',
+      description: 'Start one or more parallel delegation runs using selected backends.',
+      fields: [
+        {
+          path: 'backendIds',
+          title: 'Backends',
+          description: 'Select one or more backends. Each backend runs as its own execution run.',
+          widget: 'multiselect',
+          required: true,
+          optionsSourceId: 'execution.backends.enabled',
+        },
+        {
+          path: 'instructions',
+          title: 'Instructions',
+          description: 'What you want the delegate(s) to do.',
+          widget: 'textarea',
+          required: true,
+        },
+      ],
+    },
+    examples: {
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","backendIds":["codex"],"instructions":"Delegate the task."}' },
+    },
+    surfaces: {
+      ui_button: true,
+      ui_slash_command: true,
+      voice_tool: true,
+      voice_action_block: true,
+      mcp: true,
+      session_control_cli: true,
+    },
+    inputSchema: DelegateStartInputSchema,
+  },
+  {
+    id: 'voice_agent.start',
+    title: 'Start voice agent run',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    slash: { tokens: ['/h.voice'] },
+    bindings: { voiceClientToolName: 'startVoiceAgentRun', mcpToolName: 'voice_agent_start' },
+    inputHints: {
+      title: 'Start a voice agent run',
+      description: 'Start a voice agent execution run (typically used by the voice control plane).',
+      fields: [
+        {
+          path: 'backendIds',
+          title: 'Backends',
+          description: 'Select one or more backends.',
+          widget: 'multiselect',
+          required: true,
+          optionsSourceId: 'execution.backends.enabled',
+        },
+        {
+          path: 'instructions',
+          title: 'Instructions',
+          description: 'Initial instructions for the voice agent run.',
+          widget: 'textarea',
+          required: true,
+        },
+      ],
+    },
+    examples: {
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","backendIds":["codex"],"instructions":"..."}' },
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: true,
+      voice_action_block: true,
+      mcp: true,
+      session_control_cli: true,
+    },
+    inputSchema: VoiceAgentStartInputSchema,
   },
   {
     id: 'execution.run.list',
@@ -170,6 +464,10 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     placements: ['run_list', 'command_palette', 'slash_command', 'voice_panel'],
     slash: { tokens: ['/h.runs'] },
     bindings: { voiceClientToolName: 'listExecutionRuns', mcpToolName: 'execution_run_list' },
+    inputHints: {
+      title: 'List execution runs',
+      fields: [{ path: 'sessionId', title: 'Session id', widget: 'text' }],
+    },
     examples: {
       voice: { argsExample: '{"sessionId":"{{sessionId}}"}' },
     },
@@ -200,7 +498,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       mcp: true,
       session_control_cli: true,
     },
-    inputSchema: ExecutionRunIdInputSchema,
+    inputHints: {
+      title: 'Get a run',
+      fields: [
+        { path: 'runId', title: 'Run id', widget: 'text', required: true },
+        { path: 'includeStructured', title: 'Include structured output', widget: 'toggle' },
+      ],
+    },
+    inputSchema: ExecutionRunGetInputSchema,
   },
   {
     id: 'execution.run.send',
@@ -218,6 +523,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_action_block: true,
       mcp: true,
       session_control_cli: true,
+    },
+    inputHints: {
+      title: 'Send to run',
+      fields: [
+        { path: 'runId', title: 'Run id', widget: 'text', required: true },
+        { path: 'message', title: 'Message', widget: 'textarea', required: true },
+        { path: 'resume', title: 'Resume if needed', widget: 'toggle' },
+      ],
     },
     inputSchema: ExecutionRunSendInputSchema,
   },
@@ -238,6 +551,10 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       mcp: true,
       session_control_cli: true,
     },
+    inputHints: {
+      title: 'Stop a run',
+      fields: [{ path: 'runId', title: 'Run id', widget: 'text', required: true }],
+    },
     inputSchema: ExecutionRunIdInputSchema,
   },
   {
@@ -256,6 +573,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_action_block: true,
       mcp: true,
       session_control_cli: true,
+    },
+    inputHints: {
+      title: 'Run action',
+      fields: [
+        { path: 'runId', title: 'Run id', widget: 'text', required: true },
+        { path: 'actionId', title: 'Action id', widget: 'text', required: true },
+        { path: 'input', title: 'Input (JSON)', widget: 'textarea' },
+      ],
     },
     inputSchema: ExecutionRunActionInputSchema,
   },
@@ -276,6 +601,10 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       mcp: false,
       session_control_cli: false,
     },
+    inputHints: {
+      title: 'Open a session',
+      fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
+    },
     inputSchema: SessionOpenInputSchema,
   },
   {
@@ -294,6 +623,15 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_action_block: true,
       mcp: false,
       session_control_cli: true,
+    },
+    inputHints: {
+      title: 'Create a new session',
+      fields: [
+        { path: 'tag', title: 'Tag', widget: 'text' },
+        { path: 'path', title: 'Path', widget: 'text' },
+        { path: 'host', title: 'Host', widget: 'text' },
+        { path: 'initialMessage', title: 'Initial message', widget: 'textarea' },
+      ],
     },
     inputSchema: SessionSpawnNewInputSchema,
   },
@@ -315,6 +653,13 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       mcp: false,
       session_control_cli: false,
     },
+    inputHints: {
+      title: 'Send a message',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'message', title: 'Message', widget: 'textarea', required: true },
+      ],
+    },
     inputSchema: SessionSendMessageInputSchema,
   },
   {
@@ -334,6 +679,23 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_action_block: true,
       mcp: false,
       session_control_cli: false,
+    },
+    inputHints: {
+      title: 'Respond to permission request',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        {
+          path: 'decision',
+          title: 'Decision',
+          widget: 'select',
+          required: true,
+          options: [
+            { value: 'allow', label: 'Allow' },
+            { value: 'deny', label: 'Deny' },
+          ],
+        },
+        { path: 'requestId', title: 'Request id', widget: 'text' },
+      ],
     },
     inputSchema: SessionPermissionRespondInputSchema,
   },
@@ -355,6 +717,10 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       mcp: false,
       session_control_cli: false,
     },
+    inputHints: {
+      title: 'Set primary action session',
+      fields: [{ path: 'sessionId', title: 'Session id (or null)', widget: 'text' }],
+    },
     inputSchema: SessionPrimaryTargetInputSchema,
   },
   {
@@ -374,6 +740,10 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_action_block: true,
       mcp: false,
       session_control_cli: false,
+    },
+    inputHints: {
+      title: 'Set tracked sessions',
+      fields: [{ path: 'sessionIds', title: 'Session ids', widget: 'text_list', listSeparator: 'comma', required: true }],
     },
     inputSchema: SessionTrackedTargetsInputSchema,
   },
@@ -395,6 +765,14 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       mcp: false,
       session_control_cli: false,
     },
+    inputHints: {
+      title: 'List sessions',
+      fields: [
+        { path: 'limit', title: 'Limit', widget: 'text' },
+        { path: 'cursor', title: 'Cursor', widget: 'text' },
+        { path: 'includeLastMessagePreview', title: 'Include last message preview', widget: 'toggle' },
+      ],
+    },
     inputSchema: SessionListInputSchema,
   },
   {
@@ -414,6 +792,13 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_action_block: true,
       mcp: false,
       session_control_cli: false,
+    },
+    inputHints: {
+      title: 'Get session activity',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'windowSeconds', title: 'Window seconds', widget: 'text' },
+      ],
     },
     inputSchema: SessionActivityInputSchema,
   },
@@ -435,6 +820,16 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       mcp: false,
       session_control_cli: false,
     },
+    inputHints: {
+      title: 'Get recent messages',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'limit', title: 'Limit', widget: 'text' },
+        { path: 'cursor', title: 'Cursor', widget: 'text' },
+        { path: 'includeUser', title: 'Include user', widget: 'toggle' },
+        { path: 'includeAssistant', title: 'Include assistant', widget: 'toggle' },
+      ],
+    },
     inputSchema: SessionRecentMessagesInputSchema,
   },
   {
@@ -444,6 +839,11 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     placements: ['voice_panel', 'command_palette', 'slash_command'],
     slash: { tokens: ['/h.voice.reset'] },
     bindings: { voiceClientToolName: 'resetGlobalVoiceAgent' },
+    inputHints: {
+      title: 'Reset voice agent',
+      description: 'Reset the global voice agent state (clears the current voice conversation).',
+      fields: [],
+    },
     examples: {
       voice: { argsExample: '{}' },
     },

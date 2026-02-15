@@ -26,6 +26,7 @@ export const KNOWN_CANONICAL_TOOL_NAMES_V2 = [
   'AcpHistoryImport',
   'WorkspaceIndexingPermission',
   'change_title',
+  'SubAgentRun',
 ] as const;
 
 export const KnownCanonicalToolNameV2Schema = z.enum(KNOWN_CANONICAL_TOOL_NAMES_V2);
@@ -39,4 +40,3 @@ export const CanonicalToolNameV2Schema = z.union([
   KnownCanonicalToolNameV2Schema,
   z.string().regex(/^mcp__/),
 ]);
-

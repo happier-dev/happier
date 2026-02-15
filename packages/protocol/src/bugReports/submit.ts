@@ -1,60 +1,9 @@
 import type { BugReportFormPayload, BugReportServiceSubmitInput } from './types.js';
-import {
-  BUG_REPORT_DEFAULT_ISSUE_LABELS,
-  BUG_REPORT_FALLBACK_MAX_LABEL_LENGTH,
-  BUG_REPORT_FALLBACK_MAX_LABELS,
-} from './types.js';
 import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from './redaction.js';
 import { normalizeBugReportProviderUrl, sanitizeBugReportUrl } from './sanitize.js';
 import { normalizeBugReportIssueTarget } from './issueTarget.js';
 import { utf8ByteLength } from './utf8.js';
-
-async function withAbortTimeout<T>(timeoutMs: number, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Math.max(1_000, timeoutMs));
-  try {
-    return await run(controller.signal);
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function postJson<TResponse>(input: {
-  url: string;
-  body: unknown;
-  timeoutMs: number;
-}): Promise<TResponse> {
-  const response = await withAbortTimeout(input.timeoutMs, async (signal) =>
-    await fetch(input.url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(input.body),
-      signal,
-    }),
-  );
-
-  if (!response.ok) {
-    const safeErrorText = await readSafeBugReportErrorText(response);
-    throw new Error(`Request failed (${response.status}): ${safeErrorText}`);
-  }
-
-  return await response.json() as TResponse;
-}
-
-async function readSafeBugReportErrorText(response: Response): Promise<string> {
-  try {
-    const text = await response.text();
-    const sanitized = trimBugReportTextToMaxBytes(
-      redactBugReportSensitiveText(String(text ?? '')),
-      1024,
-    ).trim();
-    return sanitized || 'unknown error';
-  } catch {
-    return 'unknown error';
-  }
-}
+import { postJson, readSafeBugReportErrorText, withAbortTimeout } from './http.js';
 
 export async function submitBugReportToService(input: BugReportServiceSubmitInput): Promise<{
   reportId: string;
@@ -90,15 +39,6 @@ export async function submitBugReportToService(input: BugReportServiceSubmitInpu
     ...artifact,
     content: trimBugReportTextToMaxBytes(redactBugReportSensitiveText(artifact.content), maxArtifactBytes),
   }));
-  const normalizedLabels = Array.from(
-    new Set(
-      (input.labels ?? BUG_REPORT_DEFAULT_ISSUE_LABELS)
-        .map((label) => String(label ?? '').trim())
-        .filter((label) => label.length > 0)
-        .map((label) => label.slice(0, BUG_REPORT_FALLBACK_MAX_LABEL_LENGTH)),
-    ),
-  ).slice(0, BUG_REPORT_FALLBACK_MAX_LABELS);
-  const issueLabels = normalizedLabels.length > 0 ? normalizedLabels : BUG_REPORT_DEFAULT_ISSUE_LABELS;
 
   const session = await postJson<{
     reportId: string;
@@ -176,7 +116,7 @@ export async function submitBugReportToService(input: BugReportServiceSubmitInpu
       issue: {
         owner: issueTarget.owner,
         repo: issueTarget.repo,
-        labels: issueLabels,
+        number: input.existingIssueNumber,
       },
     },
   });

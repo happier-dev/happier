@@ -25,10 +25,10 @@ describe('protocol package root exports', () => {
         expect(parsed.t).toBe('automation-upsert');
     });
 
-    it('exports voice agent streaming schemas', () => {
-        expect(typeof protocol.VoiceAgentTurnStreamStartRequestSchema).toBe('object');
-        expect(typeof protocol.VoiceAgentTurnStreamReadResponseSchema).toBe('object');
-        expect(typeof protocol.VoiceAgentTurnStreamCancelRequestSchema).toBe('object');
+    it('exports execution run streaming schemas', () => {
+        expect(typeof (protocol as any).ExecutionRunTurnStreamStartRequestSchema).toBe('object');
+        expect(typeof (protocol as any).ExecutionRunTurnStreamReadResponseSchema).toBe('object');
+        expect(typeof (protocol as any).ExecutionRunTurnStreamCancelRequestSchema).toBe('object');
     });
 
     it('exports review triage overlay schemas for execution-run consumers', () => {

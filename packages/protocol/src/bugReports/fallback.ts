@@ -1,17 +1,13 @@
 import {
-  BUG_REPORT_DEFAULT_ISSUE_LABELS,
   BUG_REPORT_DEFAULT_ISSUE_OWNER,
   BUG_REPORT_DEFAULT_ISSUE_REPO,
   BUG_REPORT_FALLBACK_BODY_TRUNCATION_SUFFIX,
   BUG_REPORT_FALLBACK_ISSUE_URL_MAX_LENGTH,
-  BUG_REPORT_FALLBACK_MAX_LABEL_LENGTH,
-  BUG_REPORT_FALLBACK_MAX_LABELS,
   type BugReportEnvironmentPayload,
   type BugReportFrequency,
   type BugReportSeverity,
 } from './types.js';
 import { resolveBugReportIssueTargetWithDefaults } from './issueTarget.js';
-import { sanitizeBugReportUrl } from './sanitize.js';
 
 export function normalizeBugReportReproductionSteps(raw: string | string[]): string[] {
   const inputLines = Array.isArray(raw)
@@ -22,48 +18,52 @@ export function normalizeBugReportReproductionSteps(raw: string | string[]): str
     .filter((line) => line.length > 0)
     .map((line) => line.replace(/^((\d+[.)])|[-*•])\s*/, '').trim())
     .filter((line) => line.length > 0);
-  if (steps.length === 0) return ['Unknown'];
+  if (steps.length === 0) return [];
   return steps.slice(0, 20);
 }
 
 export function formatBugReportFallbackIssueBody(input: {
   summary: string;
-  currentBehavior: string;
-  expectedBehavior: string;
-  reproductionSteps: string[];
-  frequency: BugReportFrequency;
-  severity: BugReportSeverity;
+  currentBehavior?: string;
+  expectedBehavior?: string;
+  reproductionSteps?: string[];
+  frequency?: BugReportFrequency;
+  severity?: BugReportSeverity;
   environment: BugReportEnvironmentPayload;
   whatChangedRecently?: string;
   diagnosticsIncluded: boolean;
 }): string {
-  const steps = input.reproductionSteps.map((step, index) => `${index + 1}. ${step}`).join('\n');
-  const sanitizedServerUrl = sanitizeBugReportUrl(input.environment.serverUrl);
+  const summary = input.summary.trim();
+  const currentBehavior = input.currentBehavior?.trim();
+  const expectedBehavior = input.expectedBehavior?.trim();
+  const reproductionSteps = Array.isArray(input.reproductionSteps) ? input.reproductionSteps : [];
+  const steps = reproductionSteps.length > 0
+    ? reproductionSteps.map((step, index) => `${index + 1}. ${String(step ?? '').trim()}`).filter(Boolean).join('\n')
+    : null;
 
   return [
     '## Summary',
-    input.summary,
+    summary,
     '',
-    '## Current Behavior',
-    input.currentBehavior,
-    '',
-    '## Expected Behavior',
-    input.expectedBehavior,
-    '',
-    '## Reproduction Steps',
+    currentBehavior ? '## Current Behavior' : null,
+    currentBehavior ?? null,
+    currentBehavior ? '' : null,
+    expectedBehavior ? '## Expected Behavior' : null,
+    expectedBehavior ?? null,
+    expectedBehavior ? '' : null,
+    steps ? '## Reproduction Steps' : null,
     steps,
-    '',
-    '## Frequency / Severity',
-    `- Frequency: ${input.frequency}`,
-    `- Severity: ${input.severity}`,
-    '',
+    steps ? '' : null,
+    input.frequency || input.severity ? '## Frequency / Severity' : null,
+    input.frequency ? `- Frequency: ${input.frequency}` : null,
+    input.severity ? `- Severity: ${input.severity}` : null,
+    input.frequency || input.severity ? '' : null,
     '## Environment',
     `- App version: ${input.environment.appVersion}`,
     `- Platform: ${input.environment.platform}`,
     input.environment.osVersion ? `- OS: ${input.environment.osVersion}` : null,
     input.environment.deviceModel ? `- Device: ${input.environment.deviceModel}` : null,
     input.environment.serverVersion ? `- Server version: ${input.environment.serverVersion}` : null,
-    sanitizedServerUrl ? `- Server URL: ${sanitizedServerUrl}` : null,
     `- Deployment: ${input.environment.deploymentType}`,
     '',
     '## Diagnostics',
@@ -80,7 +80,6 @@ export function buildBugReportFallbackIssueUrl(input: {
   body: string;
   owner: string;
   repo: string;
-  labels?: string[];
 }): string {
   const issueTarget = resolveBugReportIssueTargetWithDefaults({
     owner: input.owner,
@@ -88,15 +87,6 @@ export function buildBugReportFallbackIssueUrl(input: {
     defaultOwner: BUG_REPORT_DEFAULT_ISSUE_OWNER,
     defaultRepo: BUG_REPORT_DEFAULT_ISSUE_REPO,
   });
-  const labels = Array.from(
-    new Set(
-      (input.labels ?? BUG_REPORT_DEFAULT_ISSUE_LABELS)
-        .map((label) => String(label ?? '').trim())
-        .filter((label) => label.length > 0)
-        .map((label) => label.slice(0, BUG_REPORT_FALLBACK_MAX_LABEL_LENGTH)),
-    ),
-  ).slice(0, BUG_REPORT_FALLBACK_MAX_LABELS);
-  const normalizedLabels = labels.length > 0 ? labels : BUG_REPORT_DEFAULT_ISSUE_LABELS;
   const issuePath = `https://github.com/${issueTarget.owner}/${issueTarget.repo}/issues/new`;
   const encode = (value: string) => encodeURIComponent(value).replace(/%20/g, '%20');
   const normalizedTitle = (input.title.trim() || 'Bug report').slice(0, 200);
@@ -105,7 +95,6 @@ export function buildBugReportFallbackIssueUrl(input: {
     const query = [
       `title=${encode(normalizedTitle)}`,
       `body=${encode(body)}`,
-      `labels=${encode(normalizedLabels.join(','))}`,
     ].join('&');
     return `${issuePath}?${query}`;
   };

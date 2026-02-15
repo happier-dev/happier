@@ -54,6 +54,8 @@ export {
   ExitPlanModeInputV2Schema,
   AskUserQuestionInputV2Schema,
   AskUserQuestionResultV2Schema,
+  SubAgentRunInputV2Schema,
+  SubAgentRunResultV2Schema,
   AcpHistoryImportInputV2Schema,
   WorkspaceIndexingPermissionInputV2Schema,
   ChangeTitleInputV2Schema,

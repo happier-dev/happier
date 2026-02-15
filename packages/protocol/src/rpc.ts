@@ -2,6 +2,8 @@ export const RPC_METHODS = {
   SPAWN_HAPPY_SESSION: 'spawn-happy-session',
   STOP_SESSION: 'stop-session',
   STOP_DAEMON: 'stop-daemon',
+  DAEMON_EXECUTION_RUNS_LIST: 'daemon.executionRuns.list',
+  SESSION_CONTINUE_WITH_REPLAY: 'session.continueWithReplay',
   BASH: 'bash',
   PREVIEW_ENV: 'preview-env',
   READ_FILE: 'readFile',
@@ -47,14 +49,18 @@ export const RPC_ERROR_MESSAGES = {
 
 // Session-scoped RPC method names (used with `${sessionId}:${method}` over socket RPC).
 export const SESSION_RPC_METHODS = {
-  VOICE_MEDIATOR_START: 'voice.mediator.start',
-  VOICE_MEDIATOR_SEND_TURN: 'voice.mediator.sendTurn',
-  VOICE_MEDIATOR_SEND_TURN_STREAM_START: 'voice.mediator.sendTurnStream.start',
-  VOICE_MEDIATOR_SEND_TURN_STREAM_READ: 'voice.mediator.sendTurnStream.read',
-  VOICE_MEDIATOR_SEND_TURN_STREAM_CANCEL: 'voice.mediator.sendTurnStream.cancel',
-  VOICE_MEDIATOR_COMMIT: 'voice.mediator.commit',
-  VOICE_MEDIATOR_STOP: 'voice.mediator.stop',
-  VOICE_MEDIATOR_GET_MODELS: 'voice.mediator.getModels',
+  EXECUTION_RUN_START: 'execution.run.start',
+  EXECUTION_RUN_ENSURE: 'execution.run.ensure',
+  EXECUTION_RUN_ENSURE_OR_START: 'execution.run.ensureOrStart',
+  EXECUTION_RUN_SEND: 'execution.run.send',
+  EXECUTION_RUN_STREAM_START: 'execution.run.stream.start',
+  EXECUTION_RUN_STREAM_READ: 'execution.run.stream.read',
+  EXECUTION_RUN_STREAM_CANCEL: 'execution.run.stream.cancel',
+  EXECUTION_RUN_STOP: 'execution.run.stop',
+  EXECUTION_RUN_LIST: 'execution.run.list',
+  EXECUTION_RUN_GET: 'execution.run.get',
+  EXECUTION_RUN_ACTION: 'execution.run.action',
+  EPHEMERAL_TASK_RUN: 'ephemeral.task.run',
 } as const;
 
 export function isRpcMethodNotFoundResult(value: unknown): value is { error: string; errorCode?: string } {

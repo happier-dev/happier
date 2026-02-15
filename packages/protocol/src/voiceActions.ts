@@ -1,25 +1,37 @@
 import { z } from 'zod';
+import { listVoiceActionBlockSpecs } from './actions/actionSpecs.js';
 
 export const VOICE_ACTIONS_BLOCK = {
   startTag: '<voice_actions>',
   endTag: '</voice_actions>',
 } as const;
 
-export const VoiceAssistantActionSchema = z.discriminatedUnion('t', [
-  z.object({
-    t: z.literal('messageClaudeCode'),
-    args: z.object({
-      message: z.string().min(1),
-    }),
-  }),
-  z.object({
-    t: z.literal('processPermissionRequest'),
-    args: z.object({
-      decision: z.enum(['allow', 'deny']),
-      requestId: z.string().min(1).optional(),
-    }),
-  }),
-]);
+function buildVoiceAssistantActionSchema(): z.ZodTypeAny {
+  // Centralized: the action block schema is derived from Action Specs.
+  // Each spec that opts into surface.voice_action_block must bind a stable voiceClientToolName and inputSchema.
+  const voiceActionBlockOptions = listVoiceActionBlockSpecs().flatMap((spec) => {
+    const toolName = spec.bindings?.voiceClientToolName;
+    if (!toolName) return [];
+    return [
+      z.object({
+        t: z.literal(toolName),
+        args: spec.inputSchema,
+      }),
+    ];
+  });
+
+  return z.discriminatedUnion('t', voiceActionBlockOptions as any);
+}
+
+let memoizedVoiceAssistantActionSchema: z.ZodTypeAny | undefined;
+function getVoiceAssistantActionSchema(): z.ZodTypeAny {
+  if (!memoizedVoiceAssistantActionSchema) {
+    memoizedVoiceAssistantActionSchema = buildVoiceAssistantActionSchema();
+  }
+  return memoizedVoiceAssistantActionSchema;
+}
+
+export const VoiceAssistantActionSchema = z.lazy(() => getVoiceAssistantActionSchema());
 
 export type VoiceAssistantAction = z.infer<typeof VoiceAssistantActionSchema>;
 
@@ -55,4 +67,3 @@ export function extractVoiceActionsFromAssistantText(
     return { assistantText: assistantText.trim(), actions: [] };
   }
 }
-
