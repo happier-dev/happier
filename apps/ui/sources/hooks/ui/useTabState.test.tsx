@@ -6,7 +6,7 @@ import renderer, { act } from 'react-test-renderer';
 
 const mocks = vi.hoisted(() => ({
   useAuth: vi.fn(),
-  kvGet: vi.fn(),
+  kvBulkGet: vi.fn(),
   kvSet: vi.fn(),
 }));
 
@@ -15,7 +15,7 @@ vi.mock('@/auth/context/AuthContext', () => ({
 }));
 
 vi.mock('@/sync/api/account/apiKv', () => ({
-  kvGet: (...args: any[]) => mocks.kvGet(...args),
+  kvBulkGet: (...args: any[]) => mocks.kvBulkGet(...args),
   kvSet: (...args: any[]) => mocks.kvSet(...args),
 }));
 
@@ -34,7 +34,7 @@ describe('useTabState', () => {
 
   it('loads the active tab from account KV on mount', async () => {
     mocks.useAuth.mockReturnValue({ credentials: { token: 't' } });
-    mocks.kvGet.mockResolvedValue({ key: 'ui:active-tab', value: 'settings', version: 3 });
+    mocks.kvBulkGet.mockResolvedValue({ values: [{ key: 'ui:active-tab', value: 'settings', version: 3 }] });
 
     const { useTabState } = await import('./useTabState');
     const seen: Array<{ tab: string; loading: boolean }> = [];
@@ -57,7 +57,7 @@ describe('useTabState', () => {
 
   it('persists changes back to KV with optimistic UI update', async () => {
     mocks.useAuth.mockReturnValue({ credentials: { token: 't' } });
-    mocks.kvGet.mockResolvedValue(null);
+    mocks.kvBulkGet.mockResolvedValue({ values: [] });
     mocks.kvSet.mockResolvedValue(1);
 
     const { useTabState } = await import('./useTabState');
@@ -83,4 +83,3 @@ describe('useTabState', () => {
     expect(mocks.kvSet).toHaveBeenCalledWith({ token: 't' }, 'ui:active-tab', 'inbox', -1);
   });
 });
-

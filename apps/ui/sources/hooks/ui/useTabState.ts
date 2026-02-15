@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import type { TabType } from '@/components/ui/navigation/TabBar';
-import { kvGet, kvSet } from '@/sync/api/account/apiKv';
+import { kvBulkGet, kvSet } from '@/sync/api/account/apiKv';
 
 const TAB_STATE_KEY = 'ui:active-tab';
 const DEFAULT_TAB: TabType = 'sessions';
@@ -44,7 +44,8 @@ export function useTabState(): {
     let mounted = true;
     (async () => {
       try {
-        const item = await kvGet(credentials, TAB_STATE_KEY);
+        const res = await kvBulkGet(credentials, [TAB_STATE_KEY]);
+        const item = res.values.find((row) => row.key === TAB_STATE_KEY) ?? null;
         if (!mounted) return;
         if (!item) return;
         const normalized = normalizeStoredTab(item.value);
@@ -75,11 +76,10 @@ export function useTabState(): {
         console.warn('[useTabState] Failed to save tab state:', error);
         if (String(error).includes('version-mismatch')) {
           try {
-            const item = await kvGet(credentials, TAB_STATE_KEY);
+            const res = await kvBulkGet(credentials, [TAB_STATE_KEY]);
+            const item = res.values.find((row) => row.key === TAB_STATE_KEY) ?? null;
             const normalized = item ? normalizeStoredTab(item.value) : null;
-            if (item && normalized) {
-              setState({ activeTab: normalized, version: item.version });
-            }
+            if (item && normalized) setState({ activeTab: normalized, version: item.version });
           } catch {
             // ignore best-effort conflict refresh
           }
@@ -91,4 +91,3 @@ export function useTabState(): {
 
   return { activeTab: state.activeTab, setActiveTab, isLoading };
 }
-
