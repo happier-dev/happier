@@ -31,9 +31,17 @@ function resolveShikiLanguageId(language: string): BundledLanguage {
 async function getShikiHighlighter(params: { theme: string; language: string }): Promise<ShikiHighlighter> {
     const key = `${params.theme}:${params.language}`;
     const existing = shikiHighlighterCache.get(key);
-    if (existing) return existing;
+    if (existing) {
+        try {
+            return await existing;
+        } catch {
+            // If initialization failed (transient bundler/module issues, partial cache poisoning),
+            // evict and allow a future attempt to retry.
+            shikiHighlighterCache.delete(key);
+        }
+    }
 
-    const promise = (async () => {
+    const promise: Promise<ShikiHighlighter> = (async () => {
         const shiki = await import('shiki');
         const lang = resolveShikiLanguageId(params.language);
 
@@ -41,7 +49,10 @@ async function getShikiHighlighter(params: { theme: string; language: string }):
             themes: [params.theme],
             langs: [lang],
         });
-    })();
+    })().catch((err) => {
+        shikiHighlighterCache.delete(key);
+        throw err;
+    });
 
     shikiHighlighterCache.set(key, promise);
     return promise;

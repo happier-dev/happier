@@ -61,20 +61,24 @@ describe('bugReportLogBuffer', () => {
 
     it('returns only logs newer than a provided timestamp window', () => {
         vi.useFakeTimers();
-        installBugReportConsoleCapture({ maxEntries: 10 });
+        try {
+            installBugReportConsoleCapture({ maxEntries: 10 });
 
-        const firstTs = new Date('2026-01-01T00:00:00.000Z');
-        vi.setSystemTime(firstTs);
-        console.info('first-entry');
+            const firstTs = new Date('2026-01-01T00:00:00.000Z');
+            vi.setSystemTime(firstTs);
+            console.info('first-entry');
 
-        const secondTs = new Date('2026-01-01T00:01:10.000Z');
-        vi.setSystemTime(secondTs);
-        console.info('second-entry');
+            const secondTs = new Date('2026-01-01T00:01:10.000Z');
+            vi.setSystemTime(secondTs);
+            console.info('second-entry');
 
-        const text = getBugReportLogText(10_000, { sinceMs: new Date('2026-01-01T00:01:00.000Z').getTime() });
+            const text = getBugReportLogText(10_000, { sinceMs: new Date('2026-01-01T00:01:00.000Z').getTime() });
 
-        expect(text).toContain('second-entry');
-        expect(text).not.toContain('first-entry');
+            expect(text).toContain('second-entry');
+            expect(text).not.toContain('first-entry');
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('preserves configured maxEntries after clear', () => {

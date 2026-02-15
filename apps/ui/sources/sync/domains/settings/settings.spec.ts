@@ -246,7 +246,7 @@ describe('settings', () => {
             expect((parsed as any).voice.adapters.local_conversation.handsFree.endpointing.minSpeechMs).toBe(120);
             expect((parsed as any).voice.adapters.local_conversation.tts.bargeInEnabled).toBe(true);
             expect((parsed as any).voice.adapters.local_conversation.agent.permissionPolicy).toBe('read_only');
-            expect((parsed as any).voice.adapters.local_conversation.agent.idleTtlSeconds).toBe(300);
+            expect((parsed as any).voice.adapters.local_conversation.agent.idleTtlSeconds).toBe(1800);
             expect((parsed as any).voice.adapters.local_conversation.agent.chatModelSource).toBe('custom');
             expect((parsed as any).voice.adapters.local_conversation.agent.chatModelId).toBe('default');
             expect((parsed as any).voice.adapters.local_conversation.agent.commitModelSource).toBe('chat');

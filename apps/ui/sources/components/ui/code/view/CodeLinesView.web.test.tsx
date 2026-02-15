@@ -111,4 +111,74 @@ describe('CodeLinesView (web)', () => {
         // Keep tree referenced to avoid act warnings about unmounted trees.
         expect(tree.root.findAllByType('CodeLineRow' as any).length).toBe(1);
     });
+
+    it('retries highlighter initialization after a cached failure', async () => {
+        rowSpy.mockClear();
+        createHighlighterSpy.mockReset();
+        vi.resetModules();
+        createHighlighterSpy
+            .mockImplementationOnce(async () => {
+                throw new Error('shiki_init_failed');
+            })
+            .mockImplementation(async () => ({
+                codeToTokens: () => ({
+                    fg: '#000',
+                    tokens: [[{ content: 'const', color: '#f00' }]],
+                }),
+            }));
+
+        const { CodeLinesView } = await import('./CodeLinesView.web');
+
+        const view = (
+            <CodeLinesView
+                lines={[
+                    {
+                        id: 'f:1',
+                        sourceIndex: 0,
+                        kind: 'file',
+                        oldLine: null,
+                        newLine: 1,
+                        renderPrefixText: '',
+                        renderCodeText: 'const x = 1;',
+                        renderIsHeaderLine: false,
+                        selectable: false,
+                    },
+                ]}
+                syntaxHighlighting={{
+                    mode: 'advanced',
+                    language: 'typescript',
+                    maxBytes: 1_000_000,
+                    maxLines: 10_000,
+                    maxLineLength: 10_000,
+                }}
+            />
+        );
+
+        let tree1!: renderer.ReactTestRenderer;
+        renderer.act(() => {
+            tree1 = renderer.create(view);
+        });
+        await flushReactAsyncWork();
+
+        const calls1 = rowSpy.mock.calls.map((c) => c[0]);
+        expect(calls1.some((p: any) => Array.isArray(p.advancedTokens) && p.advancedTokens.length > 0)).toBe(false);
+
+        renderer.act(() => {
+            tree1.unmount();
+        });
+
+        rowSpy.mockClear();
+
+        let tree2!: renderer.ReactTestRenderer;
+        renderer.act(() => {
+            tree2 = renderer.create(view);
+        });
+        await flushReactAsyncWork();
+
+        const calls2 = rowSpy.mock.calls.map((c) => c[0]);
+        expect(calls2.some((p: any) => Array.isArray(p.advancedTokens) && p.advancedTokens.length > 0)).toBe(true);
+        expect(createHighlighterSpy).toHaveBeenCalledTimes(2);
+
+        expect(tree2.root.findAllByType('CodeLineRow' as any).length).toBe(1);
+    });
 });
