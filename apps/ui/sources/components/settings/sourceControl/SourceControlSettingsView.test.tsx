@@ -11,6 +11,10 @@ const setScmPushRejectPolicy = vi.fn();
 const setScmDefaultDiffModeByBackend = vi.fn();
 const setFilesDiffSyntaxHighlightingMode = vi.fn();
 const setFilesChangedFilesRowDensity = vi.fn();
+const setScmCommitMessageGeneratorEnabled = vi.fn();
+const setScmCommitMessageGeneratorBackendId = vi.fn();
+
+const modalPrompt = vi.fn();
 
 vi.mock('react-native-unistyles', () => ({
     useUnistyles: () => ({
@@ -35,7 +39,15 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (name === 'scmDefaultDiffModeByBackend') return [{}, setScmDefaultDiffModeByBackend];
         if (name === 'filesDiffSyntaxHighlightingMode') return ['off', setFilesDiffSyntaxHighlightingMode];
         if (name === 'filesChangedFilesRowDensity') return ['comfortable', setFilesChangedFilesRowDensity];
+        if (name === 'scmCommitMessageGeneratorEnabled') return [false, setScmCommitMessageGeneratorEnabled];
+        if (name === 'scmCommitMessageGeneratorBackendId') return ['claude', setScmCommitMessageGeneratorBackendId];
         return [null, vi.fn()];
+    },
+}));
+
+vi.mock('@/modal', () => ({
+    Modal: {
+        prompt: modalPrompt,
     },
 }));
 
@@ -86,7 +98,8 @@ describe('SourceControlSettingsView', () => {
         const titles = tree!.root.findAllByType('Item' as any).map((item) => item.props.title);
         expect(titles).toContain('Git default diff: Included');
         expect(titles).toContain('Sapling default diff: Pending');
-        expect(titles).toContain('Sapling default diff: Combined');
+        // When no snapshot/capabilities are available yet, Sapling conservatively only advertises "pending".
+        expect(titles).not.toContain('Sapling default diff: Combined');
         expect(titles).not.toContain('Sapling default diff: Included');
     });
 
@@ -130,5 +143,26 @@ describe('SourceControlSettingsView', () => {
         });
 
         expect(setFilesChangedFilesRowDensity).toHaveBeenCalledWith('compact');
+    });
+
+    it('renders commit message generator settings and allows enabling', async () => {
+        setScmCommitMessageGeneratorEnabled.mockClear();
+
+        const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(SourceControlSettingsView));
+        });
+
+        const items = tree!.root.findAllByType('Item' as any);
+        const generatorItem = items.find((item) => item.props.title === 'Commit message generator');
+        expect(generatorItem).toBeTruthy();
+
+        await act(async () => {
+            generatorItem!.props.onPress();
+        });
+
+        expect(setScmCommitMessageGeneratorEnabled).toHaveBeenCalledWith(true);
     });
 });
