@@ -29,8 +29,8 @@ describe("Account username update (integration)", () => {
     });
 
     it("POST /v1/account/username sets the current user's username", async () => {
-        process.env.FRIENDS_ENABLED = "1";
-        process.env.FRIENDS_ALLOW_USERNAME = "1";
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "1";
 
         await withAuthenticatedTestApp(
             (app) => accountRoutes(app as any),
@@ -60,8 +60,8 @@ describe("Account username update (integration)", () => {
     });
 
     it("POST /v1/account/username returns 409 username-taken when the username is already used", async () => {
-        process.env.FRIENDS_ENABLED = "1";
-        process.env.FRIENDS_ALLOW_USERNAME = "1";
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "1";
 
         await withAuthenticatedTestApp(
             (app) => accountRoutes(app as any),
@@ -93,8 +93,8 @@ describe("Account username update (integration)", () => {
     });
 
     it("POST /v1/account/username returns 400 invalid-username for invalid usernames", async () => {
-        process.env.FRIENDS_ENABLED = "1";
-        process.env.FRIENDS_ALLOW_USERNAME = "1";
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "1";
 
         await withAuthenticatedTestApp(
             (app) => accountRoutes(app as any),
@@ -120,9 +120,9 @@ describe("Account username update (integration)", () => {
         );
     });
 
-    it("POST /v1/account/username returns 400 username-disabled when FRIENDS_ALLOW_USERNAME is off", async () => {
-        process.env.FRIENDS_ENABLED = "1";
-        process.env.FRIENDS_ALLOW_USERNAME = "0";
+    it("POST /v1/account/username returns 400 username-disabled when username updates are disabled", async () => {
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "0";
 
         await withAuthenticatedTestApp(
             (app) => accountRoutes(app as any),
@@ -149,8 +149,8 @@ describe("Account username update (integration)", () => {
     });
 
     it("POST /v1/account/username allows setting a username when Friends requires GitHub and the user has GitHub connected", async () => {
-        process.env.FRIENDS_ENABLED = "1";
-        process.env.FRIENDS_ALLOW_USERNAME = "0";
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "0";
 
         await withAuthenticatedTestApp(
             (app) => accountRoutes(app as any),
@@ -194,9 +194,9 @@ describe("Account username update (integration)", () => {
     });
 
     it("POST /v1/account/username allows setting a username when Friends requires a specific identity provider and the user has that identity connected", async () => {
-        process.env.FRIENDS_ENABLED = "1";
-        process.env.FRIENDS_ALLOW_USERNAME = "0";
-        process.env.FRIENDS_IDENTITY_PROVIDER = "custom";
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "0";
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__IDENTITY_PROVIDER = "custom";
 
         await withAuthenticatedTestApp(
             (app) => accountRoutes(app as any),
@@ -234,9 +234,9 @@ describe("Account username update (integration)", () => {
         );
     });
 
-    it("POST /v1/account/username returns 400 friends-disabled when FRIENDS_ENABLED is off", async () => {
-        process.env.FRIENDS_ENABLED = "0";
-        process.env.FRIENDS_ALLOW_USERNAME = "1";
+    it("POST /v1/account/username returns 400 friends-disabled when friends feature is off", async () => {
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "0";
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "1";
 
         await withAuthenticatedTestApp(
             (app) => accountRoutes(app as any),

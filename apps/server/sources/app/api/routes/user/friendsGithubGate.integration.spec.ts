@@ -103,8 +103,8 @@ describe("Friends + GitHub gating (integration)", () => {
         await db.account.deleteMany().catch(() => {});
     });
 
-    it("POST /v1/friends/add returns 400 friends-disabled when FRIENDS_ENABLED is off", async () => {
-        process.env.FRIENDS_ENABLED = "0";
+    it("POST /v1/friends/add returns 400 friends-disabled when friends feature is off", async () => {
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "0";
 
         const app = createTestApp();
         await userRoutes(app as any);
@@ -134,8 +134,8 @@ describe("Friends + GitHub gating (integration)", () => {
         await app.close();
     });
 
-    it("GET /v1/user/search returns 400 friends-disabled when FRIENDS_ENABLED is off", async () => {
-        process.env.FRIENDS_ENABLED = "0";
+    it("GET /v1/user/search returns 400 friends-disabled when friends feature is off", async () => {
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "0";
 
         const app = createTestApp();
         await userRoutes(app as any);
@@ -157,8 +157,8 @@ describe("Friends + GitHub gating (integration)", () => {
         await app.close();
     });
 
-    it("GET /v1/friends returns 400 friends-disabled when FRIENDS_ENABLED is off", async () => {
-        process.env.FRIENDS_ENABLED = "0";
+    it("GET /v1/friends returns 400 friends-disabled when friends feature is off", async () => {
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "0";
 
         const app = createTestApp();
         await userRoutes(app as any);
@@ -180,8 +180,8 @@ describe("Friends + GitHub gating (integration)", () => {
         await app.close();
     });
 
-    it("POST /v1/friends/remove returns 400 friends-disabled when FRIENDS_ENABLED is off", async () => {
-        process.env.FRIENDS_ENABLED = "0";
+    it("POST /v1/friends/remove returns 400 friends-disabled when friends feature is off", async () => {
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "0";
 
         const app = createTestApp();
         await userRoutes(app as any);
@@ -212,8 +212,8 @@ describe("Friends + GitHub gating (integration)", () => {
     });
 
     it("POST /v1/friends/add returns 400 provider-required when either user lacks the required identity provider", async () => {
-        process.env.FRIENDS_ENABLED = "1";
-        process.env.FRIENDS_ALLOW_USERNAME = "0";
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "0";
 
         const app = createTestApp();
         await userRoutes(app as any);
@@ -243,9 +243,9 @@ describe("Friends + GitHub gating (integration)", () => {
         await app.close();
     });
 
-    it("POST /v1/friends/add returns 400 username-required when FRIENDS_ALLOW_USERNAME is on and either user lacks a username", async () => {
-        process.env.FRIENDS_ENABLED = "1";
-        process.env.FRIENDS_ALLOW_USERNAME = "1";
+    it("POST /v1/friends/add returns 400 username-required when username-based friends are enabled and either user lacks a username", async () => {
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "1";
 
         const app = createTestApp();
         await userRoutes(app as any);
@@ -276,8 +276,8 @@ describe("Friends + GitHub gating (integration)", () => {
     });
 
     it("GET /v1/user/search returns only users connected to the required identity provider", async () => {
-        process.env.FRIENDS_ENABLED = "1";
-        process.env.FRIENDS_ALLOW_USERNAME = "0";
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "0";
 
         const app = createTestApp();
         await userRoutes(app as any);
@@ -326,9 +326,9 @@ describe("Friends + GitHub gating (integration)", () => {
         await app.close();
     });
 
-    it("GET /v1/user/search returns username accounts even without GitHub when FRIENDS_ALLOW_USERNAME is on", async () => {
-        process.env.FRIENDS_ENABLED = "1";
-        process.env.FRIENDS_ALLOW_USERNAME = "1";
+    it("GET /v1/user/search returns username accounts even without GitHub when username-based friends are enabled", async () => {
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "1";
 
         const app = createTestApp();
         await userRoutes(app as any);
@@ -364,6 +364,45 @@ describe("Friends + GitHub gating (integration)", () => {
         expect(res.statusCode).toBe(200);
         const body = res.json() as { users: Array<{ id: string }> };
         expect(body.users.map((u) => u.id).sort()).toEqual([ghUser.id, usernameOnly.id].sort());
+        await app.close();
+    });
+
+    it("GET /v1/user/search succeeds for light flavor when DB provider env is unset", async () => {
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
+        process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "1";
+        process.env.HAPPIER_SERVER_FLAVOR = "light";
+        process.env.HAPPY_SERVER_FLAVOR = "light";
+        delete process.env.HAPPIER_DB_PROVIDER;
+        delete process.env.HAPPY_DB_PROVIDER;
+
+        const app = createTestApp();
+        await userRoutes(app as any);
+        await app.ready();
+
+        const current = await db.account.create({
+            data: { publicKey: "pk-search-light-default-current", username: "light_default_current" },
+            select: { id: true },
+        });
+
+        const match = await db.account.create({
+            data: { publicKey: "pk-search-light-default-match", username: "lightdefault_alice" },
+            select: { id: true },
+        });
+
+        await db.account.create({
+            data: { publicKey: "pk-search-light-default-other", username: "otherprefix_bob" },
+            select: { id: true },
+        });
+
+        const res = await app.inject({
+            method: "GET",
+            url: "/v1/user/search?query=lightdefault_",
+            headers: { "x-test-user-id": current.id },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = res.json() as { users: Array<{ id: string }> };
+        expect(body.users.map((u) => u.id)).toContain(match.id);
         await app.close();
     });
 

@@ -105,7 +105,7 @@ export async function userRoutes(app: Fastify) {
         const { query } = request.query;
 
         const serverFlavorRaw = (process.env.HAPPIER_SERVER_FLAVOR ?? process.env.HAPPY_SERVER_FLAVOR)?.trim();
-        const fallbackProvider = serverFlavorRaw === "light" ? "pglite" : "postgres";
+        const fallbackProvider = serverFlavorRaw === "light" ? "sqlite" : "postgres";
         const dbProvider = getDbProviderFromEnv(process.env, fallbackProvider);
         const username =
             dbProvider === "sqlite"

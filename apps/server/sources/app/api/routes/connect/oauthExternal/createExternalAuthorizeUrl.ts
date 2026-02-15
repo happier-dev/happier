@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import { auth } from "@/app/auth/auth";
+import { isOAuthStateUnavailableError } from "@/app/auth/oauthStateErrors";
 import { generatePkceVerifier, pkceChallengeS256 } from "@/app/oauth/pkce";
 import type { OAuthFlowProvider } from "@/app/oauth/providers/registry";
 import { db } from "@/storage/db";
@@ -46,20 +47,30 @@ export async function createExternalAuthorizeUrl(params: ExternalAuthorizeFlowPa
         }
     }
     if (!sid) return null;
+    const repeatKeyId = `oauth_state_${sid}`;
 
-    const state = params.flow === "auth"
-        ? await auth.createOauthStateToken({
-              flow: "auth",
-              provider: params.providerId,
-              sid,
-              publicKey: params.publicKeyHex,
-          })
-        : await auth.createOauthStateToken({
-              flow: "connect",
-              provider: params.providerId,
-              sid,
-              userId: params.userId,
-          });
+    let state: string;
+    try {
+        state = params.flow === "auth"
+            ? await auth.createOauthStateToken({
+                  flow: "auth",
+                  provider: params.providerId,
+                  sid,
+                  publicKey: params.publicKeyHex,
+              })
+            : await auth.createOauthStateToken({
+                  flow: "connect",
+                  provider: params.providerId,
+                  sid,
+                  userId: params.userId,
+              });
+    } catch (error) {
+        if (isOAuthStateUnavailableError(error)) {
+            await db.repeatKey.delete({ where: { key: repeatKeyId } }).catch(() => undefined);
+            return null;
+        }
+        throw error;
+    }
 
     const scope = params.provider.resolveScope({ env: params.env, flow: params.flow });
     return await params.provider.resolveAuthorizeUrl({

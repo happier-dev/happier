@@ -4,6 +4,7 @@ import tweetnacl from "tweetnacl";
 
 import { type Fastify } from "../../types";
 import { resolveAuthPolicyFromEnv } from "@/app/auth/authPolicy";
+import { OAUTH_STATE_UNAVAILABLE_CODE } from "@/app/auth/oauthStateErrors";
 import { Context } from "@/context";
 import { findOAuthProviderById } from "@/app/oauth/providers/registry";
 import { disconnectExternalIdentity } from "@/app/auth/providers/identity";
@@ -66,7 +67,7 @@ export function connectOAuthExternalRoutes(app: Fastify) {
                 provider,
                 publicKeyHex,
             });
-            if (!url) return reply.code(400).send({ error: "oauth_state_unavailable" });
+            if (!url) return reply.code(400).send({ error: OAUTH_STATE_UNAVAILABLE_CODE });
             return reply.send({ url });
         } catch (error) {
             if (error instanceof Error && error.message === OAUTH_NOT_CONFIGURED_ERROR) {
@@ -139,7 +140,7 @@ export function connectOAuthExternalRoutes(app: Fastify) {
                 provider,
                 userId: request.userId,
             });
-            if (!url) return reply.code(400).send({ error: "oauth_state_unavailable" });
+            if (!url) return reply.code(400).send({ error: OAUTH_STATE_UNAVAILABLE_CODE });
             return reply.send({ url });
         } catch (error) {
             if (error instanceof Error && error.message === OAUTH_NOT_CONFIGURED_ERROR) {

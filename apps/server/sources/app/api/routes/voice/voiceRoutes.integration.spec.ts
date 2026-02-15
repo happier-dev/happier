@@ -64,8 +64,8 @@ describe("voiceRoutes (integration, sqlite)", () => {
             HAPPY_DB_PROVIDER: "sqlite",
             DATABASE_URL: `file:${dbPath}`,
             HAPPY_SERVER_LIGHT_DATA_DIR: baseDir,
-            VOICE_ENABLED: "true",
-            VOICE_REQUIRE_SUBSCRIPTION: "false",
+            HAPPIER_FEATURE_VOICE__ENABLED: "true",
+            HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: "false",
             VOICE_MAX_CONCURRENT_SESSIONS: "1",
             VOICE_MAX_SESSION_SECONDS: "60",
             ELEVENLABS_API_KEY: "elevenlabs-key",
@@ -141,6 +141,67 @@ describe("voiceRoutes (integration, sqlite)", () => {
 
         const conversations = await db.voiceConversation.count();
         expect(conversations).toBe(0);
+    });
+
+    it("respects ELEVENLABS_API_BASE_URL when minting a conversation token", async () => {
+        const user = await db.account.create({ data: { publicKey: "pk-voice-baseurl-u1" }, select: { id: true } });
+
+        process.env.ELEVENLABS_API_BASE_URL = "http://elevenlabs.example.test/";
+        const expected = "http://elevenlabs.example.test/v1/convai/conversation/token?agent_id=agent_dev";
+
+        vi.stubGlobal("fetch", vi.fn(async (url: any) => {
+            expect(String(url)).toBe(expected);
+            return new Response(JSON.stringify({ token: "conv_token_baseurl" }), { status: 200 });
+        }) as any);
+
+        const app = createTestApp();
+        voiceRoutes(app as any);
+        await app.ready();
+
+        const res = await app.inject({
+            method: "POST",
+            url: "/v1/voice/token",
+            headers: { "content-type": "application/json", "x-test-user-id": user.id },
+            payload: { sessionId: "baseurl-s1" },
+        });
+        expect(res.statusCode).toBe(200);
+        const json = res.json() as any;
+        expect(json.allowed).toBe(true);
+        expect(typeof json.token).toBe("string");
+        expect(typeof json.leaseId).toBe("string");
+    });
+
+    it("mints a voice token via the account-scoped alias route without a sessionId", async () => {
+        const user = await db.account.create({ data: { publicKey: "pk-voice-alias-u1" }, select: { id: true } });
+
+        vi.stubGlobal("fetch", vi.fn(async (url: any) => {
+            if (typeof url === "string" && url.includes("/v1/convai/conversation/token")) {
+                return new Response(JSON.stringify({ token: "conv_token_alias" }), { status: 200 });
+            }
+            throw new Error(`unexpected fetch url: ${String(url)}`);
+        }) as any);
+
+        const app = createTestApp();
+        voiceRoutes(app as any);
+        await app.ready();
+
+        const res = await app.inject({
+            method: "POST",
+            url: "/v1/voice/lease/mint",
+            headers: { "content-type": "application/json", "x-test-user-id": user.id },
+            payload: {},
+        });
+        expect(res.statusCode).toBe(200);
+        const json = res.json() as any;
+        expect(json.allowed).toBe(true);
+        expect(typeof json.token).toBe("string");
+        expect(typeof json.leaseId).toBe("string");
+
+        const lease = await db.voiceSessionLease.findUnique({
+            where: { id: json.leaseId },
+            select: { accountId: true, sessionId: true },
+        });
+        expect(lease).toEqual({ accountId: user.id, sessionId: null });
     });
 
     it("enforces max concurrent sessions and deletes the losing lease", async () => {

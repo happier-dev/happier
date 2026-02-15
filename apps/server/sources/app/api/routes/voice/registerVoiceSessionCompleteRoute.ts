@@ -2,6 +2,7 @@ import { z } from "zod";
 import { log } from "@/utils/logging/log";
 import { db } from "@/storage/db";
 import { parseIntEnv } from "@/config/env";
+import { resolveElevenLabsApiBaseUrl } from "@/voice/elevenLabsEnv";
 import { type Fastify } from "../../types";
 
 function extractConversationAgentId(payload: any): string | null {
@@ -65,6 +66,7 @@ export function registerVoiceSessionCompleteRoute(app: Fastify): void {
         const { leaseId, providerConversationId } = request.body as { leaseId: string; providerConversationId: string };
 
         const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY?.trim() ?? "";
+        const elevenLabsApiBaseUrl = resolveElevenLabsApiBaseUrl(process.env);
         if (!elevenLabsApiKey) {
             return reply.code(503).send({ ok: false, reason: "upstream_error" as const });
         }
@@ -88,7 +90,7 @@ export function registerVoiceSessionCompleteRoute(app: Fastify): void {
             let res: Response;
             try {
                 res = await fetch(
-                    `https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(providerConversationId)}`,
+                    `${elevenLabsApiBaseUrl}/v1/convai/conversations/${encodeURIComponent(providerConversationId)}`,
                     {
                         method: "GET",
                         headers: {

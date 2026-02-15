@@ -110,6 +110,93 @@ export function buildPendingChangedUpdate(
     };
 }
 
+export function buildAutomationUpsertUpdate(
+    data: { automationId: string; version: number; enabled: boolean; updatedAt: number },
+    updateSeq: number,
+    updateId: string,
+): UpdatePayload {
+    return {
+        id: updateId,
+        seq: updateSeq,
+        body: {
+            t: "automation-upsert",
+            automationId: data.automationId,
+            version: data.version,
+            enabled: data.enabled,
+            updatedAt: data.updatedAt,
+        },
+        createdAt: Date.now(),
+    };
+}
+
+export function buildAutomationDeleteUpdate(
+    data: { automationId: string; deletedAt: number },
+    updateSeq: number,
+    updateId: string,
+): UpdatePayload {
+    return {
+        id: updateId,
+        seq: updateSeq,
+        body: {
+            t: "automation-delete",
+            automationId: data.automationId,
+            deletedAt: data.deletedAt,
+        },
+        createdAt: Date.now(),
+    };
+}
+
+export function buildAutomationRunUpdatedUpdate(
+    data: {
+        runId: string;
+        automationId: string;
+        state: "queued" | "claimed" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
+        scheduledAt: number;
+        startedAt?: number | null;
+        finishedAt?: number | null;
+        updatedAt: number;
+        machineId?: string | null;
+    },
+    updateSeq: number,
+    updateId: string,
+): UpdatePayload {
+    return {
+        id: updateId,
+        seq: updateSeq,
+        body: {
+            t: "automation-run-updated",
+            runId: data.runId,
+            automationId: data.automationId,
+            state: data.state,
+            scheduledAt: data.scheduledAt,
+            startedAt: data.startedAt ?? null,
+            finishedAt: data.finishedAt ?? null,
+            updatedAt: data.updatedAt,
+            machineId: data.machineId ?? null,
+        },
+        createdAt: Date.now(),
+    };
+}
+
+export function buildAutomationAssignmentUpdatedUpdate(
+    data: { machineId: string; automationId: string; enabled: boolean; updatedAt: number },
+    updateSeq: number,
+    updateId: string,
+): UpdatePayload {
+    return {
+        id: updateId,
+        seq: updateSeq,
+        body: {
+            t: "automation-assignment-updated",
+            machineId: data.machineId,
+            automationId: data.automationId,
+            enabled: data.enabled,
+            updatedAt: data.updatedAt,
+        },
+        createdAt: Date.now(),
+    };
+}
+
 export function buildDeleteSessionUpdate(sessionId: string, updateSeq: number, updateId: string): UpdatePayload {
     return {
         id: updateId,

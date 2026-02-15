@@ -32,7 +32,7 @@ describe("voiceRoutes (rate limit)", () => {
         process.env = {
             ...originalEnv,
             NODE_ENV: "production",
-            VOICE_ENABLED: "1",
+            HAPPIER_FEATURE_VOICE__ENABLED: "1",
             ELEVENLABS_API_KEY: "el_key",
             ELEVENLABS_AGENT_ID_PROD: "agent_prod",
             REVENUECAT_SECRET_KEY: "rc_secret",

@@ -10,3 +10,9 @@ export function resolveElevenLabsAgentId(env: NodeJS.ProcessEnv): string | undef
   const resolved = isProduction ? (prod || generic) : (generic || prod);
   return resolved || undefined;
 }
+
+export function resolveElevenLabsApiBaseUrl(env: NodeJS.ProcessEnv): string {
+  const raw = typeof env.ELEVENLABS_API_BASE_URL === 'string' ? env.ELEVENLABS_API_BASE_URL.trim() : '';
+  const base = raw || 'https://api.elevenlabs.io';
+  return base.replace(/\/+$/, '');
+}

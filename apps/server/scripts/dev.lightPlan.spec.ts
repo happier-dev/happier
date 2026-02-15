@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { buildLightDevPlan } from "./dev.lightPlan";
 
 describe('buildLightDevPlan', () => {
-    it('uses migrate:light:deploy as the default migration step', () => {
+    it('uses migrate:sqlite:deploy as the default migration step', () => {
         const plan = buildLightDevPlan({});
-        expect(plan.migrateDeployArgs).toEqual(['-s', 'migrate:light:deploy']);
+        expect(plan.migrateDeployArgs).toEqual(['-s', 'migrate:sqlite:deploy']);
         expect(plan.startLightArgs).toEqual(['-s', 'start:light']);
     });
 

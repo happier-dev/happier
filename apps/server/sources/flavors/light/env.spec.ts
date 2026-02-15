@@ -20,7 +20,7 @@ describe("light env helpers", () => {
     expect(env.HAPPY_SERVER_LIGHT_DATA_DIR).toBe("/custom/data");
     expect(env.HAPPY_SERVER_LIGHT_FILES_DIR).toBe("/custom/files");
     expect(env.HAPPY_SERVER_LIGHT_DB_DIR).toBe("/custom/db");
-    // DATABASE_URL is not managed by the light env helpers anymore (pglite runtime assigns it).
+    // DATABASE_URL is not managed by the light env helpers (runtime provider wiring assigns it).
     expect(env.DATABASE_URL).toBe("file:/custom.sqlite");
     expect(env.PUBLIC_URL).toBe("http://example.com");
   });
@@ -46,6 +46,14 @@ describe("light env helpers", () => {
     const env: NodeJS.ProcessEnv = { PORT: "oops" };
     applyLightDefaultEnv(env, { homedir: "/home/test" });
     expect(env.PUBLIC_URL).toBe("http://localhost:3005");
+  });
+
+  it("applyLightDefaultEnv avoids bunfs homedir defaults", () => {
+    const env: NodeJS.ProcessEnv = {};
+    applyLightDefaultEnv(env, { homedir: "/$bunfs/root" });
+    const expectedBase = join(tmpdir(), "happier-server-light");
+    expect(env.HAPPY_SERVER_LIGHT_DATA_DIR).toBe(expectedBase);
+    expect(env.HAPPY_SERVER_LIGHT_DB_DIR).toBe(join(expectedBase, "pglite"));
   });
 
   it("ensureHandyMasterSecret persists a generated secret and reuses it", async () => {

@@ -70,6 +70,8 @@ model Account {
     AccountChanges         AccountChange[]
     SessionPendingMessage  SessionPendingMessage[]
     AccountIdentity        AccountIdentity[]
+    automations            Automation[]
+    automationRuns         AutomationRun[]
 }
 
 enum AccountIdentityEligibilityStatus {
@@ -248,6 +250,7 @@ model Session {
     shares            SessionShare[]
     publicShare       PublicSessionShare?
     accountChanges    AccountChange[]    @relation("AccountChangeSession")
+    producedByAutomationRuns AutomationRun[] @relation("AutomationRunProducedSession")
 
     @@unique([accountId, tag])
     @@index([accountId, updatedAt])
@@ -373,9 +376,113 @@ model Machine {
     updatedAt          DateTime    @updatedAt
     accessKeys         AccessKey[]
     accountChanges     AccountChange[] @relation("AccountChangeMachine")
+    automationAssignments AutomationAssignment[]
+    automationClaimedRuns AutomationRun[] @relation("AutomationRunClaimedByMachine")
 
     @@unique([accountId, id])
     @@index([accountId])
+}
+
+enum AutomationScheduleKind {
+    cron
+    interval
+}
+
+enum AutomationTargetType {
+    new_session
+    existing_session
+}
+
+enum AutomationRunState {
+    queued
+    claimed
+    running
+    succeeded
+    failed
+    cancelled
+    expired
+}
+
+model Automation {
+    id               String                 @id @default(cuid())
+    accountId        String
+    account          Account                @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    name             String
+    description      String?
+    enabled          Boolean                @default(true)
+    scheduleKind     AutomationScheduleKind
+    scheduleExpr     String?
+    everyMs          Int?
+    timezone         String?
+    targetType       AutomationTargetType
+    templateCiphertext String
+    templateVersion  Int                    @default(0)
+    nextRunAt        DateTime?
+    lastRunAt        DateTime?
+    createdAt        DateTime               @default(now())
+    updatedAt        DateTime               @updatedAt
+    assignments      AutomationAssignment[]
+    runs             AutomationRun[]
+
+    @@index([accountId, enabled, updatedAt])
+    @@index([accountId, nextRunAt])
+}
+
+model AutomationAssignment {
+    id           String      @id @default(cuid())
+    automationId String
+    automation   Automation  @relation(fields: [automationId], references: [id], onDelete: Cascade)
+    machineId    String
+    machine      Machine     @relation(fields: [machineId], references: [id], onDelete: Cascade)
+    enabled      Boolean     @default(true)
+    priority     Int         @default(0)
+    createdAt    DateTime    @default(now())
+    updatedAt    DateTime    @updatedAt
+
+    @@unique([automationId, machineId])
+    @@index([machineId, enabled])
+    @@index([automationId, enabled])
+}
+
+model AutomationRun {
+    id                 String             @id @default(cuid())
+    automationId       String
+    automation         Automation         @relation(fields: [automationId], references: [id], onDelete: Cascade)
+    accountId          String
+    account            Account            @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    state              AutomationRunState @default(queued)
+    scheduledAt        DateTime
+    dueAt              DateTime
+    claimedAt          DateTime?
+    startedAt          DateTime?
+    finishedAt         DateTime?
+    claimedByMachineId String?
+    claimedByMachine   Machine?           @relation("AutomationRunClaimedByMachine", fields: [claimedByMachineId], references: [id], onDelete: SetNull)
+    leaseExpiresAt     DateTime?
+    attempt            Int                @default(0)
+    summaryCiphertext  String?
+    errorCode          String?
+    errorMessage       String?
+    producedSessionId  String?
+    producedSession    Session?           @relation("AutomationRunProducedSession", fields: [producedSessionId], references: [id], onDelete: SetNull)
+    createdAt          DateTime           @default(now())
+    updatedAt          DateTime           @updatedAt
+    events             AutomationRunEvent[]
+
+    @@index([accountId, state, dueAt])
+    @@index([automationId, dueAt])
+    @@index([claimedByMachineId, leaseExpiresAt])
+}
+
+model AutomationRunEvent {
+    id        String        @id @default(cuid())
+    runId     String
+    run       AutomationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+    ts        DateTime      @default(now())
+    type      String
+    payload   Json?
+
+    @@index([runId, ts])
 }
 
 model UploadedFile {

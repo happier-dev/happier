@@ -1,15 +1,8 @@
 import { isLoopbackHostname } from "@/utils/network/urlSafety";
-
-function parseBooleanEnvFallback(raw: string | undefined, fallback: boolean): boolean {
-    const value = (raw ?? "").toString().trim().toLowerCase();
-    if (!value) return fallback;
-    if (value === "1" || value === "true" || value === "yes" || value === "on") return true;
-    if (value === "0" || value === "false" || value === "no" || value === "off") return false;
-    return fallback;
-}
+import { readAuthFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 
 export function isProviderResetEnabled(env: NodeJS.ProcessEnv): boolean {
-    return parseBooleanEnvFallback(env.AUTH_RECOVERY_PROVIDER_RESET_ENABLED, true);
+    return readAuthFeatureEnv(env).recoveryProviderResetEnabled;
 }
 
 function parseAllowedOAuthReturnSchemes(env: NodeJS.ProcessEnv): Set<string> {

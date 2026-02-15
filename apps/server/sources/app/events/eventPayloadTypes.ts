@@ -79,6 +79,32 @@ export type UpdateEvent = {
     pendingCount: number;
     changedByAccountId?: string;
 } | {
+    type: 'automation-upsert';
+    automationId: string;
+    version: number;
+    enabled: boolean;
+    updatedAt: number;
+} | {
+    type: 'automation-delete';
+    automationId: string;
+    deletedAt: number;
+} | {
+    type: 'automation-run-updated';
+    runId: string;
+    automationId: string;
+    state: 'queued' | 'claimed' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'expired';
+    scheduledAt: number;
+    startedAt?: number | null;
+    finishedAt?: number | null;
+    updatedAt: number;
+    machineId?: string | null;
+} | {
+    type: 'automation-assignment-updated';
+    machineId: string;
+    automationId: string;
+    enabled: boolean;
+    updatedAt: number;
+} | {
     type: 'update-account';
     userId: string;
     settings?: {

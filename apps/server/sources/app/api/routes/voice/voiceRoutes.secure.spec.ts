@@ -58,7 +58,7 @@ describe("voiceRoutes (secure)", () => {
         process.env = {
             ...originalEnv,
             NODE_ENV: "production",
-            VOICE_ENABLED: "1",
+            HAPPIER_FEATURE_VOICE__ENABLED: "1",
             ELEVENLABS_API_KEY: "el_key",
             ELEVENLABS_AGENT_ID_PROD: "agent_prod",
             REVENUECAT_SECRET_KEY: "rc_secret",
@@ -77,7 +77,7 @@ describe("voiceRoutes (secure)", () => {
     });
 
     it("returns 403 when voice is disabled", async () => {
-        process.env.VOICE_ENABLED = "0";
+        process.env.HAPPIER_FEATURE_VOICE__ENABLED = "0";
 
         const { voiceRoutes } = await import("./voiceRoutes");
         const app = new FakeApp();
@@ -251,8 +251,67 @@ describe("voiceRoutes (secure)", () => {
         expect(globalThis.fetch).toHaveBeenCalledTimes(2);
     });
 
+    it("aliases /v1/voice/lease/mint and persists a lease with sessionId null when body is empty", async () => {
+        (globalThis.fetch as any)
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({ subscriber: { entitlements: { active: { voice: { expires_date: "2099-01-01" } } } } }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({ token: "conv_token" }),
+            });
+
+        const { voiceRoutes } = await import("./voiceRoutes");
+        const app = new FakeApp();
+        voiceRoutes(app as any);
+
+        const handler = app.routes.get("POST /v1/voice/lease/mint");
+        expect(handler).toBeTruthy();
+
+        const reply = replyStub();
+        const res = await handler({ userId: "u1", body: {} }, reply);
+
+        expect(reply.code).not.toHaveBeenCalled();
+        expect(res).toEqual(
+            expect.objectContaining({ allowed: true, token: "conv_token", leaseId: "lease_1", expiresAtMs: expect.any(Number) }),
+        );
+        expect(leaseCreate).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({ sessionId: null }),
+            }),
+        );
+    });
+
+    it("normalizes empty/whitespace sessionId to null for /v1/voice/token", async () => {
+        (globalThis.fetch as any)
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({ subscriber: { entitlements: { active: { voice: { expires_date: "2099-01-01" } } } } }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({ token: "conv_token" }),
+            });
+
+        const { voiceRoutes } = await import("./voiceRoutes");
+        const app = new FakeApp();
+        voiceRoutes(app as any);
+
+        const handler = app.routes.get("POST /v1/voice/token");
+        const reply = replyStub();
+        await handler({ userId: "u1", body: { sessionId: "   " } }, reply);
+
+        expect(reply.code).not.toHaveBeenCalled();
+        expect(leaseCreate).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({ sessionId: null }),
+            }),
+        );
+    });
+
     it("returns 403 when max minutes per day is exceeded", async () => {
-        process.env.VOICE_REQUIRE_SUBSCRIPTION = "0";
+        process.env.HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION = "0";
         process.env.VOICE_MAX_MINUTES_PER_DAY = "1";
         conversationAggregate.mockResolvedValueOnce({ _sum: { durationSeconds: 60 } });
         (globalThis.fetch as any).mockResolvedValueOnce({
@@ -274,7 +333,7 @@ describe("voiceRoutes (secure)", () => {
     });
 
     it("returns 403 when max minutes per day is exceeded by pending leases", async () => {
-        process.env.VOICE_REQUIRE_SUBSCRIPTION = "0";
+        process.env.HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION = "0";
         process.env.VOICE_MAX_MINUTES_PER_DAY = "1";
         conversationAggregate.mockResolvedValueOnce({ _sum: { durationSeconds: 0 } });
         leaseCount.mockResolvedValueOnce(1);

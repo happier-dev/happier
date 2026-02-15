@@ -50,9 +50,14 @@ That said, Happier Server is open source and self-hostable if you prefer running
 Happier Server supports two flavors that share the same API + internal logic. Flavors are **presets** (defaults); you can override individual backends via env vars.
 
 - **full** (default, recommended for production): Postgres (default) or MySQL 8+ + Redis (required for multi-replica Socket.IO) + S3/Minio-compatible public file storage (default) or local files (`HAPPIER_FILES_BACKEND=local`).
-- **light** (recommended for self-hosting/testing): embedded Postgres via PGlite (default) or SQLite + local public file storage served by the server under `GET /files/*`.
+- **light** (recommended for self-hosting/testing): SQLite (default) or embedded Postgres via PGlite + local public file storage served by the server under `GET /files/*`.
 
 ## Required environment (full flavor)
+
+For the complete runtime environment-variable reference (including advanced/internal toggles and legacy aliases), see:
+
+- `apps/docs/content/docs/deployment/env.mdx`
+- canonical template: `apps/server/.env.example`
 
 The full flavor expects these env vars to be set:
 
@@ -79,6 +84,43 @@ The full flavor expects these env vars to be set:
 Optional (recommended for multi-core / multi-replica):
 
 - `REDIS_URL` + `HAPPIER_SOCKET_ADAPTER=redis-streams`
+
+### Bug report feature controls
+
+Happier clients read bug-report settings from `GET /v1/features`. Configure these env vars to control behavior:
+
+- `HAPPIER_FEATURE_BUG_REPORTS__ENABLED` (default `1`)
+- `HAPPIER_FEATURE_BUG_REPORTS__PROVIDER_URL` (default `https://reports.happier.dev`)
+  - If set to an invalid URL, provider submission is disabled (`providerUrl=null`) instead of failing open.
+- `HAPPIER_FEATURE_BUG_REPORTS__DEFAULT_INCLUDE_DIAGNOSTICS` (default `1`)
+- `HAPPIER_FEATURE_BUG_REPORTS__MAX_ARTIFACT_BYTES` (default `10485760`)
+- `HAPPIER_FEATURE_BUG_REPORTS__UPLOAD_TIMEOUT_MS` (default `120000`)
+- `HAPPIER_FEATURE_BUG_REPORTS__CONTEXT_WINDOW_MS` (default `1800000`; min `1000`, max `86400000`)
+- `HAPPIER_FEATURE_BUG_REPORTS__ACCEPTED_ARTIFACT_KINDS` (comma-separated allowlist)
+
+Server diagnostics (used by bug reports when enabled):
+
+- `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_ENABLED` (default `0`)
+- `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_ACCESS_MODE` (default `owner`, allowed: `authenticated`, `owner`)
+- `HAPPIER_SERVER_OWNER_USER_IDS` (comma-separated account ids allowed for owner-only server features)
+- `HAPPIER_BUG_REPORTS_SERVER_LOG_PATH` (optional explicit path; fallback uses `HAPPIER_SELF_HOST_LOG_DIR/server.log`)
+- `HAPPIER_BUG_REPORTS_SERVER_LOG_MAX_BYTES` (default `262144`, max tail bytes read per snapshot request)
+- `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_RATE_LIMIT_MAX` (default `30`)
+- `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_RATE_LIMIT_WINDOW` (default `1 minute`)
+
+To fully disable server log exfiltration for self-hosted deployments:
+
+1. Keep `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_ENABLED=0`.
+2. Remove `server` from `HAPPIER_FEATURE_BUG_REPORTS__ACCEPTED_ARTIFACT_KINDS`.
+
+For shared multi-user servers, keep diagnostics enabled with owner-only access (default):
+
+1. Keep `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_ACCESS_MODE=owner` (or leave unset).
+2. Set `HAPPIER_SERVER_OWNER_USER_IDS=<owner-id-1>,<owner-id-2>`.
+
+If `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_ACCESS_MODE=owner` and `HAPPIER_SERVER_OWNER_USER_IDS` is not set, the diagnostics endpoint returns `403` by design.
+
+`HAPPIER_SERVER_OWNER_USER_IDS` uses Happier account ids (owners can copy theirs from Settings → Account in the app).
 
 ### Example `.env` (full flavor, production)
 
@@ -123,9 +165,9 @@ METRICS_PORT=9090
 # If unset, defaults to ~/.happy/server-light
 HAPPIER_SERVER_LIGHT_DATA_DIR=/var/lib/happy/server-light
 
-# Optional: DB provider for light flavor (defaults to embedded Postgres via pglite)
-# HAPPIER_DB_PROVIDER=pglite
+# Optional: DB provider for light flavor (defaults to SQLite)
 # HAPPIER_DB_PROVIDER=sqlite
+# HAPPIER_DB_PROVIDER=pglite
 
 # Optional: ports
 PORT=3005
@@ -273,18 +315,18 @@ Notes:
 - `yarn start` is production-style (it expects env vars already set in your environment).
 - Minio cleanup: `yarn s3:down`.
 
-#### Light flavor (PGlite + local files)
+#### Light flavor (SQLite + local files)
 
-*The light flavor does not require Docker.* By default it uses an embedded Postgres database (PGlite) persisted on disk and serves public files from disk under `GET /files/*`.
+*The light flavor does not require Docker.* By default it uses SQLite persisted on disk and serves public files from disk under `GET /files/*`.
 
 ```bash
 yarn install
 
-# Runs `prisma migrate deploy` against embedded Postgres (PGlite) before starting
+# Runs light migrations for the selected provider before starting (SQLite by default)
 PORT=3005 yarn dev:light
 
-# Or run the light flavor against SQLite instead of PGlite:
-HAPPIER_DB_PROVIDER=sqlite PORT=3005 yarn dev:light
+# Optional: run the light flavor against embedded Postgres (PGlite):
+HAPPIER_DB_PROVIDER=pglite PORT=3005 yarn dev:light
 ```
 
 Verify:
@@ -330,8 +372,8 @@ DB portability contract suite:
 
 Light flavor note (SQLite vs PGlite):
 
-- The default light DB is embedded Postgres (PGlite) for closer compatibility with production Postgres.
-- SQLite is supported as an alternative light DB by setting `HAPPIER_DB_PROVIDER=sqlite`.
+- The default light DB is SQLite for maximum stability in local/self-host environments.
+- Embedded Postgres (PGlite) is supported by setting `HAPPIER_DB_PROVIDER=pglite`.
 - There is no built-in automatic migration between SQLite and PGlite databases; treat them as separate backends and migrate data explicitly if needed.
 
 ### Schema changes (developer workflow)
@@ -353,7 +395,8 @@ No-data-loss guidelines:
 Light defaults (when env vars are missing):
 
 - data dir: `~/.happy/server-light`
-- pglite db dir: `~/.happy/server-light/pglite`
+- sqlite db file: `~/.happy/server-light/happier-server-light.sqlite`
+- pglite db dir (when `HAPPIER_DB_PROVIDER=pglite`): `~/.happy/server-light/pglite`
 - public files: `~/.happy/server-light/files/*`
 - `HANDY_MASTER_SECRET` is generated (once) and persisted to `~/.happy/server-light/handy-master-secret.txt`
 

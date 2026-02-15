@@ -42,7 +42,7 @@ describe("voiceRoutes (session complete)", () => {
         vi.clearAllMocks();
         process.env = {
             ...originalEnv,
-            VOICE_ENABLED: "1",
+            HAPPIER_FEATURE_VOICE__ENABLED: "1",
             ELEVENLABS_API_KEY: "el_key",
         };
         leaseFindFirst.mockResolvedValue({

@@ -5,36 +5,41 @@ import { join } from 'node:path';
 
 import { applySqliteMigrationsIfNeeded, listSqliteMigrations, resolveSqliteDatabaseFilePath } from './sqliteMigrations';
 
-const sqliteStore = new Map();
+type SqliteState = { tables: Set<string>; applied: Set<string> };
 
-function getSqliteState(databasePath) {
+const sqliteStore = new Map<string, SqliteState>();
+
+function getSqliteState(databasePath: unknown): SqliteState {
   const key = String(databasePath ?? '');
   if (!sqliteStore.has(key)) {
     sqliteStore.set(key, { tables: new Set(), applied: new Set() });
   }
-  return sqliteStore.get(key);
+  return sqliteStore.get(key)!;
 }
 
-function extractCreatedTableNames(sql) {
-  const result = [];
+function extractCreatedTableNames(sql: unknown): string[] {
+  const result: string[] = [];
   const text = String(sql ?? '');
   const regex = /CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+["'`[]?([A-Za-z0-9_]+)["'`\]]?/gi;
-  let match;
+  let match: RegExpExecArray | null;
   // eslint-disable-next-line no-cond-assign
   while ((match = regex.exec(text))) {
-    const name = match[1];
+    const name = match[1] ?? '';
     if (name) result.push(name);
   }
   return result;
 }
 
 class FakeDatabase {
-  constructor(databasePath) {
+  databasePath: string;
+  state: SqliteState;
+
+  constructor(databasePath: unknown) {
     this.databasePath = String(databasePath ?? '');
     this.state = getSqliteState(this.databasePath);
   }
 
-  exec(sql) {
+  exec(sql: unknown): void {
     const text = String(sql ?? '').trim();
     if (!text) return;
     const upper = text.toUpperCase();
@@ -47,7 +52,7 @@ class FakeDatabase {
     }
   }
 
-  query(queryText) {
+  query(queryText: unknown): { all?: () => Array<{ name?: string; migration_name?: string }>; run?: (...args: any[]) => void } {
     const text = String(queryText ?? '');
     if (text.includes("FROM sqlite_master")) {
       return {
@@ -61,8 +66,7 @@ class FakeDatabase {
     }
     if (text.startsWith('INSERT INTO _prisma_migrations')) {
       return {
-        run: (_id, checksum, name) => {
-          void checksum;
+        run: (_id: unknown, _checksum: unknown, name: unknown) => {
           this.state.applied.add(String(name ?? '').trim());
         },
       };

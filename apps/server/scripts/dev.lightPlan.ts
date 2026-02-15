@@ -6,7 +6,7 @@ export type LightDevPlan = {
 };
 
 export function buildLightDevPlan(env: NodeJS.ProcessEnv): LightDevPlan {
-    const provider = getDbProviderFromEnv(env, "pglite");
+    const provider = getDbProviderFromEnv(env, "sqlite");
     if (provider !== "pglite" && provider !== "sqlite") {
         throw new Error(`Unsupported HAPPY_DB_PROVIDER/HAPPIER_DB_PROVIDER for light dev plan: ${provider}`);
     }
