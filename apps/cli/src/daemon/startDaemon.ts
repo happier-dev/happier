@@ -60,6 +60,7 @@ import { resolveWaitForAuthConfig } from './startup/waitForAuthConfig';
 	import { resolveSpawnChildEnvironment } from './spawn/resolveSpawnChildEnvironment';
 	import { createSpawnConcurrencyGate } from './spawn/createSpawnConcurrencyGate';
 
+import { startAutomationWorker, type AutomationWorkerHandle } from './automation/automationWorker';
 function resolvePositiveIntEnv(raw: string | undefined, fallback: number, bounds: { min: number; max: number }): number {
   const value = (raw ?? '').trim();
   if (!value) return fallback;
@@ -147,6 +148,7 @@ export async function startDaemon(): Promise<void> {
 	    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
 	    let apiMachineForSessions: ApiMachineClient | null = null;
 
+	    let automationWorker: AutomationWorkerHandle | null = null;
     // Session spawning awaiter system
 	    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
 	    const pidToSpawnResultResolver = new Map<number, (result: SpawnSessionResult) => void>();
@@ -989,11 +991,27 @@ export async function startDaemon(): Promise<void> {
 	          requestShutdown: () => requestShutdown('happier-app')
 	        });
 
+
+	        automationWorker = startAutomationWorker({
+	          token: credentials.token,
+	          machineId,
+	          encryption: credentials.encryption,
+	          spawnSession,
+	        });
+
 	        let didRefreshMachineMetadata = false;
 	        connectedApiMachine.connect({
 	          onConnect: async () => {
-	            if (didRefreshMachineMetadata || shutdownInitiated) return;
+	            if (shutdownInitiated) return;
 
+	            if (automationWorker) {
+	              await automationWorker.refreshAssignments().catch((error) => {
+	                logger.warn('[DAEMON RUN] Failed to refresh automation assignments on machine reconnect', error);
+	              });
+	            }
+
+	            if (didRefreshMachineMetadata) return;
+	            didRefreshMachineMetadata = true;
 	            // Keep machine metadata fresh without clobbering user-provided fields (e.g. displayName) that may exist.
 	            await connectedApiMachine.updateMachineMetadata((metadata) => {
 	              const base = (metadata ?? (machine.metadata as any) ?? {}) as any;
@@ -1022,9 +1040,11 @@ export async function startDaemon(): Promise<void> {
 	              }
 
 	              return next;
+	            }).catch((error) => {
+	              didRefreshMachineMetadata = false;
+	              logger.warn('[DAEMON RUN] Failed to refresh machine metadata on reconnect', error);
 	            });
 
-	            didRefreshMachineMetadata = true;
 	          },
 	        });
 	      } catch (error) {
@@ -1105,6 +1125,10 @@ export async function startDaemon(): Promise<void> {
 
 	        apiMachine.shutdown();
       }
+      if (automationWorker) {
+        automationWorker.stop();
+      }
+
       await stopControlServer();
 	      await cleanupDaemonState();
 	      await stopCaffeinate();
