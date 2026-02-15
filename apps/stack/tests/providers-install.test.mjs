@@ -51,6 +51,13 @@ test('hstack providers install supports --force to reinstall even if already ins
   assert.equal(data.skipIfInstalled, false);
 });
 
+test('hstack providers install shows progress output in non-json mode', () => {
+  const res = runProvidersCommand(['install', '--providers=codex', '--dry-run']);
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout ?? '', /\-\s*\[[^\]]+\]\s+install/i);
+  assert.match(res.stdout ?? '', /codex/i);
+});
+
 test('hstack providers install rejects unknown provider id', () => {
   const res = runProvidersCommand(['install', '--providers=not-a-provider', '--dry-run', '--json']);
   assert.notEqual(res.status, 0);

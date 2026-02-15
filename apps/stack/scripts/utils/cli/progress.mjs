@@ -27,6 +27,14 @@ function colorSpinner(frame) {
 }
 
 export function createStepPrinter({ enabled = true } = {}) {
+  if (!enabled) {
+    return {
+      start: () => {},
+      stop: () => {},
+      info: () => {},
+    };
+  }
+
   const tty = enabled && isTty();
   const frames = spinnerFrames();
   let timer = null;
@@ -138,4 +146,3 @@ export async function runCommandLogged({
   err.logPath = logPath;
   throw err;
 }
-

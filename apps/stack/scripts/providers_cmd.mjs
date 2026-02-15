@@ -2,8 +2,13 @@ import './utils/env/env.mjs';
 
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
+import { createStepPrinter, runCommandLogged } from './utils/cli/progress.mjs';
 import { AGENT_IDS, getProviderCliInstallSpec } from '@happier-dev/agents';
 import { installProviderCli, planProviderCliInstall, resolvePlatformFromNodePlatform } from '@happier-dev/cli-common/providers';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 function usageText() {
   return [
@@ -31,6 +36,25 @@ function splitProviders(raw) {
 
 function resolvePlatform() {
   return resolvePlatformFromNodePlatform(process.platform) ?? 'unsupported';
+}
+
+function commandExists(cmd, env) {
+  const name = String(cmd ?? '').trim();
+  if (!name) return false;
+
+  const pathEnv = env?.PATH ?? process.env.PATH;
+  if (process.platform === 'win32') {
+    const res = spawnSync('where', [name], { stdio: 'ignore', env: { ...process.env, ...(env ?? {}), PATH: pathEnv } });
+    return (res.status ?? 1) === 0;
+  }
+  const res = spawnSync('sh', ['-lc', `command -v ${name} >/dev/null 2>&1`], { stdio: 'ignore', env: { ...process.env, ...(env ?? {}), PATH: pathEnv } });
+  return (res.status ?? 1) === 0;
+}
+
+function resolveProviderInstallLogPath(providerId) {
+  const base = join(tmpdir(), 'happier-provider-installs');
+  mkdirSync(base, { recursive: true });
+  return join(base, `install-provider-${providerId}-${Date.now()}.log`);
 }
 
 function planForProvider(providerId) {
@@ -107,17 +131,90 @@ async function cmdInstall({ argv }) {
     throw new Error('[providers] unsupported platform');
   }
 
-  const results = resolved.map((providerId) =>
-    installProviderCli({ providerId, platform, dryRun, skipIfInstalled, env: process.env }),
-  );
-  const failures = results.filter((r) => !r.ok);
-  if (failures.length > 0) {
-    const first = failures[0];
-    const extra = first.logPath ? `\nlog: ${first.logPath}` : '';
-    throw new Error(`[providers] install failed: ${first.errorMessage}${extra}`.trim());
+  // In json mode, preserve the existing structured behavior (no progress output).
+  if (json) {
+    const results = resolved.map((providerId) =>
+      installProviderCli({ providerId, platform, dryRun, skipIfInstalled, env: process.env }),
+    );
+    const failures = results.filter((r) => !r.ok);
+    if (failures.length > 0) {
+      const first = failures[0];
+      const extra = first.logPath ? `\nlog: ${first.logPath}` : '';
+      throw new Error(`[providers] install failed: ${first.errorMessage}${extra}`.trim());
+    }
+
+    const plan = results.map((r) => (r.ok ? r.plan : null)).filter(Boolean);
+
+    printResult({
+      json,
+      data: {
+        ok: true,
+        providers: resolved,
+        dryRun,
+        skipIfInstalled,
+        plan,
+        results: results.map((r) => (r.ok ? { ok: true, providerId: r.plan.providerId, alreadyInstalled: r.alreadyInstalled, logPath: r.logPath } : r)),
+      },
+      text: null,
+    });
+    return;
   }
 
-  const plan = results.map((r) => (r.ok ? r.plan : null)).filter(Boolean);
+  // Human-friendly progress output (TTY spinner when interactive; simple lines otherwise).
+  const steps = createStepPrinter({ enabled: true });
+  const results = [];
+  for (const providerId of resolved) {
+    const spec = getProviderCliInstallSpec(providerId);
+    const planned = planProviderCliInstall({ providerId, platform });
+    if (!planned.ok) {
+      throw new Error(`[providers] install failed: ${planned.errorMessage}`);
+    }
+
+    const label = `Installing ${spec.title || `${providerId} CLI`}`;
+    const binariesPresent = skipIfInstalled && spec.binaries.every((b) => commandExists(b, process.env));
+    if (binariesPresent) {
+      steps.info(`- [✓] ${label} (already installed)`);
+      results.push({ ok: true, providerId, alreadyInstalled: true, logPath: null, plan: planned.plan });
+      continue;
+    }
+
+    steps.start(label);
+    if (dryRun) {
+      steps.stop('✓', `${label} (dry-run)`);
+      results.push({ ok: true, providerId, alreadyInstalled: false, logPath: null, plan: planned.plan });
+      continue;
+    }
+
+    const logPath = resolveProviderInstallLogPath(providerId);
+    writeFileSync(
+      logPath,
+      [`# providerId: ${providerId}`, `# platform: ${platform}`, ''].join('\n'),
+      'utf8',
+    );
+
+    try {
+      for (const c of planned.plan.commands) {
+        // eslint-disable-next-line no-await-in-loop
+        await runCommandLogged({
+          label,
+          cmd: c.cmd,
+          args: c.args,
+          cwd: process.cwd(),
+          env: process.env,
+          logPath,
+          showSteps: false,
+          quiet: true,
+        });
+      }
+    } catch (e) {
+      steps.stop('x', label);
+      const message = e instanceof Error ? e.message : String(e);
+      throw new Error(`[providers] install failed: ${message}\nlog: ${logPath}`);
+    }
+
+    steps.stop('✓', label);
+    results.push({ ok: true, providerId, alreadyInstalled: false, logPath, plan: planned.plan });
+  }
 
   printResult({
     json,
@@ -126,8 +223,8 @@ async function cmdInstall({ argv }) {
       providers: resolved,
       dryRun,
       skipIfInstalled,
-      plan,
-      results: results.map((r) => (r.ok ? { ok: true, providerId: r.plan.providerId, alreadyInstalled: r.alreadyInstalled, logPath: r.logPath } : r)),
+      plan: results.map((r) => r.plan),
+      results: results.map((r) => ({ ok: true, providerId: r.providerId, alreadyInstalled: r.alreadyInstalled, logPath: r.logPath })),
     },
     text: json ? null : `✓ providers installed: ${resolved.join(', ')}`,
   });

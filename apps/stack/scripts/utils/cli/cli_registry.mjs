@@ -258,7 +258,7 @@ export function gethstackRegistry() {
       scriptRelPath: 'scripts/providers_cmd.mjs',
       rootUsage: [
         'hstack providers list [--json]',
-        'hstack providers install --providers=<id1,id2> [--dry-run] [--json]',
+        'hstack providers install --providers=<id1,id2> [--dry-run] [--force] [--json]',
       ],
       description: 'Install and manage provider CLIs',
     },
