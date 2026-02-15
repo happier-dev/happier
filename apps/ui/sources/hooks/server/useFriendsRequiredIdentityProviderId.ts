@@ -1,5 +1,5 @@
 import { normalizeProviderId } from '@/auth/providers/registry';
-import { useServerFeatureValue } from './useServerFeatures';
+import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 
 /**
  * Returns:
@@ -8,12 +8,8 @@ import { useServerFeatureValue } from './useServerFeatures';
  * - `null` when the server reports no required provider or the request failed
  */
 export function useFriendsRequiredIdentityProviderId(): string | null | undefined {
-    return useServerFeatureValue({
-        initial: undefined,
-        select: (features) => {
-            if (!features) return null;
-            const raw = features.features?.social?.friends?.requiredIdentityProviderId;
-            return normalizeProviderId(raw) ?? null;
-        },
-    });
+    const snapshot = useServerFeaturesRuntimeSnapshot();
+    if (snapshot.status === 'loading') return undefined;
+    if (snapshot.status !== 'ready') return null;
+    return normalizeProviderId(snapshot.features.features.social.friends.requiredIdentityProviderId) ?? null;
 }

@@ -59,12 +59,12 @@ This happens when the user’s GitHub login cannot be used as a unique server us
 
 ### Feature toggles
 
-- `FRIENDS_ENABLED` (`true`/`false`, default `true`): master switch for Friends endpoints + UI.
-- `FRIENDS_ALLOW_USERNAME` (`true`/`false`, default `false`):
+- `HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED` (`true`/`false`, default `true`): master switch for Friends endpoints + UI.
+- `HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME` (`true`/`false`, default `false`):
   - `false`: Friends requires GitHub connection for requests/discovery.
   - `true`: Friends requires a claimed `@username` (GitHub is optional).
 
-### Username policy (when `FRIENDS_ALLOW_USERNAME=true`)
+### Username policy (when username-based friends are enabled)
 
 - `FRIENDS_USERNAME_MIN_LEN` (default `3`)
 - `FRIENDS_USERNAME_MAX_LEN` (default `32`)
@@ -108,11 +108,11 @@ Optional:
 - `POST /v1/friends/add`: send a friend request.
 - `POST /v1/friends/remove`: remove a friend.
 - `GET /v1/friends`: list friends/relationships.
-- `POST /v1/account/username`: claim/update a username (requires auth; available when Friends is enabled and either `FRIENDS_ALLOW_USERNAME=true` or GitHub is connected).
+- `POST /v1/account/username`: claim/update a username (requires auth; available when Friends is enabled and either username-based friends are enabled or GitHub is connected).
   - Body: `{ "username": "alice" }`
   - Success: `200 { "username": "alice" }`
   - Errors:
     - `400 { "error": "friends-disabled" }` when Friends is disabled
-    - `400 { "error": "username-disabled" }` when `FRIENDS_ALLOW_USERNAME=false` and the user has no GitHub identity
+    - `400 { "error": "username-disabled" }` when username-based friends are disabled and the user has no GitHub identity
     - `400 { "error": "invalid-username" }` when the username fails validation
     - `409 { "error": "username-taken" }` when the username is already in use

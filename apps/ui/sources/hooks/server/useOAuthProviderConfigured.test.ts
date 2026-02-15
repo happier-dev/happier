@@ -31,14 +31,14 @@ describe('useOAuthProviderConfigured', () => {
         expect(seen.at(-1)).toBe(true);
     });
 
-    it('returns null when the request fails', async () => {
+    it('fails closed when the request fails', async () => {
         vi.resetModules();
         stubServerFeaturesFetchFailure();
 
         const { useOAuthProviderConfigured } = await import('./useOAuthProviderConfigured');
         const seen = await renderHookAndCollectValues(() => useOAuthProviderConfigured('github'));
 
-        expect(seen.at(-1)).toBe(null);
+        expect(seen.at(-1)).toBe(false);
     });
 
     it('normalizes provider id input before reading config state', async () => {

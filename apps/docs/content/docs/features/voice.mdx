@@ -1,31 +1,37 @@
 ---
 title: Voice
-description: Configure voice providers (Happier Voice, BYO ElevenLabs, Local OSS).
+description: Configure voice providers (Happier Voice, BYO ElevenLabs, Local Voice).
 ---
 
 Happier supports optional voice conversations with these providers:
 
 - **Off**: disables voice.
-- **Happier Voice**: your server mints short-lived ElevenLabs *conversation tokens* and can enforce subscription/quota server-side.
+- **Happier Voice (ElevenLabs)**: your server mints short-lived ElevenLabs *conversation tokens* and can enforce subscription/quota server-side.
 - **Use my ElevenLabs**: the client uses your own ElevenLabs `xi-api-key` (and agent id) and calls ElevenLabs directly (Happier never sees your key).
-- **Local OSS Voice**: a turn-based mic → STT → send message → TTS pipeline using **OpenAI-compatible** STT/TTS endpoints you run yourself.
+- **Local Voice (OpenAI-compatible + on-device)**: a mic → STT → voice agent → optional TTS pipeline using **OpenAI-compatible** endpoints you run yourself, with optional on-device STT/TTS.
 
-## Glossary (STT vs TTS vs mediator)
+## Glossary (connection vs target vs STT/TTS)
+
+Happier voice is designed as an **account-scoped voice connection** with **session targeting**:
+
+- **Voice connection (account-scoped)**: a single active voice connection that can stay running while you navigate across sessions.
+- **Primary action session (target)**: the session the voice assistant should act on when it sends messages or approves permissions.
+- **Tracked sessions**: additional sessions the voice assistant is allowed to monitor more closely for background updates (configurable).
 
 - **STT (speech-to-text)**: converts microphone audio into text. Without STT, you cannot "talk to Happier".
 - **TTS (text-to-speech)**: converts text into spoken audio. Without TTS, you can still use voice input, but replies won't be spoken aloud.
-- **Mediator**: an optional middle step between STT and the session transcript.
-  - **Direct-to-session** sends the STT text into the session as a normal message.
-  - **Mediator mode** sends the STT text into an ephemeral multi-turn chat, then you **Commit** a single final instruction message into the session when ready.
+- **Voice agent mode (local voice)**: your spoken input goes to an ephemeral "colleague" voice agent.
+  - The voice agent does **not** automatically write to the session transcript.
+  - When you want something applied to the session, the voice agent uses tools (e.g. `sendSessionMessage`) to send a single, explicit message into the target session.
 
 ## App settings
 
 In the app, open **Settings → Voice** and choose one of:
 
 - **Off**: disables voice and hides the mic button.
-- **Happier Voice**: uses `POST /v1/voice/token` to mint a conversation token from your server.
+- **Happier Voice**: uses your server to mint a conversation token (account-scoped).
 - **Use my ElevenLabs**: stores your ElevenLabs credentials on-device and calls ElevenLabs directly.
-- **Local OSS Voice**: stores STT/TTS endpoint URLs (and optional keys) on-device and uses them for turn-based voice chat.
+- **Local Voice**: stores STT/TTS endpoint URLs (and optional keys) on-device and uses them for local turn-based voice chat.
 
 ### Secure storage (BYO)
 
@@ -34,15 +40,28 @@ When using **Use my ElevenLabs** (or Local OSS endpoints with API keys), the app
 - The key is encrypted locally using libsodium `secretbox`.
 - Plaintext is not persisted; only ciphertext is stored.
 
+### ElevenLabs API key permissions (BYO)
+
+When creating a **restricted** ElevenLabs API key (ElevenLabs → **Developers** → **API Keys** → **Create API key**), enable:
+
+- **Text to Speech** → **Access**
+- **Voices** → **Read**
+- **Conversational AI / Agents** → **Read & Write** (required for **Create Happier Agent** / **Update Agent**)
+- Optional: **User** → **Read**
+
 ### Privacy controls (all voice providers)
 
 In **Settings → Voice → Privacy**, you can control what session context gets sent to voice providers.
 
-Defaults are chosen to be useful while reducing risk:
+Defaults are chosen to be **privacy-hardened by default**:
 
-- Session summary and a limited number of recent messages can be shared.
-- Tool **names** can be shared, but tool **arguments are always redacted**.
-- Local file paths are off by default.
+- Session summaries and selected updates can be shared.
+- Tool names can be shared.
+- Tool arguments and local file paths are **off by default** (enable only if you want full context, since they can include sensitive content).
+
+If you have privacy concerns, disable these toggles first:
+
+- Share recent messages
 
 ## Use my ElevenLabs: optional auto-provisioning
 
@@ -53,51 +72,42 @@ If you don’t want to configure an agent manually in the ElevenLabs dashboard, 
 
 This is optional — you can still manually enter your agent id + API key.
 
-## Local OSS Voice (OpenAI-compatible STT/TTS)
+## Local Voice (OpenAI-compatible STT/TTS + device options)
 
-Local OSS Voice is a **turn-based** pipeline:
+Local Voice is a **turn-based** pipeline:
 
 1. Record audio
 2. Send to your STT server (`POST /v1/audio/transcriptions`)
-3. **Either**:
-   - **Direct-to-session**: send the transcribed text into the Happier session as a normal message
-   - **Mediator mode**: send the transcribed text into an ephemeral “voice mediator” chat (multi-turn), then **Commit** a single final instruction message into the Happier session
+3. Send the transcribed text to a local voice engine (direct or voice agent conversation mode)
 4. Optionally synthesize the next reply via TTS (`POST /v1/audio/speech`) and play it
 
-In **Settings → Voice → Local OSS Voice**, configure:
+In **Settings → Voice → Local Voice**, configure:
 
-- **STT Base URL** (typically ends with `/v1`)
-- **TTS Base URL** (typically ends with `/v1`)
+- **STT Base URL** (typically ends with `/v1`) or enable **Device STT**
+- **TTS Base URL** (typically ends with `/v1`) or enable **Device TTS**
 - Optional API keys, model/voice fields, and format (`mp3`/`wav`)
-- Optional experimental toggles:
-  - **Device STT**: use on-device speech recognition (no STT HTTP endpoint required).
-  - **Device TTS**: use on-device speech synthesis (no TTS HTTP endpoint required).
+- Optional hands-free / endpointing controls (when using Device STT)
 
 Minimum configuration notes:
 
 - To use the mic and send spoken input, you must configure **STT Base URL** (unless **Device STT** is enabled).
 - To hear spoken replies, configure **TTS Base URL** and enable auto-speak (unless **Device TTS** is enabled).
-- Mediator mode is optional. If you don't enable it, Local OSS Voice uses direct-to-session mode.
+- Voice agent mode is optional. If you don't enable it, Local Voice uses direct-to-session mode.
 
-### Mediator mode (local voice)
+### Voice agent mode (local voice)
 
-Mediator mode is designed to feel closer to the ElevenLabs “planner/bridge” experience, while keeping the **session transcript clean** until you explicitly commit.
+Voice agent mode is designed to feel closer to a "colleague" experience, while keeping the **session transcript clean** unless the voice agent explicitly sends a session message via tools.
 
 How it works:
 
-- Each time you speak, Happier transcribes your audio and sends it to the mediator.
-- The mediator replies (and Happier can speak the reply via TTS).
-- When you’re happy with the plan, tap **Commit** to generate a single instruction message and insert it into the Happier session.
+- Each time you speak, Happier transcribes your audio and sends it to the voice agent.
+- The voice agent replies (and Happier can speak the reply via TTS).
+- When the user asks, the voice agent calls `sendSessionMessage` to send one explicit message into the target session.
 
-The mediator supports two backends:
+The voice agent can run against:
 
-- **Daemon mediator (recommended):** runs inside the daemon’s per-session process and uses the same provider stack as that session (with tools restricted by a policy).
-- **OpenAI-compatible mediator:** calls a user-configured `POST /v1/chat/completions` endpoint (useful for fully local/chat-only setups).
-
-You can also configure **separate models** for:
-
-- **Chat model:** fast and responsive for back-and-forth discussion.
-- **Commit model:** optionally heavier/more accurate for generating the final instruction message.
+- a daemon-backed voice agent (recommended when available), or
+- a user-configured OpenAI-compatible `POST /v1/chat/completions` endpoint.
 
 Important: on phones, `localhost` usually points to the phone, not your computer. Use your computer’s LAN IP (e.g. `http://192.168.x.x:PORT/v1`) or a tunnel.
 
@@ -114,8 +124,8 @@ To enable it in production, set:
 
 Optional controls:
 
-- `VOICE_ENABLED` (`true`/`false`, default `true`)
-- `VOICE_REQUIRE_SUBSCRIPTION` (`true`/`false`, defaults to `true` when `NODE_ENV=production`)
+- `HAPPIER_FEATURE_VOICE__ENABLED` (`true`/`false`, default `true`)
+- `HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION` (`true`/`false`, defaults to `true` when `NODE_ENV=production`)
 - `VOICE_FREE_SESSIONS_PER_MONTH` (default `0`)
 - `VOICE_FREE_MINUTES_PER_MONTH` (default `0`)
 - `VOICE_MAX_CONCURRENT_SESSIONS` (default `1`)
@@ -127,14 +137,6 @@ Optional controls:
 - `VOICE_LEASE_RETENTION_DAYS` (default `30`, clamp 7–365)
 - `VOICE_LEASE_CLEANUP_INTERVAL_MS` (default `21600000` = 6h, min `10000`)
 
-If `VOICE_REQUIRE_SUBSCRIPTION=true`, also set:
-
-- `REVENUECAT_SECRET_KEY`
-
-## RevenueCat entitlement
-
-The server checks for a **`voice`** entitlement (with a compatibility fallback to **`pro`**) when minting tokens.
-
 ## Usage accounting (minutes)
 
 When using **Happier Voice**, the app starts a session using `/v1/voice/token` and (best-effort) reports completion via:
@@ -142,6 +144,8 @@ When using **Happier Voice**, the app starts a session using `/v1/voice/token` a
 - `POST /v1/voice/session/complete` with `{ leaseId, providerConversationId }`
 
 The server fetches the provider’s conversation metadata to determine duration (the client does not self-report minutes).
+
+Note: the server also exposes an account-scoped mint alias route at `POST /v1/voice/lease/mint`. Both routes mint the same kind of short-lived conversation token. The request body may omit `sessionId` (it is treated as optional correlation only).
 
 ## ElevenLabs agent setup (manual BYO)
 
@@ -164,8 +168,22 @@ In ElevenLabs, reference these dynamic variables in your agent prompt/template s
 
 Happier exposes these client tools at runtime (the agent can call them if you enable tools in the agent configuration):
 
-- `messageClaudeCode` — parameters: `{ "message": "string" }`
+- `sendSessionMessage` — parameters: `{ "message": "string" }`
 - `processPermissionRequest` — parameters: `{ "decision": "allow" | "deny" }`
+- `setPrimaryActionSession` — parameters: `{ "sessionId": "string|null" }`
+- `setTrackedSessions` — parameters: `{ "sessionIds": ["string", "..."] }`
+- `listSessions` — parameters: `{ "limit"?: number, "cursor"?: "string|null" }`
+- `getSessionActivity` — parameters: `{ "sessionId": "string" }`
+- `getSessionRecentMessages` — parameters: `{ "sessionId": "string", "limit"?: number, "cursor"?: "string|null" }`
+
+### Pagination (tools)
+
+Some tools return a `nextCursor` for pagination:
+
+- `listSessions` returns `{ sessions, nextCursor }`
+- `getSessionRecentMessages` returns `{ messages, nextCursor }`
+
+To paginate, call the tool again with `cursor: nextCursor` until `nextCursor` is `null`.
 
 Tool names and parameter shapes must match what you configure in ElevenLabs.
 
@@ -174,6 +192,6 @@ Tool names and parameter shapes must match what you configure in ElevenLabs.
 If you configure manually, a good starting point:
 
 - Use `initialConversationContext` as the source of truth about the current coding session.
-- When the user asks to “do X”, call `messageClaudeCode` with a single, concrete instruction.
+- When the user asks to “do X”, call `sendSessionMessage` with a single, concrete instruction.
 - When the user asks to approve/deny a permission request, call `processPermissionRequest`.
 - Keep responses short; confirm tool actions (“sent”, “done”) and then wait.

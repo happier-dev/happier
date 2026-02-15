@@ -2,7 +2,6 @@
  * Capability probe operations (machine RPC)
  */
 
-import { apiSocket } from '../api/session/apiSocket';
 import { isPlainObject } from './_shared';
 import { RPC_METHODS, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpc';
 import {
@@ -15,6 +14,7 @@ import {
     type CapabilitiesInvokeRequest,
     type CapabilitiesInvokeResponse,
 } from '../api/capabilities/capabilitiesProtocol';
+import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 
 export type {
     CapabilitiesDescribeResponse,
@@ -28,9 +28,17 @@ export type MachineCapabilitiesDescribeResult =
     | { supported: true; response: CapabilitiesDescribeResponse }
     | { supported: false; reason: 'not-supported' | 'error' };
 
-export async function machineCapabilitiesDescribe(machineId: string): Promise<MachineCapabilitiesDescribeResult> {
+export async function machineCapabilitiesDescribe(
+    machineId: string,
+    options?: { serverId?: string | null },
+): Promise<MachineCapabilitiesDescribeResult> {
     try {
-        const result = await apiSocket.machineRPC<unknown, {}>(machineId, RPC_METHODS.CAPABILITIES_DESCRIBE, {});
+        const result = await machineRpcWithServerScope<unknown, {}>({
+            machineId,
+            method: RPC_METHODS.CAPABILITIES_DESCRIBE,
+            payload: {},
+            serverId: options?.serverId,
+        });
         if (isRpcMethodNotFoundResult(result)) return { supported: false, reason: 'not-supported' };
         if (isPlainObject(result) && typeof result.error === 'string') return { supported: false, reason: 'error' };
         const parsed = parseCapabilitiesDescribeResponse(result);
@@ -48,12 +56,18 @@ export type MachineCapabilitiesDetectResult =
 export async function machineCapabilitiesDetect(
     machineId: string,
     request: CapabilitiesDetectRequest,
-    options?: { timeoutMs?: number },
+    options?: { timeoutMs?: number; serverId?: string | null },
 ): Promise<MachineCapabilitiesDetectResult> {
     try {
         const timeoutMs = typeof options?.timeoutMs === 'number' ? options.timeoutMs : 2500;
         const result = await Promise.race([
-            apiSocket.machineRPC<unknown, CapabilitiesDetectRequest>(machineId, RPC_METHODS.CAPABILITIES_DETECT, request),
+            machineRpcWithServerScope<unknown, CapabilitiesDetectRequest>({
+                machineId,
+                method: RPC_METHODS.CAPABILITIES_DETECT,
+                payload: request,
+                serverId: options?.serverId,
+                timeoutMs,
+            }),
             new Promise<{ error: string }>((resolve) => {
                 setTimeout(() => resolve({ error: 'Timeout' }), timeoutMs);
             }),
@@ -77,12 +91,18 @@ export type MachineCapabilitiesInvokeResult =
 export async function machineCapabilitiesInvoke(
     machineId: string,
     request: CapabilitiesInvokeRequest,
-    options?: { timeoutMs?: number },
+    options?: { timeoutMs?: number; serverId?: string | null },
 ): Promise<MachineCapabilitiesInvokeResult> {
     try {
         const timeoutMs = typeof options?.timeoutMs === 'number' ? options.timeoutMs : 30_000;
         const result = await Promise.race([
-            apiSocket.machineRPC<unknown, CapabilitiesInvokeRequest>(machineId, RPC_METHODS.CAPABILITIES_INVOKE, request),
+            machineRpcWithServerScope<unknown, CapabilitiesInvokeRequest>({
+                machineId,
+                method: RPC_METHODS.CAPABILITIES_INVOKE,
+                payload: request,
+                serverId: options?.serverId,
+                timeoutMs,
+            }),
             new Promise<{ error: string }>((resolve) => {
                 setTimeout(() => resolve({ error: 'Timeout' }), timeoutMs);
             }),

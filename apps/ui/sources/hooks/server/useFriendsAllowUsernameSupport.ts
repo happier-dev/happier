@@ -1,4 +1,4 @@
-import { useServerFeatureValue } from './useServerFeatures';
+import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 
 /**
  * Returns:
@@ -8,11 +8,8 @@ import { useServerFeatureValue } from './useServerFeatures';
  * - `null` when the request failed
  */
 export function useFriendsAllowUsernameSupport(): boolean | null | undefined {
-    return useServerFeatureValue({
-        initial: undefined,
-        select: (features) => {
-            if (!features) return null;
-            return features.features?.social?.friends?.allowUsername === true;
-        },
-    });
+    const snapshot = useServerFeaturesRuntimeSnapshot();
+    if (snapshot.status === 'loading') return undefined;
+    if (snapshot.status !== 'ready') return false;
+    return snapshot.features.features.social.friends.allowUsername === true;
 }

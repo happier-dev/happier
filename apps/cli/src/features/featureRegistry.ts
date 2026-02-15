@@ -25,6 +25,20 @@ const CLI_FEATURE_REGISTRY: Readonly<Partial<Record<FeatureId, CliFeatureDefinit
     serverRequired: true,
     serverEnabled: (features) => features.features.bugReports.enabled === true,
   },
+  'execution.runs': {
+    id: 'execution.runs',
+    // Execution runs are currently a client/daemon feature; the server features payload does not
+    // yet advertise a dedicated gate. Keep this locally gated for now.
+    serverRequired: false,
+    serverEnabled: ALWAYS_ENABLED,
+  },
+  voice: {
+    id: 'voice',
+    // Voice can run fully locally; treat server gating as best-effort and rely on local policy in V1.
+    // (If we later want server-enforced gating, we can flip serverRequired=true and plumb server snapshots.)
+    serverRequired: false,
+    serverEnabled: (features) => features.features.voice.enabled === true,
+  },
 };
 
 export function getCliFeatureDefinition(featureId: FeatureId): CliFeatureDefinition {

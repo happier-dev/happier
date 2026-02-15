@@ -95,6 +95,17 @@ describe('featureDecisionInputs', () => {
     expect(inputs.serverSnapshot).toBeUndefined();
   });
 
+  it('derives local policy for execution.runs from env', () => {
+    const inputs = createCliFeatureDecisionInputs({
+      featureId: 'execution.runs',
+      env: {
+        HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED: '0',
+      } as NodeJS.ProcessEnv,
+    });
+
+    expect(inputs.localPolicyEnabled).toBe(false);
+  });
+
   it('loads server snapshot when resolving inputs for a server URL', async () => {
     const fetchSpy = vi.fn(async () => ({
       ok: true,

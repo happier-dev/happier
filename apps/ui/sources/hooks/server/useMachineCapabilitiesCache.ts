@@ -6,6 +6,7 @@ import {
 import type { CapabilitiesDetectRequest, CapabilitiesDetectResponse, CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { CHECKLIST_IDS, resumeChecklistId } from '@happier-dev/protocol/checklists';
 import { AGENT_IDS } from '@/agents/catalog/catalog';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 export type MachineCapabilitiesSnapshot = {
     response: CapabilitiesDetectResponse;
@@ -30,17 +31,34 @@ const listeners = new Map<string, Set<(state: MachineCapabilitiesCacheState) => 
 const DEFAULT_STALE_MS = 24 * 60 * 60 * 1000; // 24 hours
 const DEFAULT_FETCH_TIMEOUT_MS = 2500;
 
+function normalizeServerId(raw: string | null | undefined): string {
+    return String(raw ?? '').trim();
+}
+
+function resolveServerId(raw: string | null | undefined): string {
+    const explicit = normalizeServerId(raw);
+    if (explicit) return explicit;
+    return String(getActiveServerSnapshot().serverId ?? '').trim();
+}
+
+function toCacheKey(machineIdRaw: string, serverIdRaw?: string | null): string {
+    const machineId = String(machineIdRaw ?? '').trim();
+    const serverId = resolveServerId(serverIdRaw);
+    if (!serverId) return machineId;
+    return `${serverId}::${machineId}`;
+}
+
 function getEntry(cacheKey: string): CacheEntry | null {
     return cache.get(cacheKey) ?? null;
 }
 
-export function getMachineCapabilitiesCacheState(machineId: string): MachineCapabilitiesCacheState | null {
-    const entry = getEntry(machineId);
+export function getMachineCapabilitiesCacheState(machineId: string, serverId?: string | null): MachineCapabilitiesCacheState | null {
+    const entry = getEntry(toCacheKey(machineId, serverId));
     return entry ? entry.state : null;
 }
 
-export function getMachineCapabilitiesSnapshot(machineId: string): MachineCapabilitiesSnapshot | null {
-    const state = getMachineCapabilitiesCacheState(machineId);
+export function getMachineCapabilitiesSnapshot(machineId: string, serverId?: string | null): MachineCapabilitiesSnapshot | null {
+    const state = getMachineCapabilitiesCacheState(machineId, serverId);
     if (!state) return null;
     if (state.status === 'loaded') return state.snapshot;
     if (state.status === 'loading') return state.snapshot ?? null;
@@ -116,10 +134,11 @@ function getTimeoutMsForRequest(request: CapabilitiesDetectRequest, fallback: nu
 
 async function fetchAndMerge(params: {
     machineId: string;
+    serverId?: string | null;
     request: CapabilitiesDetectRequest;
     timeoutMs?: number;
 }): Promise<void> {
-    const cacheKey = params.machineId;
+    const cacheKey = toCacheKey(params.machineId, params.serverId);
     const token = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
 
     const existing = getEntry(cacheKey);
@@ -144,7 +163,10 @@ async function fetchAndMerge(params: {
 
     let result: MachineCapabilitiesDetectResult;
     try {
-        result = await machineCapabilitiesDetect(params.machineId, params.request, { timeoutMs });
+        result = await machineCapabilitiesDetect(params.machineId, params.request, {
+            timeoutMs,
+            serverId: params.serverId,
+        });
     } catch {
         const current = getEntry(cacheKey);
         if (!current || current.inFlightToken !== token) {
@@ -191,6 +213,7 @@ async function fetchAndMerge(params: {
 
 export function prefetchMachineCapabilities(params: {
     machineId: string;
+    serverId?: string | null;
     request: CapabilitiesDetectRequest;
     timeoutMs?: number;
 }): Promise<void> {
@@ -199,32 +222,44 @@ export function prefetchMachineCapabilities(params: {
 
 export function prefetchMachineCapabilitiesIfStale(params: {
     machineId: string;
+    serverId?: string | null;
     staleMs: number;
     request: CapabilitiesDetectRequest;
     timeoutMs?: number;
 }): Promise<void> {
-    const cacheKey = params.machineId;
+    const cacheKey = toCacheKey(params.machineId, params.serverId);
     const existing = getEntry(cacheKey);
     if (!existing || existing.state.status === 'idle') {
-        return fetchAndMerge({ machineId: params.machineId, request: params.request, timeoutMs: params.timeoutMs });
+        return fetchAndMerge({
+            machineId: params.machineId,
+            serverId: params.serverId,
+            request: params.request,
+            timeoutMs: params.timeoutMs,
+        });
     }
     const now = Date.now();
     const isStale = (now - existing.updatedAt) > params.staleMs;
     if (isStale) {
-        return fetchAndMerge({ machineId: params.machineId, request: params.request, timeoutMs: params.timeoutMs });
+        return fetchAndMerge({
+            machineId: params.machineId,
+            serverId: params.serverId,
+            request: params.request,
+            timeoutMs: params.timeoutMs,
+        });
     }
     return Promise.resolve();
 }
 
 export function useMachineCapabilitiesCache(params: {
     machineId: string | null;
+    serverId?: string | null;
     enabled: boolean;
     staleMs?: number;
     request: CapabilitiesDetectRequest;
     timeoutMs?: number;
 }): { state: MachineCapabilitiesCacheState; refresh: (next?: { request?: CapabilitiesDetectRequest; timeoutMs?: number }) => void } {
-    const { machineId, enabled, staleMs = DEFAULT_STALE_MS } = params;
-    const cacheKey = machineId ?? null;
+    const { machineId, enabled, staleMs = DEFAULT_STALE_MS, serverId } = params;
+    const cacheKey = machineId ? toCacheKey(machineId, serverId) : null;
 
     // Keep the refresh function referentially stable even when callers pass a new request
     // object each render. This prevents effect churn (and, in extreme cases, navigation
@@ -244,12 +279,13 @@ export function useMachineCapabilitiesCache(params: {
         if (!machineId) return;
         void fetchAndMerge({
             machineId,
+            serverId,
             request: next?.request ?? requestRef.current,
             timeoutMs: typeof next?.timeoutMs === 'number' ? next.timeoutMs : timeoutMsRef.current,
         });
-        const entry = getEntry(machineId);
+        const entry = getEntry(toCacheKey(machineId, serverId));
         if (entry) setState(entry.state);
-    }, [machineId]);
+    }, [machineId, serverId]);
 
     React.useEffect(() => {
         if (!cacheKey) {

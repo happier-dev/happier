@@ -31,14 +31,14 @@ describe('useFriendsAllowUsernameSupport', () => {
         expect(seen.at(-1)).toBe(true);
     });
 
-    it('returns null when the request fails', async () => {
+    it('fails closed when the request fails', async () => {
         vi.resetModules();
         stubServerFeaturesFetchFailure();
 
         const { useFriendsAllowUsernameSupport } = await import('./useFriendsAllowUsernameSupport');
         const seen = await renderHookAndCollectValues(() => useFriendsAllowUsernameSupport());
 
-        expect(seen.at(-1)).toBe(null);
+        expect(seen.at(-1)).toBe(false);
     });
 
     it('starts in loading state (undefined) before server features resolve', async () => {

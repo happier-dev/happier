@@ -48,7 +48,8 @@ function invokeProviderCliInstall(agentId: AgentCatalogEntry['id'], params?: Rec
     });
 
     if (!result.ok) {
-        return { ok: false, error: { message: result.errorMessage, code: 'install-failed' }, ...(result.logPath ? { logPath: result.logPath } : {}) };
+        const code = result.errorCode === 'no-recipe' ? 'install-not-available' : 'install-failed';
+        return { ok: false, error: { message: result.errorMessage, code }, ...(result.logPath ? { logPath: result.logPath } : {}) };
     }
 
     return { ok: true, result: { plan: result.plan, alreadyInstalled: result.alreadyInstalled, logPath: result.logPath ?? null } };

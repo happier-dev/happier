@@ -7,8 +7,58 @@ import { flushHookEffects } from './serverFeatureHookHarness.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const activeServerIdRef = vi.hoisted(() => ({ current: 'server-a' }));
+
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: () => ({
+        serverId: activeServerIdRef.current,
+        serverUrl: 'https://example.test',
+        kind: 'stack',
+        generation: 1,
+    }),
+}));
+
 describe('useMachineCapabilitiesCache (hook)', () => {
     const newSessionRequest = (): CapabilitiesDetectRequest => ({ checklistId: CHECKLIST_IDS.NEW_SESSION });
+
+    it('scopes cache entries by active server when serverId is omitted', async () => {
+        vi.resetModules();
+
+        activeServerIdRef.current = 'server-a';
+
+        const machineCapabilitiesDetect = vi.fn(async () => {
+            return { supported: true, response: { protocolVersion: 1, results: {} } };
+        });
+
+        vi.doMock('@/sync/ops', () => {
+            return {
+                machineCapabilitiesDetect,
+            };
+        });
+
+        const {
+            prefetchMachineCapabilities,
+            getMachineCapabilitiesCacheState,
+        } = await import('./useMachineCapabilitiesCache');
+
+        await prefetchMachineCapabilities({
+            machineId: 'm1',
+            request: newSessionRequest(),
+            timeoutMs: 1,
+        });
+
+        expect(getMachineCapabilitiesCacheState('m1', 'server-a')?.status).toBe('loaded');
+
+        activeServerIdRef.current = 'server-b';
+        await prefetchMachineCapabilities({
+            machineId: 'm1',
+            request: newSessionRequest(),
+            timeoutMs: 1,
+        });
+
+        expect(getMachineCapabilitiesCacheState('m1', 'server-a')?.status).toBe('loaded');
+        expect(getMachineCapabilitiesCacheState('m1', 'server-b')?.status).toBe('loaded');
+    });
 
     it('does not leave the cache stuck in loading when detection throws', async () => {
         vi.resetModules();
@@ -156,6 +206,64 @@ describe('useMachineCapabilitiesCache (hook)', () => {
 
         expect(getMachineCapabilitiesSnapshot('m1')?.response.results).toEqual({
             'cli.gemini': { ok: true, checkedAt: 1, data: { available: true } },
+        });
+    });
+
+    it('isolates snapshot cache entries by server id for the same machine id', async () => {
+        vi.resetModules();
+
+        const machineCapabilitiesDetect = vi.fn(async () => {
+            const call = machineCapabilitiesDetect.mock.calls.length;
+            if (call === 1) {
+                return {
+                    supported: true,
+                    response: {
+                        protocolVersion: 1,
+                        results: {
+                            'cli.codex': { ok: true, checkedAt: 1, data: { version: 'server-a' } },
+                        },
+                    },
+                };
+            }
+            return {
+                supported: true,
+                response: {
+                    protocolVersion: 1,
+                    results: {
+                        'cli.codex': { ok: true, checkedAt: 2, data: { version: 'server-b' } },
+                    },
+                },
+            };
+        });
+
+        vi.doMock('@/sync/ops', () => {
+            return {
+                machineCapabilitiesDetect,
+            };
+        });
+
+        const { getMachineCapabilitiesSnapshot, prefetchMachineCapabilities } = await import('./useMachineCapabilitiesCache');
+
+        await prefetchMachineCapabilities({
+            machineId: 'm1',
+            serverId: 'server-a',
+            request: newSessionRequest(),
+        });
+        await prefetchMachineCapabilities({
+            machineId: 'm1',
+            serverId: 'server-b',
+            request: newSessionRequest(),
+        });
+
+        expect(getMachineCapabilitiesSnapshot('m1', 'server-a')?.response.results['cli.codex']).toEqual({
+            ok: true,
+            checkedAt: 1,
+            data: { version: 'server-a' },
+        });
+        expect(getMachineCapabilitiesSnapshot('m1', 'server-b')?.response.results['cli.codex']).toEqual({
+            ok: true,
+            checkedAt: 2,
+            data: { version: 'server-b' },
         });
     });
 

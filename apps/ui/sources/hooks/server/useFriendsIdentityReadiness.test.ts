@@ -17,6 +17,14 @@ describe('useFriendsIdentityReadiness', () => {
                 ok: true,
                 json: async () => ({
                     features: {
+                        bugReports: {
+                            enabled: true,
+                            providerUrl: 'https://reports.happier.dev',
+                            defaultIncludeDiagnostics: true,
+                            maxArtifactBytes: 10485760,
+                            acceptedArtifactKinds: ['ui-mobile', 'ui-desktop', 'cli', 'daemon', 'server', 'stack-service', 'user-note'],
+                            uploadTimeoutMs: 120000,
+                        },
                         sharing: {
                             session: { enabled: true },
                             public: { enabled: true },
@@ -75,6 +83,14 @@ describe('useFriendsIdentityReadiness', () => {
                 ok: true,
                 json: async () => ({
                     features: {
+                        bugReports: {
+                            enabled: true,
+                            providerUrl: 'https://reports.happier.dev',
+                            defaultIncludeDiagnostics: true,
+                            maxArtifactBytes: 10485760,
+                            acceptedArtifactKinds: ['ui-mobile', 'ui-desktop', 'cli', 'daemon', 'server', 'stack-service', 'user-note'],
+                            uploadTimeoutMs: 120000,
+                        },
                         sharing: {
                             session: { enabled: true },
                             public: { enabled: true },
@@ -138,6 +154,14 @@ describe('useFriendsIdentityReadiness', () => {
                 ok: true,
                 json: async () => ({
                     features: {
+                        bugReports: {
+                            enabled: true,
+                            providerUrl: 'https://reports.happier.dev',
+                            defaultIncludeDiagnostics: true,
+                            maxArtifactBytes: 10485760,
+                            acceptedArtifactKinds: ['ui-mobile', 'ui-desktop', 'cli', 'daemon', 'server', 'stack-service', 'user-note'],
+                            uploadTimeoutMs: 120000,
+                        },
                         sharing: {
                             session: { enabled: true },
                             public: { enabled: true },

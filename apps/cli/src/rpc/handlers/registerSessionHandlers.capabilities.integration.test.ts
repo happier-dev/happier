@@ -215,6 +215,26 @@ describe('registerCommonHandlers capabilities', () => {
         }
     });
 
+    it('returns install-not-available when provider has no auto-install recipe for the selected platform', async () => {
+        const dir = await mkdtemp(join(tmpdir(), 'happier-cli-capabilities-provider-install-missing-recipe-'));
+        try {
+            process.env.PATH = `${dir}`;
+
+            const { call } = createTestRpcManager({ scopePrefix: 'machine-test-provider-install-missing-recipe' });
+            const result = await call<CapabilitiesInvokeResponse, CapabilitiesInvokeRequest>(RPC_METHODS.CAPABILITIES_INVOKE, {
+                id: 'cli.opencode',
+                method: 'install',
+                params: { dryRun: true, platform: 'win32' },
+            });
+
+            expect(result.ok).toBe(false);
+            if (result.ok) return;
+            expect(result.error.code).toBe('install-not-available');
+        } finally {
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
     it('detects tool.executionRuns backends from PATH even when requesting only tool.executionRuns', async () => {
         const dir = await mkdtemp(join(tmpdir(), 'happier-cli-capabilities-execution-runs-'));
         try {

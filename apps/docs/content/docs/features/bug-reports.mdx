@@ -15,14 +15,14 @@ When enabled by your server, users can submit:
 
 Use these env vars on the Happier server:
 
-- `HAPPIER_BUG_REPORTS_ENABLED` (default `1`)
-- `HAPPIER_BUG_REPORTS_PROVIDER_URL` (default `https://reports.happier.dev`)
+- `HAPPIER_FEATURE_BUG_REPORTS__ENABLED` (default `1`)
+- `HAPPIER_FEATURE_BUG_REPORTS__PROVIDER_URL` (default `https://reports.happier.dev`)
   - If set to an invalid URL, provider submission is disabled instead of falling back to a central default.
-- `HAPPIER_BUG_REPORTS_DEFAULT_INCLUDE_DIAGNOSTICS` (default `1`)
-- `HAPPIER_BUG_REPORTS_MAX_ARTIFACT_BYTES` (default `10485760`)
-- `HAPPIER_BUG_REPORTS_UPLOAD_TIMEOUT_MS` (default `120000`)
-- `HAPPIER_BUG_REPORTS_CONTEXT_WINDOW_MS` (default `1800000`; min `1000`, max `86400000`)
-- `HAPPIER_BUG_REPORTS_ACCEPTED_ARTIFACT_KINDS` (comma-separated allowlist)
+- `HAPPIER_FEATURE_BUG_REPORTS__DEFAULT_INCLUDE_DIAGNOSTICS` (default `1`)
+- `HAPPIER_FEATURE_BUG_REPORTS__MAX_ARTIFACT_BYTES` (default `10485760`)
+- `HAPPIER_FEATURE_BUG_REPORTS__UPLOAD_TIMEOUT_MS` (default `120000`)
+- `HAPPIER_FEATURE_BUG_REPORTS__CONTEXT_WINDOW_MS` (default `1800000`; min `1000`, max `86400000`)
+- `HAPPIER_FEATURE_BUG_REPORTS__ACCEPTED_ARTIFACT_KINDS` (comma-separated allowlist)
 - `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_ENABLED` (default `0`)
 - `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_ACCESS_MODE` (default `owner`, allowed: `authenticated`, `owner`)
 - `HAPPIER_SERVER_OWNER_USER_IDS` (comma-separated server owner account ids for owner-gated features)
@@ -31,7 +31,7 @@ Use these env vars on the Happier server:
 - `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_RATE_LIMIT_MAX` (default `30`)
 - `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_RATE_LIMIT_WINDOW` (default `1 minute`)
 
-To hard-disable server log exfiltration, keep `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_ENABLED=0` and/or remove `server` from `HAPPIER_BUG_REPORTS_ACCEPTED_ARTIFACT_KINDS`.
+To hard-disable server log exfiltration, keep `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_ENABLED=0` and/or remove `server` from `HAPPIER_FEATURE_BUG_REPORTS__ACCEPTED_ARTIFACT_KINDS`.
 
 For shared servers, keep `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_ACCESS_MODE=owner` (or leave it unset) and define `HAPPIER_SERVER_OWNER_USER_IDS` so only configured owners can fetch server diagnostics snapshots.
 
@@ -44,6 +44,15 @@ For shared servers, keep `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_ACCESS_MODE=own
 - User-facing UI follows server capability flags.
 - Clients remain backward-compatible with older servers that do not expose `features.bugReports` (treated as disabled).
 - When provider submission is unavailable, clients can still offer a prefilled public GitHub issue fallback (without private artifacts).
+
+## Similar issues (duplicates)
+
+To reduce duplicate reports, Happier can search GitHub for potentially similar issues while you fill the report.
+
+- In the app, you can select one of the suggested issues to post your report as a comment instead of opening a new issue.
+- In the CLI, you can:
+  - pass `--existing-issue-number <number>` to post the report as a comment on an existing issue
+  - pass `--no-similar-issues` to skip duplicate searching in interactive mode
 
 ## CLI reporting
 

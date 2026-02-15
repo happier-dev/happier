@@ -1,4 +1,4 @@
-import { useServerFeatureValue } from './useServerFeatures';
+import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 
 /**
  * Returns:
@@ -8,14 +8,11 @@ import { useServerFeatureValue } from './useServerFeatures';
  */
 export function useOAuthProviderConfigured(providerId: string): boolean | null {
     const id = providerId.toString().trim().toLowerCase();
+    const snapshot = useServerFeaturesRuntimeSnapshot();
 
-    return useServerFeatureValue({
-        initial: null,
-        deps: [id],
-        select: (features) => {
-            if (!id || !features) return null;
-            const value = features.features?.oauth?.providers?.[id]?.configured;
-            return typeof value === 'boolean' ? value : null;
-        },
-    });
+    if (!id || snapshot.status === 'loading') return null;
+    if (snapshot.status !== 'ready') return false;
+
+    const value = snapshot.features.features.oauth.providers[id]?.configured;
+    return typeof value === 'boolean' ? value : false;
 }

@@ -1,14 +1,14 @@
 ---
 title: Local voice providers
-description: Run local OpenAI-compatible STT/TTS servers for Local OSS Voice.
+description: Run local OpenAI-compatible STT/TTS servers for Local Voice.
 ---
 
-Local OSS Voice is a turn-based pipeline that uses **OpenAI-compatible** endpoints that you host yourself:
+Local Voice is a turn-based pipeline that uses **OpenAI-compatible** endpoints that you host yourself:
 
 - **STT**: `POST /v1/audio/transcriptions`
 - **TTS**: `POST /v1/audio/speech`
 
-In the app, configure **Settings → Voice → Local OSS Voice**:
+In the app, configure **Settings → Voice → Local Voice**:
 
 - **STT Base URL** (typically `http://<host>:<port>/v1`)
 - **TTS Base URL** (typically `http://<host>:<port>/v1`)
@@ -25,17 +25,17 @@ Optional experimental toggles:
 - **TTS is optional** (it is only required if you want spoken replies).
 - STT and TTS can be hosted on the same server (if it supports both endpoints), or on two separate servers.
 
-## Direct-to-session vs mediator mode
+## Direct-to-session vs voice agent mode
 
-Local OSS Voice supports two conversation modes:
+Local Voice supports two conversation modes:
 
 - **Direct-to-session:** each time you speak, the transcribed text is sent into the Happier session as a normal message.
-- **Mediator mode:** each time you speak, the transcribed text is sent into an ephemeral multi-turn “voice mediator” chat. When you’re ready, you tap **Commit** and Happier inserts a single final instruction message into the session.
+- **Voice agent mode:** each time you speak, the transcribed text is sent into an ephemeral multi-turn “voice agent” chat. The voice agent does not write to the session transcript unless it explicitly calls `sendSessionMessage` (for example, when you ask it to apply a decision to the session).
 
-Mediator mode can use:
+Voice agent mode can use:
 
-- **Daemon mediator (recommended):** uses the daemon’s per-session process (no extra HTTP endpoints required).
-- **OpenAI-compatible mediator:** calls a user-configured chat endpoint (`POST /v1/chat/completions`). This is useful if you want the entire voice stack (STT+TTS+chat) to be local/HTTP-based.
+- **Daemon voice agent (recommended):** uses the daemon’s per-session process (no extra HTTP endpoints required).
+- **OpenAI-compatible voice agent:** calls a user-configured chat endpoint (`POST /v1/chat/completions`). This is useful if you want the entire voice stack (STT+TTS+chat) to be local/HTTP-based.
 
 ## Important networking notes
 
