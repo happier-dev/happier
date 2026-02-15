@@ -172,7 +172,6 @@ export function EmptyMainScreen() {
                         <RoundButton
                             title={t('connect.enterUrlManually')}
                             size="large"
-                            display="normal"
                             loading={isLoading}
                             onPress={handleManualUrlEntry}
                         />
