@@ -15,6 +15,7 @@
     "worktrees-and-forks",
     "server-flavors",
     "remote-access",
+    "remote-daemon",
     "paths-and-env",
     "menubar",
     "mobile-ios",

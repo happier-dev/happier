@@ -19,6 +19,12 @@ In the app, open:
 
 Happier does **not** bundle provider CLIs today. You install them yourself and Happier detects them on your machine.
 
+You have a few options:
+
+- **In the app**: each provider settings page shows detection status and can run a best-effort installer against the selected machine (see “CLI & Connection” on the provider page).
+- **With hstack** (recommended when available): `hstack providers install <provider>` wraps supported installers and can be scripted with `--json`.
+- **Manually**: follow each provider’s official docs and ensure the binary is on `PATH` (or configure `HAPPIER_<PROVIDER>_PATH`).
+
 See the provider-specific pages for installation and troubleshooting.
 
 <Cards>
@@ -30,4 +36,5 @@ See the provider-specific pages for installation and troubleshooting.
   <Card title="Kilo (experimental)" href="/docs/providers/kilo" />
   <Card title="Kimi" href="/docs/providers/kimi" />
   <Card title="Qwen" href="/docs/providers/qwen" />
+  <Card title="Pi (experimental)" href="/docs/providers/pi" />
 </Cards>

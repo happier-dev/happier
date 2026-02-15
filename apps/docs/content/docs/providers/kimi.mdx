@@ -10,6 +10,29 @@ Happier supports Kimi as a local CLI-backed provider.
 - Kimi CLI installed locally.
 - Binary available on `PATH` (or set `HAPPIER_KIMI_PATH`).
 
+## Install Kimi
+
+If you use hstack, you can install Kimi with the providers installer:
+
+```bash
+hstack providers install kimi
+kimi --version
+```
+
+Or install manually (macOS / Linux):
+
+```bash
+curl -LsSf https://code.kimi.com/install.sh | bash
+kimi --version
+```
+
+Windows (PowerShell):
+
+```powershell
+Invoke-RestMethod https://code.kimi.com/install.ps1 | Invoke-Expression
+kimi --version
+```
+
 ## Start Kimi with Happier
 
 ```bash

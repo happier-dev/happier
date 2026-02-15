@@ -1,0 +1,37 @@
+---
+title: Pi (experimental)
+description: Configure Pi Coding Agent in Happier (ACP), including install and detection.
+---
+
+Happier can run **Pi Coding Agent** through the local `pi` CLI.
+
+## Install Pi
+
+If you use hstack, you can install Pi with the providers installer:
+
+```bash
+hstack providers install pi
+pi --version
+```
+
+Or install manually:
+
+```bash
+npm install -g @mariozechner/pi-coding-agent
+pi --version
+```
+
+## Start Pi with Happier
+
+```bash
+happier pi
+```
+
+## Troubleshooting
+
+If Pi is not detected:
+
+1. Verify `pi --version` works.
+2. Restart Happier.
+3. Set `HAPPIER_PI_PATH` if your binary is not in `PATH`.
+

@@ -1,0 +1,81 @@
+---
+title: Remote daemon setup (SSH)
+description: Install Happier on a remote host, pair credentials, and optionally install the daemon service.
+---
+
+This page documents `hstack remote daemon setup`, a workflow to provision a **remote machine** (VPS, home server, dev box) over SSH:
+
+- installs the Happier CLI on the remote host
+- pairs/authenticates the remote host against your account
+- optionally installs + starts the daemon as a **user service**
+
+## Quickstart
+
+From a machine where you already have Happier authenticated:
+
+```bash
+hstack remote daemon setup --ssh user@host
+```
+
+Default behavior:
+
+- uses the **stable** channel (set `--channel preview` when you want preview binaries)
+- installs/starts the daemon service in **user** mode
+
+## Preview vs stable channel
+
+```bash
+hstack remote daemon setup --ssh user@host --channel preview
+```
+
+Equivalent shortcuts:
+
+```bash
+hstack remote daemon setup --ssh user@host --preview
+hstack remote daemon setup --ssh user@host --stable
+```
+
+## Self-hosted server targeting
+
+If you’re pairing the remote machine to a self-hosted server, pass the URLs so the local approval step targets the right control plane:
+
+```bash
+hstack remote daemon setup --ssh user@host \
+  --server-url https://api.example.com \
+  --webapp-url https://app.example.com \
+  --public-server-url https://api.example.com
+```
+
+Notes:
+
+- `--server-url` is the server API base URL.
+- `--webapp-url` is the web UI origin used for login/approval UX.
+- `--public-server-url` is the server URL that other devices can reach (often the same as `--server-url`).
+
+## Skip daemon service install
+
+If you only want the CLI installed + authenticated (no always-on daemon):
+
+```bash
+hstack remote daemon setup --ssh user@host --service none
+```
+
+## What this wraps (pairing details)
+
+Under the hood, `hstack remote daemon setup` orchestrates the same pairing flow documented in:
+
+- `/docs/clients/cli#pairing-json-manual--scripting`
+- `/docs/clients/cli#remote-machine-pairing-ssh-automated`
+
+If you prefer, you can run pairing directly with the Happier CLI:
+
+```bash
+happier auth pair-remote --ssh user@host --json
+```
+
+## Requirements
+
+- SSH access to the remote host (`ssh user@host`)
+- Remote host has `bash` and `curl`
+- The remote host must be a Unix-like OS (Linux/macOS). Windows hosts are not supported for this SSH flow.
+

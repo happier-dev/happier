@@ -105,6 +105,37 @@ See: `/docs/hstack/auth`.
 
 ---
 
+## Providers
+
+List supported provider CLIs and whether auto-install is available on your platform:
+
+- `hstack providers list`
+
+Install provider CLIs (best-effort):
+
+- `hstack providers install claude,codex,gemini`
+- `hstack providers install claude codex gemini`
+
+Useful flags:
+
+- `--dry-run` / `--plan` (show what would run)
+- `--force` / `--reinstall` (re-run installer even if already installed)
+- `--json` (scripting)
+
+See also: `/docs/providers`.
+
+---
+
+## Remote
+
+Provision a remote machine over SSH (install Happier, pair credentials, optionally install/start the daemon service):
+
+- `hstack remote daemon setup --ssh user@host [--channel stable|preview] [--service user|none]`
+
+See: `/docs/hstack/remote-daemon`.
+
+---
+
 ## Contributor workflows (`contrib`)
 
 These commands help you work with a long-lived `dev/` checkout while still producing clean PR branches:

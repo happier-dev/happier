@@ -7,7 +7,14 @@ This page documents how Happier integrates with **Codex** and what Codex-specifi
 
 ## Install Codex
 
-Install Codex on your machine first, then restart Happier:
+If you use hstack, you can install Codex with the providers installer:
+
+```bash
+hstack providers install codex
+codex --version
+```
+
+Or install manually, then restart Happier:
 
 ```bash
 npm install -g @openai/codex
@@ -57,4 +64,3 @@ When you change permission mode:
 If you choose **Apply timing: next prompt** in the app:
 - the selection applies to the next message you send (as message metadata), and
 - it becomes session-wide only after that message is committed.
-

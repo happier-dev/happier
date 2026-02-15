@@ -10,6 +10,22 @@ Happier integrates Gemini through the local Gemini CLI/runtime and ACP-compatibl
 - Gemini CLI installed on your machine.
 - CLI available on `PATH` (or set `HAPPIER_GEMINI_PATH` if needed).
 
+## Install Gemini
+
+If you use hstack, you can install Gemini with the providers installer:
+
+```bash
+hstack providers install gemini
+gemini --version
+```
+
+Or install manually:
+
+```bash
+npm install -g @google/gemini-cli
+gemini --version
+```
+
 ## Start Gemini with Happier
 
 ```bash

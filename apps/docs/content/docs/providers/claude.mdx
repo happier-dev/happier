@@ -44,6 +44,15 @@ Use Anthropic’s official setup guide:
 
 Anthropic currently supports both install paths. Prefer the native installer flow in their docs, and use npm (`npm install -g @anthropic-ai/claude-code`) when that better fits your environment.
 
+### Install via hstack (best-effort)
+
+If you use hstack, you can run the provider installer (uses the upstream native installer by default):
+
+```bash
+hstack providers install claude
+claude --version
+```
+
 ## Where to configure Claude in Happier
 
 In the app:

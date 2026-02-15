@@ -10,6 +10,29 @@ Happier supports Qwen as a local CLI-backed provider.
 - Qwen CLI installed locally.
 - Binary available on `PATH` (or set `HAPPIER_QWEN_PATH`).
 
+## Install Qwen
+
+If you use hstack, you can install Qwen with the providers installer:
+
+```bash
+hstack providers install qwen
+qwen --version
+```
+
+Or install manually (macOS / Linux):
+
+```bash
+curl -fsSL https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.sh | bash
+qwen --version
+```
+
+Windows (Run as Administrator in CMD):
+
+```bat
+curl -fsSL -o %TEMP%\\install-qwen.bat https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.bat && %TEMP%\\install-qwen.bat
+qwen --version
+```
+
 ## Start Qwen with Happier
 
 ```bash

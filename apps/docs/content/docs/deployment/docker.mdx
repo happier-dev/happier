@@ -30,12 +30,14 @@ Most self-host setups run the **server** in Docker, but run the **daemon** on a 
 After your server is reachable at `HAPPIER_SERVER_URL` (and you know the matching `HAPPIER_WEBAPP_URL`), authenticate the daemon machine against it.
 
 - Interactive: `happier --server-url ... --webapp-url ... auth login`
-- Automated over SSH (recommended for headless servers): `happier --server-url ... --webapp-url ... auth pair-remote --ssh user@host --json`
+- Automated over SSH (pair only): `happier --server-url ... --webapp-url ... auth pair-remote --ssh user@host --json`
+- Automated over SSH (recommended bootstrap: install + pair + daemon service): `hstack remote daemon setup --ssh user@host --server-url ... --webapp-url ...`
 
 See:
 
 - [CLI auth](/docs/clients/cli#authenticate)
 - [Daemon auth](/docs/clients/daemon#headless-authentication-no-tty)
+- [hstack remote daemon setup](/docs/hstack/remote-daemon)
 
 ## Build images
 
