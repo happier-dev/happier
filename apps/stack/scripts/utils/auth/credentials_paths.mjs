@@ -8,12 +8,12 @@ function normalizeServerUrl(url) {
   return String(url ?? '').trim().replace(/\/+$/, '');
 }
 
-function sanitizeServerIdForFilesystem(raw, fallback = 'cloud') {
+function sanitizeServerIdForFilesystem(raw, fallback = 'default') {
   const value = String(raw ?? '').trim();
-  if (!value) return String(fallback ?? '').trim() || 'cloud';
-  if (value === '.' || value === '..') return String(fallback ?? '').trim() || 'cloud';
-  if (value.includes('/') || value.includes('\\')) return String(fallback ?? '').trim() || 'cloud';
-  if (!SERVER_ID_SAFE_RE.test(value)) return String(fallback ?? '').trim() || 'cloud';
+  if (!value) return String(fallback ?? '').trim() || 'default';
+  if (value === '.' || value === '..') return String(fallback ?? '').trim() || 'default';
+  if (value.includes('/') || value.includes('\\')) return String(fallback ?? '').trim() || 'default';
+  if (!SERVER_ID_SAFE_RE.test(value)) return String(fallback ?? '').trim() || 'default';
   return value;
 }
 
@@ -46,8 +46,8 @@ export function resolveStackCredentialPaths({ cliHomeDir, serverUrl = '', env = 
   const legacyPath = join(home, 'access.key');
   const normalizedServerUrl = normalizeServerUrl(serverUrl);
   const urlHashServerId = sanitizeServerIdForFilesystem(
-    normalizedServerUrl ? deriveServerIdFromUrl(normalizedServerUrl) : 'cloud',
-    'cloud'
+    normalizedServerUrl ? deriveServerIdFromUrl(normalizedServerUrl) : 'default',
+    'default'
   );
   const overrideServerId = resolveActiveServerIdOverride(env);
   const activeServerId = overrideServerId || urlHashServerId;
@@ -71,8 +71,8 @@ export function resolveStackDaemonStatePaths({ cliHomeDir, serverUrl = '', env =
   const home = requireCliHomeDir(cliHomeDir);
   const normalizedServerUrl = normalizeServerUrl(serverUrl);
   const urlHashServerId = sanitizeServerIdForFilesystem(
-    normalizedServerUrl ? deriveServerIdFromUrl(normalizedServerUrl) : 'cloud',
-    'cloud'
+    normalizedServerUrl ? deriveServerIdFromUrl(normalizedServerUrl) : 'default',
+    'default'
   );
   const overrideServerId = resolveActiveServerIdOverride(env);
   const activeServerId = overrideServerId || urlHashServerId;

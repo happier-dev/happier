@@ -76,8 +76,8 @@ const baseWelcomeFeatures = createWelcomeFeaturesResponse({
     autoRedirectProviderId: null,
 });
 
-vi.mock('@/sync/api/capabilities/apiFeatures', () => ({
-    getServerFeatures: async () => ({
+vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
+    getReadyServerFeatures: async () => ({
         ...baseWelcomeFeatures,
         features: {
             ...baseWelcomeFeatures.features,

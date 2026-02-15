@@ -2,6 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 type CachedFeaturesShape = {
     features: {
+        bugReports: {
+            enabled: boolean;
+            providerUrl: string | null;
+            defaultIncludeDiagnostics: boolean;
+            maxArtifactBytes: number;
+            acceptedArtifactKinds: string[];
+            uploadTimeoutMs: number;
+        };
         sharing: {
             session: { enabled: boolean };
             public: { enabled: boolean };
@@ -52,6 +60,14 @@ function buildCachedFeatures(
 ): CachedFeaturesShape {
     return {
         features: {
+            bugReports: {
+                enabled: true,
+                providerUrl: 'https://reports.happier.dev',
+                defaultIncludeDiagnostics: true,
+                maxArtifactBytes: 10 * 1024 * 1024,
+                acceptedArtifactKinds: ['ui-mobile', 'ui-desktop', 'cli', 'daemon', 'server', 'stack-service', 'user-note'],
+                uploadTimeoutMs: 120000,
+            },
             sharing: {
                 session: { enabled: true },
                 public: { enabled: true },
@@ -95,13 +111,9 @@ function buildCachedFeatures(
     };
 }
 
-vi.mock('@/sync/api/capabilities/apiFeatures', async () => {
-    const actual = await vi.importActual<typeof import('@/sync/api/capabilities/apiFeatures')>('@/sync/api/capabilities/apiFeatures');
-    return {
-        ...actual,
-        getCachedServerFeatures: () => cachedFeatures,
-    };
-});
+vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
+    getCachedReadyServerFeatures: () => cachedFeatures,
+}));
 
 describe('auth providers registry (fallback)', () => {
     beforeEach(() => {

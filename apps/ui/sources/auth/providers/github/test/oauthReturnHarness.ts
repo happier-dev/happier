@@ -60,13 +60,9 @@ vi.mock('@/auth/context/AuthContext', () => ({
 
 vi.mock('@/modal', () => ({ Modal: modal }));
 
-vi.mock('@/sync/api/capabilities/apiFeatures', async () => {
-    const actual = await vi.importActual<typeof import('@/sync/api/capabilities/apiFeatures')>('@/sync/api/capabilities/apiFeatures');
-    return {
-        ...actual,
-        isSessionSharingSupported: async () => false,
-    };
-});
+vi.mock('@/sync/api/capabilities/sessionSharingSupport', () => ({
+    isSessionSharingSupported: async () => false,
+}));
 
 vi.mock('@/platform/cryptoRandom', () => ({
     getRandomBytes: () => new Uint8Array(32).fill(9),

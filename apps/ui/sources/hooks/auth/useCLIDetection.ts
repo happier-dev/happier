@@ -24,6 +24,10 @@ export interface UseCLIDetectionOptions {
      * When true, requests login status detection (best-effort; may return null).
      */
     includeLoginStatus?: boolean;
+    /**
+     * Optional explicit server scope for machine capability cache entries.
+     */
+    serverId?: string | null;
 }
 
 function readCliAvailable(result: CapabilityDetectResult | undefined): boolean | null {
@@ -67,6 +71,7 @@ export function useCLIDetection(machineId: string | null, options?: UseCLIDetect
 
     const { state: cached } = useMachineCapabilitiesCache({
         machineId,
+        serverId: options?.serverId,
         enabled: isOnline && options?.autoDetect !== false,
         request,
     });

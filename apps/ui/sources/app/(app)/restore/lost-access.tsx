@@ -3,7 +3,7 @@ import { ActivityIndicator, Linking, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { getServerFeatures } from '@/sync/api/capabilities/apiFeatures';
+import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 import { t } from '@/text';
 import { getRandomBytesAsync } from '@/platform/cryptoRandom';
 import { encodeBase64 } from '@/encryption/base64';
@@ -21,7 +21,7 @@ export default function LostAccess() {
         let mounted = true;
         void (async () => {
             try {
-                const features = await getServerFeatures();
+                const features = await getReadyServerFeatures();
                 const reset = features?.features?.auth?.recovery?.providerReset ?? null;
                 const enabled = reset?.enabled === true ? reset.providers : [];
                 if (mounted) setProviders(enabled);

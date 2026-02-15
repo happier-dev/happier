@@ -21,23 +21,23 @@ describe('TokenStorage (web) server scope mismatch', () => {
         restoreLocalStorage = null;
     });
 
-    it('does not read cloud-scoped credentials when active server URL differs from active server id profile', async () => {
+    it('does not read id-scoped credentials when active server URL differs from active server id profile', async () => {
         restoreLocalStorage = installLocalStorageMock().restore;
 
-        // Seed credentials under the cloud server id scope.
+        // Seed credentials under a stale profile id scope.
         localStorage.setItem(
-            'auth_credentials__srv_cloud',
-            JSON.stringify({ token: 'token-cloud', secret: 'secret-cloud' }),
+            'auth_credentials__srv_stale_profile',
+            JSON.stringify({ token: 'token-stale', secret: 'secret-stale' }),
         );
 
         // Simulate stack-context bootstrap:
         // - active server URL is a local stack URL (env fallback)
-        // - active server id still points at the cloud profile (only seeded profile)
+        // - active server id still points at a different persisted profile
         // TokenStorage should treat this as "unknown server id for this URL" and avoid using the id scope.
         vi.doMock('@/sync/domains/server/serverProfiles', () => ({
-            getActiveServerId: () => 'cloud',
+            getActiveServerId: () => 'stale-profile',
             getActiveServerUrl: () => 'http://localhost:3010',
-            listServerProfiles: () => [{ id: 'cloud', serverUrl: 'https://api.happier.dev' }],
+            listServerProfiles: () => [{ id: 'stale-profile', serverUrl: 'https://remote.example.test' }],
         }));
 
         const { TokenStorage } = await import('./tokenStorage');

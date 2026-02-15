@@ -105,8 +105,8 @@ async function getServerScopedKeys(baseKey: string, serverUrlOverride?: string):
         : '';
 
     // If the active server URL is coming from env/same-origin fallback but the persisted active server id
-    // still points at a different profile (commonly: cloud), do NOT use the id scope. Fall back to a URL hash
-    // scope so credentials are never read from the wrong server.
+    // still points at a different profile, do NOT use the id scope. Fall back to a URL hash scope so
+    // credentials are never read from the wrong server.
     const serverId = resolvedServerId ?? (activeServerUrl && activeServerUrl === normalizedUrl ? activeServerId : null);
 
     if (!serverId) {

@@ -6,6 +6,10 @@ ${chalk.bold('happier auth')} - Authentication management
 
 ${chalk.bold('Usage:')}
   happier auth login [--no-open] [--force] [--method web|mobile] [--server <name-or-id> | --server-url <url> [--webapp-url <url>] [--persist|--no-persist]]    Authenticate with Happier
+  happier auth request --json [--server <name-or-id> | --server-url <url> [--webapp-url <url>] [--persist|--no-persist]]                                    Create a claim-gated auth request (headless-friendly)
+  happier auth approve --public-key <base64> --json [--server <name-or-id> | --server-url <url> [--webapp-url <url>] [--persist|--no-persist]]              Approve an auth request using your local credentials
+  happier auth wait --public-key <base64> --json [--server <name-or-id> | --server-url <url> [--webapp-url <url>] [--persist|--no-persist]]                Wait for approval and write credentials for this machine
+  happier auth pair-remote --ssh <user@host> --json                                                                                                                Fully automated remote pairing over SSH
   happier auth logout [--all]     Log out (active server by default)
   happier auth status             Show authentication status
   happier auth help               Show this help message
@@ -15,6 +19,9 @@ ${chalk.bold('Options:')}
   --force    Clear credentials, machine ID, and stop daemon before re-auth
   --method   Force authentication method (web|mobile). Useful for headless/non-TTY.
   --all      When used with logout, remove local data for all servers
+  --json       Print machine-readable JSON (recommended for containers)
+  --public-key Used with approve/wait; the terminal public key from "auth request --json"
+  --ssh        Used with pair-remote; ssh target (e.g. user@host)
   --server      Use an existing saved server profile
   --server-url  Use a specific server URL (defaults to persisting as a new profile)
   --webapp-url  Override web app URL for this server profile

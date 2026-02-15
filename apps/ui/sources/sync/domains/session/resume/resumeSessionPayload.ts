@@ -8,8 +8,6 @@ export type ResumeHappySessionRpcParams = {
     directory: string;
     agent: AgentId;
     resume?: string;
-    sessionEncryptionKeyBase64: string;
-    sessionEncryptionVariant: 'dataKey';
     permissionMode?: PermissionMode;
     permissionModeUpdatedAt?: number;
     modelId?: string;
@@ -24,8 +22,6 @@ const ResumeHappySessionRpcParamsSchema = z.object({
     directory: z.string().min(1),
     agent: z.enum(AGENT_IDS),
     resume: z.string().min(1).optional(),
-    sessionEncryptionKeyBase64: z.string().min(1),
-    sessionEncryptionVariant: z.literal('dataKey'),
     permissionMode: z.string().refine((value) => isPermissionMode(value)).optional(),
     permissionModeUpdatedAt: z.number().optional(),
     modelId: z.string().min(1).optional(),

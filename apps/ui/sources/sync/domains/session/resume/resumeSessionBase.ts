@@ -6,10 +6,7 @@ import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog
 import type { PermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
 import type { ModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
 
-export type ResumeSessionBaseOptions = Omit<
-    ResumeSessionOptions,
-    'sessionEncryptionKeyBase64' | 'sessionEncryptionVariant'
->;
+export type ResumeSessionBaseOptions = ResumeSessionOptions;
 
 export function buildResumeSessionBaseOptionsFromSession(opts: {
     sessionId: string;

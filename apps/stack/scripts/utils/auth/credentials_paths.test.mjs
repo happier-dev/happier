@@ -22,6 +22,14 @@ test('resolveStackCredentialPaths returns legacy + server-scoped paths', async (
   assert.deepEqual(out.paths, [out.serverScopedPath, out.legacyPath]);
 });
 
+test('resolveStackCredentialPaths uses a neutral default server id when serverUrl is empty', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-cred-paths-'));
+  const out = resolveStackCredentialPaths({ cliHomeDir: dir, serverUrl: '' });
+  assert.equal(out.urlHashServerId, 'default');
+  assert.equal(out.activeServerId, 'default');
+  assert.ok(out.serverScopedPath.endsWith('/servers/default/access.key'));
+});
+
 test('findExistingStackCredentialPath prefers server-scoped credentials', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-cred-paths-'));
   const serverUrl = 'http://127.0.0.1:3009';

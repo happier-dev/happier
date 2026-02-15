@@ -2,7 +2,7 @@ import { authChallenge } from "./challenge";
 import { encodeBase64 } from "@/encryption/base64";
 import { Encryption } from "@/sync/encryption/encryption";
 import sodium from '@/encryption/libsodium.lib';
-import { isSessionSharingSupported } from '@/sync/api/capabilities/apiFeatures';
+import { isSessionSharingSupported } from '@/sync/api/capabilities/sessionSharingSupport';
 import { serverFetch } from '@/sync/http/client';
 
 const CONTENT_KEY_BINDING_PREFIX = new TextEncoder().encode('Happy content key v1\u0000');

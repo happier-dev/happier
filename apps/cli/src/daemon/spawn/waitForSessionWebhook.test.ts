@@ -81,7 +81,7 @@ describe('waitForSessionWebhook', () => {
         timeoutErrorMessage: 'Session webhook timeout for PID 88',
       });
 
-      vi.advanceTimersByTime(20_000);
+      vi.advanceTimersByTime(65_000);
 
       const resolver = pidToAwaiter.get(88);
       expect(typeof resolver).toBe('function');

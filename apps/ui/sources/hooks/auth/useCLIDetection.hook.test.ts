@@ -175,4 +175,17 @@ describe('useCLIDetection (hook)', () => {
         expect(latest?.error).toBe('Detection error');
         expect(latest?.timestamp).toBe(0);
     });
+
+    it('forwards server scope to the machine capabilities cache hook', async () => {
+        useMachineCapabilitiesCacheMock.mockReturnValue({
+            state: { status: 'loading' },
+            refresh: vi.fn(),
+        });
+
+        const { useCLIDetection } = await import('./useCLIDetection');
+        renderHookState(() => useCLIDetection('m1', { autoDetect: false, serverId: 'server-b' }));
+
+        const firstCall = useMachineCapabilitiesCacheMock.mock.calls.at(-1)?.[0];
+        expect(firstCall?.serverId).toBe('server-b');
+    });
 });
