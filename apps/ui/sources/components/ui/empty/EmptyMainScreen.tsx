@@ -90,6 +90,22 @@ export function EmptyMainScreen() {
     const { theme } = useUnistyles();
     const styles = stylesheet;
 
+    const handleManualUrlEntry = React.useCallback(async () => {
+        const url = await Modal.prompt(
+            t('modals.authenticateTerminal'),
+            t('modals.pasteUrlFromTerminal'),
+            {
+                placeholder: t('connect.terminalUrlPlaceholder'),
+                cancelText: t('common.cancel'),
+                confirmText: t('common.authenticate')
+            }
+        );
+
+        if (url?.trim()) {
+            connectWithUrl(url.trim());
+        }
+    }, [connectWithUrl]);
+
     return (
         <View style={styles.container}>
             {/* Terminal-style code block */}
@@ -103,9 +119,8 @@ export function EmptyMainScreen() {
                 </Text>
             </View>
 
-
-            {Platform.OS !== 'web' && (
-                <>
+            {Platform.OS !== 'web' ? (
+                <View>
                     <View style={styles.stepsContainer}>
                         <View style={styles.stepRow}>
                             <View style={styles.stepNumber}>
@@ -146,25 +161,23 @@ export function EmptyMainScreen() {
                                 title={t('connect.enterUrlManually')}
                                 size="normal"
                                 display="inverted"
-                                onPress={async () => {
-                                    const url = await Modal.prompt(
-                                        t('modals.authenticateTerminal'),
-                                        t('modals.pasteUrlFromTerminal'),
-                                        {
-                                            placeholder: t('connect.terminalUrlPlaceholder'),
-                                            cancelText: t('common.cancel'),
-                                            confirmText: t('common.authenticate')
-                                        }
-                                    );
-
-                                    if (url?.trim()) {
-                                        connectWithUrl(url.trim());
-                                    }
-                                }}
+                                onPress={handleManualUrlEntry}
                             />
                         </View>
                     </View>
-                </>
+                </View>
+            ) : (
+                <View style={styles.buttonsContainer}>
+                    <View style={styles.buttonWrapperSecondary}>
+                        <RoundButton
+                            title={t('connect.enterUrlManually')}
+                            size="large"
+                            display="normal"
+                            loading={isLoading}
+                            onPress={handleManualUrlEntry}
+                        />
+                    </View>
+                </View>
             )}
         </View>
     );
