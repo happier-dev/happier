@@ -74,10 +74,10 @@ vi.mock('@/modal', () => ({
     Modal: { alert: vi.fn() },
 }));
 
-const sendMessageSpy = vi.fn(async () => undefined);
+const sendMessageSpy = vi.fn<(sessionId: string, text: string, opts?: unknown) => Promise<void>>(async () => undefined);
 vi.mock('@/sync/sync', () => ({
     sync: {
-        sendMessage: (...args: any[]) => sendMessageSpy(...args),
+        sendMessage: (sessionId: string, text: string, opts?: unknown) => sendMessageSpy(sessionId, text, opts),
         submitMessage: vi.fn(),
     },
 }));
@@ -340,6 +340,149 @@ describe('MessageView (structured meta)', () => {
         });
 
         expect(tree!.root.findAllByType(ReviewFindingsMessageCard as any)).toHaveLength(1);
+    });
+
+    it('renders a structured plan-output card for tool-call messages when meta.happier.kind is plan_output.v1', async () => {
+        const { MessageView } = await import('./MessageView');
+        const { PlanOutputMessageCard } = await import('../plans/messages/PlanOutputMessageCard');
+
+        const message: any = {
+            kind: 'tool-call',
+            id: 'msg-tool-1',
+            localId: null,
+            createdAt: 1,
+            tool: {
+                id: 'call_1',
+                name: 'SubAgentRun',
+                state: 'completed',
+                input: {},
+                createdAt: 1,
+                startedAt: 1,
+                completedAt: 2,
+                description: null,
+                result: { ok: true },
+            },
+            children: [],
+            meta: {
+                happier: {
+                    kind: 'plan_output.v1',
+                    payload: {
+                        runRef: { runId: 'run_1', callId: 'call_1', backendId: 'b1' },
+                        summary: 'Plan summary.',
+                        sections: [{ title: 'Approach', items: ['Step 1'] }],
+                        risks: ['Risk 1'],
+                        milestones: [{ title: 'M1' }],
+                        recommendedBackendId: 'b1',
+                        generatedAtMs: 1,
+                    },
+                },
+            },
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+        });
+
+        expect(tree!.root.findAllByType(PlanOutputMessageCard as any)).toHaveLength(1);
+    });
+
+    it('renders a structured delegate-output card for tool-call messages when meta.happier.kind is delegate_output.v1', async () => {
+        const { MessageView } = await import('./MessageView');
+        const { DelegateOutputMessageCard } = await import('../delegations/messages/DelegateOutputMessageCard');
+
+        const message: any = {
+            kind: 'tool-call',
+            id: 'msg-tool-1',
+            localId: null,
+            createdAt: 1,
+            tool: {
+                id: 'call_1',
+                name: 'SubAgentRun',
+                state: 'completed',
+                input: {},
+                createdAt: 1,
+                startedAt: 1,
+                completedAt: 2,
+                description: null,
+                result: { ok: true },
+            },
+            children: [],
+            meta: {
+                happier: {
+                    kind: 'delegate_output.v1',
+                    payload: {
+                        runRef: { runId: 'run_1', callId: 'call_1', backendId: 'b1' },
+                        summary: 'Delegation summary.',
+                        deliverables: [{ id: 'd1', title: 'Deliverable 1', details: 'Do it' }],
+                        generatedAtMs: 1,
+                    },
+                },
+            },
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+        });
+
+        expect(tree!.root.findAllByType(DelegateOutputMessageCard as any)).toHaveLength(1);
+    });
+
+    it('can adopt a plan by sending a structured user message to the parent session', async () => {
+        sendMessageSpy.mockClear();
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'tool-call',
+            id: 'msg-tool-1',
+            localId: null,
+            createdAt: 1,
+            tool: {
+                id: 'call_1',
+                name: 'SubAgentRun',
+                state: 'completed',
+                input: {},
+                createdAt: 1,
+                startedAt: 1,
+                completedAt: 2,
+                description: null,
+                result: { ok: true },
+            },
+            children: [],
+            meta: {
+                happier: {
+                    kind: 'plan_output.v1',
+                    payload: {
+                        runRef: { runId: 'run_1', callId: 'call_1', backendId: 'b1' },
+                        summary: 'Plan summary.',
+                        sections: [{ title: 'Approach', items: ['Step 1'] }],
+                        risks: [],
+                        milestones: [],
+                        generatedAtMs: 1,
+                    },
+                },
+            },
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+        });
+
+        const adoptButtons = tree!.root.findAll((node) => {
+            if ((node as any).type !== 'Pressable') return false;
+            if (typeof (node as any).props?.onPress !== 'function') return false;
+            return String((node as any).props?.accessibilityLabel ?? '') === 'Adopt plan';
+        });
+        expect(adoptButtons).toHaveLength(1);
+        await act(async () => {
+            adoptButtons[0]!.props.onPress();
+        });
+
+        expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+        expect(sendMessageSpy.mock.calls[0]?.[0]).toBe('s1');
+        expect(String(sendMessageSpy.mock.calls[0]?.[1] ?? '')).toContain('@happier/plan.adopt');
     });
 
     it('can apply accepted findings by sending a structured user message to the parent session', async () => {

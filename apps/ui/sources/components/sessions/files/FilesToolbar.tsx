@@ -20,6 +20,8 @@ type FilesToolbarProps = {
     showSessionViewToggle: boolean;
     onChangedFilesViewMode: (mode: ChangedFilesViewMode) => void;
     onChangedFilesPresentationChange: (mode: ChangedFilesPresentation) => void;
+    scmPanelExpanded: boolean;
+    onToggleScmPanel: () => void;
 };
 
 export function FilesToolbar(props: FilesToolbarProps) {
@@ -36,6 +38,8 @@ export function FilesToolbar(props: FilesToolbarProps) {
         showSessionViewToggle,
         onChangedFilesViewMode,
         onChangedFilesPresentationChange,
+        scmPanelExpanded,
+        onToggleScmPanel,
     } = props;
 
     const chipStyle = (active: boolean) => ({
@@ -124,7 +128,7 @@ export function FilesToolbar(props: FilesToolbarProps) {
                 />
             </View>
 
-            <View style={{ flexDirection: 'row', marginTop: 10, gap: 8 }}>
+            <View style={{ flexDirection: 'row', marginTop: 10, gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                 <Chip
                     active={!showAllRepositoryFiles}
                     label="Changed files"
@@ -138,43 +142,46 @@ export function FilesToolbar(props: FilesToolbarProps) {
                     icon={<Octicons name="repo" size={14} color={theme.colors.textSecondary} />}
                     onPress={onShowAllRepositoryFiles}
                 />
-            </View>
 
-            {!showAllRepositoryFiles && changedFilesCount > 0 && (
-                <View style={{ flexDirection: 'row', marginTop: 10, gap: 8 }}>
-                    <Chip
-                        active={changedFilesViewMode === 'repository'}
-                        label="Repository view"
-                        icon={<Octicons name="list-unordered" size={14} color={theme.colors.textSecondary} />}
-                        onPress={() => onChangedFilesViewMode('repository')}
-                    />
-                    {showSessionViewToggle && (
+                {!showAllRepositoryFiles && changedFilesCount > 0 ? (
+                    <>
                         <Chip
-                            active={changedFilesViewMode === 'session'}
-                            label="Session view"
-                            icon={<Octicons name="history" size={14} color={theme.colors.textSecondary} />}
-                            onPress={() => onChangedFilesViewMode('session')}
+                            active={changedFilesViewMode === 'repository'}
+                            label="Repository view"
+                            icon={<Octicons name="list-unordered" size={14} color={theme.colors.textSecondary} />}
+                            onPress={() => onChangedFilesViewMode('repository')}
                         />
-                    )}
-                </View>
-            )}
+                        {showSessionViewToggle && (
+                            <Chip
+                                active={changedFilesViewMode === 'session'}
+                                label="Session view"
+                                icon={<Octicons name="history" size={14} color={theme.colors.textSecondary} />}
+                                onPress={() => onChangedFilesViewMode('session')}
+                            />
+                        )}
 
-            {!showAllRepositoryFiles && changedFilesCount > 0 && (
-                <View style={{ flexDirection: 'row', marginTop: 10, gap: 8 }}>
-                    <Chip
-                        active={changedFilesPresentation === 'list'}
-                        label="List"
-                        icon={<Octicons name="list-unordered" size={14} color={theme.colors.textSecondary} />}
-                        onPress={() => onChangedFilesPresentationChange('list')}
-                    />
-                    <Chip
-                        active={changedFilesPresentation === 'review'}
-                        label="Review"
-                        icon={<Octicons name="diff" size={14} color={theme.colors.textSecondary} />}
-                        onPress={() => onChangedFilesPresentationChange('review')}
-                    />
-                </View>
-            )}
+                        <Chip
+                            active={changedFilesPresentation === 'review'}
+                            label="Review"
+                            icon={<Octicons name="diff" size={14} color={theme.colors.textSecondary} />}
+                            onPress={() => onChangedFilesPresentationChange('review')}
+                        />
+                        <Chip
+                            active={changedFilesPresentation === 'list'}
+                            label="List"
+                            icon={<Octicons name="list-unordered" size={14} color={theme.colors.textSecondary} />}
+                            onPress={() => onChangedFilesPresentationChange('list')}
+                        />
+                    </>
+                ) : null}
+
+                <Chip
+                    active={scmPanelExpanded}
+                    label="SCM"
+                    icon={<Octicons name="git-branch" size={14} color={theme.colors.textSecondary} />}
+                    onPress={onToggleScmPanel}
+                />
+            </View>
 
             {!showAllRepositoryFiles && changedFilesCount > 0 && !showSessionViewToggle && (
                 <View

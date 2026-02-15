@@ -20,6 +20,7 @@ type ChangedFilesListProps = {
     repositoryOnlyFiles: ScmFileStatus[];
     suppressedInferredCount: number;
     onFilePress: (file: ScmFileStatus) => void;
+    renderFileActions?: (file: ScmFileStatus) => React.ReactNode;
     rowDensity?: 'comfortable' | 'compact';
 };
 
@@ -42,6 +43,7 @@ export function ChangedFilesList({
     repositoryOnlyFiles,
     suppressedInferredCount,
     onFilePress,
+    renderFileActions,
     rowDensity = 'comfortable',
 }: ChangedFilesListProps) {
     const isDarkTheme = theme.dark === true;
@@ -60,7 +62,12 @@ export function ChangedFilesList({
                         subtitle={renderFileSubtitle(file)}
                         icon={<ChangedFileIcon file={file} size={iconSize} />}
                         density={rowDensity}
-                        rightElement={<ChangedFileStatusIcon file={file} theme={theme} isDarkTheme={isDarkTheme} />}
+                        rightElement={(
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                {renderFileActions ? renderFileActions(file) : null}
+                                <ChangedFileStatusIcon file={file} theme={theme} isDarkTheme={isDarkTheme} />
+                            </View>
+                        )}
                         onPress={() => onFilePress(file)}
                         showDivider={index < allRepositoryChangedFiles.length - 1}
                     />
@@ -141,7 +148,12 @@ export function ChangedFilesList({
                         subtitle={renderSessionAttributionSubtitle(entry.file, entry.confidence)}
                         icon={<ChangedFileIcon file={entry.file} size={iconSize} />}
                         density={rowDensity}
-                        rightElement={<ChangedFileStatusIcon file={entry.file} theme={theme} isDarkTheme={isDarkTheme} />}
+                        rightElement={(
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                {renderFileActions ? renderFileActions(entry.file) : null}
+                                <ChangedFileStatusIcon file={entry.file} theme={theme} isDarkTheme={isDarkTheme} />
+                            </View>
+                        )}
                         onPress={() => onFilePress(entry.file)}
                         showDivider={index < sessionAttributedFiles.length - 1}
                     />
@@ -160,7 +172,12 @@ export function ChangedFilesList({
                             subtitle={renderFileSubtitle(file)}
                             icon={<ChangedFileIcon file={file} size={iconSize} />}
                             density={rowDensity}
-                            rightElement={<ChangedFileStatusIcon file={file} theme={theme} isDarkTheme={isDarkTheme} />}
+                            rightElement={(
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                    {renderFileActions ? renderFileActions(file) : null}
+                                    <ChangedFileStatusIcon file={file} theme={theme} isDarkTheme={isDarkTheme} />
+                                </View>
+                            )}
                             onPress={() => onFilePress(file)}
                             showDivider={index < repositoryOnlyFiles.length - 1}
                         />

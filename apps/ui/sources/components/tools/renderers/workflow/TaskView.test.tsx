@@ -143,7 +143,7 @@ describe('TaskView', () => {
             expect(joined).toContain('+ 1 more');
         });
 
-        it('renders recent sidechain text messages in summary mode', async () => {
+        it('does not render sidechain text messages in summary mode', async () => {
             const base = Date.now();
             const taskTool = makeTaskTool({ createdAt: base, startedAt: base });
             const messages: Message[] = [
@@ -153,7 +153,26 @@ describe('TaskView', () => {
             const tree = await renderView(taskTool, messages, 'summary');
 
             const joined = collectHostText(tree).join(' ');
-            expect(joined).toContain('Working...');
+            expect(joined).not.toContain('First');
+            expect(joined).not.toContain('Working...');
+        });
+
+        it('does not show internal TaskOutput import UI', async () => {
+            const base = Date.now();
+            const taskTool = makeTaskTool({ createdAt: base, startedAt: base });
+            const imported: Message = {
+                kind: 'agent-text',
+                id: 'agent-imported',
+                localId: null,
+                createdAt: base + 1,
+                text: 'x',
+                isThinking: false,
+                meta: { importedFrom: 'claude-taskoutput' },
+            };
+
+            const tree = await renderView(taskTool, [imported], 'summary');
+            // Import source is an internal detail; UI should focus on the task content itself.
+            expect(collectHostText(tree).join(' ')).not.toContain('TaskOutput');
         });
     });
 
@@ -196,7 +215,22 @@ describe('TaskView', () => {
     });
 
     describe('Result Rendering', () => {
-        it('renders task result content when present', async () => {
+        it('does not render background-run task result content in summary mode', async () => {
+            const base = Date.now();
+            const taskTool = makeTaskTool({
+                state: 'completed',
+                input: { operation: 'run', description: 'Do thing', run_in_background: true },
+                result: { content: 'SUBTASK_OK' },
+                createdAt: base,
+                startedAt: base,
+                completedAt: base + 100,
+            });
+            const tree = await renderView(taskTool, []);
+
+            expect(collectHostText(tree).join(' ')).not.toContain('SUBTASK_OK');
+        });
+
+        it('renders foreground-run task result content in summary mode', async () => {
             const base = Date.now();
             const taskTool = makeTaskTool({
                 state: 'completed',
@@ -207,6 +241,36 @@ describe('TaskView', () => {
                 completedAt: base + 100,
             });
             const tree = await renderView(taskTool, []);
+
+            expect(collectHostText(tree).join(' ')).toContain('SUBTASK_OK');
+        });
+
+        it('renders task result content when detailLevel=full', async () => {
+            const base = Date.now();
+            const taskTool = makeTaskTool({
+                state: 'completed',
+                input: { operation: 'run', description: 'Do thing' },
+                result: { content: 'SUBTASK_OK' },
+                createdAt: base,
+                startedAt: base,
+                completedAt: base + 100,
+            });
+            const tree = await renderView(taskTool, [], 'full');
+
+            expect(collectHostText(tree).join(' ')).toContain('SUBTASK_OK');
+        });
+
+        it('renders task result content blocks when detailLevel=full', async () => {
+            const base = Date.now();
+            const taskTool = makeTaskTool({
+                state: 'completed',
+                input: { operation: 'run', description: 'Do thing' },
+                result: { content: [{ type: 'text', text: 'SUBTASK_OK' }] },
+                createdAt: base,
+                startedAt: base,
+                completedAt: base + 100,
+            });
+            const tree = await renderView(taskTool, [], 'full');
 
             expect(collectHostText(tree).join(' ')).toContain('SUBTASK_OK');
         });

@@ -77,6 +77,37 @@ describe('ChangedFilesList', () => {
         expect(items[0].props.density).toBe('compact');
     });
 
+    it('supports injecting per-file actions for commit/stage flows', async () => {
+        const { ChangedFilesList } = await import('./ChangedFilesList');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <ChangedFilesList
+                    theme={{ colors: { surfaceHigh: '#111', divider: '#222', textLink: '#09f', textSecondary: '#999', text: '#fff', dark: false } } as any}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[file as any]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    onFilePress={vi.fn()}
+                    renderFileActions={(f) => React.createElement('Action', { path: f.fullPath })}
+                />
+            );
+        });
+
+        const items = tree!.root.findAllByType('Item' as any);
+        expect(items).toHaveLength(1);
+
+        const right = items[0]!.props.rightElement;
+        let rightTree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            rightTree = renderer.create(right);
+        });
+        expect(rightTree!.root.findAllByType('Action' as any)).toHaveLength(1);
+    });
+
     it('renders session reliability warning when attribution is limited', async () => {
         const { ChangedFilesList } = await import('./ChangedFilesList');
         let tree: renderer.ReactTestRenderer | null = null;

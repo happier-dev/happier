@@ -1,10 +1,11 @@
 import React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, Text, TextInput, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import type { ReviewFindingsV1, ReviewTriageStatus } from '@happier-dev/protocol';
 
 import { sessionExecutionRunAction } from '@/sync/ops/sessionExecutionRuns';
+import { sync } from '@/sync/sync';
 
 function formatFindingLocation(finding: ReviewFindingsV1['findings'][number]): string | null {
     if (!finding.filePath) return null;
@@ -23,25 +24,40 @@ export function ReviewFindingsMessageCard(props: {
 }) {
     const [expandedFindingId, setExpandedFindingId] = React.useState<string | null>(null);
     const [draftStatusByFindingId, setDraftStatusByFindingId] = React.useState<Record<string, ReviewTriageStatus>>({});
+    const [draftCommentByFindingId, setDraftCommentByFindingId] = React.useState<Record<string, string>>({});
     const [saveError, setSaveError] = React.useState<string | null>(null);
     const [isSaving, setIsSaving] = React.useState(false);
+    const [applyError, setApplyError] = React.useState<string | null>(null);
+    const [isApplying, setIsApplying] = React.useState(false);
     const findings = props.payload.findings ?? [];
 
     React.useEffect(() => {
         const next: Record<string, ReviewTriageStatus> = {};
+        const nextComments: Record<string, string> = {};
         const triageFindings = props.payload.triage?.findings ?? [];
         for (const t of triageFindings) {
             if (typeof t.id === 'string' && typeof t.status === 'string') {
                 next[t.id] = t.status as ReviewTriageStatus;
+                if (typeof (t as any).comment === 'string' && String((t as any).comment).trim().length > 0) {
+                    nextComments[t.id] = String((t as any).comment).trim();
+                }
             }
         }
         setDraftStatusByFindingId(next);
+        setDraftCommentByFindingId(nextComments);
     }, [props.payload.triage]);
 
     const triageOverlay = React.useMemo(() => {
-        const items = Object.entries(draftStatusByFindingId).map(([id, status]) => ({ id, status }));
+        const items = Object.entries(draftStatusByFindingId).map(([id, status]) => {
+            const comment = typeof draftCommentByFindingId[id] === 'string' ? draftCommentByFindingId[id].trim() : '';
+            return {
+                id,
+                status,
+                ...(comment ? { comment } : {}),
+            };
+        });
         return { findings: items };
-    }, [draftStatusByFindingId]);
+    }, [draftCommentByFindingId, draftStatusByFindingId]);
 
     const hasDraft = Object.keys(draftStatusByFindingId).length > 0;
 
@@ -65,6 +81,45 @@ export function ReviewFindingsMessageCard(props: {
             }
         })();
     }, [props.sessionId, props.payload.runRef.runId, triageOverlay]);
+
+    const acceptedFindingIds = React.useMemo(() => {
+        return Object.entries(draftStatusByFindingId)
+            .filter(([, status]) => status === 'accept')
+            .map(([id]) => id);
+    }, [draftStatusByFindingId]);
+
+    const handleApplyAcceptedFindings = React.useCallback(() => {
+        void (async () => {
+            if (acceptedFindingIds.length === 0) return;
+            setApplyError(null);
+            setIsApplying(true);
+            try {
+                const acceptedFindings = findings
+                    .filter((f) => acceptedFindingIds.includes(f.id))
+                    .slice(0, 50)
+                    .map((f) => ({
+                        id: f.id,
+                        title: f.title,
+                        summary: f.summary,
+                        ...(f.patch ? { suggestedPatch: f.patch.slice(0, 4000) } : {}),
+                    }));
+
+                const payload = {
+                    runId: props.payload.runRef.runId,
+                    callId: props.payload.runRef.callId,
+                    acceptedFindingIds,
+                    acceptedFindings,
+                };
+
+                const text = `@happier/review.apply_accepted_findings\n${JSON.stringify(payload)}`;
+                await sync.sendMessage(props.sessionId, text, 'Apply accepted findings');
+            } catch (e) {
+                setApplyError(e instanceof Error ? e.message : 'Failed to apply accepted findings.');
+            } finally {
+                setIsApplying(false);
+            }
+        })();
+    }, [acceptedFindingIds, findings, props.payload.runRef.callId, props.payload.runRef.runId, props.sessionId]);
 
     return (
         <View style={styles.container}>
@@ -112,18 +167,38 @@ export function ReviewFindingsMessageCard(props: {
                                         );
                                     })}
                                 </View>
+                                {draftStatusByFindingId[f.id] === 'needs_refinement' ? (
+                                    <TextInput
+                                        value={draftCommentByFindingId[f.id] ?? ''}
+                                        onChangeText={(text) =>
+                                            setDraftCommentByFindingId((prev) => ({ ...prev, [f.id]: String(text ?? '') }))
+                                        }
+                                        placeholder="Optional comment for refinement"
+                                        multiline
+                                        style={styles.refinementInput as any}
+                                    />
+                                ) : null}
                             </View>
                         ) : null}
                     </View>
                 );
             })}
             {saveError ? <Text style={styles.errorText}>{saveError}</Text> : null}
+            {applyError ? <Text style={styles.errorText}>{applyError}</Text> : null}
             <Pressable
                 onPress={handleApplyTriage}
                 style={[styles.applyButton, (!hasDraft || isSaving) && styles.applyButtonDisabled]}
                 disabled={!hasDraft || isSaving}
             >
                 <Text style={styles.applyButtonText}>{isSaving ? 'Applying…' : 'Apply triage'}</Text>
+            </Pressable>
+
+            <Pressable
+                onPress={handleApplyAcceptedFindings}
+                style={[styles.applyButton, (acceptedFindingIds.length === 0 || isApplying) && styles.applyButtonDisabled]}
+                disabled={acceptedFindingIds.length === 0 || isApplying}
+            >
+                <Text style={styles.applyButtonText}>{isApplying ? 'Sending…' : 'Apply accepted findings'}</Text>
             </Pressable>
         </View>
     );
@@ -200,6 +275,14 @@ const styles = StyleSheet.create((theme) => ({
     triageChipTextSelected: {
         color: theme.colors.textLink,
         fontWeight: '600',
+    },
+    refinementInput: {
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        borderRadius: 10,
+        padding: 10,
+        minHeight: 44,
+        color: theme.colors.text,
     },
     errorText: {
         color: theme.colors.textSecondary,

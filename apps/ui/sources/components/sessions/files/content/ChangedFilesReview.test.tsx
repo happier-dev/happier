@@ -519,4 +519,108 @@ describe('ChangedFilesReview', () => {
         const texts = tree!.root.findAllByType('Text' as any);
         expect(texts.some((n) => String(n.props?.children) === 'files.reviewDiffRequestFailed')).toBe(true);
     });
+
+    it('supports injecting per-file actions for commit/stage flows', async () => {
+        sessionScmDiffFileSpy.mockClear();
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: `diff:${req.path}:${req.area}`,
+            error: null,
+        }));
+
+        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+        const renderFileActions = vi.fn((_file: any) => React.createElement('Action'));
+
+        await act(async () => {
+            renderer.create(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={snapshot}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[fileA, fileB]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                    renderFileActions={renderFileActions as any}
+                />
+            );
+        });
+
+        const calledPaths = new Set(renderFileActions.mock.calls.map((call) => call[0]?.fullPath));
+        expect(Array.from(calledPaths).sort()).toEqual(['src/a.ts', 'src/b.ts']);
+    });
+
+    it('filters out files that have no delta in the selected diff area', async () => {
+        sessionScmDiffFileSpy.mockClear();
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: `diff:${req.path}:${req.area}`,
+            error: null,
+        }));
+
+        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+
+        const indexSnapshot = {
+            ...snapshot,
+            capabilities: { readDiffFile: true, writeInclude: true, writeExclude: true },
+            totals: {
+                ...snapshot.totals,
+                includedFiles: 0,
+                pendingFiles: 1,
+                includedAdded: 0,
+                includedRemoved: 0,
+                pendingAdded: 1,
+                pendingRemoved: 1,
+            },
+        } as any;
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={indexSnapshot}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[fileA]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                />
+            );
+        });
+
+        // Sanity: pending mode shows the file.
+        expect(tree!.root.findAllByType('Item' as any)).toHaveLength(1);
+
+        // Switch to Included; this should hide the file entirely (no included delta).
+        const includedPressables = tree!.root.findAll((node) => {
+            if ((node as any).type !== 'Pressable') return false;
+            const textNodes = (node as any).findAll?.((n: any) => n.type === 'Text') ?? [];
+            return textNodes.some((n: any) => String((n.children ?? []).join('')) === 'Included');
+        });
+        expect(includedPressables.length).toBeGreaterThan(0);
+
+        await act(async () => {
+            includedPressables[0]!.props.onPress();
+            await Promise.resolve();
+        });
+
+        expect(tree!.root.findAllByType('Item' as any)).toHaveLength(0);
+
+        const emptyTexts = tree!.root.findAll((node) => {
+            if ((node as any).type !== 'Text') return false;
+            return String(((node as any).children ?? []).join('')) === 'files.noChanges';
+        });
+        expect(emptyTexts.length).toBeGreaterThan(0);
+    });
 });

@@ -48,17 +48,41 @@ function formatTaskSummary(tool: ToolCall): string | null {
     return null;
 }
 
+function coerceTaskResultText(result: unknown): string | null {
+    if (typeof result === 'string') return result;
+    if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
+
+    const record = result as Record<string, unknown>;
+    const content = record.content;
+    if (typeof content === 'string') return content;
+    if (!Array.isArray(content)) return null;
+
+    const chunks: string[] = [];
+    for (const item of content) {
+        if (!item || typeof item !== 'object') continue;
+        if ((item as any).type !== 'text') continue;
+        const text = (item as any).text;
+        if (typeof text === 'string' && text.trim().length > 0) {
+            chunks.push(text);
+        }
+    }
+    const joined = chunks.join('\n').trim();
+    return joined.length > 0 ? joined : null;
+}
+
 export const TaskView = React.memo<ToolViewProps>(({ tool, metadata, messages, detailLevel }) => {
     const { theme } = useUnistyles();
     const filtered: FilteredTool[] = [];
     const isFullView = detailLevel === 'full';
     const taskStartedAt = tool.startedAt ?? tool.createdAt;
-    const taskResultContent =
-        typeof (tool.result as any)?.content === 'string'
-            ? String((tool.result as any).content)
-            : typeof tool.result === 'string'
-                ? tool.result
-                : null;
+    const inferredOperation = inferOperation(tool.input);
+    const isBackgroundRun =
+        inferredOperation === 'run' &&
+        ((tool.input as any)?.run_in_background === true || typeof (tool.input as any)?.subagent_type === 'string');
+    // Task tool results can be very verbose for background subagents (e.g. Claude Task launch/completion blobs).
+    // Keep the main transcript readable by hiding those results in summary mode.
+    const shouldShowResultInline = isFullView || !isBackgroundRun;
+    const taskResultContent = shouldShowResultInline ? coerceTaskResultText(tool.result) : null;
 
     for (let m of messages) {
         if (m.kind === 'tool-call') {
@@ -137,6 +161,15 @@ export const TaskView = React.memo<ToolViewProps>(({ tool, metadata, messages, d
             fontSize: 14,
             color: theme.colors.textSecondary,
         },
+        badgeRow: {
+            paddingVertical: 6,
+            paddingHorizontal: 4,
+        },
+        badgeText: {
+            fontSize: 12,
+            color: theme.colors.textSecondary,
+            opacity: 0.8,
+        },
         moreToolsItem: {
             paddingVertical: 4,
             paddingHorizontal: 4,
@@ -155,13 +188,7 @@ export const TaskView = React.memo<ToolViewProps>(({ tool, metadata, messages, d
     const visibleTools = isFullView ? filtered : filtered.slice(Math.max(0, filtered.length - 3));
     const remainingCount = Math.max(0, filtered.length - visibleTools.length);
     const textMessages = messages.filter((m) => m.kind === 'user-text' || m.kind === 'agent-text');
-    const threadTextMessages = isFullView
-        ? textMessages
-        : (() => {
-            const agentMessages = textMessages.filter((m) => m.kind === 'agent-text' && !(m as any).isThinking);
-            if (agentMessages.length > 0) return agentMessages.slice(Math.max(0, agentMessages.length - 2));
-            return textMessages.slice(Math.max(0, textMessages.length - 1));
-        })();
+    const threadTextMessages = isFullView ? textMessages : [];
 
     const hasAnyContent = Boolean(summary) || Boolean(taskResultContent) || filtered.length > 0 || threadTextMessages.length > 0;
     if (!hasAnyContent) return null;

@@ -37,6 +37,7 @@ type ChangedFilesReviewProps = {
     maxFiles: number;
     maxChangedLines: number;
     onFilePress: (file: ScmFileStatus) => void;
+    renderFileActions?: (file: ScmFileStatus) => React.ReactNode;
     focusPath?: string | null;
     rowDensity?: 'comfortable' | 'compact';
     reviewCommentsEnabled?: boolean;
@@ -56,6 +57,60 @@ function totalsChangedLines(snapshot: ScmWorkingSnapshot | null, area: ScmDiffAr
     if (area === 'included') return totals.includedAdded + totals.includedRemoved;
     if (area === 'pending') return totals.pendingAdded + totals.pendingRemoved;
     return totals.includedAdded + totals.includedRemoved + totals.pendingAdded + totals.pendingRemoved;
+}
+
+type ScmEntryDelta = Readonly<{
+    hasIncludedDelta: boolean;
+    hasPendingDelta: boolean;
+    includedAdded: number;
+    includedRemoved: number;
+    pendingAdded: number;
+    pendingRemoved: number;
+}>;
+
+function entryToDelta(entry: any): ScmEntryDelta {
+    return {
+        hasIncludedDelta: Boolean(entry?.hasIncludedDelta),
+        hasPendingDelta: Boolean(entry?.hasPendingDelta),
+        includedAdded: Number(entry?.stats?.includedAdded ?? 0),
+        includedRemoved: Number(entry?.stats?.includedRemoved ?? 0),
+        pendingAdded: Number(entry?.stats?.pendingAdded ?? 0),
+        pendingRemoved: Number(entry?.stats?.pendingRemoved ?? 0),
+    };
+}
+
+function fileHasDeltaForArea(file: ScmFileStatus, delta: ScmEntryDelta | null, area: ScmDiffArea): boolean {
+    if (delta) {
+        if (area === 'included') return delta.hasIncludedDelta;
+        if (area === 'pending') return delta.hasPendingDelta;
+        return delta.hasIncludedDelta || delta.hasPendingDelta;
+    }
+    // Fallback when snapshot entries are not available in tests or partial snapshots.
+    if (area === 'included') return file.isIncluded === true;
+    if (area === 'pending') return file.isIncluded === false;
+    return true;
+}
+
+function toAreaFileStatus(file: ScmFileStatus, delta: ScmEntryDelta | null, area: ScmDiffArea): ScmFileStatus {
+    if (!delta) {
+        // Best-effort: keep existing stats if we don't have entry-level numbers.
+        return area === 'included'
+            ? { ...file, isIncluded: true }
+            : area === 'pending'
+                ? { ...file, isIncluded: false }
+                : file;
+    }
+    if (area === 'included') {
+        return { ...file, isIncluded: true, linesAdded: delta.includedAdded, linesRemoved: delta.includedRemoved };
+    }
+    if (area === 'pending') {
+        return { ...file, isIncluded: false, linesAdded: delta.pendingAdded, linesRemoved: delta.pendingRemoved };
+    }
+    return {
+        ...file,
+        linesAdded: delta.includedAdded + delta.pendingAdded,
+        linesRemoved: delta.includedRemoved + delta.pendingRemoved,
+    };
 }
 
 type DiffState = {
@@ -168,15 +223,27 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
     const [diffArea, setDiffArea] = React.useState<ScmDiffArea>(diffConfig.defaultMode);
     React.useEffect(() => {
         const available = new Set<ScmDiffArea>(diffConfig.availableModes);
-        setDiffArea((prev) => (available.has(prev) ? prev : diffConfig.defaultMode));
+        const fallback = available.has(diffConfig.defaultMode)
+            ? diffConfig.defaultMode
+            : (diffConfig.availableModes[0] ?? 'pending');
+        setDiffArea((prev) => (available.has(prev) ? prev : fallback));
     }, [diffConfig.availableModes, diffConfig.defaultMode]);
 
-    const sections = React.useMemo(() => {
+    const entryDeltaByPath = React.useMemo(() => {
+        const map = new Map<string, ScmEntryDelta>();
+        for (const entry of snapshot?.entries ?? []) {
+            if (!entry?.path) continue;
+            map.set(entry.path, entryToDelta(entry));
+        }
+        return map;
+    }, [snapshot?.entries]);
+
+    const baseSections = React.useMemo(() => {
         if (changedFilesViewMode === 'repository') {
             return [
                 {
                     key: 'repository',
-                    title: t('files.repositoryChangedFiles', { count: allRepositoryChangedFiles.length }),
+                    kind: 'repository',
                     files: allRepositoryChangedFiles,
                 },
             ] as const;
@@ -185,20 +252,60 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
         return [
             {
                 key: 'session',
-                title: t('files.sessionAttributedChanges', { count: sessionAttributedFiles.length }),
+                kind: 'session',
                 files: sessionAttributedFiles.map((entry) => entry.file),
             },
             ...(repositoryOnlyFiles.length > 0
                 ? ([
                     {
                         key: 'other',
-                        title: t('files.otherRepositoryChanges', { count: repositoryOnlyFiles.length }),
+                        kind: 'other',
                         files: repositoryOnlyFiles,
                     },
                 ] as const)
                 : ([] as const)),
         ] as const;
     }, [allRepositoryChangedFiles, changedFilesViewMode, repositoryOnlyFiles, sessionAttributedFiles]);
+
+    const sections = React.useMemo(() => {
+        const out: { key: string; title: string; files: ScmFileStatus[] }[] = [];
+        for (const section of baseSections) {
+            const files: ScmFileStatus[] = [];
+            const seen = new Set<string>();
+            for (const file of section.files) {
+                if (!file?.fullPath) continue;
+                if (seen.has(file.fullPath)) continue;
+                seen.add(file.fullPath);
+
+                const delta = entryDeltaByPath.get(file.fullPath) ?? null;
+                if (!fileHasDeltaForArea(file, delta, diffArea)) continue;
+                files.push(toAreaFileStatus(file, delta, diffArea));
+            }
+
+            if (section.kind === 'repository') {
+                out.push({
+                    key: section.key,
+                    title: t('files.repositoryChangedFiles', { count: files.length }),
+                    files,
+                });
+                continue;
+            }
+            if (section.kind === 'session') {
+                out.push({
+                    key: section.key,
+                    title: t('files.sessionAttributedChanges', { count: files.length }),
+                    files,
+                });
+                continue;
+            }
+            out.push({
+                key: section.key,
+                title: t('files.otherRepositoryChanges', { count: files.length }),
+                files,
+            });
+        }
+        return out;
+    }, [baseSections, diffArea, entryDeltaByPath]);
 
     const reviewFiles = React.useMemo(() => {
         const out: ScmFileStatus[] = [];
@@ -318,6 +425,14 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
         <>
             {diffAreaSelector}
 
+            {reviewFiles.length === 0 && (
+                <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6 }}>
+                    <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                        {t('files.noChanges')}
+                    </Text>
+                </View>
+            )}
+
             {tooLarge && reviewFiles.length > 0 && (
                 <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6 }}>
                     <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
@@ -380,6 +495,7 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
 
                             const rightElement = (
                                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                    {props.renderFileActions ? props.renderFileActions(file) : null}
                                     {!tooLarge && (
                                         <ChangedFileStatusIcon file={file} theme={theme} isDarkTheme={isDarkTheme} />
                                     )}
