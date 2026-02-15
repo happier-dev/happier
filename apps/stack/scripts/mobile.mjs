@@ -333,7 +333,11 @@ async function main() {
     }
 
     const configuration = kv.get('--configuration') ?? 'Debug';
+    const buildMetroPort = (env.RCT_METRO_PORT ?? env.EXPO_PACKAGER_PORT ?? '').toString().trim();
     const args = ['run:ios', '--no-bundler', '--no-build-cache', '--configuration', configuration];
+    if (buildMetroPort) {
+      args.push('-p', buildMetroPort);
+    }
     if (device) {
       args.push('-d', device);
     }
