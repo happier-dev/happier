@@ -4,7 +4,9 @@
  */
 
 import Fuse from 'fuse.js';
+import { listActionSpecs } from '@happier-dev/protocol';
 import { storage } from '../state/storage';
+import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 
 export interface CommandItem {
     command: string;        // The command without slash (e.g., "compact")
@@ -58,6 +60,37 @@ const DEFAULT_COMMANDS: CommandItem[] = [
     { command: 'clear', description: 'Clear the conversation' }
 ];
 
+function describeActionSlashToken(token: string, fallbackTitle: string): string {
+    if (token === '/h.review') return 'Start a code review run';
+    if (token === '/h.plan') return 'Start a planning run';
+    if (token === '/h.delegate') return 'Start a delegation run';
+    if (token === '/h.voice') return 'Start a voice agent run';
+    if (token === '/h.runs') return 'List execution runs';
+    if (token === '/h.voice.reset') return 'Reset the global voice agent';
+    return fallbackTitle;
+}
+
+function buildActionSlashCommands(state: any): CommandItem[] {
+    const out: CommandItem[] = [];
+    for (const spec of listActionSpecs()) {
+        if (spec.surfaces.ui_slash_command !== true) continue;
+        if (!isActionEnabledInState(state as any, spec.id)) continue;
+        const tokens = spec.slash?.tokens ?? [];
+        for (const token of tokens) {
+            if (typeof token !== 'string') continue;
+            if (!token.startsWith('/')) continue;
+            const command = token.slice(1);
+            if (command.trim().length === 0) continue;
+            if (out.find((c) => c.command === command)) continue;
+            out.push({
+                command,
+                description: describeActionSlashToken(token, spec.title),
+            });
+        }
+    }
+    return out;
+}
+
 // Command descriptions for known tools/commands
 const COMMAND_DESCRIPTIONS: Record<string, string> = {
     // Default commands
@@ -81,12 +114,11 @@ const COMMAND_DESCRIPTIONS: Record<string, string> = {
 function getCommandsFromSession(sessionId: string): CommandItem[] {
     const state = storage.getState();
     const session = state.sessions[sessionId];
+    const commands: CommandItem[] = [...buildActionSlashCommands(state), ...DEFAULT_COMMANDS];
     if (!session || !session.metadata) {
-        return DEFAULT_COMMANDS;
+        return commands;
     }
 
-    const commands: CommandItem[] = [...DEFAULT_COMMANDS];
-    
     // Prefer richer metadata when available
     const details = (session.metadata as any).slashCommandDetails as Array<{ command?: unknown; description?: unknown }> | undefined;
     if (Array.isArray(details) && details.length > 0) {
