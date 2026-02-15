@@ -76,6 +76,12 @@ import {
 } from './permissions/permissionRequest';
 import { AcpReplayCapture, type AcpReplayEvent } from './history/acpReplayCapture';
 
+function makeAbortError(message: string): Error {
+  const err = new Error(message);
+  err.name = 'AbortError';
+  return err;
+}
+
 /**
  * Retry configuration for ACP operations
  */
@@ -574,36 +580,36 @@ export class AcpBackend implements AgentBackend {
         env: { ...process.env, ...this.options.env },
       });
 
-      this.process = spawn(spec.command, spec.args, spec.options);
+	    this.process = spawn(spec.command, spec.args, spec.options);
 
-    if (!this.process.stdin || !this.process.stdout || !this.process.stderr) {
-      throw new Error('Failed to create stdio pipes');
-    }
+	    if (!this.process.stdin || !this.process.stdout || !this.process.stderr) {
+	      throw new Error('Failed to create stdio pipes');
+	    }
 
-    // Best-effort stderr artifact capture for diagnostics.
-    try {
-      this.stderrAppender?.close().catch(() => {});
-      this.stderrAppender = await createSubprocessStderrAppender({
-        agentName: this.options.agentName,
-        pid: typeof this.process.pid === 'number' ? this.process.pid : null,
-        label: 'acp',
-      });
-    } catch (error) {
-      logger.debug('[AcpBackend] Failed to create stderr artifact appender (non-fatal)', error);
-      this.stderrAppender = null;
-    }
+	    // Best-effort stderr artifact capture for diagnostics.
+	    try {
+	      this.stderrAppender?.close().catch(() => {});
+	      this.stderrAppender = await createSubprocessStderrAppender({
+	        agentName: this.options.agentName,
+	        pid: typeof this.process.pid === 'number' ? this.process.pid : null,
+	        label: 'acp',
+	      });
+	    } catch (error) {
+	      logger.debug('[AcpBackend] Failed to create stderr artifact appender (non-fatal)', error);
+	      this.stderrAppender = null;
+	    }
 
-    // Handle stderr output via transport handler
-    this.process.stderr.on('data', (data: Buffer) => {
-      const text = data.toString();
-      if (!text.trim()) return;
+	    // Handle stderr output via transport handler
+	    this.process.stderr.on('data', (data: Buffer) => {
+	      const text = data.toString();
+	      if (!text.trim()) return;
 
-      this.stderrAppender?.append(text);
+	      this.stderrAppender?.append(text);
 
-      // Build context for transport handler
-      const hasActiveInvestigation = this.transport.isInvestigationTool
-        ? Array.from(this.activeToolCalls).some(id => this.transport.isInvestigationTool!(id))
-        : false;
+	      // Build context for transport handler
+	      const hasActiveInvestigation = this.transport.isInvestigationTool
+	        ? Array.from(this.activeToolCalls).some(id => this.transport.isInvestigationTool!(id))
+	        : false;
 
       const context: StderrContext = {
         activeToolCalls: this.activeToolCalls,
@@ -642,17 +648,21 @@ export class AcpBackend implements AgentBackend {
       this.emit({ type: 'status', status: 'error', detail: err.message });
     });
 
-    this.process.on('exit', (code, signal) => {
-      if (!this.disposed && code !== 0 && code !== null) {
-        logger.debug(`[AcpBackend] Process exited with code ${code}, signal ${signal}`);
-        const detail = `Exit code: ${code}`;
-        this.failPendingResponseWait(new Error(detail));
-        this.emit({ type: 'status', status: 'error', detail });
-      }
+	    this.process.on('exit', (code, signal) => {
+	      const hasSignal = typeof signal === 'string' && signal.trim().length > 0;
+	      const hasNonZeroCode = typeof code === 'number' && Number.isFinite(code) && code !== 0;
+	      const hasUnknownExit = code === null && !hasSignal;
 
-      void this.stderrAppender?.close().catch(() => {});
-      this.stderrAppender = null;
-    });
+	      if (!this.disposed && (hasSignal || hasNonZeroCode || hasUnknownExit)) {
+	        logger.debug(`[AcpBackend] Process exited with code ${code}, signal ${signal}`);
+	        const detail = hasSignal ? `Signal: ${signal}` : `Exit code: ${typeof code === 'number' ? code : 1}`;
+	        this.failPendingResponseWait(new Error(detail));
+	        this.emit({ type: 'status', status: 'error', detail });
+	      }
+
+	      void this.stderrAppender?.close().catch(() => {});
+	      this.stderrAppender = null;
+	    });
 
     // Create Web Streams from Node streams
     const streams = nodeToWebStreams(
@@ -846,9 +856,23 @@ export class AcpBackend implements AgentBackend {
               || result.decision === 'approved_execpolicy_amendment';
 
             await this.respondToPermission(permissionId, isApproved);
+            if (result.decision === 'denied' || result.decision === 'abort') {
+              // When the user declines a permission prompt, abort the in-flight prompt turn so the
+              // agent doesn't continue and retry tool calls. This matches our non-ACP behavior.
+              const requestSessionId =
+                typeof (extendedParams as any).sessionId === 'string'
+                  ? String((extendedParams as any).sessionId)
+                  : (this.acpSessionId ?? '');
+              void this.cancel(requestSessionId);
+              this.clearTrackedToolCall(toolCallId, `permission decision=${result.decision}`);
+              this.lastSelectedPermissionOptionIdByToolCallId.delete(toolCallId);
+              return { outcome: { outcome: 'cancelled' } };
+            }
+
             if (!isApproved) {
               this.clearTrackedToolCall(toolCallId, `permission decision=${result.decision}`);
             }
+
             const outcome = pickPermissionOutcome(options as PermissionOptionLike[], result.decision);
             if (outcome.outcome === 'selected') {
               this.lastSelectedPermissionOptionIdByToolCallId.set(toolCallId, outcome.optionId);
@@ -2046,17 +2070,33 @@ export class AcpBackend implements AgentBackend {
   }
 
   async cancel(sessionId: SessionId): Promise<void> {
-    if (!this.connection || !this.acpSessionId) {
-      return;
+    if (this.waitingForResponse) {
+      this.failPendingResponseWait(makeAbortError('Cancelled by user'));
     }
 
-    try {
-      await this.connection.cancel({ sessionId: this.acpSessionId });
-      this.emit({ type: 'status', status: 'stopped', detail: 'Cancelled by user' });
-    } catch (error) {
-      // Log to file only, not console
-      logger.debug('[AcpBackend] Error cancelling:', error);
+    if (this.idleTimeout) {
+      clearTimeout(this.idleTimeout);
+      this.idleTimeout = null;
     }
+
+    if (this.toolCallTimeouts.size > 0) {
+      for (const timeout of this.toolCallTimeouts.values()) {
+        clearTimeout(timeout);
+      }
+      this.toolCallTimeouts.clear();
+    }
+
+    this.activeToolCalls.clear();
+    this.toolCallStartTimes.clear();
+
+    if (!this.connection || !this.acpSessionId) return;
+
+    // Fire-and-forget: local cancellation must unblock immediately.
+    void this.connection
+      .cancel({ sessionId: this.acpSessionId })
+      .catch((error) => logger.debug('[AcpBackend] Error cancelling:', error));
+
+    this.emit({ type: 'status', status: 'stopped', detail: 'Cancelled by user' });
   }
 
   /**

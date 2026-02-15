@@ -205,6 +205,161 @@ async function runSdkStreamUntilEof() {
       continue;
     }
 
+    if (scenario === 'review-json') {
+      const assistant = {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                summary: `FAKE_REVIEW_SUMMARY_${turn}`,
+                findings: [
+                  {
+                    id: `f_${turn}_1`,
+                    title: 'Fake finding',
+                    severity: 'low',
+                    category: 'style',
+                    summary: 'Fake finding summary',
+                    filePath: 'README.md',
+                    startLine: 1,
+                    endLine: 1,
+                    suggestion: 'No-op',
+                  },
+                ],
+              }),
+            },
+          ],
+        },
+      };
+      const result = {
+        type: 'result',
+        subtype: 'success',
+        result: `FAKE_CLAUDE_DONE_${turn}`,
+        num_turns: turn,
+        usage: { input_tokens: 1, output_tokens: 1 },
+        total_cost_usd: 0,
+        duration_ms: Math.max(1, Date.now() - now),
+        duration_api_ms: 1,
+        is_error: false,
+        session_id: sessionId,
+      };
+
+      process.stdout.write(`${JSON.stringify(assistant)}\n`);
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      continue;
+    }
+
+    if (scenario === 'plan-json') {
+      const assistant = {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                summary: `FAKE_PLAN_SUMMARY_${turn}`,
+                sections: [
+                  { title: 'Phase 1', items: ['Do the thing', 'Verify'] },
+                ],
+                risks: ['Fake risk'],
+                milestones: [{ title: 'M1', details: 'Fake milestone' }],
+                recommendedBackendId: 'claude',
+              }),
+            },
+          ],
+        },
+      };
+      const result = {
+        type: 'result',
+        subtype: 'success',
+        result: `FAKE_CLAUDE_DONE_${turn}`,
+        num_turns: turn,
+        usage: { input_tokens: 1, output_tokens: 1 },
+        total_cost_usd: 0,
+        duration_ms: Math.max(1, Date.now() - now),
+        duration_api_ms: 1,
+        is_error: false,
+        session_id: sessionId,
+      };
+
+      process.stdout.write(`${JSON.stringify(assistant)}\n`);
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      continue;
+    }
+
+    if (scenario === 'delegate-json') {
+      const assistant = {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                summary: `FAKE_DELEGATE_SUMMARY_${turn}`,
+                deliverables: [{ id: `d_${turn}_1`, title: 'Fake deliverable', details: 'Fake details' }],
+              }),
+            },
+          ],
+        },
+      };
+      const result = {
+        type: 'result',
+        subtype: 'success',
+        result: `FAKE_CLAUDE_DONE_${turn}`,
+        num_turns: turn,
+        usage: { input_tokens: 1, output_tokens: 1 },
+        total_cost_usd: 0,
+        duration_ms: Math.max(1, Date.now() - now),
+        duration_api_ms: 1,
+        is_error: false,
+        session_id: sessionId,
+      };
+
+      process.stdout.write(`${JSON.stringify(assistant)}\n`);
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      continue;
+    }
+
+    if (scenario === 'commit-message-json') {
+      const assistant = {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                title: 'feat: ephemeral commit message',
+                body: '',
+                message: 'feat: ephemeral commit message',
+                confidence: 1,
+              }),
+            },
+          ],
+        },
+      };
+      const result = {
+        type: 'result',
+        subtype: 'success',
+        result: `FAKE_CLAUDE_DONE_${turn}`,
+        num_turns: turn,
+        usage: { input_tokens: 1, output_tokens: 1 },
+        total_cost_usd: 0,
+        duration_ms: Math.max(1, Date.now() - now),
+        duration_api_ms: 1,
+        is_error: false,
+        session_id: sessionId,
+      };
+
+      process.stdout.write(`${JSON.stringify(assistant)}\n`);
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      continue;
+    }
+
     const assistant = {
       type: 'assistant',
       message: { role: 'assistant', content: [{ type: 'text', text: `FAKE_CLAUDE_OK_${turn}` }] },

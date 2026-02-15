@@ -103,7 +103,7 @@ function writeFakePermissionAgentScript(params: { dir: string }): string {
 }
 
 describe('AcpBackend permission deny cleanup', () => {
-  it('resolves waitForResponseComplete after denied permission without waiting for tool timeout', async () => {
+  it('aborts the in-flight prompt when permission is denied', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-acp-perm-deny-'));
     const scriptPath = writeFakePermissionAgentScript({ dir });
     let backendForCleanup: AcpBackend | undefined;
@@ -129,7 +129,7 @@ describe('AcpBackend permission deny cleanup', () => {
       const started = await backend.startSession();
       await backend.sendPrompt(started.sessionId, 'please run bash with permission');
 
-      await expect(backend.waitForResponseComplete(250)).resolves.toBeUndefined();
+      await expect(backend.waitForResponseComplete(250)).rejects.toMatchObject({ name: 'AbortError' });
     } finally {
       await backendForCleanup?.dispose().catch(() => {});
       rmSync(dir, { recursive: true, force: true });

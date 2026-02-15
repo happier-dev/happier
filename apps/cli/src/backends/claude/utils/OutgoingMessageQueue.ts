@@ -10,6 +10,7 @@ import { AsyncLock } from '@/utils/lock';
 interface QueueItem {
     id: number;                    // Incremental ID for ordering
     logMessage: any;               
+    meta?: Record<string, unknown>;
     delayed: boolean;              // Whether this message should be delayed
     delayMs: number;               // Delay duration (e.g., 250ms)
     toolCallIds?: string[];        // Tool calls to track for early release
@@ -24,19 +25,21 @@ export class OutgoingMessageQueue {
     private processTimer?: NodeJS.Timeout;
     private delayTimers = new Map<number, NodeJS.Timeout>();
     
-    constructor(private sendFunction: (message: any) => void) {}
+    constructor(private sendFunction: (message: any, meta?: Record<string, unknown>) => void) {}
     
     /**
      * Add message to queue
      */
     enqueue(logMessage: any, options?: {
         delay?: number,
-        toolCallIds?: string[]
+        toolCallIds?: string[],
+        meta?: Record<string, unknown>,
     }) {
         this.lock.inLock(async () => {
             const item: QueueItem = {
                 id: this.nextId++,
                 logMessage,
+                meta: options?.meta,
                 delayed: !!options?.delay,
                 delayMs: options?.delay || 0,
                 toolCallIds: options?.toolCallIds,
@@ -122,7 +125,7 @@ export class OutgoingMessageQueue {
             // Send if not already sent
             if (!item.sent) {
                 if (item.logMessage.type !== 'system') {
-                    this.sendFunction(item.logMessage);
+                    this.sendFunction(item.logMessage, item.meta);
                 }
                 item.sent = true;
             }

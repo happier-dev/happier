@@ -252,6 +252,343 @@ describe('sessionScanner', () => {
     expect(collectedMessages).toHaveLength(1)
     expect(collectedMessages[0].type).toBe('assistant')
   })
+
+  it('imports Task output_file sidechain transcript even when initial messages are pre-processed', async () => {
+    const sessionId = '33333333-3333-3333-3333-333333333333'
+    const sessionFile = join(projectDir, `${sessionId}.jsonl`)
+
+    const subagentId = 'a971610'
+    const sidechainId = 'toolu_task_1'
+
+    const subagentsDir = join(projectDir, sessionId, 'subagents')
+    await mkdir(subagentsDir, { recursive: true })
+    const subagentJsonlPath = join(subagentsDir, `agent-${subagentId}.jsonl`)
+
+    // First line is the prompt root (should be skipped by importer), second line is actual content.
+    const subagentLines = [
+      JSON.stringify({
+        parentUuid: null,
+        isSidechain: true,
+        type: 'user',
+        agentId: subagentId,
+        uuid: 'sc_root',
+        timestamp: new Date().toISOString(),
+        message: { role: 'user', content: 'prompt root' },
+      }),
+      JSON.stringify({
+        parentUuid: 'sc_root',
+        isSidechain: true,
+        type: 'assistant',
+        agentId: subagentId,
+        uuid: 'sc_msg_1',
+        timestamp: new Date().toISOString(),
+        message: { role: 'assistant', content: [{ type: 'text', text: 'Working...' }] },
+      }),
+    ]
+    await writeFile(subagentJsonlPath, subagentLines.join('\n') + '\n')
+
+    const tasksDir = join(testDir, 'tasks')
+    await mkdir(tasksDir, { recursive: true })
+    const outputFilePath = join(tasksDir, `${subagentId}.output`)
+    // Make output_file a symlink, matching Claude Code behavior.
+    await (await import('node:fs/promises')).symlink(subagentJsonlPath, outputFilePath)
+
+    const assistantToolUse = {
+      type: 'assistant',
+      uuid: 'a1',
+      message: {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: sidechainId,
+            name: 'Task',
+            input: { description: 'Count tests', prompt: 'count', run_in_background: true },
+          },
+        ],
+      },
+    }
+
+    const userToolResult = {
+      type: 'user',
+      uuid: 'u1',
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: sidechainId,
+            content: [
+              {
+                type: 'text',
+                text:
+                  `Async agent launched successfully.\n` +
+                  `agentId: ${subagentId}\n` +
+                  `output_file: ${outputFilePath}\n`,
+              },
+            ],
+          },
+        ],
+      },
+      toolUseResult: {
+        status: 'async_launched',
+        agentId: subagentId,
+        outputFile: outputFilePath,
+      },
+    }
+
+    await writeFile(sessionFile, JSON.stringify(assistantToolUse) + '\n' + JSON.stringify(userToolResult) + '\n')
+
+    scanner = await createSessionScanner({
+      sessionId,
+      workingDirectory: testDir,
+      onMessage: (msg) => collectedMessages.push(msg),
+    })
+
+    await waitFor(
+      () => collectedMessages.some((m) => (m as any).isSidechain === true && (m as any).sidechainId === sidechainId),
+      2000,
+    )
+
+    // Ensure we did not replay the pre-existing main session history.
+    expect(collectedMessages.some((m) => (m as any).uuid === 'a1')).toBe(false)
+    expect(collectedMessages.some((m) => (m as any).uuid === 'u1')).toBe(false)
+
+    const sidechainMsg = collectedMessages.find((m) => (m as any).sidechainId === sidechainId)
+    expect(sidechainMsg).toBeDefined()
+    expect((sidechainMsg as any).isSidechain).toBe(true)
+    expect((sidechainMsg as any).sidechainId).toBe(sidechainId)
+  })
+
+  it('imports Task sidechain transcript from inferred subagent jsonl path when output_file is missing', async () => {
+    const sessionId = '55555555-5555-5555-5555-555555555555'
+    const sessionFile = join(projectDir, `${sessionId}.jsonl`)
+
+    const agentId = 'a6ca4a6'
+    const sidechainId = 'toolu_task_3'
+
+    const subagentsDir = join(projectDir, sessionId, 'subagents')
+    await mkdir(subagentsDir, { recursive: true })
+    const subagentJsonlPath = join(subagentsDir, `agent-${agentId}.jsonl`)
+
+    const subagentLines = [
+      JSON.stringify({
+        parentUuid: null,
+        isSidechain: true,
+        type: 'user',
+        agentId,
+        uuid: 'sc2_root',
+        timestamp: new Date().toISOString(),
+        message: { role: 'user', content: 'prompt root' },
+      }),
+      JSON.stringify({
+        parentUuid: 'sc2_root',
+        isSidechain: true,
+        type: 'assistant',
+        agentId,
+        uuid: 'sc2_msg_1',
+        timestamp: new Date().toISOString(),
+        message: { role: 'assistant', content: [{ type: 'text', text: 'Subagent says hi' }] },
+      }),
+    ]
+    await writeFile(subagentJsonlPath, subagentLines.join('\n') + '\n')
+
+    const assistantToolUse = {
+      type: 'assistant',
+      uuid: 'a3',
+      sessionId,
+      message: {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: sidechainId,
+            name: 'Task',
+            input: { description: 'Explore', prompt: 'explore' },
+          },
+        ],
+      },
+    }
+
+    const userToolResult = {
+      type: 'user',
+      uuid: 'u4',
+      sessionId,
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: sidechainId,
+            content: [{ type: 'text', text: `done\nagentId: ${agentId}\n` }],
+          },
+        ],
+      },
+      toolUseResult: {
+        status: 'completed',
+        agentId,
+      },
+    }
+
+    await writeFile(sessionFile, JSON.stringify(assistantToolUse) + '\n' + JSON.stringify(userToolResult) + '\n')
+
+    scanner = await createSessionScanner({
+      sessionId,
+      workingDirectory: testDir,
+      onMessage: (msg) => collectedMessages.push(msg),
+    })
+
+    await waitFor(
+      () => collectedMessages.some((m) => (m as any).isSidechain === true && (m as any).sidechainId === sidechainId),
+      2000,
+    )
+
+    const sidechainMsg = collectedMessages.find((m) => (m as any).sidechainId === sidechainId)
+    expect(sidechainMsg).toBeDefined()
+    expect((sidechainMsg as any).isSidechain).toBe(true)
+    expect((sidechainMsg as any).sidechainId).toBe(sidechainId)
+  })
+
+  it('rewrites <task-notification> user text into a Task tool_result update (and does not emit the raw XML)', async () => {
+    scanner = await createSessionScanner({
+      sessionId: null,
+      workingDirectory: testDir,
+      onMessage: (msg) => collectedMessages.push(msg),
+    })
+
+    const sessionId = '44444444-4444-4444-4444-444444444444'
+    const sessionFile = join(projectDir, `${sessionId}.jsonl`)
+
+    const subagentId = 'ab0e58d'
+    const sidechainId = 'toolu_task_2'
+    const outputFilePath = join(testDir, 'tasks', `${subagentId}.output`)
+    await mkdir(join(testDir, 'tasks'), { recursive: true })
+    await writeFile(outputFilePath, 'placeholder\n')
+
+    const assistantToolUse = {
+      type: 'assistant',
+      uuid: 'a2',
+      message: {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: sidechainId,
+            name: 'Task',
+            input: { description: 'Explore', prompt: 'explore', run_in_background: true },
+          },
+        ],
+      },
+    }
+
+    const userToolResult = {
+      type: 'user',
+      uuid: 'u2',
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: sidechainId,
+            content: [
+              {
+                type: 'text',
+                text:
+                  `Async agent launched successfully.\n` +
+                  `agentId: ${subagentId}\n` +
+                  `output_file: ${outputFilePath}\n`,
+              },
+            ],
+          },
+        ],
+      },
+      toolUseResult: {
+        status: 'async_launched',
+        agentId: subagentId,
+        outputFile: outputFilePath,
+      },
+    }
+
+    const taskNotification = {
+      type: 'user',
+      uuid: 'u3',
+      message: {
+        role: 'user',
+        content:
+          '<task-notification>\n' +
+          `<task-id>${subagentId}</task-id>\n` +
+          '<status>completed</status>\n' +
+          '<summary>done</summary>\n' +
+          '<result>Hello from task</result>\n' +
+          '</task-notification>\n' +
+          `Full transcript available at: ${outputFilePath}`,
+      },
+    }
+
+    await writeFile(
+      sessionFile,
+      [assistantToolUse, userToolResult, taskNotification].map((v) => JSON.stringify(v)).join('\n') + '\n',
+    )
+
+    if (!scanner) throw new Error('scanner not initialized')
+    scanner.onNewSession(sessionId)
+
+    await waitFor(
+      () =>
+        collectedMessages.some(
+          (m) =>
+            m.type === 'user' &&
+            Array.isArray((m as any).message?.content) &&
+            (m as any).message.content.some((c: any) => c?.type === 'tool_result' && c?.tool_use_id === sidechainId),
+        ),
+      2000,
+    )
+
+    expect(
+      collectedMessages.some(
+        (m) => m.type === 'user' && typeof (m as any).message?.content === 'string' && String((m as any).message.content).includes('<task-notification>'),
+      ),
+    ).toBe(false)
+
+    const rewritten = collectedMessages.find(
+      (m) =>
+        (m as any).uuid === 'u3' &&
+        m.type === 'user' &&
+        Array.isArray((m as any).message?.content) &&
+        (m as any).message.content.some((c: any) => c?.type === 'tool_result' && c?.tool_use_id === sidechainId),
+    ) as any
+    expect(rewritten).toBeTruthy()
+    const toolResult = rewritten.message.content.find((c: any) => c?.type === 'tool_result' && c?.tool_use_id === sidechainId)
+    expect(toolResult).toBeTruthy()
+    const text = getFirstTextFromContent(toolResult.content)
+    expect(text).toContain('Hello from task')
+  })
+
+  it('should emit progress records from transcript files', async () => {
+    scanner = await createSessionScanner({
+      sessionId: null,
+      workingDirectory: testDir,
+      onMessage: (msg) => collectedMessages.push(msg),
+    })
+
+    const sessionId = '33333333-3333-3333-3333-333333333333'
+    const sessionFile = join(projectDir, `${sessionId}.jsonl`)
+    await writeFile(
+      sessionFile,
+      JSON.stringify({
+        type: 'progress',
+        uuid: 'progress-1',
+        status: 'running',
+      }) + '\n',
+    )
+
+    scanner.onNewSession(sessionId)
+    await waitFor(() => collectedMessages.length >= 1, 1000)
+
+    expect(collectedMessages).toHaveLength(1)
+    expect(collectedMessages[0].type).toBe('progress')
+    expect((collectedMessages[0] as any).uuid).toBe('progress-1')
+  })
   
   it('should notify when transcript file is missing for too long', async () => {
     const missing: { sessionId: string; filePath: string }[] = []

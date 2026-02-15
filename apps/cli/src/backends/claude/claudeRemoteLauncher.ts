@@ -19,10 +19,12 @@ import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { waitForMessagesOrPending } from '@/agent/runtime/waitForMessagesOrPending';
 import { cleanupStdinAfterInk } from '@/ui/ink/cleanupStdinAfterInk';
 import { restoreStdinBestEffort } from '@/ui/ink/restoreStdinBestEffort';
-import { createNonBlockingStdout } from '@/ui/ink/nonBlockingStdout';
-import { resolveHasTTY } from '@/ui/tty/resolveHasTTY';
 import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
 import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
+import { ClaudeRemoteTaskOutputCollector } from './remote/sidechains/claudeRemoteTaskOutputCollector';
+import { ClaudeRemoteSubagentFileCollector } from './remote/sidechains/claudeRemoteSubagentFileCollector';
+import { resolveHasTTY } from '@/ui/tty/resolveHasTTY';
+import { createNonBlockingStdout } from '@/ui/ink/nonBlockingStdout';
 
 interface PermissionsField {
     date: number;
@@ -168,8 +170,15 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 
     // Create outgoing message queue
     const messageQueue = new OutgoingMessageQueue(
-        (logMessage) => session.client.sendClaudeSessionMessage(logMessage)
+        (logMessage, meta) => session.client.sendClaudeSessionMessage(logMessage, meta)
     );
+
+    const taskOutputCollector = new ClaudeRemoteTaskOutputCollector();
+    const subagentFileCollector = new ClaudeRemoteSubagentFileCollector({
+        emitImported: (body, meta) => {
+            messageQueue.enqueue(body, { meta });
+        },
+    });
 
     // Set up callback to release delayed messages when permission is requested
     permissionHandler.setOnPermissionRequest((toolCallId: string) => {
@@ -192,6 +201,9 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
         // Write to permission handler for tool id resolving
         permissionHandler.onMessage(message);
 
+        const taskOutputIngest = taskOutputCollector.observe(message);
+        subagentFileCollector.observe(message);
+
         if (message.type === 'user') {
             let umessage = message as SDKUserMessage;
             if (umessage.message.content && Array.isArray(umessage.message.content)) {
@@ -209,6 +221,11 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 
         const logMessage = sdkToLogConverter.convert(msg);
         if (logMessage) {
+            const taskOutputToolUseIds = new Set<string>();
+            for (const info of taskOutputIngest.taskOutputToolResults) {
+                taskOutputToolUseIds.add(info.toolUseId);
+            }
+
             // Add permissions field to tool result content
             if (logMessage.type === 'user' && logMessage.message?.content) {
                 const content = Array.isArray(logMessage.message.content)
@@ -244,6 +261,14 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                                 permissions
                             };
                         }
+
+                        if (taskOutputToolUseIds.has(c.tool_use_id)) {
+                            // TaskOutput tool_result payloads can be huge (JSONL transcript). Keep the main transcript compact.
+                            content[i] = {
+                                ...content[i],
+                                content: '',
+                            };
+                        }
                     }
                 }
             }
@@ -263,7 +288,8 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 
                 if (toolCallIds.length > 0) {
                     // Check if this is a sidechain tool call (has parent_tool_use_id)
-                    const isSidechain = assistantMsg.parent_tool_use_id !== undefined;
+                    const isSidechain =
+                        typeof assistantMsg.parent_tool_use_id === 'string' && assistantMsg.parent_tool_use_id.trim().length > 0;
 
                     if (!isSidechain) {
                         // Top-level tool call - queue with delay
@@ -278,6 +304,10 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 
             // Queue all other messages immediately (no delay)
             messageQueue.enqueue(logMessage);
+        }
+
+        for (const imported of taskOutputIngest.imported) {
+            messageQueue.enqueue(imported.body, { meta: imported.meta });
         }
 
         // Insert a fake message to start the sidechain
@@ -319,6 +349,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                 messageBuffer.addMessage('Starting new Claude session...', 'status');
                 permissionHandler.reset(); // Reset permissions before starting new session
                 sdkToLogConverter.resetParentChain(); // Reset parent chain for new conversation
+                subagentFileCollector.cleanup(); // Stop any watchers from prior sessions (subagent JSONL lives under session id).
                 logger.debug(`[remote]: New session detected (previous: ${previousSessionId}, current: ${session.sessionId})`);
                 forceNewSession = false;
             } else {
@@ -487,6 +518,8 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 
         // Clean up permission handler
         permissionHandler.reset();
+        subagentFileCollector.cleanup();
+
         if (inkInstance) {
             inkInstance.unmount();
         }

@@ -47,6 +47,13 @@ export const RawJSONLinesSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("system"),
     uuid: z.string() // Used in getMessageKey()
+  }).passthrough(),
+
+  // Progress message - emitted by local transcript scanner in some Claude versions.
+  // Keep schema lenient and passthrough so scanner can forward it safely.
+  z.object({
+    type: z.literal("progress"),
+    uuid: z.string().optional(),
   }).passthrough()
 ]);
 

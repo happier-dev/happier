@@ -88,7 +88,9 @@ export class SDKToLogConverter {
             return null
         }
 
-        const uuid = randomUUID()
+        const sdkUuidRaw = (sdkMessage as any)?.uuid;
+        const sdkUuid = typeof sdkUuidRaw === 'string' && sdkUuidRaw.trim().length > 0 ? sdkUuidRaw.trim() : null;
+        const uuid = sdkUuid ?? randomUUID()
         const timestamp = new Date().toISOString()
         let parentUuid = this.lastUuid;
         let isSidechain = false;

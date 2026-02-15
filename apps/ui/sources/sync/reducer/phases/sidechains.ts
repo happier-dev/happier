@@ -69,15 +69,17 @@ export function runSidechainsPhase(params: Readonly<{
                         continue;
                     }
 
-                    const last = existingSidechain[existingSidechain.length - 1];
-                    if (last && last.role === 'agent' && last.isThinking && typeof last.text === 'string') {
-                        const merged = unwrapThinkingText(last.text) + chunk;
-                        last.text = wrapThinkingText(merged);
-                        changed.add(last.id);
-                    } else {
-                        let mid = allocateId();
-                        let textMsg: ReducerMessage = {
-                            id: mid,
+	                    const last = existingSidechain[existingSidechain.length - 1];
+	                    if (last && last.role === 'agent' && last.isThinking && typeof last.text === 'string') {
+	                        const merged = unwrapThinkingText(last.text) + chunk;
+	                        last.text = wrapThinkingText(merged);
+	                        // Sidechain children must never be emitted as root-level transcript messages.
+	                        // Marking the owning Task/SubAgentRun tool-call as changed (below) is sufficient
+	                        // to refresh the child transcript in both the task view and the main session view.
+	                    } else {
+	                        let mid = allocateId();
+	                        let textMsg: ReducerMessage = {
+	                            id: mid,
                             realID: msg.id,
                             role: 'agent',
                             createdAt: msg.createdAt,
@@ -178,11 +180,13 @@ export function runSidechainsPhase(params: Readonly<{
                                         decision: c.permissions.decision
                                     };
                                 }
-                            }
+	                            }
 
-                            changed.add(sidechainMessageId);
-                        }
-                    }
+	                            // Do not mark sidechain child tool messages as changed root messages.
+	                            // The owning Task/SubAgentRun tool-call is marked changed at the end of
+	                            // this loop iteration, which will re-serialize updated children.
+	                        }
+	                    }
 
                     // Also update the main permission message if it exists
                     let permissionMessageId = state.toolIdToMessageId.get(c.tool_use_id);

@@ -16,9 +16,20 @@ if (logPath) {
 
 const toolName = process.env.FAKE_CLAUDE_TOOL_NAME || '';
 const hangTurn = process.env.FAKE_CLAUDE_HANG_TURN === '1';
+const multiChunk = process.env.FAKE_CLAUDE_MULTI_CHUNK === '1';
 
 let turn = 0;
 let didInit = false;
+
+const args = process.argv.slice(2);
+const resumeIdx = args.findIndex((a) => a === '--resume' || a === '-r');
+const isResuming = resumeIdx >= 0;
+// Use UUID-like values to mirror real Claude Code behavior.
+const sessionId = isResuming ? '1433467f-ff14-4292-b5b2-2aac77a808f0' : 'aada10c6-9299-4c45-abc4-91db9c0f935d';
+
+// Claude Code stream-json emits an init message that includes the effective session id.
+process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init', session_id: sessionId }) + '\\n');
+didInit = true;
 
 const rl = readline.createInterface({ input: process.stdin });
 rl.on('line', (line) => {
@@ -28,10 +39,6 @@ rl.on('line', (line) => {
   try { msg = JSON.parse(trimmed); } catch { return; }
   if (!msg || msg.type !== 'user') return;
   turn += 1;
-  if (!didInit) {
-    didInit = true;
-    process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'fake' }) + '\\n');
-  }
   if (toolName && turn === 1) {
     // Request permission for a tool call; the parent will reply with a control_response.
     const reqId = 'req-1';
@@ -47,7 +54,7 @@ rl.on('line', (line) => {
       const behavior = msg2.response.response && msg2.response.response.behavior;
       const label = behavior === 'allow' ? 'TOOL_ALLOWED' : 'TOOL_DENIED';
       process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: label }] } }) + '\\n');
-      process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: turn, total_cost_usd: 0, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: 'fake' }) + '\\n');
+      process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: turn, total_cost_usd: 0, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: sessionId }) + '\\n');
     };
     rl.on('line', onControl);
     return;
@@ -55,8 +62,13 @@ rl.on('line', (line) => {
   if (hangTurn && turn === 1) {
     return;
   }
-  process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'FAKE_ASSIST_' + turn }] } }) + '\\n');
-  process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: turn, total_cost_usd: 0, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: 'fake' }) + '\\n');
+  if (multiChunk) {
+    process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'FAKE_ASSIST_' + turn + '_A' }] } }) + '\\n');
+    process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'FAKE_ASSIST_' + turn + '_B' }] } }) + '\\n');
+  } else {
+    process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'FAKE_ASSIST_' + turn }] } }) + '\\n');
+  }
+  process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: turn, total_cost_usd: 0, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: sessionId }) + '\\n');
 });
 rl.on('close', () => process.exit(0));
 `;
@@ -79,6 +91,7 @@ async function withFakeClaudeBackend(
     permissionPolicy: 'no_tools' | 'read_only';
     toolName?: string;
     hangTurn?: boolean;
+    multiChunk?: boolean;
     modelId?: string;
     includeLogPath?: boolean;
   }>,
@@ -105,6 +118,7 @@ async function withFakeClaudeBackend(
       delete process.env.FAKE_CLAUDE_TOOL_NAME;
     }
     process.env.FAKE_CLAUDE_HANG_TURN = params.hangTurn ? '1' : '0';
+    process.env.FAKE_CLAUDE_MULTI_CHUNK = params.multiChunk ? '1' : '0';
 
     const { ClaudeSdkAgentBackend } = await import('./ClaudeSdkAgentBackend');
     backend = new ClaudeSdkAgentBackend({
@@ -145,11 +159,40 @@ describe('ClaudeSdkAgentBackend', () => {
     delete process.env.FAKE_CLAUDE_LOG_PATH;
     delete process.env.FAKE_CLAUDE_TOOL_NAME;
     delete process.env.FAKE_CLAUDE_HANG_TURN;
+    delete process.env.FAKE_CLAUDE_MULTI_CHUNK;
     if (originalDebug === undefined) {
       delete process.env.DEBUG;
     } else {
       process.env.DEBUG = originalDebug;
     }
+  });
+
+  it('emits cumulative model-output fullText when Claude returns multiple assistant messages in a single turn', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-chunks-',
+        permissionPolicy: 'no_tools',
+        multiChunk: true,
+      },
+      async ({ backend }) => {
+        const fullTexts: string[] = [];
+        backend.onMessage((msg: any) => {
+          if (msg.type === 'model-output' && typeof msg.fullText === 'string') {
+            fullTexts.push(msg.fullText);
+          }
+        });
+
+        const { sessionId } = await backend.startSession();
+        await backend.sendPrompt(sessionId, 'hi');
+
+        expect(fullTexts.length).toBeGreaterThan(0);
+        const last = fullTexts[fullTexts.length - 1]!;
+        expect(last).toContain('FAKE_ASSIST_1_A');
+        expect(last).toContain('FAKE_ASSIST_1_B');
+      },
+    );
   });
 
   it('supports multi-turn sendPrompt and passes the model id through to the spawned process', async () => {
@@ -286,6 +329,39 @@ describe('ClaudeSdkAgentBackend', () => {
           new Promise<string>((resolve) => setTimeout(() => resolve('timeout'), 300)),
         ]);
         expect(settled).toBe('rejected:Agent disposed');
+      },
+    );
+  });
+
+  it('supports loadSession by passing --resume and emitting vendor_session_id', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-resume-',
+        permissionPolicy: 'no_tools',
+      },
+      async ({ backend, logPath }) => {
+        const events: any[] = [];
+        backend.onMessage((msg: any) => {
+          if (msg?.type === 'event') events.push(msg);
+        });
+
+        const loaded = await (backend as any).loadSession('aada10c6-9299-4c45-abc4-91db9c0f935d');
+        expect(loaded?.sessionId).toBe('1433467f-ff14-4292-b5b2-2aac77a808f0');
+
+        await backend.sendPrompt(loaded.sessionId, 'hi');
+
+        const argvLog = (await import('node:fs/promises')).readFile(logPath, 'utf8');
+        const logText = await argvLog;
+        expect(logText).toContain('--resume');
+        expect(logText).toContain('aada10c6-9299-4c45-abc4-91db9c0f935d');
+
+        expect(
+          events.some(
+            (e) => e?.name === 'vendor_session_id' && e?.payload && e.payload.sessionId === '1433467f-ff14-4292-b5b2-2aac77a808f0',
+          ),
+        ).toBe(true);
       },
     );
   });

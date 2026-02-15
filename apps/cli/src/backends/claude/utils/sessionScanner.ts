@@ -1,10 +1,12 @@
 import { InvalidateSync } from "@/utils/sync";
-import { RawJSONLines, RawJSONLinesSchema } from "../types";
+import { RawJSONLines } from "../types";
 import { dirname, join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { logger } from "@/ui/logger";
 import { startFileWatcher } from "@/integrations/watcher/startFileWatcher";
 import { getProjectPath } from "./path";
+import { parseRawJsonLinesObject } from './parseRawJsonLines';
+import { ClaudeRemoteSubagentFileCollector } from '../remote/sidechains/claudeRemoteSubagentFileCollector';
 
 /**
  * Known internal Claude Code event types that should be silently skipped.
@@ -95,6 +97,101 @@ export async function createSessionScanner(opts: {
     let currentSessionId: string | null = null;
     let watchers = new Map<string, { filePath: string; stop: () => void }>();
     let processedMessageKeys = new Set<string>();
+    const taskToolUseIdByAgentId = new Map<string, string>();
+
+    const subagentCollector = new ClaudeRemoteSubagentFileCollector({
+        emitImported: (body) => {
+            // Best-effort: avoid double-emitting imported sidechain messages within the same scanner lifetime.
+            try {
+                const uuid = typeof (body as any)?.uuid === 'string' ? String((body as any).uuid) : '';
+                const sidechainId = typeof (body as any)?.sidechainId === 'string' ? String((body as any).sidechainId) : '';
+                const key = uuid && sidechainId ? `sidechain:${sidechainId}:${uuid}` : messageKey(body);
+                if (processedMessageKeys.has(key)) return;
+                processedMessageKeys.add(key);
+            } catch {
+                // If we can't key it (unexpected type), still emit; downstream should dedupe by uuid.
+            }
+            try {
+                opts.onMessage(body);
+            } catch (err) {
+                logger.debug('[SESSION_SCANNER] onMessage callback threw (sidechain import):', err);
+            }
+        },
+        resolveJsonlPathForAgentId: ({ agentId, claudeSessionId }) => {
+            if (!claudeSessionId) return null;
+            const sanitized = String(agentId ?? '').trim();
+            if (!sanitized) return null;
+            return join(effectiveProjectDir(), claudeSessionId, 'subagents', `agent-${sanitized}.jsonl`);
+        },
+    });
+
+    function isTaskNotificationUserText(message: RawJSONLines): boolean {
+        if (message.type !== 'user') return false;
+        if ((message as any).isSidechain === true) return false;
+        const content = (message as any)?.message?.content;
+        if (typeof content !== 'string') return false;
+        return /^\s*<task-notification>/i.test(content);
+    }
+
+    function extractTaskNotification(payload: string): { taskId: string; result: string } | null {
+        const raw = String(payload ?? '');
+        const taskId = raw.match(/<task-id>\s*([^<\n\r]+?)\s*<\/task-id>/i)?.[1]?.trim() ?? '';
+        if (!taskId) return null;
+        const result = raw.match(/<result>\s*([\s\S]*?)\s*<\/result>/i)?.[1]?.trim() ?? '';
+        if (!result) return null;
+        return { taskId, result };
+    }
+
+    function observeTaskToolResultMapping(message: RawJSONLines): void {
+        if (message.type !== 'user') return;
+        const toolUseResult = (message as any).toolUseResult;
+        if (!toolUseResult || typeof toolUseResult !== 'object') return;
+        const agentId =
+            typeof (toolUseResult as any).agentId === 'string' ? String((toolUseResult as any).agentId).trim() : '';
+        if (!agentId) return;
+
+        const content = (message as any)?.message?.content;
+        if (!Array.isArray(content)) return;
+        for (const item of content) {
+            if (!item || typeof item !== 'object') continue;
+            if ((item as any).type !== 'tool_result') continue;
+            const toolUseId = typeof (item as any).tool_use_id === 'string' ? String((item as any).tool_use_id).trim() : '';
+            if (!toolUseId) continue;
+            taskToolUseIdByAgentId.set(agentId, toolUseId);
+        }
+    }
+
+    type TaskNotificationAction = { type: 'rewrite'; message: RawJSONLines } | { type: 'drop' };
+
+    function rewriteTaskNotificationToToolResult(message: RawJSONLines): TaskNotificationAction | null {
+        if (!isTaskNotificationUserText(message)) return null;
+        const content = String((message as any).message.content ?? '');
+        const parsed = extractTaskNotification(content);
+        if (!parsed) return { type: 'drop' };
+
+        const toolUseId = taskToolUseIdByAgentId.get(parsed.taskId) ?? null;
+        if (!toolUseId) {
+            // If we can't map the task-id to a Task tool_use, drop it to avoid transcript spam.
+            return { type: 'drop' };
+        }
+
+        return { type: 'rewrite', message: {
+            ...(message as any),
+            isMeta: true,
+            type: 'user',
+            message: {
+                role: 'user',
+                content: [
+                    {
+                        type: 'tool_result',
+                        tool_use_id: toolUseId,
+                        content: [{ type: 'text', text: parsed.result }],
+                        is_error: false,
+                    },
+                ],
+            },
+        } as any };
+    }
 
     // If the caller already knows the transcript path for the initial session,
     // apply it before reading any existing messages so we mark the correct history as processed.
@@ -109,8 +206,17 @@ export async function createSessionScanner(opts: {
         let messages = await readSessionLog(getSessionFilePath(opts.sessionId));
         logger.debug(`[SESSION_SCANNER] Marking ${messages.length} existing messages as processed from session ${opts.sessionId}`);
         for (let m of messages) {
+            // Observe history for sidechain import + task-notification mapping, even when we do not replay history.
+            try {
+                observeTaskToolResultMapping(m);
+                subagentCollector.observe(m as any);
+            } catch (err) {
+                logger.debug('[SESSION_SCANNER] Failed observing historical message:', err);
+            }
             processedMessageKeys.add(messageKey(m));
         }
+        // Backfill sidechain messages for any already-launched tasks.
+        await subagentCollector.syncAll();
         // IMPORTANT: Also start watching the initial session file because Claude Code
         // may continue writing to it even after creating a new session with --resume
         // (agent tasks and other updates can still write to the original session file)
@@ -144,6 +250,12 @@ export async function createSessionScanner(opts: {
             let skipped = 0;
             let sent = 0;
             for (let file of sessionMessages) {
+                try {
+                    observeTaskToolResultMapping(file);
+                    subagentCollector.observe(file as any);
+                } catch (err) {
+                    logger.debug('[SESSION_SCANNER] Failed observing message:', err);
+                }
                 let key = messageKey(file);
                 if (processedMessageKeys.has(key)) {
                     skipped++;
@@ -152,8 +264,17 @@ export async function createSessionScanner(opts: {
                 processedMessageKeys.add(key);
                 logger.debug(`[SESSION_SCANNER] Sending new message: type=${file.type}, uuid=${file.type === 'summary' ? file.leafUuid : file.uuid}`);
                 try {
-                    opts.onMessage(file);
-                    sent++;
+                    const action = rewriteTaskNotificationToToolResult(file);
+                    if (action?.type === 'drop') {
+                        skipped++;
+                        continue;
+                    }
+                    if (action?.type === 'rewrite') {
+                        opts.onMessage(action.message);
+                    } else {
+                        opts.onMessage(file);
+                    }
+                    sent++; // count only emitted messages
                 } catch (err) {
                     logger.debug('[SESSION_SCANNER] onMessage callback threw:', err);
                 }
@@ -162,6 +283,8 @@ export async function createSessionScanner(opts: {
                 logger.debug(`[SESSION_SCANNER] Session ${session}: found=${sessionMessages.length}, skipped=${skipped}, sent=${sent}`);
             }
         }
+
+        await subagentCollector.syncAll();
 
         // Move pending sessions to finished sessions (but keep processing them via watchers)
         for (let p of sessions) {
@@ -198,6 +321,7 @@ export async function createSessionScanner(opts: {
     return {
         cleanup: async () => {
             clearInterval(intervalId);
+            subagentCollector.cleanup();
             for (let w of watchers.values()) {
                 w.stop();
             }
@@ -273,6 +397,12 @@ function messageKey(message: RawJSONLines): string {
         return 'summary: ' + message.leafUuid + ': ' + message.summary;
     } else if (message.type === 'system') {
         return message.uuid;
+    } else if (message.type === 'progress') {
+        const uuid = typeof (message as any).uuid === 'string' ? (message as any).uuid : '';
+        if (uuid) return `progress:${uuid}`;
+        const ts = typeof (message as any).timestamp === 'string' ? (message as any).timestamp : '';
+        if (ts) return `progress:timestamp:${ts}`;
+        return `progress:${JSON.stringify(message)}`;
     } else {
         throw Error() // Impossible
     }
@@ -306,13 +436,13 @@ async function readSessionLog(sessionFilePath: string): Promise<RawJSONLines[]> 
                 continue;
             }
             
-            let parsed = RawJSONLinesSchema.safeParse(message);
-            if (!parsed.success) {
+            const parsed = parseRawJsonLinesObject(message);
+            if (!parsed) {
                 // Unknown message types are silently skipped
                 // They will be tracked by processedMessageKeys to avoid reprocessing
                 continue;
             }
-            messages.push(parsed.data);
+            messages.push(parsed);
         } catch (e) {
             logger.debug(`[SESSION_SCANNER] Error processing message: ${e}`);
             continue;

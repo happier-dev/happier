@@ -1,8 +1,9 @@
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 
 import { curateToolTraceFixturesFromJsonlLines } from '../src/agent/tools/trace/curateToolTraceFixtures';
+import { resolveStackToolTraceDir } from '../src/agent/tools/trace/resolveStackToolTraceDir';
+import { mergeToolTraceFixturesV1 } from '../src/agent/tools/trace/mergeToolTraceFixtures';
 
 function parseArgs(argv: string[]) {
     const out: Record<string, string | boolean> = {};
@@ -39,7 +40,7 @@ function readJsonlFiles(filePaths: string[]): string[] {
 }
 
 function resolveDefaultTracePaths(stack: string): string[] {
-    const dir = path.join(os.homedir(), '.happy', 'stacks', stack, 'cli', 'tool-traces');
+    const dir = resolveStackToolTraceDir({ stack });
     const files = readdirSync(dir).filter((f) => f.endsWith('.jsonl')).sort();
     return files.map((f) => path.join(dir, f));
 }
@@ -109,7 +110,21 @@ function main() {
             '__fixtures__',
             'tool-trace-fixtures.v1.json',
         );
-        writeFileSync(repoPath, JSON.stringify(fixtures, null, 2));
+        let existing: any = null;
+        try {
+            existing = JSON.parse(readFileSync(repoPath, 'utf8'));
+        } catch {
+            existing = null;
+        }
+
+        // Keep the committed keyset stable even if the current trace inputs don't include every allowlisted key.
+        const merged = mergeToolTraceFixturesV1({
+            existing: existing && existing.v === 1 && existing.examples ? existing : null,
+            next: fixtures,
+            allowlistKeys,
+        });
+
+        writeFileSync(repoPath, JSON.stringify(merged, null, 2));
         // eslint-disable-next-line no-console
         console.log(`[tool-trace-fixtures-v1] wrote repo fixture: ${repoPath}`);
     }

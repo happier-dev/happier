@@ -25,6 +25,7 @@ import {
 import { getDefaultClaudeCodePath, getCleanEnv, logDebug, streamToStdin } from './utils'
 import type { Writable } from 'node:stream'
 import { logger } from '@/ui/logger'
+import { createManagedChildProcess } from '@/subprocess/supervision/managedChildProcess'
 
 /**
  * Query class manages Claude Code process interaction
@@ -352,6 +353,7 @@ export function query(config: {
         // Use shell on Windows for global binaries and command-only mode
         shell: !isJsFile && process.platform === 'win32'
     }) as ChildProcessWithoutNullStreams
+    const managedChild = createManagedChildProcess(child)
 
     // Handle stdin
     let childStdin: Writable | null = null
@@ -390,28 +392,28 @@ export function query(config: {
     process.on('exit', cleanup)
 
     // Handle process exit
-    const processExitPromise = new Promise<void>((resolve) => {
-        child.on('close', (code, signal) => {
-            if (config.options?.abort?.aborted) {
-                query.setError(new AbortError('Claude Code process aborted by user'))
-                resolve()
-                return
-            }
+    const processExitPromise = managedChild.waitForTermination().then((event) => {
+        if (config.options?.abort?.aborted) {
+            query.setError(new AbortError('Claude Code process aborted by user'))
+            return
+        }
 
-            if (signal) {
-                query.setError(new Error(`Claude Code process terminated with signal ${signal}`))
-                resolve()
-                return
+        if (event.type === 'exited') {
+            if (event.code !== 0) {
+                query.setError(new Error(`Claude Code process exited with code ${event.code}`))
             }
+            return
+        }
 
-            if (code !== 0) {
-                query.setError(new Error(`Claude Code process exited with code ${code}`))
-                resolve()
-                return
-            }
+        if (event.type === 'signaled') {
+            query.setError(new Error(`Claude Code process terminated with signal ${event.signal}`))
+            return
+        }
 
-            resolve()
-        })
+        if (event.type === 'spawn_error') {
+            query.setError(new Error(`Failed to spawn Claude Code process: ${event.errorMessage}`))
+            return
+        }
     })
 
     // Create query instance

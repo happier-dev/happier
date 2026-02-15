@@ -75,6 +75,14 @@ export class JsonlFollower {
         }
     }
 
+    /**
+     * Drain once immediately. Safe to call even if `start()` was never invoked.
+     * Intended for integrations that trigger drain off fs watchers instead of polling.
+     */
+    async drainNow(): Promise<void> {
+        await this.drain();
+    }
+
     private async drain(): Promise<void> {
         if (this.stopped) return;
         if (this.inFlight) return;

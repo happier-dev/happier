@@ -34,7 +34,11 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
   private readonly abortController = new AbortController();
   private stderrAppender: BoundedTextFileAppender | null = null;
 
-  private readonly sessionId: SessionId = `voice-mediator-claude-${randomUUID()}`;
+  private readonly localSessionId: SessionId = `voice-agent-claude-${randomUUID()}`;
+  private readonly acceptedSessionIds = new Set<SessionId>();
+  private vendorSessionId: SessionId | null = null;
+  private resolveVendorSessionId: ((id: SessionId) => void) | null = null;
+  private vendorSessionIdPromise: Promise<SessionId>;
   private started = false;
   private disposed = false;
 
@@ -51,7 +55,12 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
       permissionPolicy: ClaudeSdkPermissionPolicy;
       settingsPath?: string;
     }>,
-  ) {}
+  ) {
+    this.acceptedSessionIds.add(this.localSessionId);
+    this.vendorSessionIdPromise = new Promise<SessionId>((resolve) => {
+      this.resolveVendorSessionId = resolve;
+    });
+  }
 
   onMessage(handler: AgentMessageHandler): void {
     this.listeners.push(handler);
@@ -69,7 +78,31 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
   }
 
   async startSession(): Promise<StartSessionResult> {
-    if (this.started) return { sessionId: this.sessionId };
+    if (this.started) return { sessionId: this.localSessionId };
+    await this.startSessionInternal({ resume: null });
+    return { sessionId: this.localSessionId };
+  }
+
+  async loadSession(sessionId: SessionId): Promise<StartSessionResult> {
+    if (this.started) {
+      throw new Error('Session already started');
+    }
+
+    const resume = String(sessionId ?? '').trim();
+    if (!resume) {
+      throw new Error('Missing sessionId');
+    }
+
+    this.acceptedSessionIds.add(resume);
+
+    await this.startSessionInternal({ resume });
+
+    const resolved = await this.waitForVendorSessionId({ timeoutMs: 2_000 });
+    return { sessionId: resolved ?? (resume as SessionId) };
+  }
+
+  private async startSessionInternal(params: Readonly<{ resume: string | null }>): Promise<void> {
+    if (this.started) return;
     this.started = true;
 
     const model = this.normalizeModelId(this.opts.modelId);
@@ -88,6 +121,7 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
         model: model ?? undefined,
         canCallTool,
         settingsPath: this.opts.settingsPath,
+        ...(params.resume ? { resume: params.resume } : {}),
         abort: this.abortController.signal,
         stderr: (data) => {
           this.stderrAppender?.append(data);
@@ -97,12 +131,10 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
 
     this.queryIter = q[Symbol.asyncIterator]();
     this.loopPromise = this.runLoop();
-
-    return { sessionId: this.sessionId };
   }
 
   async sendPrompt(sessionId: SessionId, prompt: string): Promise<void> {
-    if (sessionId !== this.sessionId) {
+    if (!this.acceptedSessionIds.has(sessionId)) {
       throw new Error(`Unknown sessionId: ${sessionId}`);
     }
     if (this.disposed) throw new Error('Backend disposed');
@@ -164,13 +196,13 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
 
   private buildCanCallTool() {
     if (this.opts.permissionPolicy === 'no_tools') {
-      return async () => ({ behavior: 'deny', message: 'Tools are disabled for voice mediator.', interrupt: true } as const);
+      return async () => ({ behavior: 'deny', message: 'Tools are disabled for voice agent.', interrupt: true } as const);
     }
 
     return async (toolName: string, input: unknown) => {
       const normalizedToolName = normalizeToolNameForPolicy(toolName);
       if (!READ_ONLY_SAFE_TOOL_NAMES.has(normalizedToolName)) {
-        return { behavior: 'deny', message: `Tool denied by voice mediator policy: ${toolName}`, interrupt: true } as const;
+        return { behavior: 'deny', message: `Tool denied by voice agent policy: ${toolName}`, interrupt: true } as const;
       }
       const updatedInput = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
       return { behavior: 'allow', updatedInput } as const;
@@ -191,6 +223,7 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
     if (type === 'system') {
       const system = msg as SDKSystemMessage;
       if (system.subtype === 'init') {
+        this.noteVendorSessionId(system.session_id);
         this.emit({ type: 'status', status: 'running' });
       }
       return;
@@ -200,13 +233,21 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
       const assistant = msg as SDKAssistantMessage;
       const text = this.extractAssistantText(assistant);
       if (!text) return;
-      this.pendingTurn?.buffer.push(text);
-      this.emit({ type: 'model-output', fullText: text });
+      const pending = this.pendingTurn;
+      if (pending) {
+        pending.buffer.push(text);
+        // AgentBackend contract: `fullText` is the full assistant text so far for the
+        // current turn. ExecutionRunManager relies on this to assemble bounded outputs.
+        this.emit({ type: 'model-output', fullText: pending.buffer.join('\n').trim() });
+      } else {
+        this.emit({ type: 'model-output', fullText: text });
+      }
       return;
     }
 
     if (type === 'result') {
       const result = msg as SDKResultMessage;
+      this.noteVendorSessionId(result.session_id);
       if (result.subtype === 'success') {
         const pending = this.pendingTurn;
         if (pending) {
@@ -224,6 +265,36 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
       }
       this.emit({ type: 'status', status: 'error', detail: String(result.subtype) });
       return;
+    }
+  }
+
+  private noteVendorSessionId(sessionIdRaw: unknown): void {
+    const sessionId = typeof sessionIdRaw === 'string' ? sessionIdRaw.trim() : '';
+    if (!sessionId) return;
+    const normalized = sessionId as SessionId;
+    if (!this.acceptedSessionIds.has(normalized)) {
+      this.acceptedSessionIds.add(normalized);
+      this.emit({ type: 'event', name: 'vendor_session_id', payload: { sessionId: normalized } });
+    }
+    if (!this.vendorSessionId) {
+      this.vendorSessionId = normalized;
+      const resolve = this.resolveVendorSessionId;
+      this.resolveVendorSessionId = null;
+      resolve?.(normalized);
+    }
+  }
+
+  private async waitForVendorSessionId(params: Readonly<{ timeoutMs: number }>): Promise<SessionId | null> {
+    if (this.vendorSessionId) return this.vendorSessionId;
+    const timeoutMs = Math.max(1, Math.floor(params.timeoutMs));
+    try {
+      const vendor = await Promise.race([
+        this.vendorSessionIdPromise,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+      ]);
+      return vendor;
+    } catch {
+      return null;
     }
   }
 

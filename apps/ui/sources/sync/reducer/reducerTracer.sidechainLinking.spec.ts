@@ -83,4 +83,43 @@ describe('reducerTracer sidechain linking', () => {
         expect(traced[0].sidechainId).toBe('tool1');
         expect(state.uuidToSidechainId.get('child-uuid')).toBe('tool1');
     });
+
+    it('falls back to parent-based propagation when sidechain flag is missing', () => {
+        const state = createTracer();
+        traceMessages(state, [buildTaskMessage(), buildSidechainRoot()]);
+
+        const childWithoutFlag: NormalizedMessage = {
+            id: 'child2',
+            localId: null,
+            createdAt: 3001,
+            role: 'agent',
+            isSidechain: false,
+            content: [{
+                type: 'text',
+                text: 'still sidechain',
+                uuid: 'child-uuid-2',
+                parentUUID: 'sidechain-uuid',
+            }],
+        };
+
+        const traced = traceMessages(state, [childWithoutFlag]);
+        expect(traced).toHaveLength(1);
+        expect(traced[0].sidechainId).toBe('tool1');
+        expect(state.uuidToSidechainId.get('child-uuid-2')).toBe('tool1');
+    });
+
+    it('buffers sidechain roots until Task prompt mapping exists (prevents main transcript leakage)', () => {
+        const state = createTracer();
+
+        // Sidechain root arrives before the Task tool-call (out-of-order delivery).
+        const tracedBeforeTask = traceMessages(state, [buildSidechainRoot()]);
+        expect(tracedBeforeTask).toHaveLength(0);
+
+        // Once the Task tool-call arrives, the buffered root can be linked by prompt.
+        const tracedAfterTask = traceMessages(state, [buildTaskMessage()]);
+        expect(tracedAfterTask.map((m) => m.id).sort()).toEqual(['sidechain1', 'task1']);
+        const root = tracedAfterTask.find((m) => m.id === 'sidechain1');
+        expect(root?.sidechainId).toBe('tool1');
+        expect(state.uuidToSidechainId.get('sidechain-uuid')).toBe('tool1');
+    });
 });

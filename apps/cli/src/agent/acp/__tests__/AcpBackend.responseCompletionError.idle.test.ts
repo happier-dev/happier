@@ -119,22 +119,25 @@ describe('AcpBackend response completion error preservation', () => {
       });
       backendForCleanup = backend;
 
+      // In real-world scenarios, stderr and stdout events can be delivered in either order
+      // (especially under parallel test load). We only require that:
+      // - the transport surfaces a fatal stderr error via status:error
+      // - an idle status is eventually emitted after the prompt begins
+      // - waitForResponseComplete still throws (error is preserved) even after idle is observed
+      let promptStarted = false;
       let sawStderrErrorStatus = false;
-      const stderrErrorStatusSeen = new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Timed out waiting for error status')), 5_000);
+      let sawIdleAfterPrompt = false;
+      const errorAndIdleSeen = new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Timed out waiting for error+idle statuses')), 10_000);
         backend.onMessage((msg) => {
-          if (msg.type === 'status' && msg.status === 'error' && msg.detail === 'simulated transport error') {
+          if (msg.type !== 'status') return;
+          if (msg.status === 'error' && msg.detail === 'simulated transport error') {
             sawStderrErrorStatus = true;
-            clearTimeout(timeout);
-            resolve();
           }
-        });
-      });
-
-      const idleAfterErrorSeen = new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Timed out waiting for idle status after error')), 5_000);
-        backend.onMessage((msg) => {
-          if (msg.type === 'status' && msg.status === 'idle' && sawStderrErrorStatus) {
+          if (msg.status === 'idle' && promptStarted) {
+            sawIdleAfterPrompt = true;
+          }
+          if (sawStderrErrorStatus && sawIdleAfterPrompt) {
             clearTimeout(timeout);
             resolve();
           }
@@ -142,9 +145,9 @@ describe('AcpBackend response completion error preservation', () => {
       });
 
       const started = await backend.startSession();
+      promptStarted = true;
       await backend.sendPrompt(started.sessionId, 'hi');
-      await stderrErrorStatusSeen;
-      await idleAfterErrorSeen;
+      await errorAndIdleSeen;
 
       await expect(backend.waitForResponseComplete(1_000)).rejects.toThrow('simulated transport error');
     } finally {

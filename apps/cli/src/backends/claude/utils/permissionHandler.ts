@@ -16,6 +16,7 @@ import { getToolDescriptor } from "./getToolDescriptor";
 import { delay } from "@/utils/time";
 import { isShellCommandAllowed } from '@/agent/permissions/shellCommandAllowlist';
 import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
+import { extractAgentIdFromTaskResultText } from '@/backends/claude/remote/sidechains/extractAgentIdFromTaskResult';
 import type { PermissionRpcPayload } from './permissionRpc';
 
 type PermissionResponse = PermissionRpcPayload;
@@ -38,6 +39,7 @@ export class PermissionHandler {
     private allowedBashPrefixes = new Set<string>();
     private permissionMode: PermissionMode = 'default';
     private onPermissionRequestCallback?: (toolCallId: string) => void;
+    private agentIdByTaskId = new Map<string, string>();
 
     constructor(session: Session) {
         this.session = session;
@@ -289,6 +291,7 @@ export class PermissionHandler {
      * Creates the canCallTool callback for the SDK
      */
     handleToolCall = async (toolName: string, input: unknown, mode: EnhancedMode, options: { signal: AbortSignal }): Promise<PermissionResult> => {
+        const rewrittenInput = this.rewriteToolInput(toolName, input);
 
         // Check if tool is explicitly allowed
         if (toolName === 'Bash') {
@@ -299,11 +302,11 @@ export class PermissionHandler {
                 for (const prefix of this.allowedBashPrefixes) patterns.push({ kind: 'prefix', value: prefix });
 
                 if (patterns.length > 0 && isShellCommandAllowed(inputObj.command, patterns)) {
-                    return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
+                    return { behavior: 'allow', updatedInput: rewrittenInput as Record<string, unknown> };
                 }
             }
         } else if (this.allowedTools.has(toolName)) {
-            return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
+            return { behavior: 'allow', updatedInput: rewrittenInput as Record<string, unknown> };
         }
 
         // Calculate descriptor
@@ -318,11 +321,11 @@ export class PermissionHandler {
         const effectiveMode: PermissionMode = mode?.permissionMode ?? this.permissionMode;
 
         if (effectiveMode === 'bypassPermissions') {
-            return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
+            return { behavior: 'allow', updatedInput: rewrittenInput as Record<string, unknown> };
         }
 
         if (effectiveMode === 'acceptEdits' && descriptor.edit) {
-            return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
+            return { behavior: 'allow', updatedInput: rewrittenInput as Record<string, unknown> };
         }
 
         //
@@ -337,7 +340,43 @@ export class PermissionHandler {
                 throw new Error(`Could not resolve tool call ID for ${toolName}`);
             }
         }
-        return this.handlePermissionRequest(toolCallId, toolName, input, options.signal);
+        return this.handlePermissionRequest(toolCallId, toolName, rewrittenInput, options.signal);
+    }
+
+    private rewriteToolInput(toolName: string, input: unknown): unknown {
+        // TaskOutput is a provider tool; models sometimes pass TaskOutput the Task's "taskId" instead of its "agentId".
+        // We can deterministically rewrite when we observed the Task tool_result that includes both ids.
+        if (toolName !== 'TaskOutput' && toolName !== 'task_output') return input;
+        if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
+
+        const record = input as Record<string, unknown>;
+        const taskIdRaw = typeof record.task_id === 'string' ? record.task_id.trim() : '';
+        if (!taskIdRaw) return input;
+
+        const agentId = this.agentIdByTaskId.get(taskIdRaw) ?? null;
+        if (!agentId || agentId === taskIdRaw) return input;
+
+        return { ...record, task_id: agentId };
+    }
+
+    private coerceToolResultText(content: unknown): string {
+        if (typeof content === 'string') return content;
+        if (content == null) return '';
+
+        if (Array.isArray(content)) {
+            const chunks: string[] = [];
+            for (const item of content) {
+                if (!item || typeof item !== 'object') continue;
+                if ((item as any).type !== 'text') continue;
+                const text = (item as any).text;
+                if (typeof text === 'string' && text.trim().length > 0) {
+                    chunks.push(text);
+                }
+            }
+            return chunks.join('\n');
+        }
+
+        return '';
     }
 
     /**
@@ -504,6 +543,13 @@ export class PermissionHandler {
                         const toolCall = this.toolCalls.find(tc => tc.id === block.tool_use_id);
                         if (toolCall && !toolCall.used) {
                             toolCall.used = true;
+                        }
+                        if (toolCall && (toolCall.name === 'Task' || toolCall.name === 'task')) {
+                            const text = this.coerceToolResultText((block as any).content);
+                            const ids = extractAgentIdFromTaskResultText(text);
+                            if (ids.agentId && ids.taskId) {
+                                this.agentIdByTaskId.set(ids.taskId, ids.agentId);
+                            }
                         }
                     }
                 }

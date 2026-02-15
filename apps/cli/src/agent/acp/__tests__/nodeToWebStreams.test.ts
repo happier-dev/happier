@@ -79,4 +79,22 @@ describe('nodeToWebStreams', () => {
 
         writer.releaseLock();
     });
+
+    it('treats stdin EPIPE error events as benign during write', async () => {
+        let stdin: FakeStdin | null = null;
+        stdin = new FakeStdin((_chunk, cb) => {
+            queueMicrotask(() => {
+                const err = Object.assign(new Error('broken pipe'), { code: 'EPIPE' });
+                cb(err);
+                stdin?.emit('error', err);
+            });
+            return true;
+        });
+        const stdout = new Readable({ read() { } });
+
+        const { writable } = nodeToWebStreams(stdin as any, stdout);
+        const writer = writable.getWriter();
+        await expect(writer.write(new Uint8Array([1, 2, 3]))).resolves.toBeUndefined();
+        writer.releaseLock();
+    });
 });

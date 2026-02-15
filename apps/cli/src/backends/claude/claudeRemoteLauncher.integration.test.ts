@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { appendFile, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { Session } from './session';
@@ -23,13 +26,16 @@ vi.mock('./remote/claudeRemoteDispatch', () => ({
 
 const mockResetParentChain = vi.fn();
 const mockUpdateSessionId = vi.fn();
+const mockConvert = vi.fn();
+const mockConvertSidechainUserMessage = vi.fn();
+const mockGenerateInterruptedToolResult = vi.fn();
 vi.mock('./utils/sdkToLogConverter', () => ({
   SDKToLogConverter: vi.fn().mockImplementation(() => ({
     resetParentChain: mockResetParentChain,
     updateSessionId: mockUpdateSessionId,
-    convert: () => null,
-    convertSidechainUserMessage: () => null,
-    generateInterruptedToolResult: () => null,
+    convert: (...args: any[]) => mockConvert(...args),
+    convertSidechainUserMessage: (...args: any[]) => mockConvertSidechainUserMessage(...args),
+    generateInterruptedToolResult: (...args: any[]) => mockGenerateInterruptedToolResult(...args),
   })),
 }));
 
@@ -63,6 +69,7 @@ type SessionClientStub = {
 
 type RemoteHarness = {
   session: Session;
+  client: SessionClientStub;
   switchHandlerReady: Promise<RpcHandler>;
 };
 
@@ -131,6 +138,7 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
 
   return {
     session,
+    client,
     switchHandlerReady: switchDeferred.promise,
   };
 }
@@ -138,6 +146,9 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
 describe.sequential('claudeRemoteLauncher', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConvert.mockReturnValue(null);
+    mockConvertSidechainUserMessage.mockReturnValue(null);
+    mockGenerateInterruptedToolResult.mockReturnValue(null);
   });
 
   afterEach(() => {
@@ -247,4 +258,178 @@ describe.sequential('claudeRemoteLauncher', () => {
 
     expect(mockResetParentChain).toHaveBeenCalledTimes(1);
   });
+
+  it('replaces TaskOutput tool_result transcript payloads with an empty string (content is streamed via sidechain)', async () => {
+    const { session, client, switchHandlerReady } = createRemoteHarness();
+
+    const taskOutputToolUseId = 'tool_taskoutput_1';
+
+    // Emit a "TaskOutput" tool_use followed by its tool_result.
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
+      const dispatchOpts = opts as RemoteDispatchMockOptions & { onMessage?: (m: unknown) => void };
+
+      dispatchOpts.onMessage?.({
+        type: 'assistant',
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: taskOutputToolUseId,
+              name: 'TaskOutput',
+              input: { task_id: 'task_1' },
+            },
+          ],
+        },
+      });
+
+      // Valid RawJSONLinesSchema record; includes agentId so TaskOutput importer considers it.
+      const jsonl = JSON.stringify({ type: 'assistant', uuid: 'uuid_1', agentId: 'agent_1' });
+
+      dispatchOpts.onMessage?.({
+        type: 'user',
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: taskOutputToolUseId,
+              content: jsonl,
+            },
+          ],
+        },
+      });
+
+      await waitForAbort(dispatchOpts.signal);
+    });
+
+    // Convert the SDK user message into a RawJSONLines-ish shape that claudeRemoteLauncher rewrites.
+    mockConvert.mockImplementation((message: any) => {
+      if (message?.type !== 'user') return null;
+      const content = Array.isArray(message?.message?.content)
+        ? message.message.content.map((item: any) => ({ ...item }))
+        : message?.message?.content;
+      return {
+        type: 'user',
+        uuid: 'happy_uuid_1',
+        message: { content },
+      };
+    });
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(session);
+
+    await vi.waitFor(() => {
+      expect(client.sendClaudeSessionMessage).toHaveBeenCalled();
+    });
+
+    const sent = client.sendClaudeSessionMessage.mock.calls.map((c) => c[0]).find((m: any) => {
+      const blocks = m?.message?.content;
+      if (!Array.isArray(blocks)) return false;
+      return blocks.some((b: any) => b?.type === 'tool_result' && b?.tool_use_id === taskOutputToolUseId);
+    });
+    expect(sent).toBeTruthy();
+
+    const blocks = (sent as any).message.content as any[];
+    const toolResult = blocks.find((b) => b?.type === 'tool_result' && b?.tool_use_id === taskOutputToolUseId);
+    expect(toolResult?.content).toBe('');
+    expect(String(toolResult?.content)).not.toContain('TaskOutput');
+    expect(String(toolResult?.content)).not.toContain('imported=');
+    expect(String(toolResult?.content)).not.toContain('buffered=');
+
+    const switchHandler = await switchHandlerReady;
+    expect(await switchHandler({ to: 'local' })).toBe(true);
+    await expect(launcherPromise).resolves.toBe('switch');
+  }, 30_000);
+
+  it('imports Task subagent output_file JSONL as sidechain messages (without TaskOutput)', async () => {
+    const { session, client, switchHandlerReady } = createRemoteHarness();
+
+    const dir = await mkdtemp(join(tmpdir(), 'happy-remote-subagent-jsonl-'));
+    const agentId = 'aa5e728';
+    const jsonlPath = join(dir, `agent-${agentId}.jsonl`);
+    const outputSymlinkPath = join(dir, `${agentId}.output`);
+
+    const rootPrompt = {
+      type: 'user',
+      uuid: 'u1',
+      isSidechain: true,
+      agentId,
+      message: { role: 'user', content: 'Do work' },
+    };
+    const assistant = {
+      type: 'assistant',
+      uuid: 'a1',
+      isSidechain: true,
+      agentId,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+    };
+
+    await writeFile(jsonlPath, `${JSON.stringify(rootPrompt)}\n${JSON.stringify(assistant)}\n`, 'utf8');
+    await symlink(jsonlPath, outputSymlinkPath);
+
+    try {
+      mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
+        const dispatchOpts = opts as RemoteDispatchMockOptions & { onMessage?: (m: unknown) => void };
+
+        dispatchOpts.onMessage?.({
+          type: 'assistant',
+          parent_tool_use_id: null,
+          message: {
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tool_task_1',
+                name: 'Task',
+                input: { prompt: 'do work' },
+              },
+            ],
+          },
+        });
+
+        dispatchOpts.onMessage?.({
+          type: 'user',
+          parent_tool_use_id: null,
+          message: {
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tool_task_1',
+                content: `Async agent launched successfully.\nagentId: ${agentId}\noutput_file: ${outputSymlinkPath}\n`,
+              },
+            ],
+          },
+        });
+
+        // Simulate file growth and ensure the collector can import incrementally.
+        await appendFile(jsonlPath, `${JSON.stringify({ ...assistant, uuid: 'a2' })}\n`, 'utf8');
+
+        await waitForAbort(dispatchOpts.signal);
+      });
+
+      // Ignore normal SDK-to-log conversions; we only care about imported file records.
+      mockConvert.mockReturnValue(null);
+
+      const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+      const launcherPromise = claudeRemoteLauncher(session);
+
+      await vi.waitFor(() => {
+        expect(client.sendClaudeSessionMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ type: 'assistant', uuid: 'a1', sidechainId: 'tool_task_1' }),
+          expect.objectContaining({ importedFrom: 'claude-subagent-file', claudeAgentId: agentId, sidechainId: 'tool_task_1' }),
+        );
+      });
+
+      await vi.waitFor(() => {
+        expect(client.sendClaudeSessionMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ type: 'assistant', uuid: 'a2', sidechainId: 'tool_task_1' }),
+          expect.objectContaining({ importedFrom: 'claude-subagent-file', claudeAgentId: agentId, sidechainId: 'tool_task_1' }),
+        );
+      });
+
+      const switchHandler = await switchHandlerReady;
+      expect(await switchHandler({ to: 'local' })).toBe(true);
+      await expect(launcherPromise).resolves.toBe('switch');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

@@ -10,6 +10,14 @@ export function nodeToWebStreams(
     stdin: Writable,
     stdout: Readable,
 ): { writable: WritableStream<Uint8Array>; readable: ReadableStream<Uint8Array> } {
+    const isBenignWriteError = (error: unknown): boolean => {
+        const e = error as { code?: unknown; message?: unknown };
+        const code = typeof e?.code === 'string' ? e.code : '';
+        const message = typeof e?.message === 'string' ? e.message : '';
+        // Normal shutdown / race conditions can surface as EPIPE or destroyed stream writes.
+        return code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED' || /stream was destroyed/i.test(message);
+    };
+
     const isTruthyEnv = (value: string | undefined): boolean => {
         const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
         return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
@@ -52,6 +60,19 @@ export function nodeToWebStreams(
         }
     })();
 
+    let activeStdinWriteErrorHandler: ((error: unknown) => void) | null = null;
+    const onStdinError = (error: unknown): void => {
+        if (activeStdinWriteErrorHandler) {
+            activeStdinWriteErrorHandler(error);
+            return;
+        }
+        if (isBenignWriteError(error)) {
+            return;
+        }
+        logger.debug(`[nodeToWebStreams] stdin stream error without active write`, error);
+    };
+    stdin.on('error', onStdinError);
+
     const writable = new WritableStream<Uint8Array>({
         write(chunk) {
             try {
@@ -63,14 +84,29 @@ export function nodeToWebStreams(
                 let drained = false;
                 let wrote = false;
                 let settled = false;
-
-                const isBenignWriteError = (error: unknown): boolean => {
-                    const e = error as any;
-                    const code = typeof e?.code === 'string' ? e.code : '';
-                    const message = typeof e?.message === 'string' ? e.message : '';
-                    // Normal shutdown / race conditions can surface as EPIPE or destroyed stream writes.
-                    return code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED' || /stream was destroyed/i.test(message);
+                const clearActiveWriteErrorHandler = () => {
+                    if (activeStdinWriteErrorHandler === onWriteError) {
+                        activeStdinWriteErrorHandler = null;
+                    }
                 };
+
+                const onWriteError = (error: unknown) => {
+                    if (settled) return;
+                    settled = true;
+                    stdin.off('drain', onDrain);
+                    clearActiveWriteErrorHandler();
+                    if (isBenignWriteError(error)) {
+                        resolve();
+                        return;
+                    }
+                    logger.debug(`[nodeToWebStreams] Error writing to stdin:`, error);
+                    if (error instanceof Error) {
+                        reject(error);
+                        return;
+                    }
+                    reject(new Error(String(error)));
+                };
+                activeStdinWriteErrorHandler = onWriteError;
 
                 const onDrain = () => {
                     drained = true;
@@ -78,6 +114,7 @@ export function nodeToWebStreams(
                     if (settled) return;
                     settled = true;
                     stdin.off('drain', onDrain);
+                    clearActiveWriteErrorHandler();
                     resolve();
                 };
 
@@ -88,16 +125,7 @@ export function nodeToWebStreams(
                 const ok = stdin.write(chunk, (err) => {
                     wrote = true;
                     if (err) {
-                        if (!settled) {
-                            settled = true;
-                            stdin.off('drain', onDrain);
-                            if (isBenignWriteError(err)) {
-                                resolve();
-                                return;
-                            }
-                            logger.debug(`[nodeToWebStreams] Error writing to stdin:`, err);
-                            reject(err);
-                        }
+                        onWriteError(err);
                         return;
                     }
 
@@ -105,6 +133,7 @@ export function nodeToWebStreams(
                         if (!settled) {
                             settled = true;
                             stdin.off('drain', onDrain);
+                            clearActiveWriteErrorHandler();
                             resolve();
                         }
                         return;
@@ -113,6 +142,7 @@ export function nodeToWebStreams(
                     if (drained && !settled) {
                         settled = true;
                         stdin.off('drain', onDrain);
+                        clearActiveWriteErrorHandler();
                         resolve();
                     }
                 });
@@ -127,11 +157,13 @@ export function nodeToWebStreams(
         close() {
             return new Promise((resolve) => {
                 safeCloseCapture(capture?.stdinStream);
+                stdin.off('error', onStdinError);
                 stdin.end(resolve);
             });
         },
         abort(reason) {
             safeCloseCapture(capture?.stdinStream);
+            stdin.off('error', onStdinError);
             stdin.destroy(reason instanceof Error ? reason : new Error(String(reason)));
         },
     });

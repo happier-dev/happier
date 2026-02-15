@@ -92,6 +92,20 @@ describe('SDKToLogConverter core conversion', () => {
       });
     });
 
+    it('preserves SDK uuid when present so transcript dedupe remains stable', () => {
+      const sdkMessage: SDKAssistantMessage = {
+        type: 'assistant',
+        uuid: 'sdk_uuid_1',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'x' }],
+        },
+      } as any;
+
+      const logMessage = converter.convert(sdkMessage);
+      expect(logMessage?.uuid).toBe('sdk_uuid_1');
+    });
+
     it('marks sidechain assistant messages with sidechainId', () => {
       const sdkMessage: SDKAssistantMessage = {
         type: 'assistant',

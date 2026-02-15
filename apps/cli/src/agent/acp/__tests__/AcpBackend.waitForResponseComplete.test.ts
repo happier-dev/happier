@@ -12,12 +12,15 @@ function writeFakeAcpAgentScript(params: {
   exitCodeAfterPrompt?: number;
   stderrAfterPromptText?: string;
   emitMessageChunkAfterPrompt?: boolean;
+  selfTerminateSignalAfterPrompt?: NodeJS.Signals;
 }): string {
   const scriptPath = join(params.dir, 'fake-acp-agent.mjs');
   const shouldExitAfterPrompt = typeof params.exitCodeAfterPrompt === 'number';
   const exitCode = params.exitCodeAfterPrompt ?? 0;
   const stderrAfterPromptText = params.stderrAfterPromptText ? JSON.stringify(params.stderrAfterPromptText) : 'null';
   const emitMessageChunkAfterPrompt = params.emitMessageChunkAfterPrompt ?? true;
+  const selfTerminateSignalAfterPrompt =
+    typeof params.selfTerminateSignalAfterPrompt === 'string' ? params.selfTerminateSignalAfterPrompt : null;
   const src = `
     const decoder = new TextDecoder();
     let buf = '';
@@ -61,6 +64,11 @@ function writeFakeAcpAgentScript(params: {
           if (stderrText) {
             process.stderr.write(String(stderrText) + '\\n');
           }
+          const selfSignal = ${selfTerminateSignalAfterPrompt ? JSON.stringify(selfTerminateSignalAfterPrompt) : 'null'};
+          if (selfSignal) {
+            setTimeout(() => process.kill(process.pid, selfSignal), 20);
+            continue;
+          }
           if (${shouldExitAfterPrompt ? 'true' : 'false'}) {
             setTimeout(() => process.exit(${exitCode}), 20);
           } else {
@@ -91,7 +99,113 @@ function writeFakeAcpAgentScript(params: {
   return scriptPath;
 }
 
+function writeFakeAcpHangingToolCallAgentScript(params: { dir: string }): string {
+  const scriptPath = join(params.dir, 'fake-acp-hanging-tool-call-agent.mjs');
+  const src = `
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    function send(obj) {
+      process.stdout.write(JSON.stringify(obj) + '\\n');
+    }
+
+    function ok(id, result) {
+      send({ jsonrpc: '2.0', id, result });
+    }
+
+    process.stdin.on('data', (chunk) => {
+      buf += decoder.decode(chunk, { stream: true });
+      const lines = buf.split('\\n');
+      buf = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let req;
+        try { req = JSON.parse(trimmed); } catch { continue; }
+        if (!req || typeof req !== 'object') continue;
+        const id = req.id;
+        const method = req.method;
+
+        if (method === 'initialize') {
+          ok(id, { protocolVersion: 1, authMethods: [] });
+          continue;
+        }
+
+        if (method === 'session/new') {
+          ok(id, { sessionId: 'test-session' });
+          continue;
+        }
+
+        if (method === 'session/prompt') {
+          ok(id, {});
+          // Emit a tool call update that never completes so the client keeps waiting.
+          send({
+            jsonrpc: '2.0',
+            method: 'session/update',
+            params: {
+              sessionId: 'test-session',
+              update: {
+                sessionUpdate: 'tool_call_update',
+                toolCallId: 'tool_call_hang_1',
+                status: 'pending',
+                kind: 'execute',
+                title: 'Shell: sleep 999',
+                rawInput: { command: ['sleep', '999'] },
+              },
+            },
+          });
+          continue;
+        }
+
+        if (id !== undefined && id !== null && typeof method === 'string') {
+          ok(id, {});
+        }
+      }
+    });
+  `;
+
+  writeFileSync(scriptPath, src, 'utf8');
+  return scriptPath;
+}
+
 describe('AcpBackend.waitForResponseComplete', () => {
+  it('rejects waitForResponseComplete with AbortError after cancel', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-cancel-'));
+    const scriptPath = writeFakeAcpHangingToolCallAgentScript({ dir });
+    let backendForCleanup: AcpBackend | undefined;
+
+    try {
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: {
+          agentName: 'test',
+          getInitTimeout: () => 5_000,
+          getToolPatterns: () => [] as ToolPattern[],
+          getIdleTimeout: () => 1,
+        } satisfies TransportHandler,
+      });
+      backendForCleanup = backend;
+
+      const started = await backend.startSession();
+      await backend.sendPrompt(started.sessionId, 'hi');
+
+      const waiting = backend.waitForResponseComplete(5_000);
+
+      // Simulate user abort; backend should immediately stop waiting (without requiring
+      // the agent to emit an idle status or complete the tool call).
+      await backend.cancel(started.sessionId);
+
+      await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+    } finally {
+      await backendForCleanup?.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
   it('resolves when idle status is emitted before waitForResponseComplete starts waiting', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-acp-idle-'));
     const scriptPath = writeFakeAcpAgentScript({ dir });
@@ -158,6 +272,36 @@ describe('AcpBackend.waitForResponseComplete', () => {
       await backend.sendPrompt(started.sessionId, 'hi');
 
       await expect(backend.waitForResponseComplete(250)).rejects.toThrow(/52/);
+    } finally {
+      await backendForCleanup?.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it('rejects waitForResponseComplete when ACP process is terminated by a signal after prompt', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-signal-'));
+    const scriptPath = writeFakeAcpAgentScript({ dir, selfTerminateSignalAfterPrompt: 'SIGTERM' });
+    let backendForCleanup: AcpBackend | undefined;
+
+    try {
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: {
+          agentName: 'test',
+          getInitTimeout: () => 5_000,
+          getToolPatterns: () => [] as ToolPattern[],
+          getIdleTimeout: () => 1,
+        } satisfies TransportHandler,
+      });
+      backendForCleanup = backend;
+
+      const started = await backend.startSession();
+      await backend.sendPrompt(started.sessionId, 'hi');
+
+      await expect(backend.waitForResponseComplete(250)).rejects.toThrow(/SIGTERM/);
     } finally {
       await backendForCleanup?.dispose().catch(() => {});
       rmSync(dir, { recursive: true, force: true });

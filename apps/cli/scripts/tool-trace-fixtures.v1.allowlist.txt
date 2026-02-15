@@ -2,20 +2,14 @@
 #
 # Purpose:
 # - Keep the committed fixture set small and stable.
-# - Cover the protocols/providers we care about for tool normalization and rendering.
+# - Ensure `yarn tool:trace:fixtures:v1 --write` is deterministic for the committed keys.
 #
 # Notes:
-# - This file is used by `yarn tool:trace:fixtures:v1` when `--allowlist` is not provided.
 # - One key per line (matches the extractor key format).
-
-acp/codex/permission-request/execute
-acp/codex/tool-call/edit
-acp/codex/tool-result/edit
-acp/codex/tool-call/execute
-acp/codex/tool-call/read
-acp/codex/tool-call/search
-acp/codex/tool-result/execute
-acp/codex/tool-result/read
+#
+# IMPORTANT:
+# This file must stay in sync with:
+#   src/agent/tools/normalization/__fixtures__/tool-trace-fixtures.v1.json
 acp/auggie/permission-request/Unknown tool
 acp/auggie/tool-call/Bash
 acp/auggie/tool-call/Edit
@@ -29,6 +23,15 @@ acp/auggie/tool-result/Read
 acp/auggie/tool-result/delete
 acp/auggie/tool-result/fetch
 acp/auggie/tool-result/search
+acp/codex/permission-request/execute
+acp/codex/tool-call/edit
+acp/codex/tool-call/execute
+acp/codex/tool-call/read
+acp/codex/tool-call/search
+acp/codex/tool-result/edit
+acp/codex/tool-result/execute
+acp/codex/tool-result/read
+acp/codex/tool-result/search
 acp/gemini/permission-request/change_title
 acp/gemini/permission-request/edit
 acp/gemini/permission-request/write
@@ -42,8 +45,9 @@ acp/gemini/tool-call/read
 acp/gemini/tool-call/search
 acp/gemini/tool-call/unknown
 acp/gemini/tool-call/write
-acp/gemini/tool-result/change_title
+acp/gemini/tool-result
 acp/gemini/tool-result/TodoWrite
+acp/gemini/tool-result/change_title
 acp/gemini/tool-result/edit
 acp/gemini/tool-result/execute
 acp/gemini/tool-result/glob
@@ -51,7 +55,6 @@ acp/gemini/tool-result/read
 acp/gemini/tool-result/search
 acp/gemini/tool-result/unknown
 acp/gemini/tool-result/write
-acp/gemini/tool-result
 acp/kilo/tool-call/Bash
 acp/kilo/tool-call/CodeSearch
 acp/kilo/tool-call/Edit
@@ -78,6 +81,20 @@ acp/opencode/tool-result/execute
 acp/opencode/tool-result/other
 acp/opencode/tool-result/read
 acp/opencode/tool-result/search
+acp/pi/tool-call/Bash
+acp/pi/tool-call/Edit
+acp/pi/tool-call/Glob
+acp/pi/tool-call/Grep
+acp/pi/tool-call/LS
+acp/pi/tool-call/Read
+acp/pi/tool-call/Write
+acp/pi/tool-result/Bash
+acp/pi/tool-result/Edit
+acp/pi/tool-result/Glob
+acp/pi/tool-result/Grep
+acp/pi/tool-result/LS
+acp/pi/tool-result/Read
+acp/pi/tool-result/Write
 claude/claude/permission-request/AskUserQuestion
 claude/claude/permission-request/Bash
 claude/claude/permission-request/ExitPlanMode
@@ -105,11 +122,11 @@ claude/claude/tool-call/mcp__happier__change_title
 claude/claude/tool-result/AskUserQuestion
 claude/claude/tool-result/Bash
 claude/claude/tool-result/Edit
-claude/claude/tool-result/Grep
-claude/claude/tool-result/Glob
-claude/claude/tool-result/Read
 claude/claude/tool-result/EnterPlanMode
 claude/claude/tool-result/ExitPlanMode
+claude/claude/tool-result/Glob
+claude/claude/tool-result/Grep
+claude/claude/tool-result/Read
 claude/claude/tool-result/Task
 claude/claude/tool-result/TodoWrite
 claude/claude/tool-result/WebFetch
@@ -121,11 +138,10 @@ codex/codex/permission-request/CodexPatch
 codex/codex/tool-call-result/CodexBash
 codex/codex/tool-call-result/CodexDiff
 codex/codex/tool-call-result/CodexPatch
+codex/codex/tool-call-result/CodexReasoning
 codex/codex/tool-call-result/mcp__happier__change_title
 codex/codex/tool-call/CodexBash
 codex/codex/tool-call/CodexDiff
 codex/codex/tool-call/CodexPatch
 codex/codex/tool-call/CodexReasoning
 codex/codex/tool-call/mcp__happier__change_title
-codex/codex/tool-call-result/CodexReasoning
-acp/codex/tool-result/search

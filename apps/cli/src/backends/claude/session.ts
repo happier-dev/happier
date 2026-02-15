@@ -7,6 +7,7 @@ import type { SessionHookData } from "./utils/startHookServer";
 import type { PermissionMode } from "@/api/types";
 import { randomUUID } from "node:crypto";
 import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
+import { configuration } from '@/configuration';
 import { ClaudePermissionRpcRouter } from './utils/permissionRpcRouter';
 
 export type SessionFoundInfo = {
@@ -50,7 +51,9 @@ export class Session {
     private sessionFoundCallbacks: ((info: SessionFoundInfo) => void)[] = [];
     
     /** Keep alive interval reference for cleanup */
-    private keepAliveInterval: NodeJS.Timeout;
+    private keepAliveTimer: NodeJS.Timeout | null = null;
+    private readonly keepAliveIdleMs: number;
+    private readonly keepAliveThinkingMs: number;
 
     constructor(opts: {
         api: ApiClient,
@@ -85,18 +88,36 @@ export class Session {
         this.jsRuntime = opts.jsRuntime ?? 'node';
         this.startedBy = opts.startedBy ?? 'terminal';
 
+        this.keepAliveIdleMs = configuration.sessionKeepAliveIdleMs;
+        this.keepAliveThinkingMs = configuration.sessionKeepAliveThinkingMs;
+
         // Start keep alive
         this.client.keepAlive(this.thinking, this.mode);
-        this.keepAliveInterval = setInterval(() => {
+        this.scheduleNextKeepAlive();
+    }
+
+    private scheduleNextKeepAlive(): void {
+        if (this.keepAliveTimer) {
+            clearTimeout(this.keepAliveTimer);
+            this.keepAliveTimer = null;
+        }
+
+        const delay = this.thinking ? this.keepAliveThinkingMs : this.keepAliveIdleMs;
+        this.keepAliveTimer = setTimeout(() => {
             this.client.keepAlive(this.thinking, this.mode);
-        }, 2000);
+            this.scheduleNextKeepAlive();
+        }, delay);
+        this.keepAliveTimer.unref?.();
     }
     
     /**
      * Cleanup resources (call when session is no longer needed)
      */
     cleanup = (): void => {
-        clearInterval(this.keepAliveInterval);
+        if (this.keepAliveTimer) {
+            clearTimeout(this.keepAliveTimer);
+            this.keepAliveTimer = null;
+        }
         this.sessionFoundCallbacks = [];
         this.permissionRpcRouter = null;
         logger.debug('[Session] Cleaned up resources');
@@ -146,6 +167,7 @@ export class Session {
         const wasThinking = this.thinking;
         this.thinking = thinking;
         this.client.keepAlive(thinking, this.mode);
+        this.scheduleNextKeepAlive();
 
         if (wasThinking === thinking) {
             return;
