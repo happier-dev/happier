@@ -24,6 +24,8 @@ describe('shouldEnsureDaemonForInvocation', () => {
     expect(shouldEnsureDaemonForInvocation({ args: ['logout'] })).toBe(false);
     expect(shouldEnsureDaemonForInvocation({ args: ['attach'] })).toBe(false);
     expect(shouldEnsureDaemonForInvocation({ args: ['self'] })).toBe(false);
+    expect(shouldEnsureDaemonForInvocation({ args: ['server'] })).toBe(false);
+    expect(shouldEnsureDaemonForInvocation({ args: ['session'] })).toBe(false);
   });
 
   it('returns false for help/version invocations', () => {

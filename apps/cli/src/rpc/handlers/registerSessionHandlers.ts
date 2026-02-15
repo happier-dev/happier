@@ -12,7 +12,6 @@ import { registerFileSystemHandlers } from './fileSystem';
 import { registerRipgrepHandler } from './ripgrep';
 import { registerDifftasticHandler } from './difftastic';
 import { registerScmHandlers } from './scm';
-import { registerVoiceMediatorHandlers } from './voiceMediator';
 
 /*
  * Spawn Session Options and Result
@@ -22,6 +21,12 @@ import { registerVoiceMediatorHandlers } from './voiceMediator';
 export interface SpawnSessionOptions {
     machineId?: string;
     directory: string;
+    /**
+     * Optional initial prompt to seed for daemon-driven session starts.
+     * The spawned process consumes this prompt from environment and sends it
+     * through the normal session user-message pipeline.
+     */
+    initialPrompt?: string;
     sessionId?: string;
     /**
      * Resume an existing agent session by id (vendor resume).
@@ -46,16 +51,6 @@ export interface SpawnSessionOptions {
      * When set, the CLI will connect to this session instead of creating a new one.
      */
     existingSessionId?: string;
-    /**
-     * Session encryption key (dataKey mode only) encoded as base64.
-     * Required when existingSessionId is set.
-     */
-    sessionEncryptionKeyBase64?: string;
-    /**
-     * Session encryption variant (resume only supports dataKey).
-     * Required when existingSessionId is set.
-     */
-    sessionEncryptionVariant?: 'dataKey';
     /**
      * Optional: explicit permission mode to publish at startup (seed or override).
      * When omitted, the runner preserves existing metadata.permissionMode.
@@ -122,7 +117,6 @@ export type SpawnSessionResult =
 export function registerSessionHandlers(
     rpcHandlerManager: RpcHandlerManager,
     workingDirectory: string,
-    opts?: Readonly<{ flavor?: string }>,
 ) {
     registerBashHandler(rpcHandlerManager, workingDirectory);
     // Checklist-based machine capability registry (replaces legacy detect-cli / detect-capabilities / dep-status).
@@ -132,7 +126,4 @@ export function registerSessionHandlers(
     registerRipgrepHandler(rpcHandlerManager, workingDirectory);
     registerDifftasticHandler(rpcHandlerManager, workingDirectory);
     registerScmHandlers(rpcHandlerManager, workingDirectory);
-    if (typeof opts?.flavor === 'string' && opts.flavor.trim().length > 0) {
-        registerVoiceMediatorHandlers(rpcHandlerManager, { cwd: workingDirectory, flavor: opts.flavor });
-    }
 }

@@ -46,7 +46,7 @@ export async function dispatchCli(params: Readonly<{
       const idx = args.indexOf('--tmux');
       if (idx !== -1) args.splice(idx, 1);
     } else {
-      const disallowed = new Set(['doctor', 'auth', 'connect', 'notify', 'daemon', 'install', 'uninstall', 'logout', 'attach', 'self', 'server']);
+      const disallowed = new Set(['doctor', 'auth', 'connect', 'notify', 'daemon', 'install', 'uninstall', 'logout', 'attach', 'self', 'server', 'session']);
       if (subcommand && disallowed.has(subcommand)) {
         console.error(chalk.red('Error:'), '--tmux can only be used when starting a session.');
         process.exit(1);

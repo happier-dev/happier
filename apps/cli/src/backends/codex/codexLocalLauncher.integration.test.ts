@@ -27,7 +27,7 @@ describe('codexLocalLauncher', () => {
       recordArgv: true,
     });
 
-    const { session } = createLocalSessionHarness();
+    const { session, agentStateUpdates } = createLocalSessionHarness();
     const messageQueue = createLocalMessageQueue();
     const restoreEnv = applyCodexLauncherEnv({
       HAPPIER_CODEX_SESSIONS_DIR: fixture.sessionsRoot,
@@ -60,6 +60,9 @@ describe('codexLocalLauncher', () => {
       await waitFor(() => {
         expect(existsSync(fixture.terminatedFlag)).toBe(true);
       });
+
+      // Local sessions should publish controlledByUser so the UI can render the local/remote banner.
+      expect(agentStateUpdates.some((s) => s.controlledByUser === true)).toBe(true);
     } finally {
       restoreEnv();
       await cleanupCodexBinaryFixture(fixture);
@@ -77,7 +80,7 @@ describe('codexLocalLauncher', () => {
       recordArgv: false,
     });
 
-    const { session, codexMessages, metadataUpdates } = createLocalSessionHarness();
+    const { session, codexMessages, metadataUpdates, agentStateUpdates } = createLocalSessionHarness();
     const messageQueue = createLocalMessageQueue();
     const restoreEnv = applyCodexLauncherEnv({
       HAPPIER_CODEX_SESSIONS_DIR: fixture.sessionsRoot,
@@ -100,9 +103,11 @@ describe('codexLocalLauncher', () => {
       await waitFor(() => {
         expect(codexMessages.some((m) => m.type === 'message' && m.message === 'hello-from-local')).toBe(true);
       });
+      expect(agentStateUpdates.some((s) => s.controlledByUser === true)).toBe(true);
 
       messageQueue.push('hi', { permissionMode: 'default' });
       await expect(launcherPromise).resolves.toEqual({ type: 'switch', resumeId: sessionId });
+      expect(agentStateUpdates.some((s) => s.controlledByUser === false)).toBe(true);
 
       await waitFor(() => {
         expect(existsSync(fixture.terminatedFlag)).toBe(true);
@@ -244,6 +249,46 @@ describe('codexLocalLauncher', () => {
       if (result.type === 'exit') {
         expect(result.code).not.toBe(0);
       }
+    } finally {
+      restoreEnv();
+      await cleanupCodexBinaryFixture(fixture);
+    }
+  });
+
+  it('returns non-zero exit when the Codex TUI is terminated by SIGTERM unexpectedly', async () => {
+    const fixture = await createCodexBinaryFixture();
+    const sessionId = randomUUID();
+    const nowIso = new Date().toISOString();
+
+    await writeFakeCodexScript(fixture.fakeCodex, {
+      terminatedFlag: fixture.terminatedFlag,
+      recordArgv: false,
+      handleSigint: false,
+      handleSigterm: false,
+      selfTerminateSignal: 'SIGTERM',
+      selfTerminateAfterMs: 150,
+    });
+
+    const { session } = createLocalSessionHarness();
+    const messageQueue = createLocalMessageQueue();
+    const restoreEnv = applyCodexLauncherEnv({
+      HAPPIER_CODEX_SESSIONS_DIR: fixture.sessionsRoot,
+      HAPPIER_CODEX_TUI_BIN: fixture.fakeCodex,
+      TEST_CODEX_SESSION_ID: sessionId,
+      TEST_CODEX_TIMESTAMP: nowIso,
+      TEST_CODEX_ARGV_PATH: undefined,
+    });
+
+    try {
+      const result = await codexLocalLauncher({
+        path: fixture.sessionsRoot,
+        api: {},
+        session,
+        messageQueue,
+        permissionMode: 'default',
+      });
+
+      expect(result).toEqual({ type: 'exit', code: 1 });
     } finally {
       restoreEnv();
       await cleanupCodexBinaryFixture(fixture);

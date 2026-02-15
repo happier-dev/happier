@@ -72,6 +72,7 @@ describe('ApiSessionClient connection handling', () => {
     afterEach(() => {
         delete process.env.HAPPIER_STACK_TOOL_TRACE;
         delete process.env.HAPPIER_STACK_TOOL_TRACE_FILE;
+        delete process.env.HAPPIER_DAEMON_INITIAL_PROMPT;
         __resetToolTraceForTests();
     });
 
@@ -287,6 +288,138 @@ describe('ApiSessionClient connection handling', () => {
             meta: { permissionMode: 'read-only' },
             createdAt: 1234,
         });
+    });
+
+    it('consumes daemon initial prompt env and seeds one user prompt on callback attach', () => {
+        process.env.HAPPIER_DAEMON_INITIAL_PROMPT = '  run nightly health check  ';
+
+        const client = new ApiSessionClient('fake-token', mockSession);
+        const sendUserTextMessageSpy = vi.spyOn(client, 'sendUserTextMessage');
+        const onUserMessage = vi.fn();
+
+        client.onUserMessage(onUserMessage);
+        client.onUserMessage(onUserMessage);
+
+        expect(onUserMessage).toHaveBeenCalledTimes(1);
+        expect(onUserMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                role: 'user',
+                content: { type: 'text', text: 'run nightly health check' },
+                meta: expect.objectContaining({
+                    source: 'daemon-initial-prompt',
+                    sentFrom: 'cli',
+                }),
+            }),
+        );
+        expect(sendUserTextMessageSpy).toHaveBeenCalledTimes(1);
+        expect(sendUserTextMessageSpy).toHaveBeenCalledWith('run nightly health check');
+        expect(process.env.HAPPIER_DAEMON_INITIAL_PROMPT).toBeUndefined();
+    });
+
+    it('runs one transcript catch-up on first callback attach to recover missed startup user messages', async () => {
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+
+        const plaintext = {
+            role: 'user',
+            content: { type: 'text', text: 'missed startup prompt' },
+            meta: { source: 'ui', sentFrom: 'web' },
+        };
+        const ciphertext = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
+
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue({
+            data: {
+                messages: [
+                    {
+                        id: 'm-catchup-1',
+                        seq: 1,
+                        content: { t: 'encrypted', c: ciphertext },
+                        createdAt: 2222,
+                    },
+                ],
+                nextAfterSeq: null,
+            },
+        });
+
+        const client = new ApiSessionClient('fake-token', mockSession);
+        const onUserMessage = vi.fn();
+
+        client.onUserMessage(onUserMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        client.onUserMessage(onUserMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getSpy).toHaveBeenCalledTimes(1);
+        expect(onUserMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                role: 'user',
+                content: { type: 'text', text: 'missed startup prompt' },
+                createdAt: 2222,
+            }),
+        );
+
+        getSpy.mockRestore();
+    });
+
+    it('retries startup transcript catch-up when the first poll races before the first user prompt commit', async () => {
+        vi.useFakeTimers();
+        try {
+            const axiosMod = await import('axios');
+            const axios = axiosMod.default as any;
+
+            const plaintext = {
+                role: 'user',
+                content: { type: 'text', text: 'missed by first poll, recovered by retry' },
+                meta: { source: 'ui', sentFrom: 'web' },
+            };
+            const ciphertext = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
+
+            const getSpy = vi.spyOn(axios, 'get')
+                .mockResolvedValueOnce({
+                    data: {
+                        messages: [],
+                        nextAfterSeq: null,
+                    },
+                })
+                .mockResolvedValueOnce({
+                    data: {
+                        messages: [
+                            {
+                                id: 'm-catchup-race-1',
+                                seq: 1,
+                                content: { t: 'encrypted', c: ciphertext },
+                                createdAt: 3333,
+                            },
+                        ],
+                        nextAfterSeq: null,
+                    },
+                });
+
+            mockSession.metadata = {
+                ...mockSession.metadata,
+                startedBy: 'daemon',
+            };
+            const client = new ApiSessionClient('fake-token', mockSession);
+            const onUserMessage = vi.fn();
+
+            client.onUserMessage(onUserMessage);
+
+            await vi.advanceTimersByTimeAsync(0);
+            await vi.advanceTimersByTimeAsync(5_000);
+
+            expect(getSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+            expect(onUserMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    role: 'user',
+                    content: { type: 'text', text: 'missed by first poll, recovered by retry' },
+                    createdAt: 3333,
+                }),
+            );
+
+            getSpy.mockRestore();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('can resolve the latest permission intent from the encrypted transcript (legacy tokens supported)', async () => {
@@ -600,6 +733,60 @@ describe('ApiSessionClient connection handling', () => {
                 message: expect.any(String),
                 localId: expect.any(String),
             })
+        );
+    });
+
+    it('merges optional meta into outbound Claude session messages', () => {
+        const client = new ApiSessionClient('fake-token', mockSession);
+
+        const payload: RawJSONLines = {
+            type: 'assistant',
+            uuid: 'test-uuid',
+            message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: 'hi' }],
+            },
+        } as const;
+
+        client.sendClaudeSessionMessage(payload, { importedFrom: 'claude-taskoutput' });
+
+        const call = mockSocket.emit.mock.calls.filter((c: any[]) => c[0] === 'message').pop();
+        expect(call).toBeTruthy();
+        const decrypted = decrypt(
+            mockSession.encryptionKey,
+            mockSession.encryptionVariant,
+            decodeBase64(call![1].message),
+        ) as any;
+
+        expect(decrypted.meta).toMatchObject({
+            sentFrom: 'cli',
+            source: 'cli',
+            importedFrom: 'claude-taskoutput',
+        });
+    });
+
+    it('sends keepAlive(thinking=true) as a non-volatile emit so UIs that connect mid-turn still receive it', () => {
+        mockSocket.volatile = { emit: vi.fn() };
+
+        const client = new ApiSessionClient('fake-token', mockSession);
+        client.keepAlive(true, 'remote');
+
+        expect(mockSocket.emit).toHaveBeenCalledWith(
+            'session-alive',
+            expect.objectContaining({ sid: mockSession.id, thinking: true, mode: 'remote' }),
+        );
+        expect(mockSocket.volatile.emit).not.toHaveBeenCalled();
+    });
+
+    it('sends keepAlive(thinking=false) via volatile emit to avoid backpressure', () => {
+        mockSocket.volatile = { emit: vi.fn() };
+
+        const client = new ApiSessionClient('fake-token', mockSession);
+        client.keepAlive(false, 'remote');
+
+        expect(mockSocket.volatile.emit).toHaveBeenCalledWith(
+            'session-alive',
+            expect.objectContaining({ sid: mockSession.id, thinking: false, mode: 'remote' }),
         );
     });
 

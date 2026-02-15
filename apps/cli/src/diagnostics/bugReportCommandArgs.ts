@@ -5,10 +5,8 @@ import type {
   BugReportSeverity,
 } from '@happier-dev/protocol';
 import {
-  BUG_REPORT_DEFAULT_ISSUE_LABELS,
   BUG_REPORT_DEFAULT_ISSUE_OWNER,
   BUG_REPORT_DEFAULT_ISSUE_REPO,
-  normalizeBugReportIssueSlug,
 } from '@happier-dev/protocol';
 
 export type ParsedBugReportArgs = {
@@ -25,9 +23,8 @@ export type ParsedBugReportArgs = {
   includeDiagnostics: boolean | null;
   acceptedPrivacyNotice: boolean;
   providerUrl: string;
-  issueOwner: string;
-  issueRepo: string;
-  labels: string[];
+  existingIssueNumber: number | null;
+  skipSimilarIssues: boolean;
   serverVersion: string;
   deploymentType: BugReportDeploymentType | null;
 };
@@ -37,15 +34,15 @@ export function bugReportUsage(): string {
     `${chalk.bold('happier bug-report')} - Submit a structured bug report with optional diagnostics`,
     '',
     `${chalk.bold('Usage:')}`,
-    '  happier bug-report --title <title> --summary <text> --current-behavior <text> --expected-behavior <text> [options]',
+    '  happier bug-report --title <title> --summary <text> [options]',
     '',
     `${chalk.bold('Required fields:')}`,
     '  --title <text>',
     '  --summary <text>',
-    '  --current-behavior <text>',
-    '  --expected-behavior <text>',
     '',
     `${chalk.bold('Options:')}`,
+    '  --current-behavior <text>         Optional extra detail',
+    '  --expected-behavior <text>        Optional extra detail',
     '  --repro-step <text>                Add one reproduction step (repeatable)',
     '  --frequency <always|often|sometimes|once>   Default: often',
     '  --severity <blocker|high|medium|low>        Default: medium',
@@ -54,20 +51,12 @@ export function bugReportUsage(): string {
     '  --include-diagnostics / --no-include-diagnostics',
     '  --accept-privacy-notice            Skip interactive privacy confirmation',
     '  --provider-url <url>               Override diagnostics service URL',
-    `  --issue-owner <owner>              Default: ${BUG_REPORT_DEFAULT_ISSUE_OWNER}`,
-    `  --issue-repo <repo>                Default: ${BUG_REPORT_DEFAULT_ISSUE_REPO}`,
-    '  --labels <comma,separated,labels>  Default: bug',
+    '  --existing-issue-number <number>   Post report as a comment on an existing issue',
+    '  --no-similar-issues                Skip searching for similar issues',
     '  --server-version <version>',
     '  --deployment-type <cloud|self-hosted|enterprise>',
     '  -h, --help',
   ].join('\n');
-}
-
-function parseCsv(raw: string): string[] {
-  return String(raw ?? '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
 }
 
 export function parseBugReportArgs(args: string[]): ParsedBugReportArgs {
@@ -85,9 +74,8 @@ export function parseBugReportArgs(args: string[]): ParsedBugReportArgs {
     includeDiagnostics: null,
     acceptedPrivacyNotice: false,
     providerUrl: '',
-    issueOwner: BUG_REPORT_DEFAULT_ISSUE_OWNER,
-    issueRepo: BUG_REPORT_DEFAULT_ISSUE_REPO,
-    labels: [...BUG_REPORT_DEFAULT_ISSUE_LABELS],
+    existingIssueNumber: null,
+    skipSimilarIssues: false,
     serverVersion: '',
     deploymentType: null,
   };
@@ -185,19 +173,18 @@ export function parseBugReportArgs(args: string[]): ParsedBugReportArgs {
       [parsed.providerUrl, index] = readValue(index, arg);
       continue;
     }
-    if (arg === '--issue-owner') {
-      [parsed.issueOwner, index] = readValue(index, arg);
+    if (arg === '--existing-issue-number') {
+      let value = '';
+      [value, index] = readValue(index, arg);
+      const parsedNumber = Number(value);
+      if (!Number.isFinite(parsedNumber) || !Number.isInteger(parsedNumber) || parsedNumber <= 0) {
+        throw new Error(`Invalid --existing-issue-number value: ${value}`);
+      }
+      parsed.existingIssueNumber = parsedNumber;
       continue;
     }
-    if (arg === '--issue-repo') {
-      [parsed.issueRepo, index] = readValue(index, arg);
-      continue;
-    }
-    if (arg === '--labels') {
-      let labelsRaw = '';
-      [labelsRaw, index] = readValue(index, arg);
-      parsed.labels = parseCsv(labelsRaw);
-      if (parsed.labels.length === 0) parsed.labels = [...BUG_REPORT_DEFAULT_ISSUE_LABELS];
+    if (arg === '--no-similar-issues') {
+      parsed.skipSimilarIssues = true;
       continue;
     }
     if (arg === '--server-version') {
@@ -224,18 +211,6 @@ export function parseBugReportArgs(args: string[]): ParsedBugReportArgs {
   parsed.expectedBehavior = parsed.expectedBehavior.trim();
   parsed.whatChangedRecently = parsed.whatChangedRecently.trim();
   parsed.providerUrl = parsed.providerUrl.trim();
-  parsed.issueOwner = parsed.issueOwner.trim() || BUG_REPORT_DEFAULT_ISSUE_OWNER;
-  parsed.issueRepo = parsed.issueRepo.trim() || BUG_REPORT_DEFAULT_ISSUE_REPO;
-  const normalizedIssueOwner = normalizeBugReportIssueSlug(parsed.issueOwner);
-  if (!normalizedIssueOwner) {
-    throw new Error(`Invalid --issue-owner value: ${parsed.issueOwner}`);
-  }
-  const normalizedIssueRepo = normalizeBugReportIssueSlug(parsed.issueRepo);
-  if (!normalizedIssueRepo) {
-    throw new Error(`Invalid --issue-repo value: ${parsed.issueRepo}`);
-  }
-  parsed.issueOwner = normalizedIssueOwner;
-  parsed.issueRepo = normalizedIssueRepo;
   parsed.serverVersion = parsed.serverVersion.trim();
   return parsed;
 }

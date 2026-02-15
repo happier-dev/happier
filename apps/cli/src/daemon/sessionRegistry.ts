@@ -5,6 +5,7 @@ import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/pro
 import { join } from 'node:path';
 import * as z from 'zod';
 import { CATALOG_AGENT_IDS } from '@/backends/types';
+import { SessionRunnerRespawnDescriptorV1Schema } from './processSupervision/sessionRunnerRespawnDescriptor';
 
 const DaemonSessionMarkerSchema = z.object({
   pid: z.number().int().positive(),
@@ -20,6 +21,8 @@ const DaemonSessionMarkerSchema = z.object({
   // Optional debug-only sample of the observed command (best-effort; may be truncated by ps-list).
   processCommand: z.string().optional(),
   metadata: z.any().optional(),
+  // Safe daemon respawn inputs (no secrets). Used to reconstruct SpawnSessionOptions after reattach.
+  respawn: SessionRunnerRespawnDescriptorV1Schema.optional(),
 });
 
 export type DaemonSessionMarker = z.infer<typeof DaemonSessionMarkerSchema>;

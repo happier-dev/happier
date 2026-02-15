@@ -3,17 +3,12 @@ import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const getCodexAcpDepStatusMock = vi.fn(async () => ({ installed: false, binPath: null }));
-vi.mock('@/capabilities/deps/codexAcp', () => ({
-  // Keep this `any` so TS doesn't complain about rest/spread mismatch.
-  getCodexAcpDepStatus: (...args: any[]) => (getCodexAcpDepStatusMock as any)(...args),
-}));
-
 const ORIGINAL_ENV = {
   HAPPIER_CODEX_ACP_BIN: process.env.HAPPIER_CODEX_ACP_BIN,
   HAPPIER_CODEX_ACP_NPX_MODE: process.env.HAPPIER_CODEX_ACP_NPX_MODE,
   PATH: process.env.PATH,
 };
+const ORIGINAL_CWD = process.cwd();
 
 const tempDirs = new Set<string>();
 
@@ -27,7 +22,7 @@ async function createFakeBin(name: string): Promise<string> {
 }
 
 afterEach(async () => {
-  getCodexAcpDepStatusMock.mockClear();
+  process.chdir(ORIGINAL_CWD);
   if (ORIGINAL_ENV.HAPPIER_CODEX_ACP_BIN === undefined) delete process.env.HAPPIER_CODEX_ACP_BIN;
   else process.env.HAPPIER_CODEX_ACP_BIN = ORIGINAL_ENV.HAPPIER_CODEX_ACP_BIN;
   if (ORIGINAL_ENV.HAPPIER_CODEX_ACP_NPX_MODE === undefined) delete process.env.HAPPIER_CODEX_ACP_NPX_MODE;
@@ -42,6 +37,22 @@ afterEach(async () => {
 });
 
 describe('codexDaemonSpawnHooks.validateSpawn', () => {
+  it('reports an absolute missing path for relative HAPPIER_CODEX_ACP_BIN', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'happier-codex-spawnhooks-cwd-'));
+    tempDirs.add(cwd);
+    process.chdir(cwd);
+    process.env.HAPPIER_CODEX_ACP_BIN = './missing-codex-acp';
+
+    const { codexDaemonSpawnHooks } = await import('./spawnHooks');
+    const res = await codexDaemonSpawnHooks.validateSpawn!({
+      experimentalCodexAcp: true,
+      experimentalCodexResume: false,
+    } as any);
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error('expected ACP spawn validation to fail');
+    expect(res.errorMessage).toContain(join(cwd, 'missing-codex-acp'));
+  });
+
   it('allows ACP spawn when codex-acp is not installed but npx is available (npx mode auto)', async () => {
     delete process.env.HAPPIER_CODEX_ACP_BIN;
     delete process.env.HAPPIER_CODEX_ACP_NPX_MODE;

@@ -75,8 +75,8 @@ describe('daemon service installer', () => {
   it('throws for unsupported platform values', async () => {
     await expect(
       installDaemonService({
-        platform: 'win32' as never,
+        platform: 'aix' as never,
       }),
-    ).rejects.toThrow('Daemon service installation is currently only supported on macOS and Linux');
+    ).rejects.toThrow('Daemon service installation is currently only supported on macOS, Linux, and Windows');
   });
 });

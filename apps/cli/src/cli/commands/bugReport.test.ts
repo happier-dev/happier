@@ -44,6 +44,7 @@ function createDeps(overrides: Partial<BugReportCommandDependencies> = {}): BugR
       issueNumber: 123,
       issueUrl: 'https://github.com/happier-dev/happier/issues/123',
     }),
+    searchSimilarIssues: async () => ({ issues: [] }),
     isInteractiveTerminal: () => false,
     promptInput: async () => '',
     ...overrides,
@@ -75,6 +76,7 @@ describe('runBugReportCommand', () => {
       '--summary', 'The app freezes after login',
       '--current-behavior', 'UI becomes unresponsive for 20 seconds',
       '--expected-behavior', 'UI remains responsive',
+      '--repro-step', 'Open app',
       '--no-include-diagnostics',
     ], deps);
 
@@ -82,9 +84,6 @@ describe('runBugReportCommand', () => {
     expect(submissions[0]).toMatchObject({
       form: {
         summary: 'The app freezes after login\n\nReporter GitHub: `Foo-Bar`',
-        consent: {
-          allowMaintainerFollowUp: true,
-        },
       },
     });
   });
@@ -102,8 +101,21 @@ describe('runBugReportCommand', () => {
     ], deps)).rejects.toThrow(/unknown argument/i);
   });
 
+  it('rejects --labels flag as an unknown argument', async () => {
+    const deps = createDeps();
+
+    await expect(runBugReportCommand([
+      '--title', 'Labels unsupported',
+      '--summary', 'summary',
+      '--current-behavior', 'current',
+      '--expected-behavior', 'expected',
+      '--no-include-diagnostics',
+      '--labels', 'bug,security',
+    ], deps)).rejects.toThrow(/unknown argument/i);
+  });
+
   it('prompts for missing required fields and submits report payload', async () => {
-    const prompts = ['Crash when opening app', 'yes'];
+    const prompts = ['Crash when opening app', '', 'yes'];
     const submissions: unknown[] = [];
     const deps = createDeps({
       isInteractiveTerminal: () => true,
@@ -176,8 +188,6 @@ describe('runBugReportCommand', () => {
     const result = await runBugReportCommand([
       '--title', 'CLI command failure',
       '--summary', 'Command exits with unknown error',
-      '--current-behavior', 'The command exits immediately',
-      '--expected-behavior', 'The command should continue',
       '--no-include-diagnostics',
     ], deps);
 
@@ -191,6 +201,83 @@ describe('runBugReportCommand', () => {
           includeDiagnostics: false,
         },
       },
+    });
+    const submittedForm = (submissions[0] as any)?.form ?? {};
+    expect('currentBehavior' in submittedForm).toBe(false);
+    expect('expectedBehavior' in submittedForm).toBe(false);
+    expect('reproductionSteps' in submittedForm).toBe(false);
+  });
+
+  it('accepts --existing-issue-number and forwards it to bug report submission', async () => {
+    const submissions: unknown[] = [];
+    const deps = createDeps({
+      submitBugReport: async (input) => {
+        submissions.push(input);
+        return {
+          reportId: 'report-existing',
+          issueNumber: 99,
+          issueUrl: 'https://github.com/happier-dev/happier/issues/99',
+        };
+      },
+    });
+
+    const result = await runBugReportCommand([
+      '--title', 'Duplicate issue',
+      '--summary', 'This looks like an existing issue',
+      '--current-behavior', 'broken',
+      '--expected-behavior', 'works',
+      '--repro-step', 'Open app',
+      '--no-include-diagnostics',
+      '--existing-issue-number', '99',
+    ], deps);
+
+    expect(result.mode).toBe('submitted');
+    expect(submissions).toHaveLength(1);
+    expect(submissions[0]).toMatchObject({
+      existingIssueNumber: 99,
+    });
+  });
+
+  it('prompts to select a similar issue in interactive mode when duplicates are found', async () => {
+    const submissions: unknown[] = [];
+    const deps = createDeps({
+      isInteractiveTerminal: () => true,
+      promptInput: async () => '55',
+      searchSimilarIssues: async () => ({
+        issues: [
+          {
+            owner: 'happier-dev',
+            repo: 'happier',
+            number: 55,
+            url: 'https://github.com/happier-dev/happier/issues/55',
+            title: 'Similar issue',
+            state: 'open' as const,
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+      }),
+      submitBugReport: async (input) => {
+        submissions.push(input);
+        return {
+          reportId: 'report-similar',
+          issueNumber: 55,
+          issueUrl: 'https://github.com/happier-dev/happier/issues/55',
+        };
+      },
+    });
+
+    await runBugReportCommand([
+      '--title', 'Duplicate issue',
+      '--summary', 'This looks like an existing issue',
+      '--current-behavior', 'broken',
+      '--expected-behavior', 'works',
+      '--repro-step', 'Open app',
+      '--no-include-diagnostics',
+    ], deps);
+
+    expect(submissions).toHaveLength(1);
+    expect(submissions[0]).toMatchObject({
+      existingIssueNumber: 55,
     });
   });
 
@@ -210,6 +297,7 @@ describe('runBugReportCommand', () => {
       '--summary', 'summary',
       '--current-behavior', 'current behavior',
       '--expected-behavior', 'expected behavior',
+      '--repro-step', 'Open app',
       '--accept-privacy-notice',
     ], createDeps({
       fetchBugReportsFeature: async () => ({
@@ -377,8 +465,6 @@ describe('runBugReportCommand', () => {
   });
 
   it('falls back to GitHub issue flow when server has no provider url', async () => {
-    const previousProviderEnv = process.env.HAPPIER_BUG_REPORTS_PROVIDER_URL;
-    delete process.env.HAPPIER_BUG_REPORTS_PROVIDER_URL;
     const submitSpy = vi.fn(async () => ({
       reportId: 'report-unexpected',
       issueNumber: 999,
@@ -394,41 +480,34 @@ describe('runBugReportCommand', () => {
       },
     }));
 
-    try {
-      const result = await runBugReportCommand([
-        '--title', 'No provider configured',
-        '--summary', 'summary',
-        '--current-behavior', 'current behavior',
-        '--expected-behavior', 'expected behavior',
-        '--accept-privacy-notice',
-      ], createDeps({
-        fetchBugReportsFeature: async () => ({
-          enabled: true,
-          providerUrl: null,
-          defaultIncludeDiagnostics: true,
-          maxArtifactBytes: 10 * 1024 * 1024,
-          acceptedArtifactKinds: ['cli'],
-          uploadTimeoutMs: 20_000,
-          contextWindowMs: 30 * 60 * 1_000,
-        }),
-        collectDiagnosticsArtifacts: collectDiagnosticsSpy,
-        submitBugReport: submitSpy,
-      }));
+    const result = await runBugReportCommand([
+      '--title', 'No provider configured',
+      '--summary', 'summary',
+      '--current-behavior', 'current behavior',
+      '--expected-behavior', 'expected behavior',
+      '--repro-step', 'Open app',
+      '--accept-privacy-notice',
+    ], createDeps({
+      fetchBugReportsFeature: async () => ({
+        enabled: true,
+        providerUrl: null,
+        defaultIncludeDiagnostics: true,
+        maxArtifactBytes: 10 * 1024 * 1024,
+        acceptedArtifactKinds: ['cli'],
+        uploadTimeoutMs: 20_000,
+        contextWindowMs: 30 * 60 * 1_000,
+      }),
+      collectDiagnosticsArtifacts: collectDiagnosticsSpy,
+      submitBugReport: submitSpy,
+    }));
 
-      expect(result.mode).toBe('fallback');
-      if (result.mode !== 'fallback') {
-        throw new Error('expected fallback mode');
-      }
-      expect(result.issueUrl).toContain('github.com/happier-dev/happier/issues/new');
-      expect(submitSpy).not.toHaveBeenCalled();
-      expect(collectDiagnosticsSpy).not.toHaveBeenCalled();
-    } finally {
-      if (previousProviderEnv === undefined) {
-        delete process.env.HAPPIER_BUG_REPORTS_PROVIDER_URL;
-      } else {
-        process.env.HAPPIER_BUG_REPORTS_PROVIDER_URL = previousProviderEnv;
-      }
+    expect(result.mode).toBe('fallback');
+    if (result.mode !== 'fallback') {
+      throw new Error('expected fallback mode');
     }
+    expect(result.issueUrl).toContain('github.com/happier-dev/happier/issues/new');
+    expect(submitSpy).not.toHaveBeenCalled();
+    expect(collectDiagnosticsSpy).not.toHaveBeenCalled();
   });
 
   it('throws a clear error when --provider-url is invalid', async () => {
@@ -437,6 +516,7 @@ describe('runBugReportCommand', () => {
       '--summary', 'summary',
       '--current-behavior', 'current behavior',
       '--expected-behavior', 'expected behavior',
+      '--repro-step', 'Open app',
       '--accept-privacy-notice',
       '--provider-url', 'not-a-valid-url',
     ], createDeps())).rejects.toThrow(/invalid --provider-url/i);
@@ -448,72 +528,146 @@ describe('runBugReportCommand', () => {
       '--summary', 'summary',
       '--current-behavior', 'current behavior',
       '--expected-behavior', 'expected behavior',
+      '--repro-step', 'Open app',
       '--accept-privacy-notice',
       '--provider-url', 'file:///tmp/reports',
     ], createDeps())).rejects.toThrow(/invalid --provider-url/i);
   });
 
-  it('throws a clear error when --issue-owner is invalid', async () => {
+  it('rejects --issue-owner flag as an unknown argument', async () => {
     await expect(runBugReportCommand([
       '--title', 'Invalid owner',
       '--summary', 'summary',
       '--current-behavior', 'current behavior',
       '--expected-behavior', 'expected behavior',
+      '--repro-step', 'Open app',
       '--accept-privacy-notice',
       '--issue-owner', '../owner',
-    ], createDeps())).rejects.toThrow(/invalid --issue-owner/i);
+    ], createDeps())).rejects.toThrow(/unknown argument/i);
   });
 
-  it('throws a clear error when --issue-repo is invalid', async () => {
+  it('rejects --issue-repo flag as an unknown argument', async () => {
     await expect(runBugReportCommand([
       '--title', 'Invalid repo',
       '--summary', 'summary',
       '--current-behavior', 'current behavior',
       '--expected-behavior', 'expected behavior',
+      '--repro-step', 'Open app',
       '--accept-privacy-notice',
       '--issue-repo', 'repo?bad=1',
-    ], createDeps())).rejects.toThrow(/invalid --issue-repo/i);
+    ], createDeps())).rejects.toThrow(/unknown argument/i);
   });
 
-  it('ignores invalid provider env override when feature provider URL is valid', async () => {
-    const previousProviderEnv = process.env.HAPPIER_BUG_REPORTS_PROVIDER_URL;
-    process.env.HAPPIER_BUG_REPORTS_PROVIDER_URL = 'not-a-valid-url';
-    const submitSpy = vi.fn(async () => ({
-      reportId: 'report-env-fallback',
-      issueNumber: 42,
-      issueUrl: 'https://github.com/happier-dev/happier/issues/42',
-    }));
+  it('prompts to include diagnostics when flag is omitted and skips diagnostics when answered no', async () => {
+    let collectCalls = 0;
+    const submissions: unknown[] = [];
+    const deps = createDeps({
+      isInteractiveTerminal: () => true,
+      promptInput: async () => 'n',
+      collectDiagnosticsArtifacts: async () => {
+        collectCalls += 1;
+        return {
+          artifacts: [],
+          environment: {
+            appVersion: '1.0.0',
+            platform: 'darwin',
+            deploymentType: 'cloud',
+            serverUrl: 'https://api.happier.dev',
+          },
+        };
+      },
+      submitBugReport: async (input) => {
+        submissions.push(input);
+        return {
+          reportId: 'report-no-diags',
+          issueNumber: 777,
+          issueUrl: 'https://github.com/happier-dev/happier/issues/777',
+        };
+      },
+    });
 
-    try {
-      const result = await runBugReportCommand([
-        '--title', 'Use feature provider',
-        '--summary', 'summary',
-        '--current-behavior', 'current behavior',
-        '--expected-behavior', 'expected behavior',
-        '--accept-privacy-notice',
-      ], createDeps({
-        submitBugReport: submitSpy,
-        fetchBugReportsFeature: async () => ({
-          enabled: true,
-          providerUrl: 'https://reports.happier.dev',
-          defaultIncludeDiagnostics: true,
-          maxArtifactBytes: 10 * 1024 * 1024,
-          acceptedArtifactKinds: ['cli'],
-          uploadTimeoutMs: 20_000,
-          contextWindowMs: 30 * 60 * 1_000,
-        }),
-      }));
+    const result = await runBugReportCommand([
+      '--title', 'No diagnostics',
+      '--summary', 'summary',
+      '--current-behavior', 'current behavior',
+      '--expected-behavior', 'expected behavior',
+      '--repro-step', 'Open app',
+    ], deps);
 
-      expect(result.mode).toBe('submitted');
-      expect(submitSpy).toHaveBeenCalledWith(expect.objectContaining({
-        providerUrl: 'https://reports.happier.dev',
-      }));
-    } finally {
-      if (previousProviderEnv === undefined) {
-        delete process.env.HAPPIER_BUG_REPORTS_PROVIDER_URL;
-      } else {
-        process.env.HAPPIER_BUG_REPORTS_PROVIDER_URL = previousProviderEnv;
-      }
-    }
+    expect(result.mode).toBe('submitted');
+    expect(collectCalls).toBe(0);
+    expect(submissions).toHaveLength(1);
+    expect(submissions[0]).toMatchObject({
+      artifacts: [],
+      form: {
+        consent: {
+          includeDiagnostics: false,
+        },
+      },
+    });
   });
+
+  it('does not prompt for reproduction steps when none are provided', async () => {
+    const prompts = ['n'];
+    const submissions: unknown[] = [];
+    const deps = createDeps({
+      isInteractiveTerminal: () => true,
+      promptInput: async () => prompts.shift() ?? '',
+      submitBugReport: async (input) => {
+        submissions.push(input);
+        return {
+          reportId: 'report-repro',
+          issueNumber: 888,
+          issueUrl: 'https://github.com/happier-dev/happier/issues/888',
+        };
+      },
+    });
+
+    await runBugReportCommand([
+      '--title', 'Missing repro',
+      '--summary', 'summary',
+    ], deps);
+
+    expect(submissions).toHaveLength(1);
+    expect(submissions[0]).toMatchObject({
+      form: {
+        consent: {
+          includeDiagnostics: false,
+        },
+      },
+    });
+    const submittedForm = (submissions[0] as any)?.form ?? {};
+    expect('reproductionSteps' in submittedForm).toBe(false);
+  });
+
+  it('reprompts for summary when too short in interactive mode', async () => {
+    const prompts = ['Valid summary'];
+    const submissions: unknown[] = [];
+    const deps = createDeps({
+      isInteractiveTerminal: () => true,
+      promptInput: async () => prompts.shift() ?? '',
+      submitBugReport: async (input) => {
+        submissions.push(input);
+        return {
+          reportId: 'report-summary',
+          issueNumber: 333,
+          issueUrl: 'https://github.com/happier-dev/happier/issues/333',
+        };
+      },
+    });
+
+    await runBugReportCommand([
+      '--title', 'Valid title',
+      '--summary', 'x',
+      '--no-include-diagnostics',
+    ], deps);
+
+    expect(submissions).toHaveLength(1);
+    expect(submissions[0]).toMatchObject({
+      form: {
+        summary: 'Valid summary',
+      },
+    });
+  });
+
 });

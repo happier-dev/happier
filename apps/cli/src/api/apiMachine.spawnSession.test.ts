@@ -73,15 +73,12 @@ describe('ApiMachineClient spawn-happy-session handler', () => {
     });
 
     const rpc = (client as any).rpcHandlerManager;
-    const sessionKeyBase64 = encodeBase64(new Uint8Array(32).fill(3), 'base64');
     const params = {
       type: 'resume-session',
       sessionId: 'happy-session-1',
       directory: '/tmp',
       agent: 'codex',
       resume: 'codex-session-123',
-      sessionEncryptionKeyBase64: sessionKeyBase64,
-      sessionEncryptionVariant: 'dataKey',
       experimentalCodexResume: true,
     };
     const encrypted = encodeBase64(encrypt(machine.encryptionKey, machine.encryptionVariant, params));
@@ -97,8 +94,6 @@ describe('ApiMachineClient spawn-happy-session handler', () => {
         agent: 'codex',
         existingSessionId: 'happy-session-1',
         resume: 'codex-session-123',
-        sessionEncryptionKeyBase64: sessionKeyBase64,
-        sessionEncryptionVariant: 'dataKey',
         experimentalCodexResume: true,
       }),
     );

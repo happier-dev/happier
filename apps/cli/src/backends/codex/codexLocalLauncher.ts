@@ -7,6 +7,8 @@ import { mkdirSync } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 
+import { createManagedChildProcess } from '@/subprocess/supervision/managedChildProcess';
+
 import { CodexRolloutMirror } from './localControl/codexRolloutMirror';
 import { discoverCodexRolloutFileOnce } from './localControl/rolloutDiscovery';
 import { resolveCodexMcpPolicyForPermissionMode } from './utils/permissionModePolicy';
@@ -96,6 +98,19 @@ export async function codexLocalLauncher<TMode>(opts: {
   debugMirroring?: boolean;
   rolloutDiscovery?: Partial<CodexRolloutDiscoveryConfig>;
 }): Promise<CodexLauncherResult> {
+  // Publish local-control state immediately so UIs can render the local/remote banner
+  // even before the rollout file is discovered (Codex can take a moment to initialize).
+  try {
+    opts.session.sendSessionEvent({ type: 'switch', mode: 'local' });
+  } catch {
+    // ignore
+  }
+  try {
+    opts.session.updateAgentState((current) => ({ ...(current as any), controlledByUser: true }));
+  } catch {
+    // ignore
+  }
+
   const sessionsRootDir = resolveCodexSessionsRootDir();
   mkdirSync(sessionsRootDir, { recursive: true });
   const startedAtMs = Date.now();
@@ -110,6 +125,7 @@ export async function codexLocalLauncher<TMode>(opts: {
   let switchNotified = false;
   let mirror: CodexRolloutMirror | null = null;
   let child: ReturnType<typeof spawn> | null = null;
+  let childStopRequested = false;
 
   const queueCodexSessionIdPublish = (raw: unknown): void => {
     const next = normalizeCodexSessionId(raw);
@@ -182,6 +198,14 @@ export async function codexLocalLauncher<TMode>(opts: {
       env: process.env,
       stdio: interactive ? 'inherit' : 'pipe',
     });
+    const managedChild = createManagedChildProcess(child);
+    child.once('error', (error) => {
+      if (interactive) return;
+      const details = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      if (bufferedStderr.length < maxBufferedStderrChars) {
+        bufferedStderr = `${bufferedStderr}\n[spawn-error] ${details}`.slice(0, maxBufferedStderrChars);
+      }
+    });
 
     if (!interactive) {
       // Drain streams to avoid backpressure and capture error context for CI/non-interactive runs.
@@ -193,25 +217,10 @@ export async function codexLocalLauncher<TMode>(opts: {
       });
     }
 
-    const childExitPromise = new Promise<number>((resolve) => {
-      let settled = false;
-      const settle = (code: number) => {
-        if (settled) return;
-        settled = true;
-        resolve(code);
-      };
-
-      child!.once('error', (error) => {
-        if (!interactive) {
-          const details = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-          if (bufferedStderr.length < maxBufferedStderrChars) {
-            bufferedStderr = `${bufferedStderr}\n[spawn-error] ${details}`.slice(0, maxBufferedStderrChars);
-          }
-        }
-        settle(1);
-      });
-
-      child!.once('exit', (code) => settle(typeof code === 'number' ? code : 0));
+    const childExitPromise = managedChild.waitForTermination().then((event) => {
+      if (event.type === 'exited') return event.code;
+      if (event.type === 'signaled') return childStopRequested ? 0 : 1;
+      return 1;
     });
 
     // Discover rollout file.
@@ -287,6 +296,16 @@ export async function codexLocalLauncher<TMode>(opts: {
       if (!interactive && bufferedStderr.trim().length > 0) {
         console.error(`[codex] Local Codex process exited before rollout file was found. stderr:\n${bufferedStderr}`);
       }
+      try {
+        opts.session.sendSessionEvent({ type: 'switch', mode: 'remote' });
+      } catch {
+        // ignore
+      }
+      try {
+        opts.session.updateAgentState((current) => ({ ...(current as any), controlledByUser: false }));
+      } catch {
+        // ignore
+      }
       return { type: 'exit', code };
     }
 
@@ -300,6 +319,7 @@ export async function codexLocalLauncher<TMode>(opts: {
         exitReason = { type: 'switch', resumeId };
       }
       if (child && child.exitCode === null) {
+        childStopRequested = true;
         try {
           child.kill('SIGTERM');
         } catch {
@@ -326,6 +346,7 @@ export async function codexLocalLauncher<TMode>(opts: {
           if (switchRequested && resumeId) {
             exitReason = { type: 'switch', resumeId };
             if (child && child.exitCode === null) {
+              childStopRequested = true;
               try {
                 child.kill('SIGTERM');
               } catch {
@@ -345,7 +366,27 @@ export async function codexLocalLauncher<TMode>(opts: {
     mirror = null;
 
     if (exitReason) {
+      try {
+        opts.session.sendSessionEvent({ type: 'switch', mode: 'remote' });
+      } catch {
+        // ignore
+      }
+      try {
+        opts.session.updateAgentState((current) => ({ ...(current as any), controlledByUser: false }));
+      } catch {
+        // ignore
+      }
       return exitReason;
+    }
+    try {
+      opts.session.sendSessionEvent({ type: 'switch', mode: 'remote' });
+    } catch {
+      // ignore
+    }
+    try {
+      opts.session.updateAgentState((current) => ({ ...(current as any), controlledByUser: false }));
+    } catch {
+      // ignore
     }
     return { type: 'exit', code };
   } finally {
@@ -356,6 +397,7 @@ export async function codexLocalLauncher<TMode>(opts: {
       // ignore
     }
     if (child && child.exitCode === null) {
+      childStopRequested = true;
       try {
         child.kill('SIGTERM');
       } catch {

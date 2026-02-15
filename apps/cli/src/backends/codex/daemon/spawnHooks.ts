@@ -4,7 +4,7 @@ import { delimiter as pathDelimiter, join } from 'node:path';
 
 import tmp from 'tmp';
 
-import { getCodexAcpDepStatus } from '@/capabilities/deps/codexAcp';
+import { resolveCodexAcpSpawn } from '@/backends/codex/acp/resolveCommand';
 import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
 
 function readCodexAcpNpxMode(): 'auto' | 'never' | 'force' {
@@ -75,24 +75,30 @@ export const codexDaemonSpawnHooks: DaemonSpawnHooks = {
       };
     }
 
-    const envOverride = typeof process.env.HAPPIER_CODEX_ACP_BIN === 'string' ? process.env.HAPPIER_CODEX_ACP_BIN.trim() : '';
-    if (envOverride) {
-      if (!existsSync(envOverride)) {
-        return {
-          ok: false,
-          errorMessage: `Codex ACP is enabled, but HAPPIER_CODEX_ACP_BIN does not exist: ${envOverride}`,
-        };
-      }
-      return { ok: true };
+    let resolved: { command: string; args: string[] };
+    try {
+      resolved = resolveCodexAcpSpawn();
+    } catch (error) {
+      return {
+        ok: false,
+        errorMessage: error instanceof Error
+          ? error.message
+          : 'Codex ACP is enabled, but the command could not be resolved.',
+      };
     }
 
-    const status = await getCodexAcpDepStatus({ onlyIfInstalled: true });
-    if (!status.installed || !status.binPath) {
+    if (resolved.command === 'npx') {
+      if (isBinOnPath('npx')) return { ok: true };
+      return {
+        ok: false,
+        errorMessage:
+          'Codex ACP is enabled, but codex-acp is not installed and npx is not available. Install codex-acp from the Happier app (Machine details → Codex ACP), install Node.js/npm (for npx), or disable the experiment.',
+      };
+    }
+
+    if (resolved.command === 'codex-acp') {
+      if (isBinOnPath('codex-acp')) return { ok: true };
       const npxMode = readCodexAcpNpxMode();
-
-      const hasCodexAcp = isBinOnPath('codex-acp');
-      if (hasCodexAcp) return { ok: true };
-
       if (npxMode === 'never') {
         return {
           ok: false,
@@ -100,14 +106,17 @@ export const codexDaemonSpawnHooks: DaemonSpawnHooks = {
             'Codex ACP is enabled, but codex-acp is not installed (and npx fallback is disabled). Install codex-acp from the Happier app (Machine details → Codex ACP), add codex-acp to PATH, or disable the experiment.',
         };
       }
-
-      const hasNpx = isBinOnPath('npx');
-      if (hasNpx) return { ok: true };
-
       return {
         ok: false,
         errorMessage:
-          'Codex ACP is enabled, but codex-acp is not installed and npx is not available. Install codex-acp from the Happier app (Machine details → Codex ACP), install Node.js/npm (for npx), or disable the experiment.',
+          'Codex ACP is enabled, but codex-acp could not be resolved on PATH. Install codex-acp from the Happier app (Machine details → Codex ACP), add codex-acp to PATH, or disable the experiment.',
+      };
+    }
+
+    if (!existsSync(resolved.command)) {
+      return {
+        ok: false,
+        errorMessage: `Codex ACP is enabled, but the resolved command does not exist: ${resolved.command}`,
       };
     }
 

@@ -80,6 +80,11 @@ describe('startHappyServer (MCP integration)', () => {
 
       const tools = await client.listTools();
       const names = new Set((tools.tools ?? []).map((t: any) => String(t.name)));
+      expect(names.has('action_spec_list')).toBe(true);
+      expect(names.has('action_spec_get')).toBe(true);
+      expect(names.has('review_start')).toBe(true);
+      expect(names.has('plan_start')).toBe(true);
+      expect(names.has('delegate_start')).toBe(true);
       expect(names.has('execution_run_start')).toBe(true);
       expect(names.has('execution_run_get')).toBe(true);
       expect(names.has('execution_run_action')).toBe(true);
@@ -131,6 +136,53 @@ describe('startHappyServer (MCP integration)', () => {
       expect(sent.some((m) => (m.body as any)?.type === 'tool-result')).toBe(true);
     } finally {
       server.stop();
+    }
+  });
+
+  it('hides disabled action-spec tools and rejects action_spec_get for disabled actions', async () => {
+    const prev = process.env.HAPPIER_ACTIONS_DISABLED_ACTION_IDS;
+    process.env.HAPPIER_ACTIONS_DISABLED_ACTION_IDS = JSON.stringify(['review.start']);
+
+    const rpcHandlerManager = new RpcHandlerManager({
+      scopePrefix: 'sess_mcp_disabled_1',
+      encryptionKey: new Uint8Array([1, 2, 3, 4]),
+      encryptionVariant: 'legacy',
+    });
+
+    registerExecutionRunHandlers(rpcHandlerManager, {
+      sessionId: 'sess_mcp_disabled_1',
+      cwd: process.cwd(),
+      parentProvider: 'claude',
+      createBackend: () => createStaticBackend(JSON.stringify({ ok: true })),
+      sendAcp: () => {},
+    });
+
+    const fakeClient: HappyMcpSessionClient = {
+      sessionId: 'sess_mcp_disabled_1',
+      rpcHandlerManager,
+      sendClaudeSessionMessage: () => {},
+    };
+
+    const server = await startHappyServer(fakeClient);
+    try {
+      const client = new Client({ name: 'mcp-test-disabled', version: '1.0.0' }, { capabilities: {} });
+      await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+
+      const tools = await client.listTools();
+      const names = new Set((tools.tools ?? []).map((t: any) => String(t.name)));
+      expect(names.has('review_start')).toBe(false);
+      expect(names.has('plan_start')).toBe(true);
+
+      const got = await client.callTool({
+        name: 'action_spec_get',
+        arguments: { id: 'review.start' },
+      });
+      const parsed = parseMcpJsonText(got);
+      expect(parsed.errorCode).toBe('action_disabled');
+    } finally {
+      server.stop();
+      if (prev === undefined) delete process.env.HAPPIER_ACTIONS_DISABLED_ACTION_IDS;
+      else process.env.HAPPIER_ACTIONS_DISABLED_ACTION_IDS = prev;
     }
   });
 

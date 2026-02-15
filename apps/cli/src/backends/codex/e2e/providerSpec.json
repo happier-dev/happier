@@ -39,6 +39,13 @@
         "yolo": false,
         "plan": false
       },
+      "outsideWorkspaceRequireTaskCompleteByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
       "expectToolPermissionPrompts": false,
       "permissionSurfaceOutsideWorkspaceYolo": false
     }

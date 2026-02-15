@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { configuration } from '@/configuration';
@@ -14,9 +14,17 @@ import {
   planDaemonServiceUninstall,
   resolveLaunchAgentPlistPath,
   resolveSystemdUserUnitPath,
+  resolveWindowsDaemonWrapperPath,
+  resolveWindowsDaemonTaskName,
   resolveDaemonServiceLaunchdLabel,
   resolveDaemonServiceSystemdUnitName,
 } from './plan';
+import { commandExistsInPath } from './commandExistsInPath';
+
+function looksLikeNodeExecPath(execPath: string): boolean {
+  const base = String(execPath ?? '').replaceAll('\\', '/').split('/').at(-1) ?? '';
+  return base === 'node' || base === 'node.exe';
+}
 
 export type DaemonServiceCliAction =
   | 'paths'
@@ -29,18 +37,20 @@ export type DaemonServiceCliAction =
   | 'logs'
   | 'tail';
 
-type SupportedPlatform = 'darwin' | 'linux';
+type SupportedPlatform = 'darwin' | 'linux' | 'win32';
 
 function resolveSupportedPlatform(p: string): SupportedPlatform | null {
   const normalized = (p ?? '').toString().trim().toLowerCase();
   if (normalized === 'darwin' || normalized === 'mac' || normalized === 'macos' || normalized === 'osx') return 'darwin';
   if (normalized === 'linux') return 'linux';
+  if (normalized === 'win32' || normalized === 'windows' || normalized === 'win') return 'win32';
   return null;
 }
 
 function resolvePlatformFromProcess(): SupportedPlatform | null {
   if (process.platform === 'darwin') return 'darwin';
   if (process.platform === 'linux') return 'linux';
+  if (process.platform === 'win32') return 'win32';
   return null;
 }
 
@@ -65,16 +75,6 @@ function printJson(data: unknown): void {
   process.stdout.write(`${JSON.stringify(data)}\n`);
 }
 
-function commandExistsInPath(cmd: string, envPath: string | undefined): boolean {
-  const pathDirs = (envPath ?? '').split(delimiter).map((p) => p.trim()).filter(Boolean);
-  for (const dir of pathDirs) {
-    const full = join(dir, cmd);
-    if (!existsSync(full)) continue;
-    return true;
-  }
-  return false;
-}
-
 function runCommandCaptureBestEffort(command: Readonly<{ cmd: string; args: readonly string[] }>): { ok: boolean; out: string | null } {
   try {
     const res = spawnSync(command.cmd, [...command.args], {
@@ -91,7 +91,7 @@ function runCommandCaptureBestEffort(command: Readonly<{ cmd: string; args: read
 
 function runCommandsBestEffort(commands: ReadonlyArray<Readonly<{ cmd: string; args: readonly string[] }>>): void {
   for (const command of commands) {
-    if (!commandExistsInPath(command.cmd, process.env.PATH)) continue;
+    if (!commandExistsInPath({ cmd: command.cmd, envPath: process.env.PATH, platform: process.platform, pathext: process.env.PATHEXT })) continue;
     try {
       spawnSync(command.cmd, [...command.args], { stdio: 'ignore', env: process.env });
     } catch {
@@ -118,7 +118,7 @@ export function resolveDaemonServiceCliRuntimeFromEnv(): DaemonServiceCliRuntime
     resolveSupportedPlatform(process.env.HAPPIER_DAEMON_SERVICE_PLATFORM ?? '') ??
     resolvePlatformFromProcess();
   if (!platform) {
-    throw new Error('Daemon service is currently only supported on macOS and Linux');
+    throw new Error('Daemon service is currently only supported on macOS, Linux, and Windows');
   }
 
   const uidEnvRaw = (process.env.HAPPIER_DAEMON_SERVICE_UID ?? '').trim();
@@ -133,7 +133,8 @@ export function resolveDaemonServiceCliRuntimeFromEnv(): DaemonServiceCliRuntime
   const webappUrl = (process.env.HAPPIER_DAEMON_SERVICE_WEBAPP_URL ?? '').trim() || configuration.webappUrl;
   const publicServerUrl = (process.env.HAPPIER_DAEMON_SERVICE_PUBLIC_SERVER_URL ?? '').trim() || configuration.publicServerUrl;
   const nodePath = (process.env.HAPPIER_DAEMON_SERVICE_NODE_PATH ?? '').trim() || process.execPath;
-  const entryPath = (process.env.HAPPIER_DAEMON_SERVICE_ENTRY_PATH ?? '').trim() || join(projectPath(), 'dist', 'index.mjs');
+  const entryPathEnv = (process.env.HAPPIER_DAEMON_SERVICE_ENTRY_PATH ?? '').trim();
+  const entryPath = entryPathEnv || (looksLikeNodeExecPath(nodePath) ? join(projectPath(), 'dist', 'index.mjs') : '');
 
   return { platform, instanceId, uid, userHomeDir, happierHomeDir, serverUrl, webappUrl, publicServerUrl, nodePath, entryPath };
 }
@@ -144,6 +145,9 @@ export function resolveDaemonServicePaths(runtime: DaemonServiceCliRuntime): Rea
   unitName: string;
   plistPath: string;
   unitPath: string;
+  wrapperPath: string;
+  taskName: string;
+  installedPath: string;
   stdoutPath: string;
   stderrPath: string;
 }> {
@@ -151,12 +155,26 @@ export function resolveDaemonServicePaths(runtime: DaemonServiceCliRuntime): Rea
   const unitName = resolveDaemonServiceSystemdUnitName(runtime.instanceId);
   const plistPath = resolveLaunchAgentPlistPath({ userHomeDir: runtime.userHomeDir, instanceId: runtime.instanceId });
   const unitPath = resolveSystemdUserUnitPath({ userHomeDir: runtime.userHomeDir, instanceId: runtime.instanceId });
+  const wrapperPath = runtime.platform === 'win32'
+    ? resolveWindowsDaemonWrapperPath({ happierHomeDir: runtime.happierHomeDir, instanceId: runtime.instanceId })
+    : '';
+  const taskName = runtime.platform === 'win32'
+    ? resolveWindowsDaemonTaskName({ instanceId: runtime.instanceId })
+    : '';
+  const installedPath = runtime.platform === 'darwin'
+    ? plistPath
+    : runtime.platform === 'linux'
+      ? unitPath
+      : wrapperPath;
   return {
     platform: runtime.platform,
     label,
     unitName,
     plistPath,
     unitPath,
+    wrapperPath,
+    taskName,
+    installedPath,
     stdoutPath: join(runtime.happierHomeDir, 'logs', `daemon-service.${runtime.instanceId}.out.log`),
     stderrPath: join(runtime.happierHomeDir, 'logs', `daemon-service.${runtime.instanceId}.err.log`),
   };
@@ -202,7 +220,9 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
         platform: runtime.platform,
         paths: runtime.platform === 'darwin'
           ? { plistPath: paths.plistPath, label: paths.label, stdoutPath: paths.stdoutPath, stderrPath: paths.stderrPath }
-          : { unitPath: paths.unitPath, unitName: paths.unitName, stdoutPath: paths.stdoutPath, stderrPath: paths.stderrPath },
+          : runtime.platform === 'win32'
+            ? { taskName: paths.taskName, wrapperPath: paths.wrapperPath, stdoutPath: paths.stdoutPath, stderrPath: paths.stderrPath }
+            : { unitPath: paths.unitPath, unitName: paths.unitName, stdoutPath: paths.stdoutPath, stderrPath: paths.stderrPath },
       });
       return;
     }
@@ -210,7 +230,9 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
     process.stdout.write(
       runtime.platform === 'darwin'
         ? `LaunchAgent: ${paths.plistPath}\nLabel: ${paths.label}\n`
-        : `systemd unit: ${paths.unitPath}\nUnit name: ${paths.unitName}\n`,
+        : runtime.platform === 'win32'
+          ? `Scheduled Task: ${paths.taskName}\nWrapper: ${paths.wrapperPath}\n`
+          : `systemd unit: ${paths.unitPath}\nUnit name: ${paths.unitName}\n`,
     );
     process.stdout.write(`stdout: ${paths.stdoutPath}\nstderr: ${paths.stderrPath}\n`);
     return;
@@ -268,6 +290,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
       instanceId: runtime.instanceId,
       uid: runtime.uid ?? undefined,
       userHomeDir: runtime.userHomeDir,
+      happierHomeDir: runtime.happierHomeDir,
     });
 
     if (flags.dryRun) {
@@ -284,6 +307,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
       platform: runtime.platform,
       uid: runtime.uid ?? undefined,
       userHomeDir: runtime.userHomeDir,
+      happierHomeDir: runtime.happierHomeDir,
       instanceId: runtime.instanceId,
       runCommands: true,
     });
@@ -297,9 +321,8 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
   }
 
   if (action === 'start' || action === 'stop' || action === 'restart') {
-    const installedPath = runtime.platform === 'darwin' ? paths.plistPath : paths.unitPath;
-    if (!existsSync(installedPath)) {
-      const msg = `Daemon service is not installed (${installedPath}). Run: happier daemon service install`;
+    if (!existsSync(paths.installedPath)) {
+      const msg = `Daemon service is not installed (${paths.installedPath}). Run: happier daemon service install`;
       if (flags.json) printJson({ ok: false, error: 'not_installed', message: msg, platform: runtime.platform });
       else process.stderr.write(`${msg}\n`);
       return;
@@ -310,6 +333,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
       action,
       instanceId: runtime.instanceId,
       userHomeDir: runtime.userHomeDir,
+      happierHomeDir: runtime.happierHomeDir,
       uid: runtime.uid ?? undefined,
     });
 
@@ -333,8 +357,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
   }
 
   if (action === 'status') {
-    const installedPath = runtime.platform === 'darwin' ? paths.plistPath : paths.unitPath;
-    const installed = existsSync(installedPath);
+    const installed = existsSync(paths.installedPath);
 
     const state = await readDaemonState().catch(() => null);
     const pid = typeof state?.pid === 'number' ? state.pid : null;
@@ -353,6 +376,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
       action: 'status',
       instanceId: runtime.instanceId,
       userHomeDir: runtime.userHomeDir,
+      happierHomeDir: runtime.happierHomeDir,
       uid: runtime.uid ?? undefined,
     });
 
@@ -365,7 +389,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
         ok: true,
         platform: runtime.platform,
         installed,
-        installedPath,
+        installedPath: paths.installedPath,
         daemon: pid ? { pid, running: pidAlive, startedAt: state?.startedAt ?? null } : { pid: null, running: false, startedAt: null },
         system: { ok: systemStatus.ok, output: systemStatus.out },
       });
@@ -392,8 +416,12 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
       printJson({ ok: false, error: 'not_supported', message: 'tail is interactive; omit --json', platform: runtime.platform });
       return;
     }
+    if (runtime.platform === 'win32') {
+      process.stderr.write('tail is not supported on Windows yet. Use: happier daemon service logs\n');
+      return;
+    }
     // Best-effort: follow both stdout + stderr if tail exists.
-    if (!commandExistsInPath('tail', process.env.PATH)) {
+    if (!commandExistsInPath({ cmd: 'tail', envPath: process.env.PATH, platform: process.platform, pathext: process.env.PATHEXT })) {
       process.stderr.write('tail not found on PATH\n');
       return;
     }

@@ -2,14 +2,14 @@ import type { PermissionMode } from '@/api/types';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import { isDefaultWriteLikeToolName } from '@/agent/permissions/CodexLikePermissionHandler';
 
-export type VoiceMediatorPermissionPolicy = 'no_tools' | 'read_only';
+export type VoiceAgentPermissionPolicy = 'no_tools' | 'read_only';
 
-export function permissionModeForVoiceMediatorPolicy(_policy: VoiceMediatorPermissionPolicy): PermissionMode {
-  // Voice mediator should never run with elevated permissions.
+export function permissionModeForVoiceAgentPolicy(_policy: VoiceAgentPermissionPolicy): PermissionMode {
+  // Voice agent should never run with elevated permissions.
   return 'read-only';
 }
 
-export function createVoiceMediatorAcpPermissionHandler(permissionPolicy: VoiceMediatorPermissionPolicy): AcpPermissionHandler {
+export function createVoiceAgentAcpPermissionHandler(permissionPolicy: VoiceAgentPermissionPolicy): AcpPermissionHandler {
   if (permissionPolicy === 'no_tools') {
     return {
       async handleToolCall() {
@@ -24,4 +24,3 @@ export function createVoiceMediatorAcpPermissionHandler(permissionPolicy: VoiceM
     },
   };
 }
-

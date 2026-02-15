@@ -47,4 +47,18 @@ describe('normalizeReadResult (Kilo ACP shapes)', () => {
     const file = expectFile(normalized);
     expect(file.content).toBe('preferred');
   });
+
+  it('maps ACP record content blocks to { file.content }', () => {
+    const normalized = normalizeReadResult({
+      content: [
+        {
+          type: 'text',
+          text: 'from content block\n',
+        },
+      ],
+    });
+
+    const file = expectFile(normalized);
+    expect(file.content).toBe('from content block');
+  });
 });

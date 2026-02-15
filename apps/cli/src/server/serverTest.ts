@@ -59,6 +59,12 @@ type ReadUrlTextResult = Readonly<{ status: number; contentType: string; body: s
 function readUrlText(parsedUrl: URL, timeoutMs: number): Promise<ReadUrlTextResult> {
   return new Promise((resolve, reject) => {
     const client = parsedUrl.protocol === 'https:' ? https : http;
+    const isLoopback = parsedUrl.hostname === '127.0.0.1' || parsedUrl.hostname === 'localhost' || parsedUrl.hostname === '::1';
+    const loopbackAgent = isLoopback
+      ? parsedUrl.protocol === 'https:'
+        ? new https.Agent({ keepAlive: false })
+        : new http.Agent({ keepAlive: false })
+      : undefined;
 
     const req = client.request(
       parsedUrl,
@@ -67,6 +73,9 @@ function readUrlText(parsedUrl: URL, timeoutMs: number): Promise<ReadUrlTextResu
         headers: {
           accept: 'application/json, text/plain;q=0.9, */*;q=0.8',
         },
+        // Some environments install global proxy agents. Use an explicit Agent for loopback probes
+        // so we can reliably validate local servers (and so our tests stay deterministic).
+        agent: loopbackAgent,
       },
       (res) => {
         const status = typeof res.statusCode === 'number' ? res.statusCode : 0;
@@ -78,16 +87,21 @@ function readUrlText(parsedUrl: URL, timeoutMs: number): Promise<ReadUrlTextResu
           body += chunk;
         });
         res.on('end', () => {
+          loopbackAgent?.destroy();
           resolve({ status, contentType, body });
         });
       },
     );
 
     req.setTimeout(timeoutMs, () => {
+      loopbackAgent?.destroy();
       req.destroy(new Error('request_timeout'));
     });
 
-    req.on('error', reject);
+    req.on('error', (error) => {
+      loopbackAgent?.destroy();
+      reject(error);
+    });
     req.end();
   });
 }

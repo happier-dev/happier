@@ -3,11 +3,13 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { AddressInfo } from "node:net";
 import { logger } from "@/ui/logger";
 import type { ApiSessionClient } from "@/api/session/sessionClient";
-import { createHappierMcpServer, HAPPIER_MCP_TOOL_NAMES } from "@/mcp/createHappierMcpServer";
+import { createHappierMcpServer } from "@/mcp/createHappierMcpServer";
 
 export type HappyMcpSessionClient = Pick<ApiSessionClient, 'sessionId' | 'rpcHandlerManager' | 'sendClaudeSessionMessage'>;
 
 export async function startHappyServer(client: HappyMcpSessionClient) {
+    const toolNamesSnapshot = createHappierMcpServer(client).toolNames;
+
     //
     // Create the HTTP server
     //
@@ -74,7 +76,7 @@ export async function startHappyServer(client: HappyMcpSessionClient) {
 
     return {
         url: baseUrl.toString(),
-        toolNames: [...HAPPIER_MCP_TOOL_NAMES],
+        toolNames: toolNamesSnapshot,
         stop: () => {
             logger.debug('[happierMCP] Stopping server');
             server.close();

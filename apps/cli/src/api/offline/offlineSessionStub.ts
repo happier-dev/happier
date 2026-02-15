@@ -51,7 +51,7 @@ class OfflineSessionStub extends EventEmitter implements ApiSessionClientStubCon
 
     sendCodexMessage(_body: unknown): void {}
     sendAgentMessage(_provider: ACPProvider, _body: ACPMessageData): void {}
-    sendClaudeSessionMessage(_body: unknown): void {}
+    sendClaudeSessionMessage(_body: unknown, _meta?: Record<string, unknown>): void {}
     sendSessionEvent(
         _event:
             | { type: 'switch'; mode: 'local' | 'remote' }

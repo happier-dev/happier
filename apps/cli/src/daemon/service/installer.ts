@@ -7,12 +7,18 @@ import { projectPath } from '@/projectPath';
 import { applyDaemonServiceInstallPlan, applyDaemonServiceUninstallPlan } from './apply';
 import { planDaemonServiceInstall, planDaemonServiceUninstall } from './plan';
 
-type SupportedPlatform = 'darwin' | 'linux';
+type SupportedPlatform = 'darwin' | 'linux' | 'win32';
 
 function resolveSupportedPlatform(p: string): SupportedPlatform | null {
   if (p === 'darwin') return 'darwin';
   if (p === 'linux') return 'linux';
+  if (p === 'win32') return 'win32';
   return null;
+}
+
+function looksLikeNodeExecPath(execPath: string): boolean {
+  const base = execPath.replaceAll('\\', '/').split('/').at(-1) ?? '';
+  return base === 'node' || base === 'node.exe';
 }
 
 export async function installDaemonService(options: Readonly<{
@@ -31,7 +37,7 @@ export async function installDaemonService(options: Readonly<{
   const platformInput = options.platform ?? process.platform;
   const platform = resolveSupportedPlatform(platformInput);
   if (!platform) {
-    throw new Error('Daemon service installation is currently only supported on macOS and Linux');
+    throw new Error('Daemon service installation is currently only supported on macOS, Linux, and Windows');
   }
 
   const uid = options.uid ?? (process.getuid ? process.getuid() : undefined);
@@ -42,7 +48,7 @@ export async function installDaemonService(options: Readonly<{
   const webappUrl = options.webappUrl ?? configuration.webappUrl;
   const publicServerUrl = options.publicServerUrl ?? configuration.publicServerUrl;
   const nodePath = options.nodePath ?? process.execPath;
-  const entryPath = options.entryPath ?? join(projectPath(), 'dist', 'index.mjs');
+  const entryPath = options.entryPath ?? (looksLikeNodeExecPath(nodePath) ? join(projectPath(), 'dist', 'index.mjs') : '');
 
   const plan = planDaemonServiceInstall({
     platform,
@@ -63,17 +69,19 @@ export async function uninstallDaemonService(options: Readonly<{
   platform?: SupportedPlatform;
   uid?: number;
   userHomeDir?: string;
+  happierHomeDir?: string;
   instanceId?: string;
   runCommands?: boolean;
 }> = {}): Promise<void> {
   const platformInput = options.platform ?? process.platform;
   const platform = resolveSupportedPlatform(platformInput);
   if (!platform) {
-    throw new Error('Daemon service uninstallation is currently only supported on macOS and Linux');
+    throw new Error('Daemon service uninstallation is currently only supported on macOS, Linux, and Windows');
   }
 
   const uid = options.uid ?? (process.getuid ? process.getuid() : undefined);
   const userHomeDir = options.userHomeDir ?? homedir();
+  const happierHomeDir = options.happierHomeDir ?? configuration.happyHomeDir;
   const instanceId = options.instanceId ?? configuration.activeServerId;
 
   const plan = planDaemonServiceUninstall({
@@ -81,6 +89,7 @@ export async function uninstallDaemonService(options: Readonly<{
     instanceId,
     uid,
     userHomeDir,
+    happierHomeDir,
   });
   await applyDaemonServiceUninstallPlan(plan, { runCommands: options.runCommands });
 }

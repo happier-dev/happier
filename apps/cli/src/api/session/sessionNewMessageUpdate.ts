@@ -17,6 +17,7 @@ export function handleSessionNewMessageUpdate(params: {
     pendingMessageCallback: ((message: UserMessage) => void) | null;
     pendingMessages: UserMessage[];
     emit: (event: 'user-message' | 'message', payload: unknown) => void;
+    debug: (message: string, data?: unknown) => void;
     debugLargeJson: (message: string, data: unknown) => void;
 }): {
     handled: boolean;
@@ -31,6 +32,7 @@ export function handleSessionNewMessageUpdate(params: {
 
     const parsedContent = SessionMessageContentSchema.safeParse((params.update.body as any).message?.content);
     if (!parsedContent.success) {
+        params.debug('[SOCKET] [UPDATE] Ignoring new-message with invalid encrypted content envelope');
         return { handled: true, lastObservedMessageSeq: params.lastObservedMessageSeq };
     }
 
@@ -54,7 +56,18 @@ export function handleSessionNewMessageUpdate(params: {
         params.deleteMaterializedLocalId(localId);
     }
 
-    const body = decrypt(params.encryptionKey, params.encryptionVariant, decodeBase64(parsedContent.data.c));
+    let body: unknown;
+    try {
+        body = decrypt(params.encryptionKey, params.encryptionVariant, decodeBase64(parsedContent.data.c));
+    } catch (error) {
+        params.debug('[SOCKET] [UPDATE] Failed to decrypt new-message payload', {
+            error,
+            messageId: typeof messageId === 'string' ? messageId : null,
+            localId,
+            msgSeq: typeof msgSeq === 'number' && Number.isFinite(msgSeq) ? msgSeq : null,
+        });
+        return { handled: true, lastObservedMessageSeq: nextLastObservedMessageSeq };
+    }
     const bodyWithLocalId =
         params.update.body.message.localId === undefined
             ? body
@@ -82,10 +95,17 @@ export function handleSessionNewMessageUpdate(params: {
             } else {
                 params.pendingMessages.push(userResult.data);
             }
+        } else {
+            params.debug('[SOCKET] [UPDATE] Skipped user-message delivery to agent queue (self echo suppression)', {
+                source: source ?? null,
+                sentFrom: sentFrom ?? null,
+                localId,
+            });
         }
         params.emit('user-message', userResult.data);
     } else {
         // If not a user message, it might be a permission response or other message type.
+        params.debug('[SOCKET] [UPDATE] Decrypted new-message is not a UserMessage payload; forwarding generic event');
         params.emit('message', body);
     }
 

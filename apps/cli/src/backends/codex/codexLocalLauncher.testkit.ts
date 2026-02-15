@@ -24,6 +24,7 @@ export type LocalSessionHarness = {
   codexMessages: CodexBody[];
   sessionEvents: SessionEvent[];
   metadataUpdates: SessionMetadataState[];
+  agentStateUpdates: Array<Record<string, unknown>>;
 };
 
 export async function waitFor(assertion: () => void, opts?: { timeoutMs?: number; intervalMs?: number }): Promise<void> {
@@ -97,11 +98,17 @@ export async function writeFakeCodexScript(path: string, opts: {
   recordArgv: boolean;
   exitAfterMs?: number;
   handleSigint?: boolean;
+  handleSigterm?: boolean;
+  selfTerminateSignal?: NodeJS.Signals;
+  selfTerminateAfterMs?: number;
 }): Promise<void> {
   const sessionMetaDelayMs = typeof opts.sessionMetaDelayMs === 'number' ? opts.sessionMetaDelayMs : 0;
   const assistantText = typeof opts.assistantText === 'string' ? opts.assistantText : null;
   const exitAfterMs = typeof opts.exitAfterMs === 'number' ? opts.exitAfterMs : null;
   const handleSigint = opts.handleSigint !== false;
+  const handleSigterm = opts.handleSigterm !== false;
+  const selfTerminateSignal = typeof opts.selfTerminateSignal === 'string' ? opts.selfTerminateSignal : null;
+  const selfTerminateAfterMs = typeof opts.selfTerminateAfterMs === 'number' ? opts.selfTerminateAfterMs : null;
 
   const script = `#!/usr/bin/env node
 const fs = require('node:fs');
@@ -140,12 +147,14 @@ process.on('SIGTERM', () => {
   fs.writeFileSync(${JSON.stringify(opts.terminatedFlag)}, 'terminated', 'utf8');
   process.exit(0);
 });
+${handleSigterm ? '' : 'process.removeAllListeners(\'SIGTERM\');'}
 ${handleSigint ? `process.on('SIGINT', () => {
   fs.writeFileSync(${JSON.stringify(opts.terminatedFlag)}, 'terminated', 'utf8');
   process.exit(0);
 });` : ''}
 
 ${exitAfterMs != null ? `setTimeout(() => process.exit(0), ${exitAfterMs});` : ''}
+${selfTerminateSignal && selfTerminateAfterMs != null ? `setTimeout(() => process.kill(process.pid, ${JSON.stringify(selfTerminateSignal)}), ${selfTerminateAfterMs});` : ''}
 setInterval(() => {}, 1000);
 `;
 
@@ -157,6 +166,8 @@ export function createLocalSessionHarness(): LocalSessionHarness {
   const codexMessages: CodexBody[] = [];
   const sessionEvents: SessionEvent[] = [];
   const metadataUpdates: SessionMetadataState[] = [];
+  const agentStateUpdates: Array<Record<string, unknown>> = [];
+  let agentStateSnapshot: Record<string, unknown> = {};
 
   const session = {
     sendUserTextMessage: (_text: string) => {},
@@ -169,6 +180,10 @@ export function createLocalSessionHarness(): LocalSessionHarness {
     updateMetadata: (updater: (metadata: SessionMetadataState) => SessionMetadataState) => {
       metadataUpdates.push(updater({ codexSessionId: null }));
     },
+    updateAgentState: (updater: (state: Record<string, unknown>) => Record<string, unknown>) => {
+      agentStateSnapshot = updater(agentStateSnapshot);
+      agentStateUpdates.push(agentStateSnapshot);
+    },
     rpcHandlerManager: {
       registerHandler: (_name: string, _handler: unknown) => {},
     },
@@ -177,7 +192,7 @@ export function createLocalSessionHarness(): LocalSessionHarness {
     discardCommittedMessageLocalIds: async (_ids: string[]) => {},
   } as unknown as ApiSessionClient;
 
-  return { session, codexMessages, sessionEvents, metadataUpdates };
+  return { session, codexMessages, sessionEvents, metadataUpdates, agentStateUpdates };
 }
 
 export function createLocalMessageQueue(): MessageQueue2<LocalLauncherMode> {

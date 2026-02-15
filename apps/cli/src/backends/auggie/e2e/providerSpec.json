@@ -29,14 +29,14 @@
       },
       "outsideWorkspaceWriteAllowedByMode": {
         "default": false,
-        "safe-yolo": false,
+        "safe-yolo": true,
         "read-only": false,
         "yolo": true,
         "plan": false
       },
       "outsideWorkspaceWriteMustCompleteByMode": {
         "default": false,
-        "safe-yolo": false,
+        "safe-yolo": true,
         "read-only": false,
         "yolo": true,
         "plan": false

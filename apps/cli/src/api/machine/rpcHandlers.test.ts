@@ -11,11 +11,17 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
 import { encrypt, encodeBase64 } from '@/api/encryption';
 import { collectBugReportMachineDiagnosticsSnapshot } from '@/diagnostics/bugReportMachineDiagnostics';
+import { removeExecutionRunMarker, writeExecutionRunMarker } from '@/daemon/executionRunRegistry';
 import { registerMachineRpcHandlers } from './rpcHandlers';
 import type { Credentials } from '@/persistence';
 
-const { readCredentialsMock } = vi.hoisted(() => ({
+const { readCredentialsMock, psListMock } = vi.hoisted(() => ({
   readCredentialsMock: vi.fn<() => Promise<Credentials | null>>(async () => null),
+  psListMock: vi.fn(async () => [] as any[]),
+}));
+
+vi.mock('ps-list', () => ({
+  default: psListMock,
 }));
 
 vi.mock('@/persistence', async (importOriginal) => {
@@ -180,6 +186,63 @@ describe('registerMachineRpcHandlers', () => {
     expect(registered.has(RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS)).toBe(true);
     expect(registered.has(RPC_METHODS.BUGREPORT_GET_LOG_TAIL)).toBe(true);
     expect(registered.has(RPC_METHODS.BUGREPORT_UPLOAD_ARTIFACT)).toBe(true);
+  });
+
+  it('registers daemon execution run listing handler', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession: async () => ({ type: 'success', sessionId: 's1' } as const),
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    expect(registered.has((RPC_METHODS as any).DAEMON_EXECUTION_RUNS_LIST)).toBe(true);
+
+    const runId = `run-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    try {
+      await writeExecutionRunMarker({
+        pid: 12345,
+        happySessionId: 'sess-1',
+        runId,
+        callId: 'call-1',
+        sidechainId: 'side-1',
+        intent: 'review',
+        backendId: 'claude',
+        runClass: 'bounded',
+        ioMode: 'request_response',
+        retentionPolicy: 'ephemeral',
+        status: 'running',
+        startedAtMs: Date.now(),
+        updatedAtMs: Date.now(),
+      });
+
+      const handler = registered.get((RPC_METHODS as any).DAEMON_EXECUTION_RUNS_LIST);
+      expect(handler).toBeDefined();
+
+      psListMock.mockResolvedValueOnce([
+        { pid: 12345, name: 'node', cmd: '/secret', cpu: 1, memory: 2 },
+      ]);
+
+      const res = await handler!({});
+      expect(res).toEqual(expect.objectContaining({
+        runs: expect.any(Array),
+      }));
+      expect((res.runs as any[]).some((entry) => entry?.runId === runId)).toBe(true);
+
+      const entry = (res.runs as any[]).find((r) => r?.runId === runId);
+      expect(entry?.process?.cmd).toBeUndefined();
+    } finally {
+      await removeExecutionRunMarker(runId);
+    }
   });
 
   it('continues a session by spawning a new one and returning a Happier replay seed draft', async () => {

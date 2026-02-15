@@ -11,6 +11,12 @@ import { join } from 'node:path'
 import { isServerIdFilesystemSafe, sanitizeServerIdForFilesystem } from '@/server/serverId'
 import packageJson from '../package.json'
 
+export function isDaemonProcessArgv(args: readonly string[]): boolean {
+  if (args.length < 2) return false
+  if (args[0] !== 'daemon') return false
+  return args[1] === 'start' || args[1] === 'start-sync'
+}
+
 class Configuration {
   public readonly serverUrl: string
   public readonly publicServerUrl: string
@@ -33,10 +39,32 @@ class Configuration {
   public readonly isExperimentalEnabled: boolean
   public readonly disableCaffeinate: boolean
 
+  // Session connection keep-alive (ephemeral thinking state + online presence).
+  public readonly sessionKeepAliveIdleMs: number
+  public readonly sessionKeepAliveThinkingMs: number
+
+  // Claude remote TaskOutput sidechain import limits (defense-in-depth against huge transcripts).
+  public readonly claudeTaskOutputMaxPendingPerAgent: number
+  public readonly claudeTaskOutputMaxSeenUuidsPerSidechain: number
+  public readonly claudeTaskOutputMaxToolUseEntries: number
+  public readonly claudeTaskOutputMaxAgentMappings: number
+
+  // Claude subagent local JSONL follower (used in remote mode when Task returns output_file).
+  public readonly claudeSubagentJsonlPollIntervalMs: number
+
+  // Execution runs and ephemeral tasks (session-process budgets).
+  public readonly executionRunsMaxConcurrentPerSession: number
+  public readonly ephemeralTasksMaxConcurrentPerSession: number
+  public readonly executionRunsBoundedTimeoutMs: number
+  public readonly executionRunsMaxTurns: number
+  public readonly executionRunsMaxDepth: number
+  public readonly executionBudgetMaxConcurrentTotalPerSession: number | null
+  public readonly executionBudgetMaxConcurrentByClass: Readonly<Record<string, number>>
+
   constructor() {
     // Check if we're running as daemon based on process args
     const args = process.argv.slice(2)
-    this.isDaemonProcess = args.length >= 2 && args[0] === 'daemon' && (args[1] === 'start-sync')
+    this.isDaemonProcess = isDaemonProcessArgv(args)
 
     // Directory configuration - Priority: HAPPIER_HOME_DIR env > default home dir
     if (process.env.HAPPIER_HOME_DIR) {
@@ -58,9 +86,6 @@ class Configuration {
     const envActiveServerId = isServerIdFilesystemSafe(envActiveServerIdRaw)
       ? envActiveServerIdRaw
       : null;
-    if (envActiveServerIdRaw && !envActiveServerId) {
-      console.warn('[config] Ignoring invalid HAPPIER_ACTIVE_SERVER_ID (must be filesystem-safe)');
-    }
     const persisted = readActiveServerFromSettingsFile(this.settingsFile);
     const resolved = resolveServerSelection({
       envServerUrl: envServerUrl || null,
@@ -83,20 +108,76 @@ class Configuration {
     this.isExperimentalEnabled = ['true', '1', 'yes'].includes(process.env.HAPPIER_EXPERIMENTAL?.toLowerCase() || '');
     this.disableCaffeinate = ['true', '1', 'yes'].includes(process.env.HAPPIER_DISABLE_CAFFEINATE?.toLowerCase() || '');
 
+    const idleMsRaw = Number.parseInt(String(process.env.HAPPIER_SESSION_KEEPALIVE_IDLE_MS ?? ''), 10);
+    const thinkingMsRaw = Number.parseInt(String(process.env.HAPPIER_SESSION_KEEPALIVE_THINKING_MS ?? ''), 10);
+    // Defaults chosen to balance UI responsiveness and background traffic:
+    // - thinking: ~2s so UI connecting mid-turn sees 'thinking' quickly
+    // - idle: ~15s to reduce noise while maintaining presence
+    this.sessionKeepAliveIdleMs = Number.isFinite(idleMsRaw) && idleMsRaw >= 1000 ? idleMsRaw : 15_000;
+    this.sessionKeepAliveThinkingMs = Number.isFinite(thinkingMsRaw) && thinkingMsRaw >= 500 ? thinkingMsRaw : 2_000;
+
+    const maxPendingRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_TASKOUTPUT_MAX_PENDING_PER_AGENT ?? ''), 10);
+    const maxSeenUuidsRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_TASKOUTPUT_MAX_SEEN_UUIDS_PER_SIDECHAIN ?? ''), 10);
+    const maxToolUseRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_TASKOUTPUT_MAX_TOOLUSE_ENTRIES ?? ''), 10);
+    const maxAgentMappingsRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_TASKOUTPUT_MAX_AGENT_MAPPINGS ?? ''), 10);
+
+    this.claudeTaskOutputMaxPendingPerAgent = Number.isFinite(maxPendingRaw) && maxPendingRaw >= 0 ? maxPendingRaw : 2000;
+    this.claudeTaskOutputMaxSeenUuidsPerSidechain = Number.isFinite(maxSeenUuidsRaw) && maxSeenUuidsRaw >= 0 ? maxSeenUuidsRaw : 5000;
+    this.claudeTaskOutputMaxToolUseEntries = Number.isFinite(maxToolUseRaw) && maxToolUseRaw >= 0 ? maxToolUseRaw : 5000;
+    this.claudeTaskOutputMaxAgentMappings = Number.isFinite(maxAgentMappingsRaw) && maxAgentMappingsRaw >= 0 ? maxAgentMappingsRaw : 2000;
+
+    const subagentPollRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_SUBAGENT_JSONL_POLL_INTERVAL_MS ?? ''), 10);
+    // Default: 250ms. Most imports will be watcher-driven; this is a safety net if fs watch misses events.
+    this.claudeSubagentJsonlPollIntervalMs =
+      Number.isFinite(subagentPollRaw) && subagentPollRaw >= 25 ? subagentPollRaw : 250;
+
+    const maxConcurrentRunsRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION ?? ''), 10);
+    const maxConcurrentTasksRaw = Number.parseInt(String(process.env.HAPPIER_EPHEMERAL_TASKS_MAX_CONCURRENT_PER_SESSION ?? ''), 10);
+    const boundedTimeoutRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_RUNS_BOUNDED_TIMEOUT_MS ?? ''), 10);
+    const maxTurnsRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_RUNS_MAX_TURNS ?? ''), 10);
+    const maxDepthRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_RUNS_MAX_DEPTH ?? ''), 10);
+    const budgetTotalRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_BUDGET_MAX_CONCURRENT_TOTAL_PER_SESSION ?? ''), 10);
+    const budgetByClassRaw = String(process.env.HAPPIER_EXECUTION_BUDGET_MAX_CONCURRENT_BY_CLASS_JSON ?? '').trim();
+
+    this.executionRunsMaxConcurrentPerSession =
+      Number.isFinite(maxConcurrentRunsRaw) && maxConcurrentRunsRaw >= 1 ? maxConcurrentRunsRaw : 4;
+    this.ephemeralTasksMaxConcurrentPerSession =
+      Number.isFinite(maxConcurrentTasksRaw) && maxConcurrentTasksRaw >= 1 ? maxConcurrentTasksRaw : 2;
+    this.executionRunsBoundedTimeoutMs =
+      Number.isFinite(boundedTimeoutRaw) && boundedTimeoutRaw >= 1_000 ? boundedTimeoutRaw : 120_000;
+    this.executionRunsMaxTurns =
+      Number.isFinite(maxTurnsRaw) && maxTurnsRaw >= 1 ? maxTurnsRaw : 32;
+    // Depth 0 means "no nested runs allowed". Default 1 allows one nested hop when explicitly linked.
+    this.executionRunsMaxDepth =
+      Number.isFinite(maxDepthRaw) && maxDepthRaw >= 0 ? maxDepthRaw : 1;
+
+    this.executionBudgetMaxConcurrentTotalPerSession =
+      Number.isFinite(budgetTotalRaw) && budgetTotalRaw >= 1 ? budgetTotalRaw : null;
+
+    const parsedBudgetByClass: Record<string, number> = {};
+    if (budgetByClassRaw) {
+      try {
+        const parsed = JSON.parse(budgetByClassRaw);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+            const cls = String(key ?? '').trim();
+            if (!cls) continue;
+            const num = typeof value === 'number' ? value : Number.parseInt(String(value ?? ''), 10);
+            if (!Number.isFinite(num)) continue;
+            const int = Math.floor(num);
+            if (int < 1) continue;
+            parsedBudgetByClass[cls] = int;
+          }
+        }
+      } catch {
+        // ignore invalid json
+      }
+    }
+    this.executionBudgetMaxConcurrentByClass = Object.freeze(parsedBudgetByClass);
+
     this.currentCliVersion = packageJson.version
 
-    // Validate variant configuration
-    const variant = process.env.HAPPIER_VARIANT || 'stable'
-    if (variant === 'dev' && !this.happyHomeDir.includes('dev')) {
-      console.warn('⚠️  WARNING: HAPPIER_VARIANT=dev but HAPPIER_HOME_DIR does not contain "dev"')
-      console.warn(`   Current: ${this.happyHomeDir}`)
-      console.warn(`   Expected: Should contain "dev" (e.g., ~/.happier-dev)`)
-    }
-
-    // Visual indicator on CLI startup (only if not daemon process to avoid log clutter)
-    if (!this.isDaemonProcess && variant === 'dev') {
-      console.log('\x1b[33m🔧 DEV MODE\x1b[0m - Data: ' + this.happyHomeDir)
-    }
+    // Variant configuration is handled by caller/UX; configuration must not write to stdout/stderr.
 
     if (!existsSync(this.happyHomeDir)) {
       mkdirSync(this.happyHomeDir, { recursive: true })
@@ -234,10 +315,8 @@ function resolveServerSelection(params: Readonly<{
       } else {
         try {
           webappUrl = new URL(serverUrl).origin;
-          console.warn('[config] HAPPIER_SERVER_URL was set without HAPPIER_WEBAPP_URL; defaulting webappUrl to server origin');
         } catch {
           webappUrl = DEFAULT_WEBAPP_URL;
-          console.warn('[config] HAPPIER_SERVER_URL was set without HAPPIER_WEBAPP_URL; defaulting webappUrl to DEFAULT_WEBAPP_URL');
         }
       }
     }

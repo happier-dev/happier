@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { existsSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { mkdirSync } from 'node:fs';
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>();
   return {
@@ -16,28 +20,52 @@ vi.mock('@/utils/spawnHappyCLI', () => ({
   spawnHappyCLI: vi.fn(),
 }));
 
+vi.mock('@/ui/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
 import { readFileSync } from 'fs';
 
 import { readDaemonState } from '@/persistence';
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
 
-import { startDaemonHeartbeatLoop } from './heartbeat';
-
 describe('startDaemonHeartbeatLoop daemon self-restart', () => {
+  const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
+  let happyHomeDir: string | null = null;
+
   afterEach(() => {
     delete process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL;
     delete process.env.HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS;
     delete process.env.HAPPIER_DAEMON_RESTART_VERIFY_POLL_MS;
+    if (happyHomeDir && existsSync(happyHomeDir)) {
+      rmSync(happyHomeDir, { recursive: true, force: true });
+    }
+    happyHomeDir = null;
+    if (originalHappyHomeDir === undefined) {
+      delete process.env.HAPPIER_HOME_DIR;
+    } else {
+      process.env.HAPPIER_HOME_DIR = originalHappyHomeDir;
+    }
     vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
   it('does not permanently lock the heartbeat loop if reading package.json throws', async () => {
+    happyHomeDir = join(tmpdir(), `happier-cli-heartbeat-self-restart-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    process.env.HAPPIER_HOME_DIR = happyHomeDir;
+    mkdirSync(join(happyHomeDir, 'logs'), { recursive: true });
     process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL = '1';
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS = '25';
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_POLL_MS = '5';
 
     vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+    vi.resetModules();
 
     let tick: (() => Promise<void>) | undefined;
     const setIntervalSpy = vi
@@ -51,7 +79,7 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
       .mockImplementationOnce(() => {
         throw new Error('boom');
       })
-      .mockReturnValue(JSON.stringify({ version: '2.0.0' }) as any);
+      .mockReturnValue(JSON.stringify({ version: '1.0.0' }) as any);
 
     vi.mocked(spawnHappyCLI).mockReturnValue({ unref: vi.fn() } as any);
     vi.mocked(readDaemonState).mockResolvedValue({
@@ -61,6 +89,8 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
       startedWithCliVersion: '1.0.0',
       lastHeartbeatAt: Date.now(),
     });
+
+    const { startDaemonHeartbeatLoop } = await import('./heartbeat');
 
     startDaemonHeartbeatLoop({
       pidToTrackedSession: new Map(),
@@ -88,22 +118,20 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
       // pre-fix behavior: first tick throws and leaves heartbeatRunning stuck true
     }
 
-    const secondTick = tick!();
-    await vi.advanceTimersByTimeAsync(60);
-    await secondTick;
-
-    expect(spawnHappyCLI).toHaveBeenCalledWith(
-      ['daemon', 'start-sync'],
-      expect.objectContaining({ detached: true, stdio: 'ignore' }),
-    );
+    await tick!();
+    expect(spawnHappyCLI).not.toHaveBeenCalled();
   }, 15_000);
 
   it('uses start-sync and keeps the current daemon alive if replacement is not confirmed', async () => {
+    happyHomeDir = join(tmpdir(), `happier-cli-heartbeat-self-restart-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    process.env.HAPPIER_HOME_DIR = happyHomeDir;
+    mkdirSync(join(happyHomeDir, 'logs'), { recursive: true });
     process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL = '1';
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS = '25';
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_POLL_MS = '5';
 
     vi.useFakeTimers();
+    vi.resetModules();
 
     vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ version: '2.0.0' }) as any);
     vi.mocked(spawnHappyCLI).mockReturnValue({ unref: vi.fn() } as any);
@@ -116,6 +144,8 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
     });
 
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+    const { startDaemonHeartbeatLoop } = await import('./heartbeat');
 
     const interval = startDaemonHeartbeatLoop({
       pidToTrackedSession: new Map(),
@@ -146,11 +176,15 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
   }, 15_000);
 
   it('exits only after replacement daemon with current CLI version is confirmed', async () => {
+    happyHomeDir = join(tmpdir(), `happier-cli-heartbeat-self-restart-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    process.env.HAPPIER_HOME_DIR = happyHomeDir;
+    mkdirSync(join(happyHomeDir, 'logs'), { recursive: true });
     process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL = '1';
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS = '40';
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_POLL_MS = '5';
 
     vi.useFakeTimers();
+    vi.resetModules();
 
     vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ version: '2.0.0' }) as any);
     vi.mocked(spawnHappyCLI).mockReturnValue({ unref: vi.fn() } as any);
@@ -169,6 +203,8 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
       });
 
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+    const { startDaemonHeartbeatLoop } = await import('./heartbeat');
 
     const interval = startDaemonHeartbeatLoop({
       pidToTrackedSession: new Map(),

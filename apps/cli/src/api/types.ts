@@ -270,8 +270,9 @@ export const CreateSessionResponseSchema = z.object({
     metadata: z.string(),
     metadataVersion: z.number(),
     agentState: z.string().nullable(),
-    agentStateVersion: z.number()
-  })
+    agentStateVersion: z.number(),
+    dataEncryptionKey: z.string().nullable().optional(),
+  }).passthrough(),
 })
 
 export type CreateSessionResponse = z.infer<typeof CreateSessionResponseSchema>
@@ -485,6 +486,7 @@ export type AgentState = {
   capabilities?: {
     askUserQuestionAnswersInPermission?: boolean | null | undefined
     inFlightSteer?: boolean | null | undefined
+    localPermissionBridgeInLocalMode?: boolean | null | undefined
   } | null | undefined
   requests?: {
     [id: string]: {

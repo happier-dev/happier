@@ -108,4 +108,27 @@ describe('daemon service install plan', () => {
     expect(plan.files[0]?.path).toBe('/home/test/.config/systemd/user/happier-daemon.company.service');
     expect(plan.files[0]?.content).toContain('Environment=HAPPIER_SERVER_URL=https://company.example.test');
   });
+
+  it('plans a Scheduled Task install (win32)', () => {
+    const plan = planDaemonServiceInstall({
+      platform: 'win32',
+      instanceId: 'cloud',
+      userHomeDir: 'C:\\\\Users\\\\test',
+      happierHomeDir: 'C:\\\\Users\\\\test\\\\.happier',
+      serverUrl: 'https://api.happier.dev',
+      webappUrl: 'https://app.happier.dev',
+      publicServerUrl: 'https://api.happier.dev',
+      nodePath: 'C:\\\\Users\\\\test\\\\.local\\\\bin\\\\happier.exe',
+      entryPath: '',
+    });
+
+    expect(plan.files).toHaveLength(1);
+    expect(plan.files[0]?.path).toBe('C:\\Users\\test\\.happier\\services\\happier-daemon.cloud.ps1');
+    expect(plan.files[0]?.content).toContain('$env:HAPPIER_HOME_DIR');
+    expect(plan.files[0]?.content).toContain('happier.exe');
+
+    const cmdText = plan.commands.map((c) => `${c.cmd} ${c.args.join(' ')}`).join('\n');
+    expect(cmdText).toContain('schtasks /Create');
+    expect(cmdText).toContain('ONLOGON');
+  });
 });

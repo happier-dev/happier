@@ -164,6 +164,12 @@ export function normalizeReadResult(rawOutput: unknown): UnknownRecord {
         }
     }
 
+    const contentText = coerceTextFromContentBlocks(out.content);
+    if (typeof contentText === 'string' && contentText.trimEnd().length > 0) {
+        out.file = { content: contentText.trimEnd() };
+        return out;
+    }
+
     const fileRecord = asRecord(out.file);
     if (fileRecord) {
         out.file = { ...fileRecord };

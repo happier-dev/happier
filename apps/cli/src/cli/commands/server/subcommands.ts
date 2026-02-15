@@ -25,10 +25,10 @@ import {
 export async function runServerSubcommand(subcommand: string, args: string[]): Promise<boolean> {
   switch (subcommand) {
     case 'list':
-      await cmdList();
+      await cmdList(args.slice(1));
       return true;
     case 'current':
-      await cmdCurrent();
+      await cmdCurrent(args.slice(1));
       return true;
     case 'add':
       await cmdAdd(args.slice(1));
@@ -50,9 +50,47 @@ export async function runServerSubcommand(subcommand: string, args: string[]): P
   }
 }
 
-async function cmdList(): Promise<void> {
+function wantsJson(args: readonly string[]): boolean {
+  return args.includes('--json');
+}
+
+function printJsonEnvelope(payload: Readonly<{ kind: string } & ({ ok: true; data: unknown } | { ok: false; error: unknown })>): void {
+  console.log(JSON.stringify({ v: 1, ...payload }));
+}
+
+type ServerProfileSummary = Readonly<{
+  id: string;
+  name: string;
+  serverUrl: string;
+  webappUrl: string;
+  lastUsedAt?: number;
+}>;
+
+function summarizeProfile(p: any): ServerProfileSummary {
+  const out: ServerProfileSummary = {
+    id: String(p.id ?? ''),
+    name: String(p.name ?? ''),
+    serverUrl: String(p.serverUrl ?? ''),
+    webappUrl: String(p.webappUrl ?? ''),
+    ...(typeof p.lastUsedAt === 'number' ? { lastUsedAt: p.lastUsedAt } : {}),
+  };
+  return out;
+}
+
+async function cmdList(args: string[]): Promise<void> {
   const active = await getActiveServerProfile();
   const profiles = await listServerProfiles();
+  if (wantsJson(args)) {
+    printJsonEnvelope({
+      ok: true,
+      kind: 'server_list',
+      data: {
+        activeServerId: active.id,
+        profiles: profiles.map(summarizeProfile),
+      },
+    });
+    return;
+  }
   if (profiles.length === 0) {
     console.log(chalk.gray('(no server profiles configured)'));
     return;
@@ -66,8 +104,16 @@ async function cmdList(): Promise<void> {
   }
 }
 
-async function cmdCurrent(): Promise<void> {
+async function cmdCurrent(args: string[]): Promise<void> {
   const active = await getActiveServerProfile();
+  if (wantsJson(args)) {
+    printJsonEnvelope({
+      ok: true,
+      kind: 'server_current',
+      data: { active: summarizeProfile(active) },
+    });
+    return;
+  }
   console.log(chalk.bold('Active server'));
   console.log(`${chalk.gray('name:')}   ${active.name}`);
   console.log(`${chalk.gray('id:')}     ${active.id}`);

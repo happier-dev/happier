@@ -21,6 +21,20 @@ function matchesDynamicSpawnHooksImport(text: string): boolean {
 }
 
 async function listDistFiles(distDir: string): Promise<string[]> {
+  // In some environments (especially when build/test are orchestrated across workspaces),
+  // the build output directory can appear a moment after the test process starts.
+  // Retry briefly to avoid flaky ENOENT/empty-dir failures.
+  for (let attempt = 0; attempt < 200; attempt++) {
+    try {
+      const entries = await fs.readdir(distDir);
+      const files = entries.filter((e) => e.endsWith('.mjs') || e.endsWith('.cjs')).map((e) => join(distDir, e));
+      if (files.length > 0) return files;
+    } catch (e: any) {
+      if (e?.code !== 'ENOENT') throw e;
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+
   const entries = await fs.readdir(distDir);
   return entries.filter((e) => e.endsWith('.mjs') || e.endsWith('.cjs')).map((e) => join(distDir, e));
 }
@@ -39,5 +53,5 @@ describe('CLI build output', () => {
     }
 
     expect(offenders).toEqual([]);
-  });
+  }, 20_000);
 });

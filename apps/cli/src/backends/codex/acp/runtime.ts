@@ -33,7 +33,7 @@ export function createCodexAcpRuntime(params: {
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
-    // Codex ACP supports in-flight steering by submitting additional prompt messages while a turn is active.
+    // Codex ACP supports in-flight steering via the ACP backend's dedicated steer entrypoint.
     inFlightSteer: { enabled: true },
     pendingQueue: {
       // Drain server-pending messages mid-turn only in the provider harness / e2e context.

@@ -12,7 +12,7 @@ export type SubmitBugReportInput = {
   maxArtifactBytes?: number;
   issueOwner: string;
   issueRepo: string;
-  labels: string[];
+  existingIssueNumber?: number;
 };
 
 export async function submitBugReportToService(input: SubmitBugReportInput): Promise<{

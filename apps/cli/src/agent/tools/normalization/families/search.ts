@@ -117,6 +117,17 @@ export function normalizeGlobResult(rawOutput: unknown): UnknownRecord {
     }
 
     const record = asRecord(rawOutput);
+    if (record) {
+        const contentText = coerceTextFromContentBlocks((record as any).content);
+        if (contentText) {
+            const lines = contentText
+                .replace(/\r\n/g, '\n')
+                .split('\n')
+                .map((l) => l.trim())
+                .filter((l) => l.length > 0);
+            return { ...record, matches: lines.length > 0 ? lines : [contentText] };
+        }
+    }
     if (record && Array.isArray((record as any).matches)) {
         return { matches: (record as any).matches };
     }
@@ -231,6 +242,19 @@ export function normalizeGrepResult(rawOutput: unknown): UnknownRecord {
     }
 
     const record = asRecord(rawOutput);
+    if (record) {
+        const contentText = coerceTextFromContentBlocks((record as any).content);
+        if (contentText && contentText.trim().length > 0) {
+            const lines = contentText.replace(/\r\n/g, '\n').split('\n');
+            const matches: Array<{ filePath: string; line?: number; excerpt?: string }> = [];
+            for (const line of lines) {
+                const parsed = parseGrepLine(line);
+                if (parsed) matches.push(parsed);
+            }
+            if (matches.length > 0) return { ...record, matches };
+            return { ...record, matches: [{ excerpt: contentText.trim() }] };
+        }
+    }
     if (record && Array.isArray((record as any).matches)) return { matches: (record as any).matches };
     if (record) return { ...record };
     return { value: rawOutput };
@@ -253,6 +277,17 @@ export function normalizeLsResult(rawOutput: unknown): UnknownRecord {
     }
 
     const record = asRecord(rawOutput);
+    if (record) {
+        const contentText = coerceTextFromContentBlocks((record as any).content);
+        if (contentText) {
+            const lines = contentText
+                .replace(/\r\n/g, '\n')
+                .split('\n')
+                .map((l) => l.trim())
+                .filter((l) => l.length > 0);
+            return { ...record, entries: lines };
+        }
+    }
     if (record && Array.isArray((record as any).entries)) return { entries: (record as any).entries };
     if (record && Array.isArray((record as any).files)) return { entries: (record as any).files };
     if (record) return { ...record };

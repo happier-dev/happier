@@ -1,5 +1,5 @@
 import { open, readdir, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
 export type CodexSessionMetaPayload = {
@@ -19,6 +19,31 @@ type ScanOptions = {
     scanLimit: number;
     maxDepth?: number;
 };
+
+const CODEX_SESSION_META_CLOCK_SKEW_MS = 2_000;
+
+function parseRolloutTimestampFromFilename(filePath: string): number | null {
+    const name = basename(filePath);
+    const match = /^rollout-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})/.exec(name);
+    if (!match) return null;
+    const compact = match[1];
+    const isoLike = compact.replace(/T(\d{2})-(\d{2})-(\d{2})/, 'T$1:$2:$3');
+    const ms = Date.parse(`${isoLike}Z`);
+    return Number.isFinite(ms) ? ms : null;
+}
+
+function parseSessionMetaTimestampMs(sessionMeta: CodexSessionMetaPayload): number | null {
+    const raw = typeof sessionMeta.timestamp === 'string' ? sessionMeta.timestamp : null;
+    if (!raw) return null;
+    const ms = Date.parse(raw);
+    return Number.isFinite(ms) ? ms : null;
+}
+
+function isSessionMetaFreshForStart(opts: { sessionMeta: CodexSessionMetaPayload; startedAtMs: number }): boolean {
+    const ts = parseSessionMetaTimestampMs(opts.sessionMeta);
+    if (ts === null) return false;
+    return ts >= opts.startedAtMs - CODEX_SESSION_META_CLOCK_SKEW_MS;
+}
 
 async function collectRolloutFiles(opts: ScanOptions): Promise<string[]> {
     const results: string[] = [];
@@ -49,18 +74,21 @@ async function collectRolloutFiles(opts: ScanOptions): Promise<string[]> {
 
     await walk(opts.sessionsRootDir, 0);
 
-    // Prefer newest by mtime. The caller can further score based on session_meta timestamp.
-    const withMtime: Array<{ filePath: string; mtimeMs: number }> = [];
+    // Prefer newest by filename timestamp (or filesystem birthtime), not by mtime. Active sessions will keep mtime fresh.
+    const withTime: Array<{ filePath: string; sortMs: number; mtimeMs: number }> = [];
     for (const filePath of results) {
         try {
             const s = await stat(filePath);
-            withMtime.push({ filePath, mtimeMs: s.mtimeMs });
+            const fromName = parseRolloutTimestampFromFilename(filePath);
+            const fromBirth = Number.isFinite(s.birthtimeMs) && s.birthtimeMs > 0 ? s.birthtimeMs : null;
+            const sortMs = fromName ?? fromBirth ?? s.mtimeMs;
+            withTime.push({ filePath, sortMs, mtimeMs: s.mtimeMs });
         } catch {
             // ignore unreadable files
         }
     }
-    withMtime.sort((a, b) => b.mtimeMs - a.mtimeMs);
-    return withMtime.slice(0, Math.max(0, opts.scanLimit)).map((x) => x.filePath);
+    withTime.sort((a, b) => b.sortMs - a.sortMs || b.mtimeMs - a.mtimeMs);
+    return withTime.slice(0, Math.max(0, opts.scanLimit)).map((x) => x.filePath);
 }
 
 async function readFirstLine(filePath: string): Promise<string | null> {
@@ -134,12 +162,20 @@ export function scoreCodexRolloutCandidate(opts: {
 }): number {
     let score = 0;
 
-    const ts = typeof opts.sessionMeta.timestamp === 'string' ? Date.parse(opts.sessionMeta.timestamp) : NaN;
-    if (Number.isFinite(ts)) {
-        const diffMs = Math.abs(ts - opts.startedAtMs);
-        if (diffMs <= 10_000) score += 100;
-        else if (diffMs <= 60_000) score += 50;
-        else if (diffMs <= 5 * 60_000) score += 10;
+    const ts = parseSessionMetaTimestampMs(opts.sessionMeta);
+    if (ts !== null) {
+        const deltaMs = ts - opts.startedAtMs;
+        if (deltaMs < -CODEX_SESSION_META_CLOCK_SKEW_MS) {
+            // If a session started before this launcher, it is extremely likely to be unrelated.
+            score -= 1_000;
+        } else {
+            const diffMs = Math.abs(deltaMs);
+            if (diffMs <= 10_000) score += 100;
+            else if (diffMs <= 60_000) score += 50;
+            else if (diffMs <= 5 * 60_000) score += 10;
+        }
+    } else {
+        score -= 100;
     }
 
     // Weak signal only.
@@ -165,7 +201,7 @@ export async function discoverCodexRolloutFileOnce(opts: {
         const all = await collectRolloutFiles({ sessionsRootDir: opts.sessionsRootDir, scanLimit: opts.scanLimit });
         const matches = all.filter((p) => p.includes(resumeId));
         if (matches.length > 0) {
-            // collectRolloutFiles returns newest-first by mtime.
+            // collectRolloutFiles returns newest-first by a stable creation-ish timestamp.
             for (const filePath of matches) {
                 const sessionMeta = await readCodexSessionMetaFromRollout(filePath);
                 if (!sessionMeta) continue;
@@ -187,7 +223,13 @@ export async function discoverCodexRolloutFileOnce(opts: {
         scored.push({ filePath, sessionMeta, score });
     }
     scored.sort((a, b) => b.score - a.score);
-    const best = scored[0];
+
+    // When starting a brand-new Codex session, ignore stale rollout files and keep polling until a fresh one appears.
+    const candidates = resumeId
+        ? scored
+        : scored.filter((entry) => isSessionMetaFreshForStart({ sessionMeta: entry.sessionMeta, startedAtMs: opts.startedAtMs }));
+
+    const best = candidates[0];
     if (!best) return null;
     return { filePath: best.filePath, sessionMeta: best.sessionMeta };
 }

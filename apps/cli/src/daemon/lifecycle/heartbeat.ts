@@ -8,6 +8,8 @@ import { projectPath } from '@/projectPath';
 import { logger } from '@/ui/logger';
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
 import { writeSessionExitReport } from '@/daemon/sessionExitReport';
+import { gcExecutionRunMarkers } from '@/daemon/executionRunRegistry';
+import { findHappyProcessByPid } from '@/daemon/doctor';
 
 import { reportDaemonObservedSessionExit } from '../sessionTermination';
 import type { TrackedSession } from '../types';
@@ -16,6 +18,11 @@ import { removeSessionMarker } from '../sessionRegistry';
 function parsePositiveInt(rawValue: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(rawValue ?? '', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseNonNegativeInt(rawValue: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(rawValue ?? '', 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 async function waitForReplacementDaemon(params: Readonly<{
@@ -45,6 +52,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
   spawnResourceCleanupByPid: Map<number, () => void>;
   sessionAttachCleanupByPid: Map<number, () => Promise<void>>;
   getApiMachineForSessions: () => ApiMachineClient | null;
+  onChildExited?: (pid: number, exit: Readonly<{ reason: string; code: number | null; signal: string | null }>) => void;
   controlPort: number;
   fileState: DaemonLocallyPersistedState;
   currentCliVersion: string;
@@ -55,6 +63,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
     spawnResourceCleanupByPid,
     sessionAttachCleanupByPid,
     getApiMachineForSessions,
+    onChildExited,
     controlPort,
     fileState,
     currentCliVersion,
@@ -69,6 +78,10 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
   const heartbeatIntervalMs = parsePositiveInt(process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL, 60000);
   const restartVerifyTimeoutMs = parsePositiveInt(process.env.HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS, 10000);
   const restartVerifyPollMs = parsePositiveInt(process.env.HAPPIER_DAEMON_RESTART_VERIFY_POLL_MS, 250);
+  const executionRunTerminalTtlMs = parseNonNegativeInt(
+    process.env.HAPPIER_DAEMON_EXECUTION_RUN_TERMINAL_TTL_MS,
+    6 * 60 * 60 * 1000,
+  );
   let heartbeatRunning = false;
 
   const intervalHandle = setInterval(async () => {
@@ -89,6 +102,10 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
         } catch (error) {
           // Process is dead, remove from tracking
           logger.debug(`[DAEMON RUN] Removing stale session with PID ${pid} (process no longer exists)`);
+          if (onChildExited) {
+            onChildExited(pid, { reason: 'process-missing', code: null, signal: null });
+            continue;
+          }
           const tracked = pidToTrackedSession.get(pid);
           if (tracked) {
             const apiMachine = getApiMachineForSessions();
@@ -133,6 +150,28 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
           pidToTrackedSession.delete(pid);
           void removeSessionMarker(pid);
         }
+      }
+
+      try {
+        await gcExecutionRunMarkers({
+          nowMs: Date.now(),
+          terminalTtlMs: executionRunTerminalTtlMs,
+          isPidAlive: (pid) => {
+            try {
+              process.kill(pid, 0);
+              return true;
+            } catch {
+              return false;
+            }
+          },
+          isPidSafeHappyProcess: async (pid) => {
+            if (pidToTrackedSession.has(pid)) return true;
+            const proc = await findHappyProcessByPid(pid);
+            return Boolean(proc);
+          },
+        });
+      } catch (error) {
+        logger.debug('[DAEMON RUN] Failed to gc execution run markers', error);
       }
 
       // Cleanup any spawn resources for sessions no longer tracked (e.g. stopSession removed them).

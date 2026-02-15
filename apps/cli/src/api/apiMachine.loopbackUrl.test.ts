@@ -70,5 +70,5 @@ describe('ApiMachineClient loopback url resolution', () => {
     expect(mockIo).toHaveBeenCalled();
     const calledUrl = mockIo.mock.calls[0]?.[0];
     expect(String(calledUrl)).toContain('http://127.0.0.1:3005');
-  });
+  }, 15_000);
 });

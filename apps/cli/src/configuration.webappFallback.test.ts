@@ -207,4 +207,27 @@ describe('configuration env url fallback', () => {
     expect(configMod.configuration.serverUrl).toBe('https://api.selfhost.example.test/v1');
     expect(configMod.configuration.webappUrl).toBe('https://app.selfhost.example.test');
   });
+
+  it('reads execution-run and ephemeral-task budget env vars', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-config-budget-'));
+    tempDirs.push(homeDir);
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION = '7';
+    process.env.HAPPIER_EPHEMERAL_TASKS_MAX_CONCURRENT_PER_SESSION = '3';
+    process.env.HAPPIER_EXECUTION_RUNS_BOUNDED_TIMEOUT_MS = '45000';
+    process.env.HAPPIER_EXECUTION_RUNS_MAX_TURNS = '9';
+    process.env.HAPPIER_EXECUTION_RUNS_MAX_DEPTH = '2';
+    process.env.HAPPIER_EXECUTION_BUDGET_MAX_CONCURRENT_TOTAL_PER_SESSION = '5';
+    process.env.HAPPIER_EXECUTION_BUDGET_MAX_CONCURRENT_BY_CLASS_JSON = JSON.stringify({ review: 1, automation: 2 });
+
+    const configMod = await import('./configuration');
+    configMod.reloadConfiguration();
+    expect(configMod.configuration.executionRunsMaxConcurrentPerSession).toBe(7);
+    expect(configMod.configuration.ephemeralTasksMaxConcurrentPerSession).toBe(3);
+    expect(configMod.configuration.executionRunsBoundedTimeoutMs).toBe(45000);
+    expect(configMod.configuration.executionRunsMaxTurns).toBe(9);
+    expect(configMod.configuration.executionRunsMaxDepth).toBe(2);
+    expect(configMod.configuration.executionBudgetMaxConcurrentTotalPerSession).toBe(5);
+    expect(configMod.configuration.executionBudgetMaxConcurrentByClass).toEqual({ review: 1, automation: 2 });
+  });
 });

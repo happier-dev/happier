@@ -38,6 +38,8 @@ import { waitForVisibleConsoleSessionWebhook } from './sessions/visibleConsoleSp
 import { createStopSession } from './sessions/stopSession';
 import { resolveSpawnWebhookResult } from './sessions/resolveSpawnWebhookResult';
 import { startDaemonHeartbeatLoop } from './lifecycle/heartbeat';
+import { createSessionRunnerRespawnManager } from './processSupervision/sessionRunnerRespawn';
+import { publishShutdownStateBestEffort } from './lifecycle/publishShutdownState';
 import { projectPath } from '@/projectPath';
 import { selectPreferredTmuxSessionName, TmuxUtilities, isTmuxAvailable } from '@/integrations/tmux';
 import { resolveTerminalRequestFromSpawnOptions } from '@/terminal/runtime/terminalConfig';
@@ -54,13 +56,17 @@ import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandler
 import { buildHappySessionControlArgs } from './sessionSpawnArgs';
 import { resolveExistingSessionEncryptionKeyBase64 } from './sessionEncryption/resolveExistingSessionEncryptionKeyBase64';
 import { resolveWaitForAuthConfig } from './startup/waitForAuthConfig';
-	import { ensureSessionDirectory } from './startup/ensureSessionDirectory';
-	import { waitForInitialCredentials } from './startup/waitForInitialCredentials';
-	import { waitForSessionWebhook } from './spawn/waitForSessionWebhook';
-	import { resolveSpawnChildEnvironment } from './spawn/resolveSpawnChildEnvironment';
-	import { createSpawnConcurrencyGate } from './spawn/createSpawnConcurrencyGate';
-
+import { ensureSessionDirectory } from './startup/ensureSessionDirectory';
+import { waitForInitialCredentials } from './startup/waitForInitialCredentials';
+import { waitForSessionWebhook } from './spawn/waitForSessionWebhook';
+import { resolveSpawnChildEnvironment } from './spawn/resolveSpawnChildEnvironment';
+import { createSpawnConcurrencyGate } from './spawn/createSpawnConcurrencyGate';
 import { startAutomationWorker, type AutomationWorkerHandle } from './automation/automationWorker';
+import {
+  HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY,
+  normalizeDaemonInitialPrompt,
+} from '@/agent/runtime/daemonInitialPrompt';
+
 function resolvePositiveIntEnv(raw: string | undefined, fallback: number, bounds: { min: number; max: number }): number {
   const value = (raw ?? '').trim();
   if (!value) return fallback;
@@ -147,9 +153,9 @@ export async function startDaemon(): Promise<void> {
 	    const spawnResourceCleanupByPid = new Map<number, () => void>();
 	    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
 	    let apiMachineForSessions: ApiMachineClient | null = null;
+      let automationWorker: AutomationWorkerHandle | null = null;
 
-	    let automationWorker: AutomationWorkerHandle | null = null;
-    // Session spawning awaiter system
+	    // Session spawning awaiter system
 	    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
 	    const pidToSpawnResultResolver = new Map<number, (result: SpawnSessionResult) => void>();
 	    const pidToSpawnWebhookTimeout = new Map<number, NodeJS.Timeout>();
@@ -173,13 +179,13 @@ export async function startDaemon(): Promise<void> {
 	    };
 
 	    // Spawn a new session (sessionId reserved for future Happy session resume; vendor resume uses options.resume).
-			    const spawnSession = async (options: SpawnSessionOptions): Promise<SpawnSessionResult> => {
-			      return await spawnConcurrencyGate.run(async () => {
-		      // Do NOT log raw options: it may include secrets (token / env vars).
-		      const envKeysPreview = options.environmentVariables && typeof options.environmentVariables === 'object'
-		        ? Object.keys(options.environmentVariables as Record<string, unknown>)
-		        : [];
-		      const environmentVariablesValidation = validateEnvVarRecordStrict(options.environmentVariables);
+		    const spawnSession = async (options: SpawnSessionOptions): Promise<SpawnSessionResult> => {
+	      return await spawnConcurrencyGate.run(async () => {
+	      // Do NOT log raw options: it may include secrets (token / env vars).
+	      const envKeysPreview = options.environmentVariables && typeof options.environmentVariables === 'object'
+	        ? Object.keys(options.environmentVariables as Record<string, unknown>)
+	        : [];
+	      const environmentVariablesValidation = validateEnvVarRecordStrict(options.environmentVariables);
 		      logger.debugLargeJson('[DAEMON RUN] Spawning session', {
 		        directory: options.directory,
 		        sessionId: options.sessionId,
@@ -188,6 +194,7 @@ export async function startDaemon(): Promise<void> {
 		        agent: options.agent,
 		        profileId: options.profileId,
 		        hasToken: !!options.token,
+		        hasInitialPrompt: typeof options.initialPrompt === 'string' && options.initialPrompt.trim().length > 0,
 		        hasResume: typeof options.resume === 'string' && options.resume.trim().length > 0,
 		        windowsRemoteSessionConsole: options.windowsRemoteSessionConsole,
 		        environmentVariableCount: envKeysPreview.length,
@@ -211,19 +218,20 @@ export async function startDaemon(): Promise<void> {
 			        approvedNewDirectoryCreation = true,
 			        resume,
 			        existingSessionId,
-			        sessionEncryptionKeyBase64,
-			        sessionEncryptionVariant,
 			        permissionMode,
 			        permissionModeUpdatedAt,
-              modelId,
-              modelUpdatedAt,
+			        modelId,
+			        modelUpdatedAt,
+			        initialPrompt,
 			        experimentalCodexResume,
 			        experimentalCodexAcp
 			      } = options;
 		      const normalizedResume = typeof resume === 'string' ? resume.trim() : '';
 		      const normalizedExistingSessionId = typeof existingSessionId === 'string' ? existingSessionId.trim() : '';
 
-	      // Idempotency: a resume request should not spawn a duplicate process when the session is already running.
+		      const normalizedInitialPrompt = normalizeDaemonInitialPrompt(initialPrompt);
+
+		      // Idempotency: a resume request should not spawn a duplicate process when the session is already running.
 	      // This is especially important for pending-queue wake-ups, where the UI may attempt a best-effort wake
 	      // even if a session is already attached.
 		      if (normalizedExistingSessionId) {
@@ -266,36 +274,31 @@ export async function startDaemon(): Promise<void> {
             }
 		      }
 
-			  let normalizedSessionEncryptionKeyBase64 =
-			    typeof sessionEncryptionKeyBase64 === 'string' ? sessionEncryptionKeyBase64.trim() : '';
-			  if (normalizedExistingSessionId) {
-			    if (!normalizedSessionEncryptionKeyBase64) {
-			      const creds = await readCredentials().catch(() => null);
-			      if (creds && creds.encryption.type === 'dataKey') {
-			        const resolved = await resolveExistingSessionEncryptionKeyBase64({
-			          credentials: creds,
-			          sessionId: normalizedExistingSessionId,
-			        }).catch(() => null);
-			        if (typeof resolved === 'string' && resolved.trim().length > 0) {
-			          normalizedSessionEncryptionKeyBase64 = resolved.trim();
-			        }
-			      }
-			    }
-			    if (!normalizedSessionEncryptionKeyBase64) {
-			      return {
-			        type: 'error',
-			        errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
-			        errorMessage: 'Missing session encryption key for resume',
-			      };
-			    }
-			    if (sessionEncryptionVariant && sessionEncryptionVariant !== 'dataKey') {
-			      return {
-			        type: 'error',
-			        errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_UNSUPPORTED_ENCRYPTION_VARIANT,
-			        errorMessage: 'Unsupported session encryption variant for resume',
-			      };
-			    }
-			  }
+		      let normalizedSessionEncryptionKeyBase64 = '';
+		      if (normalizedExistingSessionId) {
+            const credentials = await readCredentials().catch(() => null);
+            if (!credentials || credentials.encryption.type !== 'dataKey') {
+              return {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
+                errorMessage: 'Missing dataKey credentials to open the session encryption key for resume.',
+              };
+            }
+
+            const resolved = await resolveExistingSessionEncryptionKeyBase64({
+              credentials,
+              sessionId: normalizedExistingSessionId,
+            }).catch(() => null);
+            if (!resolved) {
+              return {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
+                errorMessage: 'Failed to open session encryption key for resume.',
+              };
+            }
+
+            normalizedSessionEncryptionKeyBase64 = resolved;
+		      }
 		      let directoryCreated = false;
 
           const daemonSpawnHooks = AGENTS[catalogAgentId].getDaemonSpawnHooks
@@ -367,9 +370,15 @@ export async function startDaemon(): Promise<void> {
 	          sessionAttachCleanup = attach.cleanup;
 	        }
 
-	        const extraEnvForChildWithMessage = sessionAttachFilePath
-	          ? { ...extraEnvForChild, HAPPIER_SESSION_ATTACH_FILE: sessionAttachFilePath }
-	          : extraEnvForChild;
+	        const extraEnvForChildWithMessage = {
+	          ...extraEnvForChild,
+	          ...(sessionAttachFilePath
+	            ? { HAPPIER_SESSION_ATTACH_FILE: sessionAttachFilePath }
+	            : {}),
+	          ...(normalizedInitialPrompt
+	            ? { [HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY]: normalizedInitialPrompt }
+	            : {}),
+	        };
 
 	        // Check if tmux is available and should be used
 	        const tmuxAvailable = await isTmuxAvailable();
@@ -481,8 +490,8 @@ export async function startDaemon(): Promise<void> {
 	            const trackedSession: TrackedSession = {
 	              startedBy: 'daemon',
 	              pid: tmuxPid, // Real PID from tmux -P flag
+	              spawnOptions: options,
 	              tmuxSessionId: tmuxResult.sessionId,
-			      spawnOptions: options,
 	              vendorResumeId: effectiveResume || undefined,
 	              directoryCreated,
 	              message: directoryCreated
@@ -613,7 +622,7 @@ export async function startDaemon(): Promise<void> {
 		            const trackedSession: TrackedSession = {
 		              startedBy: 'daemon',
 		              pid,
-				      spawnOptions: options,
+		              spawnOptions: options,
 		              vendorResumeId: effectiveResume || undefined,
 		              directoryCreated,
 		              message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined,
@@ -709,15 +718,15 @@ export async function startDaemon(): Promise<void> {
 	            sessionAttachCleanup = null;
 	          }
 
-	          const trackedSession: TrackedSession = {
-	            startedBy: 'daemon',
-	            pid: happyProcess.pid,
-	            childProcess: happyProcess,
-			        spawnOptions: options,
-	            vendorResumeId: effectiveResume || undefined,
-	            directoryCreated,
-	            message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined
-	          };
+		          const trackedSession: TrackedSession = {
+		            startedBy: 'daemon',
+		            pid: happyProcess.pid,
+		            childProcess: happyProcess,
+		            spawnOptions: options,
+		            vendorResumeId: effectiveResume || undefined,
+		            directoryCreated,
+		            message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined
+		          };
 
           pidToTrackedSession.set(happyProcess.pid, trackedSession);
           if (spawnResourceCleanupOnExit) {
@@ -800,120 +809,88 @@ export async function startDaemon(): Promise<void> {
 		        if (spawnResourceCleanupOnFailure && !spawnResourceCleanupArmed) {
 		          spawnResourceCleanupOnFailure();
 		          spawnResourceCleanupOnFailure = null;
-		          spawnResourceCleanupOnExit = null;
-		        }
+	          spawnResourceCleanupOnExit = null;
+	        }
 	        if (sessionAttachCleanup) {
 	          await sessionAttachCleanup();
 	          sessionAttachCleanup = null;
 	        }
-	        const errorMessage = error instanceof Error ? error.message : String(error);
-	        logger.debug('[DAEMON RUN] Failed to spawn session:', error);
+		        const errorMessage = error instanceof Error ? error.message : String(error);
+		        logger.debug('[DAEMON RUN] Failed to spawn session:', error);
 		        return {
 		          type: 'error',
 	            errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
 		          errorMessage: `Failed to spawn session: ${errorMessage}`
+		        };
+		      }
+	      });
+		    };
+	
+		    const stopSessionCore = createStopSession({ pidToTrackedSession });
+
+        const resolveBoolEnv = (raw: string | undefined, fallback: boolean): boolean => {
+          const value = (raw ?? '').trim().toLowerCase();
+          if (!value) return fallback;
+          if (['1', 'true', 'yes', 'y', 'on'].includes(value)) return true;
+          if (['0', 'false', 'no', 'n', 'off'].includes(value)) return false;
+          return fallback;
+        };
+
+        const sessionRespawnEnabled = resolveBoolEnv(process.env.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED, true);
+        const sessionRespawnMaxAttempts = resolvePositiveIntEnv(
+          process.env.HAPPIER_DAEMON_SESSION_RESPAWN_MAX_ATTEMPTS,
+          10,
+          { min: 0, max: 100 },
+        );
+        const sessionRespawnBaseDelayMs = resolvePositiveIntEnv(
+          process.env.HAPPIER_DAEMON_SESSION_RESPAWN_BASE_DELAY_MS,
+          1_000,
+          { min: 50, max: 5 * 60_000 },
+        );
+        const sessionRespawnMaxDelayMs = resolvePositiveIntEnv(
+          process.env.HAPPIER_DAEMON_SESSION_RESPAWN_MAX_DELAY_MS,
+          60_000,
+          { min: 50, max: 30 * 60_000 },
+        );
+        const sessionRespawnJitterMs = resolvePositiveIntEnv(
+          process.env.HAPPIER_DAEMON_SESSION_RESPAWN_JITTER_MS,
+          250,
+          { min: 0, max: 10_000 },
+        );
+
+	        const isSessionAlreadyRunning = (sessionId: string): boolean => {
+	          for (const tracked of pidToTrackedSession.values()) {
+	            if (tracked.happySessionId === sessionId) return true;
+	          }
+	          return false;
 	        };
-	      }
-	    });
-	    };
+        const sessionRespawnMaxRestarts = sessionRespawnMaxAttempts === 0 ? null : sessionRespawnMaxAttempts;
+        const sessionRunnerRespawnManager = createSessionRunnerRespawnManager({
+          enabled: sessionRespawnEnabled,
+          maxRestarts: sessionRespawnMaxRestarts,
+          baseDelayMs: sessionRespawnBaseDelayMs,
+          maxDelayMs: sessionRespawnMaxDelayMs,
+          jitterMs: sessionRespawnJitterMs,
+          isSessionAlreadyRunning,
+          spawnSession,
+          random: () => Math.random(),
+          logDebug: (message, payload) => logger.debug(message, payload),
+          logWarn: (message) => logger.warn(message),
+        });
 
-	    const stopSession = createStopSession({ pidToTrackedSession });
+		    // Handle child process exit
+		    const onChildExited = createOnChildExited({
+		      pidToTrackedSession,
+		      spawnResourceCleanupByPid,
+		      sessionAttachCleanupByPid,
+		      getApiMachineForSessions: () => apiMachineForSessions,
+          onUnexpectedExit: sessionRunnerRespawnManager.handleUnexpectedExit,
+		    });
 
-			const resolveBoolEnv = (raw: string | undefined, fallback: boolean): boolean => {
-			  const value = (raw ?? '').trim().toLowerCase();
-			  if (!value) return fallback;
-			  if (['1', 'true', 'yes', 'y', 'on'].includes(value)) return true;
-			  if (['0', 'false', 'no', 'n', 'off'].includes(value)) return false;
-			  return fallback;
-			};
-
-			const sessionRespawnEnabled = resolveBoolEnv(process.env.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED, true);
-			const sessionRespawnMaxAttempts = resolvePositiveIntEnv(
-			  process.env.HAPPIER_DAEMON_SESSION_RESPAWN_MAX_ATTEMPTS,
-			  10,
-			  { min: 0, max: 100 },
-			);
-			const sessionRespawnBaseDelayMs = resolvePositiveIntEnv(
-			  process.env.HAPPIER_DAEMON_SESSION_RESPAWN_BASE_DELAY_MS,
-			  1_000,
-			  { min: 50, max: 5 * 60_000 },
-			);
-			const sessionRespawnMaxDelayMs = resolvePositiveIntEnv(
-			  process.env.HAPPIER_DAEMON_SESSION_RESPAWN_MAX_DELAY_MS,
-			  60_000,
-			  { min: 50, max: 30 * 60_000 },
-			);
-			const sessionRespawnJitterMs = resolvePositiveIntEnv(
-			  process.env.HAPPIER_DAEMON_SESSION_RESPAWN_JITTER_MS,
-			  250,
-			  { min: 0, max: 10_000 },
-			);
-
-			const respawnStateBySessionId = new Map<string, { attempt: number; timeout: NodeJS.Timeout | null }>();
-
-			const isSessionAlreadyRunning = (sessionId: string): boolean => {
-			  for (const tracked of pidToTrackedSession.values()) {
-			    if (tracked.happySessionId === sessionId) return true;
-			  }
-			  return false;
-			};
-
-			const scheduleSessionRespawn = (trackedSession: TrackedSession, exit: { reason: string; code: number | null; signal: string | null }) => {
-			  if (!sessionRespawnEnabled) return;
-
-			  const sessionId = typeof trackedSession.happySessionId === 'string' ? trackedSession.happySessionId.trim() : '';
-			  if (!sessionId) return;
-
-			  const spawnOptions = trackedSession.spawnOptions;
-			  if (!spawnOptions || typeof spawnOptions.directory !== 'string' || spawnOptions.directory.trim().length === 0) return;
-
-			  const state = respawnStateBySessionId.get(sessionId) ?? { attempt: 0, timeout: null };
-			  const nextAttempt = state.attempt + 1;
-			  if (sessionRespawnMaxAttempts > 0 && nextAttempt > sessionRespawnMaxAttempts) {
-			    logger.warn(`[DAEMON RUN] Session ${sessionId} crashed; respawn suppressed after ${state.attempt} attempt(s)`);
-			    respawnStateBySessionId.delete(sessionId);
-			    return;
-			  }
-
-			  const exponential = sessionRespawnBaseDelayMs * Math.pow(2, Math.max(0, nextAttempt - 1));
-			  const capped = Math.min(sessionRespawnMaxDelayMs, Math.max(sessionRespawnBaseDelayMs, exponential));
-			  const jitter = sessionRespawnJitterMs > 0 ? Math.floor(Math.random() * (sessionRespawnJitterMs + 1)) : 0;
-			  const delayMs = capped + jitter;
-
-			  if (state.timeout) clearTimeout(state.timeout);
-			  const timeout = setTimeout(() => {
-			    if (isSessionAlreadyRunning(sessionId)) return;
-
-			    const respawnOptions: SpawnSessionOptions = {
-			      ...spawnOptions,
-			      existingSessionId: sessionId,
-			      sessionId: undefined,
-			      resume: undefined,
-			      approvedNewDirectoryCreation: true,
-			    };
-
-			    logger.debug(
-			      `[DAEMON RUN] Respawning runner for session ${sessionId} after ${delayMs}ms (attempt ${nextAttempt})`,
-			      { exitReason: exit.reason, exitCode: exit.code, exitSignal: exit.signal },
-			    );
-
-			    void spawnSession(respawnOptions).catch((e) => {
-			      logger.debug(`[DAEMON RUN] Failed to respawn runner for session ${sessionId}`, e);
-			    });
-			  }, delayMs);
-			  timeout.unref?.();
-
-			  respawnStateBySessionId.set(sessionId, { attempt: nextAttempt, timeout });
-			};
-
-	    // Handle child process exit
-	    const onChildExited = createOnChildExited({
-	      pidToTrackedSession,
-	      spawnResourceCleanupByPid,
-	      sessionAttachCleanupByPid,
-	      getApiMachineForSessions: () => apiMachineForSessions,
-			  onUnexpectedExit: scheduleSessionRespawn,
-	    });
+        const stopSession = async (sessionId: string): Promise<boolean> => {
+          sessionRunnerRespawnManager.markStopRequested(sessionId, { reason: 'daemon_stop_session', requestedAtMs: Date.now() });
+          return await stopSessionCore(sessionId);
+        };
 
     const controlToken = randomBytes(32).toString('base64url');
 
@@ -991,24 +968,23 @@ export async function startDaemon(): Promise<void> {
 	          requestShutdown: () => requestShutdown('happier-app')
 	        });
 
-
-	        automationWorker = startAutomationWorker({
-	          token: credentials.token,
-	          machineId,
-	          encryption: credentials.encryption,
-	          spawnSession,
-	        });
+          automationWorker = startAutomationWorker({
+            token: credentials.token,
+            machineId,
+            encryption: credentials.encryption,
+            spawnSession,
+          });
 
 	        let didRefreshMachineMetadata = false;
 	        connectedApiMachine.connect({
 	          onConnect: async () => {
 	            if (shutdownInitiated) return;
 
-	            if (automationWorker) {
-	              await automationWorker.refreshAssignments().catch((error) => {
-	                logger.warn('[DAEMON RUN] Failed to refresh automation assignments on machine reconnect', error);
-	              });
-	            }
+              if (automationWorker) {
+                await automationWorker.refreshAssignments().catch((error) => {
+                  logger.warn('[DAEMON RUN] Failed to refresh automation assignments on machine reconnect', error);
+                });
+              }
 
 	            if (didRefreshMachineMetadata) return;
 	            didRefreshMachineMetadata = true;
@@ -1044,7 +1020,6 @@ export async function startDaemon(): Promise<void> {
 	              didRefreshMachineMetadata = false;
 	              logger.warn('[DAEMON RUN] Failed to refresh machine metadata on reconnect', error);
 	            });
-
 	          },
 	        });
 	      } catch (error) {
@@ -1062,6 +1037,7 @@ export async function startDaemon(): Promise<void> {
       spawnResourceCleanupByPid,
       sessionAttachCleanupByPid,
       getApiMachineForSessions: () => apiMachineForSessions,
+      onChildExited,
       controlPort,
       fileState,
       currentCliVersion: configuration.currentCliVersion,
@@ -1090,45 +1066,26 @@ export async function startDaemon(): Promise<void> {
 	      if (apiMachine) {
           const daemonStateUpdateTimeoutMs = resolvePositiveIntEnv(
             process.env.HAPPIER_DAEMON_SHUTDOWN_STATE_UPDATE_TIMEOUT_MS,
-            1_500,
-            { min: 100, max: 30_000 },
+            250,
+            { min: 50, max: 30_000 },
           );
-          let daemonStateUpdateSettled = false;
-	        const daemonStateUpdatePromise = apiMachine
-            .updateDaemonState((state: DaemonState | null) => ({
-	            ...state,
-	            status: 'shutting-down',
-	            shutdownRequestedAt: Date.now(),
-	            shutdownSource: source
-	          }))
-            .catch((error) => {
-              logger.warn('[DAEMON RUN] Failed to publish shutdown daemon state before exit', error);
-            })
-            .finally(() => {
-              daemonStateUpdateSettled = true;
-            });
 
-          await Promise.race([
-            daemonStateUpdatePromise,
-            new Promise<void>((resolve) => {
-              setTimeout(resolve, daemonStateUpdateTimeoutMs);
-            }),
-          ]);
-          if (!daemonStateUpdateSettled) {
-            logger.warn(
-              `[DAEMON RUN] Shutdown daemon-state publish exceeded ${daemonStateUpdateTimeoutMs}ms; continuing teardown`,
-            );
-          }
-
-	        // Give time for metadata update to send
-	        await new Promise(resolve => setTimeout(resolve, 100));
-
-	        apiMachine.shutdown();
+          await publishShutdownStateBestEffort({
+            apiMachine,
+            source,
+            timeoutMs: daemonStateUpdateTimeoutMs,
+            warn: (message, error) => {
+              if (error !== undefined) {
+                logger.warn(message, error);
+                return;
+              }
+              logger.warn(message);
+            },
+          });
       }
       if (automationWorker) {
         automationWorker.stop();
       }
-
       await stopControlServer();
 	      await cleanupDaemonState();
 	      await stopCaffeinate();

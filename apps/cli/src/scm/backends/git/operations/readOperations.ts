@@ -9,7 +9,7 @@ import type {
 } from '@happier-dev/protocol';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 import type { ScmBackendContext } from '../../../types';
-import { normalizeCommitRef, normalizePathspec, runScmCommand } from '../../../runtime';
+import { normalizeCommitRef, normalizeRepoRootPathspec, runScmCommand } from '../../../runtime';
 
 const GIT_LOG_FIELDS_PER_ENTRY = 7;
 
@@ -52,7 +52,7 @@ export async function gitDiffFile(input: {
     request: ScmDiffFileRequest;
 }): Promise<ScmDiffFileResponse> {
     const { context, request } = input;
-    const pathspec = normalizePathspec(request.path, context.cwd);
+    const pathspec = normalizeRepoRootPathspec(request.path);
     if (!pathspec.ok) {
         return {
             success: false,

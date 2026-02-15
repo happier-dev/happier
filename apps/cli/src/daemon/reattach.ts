@@ -3,6 +3,10 @@ import type { HappyProcessInfo } from './doctor';
 import type { DaemonSessionMarker } from './sessionRegistry';
 import { hashProcessCommand } from './sessionRegistry';
 import type { TrackedSession } from './types';
+import {
+  buildSpawnSessionOptionsFromRespawnDescriptorV1,
+  SessionRunnerRespawnDescriptorV1Schema,
+} from './processSupervision/sessionRunnerRespawnDescriptor';
 
 export function adoptSessionsFromMarkers(params: {
   markers: DaemonSessionMarker[];
@@ -34,10 +38,17 @@ export function adoptSessionsFromMarkers(params: {
     }
 
     if (params.pidToTrackedSession.has(marker.pid)) continue;
+
+    const respawnParsed = SessionRunnerRespawnDescriptorV1Schema.safeParse((marker as any).respawn);
+    const spawnOptions = respawnParsed.success
+      ? buildSpawnSessionOptionsFromRespawnDescriptorV1(respawnParsed.data)
+      : undefined;
+
     params.pidToTrackedSession.set(marker.pid, {
       startedBy: marker.startedBy ?? 'reattached',
       happySessionId: marker.happySessionId,
       happySessionMetadataFromLocalWebhook: marker.metadata,
+      ...(spawnOptions ? { spawnOptions } : {}),
       pid: marker.pid,
       processCommandHash: marker.processCommandHash,
       reattachedFromDiskMarker: true,

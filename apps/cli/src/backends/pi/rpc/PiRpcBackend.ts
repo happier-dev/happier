@@ -33,6 +33,7 @@ type PendingRpcRequest = {
 };
 
 type PendingTurn = {
+  promise: Promise<void>;
   resolve: () => void;
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout;
@@ -192,23 +193,21 @@ export class PiRpcBackend implements AgentBackend {
   async waitForResponseComplete(timeoutMs = 120_000): Promise<void> {
     if (!this.pendingTurn) return;
     const turn = this.pendingTurn;
-    await Promise.race([
-      new Promise<void>((_, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error('Timed out waiting for Pi response completion'));
-        }, timeoutMs);
-        timeout.unref?.();
-      }),
-      new Promise<void>((resolve) => {
-        const interval = setInterval(() => {
-          if (!this.pendingTurn || this.pendingTurn !== turn) {
-            clearInterval(interval);
-            resolve();
-          }
-        }, 20);
-        interval.unref?.();
-      }),
-    ]);
+
+    let timeout: NodeJS.Timeout | null = null;
+    try {
+      await Promise.race([
+        turn.promise,
+        new Promise<void>((_, reject) => {
+          timeout = setTimeout(() => {
+            reject(new Error('Timed out waiting for Pi response completion'));
+          }, timeoutMs);
+          timeout.unref?.();
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
   }
 
   async dispose(): Promise<void> {
@@ -500,17 +499,30 @@ export class PiRpcBackend implements AgentBackend {
 
   private createPendingTurn(timeoutMs: number): Promise<void> {
     this.rejectPendingTurn(new Error('replaced by newer turn'));
-    return new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        if (this.pendingTurn?.timeout === timeout) {
-          this.pendingTurn = null;
-        }
-        this.openPromptRequestIds.clear();
-        reject(new Error('Timed out waiting for Pi turn completion'));
-      }, timeoutMs);
-      timeout.unref?.();
-      this.pendingTurn = { resolve, reject, timeout };
+    let resolveTurn: (() => void) | null = null;
+    let rejectTurn: ((error: Error) => void) | null = null;
+
+    const promise = new Promise<void>((resolve, reject) => {
+      resolveTurn = resolve;
+      rejectTurn = reject;
     });
+
+    const timeout = setTimeout(() => {
+      if (this.pendingTurn?.timeout === timeout) {
+        this.pendingTurn = null;
+      }
+      this.openPromptRequestIds.clear();
+      rejectTurn?.(new Error('Timed out waiting for Pi turn completion'));
+    }, timeoutMs);
+    timeout.unref?.();
+
+    if (!resolveTurn || !rejectTurn) {
+      clearTimeout(timeout);
+      throw new Error('Failed to initialize Pi pending turn');
+    }
+
+    this.pendingTurn = { promise, resolve: resolveTurn, reject: rejectTurn, timeout };
+    return promise;
   }
 
   private resolvePendingTurn(): void {

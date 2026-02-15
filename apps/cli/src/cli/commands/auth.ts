@@ -3,9 +3,13 @@ import chalk from 'chalk';
 import type { CommandContext } from '@/cli/commandRegistry';
 
 import { showAuthHelp } from './auth/help';
+import { handleAuthApprove } from './auth/approve';
 import { handleAuthLogin } from './auth/login';
 import { handleAuthLogout } from './auth/logout';
+import { handleAuthPairRemote } from './auth/pairRemote';
+import { handleAuthRequest } from './auth/request';
 import { handleAuthStatus } from './auth/status';
+import { handleAuthWait } from './auth/wait';
 
 export async function handleAuthCommand(args: string[]): Promise<void> {
   const subcommand = args[0];
@@ -18,6 +22,18 @@ export async function handleAuthCommand(args: string[]): Promise<void> {
   switch (subcommand) {
     case 'login':
       await handleAuthLogin(args.slice(1));
+      return;
+    case 'request':
+      await handleAuthRequest(args.slice(1));
+      return;
+    case 'approve':
+      await handleAuthApprove(args.slice(1));
+      return;
+    case 'wait':
+      await handleAuthWait(args.slice(1));
+      return;
+    case 'pair-remote':
+      await handleAuthPairRemote(args.slice(1));
       return;
     case 'logout':
       await handleAuthLogout(args.slice(1));

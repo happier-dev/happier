@@ -200,6 +200,38 @@ export function normalizePathspec(rawPath: string, cwd: string): { ok: true; pat
     return { ok: true, pathspec: rel.split(sep).join('/') };
 }
 
+// The UI sends repo-root-relative paths (from status snapshots), but sessions can run from subdirectories.
+// Use git pathspec magic to anchor the path to the repository top-level so diffs work from any cwd.
+export function normalizeRepoRootPathspec(rawPath: string): { ok: true; pathspec: string } | { ok: false; error: string } {
+    const trimmed = String(rawPath ?? '').trim();
+    if (!trimmed) {
+        return { ok: false, error: 'Path cannot be empty' };
+    }
+    if (trimmed.includes('\0')) {
+        return { ok: false, error: 'Path contains null bytes' };
+    }
+    if (trimmed.startsWith('-')) {
+        return { ok: false, error: 'Path cannot start with "-"' };
+    }
+    if (trimmed.startsWith(':')) {
+        // Prevent injecting git pathspec magic like :(icase) or :(exclude)
+        return { ok: false, error: 'Path contains unsupported syntax' };
+    }
+    if (isAbsolute(trimmed)) {
+        return { ok: false, error: 'Absolute paths are not supported' };
+    }
+
+    const normalized = trimmed.split(sep).join('/').replace(/^\.\/+/, '').replace(/^\/+/, '');
+    const parts = normalized.split('/');
+    if (parts.some((part) => part === '..')) {
+        return { ok: false, error: `Path contains unsupported ".." segment: ${rawPath}` };
+    }
+    if (!normalized || normalized === '.') {
+        return { ok: true, pathspec: ':(top).' };
+    }
+    return { ok: true, pathspec: `:(top)${normalized}` };
+}
+
 const SAFE_COMMIT_REF_REGEX = /^(?:[0-9a-fA-F]{7,64}|[A-Za-z0-9._/-]+)$/;
 
 export function normalizeCommitRef(rawCommit: string): { ok: true; commit: string } | { ok: false; error: string } {

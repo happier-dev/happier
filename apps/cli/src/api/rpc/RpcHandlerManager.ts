@@ -88,6 +88,21 @@ export class RpcHandlerManager {
         }
     }
 
+    /**
+     * Invoke a registered handler in-process (no encryption/decryption).
+     *
+     * This is intended for internal control-plane surfaces (e.g. MCP tools) that
+     * must delegate to the same handler implementations as session RPC.
+     */
+    async invokeLocal(method: string, params: unknown): Promise<unknown> {
+        const prefixedMethod = this.getPrefixedMethod(method);
+        const handler = this.handlers.get(prefixedMethod);
+        if (!handler) {
+            return { error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
+        }
+        return await handler(params as any);
+    }
+
     onSocketConnect(socket: Socket): void {
         this.socket = socket;
         for (const [prefixedMethod] of this.handlers) {

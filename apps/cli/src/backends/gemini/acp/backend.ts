@@ -26,6 +26,11 @@ import {
   getGeminiModelSource
 } from '@/backends/gemini/utils/config';
 
+function isTruthyEnv(value: string | undefined): boolean {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
 /**
  * Options for creating a Gemini ACP backend
  */
@@ -100,7 +105,8 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
   const apiKey = explicitApiKey;
 
   if (!apiKey) {
-    logger.warn(`[Gemini] No API key found. Run 'happier connect gemini' to authenticate via Google OAuth, or set ${GEMINI_API_KEY_ENV} environment variable.`);
+    // OAuth-personal is a valid default auth path; avoid surfacing this as a warning.
+    logger.debug(`[Gemini] No API key found; using oauth-personal auth via Gemini CLI cached credentials.`);
   }
 
   // Command to run gemini
@@ -113,12 +119,20 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
   const model = determineGeminiModel(options.model, localConfig);
 
   const intent = normalizePermissionModeToIntent(options.permissionMode ?? 'default') ?? 'default';
-	  const approvalMode = intent === 'yolo' || intent === 'bypassPermissions'
-	    ? 'yolo'
-	    : intent === 'safe-yolo'
-	      ? 'auto-edit'
-	      : 'default';
-  const sandboxEnabled = !(intent === 'yolo' || intent === 'bypassPermissions');
+  const approvalMode =
+    intent === 'yolo' || intent === 'bypassPermissions'
+      ? 'yolo'
+      : intent === 'acceptEdits' || intent === 'safe-yolo'
+        ? 'auto_edit'
+        : intent === 'plan'
+          ? 'plan'
+          : 'default';
+
+  // Gemini CLI's `--sandbox` can prevent ACP from answering `initialize` (hangs before stdio bridge is ready).
+  // Keep it OFF by default and let Happier permissions enforce safety; opt-in via env when needed.
+  const sandboxEnabled = isTruthyEnv(
+    (options.env?.HAPPIER_GEMINI_USE_SANDBOX ?? process.env.HAPPIER_GEMINI_USE_SANDBOX)
+  );
 
   // Build args - ACP + provider-native approvals.
   // Model is passed via GEMINI_MODEL env var (gemini CLI reads it automatically)
@@ -164,6 +178,8 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
       // Suppress debug output from gemini CLI to avoid stdout pollution
       NODE_ENV: 'production',
       DEBUG: '',
+      // Prevent gemini-cli from relaunching itself (relaunch can break ACP stdio wiring).
+      GEMINI_CLI_NO_RELAUNCH: 'true',
     },
     mcpServers: options.mcpServers,
     permissionHandler: options.permissionHandler,

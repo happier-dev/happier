@@ -80,6 +80,35 @@ describe('git RPC handlers', () => {
         expect(diff.diff).toContain('+after');
     });
 
+    it('loads file diffs when cwd is a subdirectory and paths are repo-root relative', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-git-rpc-'));
+        git(workspace, ['init']);
+        git(workspace, ['config', 'user.email', 'test@example.com']);
+        git(workspace, ['config', 'user.name', 'Test User']);
+
+        mkdirSync(join(workspace, 'sub'), { recursive: true });
+
+        writeFileSync(join(workspace, 'a.txt'), 'before\n');
+        git(workspace, ['add', 'a.txt']);
+        git(workspace, ['commit', '-m', 'add file']);
+
+        writeFileSync(join(workspace, 'a.txt'), 'after\n');
+
+        const { call } = createTestRpcManager({ workingDirectory: workspace });
+        const diff = await call<any, { cwd?: string; path: string; area?: 'included' | 'pending' | 'both' }>(
+            RPC_METHODS.SCM_DIFF_FILE,
+            {
+                cwd: 'sub',
+                path: 'a.txt',
+                area: 'pending',
+            },
+        );
+
+        expect(diff.success).toBe(true);
+        expect(diff.diff).toContain('diff --git a/a.txt b/a.txt');
+        expect(diff.diff).toContain('+after');
+    });
+
     it('loads commit diffs even when diff.external is configured to fail', async () => {
         const workspace = mkdtempSync(join(tmpdir(), 'happier-git-rpc-'));
         git(workspace, ['init']);

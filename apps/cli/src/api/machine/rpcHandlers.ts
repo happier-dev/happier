@@ -15,6 +15,9 @@ import { CATALOG_AGENT_IDS } from '@/backends/types';
 import type { CatalogAgentId } from '@/backends/types';
 import { readCredentials } from '@/persistence';
 import { hydrateReplayDialogFromTranscript } from '@/session/replay/hydrateReplayDialogFromTranscript';
+import { listExecutionRunMarkers } from '@/daemon/executionRunRegistry';
+import psList from 'ps-list';
+import type { DaemonExecutionRunEntry, DaemonExecutionRunProcessInfo } from '@happier-dev/protocol';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 
@@ -315,6 +318,35 @@ export function registerMachineRpcHandlers(params: Readonly<{
     }
 
     return result;
+  });
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST, async () => {
+    const markers = await listExecutionRunMarkers();
+
+    let processIndex = new Map<number, DaemonExecutionRunProcessInfo>();
+    try {
+      const processes = await psList();
+	      processIndex = new Map(
+	        processes.map((proc) => [
+	          proc.pid,
+	          {
+	            pid: proc.pid,
+	            name: typeof proc.name === 'string' ? proc.name : undefined,
+	            cpu: typeof (proc as any).cpu === 'number' ? (proc as any).cpu : undefined,
+	            memory: typeof (proc as any).memory === 'number' ? (proc as any).memory : undefined,
+	          },
+	        ]),
+	      );
+    } catch {
+      // best-effort; omit process stats if ps-list fails
+    }
+
+    const runs: DaemonExecutionRunEntry[] = markers.map((marker) => {
+      const process = processIndex.get(marker.pid);
+      return process ? { ...marker, process } : marker;
+    });
+
+    return { runs };
   });
 
   // Register stop session handler

@@ -13,13 +13,6 @@ import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/backends/types';
 import { TrackedSession } from './types';
 import { SPAWN_SESSION_ERROR_CODES, SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 
-function isSpawnSessionResult(value: unknown): value is SpawnSessionResult {
-  if (!value || typeof value !== 'object') return false;
-  const type = (value as any).type;
-  if (type !== 'success' && type !== 'requestToApproveDirectoryCreation' && type !== 'error') return false;
-  return true;
-}
-
 function safeTokenEquals(provided: string, expected: string): boolean {
   const hashA = createHash('sha256').update(provided).digest();
   const hashB = createHash('sha256').update(expected).digest();
@@ -214,15 +207,6 @@ export function createDaemonControlApp({
       return {
         success: false,
         error: `Failed to spawn session: ${message}`,
-        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
-      };
-    }
-
-    if (!isSpawnSessionResult(result)) {
-      reply.code(500);
-      return {
-        success: false,
-        error: 'Failed to spawn session: invalid result',
         errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
       };
     }

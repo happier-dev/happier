@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizeCodeSearchResult } from './search';
+import { normalizeCodeSearchResult, normalizeGlobResult, normalizeGrepResult, normalizeLsResult } from './search';
 
 type CodeSearchMatch = {
   filePath?: string;
@@ -50,5 +50,37 @@ describe('normalizeCodeSearchResult (Kilo ACP shapes)', () => {
     const normalized = normalizeCodeSearchResult('just a plain message');
     const matches = expectMatches(normalized);
     expect(matches).toEqual([{ excerpt: 'just a plain message' }]);
+  });
+});
+
+describe('search family normalizers (Pi content block wrappers)', () => {
+  it('normalizes ls result content blocks into entries', () => {
+    const normalized = normalizeLsResult({
+      content: [{ type: 'text', text: 'alpha.txt\nnotes.md\n' }],
+    });
+
+    expect(normalized.entries).toEqual(['alpha.txt', 'notes.md']);
+  });
+
+  it('normalizes glob/find result content blocks into matches', () => {
+    const normalized = normalizeGlobResult({
+      content: [{ type: 'text', text: 'notes.md\nREADME.md\n' }],
+    });
+
+    expect(normalized.matches).toEqual(['notes.md', 'README.md']);
+  });
+
+  it('normalizes grep result content blocks into structured matches', () => {
+    const normalized = normalizeGrepResult({
+      content: [{ type: 'text', text: 'alpha.txt:1: alpha line with NEEDLE token' }],
+    });
+
+    expect(normalized.matches).toEqual([
+      {
+        filePath: 'alpha.txt',
+        line: 1,
+        excerpt: 'alpha line with NEEDLE token',
+      },
+    ]);
   });
 });

@@ -49,6 +49,25 @@ describe('probeServerVersion', () => {
     expect(out.version).toBe('test');
   });
 
+  it('bypasses a custom global agent when probing loopback endpoints', async () => {
+    responseMode = 'ok';
+
+    const previousAgent = (http as any).globalAgent;
+    (http as any).globalAgent = {
+      addRequest() {
+        throw new Error('global_agent_used');
+      },
+    };
+
+    try {
+      const { probeServerVersion } = await import('./serverTest');
+      const out = await probeServerVersion(baseUrl);
+      expect(out.ok).toBe(true);
+    } finally {
+      (http as any).globalAgent = previousAgent;
+    }
+  });
+
   it('returns http status failure for non-200 /v1/version responses', async () => {
     responseMode = 'http_503';
     const { probeServerVersion } = await import('./serverTest');

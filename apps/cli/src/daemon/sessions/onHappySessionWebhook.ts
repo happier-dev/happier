@@ -2,9 +2,20 @@ import type { Metadata } from '@/api/types';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 
+import os from 'node:os';
+import path from 'node:path';
+
 import { findHappyProcessByPid } from '../doctor';
 import type { TrackedSession } from '../types';
 import { hashProcessCommand, writeSessionMarker } from '../sessionRegistry';
+import { buildSessionRunnerRespawnDescriptorV1FromSpawnOptions } from '../processSupervision/sessionRunnerRespawnDescriptor';
+
+function resolveTildePath(inputPath: string): string {
+  const trimmed = inputPath.trim();
+  if (trimmed === '~') return os.homedir();
+  if (trimmed.startsWith('~/')) return path.join(os.homedir(), trimmed.slice(2));
+  return inputPath;
+}
 
 export function createOnHappySessionWebhook(params: Readonly<{
   pidToTrackedSession: Map<number, TrackedSession>;
@@ -20,21 +31,25 @@ export function createOnHappySessionWebhook(params: Readonly<{
   } = params;
 
   return (sessionId: string, sessionMetadata: Metadata) => {
-    logger.debugLargeJson(`[DAEMON RUN] Session reported`, sessionMetadata);
+    const normalizedPath = resolveTildePath(sessionMetadata.path);
+    const normalizedMetadata =
+      normalizedPath === sessionMetadata.path ? sessionMetadata : { ...sessionMetadata, path: normalizedPath };
+
+    logger.debugLargeJson(`[DAEMON RUN] Session reported`, normalizedMetadata);
 
     // Safety: ignore cross-daemon/cross-stack reports.
-    if (sessionMetadata?.happyHomeDir && sessionMetadata.happyHomeDir !== configuration.happyHomeDir) {
-      logger.debug(`[DAEMON RUN] Ignoring session report for different happyHomeDir: ${sessionMetadata.happyHomeDir}`);
+    if (normalizedMetadata?.happyHomeDir && normalizedMetadata.happyHomeDir !== configuration.happyHomeDir) {
+      logger.debug(`[DAEMON RUN] Ignoring session report for different happyHomeDir: ${normalizedMetadata.happyHomeDir}`);
       return;
     }
 
-    const pid = sessionMetadata.hostPid;
+    const pid = normalizedMetadata.hostPid;
     if (!pid) {
       logger.debug(`[DAEMON RUN] Session webhook missing hostPid for sessionId: ${sessionId}`);
       return;
     }
 
-    logger.debug(`[DAEMON RUN] Session webhook: ${sessionId}, PID: ${pid}, started by: ${sessionMetadata.startedBy || 'unknown'}`);
+    logger.debug(`[DAEMON RUN] Session webhook: ${sessionId}, PID: ${pid}, started by: ${normalizedMetadata.startedBy || 'unknown'}`);
     logger.debug(`[DAEMON RUN] Current tracked sessions before webhook: ${Array.from(pidToTrackedSession.keys()).join(', ')}`);
 
     // Check if we already have this PID (daemon-spawned)
@@ -46,7 +61,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
 
       // Update tracked session with latest webhook data.
       existingSession.happySessionId = sessionId;
-      existingSession.happySessionMetadataFromLocalWebhook = sessionMetadata;
+      existingSession.happySessionMetadataFromLocalWebhook = normalizedMetadata;
       if (existingSession.startedBy === 'daemon') {
         logger.debug(`[DAEMON RUN] Updated daemon-spawned session ${sessionId} with metadata`);
 
@@ -64,7 +79,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
           }
         }
       } else if (existingSession.reattachedFromDiskMarker) {
-        existingSession.startedBy = sessionMetadata.startedBy ?? existingSession.startedBy;
+        existingSession.startedBy = normalizedMetadata.startedBy ?? existingSession.startedBy;
         logger.debug(`[DAEMON RUN] Refreshed reattached session ${sessionId} metadata`);
       } else {
         existingSession.startedBy = 'happy directly - likely by user from terminal';
@@ -75,7 +90,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
       const trackedSession: TrackedSession = {
         startedBy: 'happy directly - likely by user from terminal',
         happySessionId: sessionId,
-        happySessionMetadataFromLocalWebhook: sessionMetadata,
+        happySessionMetadataFromLocalWebhook: normalizedMetadata,
         pid
       };
       pidToTrackedSession.set(pid, trackedSession);
@@ -95,14 +110,21 @@ export function createOnHappySessionWebhook(params: Readonly<{
         logger.debug(`[DAEMON RUN] Could not determine process command for PID ${pid}; marker will be weaker`);
       }
 
+      const tracked = pidToTrackedSession.get(pid) ?? null;
+      const respawn =
+        tracked?.startedBy === 'daemon' && tracked.spawnOptions
+          ? buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(tracked.spawnOptions)
+          : null;
+
       await writeSessionMarkerFn({
         pid,
         happySessionId: sessionId,
-        startedBy: sessionMetadata.startedBy ?? 'terminal',
-        cwd: sessionMetadata.path,
+        startedBy: normalizedMetadata.startedBy ?? 'terminal',
+        cwd: normalizedPath,
         processCommandHash,
         processCommand: proc?.command,
-        metadata: sessionMetadata,
+        metadata: normalizedMetadata,
+        ...(respawn ? { respawn } : {}),
       });
     })().catch((e) => {
       logger.debug('[DAEMON RUN] Failed to write session marker', e);

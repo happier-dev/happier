@@ -1,5 +1,7 @@
 import os from 'node:os';
 import {
+  BUG_REPORT_DEFAULT_ISSUE_OWNER,
+  BUG_REPORT_DEFAULT_ISSUE_REPO,
   buildBugReportFallbackIssueUrl as buildFallbackIssueUrl,
   formatBugReportFallbackIssueBody as formatFallbackIssueBody,
   appendBugReportReporterToSummary,
@@ -7,6 +9,8 @@ import {
   normalizeBugReportProviderUrl,
   normalizeBugReportReproductionSteps as normalizeReproductionSteps,
   sanitizeBugReportUrl,
+  searchBugReportSimilarIssues,
+  type BugReportSimilarIssue,
   type BugReportDeploymentType,
   type BugReportEnvironmentPayload,
   type BugReportFormPayload,
@@ -57,6 +61,13 @@ export type BugReportCommandDependencies = {
   fetchBugReportsFeature: (serverUrl: string) => Promise<BugReportsFeature>;
   collectDiagnosticsArtifacts: (input: CollectDiagnosticsInput) => Promise<CollectDiagnosticsResult>;
   submitBugReport: (input: SubmitBugReportInput) => Promise<{ reportId: string; issueNumber: number; issueUrl: string }>;
+  searchSimilarIssues: (input: {
+    providerUrl: string;
+    owner: string;
+    repo: string;
+    query: string;
+    limit?: number;
+  }) => Promise<{ issues: BugReportSimilarIssue[] }>;
   isInteractiveTerminal: () => boolean;
   promptInput: (question: string) => Promise<string>;
 };
@@ -66,6 +77,14 @@ const DEFAULT_DEPS: BugReportCommandDependencies = {
   fetchBugReportsFeature: fetchBugReportsFeatureFromServer,
   collectDiagnosticsArtifacts: collectBugReportDiagnosticsArtifacts,
   submitBugReport: submitBugReportToService,
+  searchSimilarIssues: async (input) =>
+    await searchBugReportSimilarIssues({
+      providerUrl: input.providerUrl,
+      owner: input.owner,
+      repo: input.repo,
+      query: input.query,
+      limit: input.limit,
+    }),
   isInteractiveTerminal,
   promptInput,
 };
@@ -74,17 +93,30 @@ async function resolveRequiredField(input: {
   value: string;
   flag: string;
   prompt: string;
+  minLength?: number;
   interactive: boolean;
   promptInputFn: (question: string) => Promise<string>;
 }): Promise<string> {
+  const minLength = Math.max(1, Math.floor(input.minLength ?? 1));
   const initial = input.value.trim();
-  if (initial.length > 0) return initial;
+  if (initial.length >= minLength) return initial;
   if (!input.interactive) {
+    if (initial.length > 0) {
+      throw new Error(
+        `Non-interactive mode: ${input.flag} is too short (min ${minLength} chars). Pass ${input.flag} "<value>"`,
+      );
+    }
     throw new Error(`Non-interactive mode: missing required ${input.flag}. Pass ${input.flag} "<value>"`);
   }
-  const prompted = (await input.promptInputFn(input.prompt)).trim();
-  if (prompted.length > 0) return prompted;
-  throw new Error(`Missing required value for ${input.flag}`);
+  // Prompt until we get a non-empty value meeting the minimum length.
+  // Empty response is treated as cancellation.
+  while (true) {
+    const prompted = (await input.promptInputFn(input.prompt)).trim();
+    if (prompted.length === 0) {
+      throw new Error(`Missing required value for ${input.flag}`);
+    }
+    if (prompted.length >= minLength) return prompted;
+  }
 }
 
 function parseYesNo(raw: string, defaultValue: boolean): boolean {
@@ -95,9 +127,18 @@ function parseYesNo(raw: string, defaultValue: boolean): boolean {
   return defaultValue;
 }
 
+function formatSimilarIssuesPrompt(issues: BugReportSimilarIssue[]): string {
+  const lines = issues.slice(0, 8).map((issue) => `- #${issue.number} (${issue.state}) ${issue.title}`);
+  return [
+    'Possible duplicate issues found:',
+    ...lines,
+    '',
+    'Enter an existing issue number to comment on, or press Enter to create a new issue: ',
+  ].join('\n');
+}
+
 function resolveProviderUrl(input: {
   cliOverride: string;
-  envOverride: string | undefined;
   featureProviderUrl: string | null;
 }): string | null {
   const cliOverride = input.cliOverride.trim();
@@ -107,14 +148,6 @@ function resolveProviderUrl(input: {
       throw new Error(`Invalid --provider-url value: ${cliOverride}`);
     }
     return normalizedCli;
-  }
-
-  const envOverride = String(input.envOverride ?? '').trim();
-  if (envOverride.length > 0) {
-    const normalizedEnv = normalizeBugReportProviderUrl(envOverride);
-    if (normalizedEnv) {
-      return normalizedEnv;
-    }
   }
 
   return normalizeBugReportProviderUrl(input.featureProviderUrl);
@@ -134,17 +167,20 @@ export async function runBugReportCommand(
   if (parsed.showHelp) {
     throw new Error('Help requested');
   }
-  const reproductionSteps = normalizeReproductionSteps(parsed.reproductionSteps);
+  const reproductionSteps = parsed.reproductionSteps.length > 0
+    ? normalizeReproductionSteps(parsed.reproductionSteps)
+    : [];
 
   const interactive = deps.isInteractiveTerminal();
   const activeServer = await deps.getActiveServerProfile();
   const feature = await deps.fetchBugReportsFeature(activeServer.serverUrl);
-  const includeDiagnostics = parsed.includeDiagnostics ?? feature.defaultIncludeDiagnostics;
+  let includeDiagnostics = parsed.includeDiagnostics ?? feature.defaultIncludeDiagnostics;
 
   const title = await resolveRequiredField({
     value: parsed.title,
     flag: '--title',
     prompt: 'Bug title: ',
+    minLength: 3,
     interactive,
     promptInputFn: deps.promptInput,
   });
@@ -152,24 +188,19 @@ export async function runBugReportCommand(
     value: parsed.summary,
     flag: '--summary',
     prompt: 'Summary: ',
+    minLength: 3,
     interactive,
     promptInputFn: deps.promptInput,
   });
   const summaryWithReporter = appendBugReportReporterToSummary(summary, parsed.githubUsername);
-  const currentBehavior = await resolveRequiredField({
-    value: parsed.currentBehavior,
-    flag: '--current-behavior',
-    prompt: 'Current behavior: ',
-    interactive,
-    promptInputFn: deps.promptInput,
-  });
-  const expectedBehavior = await resolveRequiredField({
-    value: parsed.expectedBehavior,
-    flag: '--expected-behavior',
-    prompt: 'Expected behavior: ',
-    interactive,
-    promptInputFn: deps.promptInput,
-  });
+  const currentBehavior = parsed.currentBehavior.trim() || undefined;
+  const expectedBehavior = parsed.expectedBehavior.trim() || undefined;
+
+  if (interactive && parsed.includeDiagnostics === null) {
+    const defaultHint = includeDiagnostics ? 'Y/n' : 'y/N';
+    const answer = await deps.promptInput(`Include diagnostics and logs? [${defaultHint}]: `);
+    includeDiagnostics = parseYesNo(answer, includeDiagnostics);
+  }
 
   let acceptedPrivacyNotice = parsed.acceptedPrivacyNotice;
   if (includeDiagnostics) {
@@ -188,6 +219,8 @@ export async function runBugReportCommand(
     acceptedPrivacyNotice = true;
   }
 
+  const normalizedReproSteps = reproductionSteps.length > 0 ? reproductionSteps : undefined;
+
   const baseEnvironment: BugReportEnvironmentPayload = {
     appVersion: String((packageJson as { version?: string }).version ?? 'unknown'),
     platform: process.platform,
@@ -199,7 +232,6 @@ export async function runBugReportCommand(
 
   const providerUrl = resolveProviderUrl({
     cliOverride: parsed.providerUrl,
-    envOverride: process.env.HAPPIER_BUG_REPORTS_PROVIDER_URL,
     featureProviderUrl: feature.providerUrl,
   });
   if (!feature.enabled || !providerUrl) {
@@ -207,7 +239,7 @@ export async function runBugReportCommand(
       summary: summaryWithReporter,
       currentBehavior,
       expectedBehavior,
-      reproductionSteps,
+      reproductionSteps: normalizedReproSteps ?? [],
       frequency: parsed.frequency,
       severity: parsed.severity,
       environment: baseEnvironment,
@@ -217,14 +249,43 @@ export async function runBugReportCommand(
     return {
       mode: 'fallback',
       issueUrl: buildFallbackIssueUrl({
-        owner: parsed.issueOwner,
-        repo: parsed.issueRepo,
+        owner: BUG_REPORT_DEFAULT_ISSUE_OWNER,
+        repo: BUG_REPORT_DEFAULT_ISSUE_REPO,
         title,
         body: fallbackBody,
-        labels: parsed.labels,
       }),
       diagnosticsIncluded: includeDiagnostics,
     };
+  }
+
+  let existingIssueNumber: number | undefined = parsed.existingIssueNumber ?? undefined;
+  if (!existingIssueNumber && interactive && !parsed.skipSimilarIssues) {
+    const query = [title, summary, currentBehavior ?? '', expectedBehavior ?? '']
+      .map((part) => String(part).trim())
+      .filter(Boolean)
+      .join('\n')
+      .slice(0, 1200);
+    try {
+        const similar = await deps.searchSimilarIssues({
+          providerUrl,
+          owner: BUG_REPORT_DEFAULT_ISSUE_OWNER,
+          repo: BUG_REPORT_DEFAULT_ISSUE_REPO,
+          query,
+          limit: 8,
+        });
+      if (similar.issues.length > 0) {
+        const answer = (await deps.promptInput(formatSimilarIssuesPrompt(similar.issues))).trim();
+        if (answer) {
+          const selected = Number(answer);
+          if (!Number.isFinite(selected) || !Number.isInteger(selected) || selected <= 0) {
+            throw new Error(`Invalid issue number: ${answer}`);
+          }
+          existingIssueNumber = selected;
+        }
+      }
+    } catch {
+      // If search fails, proceed without blocking bug report submission.
+    }
   }
 
   const diagnostics = includeDiagnostics
@@ -249,16 +310,15 @@ export async function runBugReportCommand(
   const form: BugReportFormPayload = {
     title,
     summary: summaryWithReporter,
-    currentBehavior,
-    expectedBehavior,
-    reproductionSteps,
+    ...(currentBehavior ? { currentBehavior } : {}),
+    ...(expectedBehavior ? { expectedBehavior } : {}),
+    ...(normalizedReproSteps && normalizedReproSteps.length > 0 ? { reproductionSteps: normalizedReproSteps } : {}),
     frequency: parsed.frequency,
     severity: parsed.severity,
     whatChangedRecently: parsed.whatChangedRecently || undefined,
     environment,
     consent: {
       includeDiagnostics,
-      allowMaintainerFollowUp: true,
       acceptedPrivacyNotice,
     },
   };
@@ -269,9 +329,9 @@ export async function runBugReportCommand(
     form,
     artifacts: diagnostics.artifacts,
     maxArtifactBytes: feature.maxArtifactBytes,
-    issueOwner: parsed.issueOwner,
-    issueRepo: parsed.issueRepo,
-    labels: parsed.labels,
+    issueOwner: BUG_REPORT_DEFAULT_ISSUE_OWNER,
+    issueRepo: BUG_REPORT_DEFAULT_ISSUE_REPO,
+    existingIssueNumber,
   });
 
   return {

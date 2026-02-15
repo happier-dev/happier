@@ -12,6 +12,11 @@ import { randomUUID } from 'node:crypto';
 import { AsyncLock } from '@/utils/lock';
 import { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers';
+import { registerExecutionRunHandlers } from '@/rpc/handlers/executionRuns';
+import { registerEphemeralTaskHandlers } from '@/rpc/handlers/ephemeralTasks';
+import { createExecutionRunBackend } from '@/agent/executionRuns/runtime/createExecutionRunBackend';
+import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
+import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/backends/types';
 import { addDiscardedCommittedMessageLocalIds } from '../queue/discardedCommittedMessageLocalIds';
 import { fetchSessionSnapshotUpdateFromServer, shouldSyncSessionSnapshotOnConnect } from './snapshotSync';
 import { createSessionScopedSocket, createUserScopedSocket } from './sockets';
@@ -38,6 +43,7 @@ import { handleSessionNewMessageUpdate } from './sessionNewMessageUpdate';
 import { handleSessionStateUpdate } from './sessionStateUpdateHandling';
 import type { ACPMessageData, ACPProvider, SessionEventMessage } from './sessionMessageTypes';
 import { consumeDaemonInitialPromptFromEnv } from '@/agent/runtime/daemonInitialPrompt';
+import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 
 export class ApiSessionClient extends EventEmitter {
     private static readonly STARTUP_MESSAGE_CATCH_UP_RETRY_DELAYS_MS = [250, 1_000, 2_500] as const;
@@ -122,7 +128,59 @@ export class ApiSessionClient extends EventEmitter {
             encryptionVariant: this.encryptionVariant,
             logger: (msg, data) => logger.debug(msg, data)
         });
-        registerSessionHandlers(this.rpcHandlerManager, this.metadata.path, { flavor: (this.metadata as any)?.flavor });
+        const resolvedFlavor = typeof (this.metadata as any)?.flavor === 'string' ? String((this.metadata as any).flavor).trim() : '';
+        const parentProvider: CatalogAgentId =
+            (CATALOG_AGENT_IDS as readonly string[]).includes(resolvedFlavor) ? (resolvedFlavor as CatalogAgentId) : 'claude';
+
+        registerSessionHandlers(this.rpcHandlerManager, this.metadata.path);
+
+        const transcriptWriter = {
+            appendUserText: (text: string, meta: Record<string, unknown>) => {
+                this.sendUserTextMessage(text, { meta });
+            },
+            appendAssistantText: (text: string, meta: Record<string, unknown>) => {
+                this.sendAgentMessage(parentProvider as any, { type: 'message', message: text }, { meta });
+            },
+        };
+
+        const executionBudgetRegistry = new ExecutionBudgetRegistry({
+            maxConcurrentExecutionRuns: configuration.executionRunsMaxConcurrentPerSession,
+            maxConcurrentEphemeralTasks: configuration.ephemeralTasksMaxConcurrentPerSession,
+            ...(typeof configuration.executionBudgetMaxConcurrentTotalPerSession === 'number'
+              ? { maxConcurrentTotal: configuration.executionBudgetMaxConcurrentTotalPerSession }
+              : {}),
+            ...(configuration.executionBudgetMaxConcurrentByClass
+              && Object.keys(configuration.executionBudgetMaxConcurrentByClass).length > 0
+              ? { maxConcurrentByClass: configuration.executionBudgetMaxConcurrentByClass }
+              : {}),
+        });
+
+                const executionRunsDecision = resolveCliFeatureDecision({ featureId: 'execution.runs', env: process.env });
+                if (executionRunsDecision.state === 'enabled') {
+                    registerExecutionRunHandlers(this.rpcHandlerManager, {
+                      sessionId: this.sessionId,
+                      cwd: this.metadata?.path ?? process.cwd(),
+                      parentProvider,
+                      createBackend: ({ backendId, permissionMode, modelId, start }) =>
+                        createExecutionRunBackend({ cwd: this.metadata?.path ?? process.cwd(), backendId, permissionMode, modelId, start }),
+                      sendAcp: (provider, body, opts) => this.sendAgentMessage(provider as any, body as any, opts),
+                      transcriptWriter,
+                      budgetRegistry: executionBudgetRegistry,
+                      policy: {
+                          maxConcurrentRuns: configuration.executionRunsMaxConcurrentPerSession,
+                          boundedTimeoutMs: configuration.executionRunsBoundedTimeoutMs,
+                          maxTurns: configuration.executionRunsMaxTurns,
+                          maxDepth: configuration.executionRunsMaxDepth,
+                      },
+                    });
+                }
+
+        registerEphemeralTaskHandlers(this.rpcHandlerManager, {
+          workingDirectory: this.metadata?.path ?? process.cwd(),
+          createBackend: ({ backendId, permissionMode }) =>
+            createExecutionRunBackend({ cwd: this.metadata?.path ?? process.cwd(), backendId, permissionMode }),
+          budgetRegistry: executionBudgetRegistry,
+        });
 
         //
         // Create socket
@@ -304,6 +362,7 @@ export class ApiSessionClient extends EventEmitter {
                 pendingMessageCallback: this.pendingMessageCallback,
                 pendingMessages: this.pendingMessages,
                 emit: (event, payload) => this.emit(event, payload),
+                debug: (message, payload) => logger.debug(message, payload),
                 debugLargeJson: (message, payload) => logger.debugLargeJson(message, payload),
             });
             if (newMessageHandlingResult.handled) {
@@ -821,7 +880,7 @@ export class ApiSessionClient extends EventEmitter {
      * Send message to session
      * @param body - Message body (can be MessageContent or raw content for agent messages)
      */
-    sendClaudeSessionMessage(body: RawJSONLines) {
+    sendClaudeSessionMessage(body: RawJSONLines, meta?: Record<string, unknown>) {
         if (isToolTraceEnabled()) {
             recordClaudeToolTraceEvents({ sessionId: this.sessionId, body });
         }
@@ -835,17 +894,7 @@ export class ApiSessionClient extends EventEmitter {
             body.isSidechain !== true &&
             body.isMeta !== true
         ) {
-            content = {
-                role: 'user',
-                content: {
-                    type: 'text',
-                    text: body.message.content
-                },
-                meta: {
-                    sentFrom: 'cli',
-                    source: 'cli',
-                }
-            }
+            content = this.buildUserTextMessageContent(body.message.content, meta);
         } else {
             // Wrap Claude messages in the expected format
             content = {
@@ -857,6 +906,7 @@ export class ApiSessionClient extends EventEmitter {
                 meta: {
                     sentFrom: 'cli',
                     source: 'cli',
+                    ...(meta && typeof meta === 'object' ? meta : {}),
                 }
             };
         }
@@ -1112,12 +1162,29 @@ export class ApiSessionClient extends EventEmitter {
         if (process.env.DEBUG) { // too verbose for production
             logger.debug(`[API] Sending keep alive message: ${thinking}`);
         }
-        this.socket.volatile.emit('session-alive', {
+        const payload = {
             sid: this.sessionId,
             time: Date.now(),
             thinking,
             mode
-        });
+        };
+
+        // When thinking=true, session-alive must be reliable: it's the only durable way
+        // for UIs that connect mid-turn to learn that the session is actively running.
+        if (thinking) {
+            this.socket.emit('session-alive', payload);
+            return;
+        }
+
+        // When idle, prefer volatile to avoid any chance of backpressure.
+        const volatileEmit = (this.socket as any)?.volatile?.emit;
+        if (typeof volatileEmit === 'function') {
+            volatileEmit.call((this.socket as any).volatile, 'session-alive', payload);
+            return;
+        }
+
+        // Fallback for non-standard socket stubs.
+        this.socket.emit('session-alive', payload);
     }
 
     /**

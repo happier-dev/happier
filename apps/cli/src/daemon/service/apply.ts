@@ -1,19 +1,9 @@
 import { chmod, mkdir, unlink, writeFile } from 'node:fs/promises';
-import { delimiter, dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
 
 import type { DaemonServiceInstallPlan, DaemonServiceUninstallPlan, DaemonServicePlannedCommand } from './plan';
-
-function commandExistsInPath(cmd: string, envPath: string | undefined): boolean {
-  const pathDirs = (envPath ?? '').split(delimiter).map((p) => p.trim()).filter(Boolean);
-  for (const dir of pathDirs) {
-    const full = join(dir, cmd);
-    if (!existsSync(full)) continue;
-    return true;
-  }
-  return false;
-}
+import { commandExistsInPath } from './commandExistsInPath';
 
 function runCommandBestEffort(command: DaemonServicePlannedCommand): boolean {
   try {
@@ -29,7 +19,7 @@ function runCommandBestEffort(command: DaemonServicePlannedCommand): boolean {
 
 async function runCommandsBestEffort(commands: readonly DaemonServicePlannedCommand[]): Promise<void> {
   for (const command of commands) {
-    if (!commandExistsInPath(command.cmd, process.env.PATH)) continue;
+    if (!commandExistsInPath({ cmd: command.cmd, envPath: process.env.PATH, platform: process.platform, pathext: process.env.PATHEXT })) continue;
     runCommandBestEffort(command);
   }
 }

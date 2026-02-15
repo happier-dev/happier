@@ -32,7 +32,7 @@ describe('codex local-control rollout discovery', () => {
         expect(nearScore).toBeGreaterThan(farScore);
     });
 
-    it('uses resumeId fast-path by filename fragment and prefers newest mtime', async () => {
+    it('prefers the most recent rollout file when multiple matches share the same resumeId', async () => {
         const root = await mkdtemp(join(tmpdir(), 'codex-sessions-'));
         try {
             const dir = join(root, '2026', '02', '04');
@@ -64,6 +64,69 @@ describe('codex local-control rollout discovery', () => {
         }
     });
 
+    it('prefers rollout whose session_meta timestamp is after startedAt even if another file has newer mtime', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'codex-sessions-stale-'));
+        try {
+            const dir = join(root, '2026', '02', '04');
+            await mkdir(dir, { recursive: true });
+
+            const startedAtMs = Date.parse('2026-02-04T12:00:05.000Z');
+
+            const stale = join(dir, 'rollout-2026-02-04T12-00-00-stale.jsonl');
+            const fresh = join(dir, 'rollout-2026-02-04T12-00-06-fresh.jsonl');
+
+            await writeFile(
+                stale,
+                `${sessionMetaLine({ id: 'stale', timestamp: '2026-02-04T12:00:00.000Z', cwd: '/x' })}\n`,
+            );
+            await writeFile(
+                fresh,
+                `${sessionMetaLine({ id: 'fresh', timestamp: '2026-02-04T12:00:06.000Z', cwd: '/x' })}\n`,
+            );
+
+            // Simulate an unrelated active Codex session continuously writing to an older rollout file.
+            await utimes(stale, new Date('2026-02-04T12:05:00.000Z'), new Date('2026-02-04T12:05:00.000Z'));
+            await utimes(fresh, new Date('2026-02-04T12:00:06.500Z'), new Date('2026-02-04T12:00:06.500Z'));
+
+            const discovered = await discoverCodexRolloutFileOnce({
+                sessionsRootDir: root,
+                startedAtMs,
+                cwd: '/x',
+                scanLimit: 50,
+            });
+
+            expect(discovered?.filePath).toBe(fresh);
+            expect(discovered?.sessionMeta.id).toBe('fresh');
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('returns null when only stale rollouts exist for a newly-started session', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'codex-sessions-only-stale-'));
+        try {
+            const dir = join(root, '2026', '02', '04');
+            await mkdir(dir, { recursive: true });
+
+            const filePath = join(dir, 'rollout-2026-02-04T11-59-00-stale-only.jsonl');
+            await writeFile(
+                filePath,
+                `${sessionMetaLine({ id: 'stale-only', timestamp: '2026-02-04T11:59:00.000Z', cwd: '/x' })}\n`,
+            );
+
+            const discovered = await discoverCodexRolloutFileOnce({
+                sessionsRootDir: root,
+                startedAtMs: Date.parse('2026-02-04T12:00:05.000Z'),
+                cwd: '/x',
+                scanLimit: 50,
+            });
+
+            expect(discovered).toBeNull();
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('can read session_meta from a huge sparse rollout file without loading the entire file', async () => {
         const root = await mkdtemp(join(tmpdir(), 'codex-sessions-huge-'));
         try {
@@ -76,7 +139,7 @@ describe('codex local-control rollout discovery', () => {
 
             const discovered = await discoverCodexRolloutFileOnce({
                 sessionsRootDir: root,
-                startedAtMs: Date.parse('2026-02-04T12:00:05.000Z'),
+                startedAtMs: Date.parse('2026-02-04T11:59:59.000Z'),
                 cwd: '/Users/leeroy/Documents/Development/happier/dev',
                 scanLimit: 10,
             });
