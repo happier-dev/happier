@@ -80,37 +80,6 @@ describe('git RPC handlers', () => {
         expect(diff.diff).toContain('+after');
     });
 
-    it('loads repo-root relative diffs when the working directory is a subdirectory', async () => {
-        const workspace = mkdtempSync(join(tmpdir(), 'happier-git-rpc-subdir-'));
-        git(workspace, ['init']);
-        git(workspace, ['config', 'user.email', 'test@example.com']);
-        git(workspace, ['config', 'user.name', 'Test User']);
-
-        mkdirSync(join(workspace, '.github', 'workflows'), { recursive: true });
-        const filePath = '.github/workflows/workflow.yml';
-        writeFileSync(join(workspace, filePath), 'before\n');
-        git(workspace, ['add', filePath]);
-        git(workspace, ['commit', '-m', 'init']);
-
-        writeFileSync(join(workspace, filePath), 'after\n');
-
-        // Simulate a session that was started in a subdirectory of the repository.
-        mkdirSync(join(workspace, 'subdir'), { recursive: true });
-        const { call } = createTestRpcManager({ workingDirectory: join(workspace, 'subdir') });
-
-        const diff = await call<any, { cwd?: string; path: string; area?: 'included' | 'pending' | 'both' }>(
-            RPC_METHODS.SCM_DIFF_FILE,
-            {
-                path: filePath,
-                area: 'pending',
-            },
-        );
-
-        expect(diff.success).toBe(true);
-        expect(diff.diff).toContain(`diff --git a/${filePath} b/${filePath}`);
-        expect(diff.diff).toContain('+after');
-    });
-
     it('loads commit diffs even when diff.external is configured to fail', async () => {
         const workspace = mkdtempSync(join(tmpdir(), 'happier-git-rpc-'));
         git(workspace, ['init']);

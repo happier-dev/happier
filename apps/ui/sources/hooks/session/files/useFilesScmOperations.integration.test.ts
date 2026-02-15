@@ -9,14 +9,14 @@ const {
     mockSessionRPC,
     modalAlert,
     modalConfirm,
-    modalShow,
+    modalPrompt,
     invalidateFromMutationAndAwait,
     trackingCapture,
 } = vi.hoisted(() => ({
     mockSessionRPC: vi.fn(),
     modalAlert: vi.fn(),
     modalConfirm: vi.fn(),
-    modalShow: vi.fn(),
+    modalPrompt: vi.fn(),
     invalidateFromMutationAndAwait: vi.fn(async () => {}),
     trackingCapture: vi.fn(),
 }));
@@ -41,7 +41,7 @@ vi.mock('@/modal', () => ({
     Modal: {
         alert: modalAlert,
         confirm: modalConfirm,
-        show: modalShow,
+        prompt: modalPrompt,
     },
 }));
 
@@ -73,26 +73,6 @@ const initialStorageState = storage.getState();
 
 type HookProps = Parameters<typeof useFilesScmOperations>[0];
 
-const DEFAULT_EPHEMERAL_TASK_SETTINGS = {
-    executionRunsEnabled: true,
-    scmCommitMessageGeneratorEnabled: false,
-    scmCommitMessageGeneratorBackendId: 'claude',
-} as const;
-
-type HookPropsInput =
-    & Omit<
-        HookProps,
-        | 'executionRunsEnabled'
-        | 'scmCommitMessageGeneratorEnabled'
-        | 'scmCommitMessageGeneratorBackendId'
-    >
-    & Partial<Pick<
-        HookProps,
-        | 'executionRunsEnabled'
-        | 'scmCommitMessageGeneratorEnabled'
-        | 'scmCommitMessageGeneratorBackendId'
-    >>;
-
 function createSession(sessionId: string, workspacePath: string) {
     const now = Date.now();
     return {
@@ -118,12 +98,11 @@ function createSession(sessionId: string, workspacePath: string) {
     };
 }
 
-function mountHook(props: HookPropsInput) {
+function mountHook(props: HookProps) {
     let current: ReturnType<typeof useFilesScmOperations> | null = null;
-    const resolvedProps = { ...DEFAULT_EPHEMERAL_TASK_SETTINGS, ...props } as HookProps;
 
     function Probe() {
-        current = useFilesScmOperations(resolvedProps);
+        current = useFilesScmOperations(props);
         return React.createElement('View');
     }
 
@@ -153,16 +132,13 @@ describe('useFilesScmOperations integration', () => {
         mockSessionRPC.mockReset();
         modalAlert.mockReset();
         modalConfirm.mockReset();
-        modalShow.mockReset();
+        modalPrompt.mockReset();
         invalidateFromMutationAndAwait.mockReset();
         invalidateFromMutationAndAwait.mockImplementation(async () => {});
         trackingCapture.mockReset();
 
         modalConfirm.mockResolvedValue(true);
-        modalShow.mockImplementation(({ props }: any) => {
-            props?.onSubmit?.({ title: 'feat: hook integration commit', body: '', message: 'feat: hook integration commit' });
-            return 'modal-commit-composer';
-        });
+        modalPrompt.mockResolvedValue('feat: hook integration commit');
     });
 
     it('creates a commit then pushes successfully against a real remote', async () => {
@@ -202,7 +178,6 @@ describe('useFilesScmOperations integration', () => {
             scmCommitStrategy: 'git_staging',
             scmRemoteConfirmPolicy: 'always',
             scmPushRejectPolicy: 'prompt_fetch',
-            ...DEFAULT_EPHEMERAL_TASK_SETTINGS,
             refreshScmData,
             loadCommitHistory,
         });
@@ -268,8 +243,7 @@ describe('useFilesScmOperations integration', () => {
             scmCommitStrategy: 'atomic',
             scmRemoteConfirmPolicy: 'always',
             scmPushRejectPolicy: 'prompt_fetch',
-            ...DEFAULT_EPHEMERAL_TASK_SETTINGS,
-        });
+        } as any);
 
         await act(async () => {
             await hook.getCurrent().createCommit();
@@ -319,8 +293,7 @@ describe('useFilesScmOperations integration', () => {
             scmCommitStrategy: 'atomic',
             scmRemoteConfirmPolicy: 'always',
             scmPushRejectPolicy: 'prompt_fetch',
-            ...DEFAULT_EPHEMERAL_TASK_SETTINGS,
-        });
+        } as any);
 
         await act(async () => {
             await hook.getCurrent().createCommit();
@@ -375,8 +348,7 @@ describe('useFilesScmOperations integration', () => {
             scmCommitStrategy: 'atomic',
             scmRemoteConfirmPolicy: 'always',
             scmPushRejectPolicy: 'prompt_fetch',
-            ...DEFAULT_EPHEMERAL_TASK_SETTINGS,
-        });
+        } as any);
 
         await act(async () => {
             await hook.getCurrent().createCommit();
@@ -426,8 +398,7 @@ describe('useFilesScmOperations integration', () => {
             scmCommitStrategy: 'atomic',
             scmRemoteConfirmPolicy: 'always',
             scmPushRejectPolicy: 'prompt_fetch',
-            ...DEFAULT_EPHEMERAL_TASK_SETTINGS,
-        });
+        } as any);
 
         await act(async () => {
             await hook.getCurrent().createCommit();
@@ -474,8 +445,7 @@ describe('useFilesScmOperations integration', () => {
             scmCommitStrategy: 'atomic',
             scmRemoteConfirmPolicy: 'always',
             scmPushRejectPolicy: 'prompt_fetch',
-            ...DEFAULT_EPHEMERAL_TASK_SETTINGS,
-        });
+        } as any);
 
         await act(async () => {
             await hook.getCurrent().createCommit();
@@ -534,8 +504,7 @@ describe('useFilesScmOperations integration', () => {
             scmCommitStrategy: 'atomic',
             scmRemoteConfirmPolicy: 'always',
             scmPushRejectPolicy: 'prompt_fetch',
-            ...DEFAULT_EPHEMERAL_TASK_SETTINGS,
-        });
+        } as any);
 
         await act(async () => {
             await hook.getCurrent().createCommit();
@@ -598,8 +567,7 @@ describe('useFilesScmOperations integration', () => {
             scmCommitStrategy: 'atomic',
             scmRemoteConfirmPolicy: 'always',
             scmPushRejectPolicy: 'prompt_fetch',
-            ...DEFAULT_EPHEMERAL_TASK_SETTINGS,
-        });
+        } as any);
 
         await act(async () => {
             await hook.getCurrent().createCommit();
@@ -662,8 +630,7 @@ describe('useFilesScmOperations integration', () => {
             scmCommitStrategy: 'atomic',
             scmRemoteConfirmPolicy: 'always',
             scmPushRejectPolicy: 'prompt_fetch',
-            ...DEFAULT_EPHEMERAL_TASK_SETTINGS,
-        });
+        } as any);
 
         await act(async () => {
             await hook.getCurrent().createCommit();

@@ -37,7 +37,6 @@ type ChangedFilesReviewProps = {
     maxFiles: number;
     maxChangedLines: number;
     onFilePress: (file: ScmFileStatus) => void;
-    renderFileActions?: (file: ScmFileStatus) => React.ReactNode;
     focusPath?: string | null;
     rowDensity?: 'comfortable' | 'compact';
     reviewCommentsEnabled?: boolean;
@@ -381,7 +380,6 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
 
                             const rightElement = (
                                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                                    {props.renderFileActions ? props.renderFileActions(file) : null}
                                     {!tooLarge && (
                                         <ChangedFileStatusIcon file={file} theme={theme} isDarkTheme={isDarkTheme} />
                                     )}

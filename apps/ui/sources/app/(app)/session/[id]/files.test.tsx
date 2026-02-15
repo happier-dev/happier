@@ -31,7 +31,6 @@ vi.mock('react-native', () => {
 
     return {
         View: 'View',
-        Pressable: 'Pressable',
         ActivityIndicator: 'ActivityIndicator',
         Platform: platform,
     };
@@ -48,7 +47,6 @@ vi.mock('react-native-unistyles', () => ({
                 textSecondary: '#aaa',
                 textLink: '#08f',
                 warning: '#f80',
-                shadow: { color: '#000' },
                 input: {
                     background: '#222',
                     placeholder: '#666',
@@ -57,28 +55,7 @@ vi.mock('react-native-unistyles', () => ({
             dark: false,
         },
     }),
-    StyleSheet: {
-        create: (value: any) =>
-            (typeof value === 'function'
-                ? value({
-                    colors: {
-                        surface: '#111',
-                        surfaceHigh: '#222',
-                        divider: '#333',
-                        text: '#eee',
-                        textSecondary: '#aaa',
-                        textLink: '#08f',
-                        warning: '#f80',
-                        shadow: { color: '#000' },
-                        input: {
-                            background: '#222',
-                            placeholder: '#666',
-                        },
-                    },
-                    dark: false,
-                })
-                : value),
-    },
+    StyleSheet: { create: (value: any) => (typeof value === 'function' ? value() : value) },
 }));
 
 vi.mock('@react-navigation/native', () => ({
@@ -219,10 +196,6 @@ vi.mock('@/hooks/session/files/useScmOperationsVisibility', () => ({
     shouldShowScmOperationsPanel: () => true,
 }));
 
-vi.mock('@/scm/operations/applyFileStageAction', () => ({
-    applyFileStageAction: vi.fn(async () => {}),
-}));
-
 vi.mock('@/components/sessions/files/FilesToolbar', () => ({
     FilesToolbar: (props: any) => {
         filesToolbarSpy(props);
@@ -320,17 +293,8 @@ describe('FilesScreen', () => {
     it('navigates to commit screen without pre-encoding sha', async () => {
         const Screen = (await import('./files')).default;
 
-        let tree: renderer.ReactTestRenderer;
         await act(async () => {
-            tree = renderer.create(<Screen />);
-        });
-        await act(async () => {});
-
-        const toggles = tree!.root.findAllByProps({ testID: 'scm-section-toggle' });
-        expect(toggles.length).toBe(1);
-
-        await act(async () => {
-            toggles[0]?.props?.onPress?.();
+            renderer.create(<Screen />);
         });
         await act(async () => {});
 
@@ -372,16 +336,8 @@ describe('FilesScreen', () => {
     it('sanitizes whitespace-containing commit refs when navigating to the commit screen', async () => {
         const Screen = (await import('./files')).default;
 
-        let tree: renderer.ReactTestRenderer;
         await act(async () => {
-            tree = renderer.create(<Screen />);
-        });
-        await act(async () => {});
-
-        const toggles = tree!.root.findAllByProps({ testID: 'scm-section-toggle' });
-        expect(toggles.length).toBe(1);
-        await act(async () => {
-            toggles[0]?.props?.onPress?.();
+            renderer.create(<Screen />);
         });
         await act(async () => {});
 
@@ -407,9 +363,9 @@ describe('FilesScreen', () => {
         });
         await act(async () => {});
 
-        expect(changedFilesReviewProps).toBeTruthy();
+        expect(changedFilesListProps).toBeTruthy();
 
-        changedFilesReviewProps.onFilePress({
+        changedFilesListProps.onFilePress({
             fileName: 'hello world.txt',
             fullPath: 'dir/hello world.txt',
             status: 'modified',
@@ -432,9 +388,8 @@ describe('FilesScreen', () => {
         });
         await act(async () => {});
 
-        // Default should land in review mode for the common "what changed?" workflow.
-        expect(changedFilesReviewProps).toBeTruthy();
-        expect(changedFilesListProps).toBeNull();
+        expect(changedFilesListProps).toBeTruthy();
+        expect(changedFilesReviewProps).toBeNull();
 
         const toolbarProps = filesToolbarSpy.mock.calls
             .map((call) => call[0])
@@ -442,26 +397,18 @@ describe('FilesScreen', () => {
         expect(typeof toolbarProps?.onChangedFilesPresentationChange).toBe('function');
 
         await act(async () => {
-            toolbarProps.onChangedFilesPresentationChange('list');
+            toolbarProps.onChangedFilesPresentationChange('review');
         });
         await act(async () => {});
 
-        expect(changedFilesListProps).toBeTruthy();
+        expect(changedFilesReviewProps).toBeTruthy();
     });
 
     it('shows commit selection state when only patch selection exists and clears both stores', async () => {
         const Screen = (await import('./files')).default;
 
-        let tree: renderer.ReactTestRenderer;
         await act(async () => {
-            tree = renderer.create(<Screen />);
-        });
-        await act(async () => {});
-
-        const toggles = tree!.root.findAllByProps({ testID: 'scm-section-toggle' });
-        expect(toggles.length).toBe(1);
-        await act(async () => {
-            toggles[0]?.props?.onPress?.();
+            renderer.create(<Screen />);
         });
         await act(async () => {});
 
@@ -583,17 +530,6 @@ describe('FilesScreen', () => {
         await act(async () => {});
 
         const list = tree!.root.findByType('ItemList');
-        // Source-control is collapsed by default to keep diffs visible first.
-        expect(list.findAllByType('SourceControlOperationsPanel').length).toBe(0);
-
-        const toggles = tree!.root.findAllByProps({ testID: 'scm-section-toggle' });
-        expect(toggles.length).toBe(1);
-
-        await act(async () => {
-            toggles[0]?.props?.onPress?.();
-        });
-        await act(async () => {});
-
         expect(list.findAllByType('SourceControlOperationsPanel').length).toBe(1);
     });
 

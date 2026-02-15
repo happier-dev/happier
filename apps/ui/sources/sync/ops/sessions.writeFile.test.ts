@@ -29,10 +29,8 @@ describe('sessionWriteFile', () => {
         expect(sessionRPCSpy).toHaveBeenCalledWith('s1', 'writeFile', {
             path: 'src/a.ts',
             content: 'aGVsbG8=',
+            expectedHash: undefined,
         });
-        const payload = sessionRPCSpy.mock.calls[0]?.[2] as Record<string, unknown> | undefined;
-        expect(payload).toBeTruthy();
-        expect(Object.prototype.hasOwnProperty.call(payload!, 'expectedHash')).toBe(false);
     });
 
     it('returns a stable errorCode when the RPC method is unavailable', async () => {

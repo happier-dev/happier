@@ -92,8 +92,8 @@ describe('FilesToolbar', () => {
 
         const textNodes = tree!.root.findAllByType('Text' as any);
         const labels = textNodes.map((node) => String(node.props.children));
-        expect(labels).toContain('Repository');
-        expect(labels).not.toContain('Session');
+        expect(labels).toContain('Repository view');
+        expect(labels).not.toContain('Session view');
         expect(labels).toContain('files.attributionReliabilityLimited');
     });
 });

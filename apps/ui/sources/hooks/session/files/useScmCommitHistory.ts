@@ -64,34 +64,6 @@ export function useScmCommitHistory(input: {
                         setHistoryHasMore(incoming.length >= limit);
                     } else {
                         // Legacy daemons may ignore `skip` and always return the first page.
-                        // Try a limit-expansion fallback (skip=0, limit increases) before giving up.
-                        if (skip > 0) {
-                            const expandedLimit = skip + limit;
-                            const expanded = await sessionScmLogList(sessionId, {
-                                limit: expandedLimit,
-                                skip: 0,
-                            });
-
-                            if (expanded.success) {
-                                const expandedEntries = expanded.entries ?? [];
-                                const expandedShas = new Set(expandedEntries.map((entry) => entry.sha));
-                                const missingFromExpanded = previous.filter((entry) => !expandedShas.has(entry.sha));
-
-                                // Prefer the expanded list order; append any missing prior entries as a safety net.
-                                const nextEntries = missingFromExpanded.length > 0
-                                    ? [...expandedEntries, ...missingFromExpanded]
-                                    : expandedEntries;
-
-                                const hasProgress = nextEntries.length > previous.length;
-                                if (hasProgress) {
-                                    setHistoryEntries(nextEntries);
-                                    setHistorySkip(nextEntries.length);
-                                    setHistoryHasMore(expandedEntries.length >= expandedLimit);
-                                    return;
-                                }
-                            }
-                        }
-
                         // If pagination makes no progress, stop offering "load more" instead of looping forever.
                         setHistoryHasMore(false);
                     }

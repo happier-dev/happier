@@ -19,7 +19,6 @@ import { evaluateScmOperationPreflight } from '@/scm/core/operationPolicy';
 import type { ScmCommitStrategy } from '@/scm/settings/commitStrategy';
 import type { ScmPushRejectPolicy, ScmRemoteConfirmPolicy } from '@/scm/settings/preferences';
 import { validateCommitMessage } from '@/scm/operations/commitMessage';
-import { openCommitComposerModal } from '@/scm/operations/commitComposer/openCommitComposerModal';
 import {
     buildNonFastForwardFetchPromptDialog,
     buildRemoteConfirmDialog,
@@ -32,7 +31,6 @@ import { withSessionProjectScmOperationLock } from '@/scm/operations/withOperati
 import { reportSessionScmOperation, trackBlockedScmOperation } from '@/scm/operations/reporting';
 import { tracking } from '@/track';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
-import { sessionEphemeralTaskRun } from '@/sync/ops/sessionEphemeralTasks';
 
 export function useFilesScmOperations(input: {
     sessionId: string;
@@ -42,9 +40,6 @@ export function useFilesScmOperations(input: {
     scmCommitStrategy: ScmCommitStrategy;
     scmRemoteConfirmPolicy: ScmRemoteConfirmPolicy;
     scmPushRejectPolicy: ScmPushRejectPolicy;
-    executionRunsEnabled: boolean;
-    scmCommitMessageGeneratorEnabled: boolean;
-    scmCommitMessageGeneratorBackendId: string;
     refreshScmData: () => Promise<void>;
     loadCommitHistory: (opts?: { reset?: boolean }) => Promise<void>;
 }) {
@@ -56,9 +51,6 @@ export function useFilesScmOperations(input: {
         scmCommitStrategy,
         scmRemoteConfirmPolicy,
         scmPushRejectPolicy,
-        executionRunsEnabled,
-        scmCommitMessageGeneratorEnabled,
-        scmCommitMessageGeneratorBackendId,
         refreshScmData,
         loadCommitHistory,
     } = input;
@@ -293,40 +285,8 @@ export function useFilesScmOperations(input: {
             return;
         }
         if (!sessionPath) return;
-        const draft = await openCommitComposerModal({
-            initialTitle: '',
-            initialBody: '',
-            showGenerator: executionRunsEnabled && scmCommitMessageGeneratorEnabled,
-            onGenerate: async () => {
-                const patches = Array.isArray(commitSelectionPatches) && commitSelectionPatches.length > 0
-                    ? commitSelectionPatches.map((entry) => ({ path: entry.path, patch: entry.patch }))
-                    : undefined;
-                const scope = (!patches && Array.isArray(commitSelectionPathHints) && commitSelectionPathHints.length > 0)
-                    ? { kind: 'paths' as const, include: commitSelectionPathHints }
-                    : undefined;
-
-                const response = await sessionEphemeralTaskRun(sessionId, {
-                    kind: 'scm.commit_message',
-                    sessionId,
-                    input: {
-                        backendId: scmCommitMessageGeneratorBackendId,
-                        ...(scope ? { scope } : {}),
-                        ...(patches ? { patches } : {}),
-                    },
-                    permissionMode: 'no_tools',
-                });
-                if (!response || typeof response !== 'object' || (response as any).ok !== true) {
-                    const error = (response as any)?.error;
-                    throw new Error(typeof error === 'string' && error.trim() ? error : 'Failed to generate commit message');
-                }
-                const title = typeof (response as any).result?.title === 'string' ? String((response as any).result.title) : '';
-                const body = typeof (response as any).result?.body === 'string' ? String((response as any).result.body) : '';
-                const message = typeof (response as any).result?.message === 'string' ? String((response as any).result.message) : title;
-                return { title, body, message };
-            },
-        });
-        if (!draft) return;
-        const validation = validateCommitMessage(draft.message ?? '');
+        const rawMessage = await Modal.prompt('Create commit', 'Enter commit message');
+        const validation = validateCommitMessage(rawMessage ?? '');
         if (!validation.ok) {
             Modal.alert(t('common.error'), validation.message);
             return;
@@ -347,9 +307,6 @@ export function useFilesScmOperations(input: {
         commitSelectionPathHints,
         commitSelectionPatches,
         commitSelectionPaths,
-        executionRunsEnabled,
-        scmCommitMessageGeneratorBackendId,
-        scmCommitMessageGeneratorEnabled,
         scmCommitStrategy,
         scmSnapshot,
         scmWriteEnabled,

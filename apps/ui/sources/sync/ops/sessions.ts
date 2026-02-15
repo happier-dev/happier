@@ -429,12 +429,7 @@ export async function sessionWriteFile(
 ): Promise<SessionWriteFileResponse> {
     try {
         const contentBase64 = encodeBase64(new TextEncoder().encode(content), 'base64');
-        // Important: do not include `expectedHash: undefined` in the payload.
-        // Some serialization/encryption layers can coerce `undefined` to `null`,
-        // which changes semantics on the daemon (null means "must be a new file").
-        const request: SessionWriteFileRequest = expectedHash === undefined
-            ? { path, content: contentBase64 }
-            : { path, content: contentBase64, expectedHash };
+        const request: SessionWriteFileRequest = { path, content: contentBase64, expectedHash };
         const response = await apiSocket.sessionRPC<SessionWriteFileResponse, SessionWriteFileRequest>(
             sessionId,
             'writeFile',
