@@ -1,8 +1,7 @@
 import * as React from 'react';
 import { Pressable, View, Text } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import { useLocalSettingMutable } from '@/sync/domains/state/storage';
-import { t } from '@/text';
 
 const styles = StyleSheet.create((theme) => ({
     container: {
@@ -40,7 +39,7 @@ export const CollapsedSidebarView = React.memo(() => {
                 style={styles.button}
                 accessibilityRole="button"
             >
-                <Text style={styles.buttonText}>{t('common.expand')}</Text>
+                <Text style={styles.buttonText}>{'>'}</Text>
             </Pressable>
         </View>
     );
