@@ -1,586 +1,132 @@
 import * as React from 'react';
+import { View } from 'react-native';
 
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { findLanguageByCode, getLanguageDisplayName, LANGUAGES } from '@/constants/Languages';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
-import { getAgentPickerOptions } from '@/agents/catalog/agentPickerOptions';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { useHappierVoiceSupport } from '@/hooks/server/useHappierVoiceSupport';
-import { Modal } from '@/modal';
-import { createHappierElevenLabsAgent, updateHappierElevenLabsAgent } from '@/realtime/elevenlabs/autoprovision';
-import { useSettingMutable } from '@/sync/domains/state/storage';
-import { sync } from '@/sync/sync';
 import { t } from '@/text';
-import { normalizeSecretPromptInput } from '@/utils/secrets/normalizeSecretInput';
-import { VOICE_PROVIDER_IDS } from '@/voice/voiceProviders';
-import { fetchOpenAiCompatSpeechAudio } from '@/voice/local/fetchOpenAiCompatSpeechAudio';
-import { formatVoiceTestFailureMessage } from '@/voice/local/formatVoiceTestFailureMessage';
-import { playAudioBytes } from '@/voice/local/playAudioBytes';
-import { speakDeviceText } from '@/voice/local/speakDeviceText';
+import { findLanguageByCode, LANGUAGES } from '@/constants/Languages';
 
-import { ByoElevenLabsSection } from './voice/ByoElevenLabsSection';
-import { LocalOssVoiceSection, type VoiceSettingsOpenMenu } from './voice/LocalOssVoiceSection';
-import { useModelPreflight } from './voice/useModelPreflight';
-import { VoiceModeSection } from './voice/VoiceModeSection';
-import { VoicePrivacySection } from './voice/VoicePrivacySection';
+import { useVoiceSettingsMutable } from '@/voice/settings/useVoiceSettingsMutable';
+import { VoiceProviderSection } from '@/voice/settings/panels/VoiceProviderSection';
+import { VoicePrivacySection } from '@/voice/settings/panels/VoicePrivacySection';
+import { VoiceUiSection } from '@/voice/settings/panels/VoiceUiSection';
+import { RealtimeElevenLabsSection } from '@/voice/settings/panels/RealtimeElevenLabsSection';
+import { LocalDirectSection } from '@/voice/settings/panels/LocalDirectSection';
+import { LocalConversationSection } from '@/voice/settings/panels/LocalConversationSection';
 
 export default function VoiceSettingsScreen() {
-    const { theme } = useUnistyles();
-    const router = useRouter();
+  const { theme } = useUnistyles();
+  const [voice, setVoice] = useVoiceSettingsMutable();
+  const happierVoiceSupported = useHappierVoiceSupport();
+  const popoverBoundaryRef = React.useRef<any>(null);
+  const [openMenu, setOpenMenu] = React.useState<null | 'assistantLanguage'>(null);
 
-    const [voiceAssistantLanguage] = useSettingMutable('voiceAssistantLanguage');
-    const [voiceProviderId, setVoiceProviderId] = useSettingMutable('voiceProviderId');
-    const [voiceByoElevenLabsAgentId, setVoiceByoElevenLabsAgentId] = useSettingMutable('voiceByoElevenLabsAgentId');
-    const [voiceByoElevenLabsApiKey, setVoiceByoElevenLabsApiKey] = useSettingMutable('voiceByoElevenLabsApiKey');
-    const [voiceShareSessionSummary, setVoiceShareSessionSummary] = useSettingMutable('voiceShareSessionSummary');
-    const [voiceShareRecentMessages, setVoiceShareRecentMessages] = useSettingMutable('voiceShareRecentMessages');
-    const [voiceRecentMessagesCount, setVoiceRecentMessagesCount] = useSettingMutable('voiceRecentMessagesCount');
-    const [voiceShareToolNames, setVoiceShareToolNames] = useSettingMutable('voiceShareToolNames');
-    const [voiceSharePermissionRequests, setVoiceSharePermissionRequests] = useSettingMutable('voiceSharePermissionRequests');
-    const [voiceShareFilePaths, setVoiceShareFilePaths] = useSettingMutable('voiceShareFilePaths');
-    const [voiceLocalSttBaseUrl, setVoiceLocalSttBaseUrl] = useSettingMutable('voiceLocalSttBaseUrl');
-    const [voiceLocalUseDeviceStt, setVoiceLocalUseDeviceStt] = useSettingMutable('voiceLocalUseDeviceStt');
-    const [voiceLocalSttApiKey, setVoiceLocalSttApiKey] = useSettingMutable('voiceLocalSttApiKey');
-    const [voiceLocalSttModel, setVoiceLocalSttModel] = useSettingMutable('voiceLocalSttModel');
-    const [voiceLocalTtsBaseUrl, setVoiceLocalTtsBaseUrl] = useSettingMutable('voiceLocalTtsBaseUrl');
-    const [voiceLocalUseDeviceTts, setVoiceLocalUseDeviceTts] = useSettingMutable('voiceLocalUseDeviceTts');
-    const [voiceLocalTtsApiKey, setVoiceLocalTtsApiKey] = useSettingMutable('voiceLocalTtsApiKey');
-    const [voiceLocalTtsModel, setVoiceLocalTtsModel] = useSettingMutable('voiceLocalTtsModel');
-    const [voiceLocalTtsVoice, setVoiceLocalTtsVoice] = useSettingMutable('voiceLocalTtsVoice');
-    const [voiceLocalTtsFormat, setVoiceLocalTtsFormat] = useSettingMutable('voiceLocalTtsFormat');
-    const [voiceLocalAutoSpeakReplies, setVoiceLocalAutoSpeakReplies] = useSettingMutable('voiceLocalAutoSpeakReplies');
-    const [voiceLocalConversationMode, setVoiceLocalConversationMode] = useSettingMutable('voiceLocalConversationMode');
-    const [voiceLocalMediatorBackend, setVoiceLocalMediatorBackend] = useSettingMutable('voiceLocalMediatorBackend');
-    const [voiceMediatorAgentSource, setVoiceMediatorAgentSource] = useSettingMutable('voiceMediatorAgentSource');
-    const [voiceMediatorAgentId, setVoiceMediatorAgentId] = useSettingMutable('voiceMediatorAgentId');
-    const [voiceMediatorPermissionPolicy, setVoiceMediatorPermissionPolicy] = useSettingMutable('voiceMediatorPermissionPolicy');
-    const [voiceMediatorIdleTtlSeconds, setVoiceMediatorIdleTtlSeconds] = useSettingMutable('voiceMediatorIdleTtlSeconds');
-    const [voiceLocalChatBaseUrl, setVoiceLocalChatBaseUrl] = useSettingMutable('voiceLocalChatBaseUrl');
-    const [voiceLocalChatApiKey, setVoiceLocalChatApiKey] = useSettingMutable('voiceLocalChatApiKey');
-    const [voiceLocalChatChatModel, setVoiceLocalChatChatModel] = useSettingMutable('voiceLocalChatChatModel');
-    const [voiceLocalChatCommitModel, setVoiceLocalChatCommitModel] = useSettingMutable('voiceLocalChatCommitModel');
-    const [voiceLocalChatTemperature, setVoiceLocalChatTemperature] = useSettingMutable('voiceLocalChatTemperature');
-    const [voiceLocalChatMaxTokens, setVoiceLocalChatMaxTokens] = useSettingMutable('voiceLocalChatMaxTokens');
-    const [voiceMediatorChatModelSource, setVoiceMediatorChatModelSource] = useSettingMutable('voiceMediatorChatModelSource');
-    const [voiceMediatorChatModelId, setVoiceMediatorChatModelId] = useSettingMutable('voiceMediatorChatModelId');
-    const [voiceMediatorCommitModelSource, setVoiceMediatorCommitModelSource] = useSettingMutable('voiceMediatorCommitModelSource');
-    const [voiceMediatorCommitModelId, setVoiceMediatorCommitModelId] = useSettingMutable('voiceMediatorCommitModelId');
-    const [voiceMediatorVerbosity, setVoiceMediatorVerbosity] = useSettingMutable('voiceMediatorVerbosity');
-    const [recentMachinePaths] = useSettingMutable('recentMachinePaths');
+  React.useEffect(() => {
+    if (happierVoiceSupported !== false) return;
+    if (voice.providerId !== 'realtime_elevenlabs') return;
+    if (voice.adapters.realtime_elevenlabs.billingMode !== 'happier') return;
+    setVoice({ ...voice, providerId: 'off' });
+  }, [happierVoiceSupported, setVoice, voice]);
 
-    const happierVoiceSupported = useHappierVoiceSupport();
-    const enabledAgentIds = useEnabledAgentIds();
-    const agentPickerOptions = React.useMemo(() => getAgentPickerOptions(enabledAgentIds), [enabledAgentIds]);
+  const effectiveAssistantLanguageId =
+    voice.adapters?.realtime_elevenlabs?.assistantLanguage
+    ?? voice.assistantLanguage
+    ?? null;
 
-    const [openMenu, setOpenMenu] = React.useState<VoiceSettingsOpenMenu>(null);
+  const currentLanguage = React.useMemo(() => {
+    const selected = effectiveAssistantLanguageId ? findLanguageByCode(effectiveAssistantLanguageId) : null;
+    return selected ?? LANGUAGES[0];
+  }, [effectiveAssistantLanguageId]);
 
-    const currentLanguage = findLanguageByCode(voiceAssistantLanguage) || LANGUAGES[0];
-    const mediatorAgentSource = voiceMediatorAgentSource === 'agent' ? 'agent' : 'session';
+  return (
+    <View style={{ flex: 1 }} ref={popoverBoundaryRef}>
+      <ItemList>
+        <VoiceProviderSection voice={voice} setVoice={setVoice} happierVoiceSupported={happierVoiceSupported} />
 
-    const hasByoApiKey = Boolean(voiceByoElevenLabsApiKey);
-    const hasVoiceLocalChatApiKey = Boolean(voiceLocalChatApiKey);
-    const hasVoiceLocalSttApiKey = Boolean(voiceLocalSttApiKey);
-    const hasVoiceLocalTtsApiKey = Boolean(voiceLocalTtsApiKey);
-    const byoConfigured = Boolean(voiceByoElevenLabsAgentId) && hasByoApiKey;
+        <ItemGroup title={t('settingsVoice.languageTitle')} footer={t('settingsVoice.languageDescription')}>
+          <DropdownMenu
+            open={openMenu === 'assistantLanguage'}
+            onOpenChange={(next) => setOpenMenu(next ? 'assistantLanguage' : null)}
+            variant="selectable"
+            search={true}
+            searchPlaceholder={t('settingsVoice.preferredLanguage')}
+            selectedId={effectiveAssistantLanguageId ?? ''}
+            showCategoryTitles={false}
+            matchTriggerWidth={true}
+            connectToTrigger={true}
+            rowKind="item"
+            popoverBoundaryRef={popoverBoundaryRef}
+            trigger={({ open, toggle }) => (
+              <Item
+                title={t('settingsVoice.preferredLanguage')}
+                subtitle={t('settingsVoice.preferredLanguageSubtitle')}
+                detail={effectiveAssistantLanguageId ? currentLanguage.name : t('settingsVoice.language.autoDetect')}
+                rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
+                onPress={toggle}
+                showChevron={false}
+                selected={false}
+              />
+            )}
+            items={[
+              {
+                id: '',
+                title: t('settingsVoice.language.autoDetect'),
+                subtitle: 'Use device language (recommended).',
+                icon: (
+                  <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                    <Ionicons name="sparkles-outline" size={20} color={theme.colors.textSecondary} />
+                  </View>
+                ),
+              },
+              ...LANGUAGES.flatMap((lang) => {
+                const code = lang.code;
+                if (typeof code !== 'string' || code.length === 0) return [];
+                return [
+                  {
+                    id: code,
+                    title: lang.name,
+                    subtitle: code,
+                    icon: (
+                      <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                        <Ionicons name="language-outline" size={20} color={theme.colors.textSecondary} />
+                      </View>
+                    ),
+                  },
+                ];
+              }),
+            ]}
+            onSelect={(id) => {
+              const nextLanguage = id ? id : null;
+              setVoice({
+                ...voice,
+                assistantLanguage: nextLanguage,
+                adapters: {
+                  ...voice.adapters,
+                  realtime_elevenlabs: {
+                    ...voice.adapters.realtime_elevenlabs,
+                    assistantLanguage: nextLanguage,
+                  },
+                },
+              });
+              setOpenMenu(null);
+            }}
+          />
+        </ItemGroup>
 
-    const [isAutoprovCreating, setIsAutoprovCreating] = React.useState(false);
-    const [isAutoprovUpdating, setIsAutoprovUpdating] = React.useState(false);
-    const [isTestingLocalTts, setIsTestingLocalTts] = React.useState(false);
+        <VoiceUiSection voice={voice} setVoice={setVoice} popoverBoundaryRef={popoverBoundaryRef} />
 
-    const { daemonMediatorModelOptions, daemonMediatorSupportsFreeform } = useModelPreflight({
-        source: mediatorAgentSource,
-        agentId: voiceMediatorAgentId ?? null,
-        recentMachinePaths,
-    });
+        <RealtimeElevenLabsSection voice={voice} setVoice={setVoice} popoverBoundaryRef={popoverBoundaryRef} />
+        <LocalDirectSection voice={voice} setVoice={setVoice} popoverBoundaryRef={popoverBoundaryRef} />
+        <LocalConversationSection voice={voice} setVoice={setVoice} popoverBoundaryRef={popoverBoundaryRef} />
 
-    React.useEffect(() => {
-        if (happierVoiceSupported === false && voiceProviderId === VOICE_PROVIDER_IDS.HAPPIER_ELEVENLABS_AGENTS) {
-            setVoiceProviderId(VOICE_PROVIDER_IDS.OFF);
-        }
-    }, [happierVoiceSupported, setVoiceProviderId, voiceProviderId]);
-
-    const setByoApiKey = async () => {
-        const valueRaw = await Modal.prompt(
-            t('settingsVoice.byo.apiKeyTitle'),
-            t('settingsVoice.byo.apiKeyDescription'),
-            { inputType: 'secure-text', placeholder: t('settingsVoice.byo.apiKeyPlaceholder') },
-        );
-        if (valueRaw === null) return;
-        const value = normalizeSecretPromptInput(valueRaw);
-        if (!value) return;
-        const enc = sync.encryptSecretValue(value);
-        if (!enc) {
-            Modal.alert(t('common.error'), t('settingsVoice.byo.apiKeySaveFailed'));
-            return;
-        }
-        setVoiceByoElevenLabsApiKey(enc as any);
-    };
-
-    const setByoAgentId = async () => {
-        const value = await Modal.prompt(
-            t('settingsVoice.byo.agentIdTitle'),
-            t('settingsVoice.byo.agentIdDescription'),
-            { placeholder: t('settingsVoice.byo.agentIdPlaceholder') },
-        );
-        if (!value) return;
-        setVoiceByoElevenLabsAgentId(value.trim() || null);
-    };
-
-    const disconnectByo = async () => {
-        const ok = await Modal.confirm(
-            t('settingsVoice.byo.disconnectTitle'),
-            t('settingsVoice.byo.disconnectDescription'),
-            { destructive: true, confirmText: t('settingsVoice.byo.disconnectConfirm') },
-        );
-        if (!ok) return;
-        setVoiceByoElevenLabsAgentId(null);
-        setVoiceByoElevenLabsApiKey(null as any);
-        setVoiceProviderId(VOICE_PROVIDER_IDS.OFF);
-    };
-
-    const setLocalUrl = async (kind: 'stt' | 'tts') => {
-        const current = kind === 'stt' ? (voiceLocalSttBaseUrl ?? '') : (voiceLocalTtsBaseUrl ?? '');
-        const value = await Modal.prompt(
-            kind === 'stt' ? t('settingsVoice.local.sttBaseUrlTitle') : t('settingsVoice.local.ttsBaseUrlTitle'),
-            kind === 'stt' ? t('settingsVoice.local.sttBaseUrlDescription') : t('settingsVoice.local.ttsBaseUrlDescription'),
-            { placeholder: t('settingsVoice.local.baseUrlPlaceholder'), defaultValue: current },
-        );
-        if (value === null) return;
-        const normalized = value.trim() || null;
-        if (kind === 'stt') setVoiceLocalSttBaseUrl(normalized);
-        else setVoiceLocalTtsBaseUrl(normalized);
-    };
-
-    const setLocalApiKey = async (kind: 'stt' | 'tts') => {
-        const valueRaw = await Modal.prompt(
-            kind === 'stt' ? t('settingsVoice.local.sttApiKeyTitle') : t('settingsVoice.local.ttsApiKeyTitle'),
-            kind === 'stt' ? t('settingsVoice.local.sttApiKeyDescription') : t('settingsVoice.local.ttsApiKeyDescription'),
-            { inputType: 'secure-text', placeholder: t('settingsVoice.local.apiKeyPlaceholder') },
-        );
-        if (valueRaw === null) return;
-        const value = normalizeSecretPromptInput(valueRaw);
-        if (!value) {
-            if (kind === 'stt') setVoiceLocalSttApiKey(null as any);
-            else setVoiceLocalTtsApiKey(null as any);
-            return;
-        }
-        const enc = sync.encryptSecretValue(value);
-        if (!enc) {
-            Modal.alert(t('common.error'), t('settingsVoice.local.apiKeySaveFailed'));
-            return;
-        }
-        if (kind === 'stt') setVoiceLocalSttApiKey(enc as any);
-        else setVoiceLocalTtsApiKey(enc as any);
-    };
-
-    const setLocalText = async (kind: 'sttModel' | 'ttsModel' | 'ttsVoice') => {
-        const current =
-            kind === 'sttModel' ? (voiceLocalSttModel ?? '') :
-                kind === 'ttsModel' ? (voiceLocalTtsModel ?? '') :
-                    (voiceLocalTtsVoice ?? '');
-        const title =
-            kind === 'sttModel' ? t('settingsVoice.local.sttModelTitle') :
-                kind === 'ttsModel' ? t('settingsVoice.local.ttsModelTitle') :
-                    t('settingsVoice.local.ttsVoiceTitle');
-        const desc =
-            kind === 'sttModel' ? t('settingsVoice.local.sttModelDescription') :
-                kind === 'ttsModel' ? t('settingsVoice.local.ttsModelDescription') :
-                    t('settingsVoice.local.ttsVoiceDescription');
-        const value = await Modal.prompt(title, desc, { placeholder: current, defaultValue: current });
-        if (value === null) return;
-        const normalized = value.trim();
-        if (kind === 'sttModel') setVoiceLocalSttModel(normalized || 'whisper-1');
-        if (kind === 'ttsModel') setVoiceLocalTtsModel(normalized || 'tts-1');
-        if (kind === 'ttsVoice') setVoiceLocalTtsVoice(normalized || 'alloy');
-    };
-
-    const setLocalChatUrl = async () => {
-        const current = voiceLocalChatBaseUrl ?? '';
-        const value = await Modal.prompt(
-            t('settingsVoice.local.chatBaseUrlTitle'),
-            t('settingsVoice.local.chatBaseUrlDescription'),
-            { placeholder: t('settingsVoice.local.baseUrlPlaceholder'), defaultValue: current },
-        );
-        if (value === null) return;
-        const normalized = value.trim() || null;
-        setVoiceLocalChatBaseUrl(normalized as any);
-    };
-
-    const setLocalChatApiKey = async () => {
-        const value = await Modal.prompt(
-            t('settingsVoice.local.chatApiKeyTitle'),
-            t('settingsVoice.local.chatApiKeyDescription'),
-            { inputType: 'secure-text', placeholder: t('settingsVoice.local.apiKeyPlaceholder') },
-        );
-        if (value === null) return;
-        const trimmed = value.trim();
-        if (!trimmed) {
-            setVoiceLocalChatApiKey(null as any);
-            return;
-        }
-        const enc = sync.encryptSecretValue(trimmed);
-        if (!enc) {
-            Modal.alert(t('common.error'), t('settingsVoice.local.apiKeySaveFailed'));
-            return;
-        }
-        setVoiceLocalChatApiKey(enc as any);
-    };
-
-    const setLocalChatText = async (kind: 'chatModel' | 'commitModel') => {
-        const current = kind === 'chatModel' ? (voiceLocalChatChatModel ?? 'default') : (voiceLocalChatCommitModel ?? 'default');
-        const value = await Modal.prompt(
-            kind === 'chatModel' ? t('settingsVoice.local.chatModelTitle') : t('settingsVoice.local.commitModelTitle'),
-            kind === 'chatModel' ? t('settingsVoice.local.chatModelDescription') : t('settingsVoice.local.commitModelDescription'),
-            { placeholder: 'default', defaultValue: String(current) },
-        );
-        if (value === null) return;
-        const trimmed = value.trim() || 'default';
-        if (kind === 'chatModel') setVoiceLocalChatChatModel(trimmed as any);
-        else setVoiceLocalChatCommitModel(trimmed as any);
-    };
-
-    const setDaemonMediatorModelText = async (kind: 'chatModel' | 'commitModel') => {
-        const current = kind === 'chatModel' ? (voiceMediatorChatModelId ?? 'default') : (voiceMediatorCommitModelId ?? 'default');
-        const value = await Modal.prompt(
-            kind === 'chatModel' ? t('settingsVoice.local.chatModelTitle') : t('settingsVoice.local.commitModelTitle'),
-            kind === 'chatModel' ? t('settingsVoice.local.chatModelDescription') : t('settingsVoice.local.commitModelDescription'),
-            { placeholder: 'default', defaultValue: String(current) },
-        );
-        if (value === null) return;
-        const trimmed = value.trim() || 'default';
-        if (kind === 'chatModel') setVoiceMediatorChatModelId(trimmed as any);
-        else setVoiceMediatorCommitModelId(trimmed as any);
-    };
-
-    const setChatTemperature = async () => {
-        const value = await Modal.prompt(
-            t('settingsVoice.local.chatTemperatureTitle'),
-            t('settingsVoice.local.chatTemperatureDescription'),
-            { inputType: 'numeric', placeholder: '0.4', defaultValue: String(voiceLocalChatTemperature ?? 0.4) },
-        );
-        if (value === null) return;
-        const n = Number(String(value).trim());
-        if (!Number.isFinite(n) || n < 0 || n > 2) {
-            Modal.alert(t('common.error'), t('settingsVoice.local.chatTemperatureInvalid'));
-            return;
-        }
-        setVoiceLocalChatTemperature(n as any);
-    };
-
-    const setChatMaxTokens = async () => {
-        const value = await Modal.prompt(
-            t('settingsVoice.local.chatMaxTokensTitle'),
-            t('settingsVoice.local.chatMaxTokensDescription'),
-            {
-                inputType: 'numeric',
-                placeholder: t('settingsVoice.local.chatMaxTokensPlaceholder'),
-                defaultValue: voiceLocalChatMaxTokens == null ? '' : String(voiceLocalChatMaxTokens),
-            },
-        );
-        if (value === null) return;
-        const trimmed = String(value).trim();
-        if (!trimmed) {
-            setVoiceLocalChatMaxTokens(null as any);
-            return;
-        }
-        const n = Number(trimmed);
-        if (!Number.isFinite(n) || n <= 0) {
-            Modal.alert(t('common.error'), t('settingsVoice.local.chatMaxTokensInvalid'));
-            return;
-        }
-        setVoiceLocalChatMaxTokens(Math.floor(n) as any);
-    };
-
-    const setMediatorIdleTtl = async () => {
-        const value = await Modal.prompt(
-            t('settingsVoice.local.mediatorIdleTtlTitle'),
-            t('settingsVoice.local.mediatorIdleTtlDescription'),
-            { inputType: 'numeric', placeholder: '300', defaultValue: String(voiceMediatorIdleTtlSeconds ?? 300) },
-        );
-        if (value === null) return;
-        const n = Number(String(value).trim());
-        if (!Number.isFinite(n) || n < 60 || n > 3600) {
-            Modal.alert(t('common.error'), t('settingsVoice.local.mediatorIdleTtlInvalid'));
-            return;
-        }
-        setVoiceMediatorIdleTtlSeconds(Math.floor(n) as any);
-    };
-
-    const createByoAgent = async () => {
-        const apiKey = sync.decryptSecretValue(voiceByoElevenLabsApiKey) ?? '';
-        if (!apiKey) {
-            Modal.alert(t('common.error'), t('settingsVoice.byo.apiKeyNotSet'));
-            return;
-        }
-        setIsAutoprovCreating(true);
-        try {
-            const created = await createHappierElevenLabsAgent({ apiKey });
-            setVoiceByoElevenLabsAgentId(created.agentId);
-            Modal.alert(t('common.success'), t('settingsVoice.byo.autoprovCreated', { agentId: created.agentId }));
-        } catch {
-            Modal.alert(t('common.error'), t('settingsVoice.byo.autoprovFailed'));
-        } finally {
-            setIsAutoprovCreating(false);
-        }
-    };
-
-    const updateByoAgent = async () => {
-        const apiKey = sync.decryptSecretValue(voiceByoElevenLabsApiKey) ?? '';
-        const agentId = voiceByoElevenLabsAgentId?.trim() ?? '';
-        if (!apiKey || !agentId) {
-            Modal.alert(t('common.error'), t('settingsVoice.byo.notConfigured'));
-            return;
-        }
-        setIsAutoprovUpdating(true);
-        try {
-            await updateHappierElevenLabsAgent({ apiKey, agentId });
-            Modal.alert(t('common.success'), t('settingsVoice.byo.autoprovUpdated'));
-        } catch {
-            Modal.alert(t('common.error'), t('settingsVoice.byo.autoprovFailed'));
-        } finally {
-            setIsAutoprovUpdating(false);
-        }
-    };
-
-    const setRecentMessagesCount = async () => {
-        const value = await Modal.prompt(
-            t('settingsVoice.privacy.recentMessagesCountTitle'),
-            t('settingsVoice.privacy.recentMessagesCountDescription'),
-            { inputType: 'numeric', placeholder: String(voiceRecentMessagesCount ?? 10) },
-        );
-        if (!value) return;
-        const parsed = Number(value);
-        if (!Number.isFinite(parsed) || parsed < 0 || parsed > 50) {
-            Modal.alert(t('common.error'), t('settingsVoice.privacy.recentMessagesCountInvalid'));
-            return;
-        }
-        setVoiceRecentMessagesCount(Math.floor(parsed));
-    };
-
-    const testLocalTts = async () => {
-        if (isTestingLocalTts) return;
-
-        // When device TTS is enabled, Test TTS should exercise the device speech backend and not
-        // require any configured OpenAI-compatible HTTP endpoint.
-        if (voiceLocalUseDeviceTts === true) {
-            setIsTestingLocalTts(true);
-            try {
-                speakDeviceText(t('settingsVoice.local.testTtsSample'));
-            } catch (err) {
-                Modal.alert(t('common.error'), formatVoiceTestFailureMessage(t('settingsVoice.local.testTtsFailed'), err));
-            } finally {
-                setIsTestingLocalTts(false);
-            }
-            return;
-        }
-
-        const baseUrl = (voiceLocalTtsBaseUrl ?? '').trim();
-        if (!baseUrl) {
-            Modal.alert(t('common.error'), t('settingsVoice.local.testTtsMissingBaseUrl'));
-            return;
-        }
-
-        const apiKey = (sync.decryptSecretValue(voiceLocalTtsApiKey) ?? '').trim();
-        const model = String(voiceLocalTtsModel ?? 'tts-1');
-        const voice = String(voiceLocalTtsVoice ?? 'alloy');
-        const format = (voiceLocalTtsFormat ?? 'mp3') === 'wav' ? 'wav' : 'mp3';
-
-        setIsTestingLocalTts(true);
-        try {
-            const bytes = await fetchOpenAiCompatSpeechAudio({
-                baseUrl,
-                apiKey: apiKey ? apiKey : null,
-                model,
-                voice,
-                format,
-                input: t('settingsVoice.local.testTtsSample'),
-            });
-
-            // Web-only for now (native playback support can be added once we choose a single audio runtime).
-            await playAudioBytes({ bytes, format });
-        } catch (err) {
-            Modal.alert(t('common.error'), formatVoiceTestFailureMessage(t('settingsVoice.local.testTtsFailed'), err));
-        } finally {
-            setIsTestingLocalTts(false);
-        }
-    };
-
-    return (
-        <ItemList style={{ paddingTop: 0 }}>
-            <VoiceModeSection
-                voiceProviderId={voiceProviderId}
-                happierVoiceSupported={happierVoiceSupported}
-                onSelectVoiceProviderId={(providerId) => setVoiceProviderId(providerId as any)}
-            />
-
-            <ByoElevenLabsSection
-                voiceProviderId={voiceProviderId}
-                byoConfigured={byoConfigured}
-                isAutoprovCreating={isAutoprovCreating}
-                isAutoprovUpdating={isAutoprovUpdating}
-                voiceByoElevenLabsAgentId={voiceByoElevenLabsAgentId}
-                hasByoApiKey={hasByoApiKey}
-                onAutoprovCreate={() => {
-                    void createByoAgent();
-                }}
-                onAutoprovUpdate={() => {
-                    void updateByoAgent();
-                }}
-                onSetAgentId={() => {
-                    void setByoAgentId();
-                }}
-                onSetApiKey={() => {
-                    void setByoApiKey();
-                }}
-                onDisconnect={() => {
-                    void disconnectByo();
-                }}
-            />
-
-            <LocalOssVoiceSection
-                voiceProviderId={voiceProviderId}
-                themeTextSecondary={theme.colors.textSecondary}
-                openMenu={openMenu}
-                onOpenMenuChange={setOpenMenu}
-                agentPickerOptions={agentPickerOptions}
-                daemonMediatorModelOptions={daemonMediatorModelOptions}
-                daemonMediatorSupportsFreeform={daemonMediatorSupportsFreeform}
-                voiceLocalConversationMode={voiceLocalConversationMode}
-                voiceLocalMediatorBackend={voiceLocalMediatorBackend}
-                voiceMediatorAgentSource={voiceMediatorAgentSource}
-                voiceMediatorAgentId={voiceMediatorAgentId}
-                voiceMediatorPermissionPolicy={voiceMediatorPermissionPolicy}
-                voiceMediatorVerbosity={voiceMediatorVerbosity}
-                voiceMediatorIdleTtlSeconds={voiceMediatorIdleTtlSeconds}
-                voiceMediatorChatModelSource={voiceMediatorChatModelSource}
-                voiceMediatorChatModelId={voiceMediatorChatModelId}
-                voiceMediatorCommitModelSource={voiceMediatorCommitModelSource}
-                voiceMediatorCommitModelId={voiceMediatorCommitModelId}
-                voiceLocalChatBaseUrl={voiceLocalChatBaseUrl}
-                hasVoiceLocalChatApiKey={hasVoiceLocalChatApiKey}
-                voiceLocalChatChatModel={voiceLocalChatChatModel}
-                voiceLocalChatCommitModel={voiceLocalChatCommitModel}
-                voiceLocalChatTemperature={voiceLocalChatTemperature}
-                voiceLocalChatMaxTokens={voiceLocalChatMaxTokens}
-                voiceLocalSttBaseUrl={voiceLocalSttBaseUrl}
-                voiceLocalUseDeviceStt={!!voiceLocalUseDeviceStt}
-                hasVoiceLocalSttApiKey={hasVoiceLocalSttApiKey}
-                voiceLocalSttModel={voiceLocalSttModel}
-                voiceLocalTtsBaseUrl={voiceLocalTtsBaseUrl}
-                voiceLocalUseDeviceTts={!!voiceLocalUseDeviceTts}
-                hasVoiceLocalTtsApiKey={hasVoiceLocalTtsApiKey}
-                voiceLocalTtsModel={voiceLocalTtsModel}
-                voiceLocalTtsVoice={voiceLocalTtsVoice}
-                voiceLocalTtsFormat={voiceLocalTtsFormat}
-                voiceLocalAutoSpeakReplies={!!voiceLocalAutoSpeakReplies}
-                isTestingLocalTts={isTestingLocalTts}
-                onSetVoiceLocalConversationMode={(mode) => setVoiceLocalConversationMode(mode as any)}
-                onToggleVoiceLocalMediatorBackend={() => {
-                    setVoiceLocalMediatorBackend((voiceLocalMediatorBackend ?? 'daemon') === 'daemon' ? ('openai_compat' as any) : ('daemon' as any));
-                }}
-                onToggleVoiceMediatorAgentSource={() => {
-                    const next = mediatorAgentSource === 'session' ? 'agent' : 'session';
-                    setVoiceMediatorAgentSource(next as any);
-                    if (next === 'agent' && !voiceMediatorAgentId) {
-                        setVoiceMediatorAgentId('claude' as any);
-                    }
-                }}
-                onSetVoiceMediatorAgentId={(agentId) => setVoiceMediatorAgentId(agentId as any)}
-                onToggleVoiceMediatorPermissionPolicy={() => {
-                    setVoiceMediatorPermissionPolicy((voiceMediatorPermissionPolicy ?? 'read_only') === 'read_only' ? ('no_tools' as any) : ('read_only' as any));
-                }}
-                onToggleVoiceMediatorVerbosity={() => {
-                    setVoiceMediatorVerbosity((voiceMediatorVerbosity ?? 'short') === 'short' ? ('balanced' as any) : ('short' as any));
-                }}
-                onSetMediatorIdleTtl={() => {
-                    void setMediatorIdleTtl();
-                }}
-                onToggleVoiceMediatorChatModelSource={() => {
-                    setVoiceMediatorChatModelSource(
-                        (voiceMediatorChatModelSource ?? 'custom') === 'session'
-                            ? ('custom' as any)
-                            : ('session' as any),
-                    );
-                }}
-                onSetVoiceMediatorChatModelId={(modelId) => setVoiceMediatorChatModelId(modelId as any)}
-                onSetDaemonMediatorModelText={(kind) => {
-                    void setDaemonMediatorModelText(kind);
-                }}
-                onCycleVoiceMediatorCommitModelSource={() => {
-                    const current = voiceMediatorCommitModelSource ?? 'chat';
-                    const next = current === 'chat' ? 'session' : current === 'session' ? 'custom' : 'chat';
-                    setVoiceMediatorCommitModelSource(next as any);
-                }}
-                onSetVoiceMediatorCommitModelId={(modelId) => setVoiceMediatorCommitModelId(modelId as any)}
-                onSetLocalChatUrl={() => {
-                    void setLocalChatUrl();
-                }}
-                onSetLocalChatApiKey={() => {
-                    void setLocalChatApiKey();
-                }}
-                onSetLocalChatText={(kind) => {
-                    void setLocalChatText(kind);
-                }}
-                onSetChatTemperature={() => {
-                    void setChatTemperature();
-                }}
-                onSetChatMaxTokens={() => {
-                    void setChatMaxTokens();
-                }}
-                onSetLocalUrl={(kind) => {
-                    void setLocalUrl(kind);
-                }}
-                onSetVoiceLocalUseDeviceStt={(value) => setVoiceLocalUseDeviceStt(value as any)}
-                onSetVoiceLocalUseDeviceTts={(value) => setVoiceLocalUseDeviceTts(value as any)}
-                onSetLocalApiKey={(kind) => {
-                    void setLocalApiKey(kind);
-                }}
-                onSetLocalText={(kind) => {
-                    void setLocalText(kind);
-                }}
-                onToggleVoiceLocalTtsFormat={() => {
-                    setVoiceLocalTtsFormat((voiceLocalTtsFormat ?? 'mp3') === 'mp3' ? 'wav' : 'mp3');
-                }}
-                onSetVoiceLocalAutoSpeakReplies={(value) => setVoiceLocalAutoSpeakReplies(value as any)}
-                onTestLocalTts={() => {
-                    void testLocalTts();
-                }}
-            />
-
-            <ItemGroup
-                title={t('settingsVoice.languageTitle')}
-                footer={t('settingsVoice.languageDescription')}
-            >
-                <Item
-                    title={t('settingsVoice.preferredLanguage')}
-                    subtitle={t('settingsVoice.preferredLanguageSubtitle')}
-                    icon={<Ionicons name="language-outline" size={29} color="#007AFF" />}
-                    detail={getLanguageDisplayName(currentLanguage)}
-                    onPress={() => router.push('/settings/voice/language')}
-                />
-            </ItemGroup>
-
-            <VoicePrivacySection
-                voiceShareSessionSummary={!!voiceShareSessionSummary}
-                voiceShareRecentMessages={!!voiceShareRecentMessages}
-                voiceRecentMessagesCount={voiceRecentMessagesCount}
-                voiceShareToolNames={!!voiceShareToolNames}
-                voiceSharePermissionRequests={!!voiceSharePermissionRequests}
-                voiceShareFilePaths={!!voiceShareFilePaths}
-                onSetVoiceShareSessionSummary={(value) => setVoiceShareSessionSummary(value as any)}
-                onSetVoiceShareRecentMessages={(value) => setVoiceShareRecentMessages(value as any)}
-                onSetRecentMessagesCount={() => {
-                    void setRecentMessagesCount();
-                }}
-                onSetVoiceShareToolNames={(value) => setVoiceShareToolNames(value as any)}
-                onSetVoiceSharePermissionRequests={(value) => setVoiceSharePermissionRequests(value as any)}
-                onSetVoiceShareFilePaths={(value) => setVoiceShareFilePaths(value as any)}
-            />
-        </ItemList>
-    );
+        <VoicePrivacySection voice={voice} setVoice={setVoice} />
+      </ItemList>
+    </View>
+  );
 }

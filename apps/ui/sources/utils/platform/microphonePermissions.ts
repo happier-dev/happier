@@ -2,6 +2,7 @@ import { Platform, Linking } from 'react-native';
 import { Modal } from '@/modal';
 import { AudioModule } from 'expo-audio';
 import { t } from '@/text';
+import { ensureVoiceForegroundAudioMode } from '@/voice/runtime/voiceAudioMode';
 
 export interface MicrophonePermissionResult {
   granted: boolean;
@@ -33,11 +34,7 @@ export async function requestMicrophonePermission(): Promise<MicrophonePermissio
       const result = await AudioModule.requestRecordingPermissionsAsync();
 
       if (result.granted) {
-        // Configure audio mode for recording
-        await AudioModule.setAudioModeAsync({
-          allowsRecording: true,
-          playsInSilentMode: true,
-        });
+        await ensureVoiceForegroundAudioMode();
 
         return { granted: true, canAskAgain: result.canAskAgain };
       }

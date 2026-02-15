@@ -58,7 +58,7 @@ describe('useHappierVoiceSupport', () => {
         expect(seen.at(-1)).toBe(false);
     });
 
-    it('returns null when the request fails', async () => {
+    it('fails closed when the request fails', async () => {
         vi.resetModules();
         stubServerFeaturesFetchFailure();
 
@@ -78,6 +78,6 @@ describe('useHappierVoiceSupport', () => {
             await new Promise((r) => setTimeout(r, 0));
         });
 
-        expect(seen.at(-1)).toBe(null);
+        expect(seen.at(-1)).toBe(false);
     });
 });

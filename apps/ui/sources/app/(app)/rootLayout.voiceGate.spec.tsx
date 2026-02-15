@@ -60,7 +60,16 @@ vi.mock('@/components/navigation/Header', () => ({
 
 vi.mock('@/sync/domains/state/storage', () => ({
     storage: {
-        getState: () => ({ settings: { voiceProviderId: 'happier_elevenlabs_agents' } }),
+        getState: () => ({
+            settings: {
+                voice: {
+                    providerId: 'realtime_elevenlabs',
+                    adapters: {
+                        realtime_elevenlabs: { billingMode: 'happier' },
+                    },
+                },
+            },
+        }),
     },
     useProfile: () => ({ linkedProviders: [], username: null }),
 }));
@@ -73,9 +82,8 @@ vi.mock('@/sync/sync', () => ({
     sync: { applySettings: (delta: Record<string, unknown>) => applySettings(delta) },
 }));
 
-vi.mock('@/sync/api/capabilities/apiFeatures', () => ({
-    getCachedServerFeatures: () => null,
-    getServerFeatures: async () =>
+vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
+    getReadyServerFeatures: async () =>
         createRootLayoutFeaturesResponse({
             voice: { enabled: false, configured: false, provider: null },
         }),
@@ -89,6 +97,13 @@ describe('RootLayout voice gating', () => {
             renderer.create(React.createElement(RootLayout));
         });
 
-        expect(applySettings).toHaveBeenCalledWith({ voiceProviderId: 'off' });
+        expect(applySettings).toHaveBeenCalledWith({
+            voice: {
+                providerId: 'off',
+                adapters: {
+                    realtime_elevenlabs: { billingMode: 'happier' },
+                },
+            },
+        });
     });
 });

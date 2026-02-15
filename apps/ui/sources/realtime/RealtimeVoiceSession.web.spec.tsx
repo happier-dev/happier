@@ -24,7 +24,8 @@ describe('RealtimeVoiceSession.web', () => {
   }
 
   function configureModules(options?: {
-    languagePreference?: string | null;
+    globalLanguagePreference?: string | null;
+    adapterLanguagePreference?: string | null;
     mappedLanguage?: string;
     startSessionResult?: string | null;
     fallbackConversationId?: string | null;
@@ -49,7 +50,16 @@ describe('RealtimeVoiceSession.web', () => {
     vi.doMock('@/sync/domains/state/storage', () => ({
       storage: {
         getState: () => ({
-          settings: { voiceAssistantLanguage: options?.languagePreference ?? 'en' },
+          settings: {
+            voice: {
+              assistantLanguage: options?.globalLanguagePreference ?? 'en',
+              adapters: {
+                realtime_elevenlabs: {
+                  assistantLanguage: options?.adapterLanguagePreference ?? null,
+                },
+              },
+            },
+          },
           setRealtimeStatus,
           setRealtimeMode,
           clearRealtimeModeDebounce,
@@ -126,7 +136,7 @@ describe('RealtimeVoiceSession.web', () => {
       throw new Error('should not be called');
     });
     installNavigatorGetUserMedia(getUserMedia);
-    configureModules({ languagePreference: 'en', mappedLanguage: 'en' });
+    configureModules({ globalLanguagePreference: 'en', mappedLanguage: 'en' });
     const { getVoiceSession } = await import('./RealtimeSession');
     await mountSessionComponent();
 
@@ -139,7 +149,7 @@ describe('RealtimeVoiceSession.web', () => {
 
   it('passes mapped language and initial context into conversation start config', async () => {
     const { conversation, getElevenLabsCodeFromPreference } = configureModules({
-      languagePreference: 'fr-pref',
+      globalLanguagePreference: 'fr-pref',
       mappedLanguage: 'fr',
       startSessionResult: 'conv_lang',
     });
@@ -169,6 +179,26 @@ describe('RealtimeVoiceSession.web', () => {
         },
       }),
     );
+  });
+
+  it('prefers adapter-specific language when configured (realtime_elevenlabs.assistantLanguage)', async () => {
+    const { getElevenLabsCodeFromPreference } = configureModules({
+      globalLanguagePreference: 'global-pref',
+      adapterLanguagePreference: 'adapter-pref',
+      mappedLanguage: 'fr',
+      startSessionResult: 'conv_lang',
+    });
+    const { getVoiceSession } = await import('./RealtimeSession');
+    await mountSessionComponent();
+
+    const session = getVoiceSession();
+    await session!.startSession({
+      sessionId: 's-lang',
+      token: 'token_lang',
+      initialContext: 'CONTEXT_LANG',
+    });
+
+    expect(getElevenLabsCodeFromPreference).toHaveBeenCalledWith('adapter-pref');
   });
 
   it('falls back to conversation.getId when startSession returns an empty id', async () => {

@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { listVoiceToolActionSpecs } from '@happier-dev/protocol';
+
 describe('ElevenLabs BYO autoprov', () => {
   const originalFetch = globalThis.fetch;
 
@@ -35,13 +37,17 @@ describe('ElevenLabs BYO autoprov', () => {
   });
 
   it('creates an agent using existing client tools when available', async () => {
+	    const requiredToolNames = listVoiceToolActionSpecs()
+	      .map((spec) => spec.bindings?.voiceClientToolName)
+	      .filter((name): name is string => typeof name === 'string' && name.trim().length > 0);
+
     fetchMock()
       .mockResolvedValueOnce(
         okJson({
-          tools: [
-            { id: 'tool_message', tool_config: { type: 'client', name: 'messageClaudeCode', description: '' } },
-            { id: 'tool_permission', tool_config: { type: 'client', name: 'processPermissionRequest', description: '' } },
-          ],
+          tools: requiredToolNames.map((name) => ({
+            id: `tool_${name}`,
+            tool_config: { type: 'client', name, description: '' },
+          })),
         }),
       )
       .mockResolvedValueOnce(okJson({ agent_id: 'agent_1' }));
@@ -55,35 +61,46 @@ describe('ElevenLabs BYO autoprov', () => {
     expect(fetchMock().mock.calls[1]?.[0]).toContain('/v1/convai/agents/create');
 
     const body = JSON.parse(fetchMock().mock.calls[1]?.[1]?.body);
-    expect(body.conversation_config.agent.prompt.tool_ids).toEqual(['tool_message', 'tool_permission']);
+    expect(body.conversation_config.agent.prompt.tool_ids).toEqual(requiredToolNames.map((name) => `tool_${name}`));
+    expect(body.conversation_config.tts?.voice_id).toBe('MClEFoImJXBTgLwdLI5n');
     expect(body.conversation_config.agent.prompt.prompt).toContain('{{initialConversationContext}}');
+    expect(body.conversation_config.agent.prompt.prompt).toContain('{{sessionId}}');
+    expect(String(body.conversation_config.agent.prompt.prompt)).not.toMatch(/Claude Code/i);
   });
 
   it('creates missing client tools before creating the agent', async () => {
-    fetchMock()
-      .mockResolvedValueOnce(okJson({ tools: [] }))
-      .mockResolvedValueOnce(okJson({ id: 'tool_message' }))
-      .mockResolvedValueOnce(okJson({ id: 'tool_permission' }))
-      .mockResolvedValueOnce(okJson({ agent_id: 'agent_1' }));
+	    const requiredToolNames = listVoiceToolActionSpecs()
+	      .map((spec) => spec.bindings?.voiceClientToolName)
+	      .filter((name): name is string => typeof name === 'string' && name.trim().length > 0);
+
+    fetchMock().mockResolvedValueOnce(okJson({ tools: [] }));
+    for (const name of requiredToolNames) {
+      fetchMock().mockResolvedValueOnce(okJson({ id: `tool_${name}` }));
+    }
+    fetchMock().mockResolvedValueOnce(okJson({ agent_id: 'agent_1' }));
 
     const { createHappierElevenLabsAgent } = await import('./autoprovision');
     const result = await createHappierElevenLabsAgent({ apiKey: 'xi_test' });
     expect(result.agentId).toBe('agent_1');
 
-    expect(fetchMock()).toHaveBeenCalledTimes(4);
+    expect(fetchMock()).toHaveBeenCalledTimes(requiredToolNames.length + 2);
     expect(fetchMock().mock.calls[1]?.[0]).toContain('/v1/convai/tools');
     expect(fetchMock().mock.calls[2]?.[0]).toContain('/v1/convai/tools');
-    expect(fetchMock().mock.calls[3]?.[0]).toContain('/v1/convai/agents/create');
+    expect(fetchMock().mock.calls[requiredToolNames.length + 1]?.[0]).toContain('/v1/convai/agents/create');
   });
 
   it('updates an existing agent to the latest template', async () => {
+	    const requiredToolNames = listVoiceToolActionSpecs()
+	      .map((spec) => spec.bindings?.voiceClientToolName)
+	      .filter((name): name is string => typeof name === 'string' && name.trim().length > 0);
+
     fetchMock()
       .mockResolvedValueOnce(
         okJson({
-          tools: [
-            { id: 'tool_message', tool_config: { type: 'client', name: 'messageClaudeCode', description: '' } },
-            { id: 'tool_permission', tool_config: { type: 'client', name: 'processPermissionRequest', description: '' } },
-          ],
+          tools: requiredToolNames.map((name) => ({
+            id: `tool_${name}`,
+            tool_config: { type: 'client', name, description: '' },
+          })),
         }),
       )
       .mockResolvedValueOnce(okJson({ agent_id: 'agent_1' }));
@@ -94,7 +111,42 @@ describe('ElevenLabs BYO autoprov', () => {
     expect(fetchMock().mock.calls[1]?.[0]).toContain('/v1/convai/agents/agent_1');
     expect(fetchMock().mock.calls[1]?.[1]?.method).toBe('PATCH');
     const body = JSON.parse(fetchMock().mock.calls[1]?.[1]?.body);
-    expect(body.conversation_config.agent.prompt.tool_ids).toEqual(['tool_message', 'tool_permission']);
+    expect(body.conversation_config.agent.prompt.tool_ids).toEqual(requiredToolNames.map((name) => `tool_${name}`));
+    expect(body.conversation_config.tts?.voice_id).toBe('MClEFoImJXBTgLwdLI5n');
+  });
+
+  it('uses provided tts configuration when creating an agent', async () => {
+	    const requiredToolNames = listVoiceToolActionSpecs()
+	      .map((spec) => spec.bindings?.voiceClientToolName)
+	      .filter((name): name is string => typeof name === 'string' && name.trim().length > 0);
+
+    fetchMock()
+      .mockResolvedValueOnce(
+        okJson({
+          tools: requiredToolNames.map((name) => ({
+            id: `tool_${name}`,
+            tool_config: { type: 'client', name, description: '' },
+          })),
+        }),
+      )
+      .mockResolvedValueOnce(okJson({ agent_id: 'agent_1' }));
+
+    const { createHappierElevenLabsAgent } = await import('./autoprovision');
+    await createHappierElevenLabsAgent({
+      apiKey: 'xi_test',
+      tts: {
+        voiceId: 'voice_custom',
+        modelId: 'eleven_turbo_v2_5',
+        voiceSettings: { stability: 0.45, similarityBoost: 0.75, useSpeakerBoost: true },
+      },
+    } as any);
+
+    const body = JSON.parse(fetchMock().mock.calls[1]?.[1]?.body);
+    expect(body.conversation_config.tts?.voice_id).toBe('voice_custom');
+    expect(body.conversation_config.tts?.model_id).toBe('eleven_turbo_v2_5');
+    expect(body.conversation_config.tts?.voice_settings?.stability).toBe(0.45);
+    expect(body.conversation_config.tts?.voice_settings?.similarity_boost).toBe(0.75);
+    expect(body.conversation_config.tts?.voice_settings?.use_speaker_boost).toBe(true);
   });
 
   it('always sends xi-api-key header and does not leak it in error messages', async () => {
@@ -136,13 +188,17 @@ describe('ElevenLabs BYO autoprov', () => {
   });
 
   it('fails when create agent response is missing agent_id', async () => {
+	    const requiredToolNames = listVoiceToolActionSpecs()
+	      .map((spec) => spec.bindings?.voiceClientToolName)
+	      .filter((name): name is string => typeof name === 'string' && name.trim().length > 0);
+
     fetchMock()
       .mockResolvedValueOnce(
         okJson({
-          tools: [
-            { id: 'tool_message', tool_config: { type: 'client', name: 'messageClaudeCode' } },
-            { id: 'tool_permission', tool_config: { type: 'client', name: 'processPermissionRequest' } },
-          ],
+          tools: requiredToolNames.map((name) => ({
+            id: `tool_${name}`,
+            tool_config: { type: 'client', name },
+          })),
         }),
       )
       .mockResolvedValueOnce(okJson({ agent_id: '' }));
@@ -154,13 +210,17 @@ describe('ElevenLabs BYO autoprov', () => {
   });
 
   it('surfaces update failure with sanitized ElevenLabs error', async () => {
+	    const requiredToolNames = listVoiceToolActionSpecs()
+	      .map((spec) => spec.bindings?.voiceClientToolName)
+	      .filter((name): name is string => typeof name === 'string' && name.trim().length > 0);
+
     fetchMock()
       .mockResolvedValueOnce(
         okJson({
-          tools: [
-            { id: 'tool_message', tool_config: { type: 'client', name: 'messageClaudeCode' } },
-            { id: 'tool_permission', tool_config: { type: 'client', name: 'processPermissionRequest' } },
-          ],
+          tools: requiredToolNames.map((name) => ({
+            id: `tool_${name}`,
+            tool_config: { type: 'client', name },
+          })),
         }),
       )
       .mockResolvedValueOnce(errorResponse(502, 'backend unavailable'));

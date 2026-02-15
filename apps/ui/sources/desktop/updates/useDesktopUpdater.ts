@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { shouldShowDesktopUpdateBanner } from './state';
+import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
 
 type DesktopUpdaterStatus =
     | 'idle'
@@ -18,26 +19,6 @@ type UpdateMetadata = {
 } | null;
 
 const DISMISS_KEY = 'desktop_update_dismissed_version';
-
-function isTauriDesktop(): boolean {
-    const internals =
-        (globalThis as any).__TAURI_INTERNALS__ ??
-        (typeof window !== 'undefined' ? (window as any).__TAURI_INTERNALS__ : undefined);
-    return internals !== undefined;
-}
-
-async function invokeTauri<T>(command: string, args?: Record<string, any>): Promise<T> {
-    const internals =
-        (globalThis as any).__TAURI_INTERNALS__ ??
-        (typeof window !== 'undefined' ? (window as any).__TAURI_INTERNALS__ : undefined);
-    const invokeFromInternals = internals?.invoke;
-    if (typeof invokeFromInternals === 'function') {
-        return invokeFromInternals(command, args);
-    }
-
-    const mod = await import('@tauri-apps/api/core');
-    return mod.invoke<T>(command, args);
-}
 
 function getDismissedVersion(): string | null {
     try {

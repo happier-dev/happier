@@ -37,12 +37,34 @@ describe('apiVoice', () => {
                 })) as unknown as typeof fetch,
             );
 
-            const res = await fetchHappierVoiceToken(credentials, 'session-1');
+            const res = await fetchHappierVoiceToken(credentials, { sessionId: 'session-1' });
             expect(res).toMatchObject({
                 allowed: true,
                 token: 'voice_token',
                 leaseId: 'lease-1',
             });
+        });
+
+        it('omits sessionId from request body when not provided', async () => {
+            const fetchSpy = vi.fn(async (_url: string, init?: RequestInit) => {
+                const body = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+                expect(body).toEqual({});
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({
+                        allowed: true,
+                        token: 'voice_token',
+                        leaseId: 'lease-1',
+                        expiresAtMs: Date.now() + 60_000,
+                    }),
+                } as any;
+            });
+
+            vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
+
+            const res = await fetchHappierVoiceToken(credentials, {});
+            expect(res).toMatchObject({ allowed: true, token: 'voice_token', leaseId: 'lease-1' });
         });
 
         it('returns denied/upstream_error for 503 responses with invalid payloads', async () => {
@@ -55,7 +77,7 @@ describe('apiVoice', () => {
                 })) as unknown as typeof fetch,
             );
 
-            const res = await fetchHappierVoiceToken(credentials, 'session-1');
+            const res = await fetchHappierVoiceToken(credentials, { sessionId: 'session-1' });
             expect(res).toEqual({ allowed: false, reason: 'upstream_error' });
         });
 
@@ -69,7 +91,7 @@ describe('apiVoice', () => {
                 })) as unknown as typeof fetch,
             );
 
-            await expect(fetchHappierVoiceToken(credentials, 'session-1')).rejects.toThrow(
+            await expect(fetchHappierVoiceToken(credentials, { sessionId: 'session-1' })).rejects.toThrow(
                 'Voice token request returned an invalid response',
             );
         });
@@ -84,7 +106,9 @@ describe('apiVoice', () => {
                 })) as unknown as typeof fetch,
             );
 
-            await expect(fetchHappierVoiceToken(credentials, 'session-1')).rejects.toThrow('Voice token request failed: 500');
+            await expect(fetchHappierVoiceToken(credentials, { sessionId: 'session-1' })).rejects.toThrow(
+                'Voice token request failed: 500',
+            );
         });
     });
 

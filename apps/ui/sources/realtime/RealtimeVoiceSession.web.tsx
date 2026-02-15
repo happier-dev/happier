@@ -28,7 +28,10 @@ class RealtimeVoiceSessionImpl implements VoiceSession {
             storage.getState().setRealtimeStatus('connecting');
 
             // Get user's preferred language for voice assistant
-            const userLanguagePreference = storage.getState().settings.voiceAssistantLanguage;
+            const settings: any = storage.getState().settings;
+            const voice = settings?.voice ?? null;
+            const adapterLanguagePreference = voice?.adapters?.realtime_elevenlabs?.assistantLanguage ?? null;
+            const userLanguagePreference = adapterLanguagePreference ?? voice?.assistantLanguage ?? null;
             const elevenLabsLanguage = getElevenLabsCodeFromPreference(userLanguagePreference);
             
             if (!config.token) {

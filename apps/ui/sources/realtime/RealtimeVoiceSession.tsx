@@ -7,7 +7,16 @@ import { getElevenLabsCodeFromPreference } from '@/constants/Languages';
 import type { VoiceSession, VoiceSessionConfig } from './types';
 
 // Static reference to the conversation hook instance
-let conversationInstance: ReturnType<typeof useConversation> | null = null;
+type ElevenLabsConversation = Readonly<{
+    startSession: (config: unknown) => Promise<unknown>;
+    endSession: () => Promise<void>;
+    getId: () => string | null;
+    sendUserMessage: (message: string) => void;
+    sendContextualUpdate: (update: string) => void;
+}>;
+
+// Treat this as a boundary to the third-party hook typing.
+let conversationInstance: ElevenLabsConversation | null = null;
 
 function debugLog(...args: unknown[]) {
     if (!__DEV__) return;
@@ -27,7 +36,10 @@ class RealtimeVoiceSessionImpl implements VoiceSession {
             storage.getState().setRealtimeStatus('connecting');
             
             // Get user's preferred language for voice assistant
-            const userLanguagePreference = storage.getState().settings.voiceAssistantLanguage;
+            const settings: any = storage.getState().settings;
+            const voice = settings?.voice ?? null;
+            const adapterLanguagePreference = voice?.adapters?.realtime_elevenlabs?.assistantLanguage ?? null;
+            const userLanguagePreference = adapterLanguagePreference ?? voice?.assistantLanguage ?? null;
             const elevenLabsLanguage = getElevenLabsCodeFromPreference(userLanguagePreference);
             
             if (!config.token) {
@@ -48,8 +60,11 @@ class RealtimeVoiceSessionImpl implements VoiceSession {
                 conversationToken: config.token,
             };
             
-            await conversationInstance.startSession(sessionConfig);
-            const conversationId = conversationInstance.getId();
+            const rawConversationId = await conversationInstance.startSession(sessionConfig);
+            const conversationId =
+                (typeof rawConversationId === 'string' && rawConversationId.trim().length > 0
+                    ? rawConversationId
+                    : (conversationInstance.getId() ?? null));
             if (typeof conversationId !== 'string' || conversationId.trim().length === 0) {
                 return null;
             }
@@ -149,7 +164,7 @@ export const RealtimeVoiceSession: React.FC = () => {
 
     useEffect(() => {
         // Store the conversation instance globally
-        conversationInstance = conversation;
+        conversationInstance = conversation as unknown as ElevenLabsConversation;
 
         // Register the voice session once
         if (!hasRegistered.current) {

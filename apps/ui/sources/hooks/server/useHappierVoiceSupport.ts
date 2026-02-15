@@ -1,4 +1,4 @@
-import { useServerFeatureValue } from './useServerFeatures';
+import { useFeatureDecision } from './useFeatureDecision';
 
 /**
  * Returns:
@@ -7,11 +7,7 @@ import { useServerFeatureValue } from './useServerFeatures';
  * - `false` when the server explicitly reports voice is unavailable/misconfigured
  */
 export function useHappierVoiceSupport(): boolean | null {
-    return useServerFeatureValue({
-        initial: null,
-        select: (features) => {
-            if (!features) return null;
-            return features.features?.voice?.enabled === true;
-        },
-    });
+    const decision = useFeatureDecision('voice');
+    if (!decision) return null;
+    return decision.state === 'enabled';
 }

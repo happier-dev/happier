@@ -2,6 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { VoiceSession } from './types';
 
+const setAudioModeAsync = vi.fn(async () => {});
+vi.mock('expo-audio', () => ({
+  AudioModule: {
+    setAudioModeAsync,
+    requestRecordingPermissionsAsync: vi.fn(async () => ({ granted: true, canAskAgain: true })),
+    getRecordingPermissionsAsync: vi.fn(async () => ({ granted: true, canAskAgain: true })),
+  },
+}));
+
 const modalAlert = vi.fn();
 const modalConfirm = vi.fn(async () => false);
 const modalPrompt = vi.fn(async () => null);
@@ -21,10 +30,29 @@ vi.mock('@/utils/platform/microphonePermissions', () => ({
   showMicrophonePermissionDeniedAlert: vi.fn(),
 }));
 
+const fetchHappierVoiceToken = vi.fn();
+const completeHappierVoiceSession = vi.fn(async () => {});
+vi.mock('@/sync/api/voice/apiVoice', () => ({
+  fetchHappierVoiceToken,
+  completeHappierVoiceSession,
+}));
+
 const getCredentials = vi.fn(async () => ({ token: 't', secret: 's' }));
 vi.mock('@/auth/storage/tokenStorage', () => ({
-  TokenStorage: { getCredentials },
+  TokenStorage: {
+    getCredentials,
+    invalidateCredentialsTokenForServerUrl: vi.fn(async () => {}),
+  },
   isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
+}));
+
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+  getActiveServerSnapshot: () => ({
+    serverId: 'server-test',
+    serverUrl: 'http://localhost:9999',
+    kind: 'stack',
+    generation: 1,
+  }),
 }));
 
 const presentPaywall = vi.fn(async () => ({ success: true, purchased: true }));
@@ -41,19 +69,36 @@ vi.mock('@/sync/sync', () => ({
 
 type TestSettings = {
   experiments: boolean;
-  voiceProviderId: string;
-  voiceByoElevenLabsAgentId: string | null;
-  voiceByoElevenLabsApiKey: { value?: string } | null;
-  voiceAssistantLanguage: string | null;
+  voice: {
+    providerId: string;
+    adapters: {
+      realtime_elevenlabs: {
+        assistantLanguage: string | null;
+        billingMode: 'happier' | 'byo';
+        byo: {
+          agentId: string | null;
+          apiKey: { value?: string } | null;
+        };
+      };
+    };
+  };
 };
 
-const defaultSettings: TestSettings = {
-  experiments: false,
-  voiceProviderId: 'happier_elevenlabs_agents',
-  voiceByoElevenLabsAgentId: null,
-  voiceByoElevenLabsApiKey: null,
-  voiceAssistantLanguage: null,
-};
+function makeDefaultSettings(): TestSettings {
+  return {
+    experiments: false,
+    voice: {
+      providerId: 'realtime_elevenlabs',
+      adapters: {
+        realtime_elevenlabs: {
+          assistantLanguage: null,
+          billingMode: 'happier',
+          byo: { agentId: null, apiKey: null },
+        },
+      },
+    },
+  };
+}
 
 const state: {
   settings: TestSettings;
@@ -62,7 +107,7 @@ const state: {
   setRealtimeMode: ReturnType<typeof vi.fn>;
   clearRealtimeModeDebounce: ReturnType<typeof vi.fn>;
 } = {
-  settings: { ...defaultSettings },
+  settings: makeDefaultSettings(),
   profile: { id: 'u1' },
   setRealtimeStatus: vi.fn(),
   setRealtimeMode: vi.fn(),
@@ -118,11 +163,13 @@ describe('Realtime voice modes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    state.settings = { ...defaultSettings };
+    state.settings = makeDefaultSettings();
     state.setRealtimeStatus.mockReset();
     state.setRealtimeMode.mockReset();
     state.clearRealtimeModeDebounce.mockReset();
     installFetchMock();
+    fetchHappierVoiceToken.mockReset();
+    completeHappierVoiceSession.mockReset();
   });
 
   afterEach(() => {
@@ -131,7 +178,7 @@ describe('Realtime voice modes', () => {
 
   describe('provider selection', () => {
     it('does nothing when voice provider is off', async () => {
-      state.settings.voiceProviderId = 'off';
+      state.settings.voice.providerId = 'off';
       const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
       const { registerVoiceSession, startRealtimeSession } = await import('./RealtimeSession');
       const { session, startSession } = makeVoiceSession('conv_0');
@@ -144,7 +191,10 @@ describe('Realtime voice modes', () => {
     });
 
     it('shows an error when BYO is selected but not configured', async () => {
-      state.settings.voiceProviderId = 'byo_elevenlabs_agents';
+      state.settings.voice.providerId = 'realtime_elevenlabs';
+      state.settings.voice.adapters.realtime_elevenlabs.billingMode = 'byo';
+      state.settings.voice.adapters.realtime_elevenlabs.byo.agentId = null;
+      state.settings.voice.adapters.realtime_elevenlabs.byo.apiKey = null;
       const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
       const { registerVoiceSession, startRealtimeSession } = await import('./RealtimeSession');
       const { session, startSession } = makeVoiceSession('conv_0');
@@ -160,15 +210,12 @@ describe('Realtime voice modes', () => {
 
   describe('happier voice lifecycle', () => {
     it('starts Happier Voice via server token minting', async () => {
-      const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
-      fetchMock.mockResolvedValueOnce(
-        createJsonResponse({
-          allowed: true,
-          token: 'conv_token',
-          leaseId: 'lease_1',
-          expiresAtMs: Date.now() + 60_000,
-        }),
-      );
+      fetchHappierVoiceToken.mockResolvedValueOnce({
+        allowed: true,
+        token: 'conv_token',
+        leaseId: 'lease_1',
+        expiresAtMs: Date.now() + 60_000,
+      });
 
       const { registerVoiceSession, startRealtimeSession } = await import('./RealtimeSession');
       const { session, startSession } = makeVoiceSession('conv_1');
@@ -177,18 +224,16 @@ describe('Realtime voice modes', () => {
       await startRealtimeSession('s1', 'hi');
 
       expect(startSession).toHaveBeenCalledWith(expect.objectContaining({ token: 'conv_token' }));
+      expect(setAudioModeAsync).toHaveBeenCalledWith(expect.objectContaining({ shouldPlayInBackground: true }));
     });
 
     it('does not mark the voice session started when provider returns no conversation id', async () => {
-      const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
-      fetchMock.mockResolvedValueOnce(
-        createJsonResponse({
-          allowed: true,
-          token: 'conv_token',
-          leaseId: 'lease_1',
-          expiresAtMs: Date.now() + 60_000,
-        }),
-      );
+      fetchHappierVoiceToken.mockResolvedValueOnce({
+        allowed: true,
+        token: 'conv_token',
+        leaseId: 'lease_1',
+        expiresAtMs: Date.now() + 60_000,
+      });
 
       const { registerVoiceSession, startRealtimeSession, isVoiceSessionStarted } = await import('./RealtimeSession');
       const { session, startSession } = makeVoiceSession(null);
@@ -198,20 +243,17 @@ describe('Realtime voice modes', () => {
 
       expect(startSession).toHaveBeenCalledWith(expect.objectContaining({ token: 'conv_token' }));
       expect(isVoiceSessionStarted()).toBe(false);
+      // No active call => best-effort cleanup should revert background audio mode.
+      expect(setAudioModeAsync).toHaveBeenCalledWith(expect.objectContaining({ shouldPlayInBackground: false }));
     });
 
     it('completes usage on stop for Happier Voice sessions', async () => {
-      const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
-      fetchMock
-        .mockResolvedValueOnce(
-          createJsonResponse({
-            allowed: true,
-            token: 'conv_token',
-            leaseId: 'lease_1',
-            expiresAtMs: Date.now() + 60_000,
-          }),
-        )
-        .mockResolvedValueOnce(createJsonResponse({ ok: true, durationSeconds: 10 }));
+      fetchHappierVoiceToken.mockResolvedValueOnce({
+        allowed: true,
+        token: 'conv_token',
+        leaseId: 'lease_1',
+        expiresAtMs: Date.now() + 60_000,
+      });
 
       const { registerVoiceSession, startRealtimeSession, stopRealtimeSession } = await import('./RealtimeSession');
       const { session, endSession } = makeVoiceSession('conv_1');
@@ -221,29 +263,24 @@ describe('Realtime voice modes', () => {
       await stopRealtimeSession();
 
       expect(endSession).toHaveBeenCalledTimes(1);
-      expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining('/v1/voice/session/complete'),
-        expect.objectContaining({
-          method: 'POST',
-          body: JSON.stringify({ leaseId: 'lease_1', providerConversationId: 'conv_1' }),
-        }),
+      expect(setAudioModeAsync).toHaveBeenCalledWith(expect.objectContaining({ shouldPlayInBackground: false }));
+      expect(completeHappierVoiceSession).toHaveBeenCalledWith(
+        expect.objectContaining({ token: 't' }),
+        { leaseId: 'lease_1', providerConversationId: 'conv_1' },
       );
     });
 
     it('retries after paywall purchase without deadlocking', async () => {
       vi.useFakeTimers();
       try {
-        const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
-        fetchMock
-          .mockResolvedValueOnce(createJsonResponse({ allowed: false, reason: 'subscription_required' }))
-          .mockResolvedValueOnce(
-            createJsonResponse({
-              allowed: true,
-              token: 'conv_token',
-              leaseId: 'lease_1',
-              expiresAtMs: Date.now() + 60_000,
-            }),
-          );
+        fetchHappierVoiceToken
+          .mockResolvedValueOnce({ allowed: false, reason: 'subscription_required' })
+          .mockResolvedValueOnce({
+            allowed: true,
+            token: 'conv_token',
+            leaseId: 'lease_1',
+            expiresAtMs: Date.now() + 60_000,
+          });
 
         const { registerVoiceSession, startRealtimeSession } = await import('./RealtimeSession');
         const { session, startSession } = makeVoiceSession('conv_1');
@@ -266,35 +303,39 @@ describe('Realtime voice modes', () => {
   });
 
   describe('concurrency and stop behavior', () => {
-    it('dedupes concurrent start calls for the same session', async () => {
-      const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
-      fetchMock.mockResolvedValueOnce(
-        createJsonResponse({
-          allowed: true,
-          token: 'conv_token',
-          leaseId: 'lease_1',
-          expiresAtMs: Date.now() + 60_000,
-        }),
-      );
+    it('dedupes concurrent start calls (account-scoped)', async () => {
+      fetchHappierVoiceToken.mockResolvedValueOnce({
+        allowed: true,
+        token: 'conv_token',
+        leaseId: 'lease_1',
+        expiresAtMs: Date.now() + 60_000,
+      });
 
       const { registerVoiceSession, startRealtimeSession } = await import('./RealtimeSession');
       const { session, startSession } = makeVoiceSession('conv_1');
       registerVoiceSession(session);
 
       const p1 = startRealtimeSession('s1', 'hi');
-      const p2 = startRealtimeSession('s1', 'hi');
+      const p2 = startRealtimeSession('s2', 'hi');
       await Promise.all([p1, p2]);
 
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchHappierVoiceToken).toHaveBeenCalledTimes(1);
       expect(startSession).toHaveBeenCalledTimes(1);
     });
 
-    it('rejects start when a different session is already starting', async () => {
+    it('does not alert when a start is already in-flight (even with a different session id)', async () => {
       const fetchStarted = createDeferred<void>();
-      const neverResolves = createDeferred<Response>();
-      const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
-      fetchMock.mockImplementationOnce(async () => {
+      const neverResolves = createDeferred<import('@/sync/api/voice/apiVoice').VoiceTokenResponse>();
+      fetchHappierVoiceToken.mockImplementationOnce(async (_credentials, options) => {
         fetchStarted.resolve();
+        const signal = options?.signal;
+        if (signal) {
+          signal.addEventListener(
+            'abort',
+            () => neverResolves.reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })),
+            { once: true },
+          );
+        }
         return neverResolves.promise;
       });
 
@@ -304,22 +345,30 @@ describe('Realtime voice modes', () => {
 
       void startRealtimeSession('s1', 'hi');
       await fetchStarted.promise;
-      await startRealtimeSession('s2', 'hi');
+      const p2 = startRealtimeSession('s2', 'hi');
 
-      expect(modalAlert).toHaveBeenCalledWith('common.error', 'errors.voiceAlreadyStarting');
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchHappierVoiceToken).toHaveBeenCalledTimes(1);
       expect(startSession).not.toHaveBeenCalled();
+      expect(modalAlert).not.toHaveBeenCalled();
+
+      // Unblock in-flight work so test can finish cleanly.
+      neverResolves.resolve({
+        allowed: true,
+        token: 'conv_token',
+        leaseId: 'lease_1',
+        expiresAtMs: Date.now() + 60_000,
+      });
+      await p2;
     });
 
     it('stop does not hang when a start attempt is stuck in token minting', async () => {
       vi.useFakeTimers();
       try {
         const fetchStarted = createDeferred<void>();
-        const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
-        fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+        fetchHappierVoiceToken.mockImplementationOnce(async (_credentials, options) => {
           fetchStarted.resolve();
-          return new Promise<Response>((_resolve, reject) => {
-            const signal = init?.signal;
+          return new Promise((_, reject) => {
+            const signal = options?.signal;
             if (!signal) return;
             signal.addEventListener(
               'abort',

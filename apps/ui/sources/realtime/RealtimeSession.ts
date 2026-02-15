@@ -7,13 +7,12 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { t } from '@/text';
 import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/platform/microphonePermissions';
 import { fetchElevenLabsConversationTokenByo } from './elevenLabsByo';
-import { VOICE_PROVIDER_IDS } from '@/voice/voiceProviders';
+import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
+import { disableVoiceBackgroundCallAudioMode, enableVoiceBackgroundCallAudioMode } from '@/voice/runtime/voiceAudioMode';
 
 let voiceSession: VoiceSession | null = null;
 let voiceSessionStarted: boolean = false;
-let currentSessionId: string | null = null;
 let startInFlight: Promise<void> | null = null;
-let startInFlightSessionId: string | null = null;
 let startInFlightAbortController: AbortController | null = null;
 let currentLeaseId: string | null = null;
 let currentProviderConversationId: string | null = null;
@@ -26,17 +25,20 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
         return;
     }
 
-    const voiceProviderId = storage.getState().settings.voiceProviderId ?? VOICE_PROVIDER_IDS.HAPPIER_ELEVENLABS_AGENTS;
-    if (voiceProviderId === VOICE_PROVIDER_IDS.OFF || voiceProviderId === VOICE_PROVIDER_IDS.LOCAL_OPENAI_STT_TTS) {
+    const normalizedSessionId = String(sessionId ?? '').trim();
+    if (normalizedSessionId.length > 0) {
+        useVoiceTargetStore.getState().setPrimaryActionSessionId(normalizedSessionId);
+        useVoiceTargetStore.getState().setLastFocusedSessionId(normalizedSessionId);
+    }
+
+    const settings: any = storage.getState().settings;
+    const providerId = settings?.voice?.providerId ?? 'off';
+    if (providerId !== 'realtime_elevenlabs') {
         return;
     }
 
-    if (startInFlight && startInFlightSessionId && startInFlightSessionId !== sessionId) {
-        Modal.alert(t('common.error'), t('errors.voiceAlreadyStarting'));
-        return;
-    }
-
-    if (startInFlight && startInFlightSessionId === sessionId) {
+    // Realtime voice is account-scoped: if a start is already in-flight, dedupe and await it.
+    if (startInFlight) {
         await startInFlight;
         return;
     }
@@ -58,10 +60,12 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
                 return;
             }
 
-            if (voiceProviderId === VOICE_PROVIDER_IDS.BYO_ELEVENLABS_AGENTS) {
-                const settings = storage.getState().settings;
-                const agentId = settings.voiceByoElevenLabsAgentId?.trim() ?? '';
-                const apiKey = sync.decryptSecretValue(settings.voiceByoElevenLabsApiKey) ?? '';
+            const realtimeCfg = settings?.voice?.adapters?.realtime_elevenlabs ?? null;
+            const billingMode = realtimeCfg?.billingMode === 'byo' ? 'byo' : 'happier';
+
+            if (billingMode === 'byo') {
+                const agentId = String(realtimeCfg?.byo?.agentId ?? '').trim();
+                const apiKey = sync.decryptSecretValue(realtimeCfg?.byo?.apiKey) ?? '';
                 if (!agentId || !apiKey) {
                     Modal.alert(t('common.error'), t('settingsVoice.byo.notConfigured'));
                     return;
@@ -70,12 +74,14 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
                 const token = await fetchElevenLabsConversationTokenByo({ agentId, apiKey });
                 if (abortController.signal.aborted) return;
 
+                await enableVoiceBackgroundCallAudioMode();
                 const conversationId = await session.startSession({
                     sessionId,
                     initialContext,
                     token,
                 });
                 if (typeof conversationId !== 'string' || conversationId.trim().length === 0) {
+                    await disableVoiceBackgroundCallAudioMode();
                     return;
                 }
                 if (abortController.signal.aborted) {
@@ -84,17 +90,13 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
                     } catch {
                         // best-effort cleanup
                     }
+                    await disableVoiceBackgroundCallAudioMode();
                     return;
                 }
-                currentSessionId = sessionId;
                 currentProviderConversationId = conversationId;
                 currentLeaseId = null;
                 currentBilledMode = 'byo';
                 voiceSessionStarted = true;
-                return;
-            }
-
-            if (voiceProviderId !== VOICE_PROVIDER_IDS.HAPPIER_ELEVENLABS_AGENTS) {
                 return;
             }
 
@@ -107,15 +109,17 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
 
             let hasRetriedAfterPaywall = retryAfterPaywall;
             for (;;) {
-                const response = await fetchHappierVoiceToken(credentials, sessionId, { signal: abortController.signal });
+                const response = await fetchHappierVoiceToken(credentials, { sessionId, signal: abortController.signal });
                 if (abortController.signal.aborted) return;
                 if (response.allowed) {
+                    await enableVoiceBackgroundCallAudioMode();
                     const conversationId = await session.startSession({
                         sessionId,
                         initialContext,
                         token: response.token,
                     });
                     if (typeof conversationId !== 'string' || conversationId.trim().length === 0) {
+                        await disableVoiceBackgroundCallAudioMode();
                         return;
                     }
                     if (abortController.signal.aborted) {
@@ -124,9 +128,9 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
                         } catch {
                             // best-effort cleanup
                         }
+                        await disableVoiceBackgroundCallAudioMode();
                         return;
                     }
-                    currentSessionId = sessionId;
                     currentProviderConversationId = conversationId;
                     currentLeaseId = response.leaseId;
                     currentBilledMode = 'happier';
@@ -157,7 +161,6 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
                 return;
             }
             console.error('Failed to start realtime session:', error);
-            currentSessionId = null;
             voiceSessionStarted = false;
             currentProviderConversationId = null;
             currentLeaseId = null;
@@ -166,7 +169,6 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
         }
     };
 
-    startInFlightSessionId = sessionId;
     const promise = run();
     startInFlight = promise;
     try {
@@ -174,7 +176,6 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
     } finally {
         if (startInFlight === promise) {
             startInFlight = null;
-            startInFlightSessionId = null;
             startInFlightAbortController = null;
         }
     }
@@ -194,7 +195,6 @@ export async function stopRealtimeSession() {
             // If start is still stuck (e.g., a hung provider start), clear the in-flight marker so voice can be used again.
             if (startInFlight === inFlight) {
                 startInFlight = null;
-                startInFlightSessionId = null;
                 startInFlightAbortController = null;
             }
         }
@@ -218,13 +218,14 @@ export async function stopRealtimeSession() {
 	            }
 	        }
 
-        currentSessionId = null;
         voiceSessionStarted = false;
         currentLeaseId = null;
         currentProviderConversationId = null;
         currentBilledMode = null;
     } catch (error) {
         console.error('Failed to stop realtime session:', error);
+    } finally {
+        await disableVoiceBackgroundCallAudioMode();
     }
 }
 
@@ -238,8 +239,4 @@ export function isVoiceSessionStarted(): boolean {
 
 export function getVoiceSession(): VoiceSession | null {
     return voiceSession;
-}
-
-export function getCurrentRealtimeSessionId(): string | null {
-    return currentSessionId;
 }

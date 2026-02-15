@@ -94,7 +94,7 @@ describe('sync: voice permission request announcements', () => {
         vi.clearAllMocks();
     });
 
-    it('announces newly-seen permission requests when agentStateVersion increases for the visible session', async () => {
+    it('does not announce permission requests via sync.applySessions (socket pipeline owns voice announcements)', async () => {
         const { sync } = await import('./sync');
 
         (sync as any).applySessions([createSession('s1')]);
@@ -114,8 +114,6 @@ describe('sync: voice permission request announcements', () => {
             },
         } as any]);
 
-        expect(sendTextMessage).toHaveBeenCalledTimes(1);
-        expect(String(sendTextMessage.mock.calls[0]?.[0] ?? '')).toMatch(/Bash/);
+        expect(sendTextMessage).not.toHaveBeenCalled();
     });
 });
-

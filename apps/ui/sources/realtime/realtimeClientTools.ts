@@ -1,87 +1,26 @@
-import { z } from 'zod';
-import { sync } from '@/sync/sync';
-import { sessionAllow, sessionDeny } from '@/sync/ops';
-import { storage } from '@/sync/domains/state/storage';
-import { trackPermissionResponse } from '@/track';
-import { getCurrentRealtimeSessionId } from './RealtimeSession';
+import { createVoiceToolHandlers } from '@/voice/tools/handlers';
+import { resolveToolSessionId } from '@/voice/tools/resolveToolSessionId';
+import { listVoiceClientToolNames } from '@happier-dev/protocol';
 
 /**
  * Static client tools for the realtime voice interface.
- * These tools allow the voice assistant to interact with Claude Code.
+ * These tools allow the voice assistant to interact with the active coding session.
  */
-export const realtimeClientTools = {
-    /**
-     * Send a message to Claude Code
-     */
-    messageClaudeCode: async (parameters: unknown) => {
-        // Parse and validate the message parameter using Zod
-        const messageSchema = z.object({
-            message: z.string().min(1, 'Message cannot be empty')
-        });
-        const parsedMessage = messageSchema.safeParse(parameters);
+const allTools = createVoiceToolHandlers({
+  resolveSessionId: (explicitSessionId) =>
+    resolveToolSessionId({
+      explicitSessionId,
+      currentSessionId: null,
+    }),
+});
 
-        if (!parsedMessage.success) {
-            console.error('Invalid message parameter:', parsedMessage.error);
-            return "error (invalid message parameter)";
-        }
-
-        const message = parsedMessage.data.message;
-        const sessionId = getCurrentRealtimeSessionId();
-        
-        if (!sessionId) {
-            console.error('No active session');
-            return "error (no active session)";
-        }
-        
-        sync.sendMessage(sessionId, message);
-        return "sent [DO NOT say anything else, simply say 'sent']";
-    },
-
-    /**
-     * Process a permission request from Claude Code
-     */
-    processPermissionRequest: async (parameters: unknown) => {
-        const messageSchema = z.object({
-            decision: z.enum(['allow', 'deny'])
-        });
-        const parsedMessage = messageSchema.safeParse(parameters);
-
-        if (!parsedMessage.success) {
-            console.error('Invalid decision parameter:', parsedMessage.error);
-            return "error (invalid decision parameter, expected 'allow' or 'deny')";
-        }
-
-        const decision = parsedMessage.data.decision;
-        const sessionId = getCurrentRealtimeSessionId();
-        
-        if (!sessionId) {
-            console.error('No active session');
-            return "error (no active session)";
-        }
-        
-        // Get the current session to check for permission requests
-        const session = storage.getState().sessions[sessionId];
-        const requests = session?.agentState?.requests;
-        
-        if (!requests || Object.keys(requests).length === 0) {
-            console.error('No active permission request');
-            return "error (no active permission request)";
-        }
-        
-        const requestId = Object.keys(requests)[0];
-        
-        try {
-            if (decision === 'allow') {
-                await sessionAllow(sessionId, requestId);
-                trackPermissionResponse(true);
-            } else {
-                await sessionDeny(sessionId, requestId);
-                trackPermissionResponse(false);
-            }
-            return "done [DO NOT say anything else, simply say 'done']";
-        } catch (error) {
-            console.error('Failed to process permission:', error);
-            return `error (failed to ${decision} permission)`;
-        }
+export const realtimeClientTools = listVoiceClientToolNames().reduce(
+  (acc, toolName) => {
+    const handler = (allTools as any)[toolName];
+    if (typeof handler === 'function') {
+      (acc as any)[toolName] = handler;
     }
-};
+    return acc;
+  },
+  {} as Record<string, (parameters: unknown) => Promise<string>>,
+);

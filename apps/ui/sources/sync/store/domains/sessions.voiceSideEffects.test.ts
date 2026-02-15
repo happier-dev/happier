@@ -11,7 +11,7 @@ function createHarness(createSessionsDomain: any, createReducer: any) {
         sessionsData: null,
         sessionListViewData: null,
         sessionListViewDataByServerId: {},
-        sessionGitStatus: {},
+        sessionScmStatus: {},
         sessionLastViewed: {},
         isDataReady: false,
         machines: {},
