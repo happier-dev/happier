@@ -245,6 +245,14 @@ export function gethstackRegistry() {
       description: 'Happier Self-Host guided install and lifecycle',
     },
     {
+      name: 'remote',
+      kind: 'node',
+      scriptRelPath: 'scripts/remote_cmd.mjs',
+      rootUsage:
+        'hstack remote daemon setup --ssh <user@host> [--preview|--stable] [--channel <stable|preview>] [--service <user|none>] [--server-url=<url>] [--webapp-url=<url>] [--public-server-url=<url>] [--json]',
+      description: 'Remote setup helpers (SSH pairing + daemon setup)',
+    },
+    {
       name: 'auth',
       kind: 'node',
       scriptRelPath: 'scripts/auth.mjs',
