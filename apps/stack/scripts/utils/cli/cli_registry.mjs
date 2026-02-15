@@ -253,6 +253,16 @@ export function gethstackRegistry() {
       description: 'Remote setup helpers (SSH pairing + daemon setup)',
     },
     {
+      name: 'providers',
+      kind: 'node',
+      scriptRelPath: 'scripts/providers_cmd.mjs',
+      rootUsage: [
+        'hstack providers list [--json]',
+        'hstack providers install --providers=<id1,id2> [--dry-run] [--json]',
+      ],
+      description: 'Install and manage provider CLIs',
+    },
+    {
       name: 'auth',
       kind: 'node',
       scriptRelPath: 'scripts/auth.mjs',
