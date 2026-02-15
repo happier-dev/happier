@@ -12,7 +12,7 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/StyledText';
 import { Typography } from '@/constants/Typography';
 import { sync } from '@/sync/sync';
-import { useSettings } from '@/sync/domains/state/storage';
+import { useAllMachines, useSettings } from '@/sync/domains/state/storage';
 import { isAgentId, getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { getProviderSettingsPlugin } from '@/agents/providers/_registry/providerSettingsRegistry';
 import { t } from '@/text';
@@ -23,6 +23,8 @@ import {
     classifySessionModeKind,
     describeResumeSupportKind,
 } from '@/agents/catalog/providerDetailsInfo';
+import { useCLIDetection } from '@/hooks/auth/useCLIDetection';
+import { ProviderCliInstallItem } from '@/components/settings/providers/ProviderCliInstallItem';
 
 const ProviderSettingsNumberField = React.memo(function ProviderSettingsNumberField(props: {
     field: any;
@@ -233,6 +235,19 @@ export default React.memo(function ProviderSettingsScreen() {
         ? (core.cli.installBanner.installCommand ?? t('settingsProviders.installInfoSeeSetupGuide'))
         : t('settingsProviders.installInfoUseProviderCliInstaller');
 
+    const machines = useAllMachines();
+    const primaryMachine = machines[0] ?? null;
+    const cliAvailability = useCLIDetection(primaryMachine?.id ?? null, { autoDetect: true });
+    const providerCliAvailable = cliAvailability.available[providerId];
+    const primaryMachineLabel = primaryMachine?.metadata?.name ?? primaryMachine?.metadata?.host ?? primaryMachine?.id ?? null;
+    const detectedCliStatus = providerCliAvailable === true
+        ? 'Detected'
+        : providerCliAvailable === false
+            ? t('machine.detectedCliNotDetected')
+            : cliAvailability.isDetecting
+                ? t('common.loading')
+                : t('machine.detectedCliUnknown');
+
     return (
         <View ref={popoverBoundaryRef} style={{ flex: 1 }}>
             <ItemList style={{ paddingTop: 0 }}>
@@ -249,114 +264,6 @@ export default React.memo(function ProviderSettingsScreen() {
                         title={t('settingsProviders.releaseChannelTitle')}
                         subtitle={core.availability.experimental ? t('settingsProviders.channelExperimental') : t('settingsProviders.channelStable')}
                         icon={<Ionicons name="flask-outline" size={29} color={theme.colors.textSecondary} />}
-                        showChevron={false}
-                    />
-                </ItemGroup>
-
-                <ItemGroup title={t('settingsProviders.capabilitiesTitle')}>
-                    <Item
-                        title={t('settingsProviders.resumeSupportTitle')}
-                        subtitle={resumeSupport}
-                        icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.textSecondary} />}
-                        showChevron={false}
-                    />
-                    <Item
-                        title={t('settingsProviders.sessionModeSupportTitle')}
-                        subtitle={sessionModeSupport}
-                        icon={<Ionicons name="layers-outline" size={29} color={theme.colors.textSecondary} />}
-                        showChevron={false}
-                    />
-                    <Item
-                        title={t('settingsProviders.runtimeModeSwitchingTitle')}
-                        subtitle={runtimeSwitchSupport}
-                        icon={<Ionicons name="swap-horizontal-outline" size={29} color={theme.colors.textSecondary} />}
-                        showChevron={false}
-                    />
-                    <Item
-                        title={t('settingsProviders.localControlTitle')}
-                        subtitle={core.localControl?.supported === true ? t('settingsProviders.supported') : t('settingsProviders.notSupported')}
-                        icon={<Ionicons name="terminal-outline" size={29} color={theme.colors.textSecondary} />}
-                        showChevron={false}
-                    />
-                </ItemGroup>
-
-                <ItemGroup title={t('settingsProviders.modelsTitle')}>
-                    <Item
-                        title={t('settingsProviders.modelSelectionTitle')}
-                        subtitle={core.model.supportsSelection ? t('settingsProviders.supported') : t('settingsProviders.notSupported')}
-                        icon={<Ionicons name="list-outline" size={29} color={theme.colors.textSecondary} />}
-                        showChevron={false}
-                    />
-                    <Item
-                        title={t('settingsProviders.freeformModelIdsTitle')}
-                        subtitle={core.model.supportsFreeform ? t('settingsProviders.allowed') : t('settingsProviders.notAllowed')}
-                        icon={<Ionicons name="create-outline" size={29} color={theme.colors.textSecondary} />}
-                        showChevron={false}
-                    />
-                    <Item
-                        title={t('settingsProviders.defaultModelTitle')}
-                        subtitle={core.model.defaultMode}
-                        icon={<Ionicons name="star-outline" size={29} color={theme.colors.textSecondary} />}
-                        showChevron={false}
-                    />
-                    <Item
-                        title={t('settingsProviders.catalogModelListTitle')}
-                        subtitle={catalogModelListText}
-                        icon={<Ionicons name="albums-outline" size={29} color={theme.colors.textSecondary} />}
-                        showChevron={false}
-                    />
-                    <Item
-                        title={t('settingsProviders.dynamicModelProbeTitle')}
-                        subtitle={dynamicProbe}
-                        icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.textSecondary} />}
-                        showChevron={false}
-                    />
-                    <Item
-                        title={t('settingsProviders.nonAcpApplyScopeTitle')}
-                        subtitle={nonAcpApplyScope}
-                        icon={<Ionicons name="arrow-forward-outline" size={29} color={theme.colors.textSecondary} />}
-                        showChevron={false}
-                    />
-                    <Item
-                        title={t('settingsProviders.acpApplyBehaviorTitle')}
-                        subtitle={acpApplyBehavior}
-                        icon={<Ionicons name="sync-outline" size={29} color={theme.colors.textSecondary} />}
-                        showChevron={false}
-                    />
-                    <Item
-                        title={t('settingsProviders.acpConfigOptionTitle')}
-                        subtitle={core.model.acpModelConfigOptionId ?? t('settingsProviders.notAvailable')}
-                        icon={<Ionicons name="settings-outline" size={29} color={theme.colors.textSecondary} />}
-                        showChevron={false}
-                    />
-                </ItemGroup>
-
-                <ItemGroup title={t('settingsProviders.cliConnectionTitle')}>
-                    <Item
-                        title={t('settingsProviders.detectedCliTitle')}
-                        subtitle={core.cli.detectKey}
-                        icon={<Ionicons name="code-slash-outline" size={29} color={theme.colors.textSecondary} />}
-                        showChevron={false}
-                    />
-                    <Item
-                        title={t('settingsProviders.installSetupTitle')}
-                        subtitle={installInfo}
-                        icon={<Ionicons name="download-outline" size={29} color={theme.colors.textSecondary} />}
-                        showChevron={false}
-                    />
-                    {core.cli.installBanner.guideUrl ? (
-                        <Item
-                            title={t('settingsProviders.setupGuideUrlTitle')}
-                            subtitle={core.cli.installBanner.guideUrl}
-                            icon={<Ionicons name="link-outline" size={29} color={theme.colors.textSecondary} />}
-                            showChevron={false}
-                            copy={core.cli.installBanner.guideUrl}
-                        />
-                    ) : null}
-                    <Item
-                        title={t('settingsProviders.connectedServiceTitle')}
-                        subtitle={core.connectedService.name}
-                        icon={<Ionicons name="cloud-outline" size={29} color={theme.colors.textSecondary} />}
                         showChevron={false}
                     />
                 </ItemGroup>
@@ -527,6 +434,126 @@ export default React.memo(function ProviderSettingsScreen() {
                         })}
                     </ItemGroup>
                 ))}
+
+                <ItemGroup title={t('settingsProviders.cliConnectionTitle')}>
+                    <Item
+                        title="Target machine"
+                        subtitle={primaryMachineLabel ?? t('machine.detectedCliUnknown')}
+                        icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.detectedCliTitle')}
+                        subtitle={`${core.cli.detectKey} • ${detectedCliStatus}`}
+                        icon={<Ionicons name="code-slash-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.installSetupTitle')}
+                        subtitle={installInfo}
+                        icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <ProviderCliInstallItem
+                        machineId={primaryMachine?.id ?? null}
+                        capabilityId={`cli.${core.cli.detectKey}` as any}
+                        providerTitle={t(core.displayNameKey)}
+                        installed={providerCliAvailable}
+                    />
+                    {core.cli.installBanner.guideUrl ? (
+                        <Item
+                            title={t('settingsProviders.setupGuideUrlTitle')}
+                            subtitle={core.cli.installBanner.guideUrl}
+                            icon={<Ionicons name="link-outline" size={29} color={theme.colors.textSecondary} />}
+                            showChevron={false}
+                            copy={core.cli.installBanner.guideUrl}
+                        />
+                    ) : null}
+                    <Item
+                        title={t('settingsProviders.connectedServiceTitle')}
+                        subtitle={core.connectedService.name}
+                        icon={<Ionicons name="cloud-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                </ItemGroup>
+
+                <ItemGroup title={t('settingsProviders.capabilitiesTitle')}>
+                    <Item
+                        title={t('settingsProviders.resumeSupportTitle')}
+                        subtitle={resumeSupport}
+                        icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.sessionModeSupportTitle')}
+                        subtitle={sessionModeSupport}
+                        icon={<Ionicons name="layers-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.runtimeModeSwitchingTitle')}
+                        subtitle={runtimeSwitchSupport}
+                        icon={<Ionicons name="swap-horizontal-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.localControlTitle')}
+                        subtitle={core.localControl?.supported === true ? t('settingsProviders.supported') : t('settingsProviders.notSupported')}
+                        icon={<Ionicons name="terminal-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                </ItemGroup>
+
+                <ItemGroup title={t('settingsProviders.modelsTitle')}>
+                    <Item
+                        title={t('settingsProviders.modelSelectionTitle')}
+                        subtitle={core.model.supportsSelection ? t('settingsProviders.supported') : t('settingsProviders.notSupported')}
+                        icon={<Ionicons name="list-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.freeformModelIdsTitle')}
+                        subtitle={core.model.supportsFreeform ? t('settingsProviders.allowed') : t('settingsProviders.notAllowed')}
+                        icon={<Ionicons name="create-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.defaultModelTitle')}
+                        subtitle={core.model.defaultMode}
+                        icon={<Ionicons name="star-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.catalogModelListTitle')}
+                        subtitle={catalogModelListText}
+                        icon={<Ionicons name="albums-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.dynamicModelProbeTitle')}
+                        subtitle={dynamicProbe}
+                        icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.nonAcpApplyScopeTitle')}
+                        subtitle={nonAcpApplyScope}
+                        icon={<Ionicons name="arrow-forward-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.acpApplyBehaviorTitle')}
+                        subtitle={acpApplyBehavior}
+                        icon={<Ionicons name="sync-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.acpConfigOptionTitle')}
+                        subtitle={core.model.acpModelConfigOptionId ?? t('settingsProviders.notAvailable')}
+                        icon={<Ionicons name="settings-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                </ItemGroup>
             </ItemList>
         </View>
     );
