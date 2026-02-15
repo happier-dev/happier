@@ -24,6 +24,7 @@ jobs:
   publish:
     name: Build and push images
     runs-on: ubuntu-latest
+    environment: release-shared
     steps:
       - name: Guard stable channel
         if: ${{ inputs.channel == 'stable' && github.ref_name != 'main' }}
