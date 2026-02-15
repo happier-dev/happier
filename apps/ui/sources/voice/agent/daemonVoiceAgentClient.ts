@@ -13,12 +13,14 @@ import type { VoiceAssistantAction } from '@happier-dev/protocol';
 
 import type { VoiceAgentClient, VoiceAgentStartParams, VoiceAgentStartResult, VoiceAgentTurnStreamEvent } from './types';
 
-function ensureOk<T>(
-  value: unknown,
-  schema: { safeParse: (v: unknown) => { success: true; data: T } | { success: false; error: unknown } },
-): T {
+type SafeParseSuccess<T> = { success: true; data: T };
+type SafeParseFailure = { success: false; error: unknown };
+type SafeParseOutput<S> =
+  S extends { safeParse: (v: unknown) => SafeParseSuccess<infer T> | SafeParseFailure } ? T : unknown;
+
+function ensureOk<S extends { safeParse: (v: unknown) => unknown }>(value: unknown, schema: S): SafeParseOutput<S> {
   const parsed = schema.safeParse(value);
-  if (parsed.success) return parsed.data;
+  if (parsed && typeof parsed === 'object' && (parsed as any).success === true) return (parsed as any).data;
   throw new Error('invalid_rpc_response');
 }
 
@@ -60,6 +62,9 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
     });
     throwIfRpcError(res);
     const parsed = ensureOk(res, ExecutionRunEnsureOrStartResponseSchema);
+    if (!parsed.ok) {
+      throw createRpcCallError({ error: parsed.error, errorCode: parsed.errorCode });
+    }
     return { voiceAgentId: parsed.runId };
   }
 

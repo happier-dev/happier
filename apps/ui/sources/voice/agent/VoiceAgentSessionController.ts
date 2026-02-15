@@ -3,14 +3,14 @@ import { buildVoiceInitialContext } from '@/voice/context/buildVoiceInitialConte
 import { resolveDaemonVoiceAgentModelIds } from '@/voice/agent/resolveDaemonVoiceAgentModels';
 import { DaemonVoiceAgentClient } from '@/voice/agent/daemonVoiceAgentClient';
 import { OpenAiCompatVoiceAgentClient } from '@/voice/agent/openaiCompatVoiceAgentClient';
-import type { VoiceAgentClient } from '@/voice/agent/types';
+import type { VoiceAgentClient, VoiceAgentStartParams } from '@/voice/agent/types';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@/sync/runtime/rpcErrors';
 import type { VoiceAssistantAction } from '@happier-dev/protocol';
 import { voiceSettingsDefaults } from '@/sync/domains/settings/voiceSettings';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { ensureVoiceCarrierSessionId, findVoiceCarrierSessionId } from '@/voice/agent/voiceCarrierSession';
-import { buildVoiceAgentResumeContextFromCarrierSession } from '@/voice/persistence/buildVoiceAgentResumeContextFromCarrierSession';
+import { buildVoiceReplaySeedPromptFromCarrierSession } from '@/voice/persistence/buildVoiceReplaySeedPromptFromCarrierSession';
 import { readVoiceAgentRunMetadataFromCarrierSession } from '@/voice/persistence/voiceAgentRunMetadata';
 import { writeVoiceAgentRunMetadataToCarrierSession } from '@/voice/persistence/voiceAgentRunMetadata';
 import { DEFAULT_AGENT_ID, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
@@ -172,11 +172,25 @@ export function createVoiceAgentSessionController(): VoiceAgentSessionController
       backend = 'openai_compat';
     }
 
+    const replayCfg = agentCfg?.replay ?? null;
+    const replayStrategy = replayCfg?.strategy === 'summary_plus_recent' ? 'summary_plus_recent' : 'recent_messages';
+    const replayRecentMessagesCountRaw = Number(replayCfg?.recentMessagesCount ?? 16);
+    const replayRecentMessagesCount =
+      Number.isFinite(replayRecentMessagesCountRaw) && replayRecentMessagesCountRaw > 0
+        ? Math.max(1, Math.min(100, Math.floor(replayRecentMessagesCountRaw)))
+        : 16;
+
+    const resumabilityMode = agentCfg?.resumabilityMode === 'provider_resume' ? 'provider_resume' : 'replay';
+    const fallbackToReplay = agentCfg?.providerResume?.fallbackToReplay !== false;
+    const shouldIncludeReplaySeed = resumabilityMode === 'replay' || (resumabilityMode === 'provider_resume' && fallbackToReplay);
+
     const resumeContext =
-      isGlobalVoiceAgent && transcriptPersistenceMode === 'persistent' && daemonCarrierSessionId
-        ? await buildVoiceAgentResumeContextFromCarrierSession({
+      shouldIncludeReplaySeed && isGlobalVoiceAgent && transcriptPersistenceMode === 'persistent' && daemonCarrierSessionId
+        ? await buildVoiceReplaySeedPromptFromCarrierSession({
             carrierSessionId: daemonCarrierSessionId,
             epoch: transcriptEpoch,
+            strategy: replayStrategy,
+            recentMessagesCount: replayRecentMessagesCount,
           }).catch(() => '')
         : '';
     const effectiveInitialContext = resumeContext
@@ -204,7 +218,7 @@ export function createVoiceAgentSessionController(): VoiceAgentSessionController
       persistedRunMeta && persistedRunMeta.backendId === resolvedAgentId ? persistedRunMeta.runId : null;
     const resumeHandle =
       persistedRunMeta && persistedRunMeta.backendId === resolvedAgentId ? persistedRunMeta.resumeHandle : null;
-    const retentionPolicy =
+    const retentionPolicy: NonNullable<VoiceAgentStartParams['retentionPolicy']> =
       backend === 'daemon' && transcriptPersistenceMode === 'persistent' ? 'resumable' : 'ephemeral';
 
     let client: VoiceAgentClient =
@@ -221,7 +235,7 @@ export function createVoiceAgentSessionController(): VoiceAgentSessionController
       initialContext: effectiveInitialContext,
       ...(transcript ? { transcript } : {}),
       ...(backend === 'daemon' ? { existingRunId, resumeHandle, retentionPolicy } : {}),
-    };
+    } satisfies Omit<VoiceAgentStartParams, 'sessionId' | 'chatModelId' | 'commitModelId'>;
 
       const started = await (async () => {
       try {
