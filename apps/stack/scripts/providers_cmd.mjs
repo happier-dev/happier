@@ -2,8 +2,8 @@ import './utils/env/env.mjs';
 
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
-import { run } from './utils/proc/proc.mjs';
-import { PROVIDERS, resolveProvider } from './utils/providers/providers_registry.mjs';
+import { AGENT_IDS, getProviderCliInstallSpec } from '@happier-dev/agents';
+import { installProviderCli, planProviderCliInstall, resolvePlatformFromNodePlatform } from '@happier-dev/cli-common/providers';
 
 function usageText() {
   return [
@@ -29,34 +29,32 @@ function splitProviders(raw) {
 }
 
 function resolvePlatform() {
-  if (process.platform === 'darwin') return 'darwin';
-  if (process.platform === 'linux') return 'linux';
-  if (process.platform === 'win32') return 'win32';
-  return 'unsupported';
+  return resolvePlatformFromNodePlatform(process.platform) ?? 'unsupported';
 }
 
-function planForProvider(provider) {
+function planForProvider(providerId) {
   const platform = resolvePlatform();
   if (platform === 'unsupported') {
-    return { ok: false, provider: provider.id, error: 'Unsupported platform' };
+    return { ok: false, provider: providerId, error: 'Unsupported platform' };
   }
-  const recipe = provider.install?.[platform] ?? null;
-  if (!recipe || recipe.length === 0) {
-    return { ok: false, provider: provider.id, error: 'No auto-install recipe available (manual install required)' };
+  const planned = planProviderCliInstall({ providerId, platform });
+  if (!planned.ok) {
+    return { ok: false, provider: providerId, error: planned.errorMessage };
   }
-  return { ok: true, provider: provider.id, commands: recipe };
+  return { ok: true, provider: providerId, commands: planned.plan.commands };
 }
 
 async function cmdList({ argv }) {
   const { flags } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
   const platform = resolvePlatform();
-  const rows = PROVIDERS.map((p) => {
-    const planned = planForProvider(p);
+  const rows = AGENT_IDS.map((id) => {
+    const spec = getProviderCliInstallSpec(id);
+    const planned = planForProvider(id);
     return {
-      id: p.id,
-      title: p.title,
-      binaries: p.binaries,
+      id: spec.id,
+      title: spec.title,
+      binaries: spec.binaries,
       autoInstall: planned.ok,
       note: planned.ok ? null : planned.error,
       platform,
@@ -93,34 +91,41 @@ async function cmdInstall({ argv }) {
   }
 
   const resolved = wanted.map((id) => {
-    const p = resolveProvider(id);
-    if (!p) {
+    if (!AGENT_IDS.includes(id)) {
       const e = new Error(`[providers] unknown provider: ${id}`);
       e.code = 'EUNKNOWN_PROVIDER';
       throw e;
     }
-    return p;
+    return id;
   });
 
-  const plan = resolved.map((p) => planForProvider(p));
-  const failures = plan.filter((p) => !p.ok);
-  if (failures.length > 0) {
-    const first = failures[0];
-    throw new Error(`[providers] cannot auto-install ${first.provider}: ${first.error}`);
+  const platform = resolvePlatform();
+  if (platform === 'unsupported') {
+    throw new Error('[providers] unsupported platform');
   }
 
-  if (!dryRun) {
-    for (const p of plan) {
-      for (const c of p.commands) {
-        await run(c.cmd, c.args, { cwd: process.cwd(), env: process.env });
-      }
-    }
+  const results = resolved.map((providerId) =>
+    installProviderCli({ providerId, platform, dryRun, env: process.env }),
+  );
+  const failures = results.filter((r) => !r.ok);
+  if (failures.length > 0) {
+    const first = failures[0];
+    const extra = first.logPath ? `\nlog: ${first.logPath}` : '';
+    throw new Error(`[providers] install failed: ${first.errorMessage}${extra}`.trim());
   }
+
+  const plan = results.map((r) => (r.ok ? r.plan : null)).filter(Boolean);
 
   printResult({
     json,
-    data: { ok: true, providers: resolved.map((p) => p.id), dryRun, plan },
-    text: json ? null : `✓ providers installed: ${resolved.map((p) => p.id).join(', ')}`,
+    data: {
+      ok: true,
+      providers: resolved,
+      dryRun,
+      plan,
+      results: results.map((r) => (r.ok ? { ok: true, providerId: r.plan.providerId, alreadyInstalled: r.alreadyInstalled, logPath: r.logPath } : r)),
+    },
+    text: json ? null : `✓ providers installed: ${resolved.join(', ')}`,
   });
 }
 

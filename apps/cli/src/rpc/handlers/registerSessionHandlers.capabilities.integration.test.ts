@@ -11,7 +11,13 @@ import { chmod, mkdtemp, rm, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import type { CapabilitiesDescribeResponse, CapabilitiesDetectRequest, CapabilitiesDetectResponse } from '@happier-dev/protocol';
+import type {
+    CapabilitiesDescribeResponse,
+    CapabilitiesDetectRequest,
+    CapabilitiesDetectResponse,
+    CapabilitiesInvokeRequest,
+    CapabilitiesInvokeResponse,
+} from '@happier-dev/protocol';
 import { CHECKLIST_IDS, resumeChecklistId } from '@happier-dev/protocol/checklists';
 import { createEncryptedRpcTestClient } from './encryptedRpc.testkit';
 
@@ -166,6 +172,80 @@ describe('registerCommonHandlers capabilities', () => {
             const tmuxData = expectCapabilityData(result, 'tool.tmux');
             expect(tmuxData.available).toBe(true);
             expect(tmuxData.version).toBe('3.3a');
+
+            const executionRunsData = expectCapabilityData(result, 'tool.executionRuns');
+            expect(executionRunsData.available).toBe(true);
+            expect(executionRunsData.intents).toEqual(['review', 'plan', 'delegate', 'voice_agent']);
+            expect(executionRunsData.backends).toEqual(
+                expect.objectContaining({
+                    claude: expect.objectContaining({ available: true }),
+                    codex: expect.objectContaining({ available: true }),
+                }),
+            );
+        } finally {
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('supports installing provider CLIs via capabilities.invoke (dry-run)', async () => {
+        const dir = await mkdtemp(join(tmpdir(), 'happier-cli-capabilities-provider-install-'));
+        try {
+            process.env.PATH = `${dir}`;
+
+            const { call } = createTestRpcManager({ scopePrefix: 'machine-test-provider-install' });
+            const result = await call<CapabilitiesInvokeResponse, CapabilitiesInvokeRequest>(RPC_METHODS.CAPABILITIES_INVOKE, {
+                id: 'cli.codex',
+                method: 'install',
+                params: { dryRun: true },
+            });
+
+            expect(result.ok).toBe(true);
+            if (!result.ok) return;
+
+            expect(result.result).toMatchObject({
+                plan: {
+                    providerId: 'codex',
+                    binaries: ['codex'],
+                },
+                alreadyInstalled: false,
+                logPath: null,
+            });
+        } finally {
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('detects tool.executionRuns backends from PATH even when requesting only tool.executionRuns', async () => {
+        const dir = await mkdtemp(join(tmpdir(), 'happier-cli-capabilities-execution-runs-'));
+        try {
+            const isWindows = process.platform === 'win32';
+
+            const fakeCodex = join(dir, isWindows ? 'codex.cmd' : 'codex');
+            await writeFile(
+                fakeCodex,
+                isWindows
+                    ? '@echo off\r\nif "%1"=="--version" (echo codex 1.2.3& exit /b 0)\r\necho ok\r\n'
+                    : '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "codex 1.2.3"; exit 0; fi\necho ok\n',
+                'utf8',
+            );
+
+            if (!isWindows) {
+                await chmod(fakeCodex, 0o755);
+            } else {
+                process.env.PATHEXT = '.CMD';
+            }
+
+            process.env.PATH = `${dir}`;
+
+            const { call } = createTestRpcManager({ scopePrefix: 'machine-test-execution-runs' });
+            const result = await call<CapabilitiesDetectResponse, CapabilitiesDetectRequest>(RPC_METHODS.CAPABILITIES_DETECT, {
+                requests: [{ id: 'tool.executionRuns' }],
+            });
+
+            expect(result.protocolVersion).toBe(1);
+            const executionRunsData = expectCapabilityData(result, 'tool.executionRuns');
+            expect(executionRunsData.available).toBe(true);
+            expect((executionRunsData.backends as any)?.codex?.available).toBe(true);
         } finally {
             await rm(dir, { recursive: true, force: true });
         }

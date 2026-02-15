@@ -9,7 +9,11 @@ test('package export entrypoints load in Node ESM', async () => {
   const service = await import('../dist/service/index.js');
   assert.equal(typeof service.resolveServiceBackend, 'function');
 
+  const providers = await import('../dist/providers/index.js');
+  assert.equal(typeof providers.planProviderCliInstall, 'function');
+
   const root = await import('../dist/index.js');
   assert.equal(typeof root.links.buildTerminalConnectLinks, 'function');
   assert.equal(typeof root.service.resolveServiceBackend, 'function');
+  assert.equal(typeof root.providers.planProviderCliInstall, 'function');
 });

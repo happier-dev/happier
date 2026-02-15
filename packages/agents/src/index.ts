@@ -54,7 +54,23 @@ export {
   computeNextMetadataConfigOptionOverrideV1,
 } from './sessionControls/publish.js';
 
+export {
+  buildHappierReplayPromptFromDialog,
+  type HappierReplayDialogItem,
+  type HappierReplayStrategy,
+} from './sessions/replay/happierReplayPrompt.js';
+
 // Namespaced provider-specific helpers/knobs.
 export * as providers from './providers/index.js';
 
+export {
+  PROVIDER_CLI_INSTALL_SPECS,
+  getProviderCliInstallSpec,
+  type ProviderCliInstallCommand,
+  type ProviderCliInstallPlatform,
+  type ProviderCliInstallSpec,
+} from './providers/cliInstallSpecs.js';
+
 export * from './providerSettings/index.js';
+
+export * from './voice/index.js';

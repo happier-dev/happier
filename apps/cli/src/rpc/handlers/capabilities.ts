@@ -16,10 +16,42 @@ import type {
 } from '@/capabilities/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { probeAgentModelsBestEffort } from '@/capabilities/probes/agentModelsProbe';
+import type { AgentId, ProviderCliInstallPlatform } from '@happier-dev/agents';
+import { installProviderCli, resolvePlatformFromNodePlatform } from '@happier-dev/cli-common/providers';
 
 function titleCase(value: string): string {
     if (!value) return value;
     return `${value[0].toUpperCase()}${value.slice(1)}`;
+}
+
+function resolveProviderCliInstallPlatform(params?: Record<string, unknown>): ProviderCliInstallPlatform | null {
+    const rawPlatform = typeof params?.platform === 'string' ? params.platform.trim() : '';
+    if (rawPlatform === 'darwin' || rawPlatform === 'linux' || rawPlatform === 'win32') return rawPlatform;
+    return resolvePlatformFromNodePlatform(process.platform);
+}
+
+function invokeProviderCliInstall(agentId: AgentCatalogEntry['id'], params?: Record<string, unknown>): CapabilitiesInvokeResponse {
+    const platform = resolveProviderCliInstallPlatform(params);
+    if (!platform) {
+        return { ok: false, error: { message: `Unsupported platform: ${process.platform}`, code: 'unsupported-platform' } };
+    }
+
+    const dryRun = Boolean(params?.dryRun);
+    const skipIfInstalled = typeof params?.skipIfInstalled === 'boolean' ? params.skipIfInstalled : true;
+
+    const result = installProviderCli({
+        providerId: agentId as AgentId,
+        platform,
+        dryRun,
+        skipIfInstalled,
+        env: process.env,
+    });
+
+    if (!result.ok) {
+        return { ok: false, error: { message: result.errorMessage, code: 'install-failed' }, ...(result.logPath ? { logPath: result.logPath } : {}) };
+    }
+
+    return { ok: true, result: { plan: result.plan, alreadyInstalled: result.alreadyInstalled, logPath: result.logPath ?? null } };
 }
 
 function createGenericCliCapability(agentId: AgentCatalogEntry['id']): Capability {
@@ -29,6 +61,7 @@ function createGenericCliCapability(agentId: AgentCatalogEntry['id']): Capabilit
             kind: 'cli',
             title: `${titleCase(agentId)} CLI`,
             methods: {
+                install: { title: 'Install' },
                 probeModels: { title: 'Probe models' },
             },
         },
@@ -37,6 +70,9 @@ function createGenericCliCapability(agentId: AgentCatalogEntry['id']): Capabilit
             return buildCliCapabilityData({ request, entry });
         },
         invoke: async ({ method, params }) => {
+            if (method === 'install') {
+                return invokeProviderCliInstall(agentId, params);
+            }
             if (method !== 'probeModels') {
                 return { ok: false, error: { message: `Unsupported method: ${method}`, code: 'unsupported-method' } };
             }
@@ -52,13 +88,18 @@ function augmentCliCapabilityWithProbeModels(cap: Capability, agentId: AgentCata
     if (!cap.descriptor.id.startsWith('cli.')) return cap;
 
     const existingMethods = cap.descriptor.methods ?? {};
-    const methods = existingMethods.probeModels
-        ? existingMethods
-        : { ...existingMethods, probeModels: { title: 'Probe models' } };
+    const methods = {
+        ...existingMethods,
+        ...(existingMethods.probeModels ? {} : { probeModels: { title: 'Probe models' } }),
+        ...(existingMethods.install ? {} : { install: { title: 'Install' } }),
+    };
 
     const baseInvoke = cap.invoke;
 
     const invoke: Capability['invoke'] = async ({ method, params }) => {
+        if (method === 'install') {
+            return invokeProviderCliInstall(agentId, params);
+        }
         if (method === 'probeModels') {
             const timeoutMsRaw = (params ?? {}).timeoutMs;
             const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : 3500;
