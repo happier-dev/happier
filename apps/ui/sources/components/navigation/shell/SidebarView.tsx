@@ -6,9 +6,7 @@ import { useRouter } from 'expo-router';
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { Typography } from '@/constants/Typography';
 import { StatusDot } from '@/components/ui/status/StatusDot';
-import { FABWide } from '@/components/ui/buttons/FABWide';
-import { VoiceAssistantStatusBar } from '@/components/voice/shell/VoiceAssistantStatusBar';
-import { useRealtimeStatus } from '@/sync/domains/state/storage';
+import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { MainView } from './MainView';
 import { Image } from 'expo-image';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -19,6 +17,7 @@ import { sync } from '@/sync/sync';
 import { PopoverBoundaryProvider } from '@/components/ui/popover';
 import { ConnectionStatusControl } from '@/components/navigation/ConnectionStatusControl';
 import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
+import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { config } from '@/config';
 import { isStackContext } from '@/sync/domains/server/serverContext';
@@ -78,7 +77,9 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         gap: 6,
     },
     envBadge: {
-        paddingHorizontal: 5,
+        marginTop: -4,
+        marginLeft: -4,
+        paddingHorizontal: 4,
         paddingVertical: 1,
         borderRadius: 999,
         borderWidth: StyleSheet.hairlineWidth,
@@ -86,8 +87,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         backgroundColor: theme.colors.surface,
     },
     envBadgeText: {
-        fontSize: 9,
-        lineHeight: 12,
+        fontSize: 6,
+        lineHeight: 8,
         color: theme.colors.textSecondary,
         ...Typography.default('semiBold'),
     },
@@ -207,13 +208,14 @@ export const SidebarView = React.memo(() => {
     const router = useRouter();
     const headerHeight = useHeaderHeight();
     const socketStatus = useSocketStatus();
-    const realtimeStatus = useRealtimeStatus();
     const syncError = useSyncError();
     const popoverBoundaryRef = React.useRef<any>(null);
     const friendRequests = useFriendRequests();
     const inboxHasContent = useInboxHasContent();
     const showEnvironmentBadge = useSetting('showEnvironmentBadge');
     const inboxFriendsEnabled = useFriendsEnabled();
+    const automationsSupport = useAutomationsSupport();
+    const showAutomations = automationsSupport?.enabled !== false;
 
     // Compute connection status once per render (theme-reactive, no stale memoization)
     const connectionStatus = (() => {
@@ -278,6 +280,10 @@ export const SidebarView = React.memo(() => {
         router.push('/new');
     }, [router]);
 
+    const handleAutomations = React.useCallback(() => {
+        router.push('/automations');
+    }, [router]);
+
     // Title content used in both centered and left-justified modes (DRY)
     const titleContent = (
         <>
@@ -313,6 +319,17 @@ export const SidebarView = React.memo(() => {
                             style={[styles.logo, { height: 24, width: 24 }]}
                         />
                     </View>
+                    {showAutomations ? (
+                        <Pressable
+                            onPress={handleAutomations}
+                            hitSlop={15}
+                            accessibilityRole="button"
+                            accessibilityLabel="Open automations"
+                            style={styles.iconButton}
+                        >
+                            <Ionicons name="timer-outline" size={22} color={theme.colors.header.tint} />
+                        </Pressable>
+                    ) : null}
 
                     {/* Left-justified title - in document flow, prevents overlap */}
                     {shouldLeftJustify && (
@@ -414,13 +431,10 @@ export const SidebarView = React.memo(() => {
                         ) : null}
                     </View>
                 )}
-                {realtimeStatus !== 'disconnected' && (
-                    <VoiceAssistantStatusBar variant="sidebar" />
-                )}
+                <VoiceSurface variant="sidebar" />
                 <MainView variant="sidebar" />
                 </PopoverBoundaryProvider>
             </View>
-            <FABWide onPress={handleNewSession} />
         </>
     )
 });
