@@ -78,16 +78,13 @@ function main() {
 
     const wantedPlatforms = ['linux-x86_64', 'windows-x86_64', 'darwin-x86_64', 'darwin-aarch64'];
     const allFiles = listFilesRecursive(artifactsDir);
-    const sigFiles = allFiles.filter((p) => p.endsWith('.sig')).sort((a, b) => a.localeCompare(b));
+    const sigFiles = allFiles.filter((p) => p.endsWith('.sig'));
 
     /** @type {Record<string, { url: string; signature: string }>} */
     const platforms = {};
 
     for (const platformKey of wantedPlatforms) {
-        let sigPath = sigFiles.find((p) => normalizeSegments(p).includes(platformKey));
-        if (!sigPath) {
-            sigPath = sigFiles.find((p) => path.basename(p).includes(platformKey));
-        }
+        const sigPath = sigFiles.find((p) => normalizeSegments(p).includes(platformKey));
         if (!sigPath) {
             fail(`Missing signature file for platform "${platformKey}" under ${artifactsDir}`);
         }

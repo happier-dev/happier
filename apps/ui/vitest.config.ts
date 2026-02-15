@@ -14,6 +14,9 @@ export default defineConfig({
         // Ensure per-file module isolation so test-local `vi.mock(...)` does not leak
         // across unrelated test files (especially important for our React Native stubs).
         isolate: true,
+        // Work around intermittent Node 25 + worker-thread resolution failures seen in large suites.
+        // Forks are slower but much more stable for our UI runner locally.
+        pool: 'forks',
         // Our UI test suite is occasionally CPU-bound on developer machines / CI runners.
         // Increase the default timeout so unrelated load doesn't cause spurious failures.
         testTimeout: 20_000,

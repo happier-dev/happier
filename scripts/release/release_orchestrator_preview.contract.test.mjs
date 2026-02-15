@@ -65,6 +65,15 @@ test('release workflow publishes server runner only when explicitly requested', 
   );
 });
 
+test('release workflow can publish self-host UI web bundle via a dedicated workflow', async () => {
+  const raw = await loadWorkflow('release.yml');
+  assert.match(
+    raw,
+    /publish_ui_web:[\s\S]*?uses:\s*\.\/\.github\/workflows\/publish-ui-web\.yml/,
+    'self-host UI web bundle publishing should be handled by a dedicated workflow',
+  );
+});
+
 test('release workflows do not embed invalid JS escaping in node -p/-e snippets', async () => {
   const release = await loadWorkflow('release.yml');
   const releaseNpm = await loadWorkflow('release-npm.yml');

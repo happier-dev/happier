@@ -182,7 +182,7 @@ if [[ "${MODE}" == "system" && "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
-if [[ "${OS}" == "linux" && ! command -v systemctl >/dev/null 2>&1 ]]; then
+if [[ "${OS}" == "linux" ]] && ! command -v systemctl >/dev/null 2>&1; then
   echo "systemctl is required for self-host installation on Linux." >&2
   exit 1
 fi
@@ -205,26 +205,44 @@ fi
 json_lookup_asset_url() {
   local json="$1"
   local name_regex="$2"
-  printf '%s' "$json" | awk -v re="$name_regex" '
-    BEGIN { RS="{"; ORS="\n" }
+  # GitHub API JSON is typically pretty-printed (newlines + spaces). Minify and then parse using a
+  # tiny jq-free state machine that pairs `"name":"..."` with the next `"browser_download_url":"..."`.
+  # We intentionally return the *last* match to support rolling tags that may contain multiple
+  # versions: newest assets are appended later in the release JSON.
+  printf '%s' "$json" | tr -d '[:space:]' | awk -v re="$name_regex" '
     {
-      name=""; url="";
-      for (i = 1; i <= NF; i++) {
-        line = $i;
-        if (line ~ /"name"[[:space:]]*:/) {
-          sub(/.*"name"[[:space:]]*:[[:space:]]*"/, "", line);
-          sub(/".*/, "", line);
-          name = line;
-        }
-        if (line ~ /"browser_download_url"[[:space:]]*:/) {
-          sub(/.*"browser_download_url"[[:space:]]*:[[:space:]]*"/, "", line);
-          sub(/".*/, "", line);
-          url = line;
+      s = $0
+      assets_key = "\"assets\":["
+      a = index(s, assets_key)
+      if (a > 0) {
+        s = substr(s, a + length(assets_key))
+      }
+      name_key = "\"name\":\""
+      url_key = "\"browser_download_url\":\""
+      last = ""
+      while (1) {
+        p = index(s, name_key)
+        if (p == 0) break
+        s = substr(s, p + length(name_key))
+        q = index(s, "\"")
+        if (q == 0) break
+        name = substr(s, 1, q - 1)
+        s = substr(s, q + 1)
+
+        u = index(s, url_key)
+        if (u == 0) continue
+        s = substr(s, u + length(url_key))
+        v = index(s, "\"")
+        if (v == 0) break
+        url = substr(s, 1, v - 1)
+        s = substr(s, v + 1)
+
+        if (name ~ re && url != "") {
+          last = url
         }
       }
-      if (name ~ re && url != "") {
-        print url;
-        exit;
+      if (last != "") {
+        print last
       }
     }
   '
@@ -289,8 +307,21 @@ ensure_minisign() {
       return 1
     fi
   fi
-  local bin_path
-  bin_path="$(find "${extract_dir}" -type f -name minisign | head -n 1 || true)"
+  local bin_path=""
+  if [[ "${OS}" == "linux" ]]; then
+    local minisign_arch=""
+    case "$(uname -m)" in
+      x86_64|amd64) minisign_arch="x86_64" ;;
+      arm64|aarch64) minisign_arch="aarch64" ;;
+      *) minisign_arch="" ;;
+    esac
+    if [[ -n "${minisign_arch}" ]]; then
+      bin_path="$(find "${extract_dir}" -type f -path "*/minisign-linux/${minisign_arch}/minisign" 2>/dev/null | head -n 1 || true)"
+    fi
+  fi
+  if [[ -z "${bin_path}" ]]; then
+    bin_path="$(find "${extract_dir}" -type f -name minisign 2>/dev/null | head -n 1 || true)"
+  fi
   if [[ -z "${bin_path}" ]]; then
     echo "Failed to locate minisign binary in bootstrap archive." >&2
     return 1
@@ -323,13 +354,25 @@ if ! RELEASE_JSON="$(curl -fsSL "${API_URL}")"; then
   fi
   exit 1
 fi
-ASSET_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "^hstack-v.*-${OS}-${ARCH}\\.tar\\.gz$")"
-CHECKSUMS_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "^checksums-hstack-v.*\\.txt$")"
-SIG_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "^checksums-hstack-v.*\\.txt\\.minisig$")"
+ASSET_REGEX="^hstack-v.*-${OS}-${ARCH}[.]tar[.]gz$"
+ASSET_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "${ASSET_REGEX}")"
 if [[ -z "${ASSET_URL}" ]]; then
   echo "Unable to find hstack binary for ${OS}-${ARCH} in ${TAG}." >&2
   exit 1
 fi
+
+ASSET_NAME="$(basename "${ASSET_URL}")"
+VERSION="${ASSET_NAME#hstack-v}"
+VERSION="${VERSION%-${OS}-${ARCH}.tar.gz}"
+if [[ -z "${VERSION}" || "${VERSION}" == "${ASSET_NAME}" ]]; then
+  echo "Failed to infer release version from asset name: ${ASSET_NAME}" >&2
+  exit 1
+fi
+
+CHECKSUMS_REGEX="^checksums-hstack-v${VERSION}[.]txt$"
+SIG_REGEX="^checksums-hstack-v${VERSION}[.]txt[.]minisig$"
+CHECKSUMS_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "${CHECKSUMS_REGEX}")"
+SIG_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "${SIG_REGEX}")"
 if [[ -z "${CHECKSUMS_URL}" ]]; then
   echo "Unable to find checksums for hstack in ${TAG}." >&2
   exit 1

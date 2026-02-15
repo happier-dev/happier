@@ -235,11 +235,7 @@ jobs:
             exit 1
           fi
           if [ "${{ inputs.environment }}" = "preview" ]; then
-            preview_number="$(( GITHUB_RUN_NUMBER % 65535 ))"
-            if [ "${preview_number}" -eq 0 ]; then
-              preview_number=65535
-            fi
-            build_version="${ui_version}-${preview_number}"
+            build_version="${ui_version}-preview.${GITHUB_RUN_NUMBER}"
           else
             build_version="${ui_version}"
           fi
@@ -259,10 +255,6 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-
-          yarn -s workspace @happier-dev/agents build
-          yarn -s workspace @happier-dev/protocol build
-
           cd apps/ui
 
           if [ -n "${TAURI_TARGET}" ]; then
@@ -313,17 +305,13 @@ jobs:
               const version = String(process.env.VERSION_OVERRIDE ?? "");
               fs.writeFileSync(out, `${JSON.stringify({ version })}\n`, "utf8");
             ' "${override}"
-            preview_bundle_args=()
-            if [ "${{ inputs.environment }}" = "preview" ] && [ "${RUNNER_OS}" = "macOS" ]; then
-              preview_bundle_args+=(--bundles app)
-            fi
-            yarn tauri build --config src-tauri/tauri.preview.conf.json --config "${override}" "${preview_bundle_args[@]}" "${configs[@]}" "${target_args[@]}"
+            yarn tauri build --config src-tauri/tauri.preview.conf.json --config "${override}" "${configs[@]}" "${target_args[@]}"
           else
             yarn tauri build "${configs[@]}" "${target_args[@]}"
           fi
 
       - name: Notarize macOS artifacts (updater + DMG) (macOS)
-        if: runner.os == 'macOS' && inputs.environment == 'production' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != '' && env.APPLE_API_KEY_ID != '' && env.APPLE_API_ISSUER_ID != '' && env.APPLE_API_PRIVATE_KEY != '' && env.TAURI_SIGNING_PRIVATE_KEY != '' && !contains(env.TAURI_SIGNING_PRIVATE_KEY, 'BEGIN PRIVATE KEY')
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != '' && env.APPLE_API_KEY_ID != '' && env.APPLE_API_ISSUER_ID != '' && env.APPLE_API_PRIVATE_KEY != '' && env.TAURI_SIGNING_PRIVATE_KEY != ''
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -397,15 +385,7 @@ jobs:
           artifact_abs="$(cd "$(dirname "${artifact_path}")" && pwd)/$(basename "${artifact_path}")"
           sig_abs="$(cd "$(dirname "${sig_path}")" && pwd)/$(basename "${sig_path}")"
           tmp_sig="${work}/notarized.sig"
-          sign_key_path="${RUNNER_TEMP}/tauri-updater-signing-key.pem"
-          normalized_tauri_signing_key="$(node -e 'const raw=String(process.env.TAURI_SIGNING_PRIVATE_KEY ?? ""); process.stdout.write(raw.includes("\\n") ? raw.replaceAll("\\n", "\n") : raw);')"
-          if printf "%s" "${normalized_tauri_signing_key}" | grep -q "BEGIN"; then
-            printf "%s" "${normalized_tauri_signing_key}" > "${sign_key_path}"
-          else
-            printf "%s" "${normalized_tauri_signing_key}" | base64 --decode > "${sign_key_path}"
-          fi
-          chmod 600 "${sign_key_path}"
-          yarn --silent tauri signer sign --private-key-path "${sign_key_path}" --password "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD}" "${artifact_abs}" > "${tmp_sig}"
+          yarn --silent tauri signer sign "${artifact_abs}" > "${tmp_sig}"
           sig_value="$(tr -d '\r\n' < "${tmp_sig}")"
           if [ -z "${sig_value}" ] || ! printf "%s" "${sig_value}" | grep -Eq '^[A-Za-z0-9+/=]+$'; then
             echo "Generated updater signature is invalid: ${tmp_sig}" >&2
@@ -422,21 +402,10 @@ jobs:
           fi
 
       - name: Fail when production notarization/signing secrets are missing (macOS)
-        if: runner.os == 'macOS' && inputs.environment == 'production' && (env.APPLE_CERTIFICATE == '' || env.APPLE_CERTIFICATE_PASSWORD == '' || env.APPLE_API_KEY_ID == '' || env.APPLE_API_ISSUER_ID == '' || env.APPLE_API_PRIVATE_KEY == '' || env.TAURI_SIGNING_PRIVATE_KEY == '' || contains(env.TAURI_SIGNING_PRIVATE_KEY, 'BEGIN PRIVATE KEY'))
+        if: runner.os == 'macOS' && inputs.environment == 'production' && (env.APPLE_CERTIFICATE == '' || env.APPLE_CERTIFICATE_PASSWORD == '' || env.APPLE_API_KEY_ID == '' || env.APPLE_API_ISSUER_ID == '' || env.APPLE_API_PRIVATE_KEY == '' || env.TAURI_SIGNING_PRIVATE_KEY == '')
         run: |
-          set -euo pipefail
-          if [ "${APPLE_CERTIFICATE}" = "" ] || [ "${APPLE_CERTIFICATE_PASSWORD}" = "" ] || [ "${APPLE_API_KEY_ID}" = "" ] || [ "${APPLE_API_ISSUER_ID}" = "" ] || [ "${APPLE_API_PRIVATE_KEY}" = "" ] || [ "${TAURI_SIGNING_PRIVATE_KEY}" = "" ]; then
-            echo "Missing required production macOS signing/notarization secrets." >&2
-            echo "Required: APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_API_KEY_ID, APPLE_API_ISSUER_ID, APPLE_API_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY." >&2
-            exit 1
-          fi
-          if printf "%s" "${TAURI_SIGNING_PRIVATE_KEY}" | grep -q "BEGIN PRIVATE KEY"; then
-            echo "TAURI_SIGNING_PRIVATE_KEY is invalid for updater signing: minisign key required, not PEM private key." >&2
-            echo "Generate updater keys with: yarn tauri signer generate (or tauri signer generate)." >&2
-            exit 1
-          fi
           echo "Missing required production macOS signing/notarization secrets." >&2
-          echo "TAURI_SIGNING_PRIVATE_KEY must be minisign format, not PEM." >&2
+          echo "Required: APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_API_KEY_ID, APPLE_API_ISSUER_ID, APPLE_API_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY." >&2
           exit 1
 
       - name: Collect updater artifact + signature
@@ -461,53 +430,21 @@ jobs:
               sig_matches=()
               while IFS= read -r match; do
                 sig_matches+=("${match}")
-              done < <(find "${search_dir}" -path '*/release/bundle/*' -type f \( -name '*.msi.sig' -o -name '*.exe.sig' -o -name '*.msi.zip.sig' -o -name '*.exe.zip.sig' -o -name '*.nsis.zip.sig' \) | sort)
+              done < <(find "${search_dir}" -path '*/release/bundle/*' -type f \( -name '*.msi.zip.sig' -o -name '*.exe.zip.sig' -o -name '*.nsis.zip.sig' \) | sort)
               if [ "${#sig_matches[@]}" -lt 1 ]; then
                 echo "Expected at least one updater signature for PLATFORM_KEY=${PLATFORM_KEY} under ${search_dir}; found 0" >&2
                 exit 1
               fi
               preferred_sig=""
               for candidate in "${sig_matches[@]}"; do
-                if [[ "${candidate}" == *-setup.exe.sig ]]; then
+                if [[ "${candidate}" == *.nsis.zip.sig ]]; then
                   preferred_sig="${candidate}"
                   break
                 fi
               done
               if [ -z "${preferred_sig}" ]; then
                 for candidate in "${sig_matches[@]}"; do
-                  if [[ "${candidate}" == *.exe.sig ]]; then
-                    preferred_sig="${candidate}"
-                    break
-                  fi
-                done
-              fi
-              if [ -z "${preferred_sig}" ]; then
-                for candidate in "${sig_matches[@]}"; do
-                  if [[ "${candidate}" == *.nsis.zip.sig ]]; then
-                    preferred_sig="${candidate}"
-                    break
-                  fi
-                done
-              fi
-              if [ -z "${preferred_sig}" ]; then
-                for candidate in "${sig_matches[@]}"; do
-                  if [[ "${candidate}" == *.msi.sig ]]; then
-                    preferred_sig="${candidate}"
-                    break
-                  fi
-                done
-              fi
-              if [ -z "${preferred_sig}" ]; then
-                for candidate in "${sig_matches[@]}"; do
                   if [[ "${candidate}" == *.exe.zip.sig ]]; then
-                    preferred_sig="${candidate}"
-                    break
-                  fi
-                done
-              fi
-              if [ -z "${preferred_sig}" ]; then
-                for candidate in "${sig_matches[@]}"; do
-                  if [[ "${candidate}" == *.msi.zip.sig ]]; then
                     preferred_sig="${candidate}"
                     break
                   fi
@@ -573,9 +510,6 @@ jobs:
           artifact_filename="$(basename "${artifact_path}")"
           ext=""
           case "${artifact_filename}" in
-            *.msi) ext=".msi" ;;
-            *.exe) ext=".exe" ;;
-            *.nsis) ext=".nsis" ;;
             *.msi.zip) ext=".msi.zip" ;;
             *.exe.zip) ext=".exe.zip" ;;
             *.nsis.zip) ext=".nsis.zip" ;;

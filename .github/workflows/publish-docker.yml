@@ -1,0 +1,104 @@
+name: Publish Docker Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Release channel (preview or stable)"
+        required: true
+        default: "preview"
+        type: choice
+        options:
+          - preview
+          - stable
+      push_latest:
+        description: "Also push the floating channel tag (preview or latest)"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build and push images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guard stable channel
+        if: ${{ inputs.channel == 'stable' && github.ref_name != 'main' }}
+        run: |
+          echo "Stable Docker publishing is only allowed from main (current ref: ${GITHUB_REF_NAME})." >&2
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Compute tags
+        id: tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          channel="${{ inputs.channel }}"
+          sha="${GITHUB_SHA}"
+          short_sha="${sha:0:12}"
+
+          if [ "$channel" = "stable" ]; then
+            float_tag="latest"
+            channel_tag="stable"
+          else
+            float_tag="preview"
+            channel_tag="preview"
+          fi
+
+          relay_base="happierdev/relay-server"
+          dev_base="happierdev/devcontainer"
+
+          relay_tags="${relay_base}:${channel_tag},${relay_base}:${channel_tag}-${short_sha}"
+          dev_tags="${dev_base}:${channel_tag},${dev_base}:${channel_tag}-${short_sha}"
+
+          if [ "${{ inputs.push_latest }}" = "true" ]; then
+            relay_tags="${relay_tags},${relay_base}:${float_tag}"
+            dev_tags="${dev_tags},${dev_base}:${float_tag}"
+          fi
+
+          echo "relay_tags=$relay_tags" >> "$GITHUB_OUTPUT"
+          echo "dev_tags=$dev_tags" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push relay-server
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: relay-server
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.relay_tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.repositoryUrl }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Build & push devcontainer
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/devcontainer/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.dev_tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.repositoryUrl }}
+            org.opencontainers.image.revision=${{ github.sha }}

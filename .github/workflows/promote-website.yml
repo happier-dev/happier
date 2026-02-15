@@ -192,6 +192,8 @@ jobs:
             apps/website/public/self-host-preview.sh \
             apps/website/public/install.ps1 \
             apps/website/public/install-preview.ps1 \
+            apps/website/public/self-host.ps1 \
+            apps/website/public/self-host-preview.ps1 \
             apps/website/public/happier-release.pub; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
@@ -235,6 +237,8 @@ jobs:
             apps/website/public/self-host-preview.sh \
             apps/website/public/install.ps1 \
             apps/website/public/install-preview.ps1 \
+            apps/website/public/self-host.ps1 \
+            apps/website/public/self-host-preview.ps1 \
             apps/website/public/happier-release.pub
 
           if git diff --cached --quiet; then

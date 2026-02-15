@@ -2,6 +2,7 @@
 
 import { join } from 'node:path';
 import { mkdir, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 
 import {
   CLI_STACK_TARGETS,
@@ -31,7 +32,10 @@ async function main() {
   const version = String(kv.get('--version') ?? '').trim()
     || readVersionFromPackageJson(join(repoRoot, 'apps', 'stack', 'package.json'));
   const outDir = join(repoRoot, 'dist', 'release-assets', 'stack');
-  const tempDir = join(repoRoot, 'dist', 'release-assets', '.tmp-stack-binaries');
+  // IMPORTANT: build scripts are invoked by multiple integration tests in parallel.
+  // Never share a single temp directory across invocations, or concurrent builds will race on rm/mkdir.
+  const tempBaseDir = join(repoRoot, 'dist', 'release-assets', '.tmp-stack-binaries');
+  const tempDir = join(tempBaseDir, `build-${process.pid}-${randomUUID()}`);
   const entrypoint = String(kv.get('--entrypoint') ?? '').trim()
     || join(repoRoot, 'apps', 'stack', 'scripts', 'self_host.mjs');
   const externals = parseCsv(kv.get('--externals') ?? process.env.HAPPIER_STACK_BUN_EXTERNALS ?? '');
@@ -41,6 +45,7 @@ async function main() {
   });
 
   await ensureFileExists(entrypoint);
+  await mkdir(tempBaseDir, { recursive: true });
   await rm(tempDir, { recursive: true, force: true });
   await mkdir(tempDir, { recursive: true });
   await mkdir(outDir, { recursive: true });
@@ -77,6 +82,9 @@ async function main() {
     path: checksumsPath,
     trustedComment: `hstack ${version} ${channel}`,
   });
+
+  // Best-effort cleanup to avoid unbounded temp build directories.
+  await rm(tempDir, { recursive: true, force: true });
 
   const output = {
     product: 'hstack',

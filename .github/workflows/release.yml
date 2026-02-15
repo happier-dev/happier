@@ -888,6 +888,18 @@ jobs:
       source_ref: dev
       allow_stable: false
 
+  publish_ui_web:
+    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && inputs.environment == 'preview' && contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped')
+    needs: [plan, bump_versions_dev]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-ui-web.yml
+    secrets: inherit
+    with:
+      channel: preview
+      source_ref: dev
+      allow_stable: false
+
   deploy_website:
     if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || needs.plan.outputs.bump_website != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
     needs: [plan, bump_versions_dev, promote_main, deploy_plan]
