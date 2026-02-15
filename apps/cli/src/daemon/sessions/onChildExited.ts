@@ -22,6 +22,8 @@ export function createOnChildExited(params: Readonly<{
     const tracked = pidToTrackedSession.get(pid);
     if (tracked) {
       const isUnexpected =
+        exit.reason === 'process-missing' ||
+        exit.reason === 'process-error' ||
         (typeof exit.code === 'number' && exit.code !== 0) ||
         (typeof exit.signal === 'string' && exit.signal.length > 0 && !['SIGTERM', 'SIGINT'].includes(exit.signal));
       if (isUnexpected && typeof tracked.happySessionId === 'string' && tracked.happySessionId.trim().length > 0) {
