@@ -17,22 +17,27 @@ ENV REDISMS_DISABLE_POSTINSTALL=1
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
 COPY package.json yarn.lock ./
-RUN mkdir -p apps/cli packages/agents packages/cli-common packages/protocol
+RUN mkdir -p apps/cli apps/stack packages/agents packages/cli-common packages/protocol packages/release-runtime
 COPY apps/cli/package.json apps/cli/
+COPY apps/stack/package.json apps/stack/
 COPY packages/agents/package.json packages/agents/
 COPY packages/cli-common/package.json packages/cli-common/
 COPY packages/protocol/package.json packages/protocol/
+COPY packages/release-runtime/package.json packages/release-runtime/
 
 RUN yarn install --frozen-lockfile --ignore-engines
 
 COPY packages/agents ./packages/agents
 COPY packages/cli-common ./packages/cli-common
 COPY packages/protocol ./packages/protocol
+COPY packages/release-runtime ./packages/release-runtime
 COPY apps/cli ./apps/cli
+COPY apps/stack ./apps/stack
 
 RUN yarn workspace @happier-dev/protocol postinstall:real \
-  && yarn workspace @happier-dev/agents postinstall:real \
-  && yarn workspace @happier-dev/cli build
+	  && yarn workspace @happier-dev/agents postinstall:real \
+	  && yarn workspace @happier-dev/release-runtime postinstall:real \
+	  && yarn workspace @happier-dev/cli build
 
 FROM node:${NODE_VERSION}-bookworm AS devcontainer
 
@@ -53,8 +58,9 @@ COPY --from=cli-builder /repo/node_modules /repo/node_modules
 COPY --from=cli-builder /repo/packages/agents /repo/packages/agents
 COPY --from=cli-builder /repo/packages/cli-common /repo/packages/cli-common
 COPY --from=cli-builder /repo/packages/protocol /repo/packages/protocol
+COPY --from=cli-builder /repo/packages/release-runtime /repo/packages/release-runtime
 COPY --from=cli-builder /repo/apps/cli /repo/apps/cli
-COPY apps/stack /repo/apps/stack
+COPY --from=cli-builder /repo/apps/stack /repo/apps/stack
 
 RUN chmod +x /repo/apps/cli/bin/happier.mjs /repo/apps/cli/bin/happier-mcp.mjs \
   && ln -sf /repo/apps/cli/bin/happier.mjs /usr/local/bin/happier \
