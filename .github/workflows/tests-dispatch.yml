@@ -1,0 +1,209 @@
+name: CI — Tests (manual dispatch)
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Profile — full runs everything; fast skips slow lanes; custom uses toggles below"
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - fast
+          - custom
+      custom_checks:
+        description: "Custom — Comma-separated checks used only when profile=custom (ui,server,cli,stack,typecheck,daemon_e2e,e2e_core,server_db_contract,providers,stress,release_contracts,installers_smoke,binary_smoke,self_host_systemd,self_host_launchd,self_host_schtasks,self_host_daemon)"
+        required: true
+        default: ""
+        type: string
+      installers_channel:
+        description: "Installers — Channel for installer smoke tests"
+        required: true
+        default: stable
+        type: choice
+        options:
+          - stable
+          - preview
+      providers_preset:
+        description: "Providers — Preset (when providers enabled)"
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - claude
+          - codex
+          - opencode
+      providers_tier:
+        description: "Providers — Tier (when providers enabled)"
+        required: true
+        default: smoke
+        type: choice
+        options:
+          - smoke
+          - extended
+
+jobs:
+  resolve:
+    name: Resolve flags
+    runs-on: ubuntu-latest
+    outputs:
+      run_ui: ${{ steps.flags.outputs.run_ui }}
+      run_server: ${{ steps.flags.outputs.run_server }}
+      run_cli: ${{ steps.flags.outputs.run_cli }}
+      run_stack: ${{ steps.flags.outputs.run_stack }}
+      run_typecheck: ${{ steps.flags.outputs.run_typecheck }}
+      run_cli_daemon_e2e: ${{ steps.flags.outputs.run_cli_daemon_e2e }}
+      run_e2e_core: ${{ steps.flags.outputs.run_e2e_core }}
+      run_server_db_contract: ${{ steps.flags.outputs.run_server_db_contract }}
+      run_providers: ${{ steps.flags.outputs.run_providers }}
+      run_stress: ${{ steps.flags.outputs.run_stress }}
+      run_release_contracts: ${{ steps.flags.outputs.run_release_contracts }}
+      run_installers_smoke: ${{ steps.flags.outputs.run_installers_smoke }}
+      run_binary_smoke: ${{ steps.flags.outputs.run_binary_smoke }}
+      run_self_host_systemd: ${{ steps.flags.outputs.run_self_host_systemd }}
+      run_self_host_launchd: ${{ steps.flags.outputs.run_self_host_launchd }}
+      run_self_host_schtasks: ${{ steps.flags.outputs.run_self_host_schtasks }}
+      run_self_host_daemon: ${{ steps.flags.outputs.run_self_host_daemon }}
+    steps:
+      - name: Compute flags
+        id: flags
+        env:
+          PROFILE: ${{ inputs.profile }}
+          CUSTOM: ${{ inputs.custom_checks }}
+        run: |
+          set -euo pipefail
+          profile="${PROFILE}"
+          custom="${CUSTOM}"
+
+          has() {
+            local key="$1"
+            echo ",${custom}," | grep -qi ",${key},"
+          }
+
+          if [ "${profile}" = "custom" ] && [ -z "${custom}" ]; then
+            echo "::error::profile=custom requires custom_checks" >&2
+            exit 1
+          fi
+
+          if [ "${profile}" = "full" ]; then
+            run_ui=true
+            run_server=true
+            run_cli=true
+            run_stack=true
+            run_typecheck=true
+            run_cli_daemon_e2e=true
+            run_e2e_core=true
+            run_server_db_contract=true
+            run_providers=false
+            run_stress=false
+            run_release_contracts=true
+            run_installers_smoke=true
+            run_binary_smoke=true
+            run_self_host_systemd=false
+            run_self_host_launchd=false
+            run_self_host_schtasks=false
+            run_self_host_daemon=false
+          elif [ "${profile}" = "fast" ]; then
+            run_ui=true
+            run_server=true
+            run_cli=true
+            run_stack=true
+            run_typecheck=true
+            run_cli_daemon_e2e=false
+            run_e2e_core=false
+            run_server_db_contract=false
+            run_providers=false
+            run_stress=false
+            run_release_contracts=true
+            run_installers_smoke=true
+            run_binary_smoke=true
+            run_self_host_systemd=false
+            run_self_host_launchd=false
+            run_self_host_schtasks=false
+            run_self_host_daemon=false
+          else
+            run_ui=false
+            run_server=false
+            run_cli=false
+            run_stack=false
+            run_typecheck=false
+            run_cli_daemon_e2e=false
+            run_e2e_core=false
+            run_server_db_contract=false
+            run_providers=false
+            run_stress=false
+            run_release_contracts=false
+            run_installers_smoke=false
+            run_binary_smoke=false
+            run_self_host_systemd=false
+            run_self_host_launchd=false
+            run_self_host_schtasks=false
+            run_self_host_daemon=false
+
+            if has ui; then run_ui=true; fi
+            if has server; then run_server=true; fi
+            if has cli; then run_cli=true; fi
+            if has stack; then run_stack=true; fi
+            if has typecheck; then run_typecheck=true; fi
+            if has daemon_e2e; then run_cli_daemon_e2e=true; fi
+            if has e2e_core; then run_e2e_core=true; fi
+            if has server_db_contract; then run_server_db_contract=true; fi
+            if has providers; then run_providers=true; fi
+            if has stress; then run_stress=true; fi
+            if has release_contracts; then run_release_contracts=true; fi
+            if has installers_smoke; then run_installers_smoke=true; fi
+            if has binary_smoke; then run_binary_smoke=true; fi
+            if has self_host_systemd; then run_self_host_systemd=true; fi
+            if has self_host_launchd; then run_self_host_launchd=true; fi
+            if has self_host_schtasks; then run_self_host_schtasks=true; fi
+            if has self_host_daemon; then run_self_host_daemon=true; fi
+          fi
+
+          {
+            echo "run_ui=${run_ui}"
+            echo "run_server=${run_server}"
+            echo "run_cli=${run_cli}"
+            echo "run_stack=${run_stack}"
+            echo "run_typecheck=${run_typecheck}"
+            echo "run_cli_daemon_e2e=${run_cli_daemon_e2e}"
+            echo "run_e2e_core=${run_e2e_core}"
+            echo "run_server_db_contract=${run_server_db_contract}"
+            echo "run_providers=${run_providers}"
+            echo "run_stress=${run_stress}"
+            echo "run_release_contracts=${run_release_contracts}"
+            echo "run_installers_smoke=${run_installers_smoke}"
+            echo "run_binary_smoke=${run_binary_smoke}"
+            echo "run_self_host_systemd=${run_self_host_systemd}"
+            echo "run_self_host_launchd=${run_self_host_launchd}"
+            echo "run_self_host_schtasks=${run_self_host_schtasks}"
+            echo "run_self_host_daemon=${run_self_host_daemon}"
+          } >> "$GITHUB_OUTPUT"
+
+  tests:
+    name: Tests (reusable)
+    needs: [resolve]
+    uses: ./.github/workflows/tests.yml
+    with:
+      run_ui: ${{ needs.resolve.outputs.run_ui == 'true' }}
+      run_server: ${{ needs.resolve.outputs.run_server == 'true' }}
+      run_cli: ${{ needs.resolve.outputs.run_cli == 'true' }}
+      run_stack: ${{ needs.resolve.outputs.run_stack == 'true' }}
+      run_typecheck: ${{ needs.resolve.outputs.run_typecheck == 'true' }}
+      run_cli_daemon_e2e: ${{ needs.resolve.outputs.run_cli_daemon_e2e == 'true' }}
+      run_e2e_core: ${{ needs.resolve.outputs.run_e2e_core == 'true' }}
+      run_server_db_contract: ${{ needs.resolve.outputs.run_server_db_contract == 'true' }}
+      run_providers: ${{ needs.resolve.outputs.run_providers == 'true' }}
+      providers_preset: ${{ inputs.providers_preset }}
+      providers_tier: ${{ inputs.providers_tier }}
+      run_stress: ${{ needs.resolve.outputs.run_stress == 'true' }}
+      run_release_contracts: ${{ needs.resolve.outputs.run_release_contracts == 'true' }}
+      run_installers_smoke: ${{ needs.resolve.outputs.run_installers_smoke == 'true' }}
+      installers_channel: ${{ inputs.installers_channel }}
+      run_binary_smoke: ${{ needs.resolve.outputs.run_binary_smoke == 'true' }}
+      run_self_host_systemd: ${{ needs.resolve.outputs.run_self_host_systemd == 'true' }}
+      run_self_host_launchd: ${{ needs.resolve.outputs.run_self_host_launchd == 'true' }}
+      run_self_host_schtasks: ${{ needs.resolve.outputs.run_self_host_schtasks == 'true' }}
+      run_self_host_daemon: ${{ needs.resolve.outputs.run_self_host_daemon == 'true' }}
+
