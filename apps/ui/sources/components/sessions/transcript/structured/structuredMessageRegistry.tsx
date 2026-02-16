@@ -3,7 +3,14 @@ import type { ZodSchema } from 'zod';
 
 import { ReviewCommentsV1Schema } from '@/sync/domains/input/reviewComments/reviewCommentMeta';
 import { ReviewCommentsMessageCard } from '@/components/sessions/reviews/messages/ReviewCommentsMessageCard';
-import { DelegateOutputV1Schema, PlanOutputV1Schema, ReviewFindingsV1Schema, VoiceAgentTurnV1Schema } from '@happier-dev/protocol';
+import {
+    DelegateOutputV1Schema,
+    PlanOutputV1Schema,
+    ReviewFindingsV1Schema,
+    SessionSummaryShardV1Schema,
+    SessionSynopsisV1Schema,
+    VoiceAgentTurnV1Schema,
+} from '@happier-dev/protocol';
 import { ReviewFindingsMessageCard } from '@/components/sessions/reviews/messages/ReviewFindingsMessageCard';
 import { PlanOutputMessageCard } from '@/components/sessions/plans/messages/PlanOutputMessageCard';
 import { DelegateOutputMessageCard } from '@/components/sessions/delegations/messages/DelegateOutputMessageCard';
@@ -14,7 +21,9 @@ export type StructuredMessageKind =
     | 'review_findings.v1'
     | 'plan_output.v1'
     | 'delegate_output.v1'
-    | 'voice_agent_turn.v1';
+    | 'voice_agent_turn.v1'
+    | 'session_synopsis.v1'
+    | 'session_summary_shard.v1';
 
 export type StructuredMessageRendererParams = Readonly<{
     sessionId: string;
@@ -60,6 +69,16 @@ export const STRUCTURED_MESSAGE_REGISTRY: readonly StructuredMessageRegistryEntr
         kind: 'voice_agent_turn.v1',
         schema: VoiceAgentTurnV1Schema,
         // Voice turns are rendered in the voice sidebar; the transcript registry should still validate the payload.
+        render: () => null,
+    },
+    {
+        kind: 'session_synopsis.v1',
+        schema: SessionSynopsisV1Schema,
+        render: () => null,
+    },
+    {
+        kind: 'session_summary_shard.v1',
+        schema: SessionSummaryShardV1Schema,
         render: () => null,
     },
 ]);

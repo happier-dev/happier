@@ -76,7 +76,7 @@ function formatResumeSupportDetailCode(code: 'cliNotDetected' | 'capabilityProbe
     }
 }
 
-export const SessionView = React.memo((props: { id: string }) => {
+export const SessionView = React.memo((props: { id: string; jumpToSeq?: number | null }) => {
     const sessionId = props.id;
     const router = useRouter();
     const session = useSession(sessionId);
@@ -262,7 +262,7 @@ export const SessionView = React.memo((props: { id: string }) => {
                     </View>
                 ) : (
                     // Normal session view
-                    <SessionViewLoaded key={sessionId} sessionId={sessionId} session={session} />
+                    <SessionViewLoaded key={sessionId} sessionId={sessionId} session={session} jumpToSeq={props.jumpToSeq ?? null} />
                 )}
             </View>
         </>
@@ -270,7 +270,7 @@ export const SessionView = React.memo((props: { id: string }) => {
 });
 
 
-function SessionViewLoaded({ sessionId, session }: { sessionId: string, session: Session }) {
+function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: string; session: Session; jumpToSeq: number | null }) {
     const { theme } = useUnistyles();
     const router = useRouter();
     const safeArea = useSafeAreaInsets();
@@ -748,19 +748,20 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
         controlledByUser: Boolean(session.agentState?.controlledByUser),
     }), [messages.length, pendingMessages.length, session.agentState?.controlledByUser]);
 
-    let content = (
-        <>
-            <Deferred>
-                {shouldRenderChatTimeline && (
-                    <ChatList
-                        session={session}
-                        bottomNotice={bottomNotice}
-                        onRequestSwitchToRemote={handleRequestSwitchToRemote}
-                    />
-                )}
-            </Deferred>
-        </>
-    );
+	    let content = (
+	        <>
+	            <Deferred>
+	                {shouldRenderChatTimeline && (
+	                    <ChatList
+	                        session={session}
+	                        bottomNotice={bottomNotice}
+	                        onRequestSwitchToRemote={handleRequestSwitchToRemote}
+	                        jumpToSeq={jumpToSeq}
+	                    />
+	                )}
+	            </Deferred>
+	        </>
+	    );
     const placeholder = !shouldRenderChatTimeline ? (
         <>
             {isLoaded ? (

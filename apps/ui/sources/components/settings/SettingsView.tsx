@@ -370,6 +370,12 @@ export const SettingsView = React.memo(function SettingsView() {
                     onPress={() => router.push('/(app)/settings/voice')}
                 />
                 <Item
+                    title={t('settings.memorySearch')}
+                    subtitle={t('settings.memorySearchSubtitle')}
+                    icon={<Ionicons name="search-outline" size={29} color="#34C759" />}
+                    onPress={() => router.push('/(app)/settings/memory')}
+                />
+                <Item
                     title={t('settings.featuresTitle')}
                     subtitle={t('settings.featuresSubtitle')}
                     icon={<Ionicons name="flask-outline" size={29} color="#FF9500" />}

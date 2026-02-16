@@ -126,4 +126,58 @@ describe('buildCommandPaletteCommands', () => {
     expect(created?.input?.engineIds).toEqual(['coderabbit']);
     expect(created?.input?.engines).toBeUndefined();
   });
+
+  it('omits command_palette actions when disabled for that placement', async () => {
+    mockedState = {
+      createSessionActionDraft: createSessionActionDraftSpy,
+      settings: {
+        actionsSettingsV1: {
+          v: 1,
+          actions: {
+            'review.start': { disabledPlacements: ['command_palette'] },
+          },
+        },
+      },
+    };
+
+    const cmds = buildCommandPaletteCommands({
+      sessionsById: {},
+      isDev: false,
+      activeSessionId: 'session-1',
+      features: { executionRunsEnabled: true, voiceEnabled: false },
+      nav: {
+        push: () => {},
+        navigateToSession: () => {},
+      },
+      auth: { logout: async () => {} },
+      actions: { execute: async () => ({ ok: true, result: {} }) },
+      alert: async () => {},
+    });
+
+    expect(commandTitles(cmds)).not.toEqual(expect.arrayContaining(['Start review run']));
+  });
+
+  it('includes a memory search navigation command', async () => {
+    const pushes: string[] = [];
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
+
+    const cmds = buildCommandPaletteCommands({
+      sessionsById: {},
+      isDev: false,
+      activeSessionId: null,
+      features: { executionRunsEnabled: false, voiceEnabled: false },
+      nav: {
+        push: (path) => pushes.push(path),
+        navigateToSession: () => {},
+      },
+      auth: { logout: async () => {} },
+      actions: { execute: async () => ({ ok: true, result: {} }) },
+      alert: async () => {},
+    });
+
+    const cmd = cmds.find((c) => c.id === 'memory-search');
+    expect(cmd).toBeTruthy();
+    await cmd!.action();
+    expect(pushes).toEqual(['/search']);
+  });
 });

@@ -90,6 +90,14 @@ export function buildCommandPaletteCommands(params: Readonly<{
       action: () => nav.push('/settings'),
     },
     {
+      id: 'memory-search',
+      title: 'Search Memory',
+      subtitle: 'Search across past conversations',
+      icon: 'search-outline',
+      category: 'Navigation',
+      action: () => nav.push('/search'),
+    },
+    {
       id: 'account',
       title: 'Account',
       subtitle: 'Manage your account',
