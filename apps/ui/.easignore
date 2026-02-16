@@ -2,3 +2,7 @@
 public/monaco/
 public/vendor/
 
+# Local env files should never be uploaded to EAS build workers.
+# Use EAS project env vars or `eas.json` `build.<profile>.env` instead.
+.env
+.env*.local
