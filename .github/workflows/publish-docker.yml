@@ -87,6 +87,8 @@ jobs:
           target: relay-server
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: |
+            HAPPIER_EMBEDDED_POLICY_ENV=${{ inputs.channel == 'stable' && 'production' || 'preview' }}
           tags: ${{ steps.tags.outputs.relay_tags }}
           labels: |
             org.opencontainers.image.source=${{ github.repositoryUrl }}

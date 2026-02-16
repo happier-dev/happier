@@ -92,6 +92,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     needs: [resolve_source]
     environment: release-shared
+    env:
+      HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
     strategy:
       fail-fast: false
       matrix:

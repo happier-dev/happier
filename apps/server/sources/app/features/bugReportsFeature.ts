@@ -1,6 +1,7 @@
 import { BUG_REPORT_DEFAULT_ACCEPTED_ARTIFACT_KINDS, normalizeBugReportProviderUrl } from "@happier-dev/protocol";
 import type { FeaturesResponse } from "./types";
 import { readBugReportsFeatureEnv } from "./catalog/readFeatureEnv";
+import { isServerFeatureEnabledByBuildPolicy } from "./catalog/serverFeatureBuildPolicy";
 
 const DEFAULT_PROVIDER_URL = "https://reports.happier.dev";
 const DEFAULT_ACCEPTED_KINDS = [...BUG_REPORT_DEFAULT_ACCEPTED_ARTIFACT_KINDS];
@@ -22,6 +23,7 @@ function parseAcceptedKinds(raw: string | undefined): string[] {
 
 export function resolveBugReportsFeature(env: NodeJS.ProcessEnv): Pick<FeaturesResponse["features"], "bugReports"> {
     const config = readBugReportsFeatureEnv(env);
+    const buildEnabled = isServerFeatureEnabledByBuildPolicy("bugReports", env);
     const hasExplicitProviderUrl = typeof config.providerUrlRaw === "string";
     const providerUrlRaw = (hasExplicitProviderUrl ? (config.providerUrlRaw ?? "") : DEFAULT_PROVIDER_URL).trim();
     const providerUrl = normalizeBugReportProviderUrl(providerUrlRaw);
@@ -34,7 +36,7 @@ export function resolveBugReportsFeature(env: NodeJS.ProcessEnv): Pick<FeaturesR
 
     return {
         bugReports: {
-            enabled: config.enabled,
+            enabled: buildEnabled && config.enabled,
             providerUrl,
             defaultIncludeDiagnostics,
             maxArtifactBytes,

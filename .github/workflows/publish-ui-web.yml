@@ -69,6 +69,10 @@ jobs:
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
     environment: release-shared
+    env:
+      APP_ENV: ${{ inputs.channel == 'stable' && 'production' || 'preview' }}
+      EXPO_UPDATES_CHANNEL: ${{ inputs.channel == 'stable' && 'production' || 'preview' }}
+      HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.channel == 'stable' && 'production' || 'preview' }}
     outputs:
       target_sha: ${{ steps.meta.outputs.target_sha }}
       ui_version: ${{ steps.meta.outputs.ui_version }}

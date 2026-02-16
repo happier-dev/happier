@@ -41,5 +41,6 @@ export function parseFeatureBuildPolicy(input: {
 export function evaluateFeatureBuildPolicy(policy: FeatureBuildPolicy, featureId: FeatureId): FeatureBuildPolicyEvaluation {
   if (policy.deny.includes(featureId)) return 'deny';
   if (policy.allow.includes(featureId)) return 'allow';
+  if (policy.allow.length > 0) return 'deny';
   return 'neutral';
 }

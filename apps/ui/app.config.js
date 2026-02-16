@@ -55,6 +55,10 @@ const updatesConfig = {
     }
 };
 
+if (!process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV) {
+    process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV = updatesChannel === 'production' ? 'production' : 'preview';
+}
+
 const linkHost = (process.env.EXPO_APP_LINK_HOST || DEFAULTS.linkHost).trim();
 const iosAssociatedDomainsRaw = (process.env.EXPO_IOS_ASSOCIATED_DOMAINS || '').trim();
 const iosAssociatedDomains = iosAssociatedDomainsRaw

@@ -270,6 +270,7 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
           # Speed up installs for mobile-only and unit-test flows (desktop/web builds happen elsewhere).
           HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"

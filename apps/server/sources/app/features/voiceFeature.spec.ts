@@ -56,4 +56,18 @@ describe('features/voiceFeature', () => {
     expect(res.voice.configured).toBe(true);
     expect(res.voice.enabled).toBe(true);
   });
+
+  it('hard-disables voice when build policy denies the feature', () => {
+    const res = resolveVoiceFeature({
+      NODE_ENV: 'production',
+      HAPPIER_BUILD_FEATURES_DENY: 'voice',
+      HAPPIER_FEATURE_VOICE__ENABLED: 'true',
+      HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: 'false',
+      ELEVENLABS_API_KEY: 'k',
+      ELEVENLABS_AGENT_ID: 'agent_dev',
+    } as any);
+
+    expect(res.voice.configured).toBe(true);
+    expect(res.voice.enabled).toBe(false);
+  });
 });

@@ -118,6 +118,8 @@ jobs:
       id-token: write
     runs-on: ubuntu-22.04
     environment: release-shared
+    env:
+      HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.channel == 'production' && 'production' || 'preview' }}
     outputs:
       sha: ${{ steps.meta.outputs.sha }}
       source_ref: ${{ steps.meta.outputs.source_ref }}

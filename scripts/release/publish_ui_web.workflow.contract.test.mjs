@@ -33,3 +33,22 @@ test('publish-ui-web uses release bot GitHub App token for rolling tag updates',
   assert.match(raw, /RELEASE_BOT_PRIVATE_KEY/);
 });
 
+test('publish-ui-web embeds build feature policy defaults and exports production variant for stable', async () => {
+  const raw = await loadWorkflow('publish-ui-web.yml');
+
+  assert.match(
+    raw,
+    /HAPPIER_EMBEDDED_POLICY_ENV:\s*\$\{\{\s*inputs\.channel\s*==\s*'stable'\s*&&\s*'production'\s*\|\|\s*'preview'\s*\}\}/,
+    'ui web publishing should set HAPPIER_EMBEDDED_POLICY_ENV to production for stable bundles',
+  );
+  assert.match(
+    raw,
+    /APP_ENV:\s*\$\{\{\s*inputs\.channel\s*==\s*'stable'\s*&&\s*'production'\s*\|\|\s*'preview'\s*\}\}/,
+    'ui web publishing should set APP_ENV so stable bundles use production config',
+  );
+  assert.match(
+    raw,
+    /EXPO_UPDATES_CHANNEL:\s*\$\{\{\s*inputs\.channel\s*==\s*'stable'\s*&&\s*'production'\s*\|\|\s*'preview'\s*\}\}/,
+    'ui web publishing should set EXPO_UPDATES_CHANNEL so updates headers match the release channel',
+  );
+});

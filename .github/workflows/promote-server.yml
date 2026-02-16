@@ -184,6 +184,7 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
         run: yarn install --frozen-lockfile --ignore-engines
 
       - name: Run release contract tests

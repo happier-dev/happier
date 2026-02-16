@@ -88,6 +88,7 @@ EXPOSE 8080
 
 # Webapp (Expo export static)
 FROM deps-alpine AS webapp-builder
+ARG HAPPIER_EMBEDDED_POLICY_ENV=preview
 ARG POSTHOG_API_KEY=""
 ARG REVENUE_CAT_STRIPE=""
 
@@ -95,7 +96,9 @@ ENV NODE_ENV=production
 ENV APP_ENV=production
 ENV EXPO_PUBLIC_POSTHOG_API_KEY=$POSTHOG_API_KEY
 ENV EXPO_PUBLIC_REVENUE_CAT_STRIPE=$REVENUE_CAT_STRIPE
+ENV HAPPIER_EMBEDDED_POLICY_ENV=$HAPPIER_EMBEDDED_POLICY_ENV
 
+COPY .github/feature-policy ./.github/feature-policy
 COPY apps/ui ./apps/ui
 COPY packages/agents ./packages/agents
 COPY packages/protocol ./packages/protocol
@@ -183,8 +186,11 @@ CMD ["yarn", "--cwd", "apps/docs", "start"]
 
 # Server
 FROM deps-debian AS server-builder
+ARG HAPPIER_EMBEDDED_POLICY_ENV=preview
 ARG HAPPIER_BUILD_DB_PROVIDERS=""
 ENV HAPPIER_BUILD_DB_PROVIDERS=$HAPPIER_BUILD_DB_PROVIDERS
+ENV HAPPIER_EMBEDDED_POLICY_ENV=$HAPPIER_EMBEDDED_POLICY_ENV
+COPY .github/feature-policy ./.github/feature-policy
 COPY apps/server ./apps/server
 COPY packages/agents ./packages/agents
 COPY packages/protocol ./packages/protocol
@@ -215,12 +221,18 @@ ENV SERVER_ROLE=worker
 
 # Relay server (self-host default: light + sqlite)
 FROM server AS relay-server
+# Embed the web UI bundle so self-hosted deployments can serve UI from the server.
+# Disable at runtime by clearing HAPPIER_SERVER_UI_DIR (e.g. `-e HAPPIER_SERVER_UI_DIR=`).
+COPY --from=webapp-builder --chown=node:node /repo/apps/ui/dist /repo/apps/ui/dist
 ENV HAPPIER_SERVER_FLAVOR=light
 ENV HAPPY_SERVER_FLAVOR=light
 ENV HAPPIER_DB_PROVIDER=sqlite
 ENV HAPPY_DB_PROVIDER=sqlite
 ENV HAPPIER_SERVER_LIGHT_DATA_DIR=/data
 ENV HAPPY_SERVER_LIGHT_DATA_DIR=/data
+ENV HAPPIER_SERVER_UI_DIR=/repo/apps/ui/dist
+ENV HAPPIER_SERVER_UI_PREFIX=/
+ENV HAPPIER_SERVER_UI_REQUIRED=1
 VOLUME ["/data"]
 
 # Default target when building without --target

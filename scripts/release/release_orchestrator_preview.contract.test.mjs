@@ -96,6 +96,15 @@ test('release-npm resolves source ref from channel and checks out resolved sourc
   assert.match(raw, /ref:\s*\$\{\{ steps\.resolve_source\.outputs\.ref \}\}/);
 });
 
+test('release-npm embeds build feature policy defaults by channel', async () => {
+  const raw = await loadWorkflow('release-npm.yml');
+  assert.match(
+    raw,
+    /HAPPIER_EMBEDDED_POLICY_ENV:\s*\$\{\{\s*inputs\.channel\s*==\s*'production'\s*&&\s*'production'\s*\|\|\s*'preview'\s*\}\}/,
+    'npm publishing should set HAPPIER_EMBEDDED_POLICY_ENV to production for production channel releases',
+  );
+});
+
 test('release-npm is compatible with npm trusted publishing (OIDC)', async () => {
   const raw = await loadWorkflow('release-npm.yml');
 
@@ -185,4 +194,19 @@ test('promote-ui native_submit handles preview platform credential gaps without 
   assert.match(raw, /for submit_platform_name in ios android; do/);
   assert.match(raw, /if \[ "\$\{\{ inputs\.environment \}\}" = "preview" \]; then/);
   assert.match(raw, /::warning::Expo submit failed for/);
+});
+
+test('promote-ui preview OTA updates are non-interactive and provide an update message', async () => {
+  const raw = await loadWorkflow('promote-ui.yml');
+  assert.match(raw, /- name: Expo OTA update/);
+  assert.match(raw, /eas-cli@\$\{EAS_CLI_VERSION\}\"\s+update\s+--branch\s+preview/);
+  assert.match(raw, /--non-interactive/);
+  assert.match(raw, /--message/);
+});
+
+test('release workflow can pass a top-level release message down to promote-ui for Expo updates', async () => {
+  const raw = await loadWorkflow('release.yml');
+  assert.match(raw, /release_message:/, 'release.yml should expose a release_message input');
+  assert.match(raw, /deploy_ui:[\s\S]*?uses:\s*\.\/\.github\/workflows\/promote-ui\.yml/);
+  assert.match(raw, /expo_update_message:\s*\$\{\{\s*inputs\.release_message\s*\}\}/);
 });

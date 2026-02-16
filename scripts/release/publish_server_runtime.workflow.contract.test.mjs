@@ -33,3 +33,13 @@ test('publish-server-runtime workflow publishes rolling server-preview tag via r
   assert.match(raw, /rolling_tag/);
   assert.match(raw, /uses:\s*\.\/\.github\/workflows\/publish-github-release\.yml/);
 });
+
+test('publish-server-runtime embeds build feature policy defaults by channel', async () => {
+  const raw = await loadWorkflow('publish-server-runtime.yml');
+
+  assert.match(
+    raw,
+    /HAPPIER_EMBEDDED_POLICY_ENV:\s*\$\{\{\s*inputs\.channel\s*==\s*'stable'\s*&&\s*'production'\s*\|\|\s*'preview'\s*\}\}/,
+    'server runtime publishing should set HAPPIER_EMBEDDED_POLICY_ENV to production for stable artifacts',
+  );
+});
