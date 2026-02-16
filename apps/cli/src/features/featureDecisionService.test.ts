@@ -22,6 +22,14 @@ function buildFeaturesResponse(overrides?: Partial<FeaturesResponse['features']>
         enabled: true,
         existingSessionTarget: true,
       },
+      connectedServices: {
+        enabled: true,
+        webOauthProxyEnabled: true,
+        quotas: { enabled: false },
+      },
+      updates: {
+        ota: { enabled: true },
+      },
       sharing: {
         session: { enabled: true },
         public: { enabled: true },
@@ -163,5 +171,30 @@ describe('resolveCliFeatureDecision', () => {
 
     expect(decision.state).toBe('disabled');
     expect(decision.blockedBy).toBe('build_policy');
+  });
+
+  it('disables connected.services.quotas when the server reports quotas disabled', () => {
+    const snapshot: CliServerFeaturesSnapshot = {
+      status: 'ready',
+      features: buildFeaturesResponse({
+        connectedServices: {
+          enabled: true,
+          webOauthProxyEnabled: true,
+          quotas: { enabled: false },
+        },
+      } as any),
+    };
+
+    const decision = resolveCliFeatureDecision({
+      featureId: 'connected.services.quotas',
+      env: {
+        HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED: '1',
+        HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: '1',
+      } as NodeJS.ProcessEnv,
+      serverSnapshot: snapshot,
+    });
+
+    expect(decision.state).toBe('disabled');
+    expect(decision.blockedBy).toBe('server');
   });
 });

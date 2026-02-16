@@ -35,6 +35,14 @@ function createFeaturesResponse(friendsEnabled: boolean): FeaturesResponse {
                 enabled: true,
                 existingSessionTarget: false,
             },
+            connectedServices: {
+                enabled: true,
+                webOauthProxyEnabled: true,
+                quotas: { enabled: true },
+            },
+            updates: {
+                ota: { enabled: true },
+            },
             sharing: {
                 session: { enabled: true },
                 public: { enabled: true },

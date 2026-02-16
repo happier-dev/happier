@@ -15,6 +15,14 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             enabled: true,
             existingSessionTarget: false,
         },
+        connectedServices: {
+            enabled: true,
+            webOauthProxyEnabled: true,
+            quotas: { enabled: true },
+        },
+        updates: {
+            ota: { enabled: true },
+        },
         sharing: {
             session: { enabled: true },
             public: { enabled: true },
@@ -59,6 +67,8 @@ export function createRootLayoutFeaturesResponse(overrides?: Partial<RootLayoutF
     const nextSocial: Partial<RootLayoutFeatures['features']['social']> = nextFeatures.social ?? {};
     const nextSharing: Partial<RootLayoutFeatures['features']['sharing']> = nextFeatures.sharing ?? {};
     const nextOauth: Partial<RootLayoutFeatures['features']['oauth']> = nextFeatures.oauth ?? {};
+    const nextConnectedServices: Partial<RootLayoutFeatures['features']['connectedServices']> = nextFeatures.connectedServices ?? {};
+    const nextUpdates: Partial<RootLayoutFeatures['features']['updates']> = nextFeatures.updates ?? {};
     return {
         features: {
             ...BASE_ROOT_LAYOUT_FEATURES.features,
@@ -74,6 +84,22 @@ export function createRootLayoutFeaturesResponse(overrides?: Partial<RootLayoutF
             automations: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.automations,
                 ...(nextFeatures.automations ?? {}),
+            },
+            connectedServices: {
+                ...BASE_ROOT_LAYOUT_FEATURES.features.connectedServices,
+                ...nextConnectedServices,
+                quotas: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.connectedServices.quotas,
+                    ...(nextConnectedServices.quotas ?? {}),
+                },
+            },
+            updates: {
+                ...BASE_ROOT_LAYOUT_FEATURES.features.updates,
+                ...nextUpdates,
+                ota: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.updates.ota,
+                    ...(nextUpdates.ota ?? {}),
+                },
             },
             social: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.social,

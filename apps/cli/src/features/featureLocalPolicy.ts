@@ -1,12 +1,4 @@
-import type { FeatureId } from '@happier-dev/protocol';
-
-function parseBooleanEnv(raw: string | null | undefined, fallback: boolean): boolean {
-  const normalized = String(raw ?? '').trim().toLowerCase();
-  if (!normalized) return fallback;
-  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') return false;
-  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') return true;
-  return fallback;
-}
+import { parseBooleanEnv, type FeatureId } from '@happier-dev/protocol';
 
 type FeatureLocalPolicyResolver = (env: NodeJS.ProcessEnv) => boolean;
 
