@@ -175,7 +175,9 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
     expect(setIntervalSpy).toHaveBeenCalled();
     expect(tick).toBeTypeOf('function');
     const tickPromise = tick!();
-    await vi.advanceTimersByTimeAsync(100);
+    // Ensure the async tick has a chance to schedule its internal timers before we flush them.
+    await Promise.resolve();
+    await vi.runAllTimersAsync();
     await tickPromise;
 
     expect(spawnHappyCLI).toHaveBeenCalledWith(
@@ -245,7 +247,9 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
     expect(setIntervalSpy).toHaveBeenCalled();
     expect(tick).toBeTypeOf('function');
     const tickPromise = tick!();
-    await vi.advanceTimersByTimeAsync(100);
+    // Ensure the async tick has a chance to schedule its internal timers before we flush them.
+    await Promise.resolve();
+    await vi.runAllTimersAsync();
     await tickPromise;
 
     expect(spawnHappyCLI).toHaveBeenCalledWith(

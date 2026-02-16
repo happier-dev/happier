@@ -33,7 +33,8 @@ function getOpenCodeConfigPath(): string {
     return join(appData, 'opencode', 'opencode.json');
   }
   // Linux, macOS, and others respect XDG_CONFIG_HOME
-  const xdgConfigHome = process.env.XDG_CONFIG_HOME || join(homedir(), '.config');
+  const homeDir = process.env.HOME || homedir();
+  const xdgConfigHome = process.env.XDG_CONFIG_HOME || join(homeDir, '.config');
   return join(xdgConfigHome, 'opencode', 'opencode.json');
 }
 
