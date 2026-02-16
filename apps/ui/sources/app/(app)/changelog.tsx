@@ -7,6 +7,10 @@ import { getChangelogEntries, getLatestVersion, setLastViewedVersion } from '@/c
 import { Typography } from '@/constants/Typography';
 import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
+import type { FeatureId } from '@happier-dev/protocol';
+import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
+
+const CHANGELOG_FEATURE_ID = 'app.ui.changelog' as const satisfies FeatureId;
 
 const styles = StyleSheet.create((theme, runtime) => ({
     container: {
@@ -76,7 +80,7 @@ const styles = StyleSheet.create((theme, runtime) => ({
     }
 }));
 
-export default function ChangelogScreen() {
+function ChangelogScreenEnabled() {
     const { theme } = useUnistyles();
     const insets = useSafeAreaInsets();
     const entries = getChangelogEntries();
@@ -144,4 +148,11 @@ export default function ChangelogScreen() {
             </ScrollView>
         </View>
     );
+}
+
+export default function ChangelogScreen() {
+    if (getFeatureBuildPolicyDecision(CHANGELOG_FEATURE_ID) === 'deny') {
+        return null;
+    }
+    return <ChangelogScreenEnabled />;
 }

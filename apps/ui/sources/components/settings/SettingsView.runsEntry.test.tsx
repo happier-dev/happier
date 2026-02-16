@@ -211,5 +211,27 @@ describe('SettingsView (runs entry)', () => {
 
         expect(routerPushSpy).toHaveBeenCalledWith('/runs');
     });
+
+    it("omits the What's New entry when changelog UI is disabled by build policy", async () => {
+        const previousDeny = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+        process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = 'app.ui.changelog';
+        vi.resetModules();
+
+        try {
+            const { SettingsView } = await import('./SettingsView');
+
+            let tree!: ReactTestRenderer;
+            await act(async () => {
+                tree = renderer.create(React.createElement(SettingsView));
+            });
+
+            const items = tree.root.findAllByType('Item' as any);
+            const whatsNewItem = items.find((item: any) => item?.props?.title === 'settings.whatsNew');
+            expect(whatsNewItem).toBeFalsy();
+        } finally {
+            if (previousDeny === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+            else process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = previousDeny;
+        }
+    });
 });
 
