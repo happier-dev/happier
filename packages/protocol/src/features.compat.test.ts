@@ -47,6 +47,9 @@ describe('FeaturesResponseSchema backward compatibility', () => {
     expect(parsed.features.bugReports.contextWindowMs).toBe(30 * 60 * 1000);
     expect(parsed.features.automations.enabled).toBe(false);
     expect(parsed.features.automations.existingSessionTarget).toBe(false);
+    expect(parsed.features.connectedServices.enabled).toBe(true);
+    expect(parsed.features.connectedServices.quotas.enabled).toBe(true);
+    expect((parsed as any).features?.updates?.ota?.enabled).toBe(true);
   });
 
   it('coerces bug report feature from sparse payloads', () => {

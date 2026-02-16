@@ -21,6 +21,15 @@ export type VoiceFeatureEnv = Readonly<{
   requireSubscription: boolean;
 }>;
 
+export type ConnectedServicesFeatureEnv = Readonly<{
+  enabled: boolean;
+  quotasEnabled: boolean;
+}>;
+
+export type UpdatesFeatureEnv = Readonly<{
+  otaEnabled: boolean;
+}>;
+
 export type SocialFriendsFeatureEnv = Readonly<{
   enabled: boolean;
   allowUsername: boolean;
@@ -64,6 +73,19 @@ export function readVoiceFeatureEnv(env: NodeJS.ProcessEnv): VoiceFeatureEnv {
   return {
     enabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.voiceEnabled], true),
     requireSubscription: parseBooleanEnv(env[FEATURE_ENV_KEYS.voiceRequireSubscription], isProduction),
+  };
+}
+
+export function readConnectedServicesFeatureEnv(env: NodeJS.ProcessEnv): ConnectedServicesFeatureEnv {
+  return {
+    enabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.connectedServicesEnabled], true),
+    quotasEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.connectedServicesQuotasEnabled], true),
+  };
+}
+
+export function readUpdatesFeatureEnv(env: NodeJS.ProcessEnv): UpdatesFeatureEnv {
+  return {
+    otaEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.updatesOtaEnabled], true),
   };
 }
 

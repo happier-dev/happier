@@ -54,6 +54,38 @@ export const DEFAULT_AUTOMATIONS_FEATURE: AutomationsFeature = {
   existingSessionTarget: false,
 };
 
+export const ConnectedServicesFeatureSchema = z.object({
+  enabled: z.boolean(),
+  // When enabled, the server supports web OAuth proxy exchange for connected service credentials.
+  webOauthProxyEnabled: z.boolean(),
+  quotas: z
+    .object({
+      enabled: z.boolean(),
+    })
+    .optional()
+    .default({ enabled: true }),
+});
+
+export type ConnectedServicesFeature = z.infer<typeof ConnectedServicesFeatureSchema>;
+
+export const DEFAULT_CONNECTED_SERVICES_FEATURE: ConnectedServicesFeature = {
+  enabled: true,
+  webOauthProxyEnabled: true,
+  quotas: { enabled: true },
+};
+
+export const UpdatesFeatureSchema = z.object({
+  ota: z.object({
+    enabled: z.boolean(),
+  }),
+});
+
+export type UpdatesFeature = z.infer<typeof UpdatesFeatureSchema>;
+
+export const DEFAULT_UPDATES_FEATURE: UpdatesFeature = {
+  ota: { enabled: true },
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object';
 }
@@ -120,6 +152,8 @@ export const FeaturesResponseSchema = z.preprocess(coerceFeaturesResponsePayload
   features: z.object({
     bugReports: BugReportsFeatureSchema.optional().default(DEFAULT_BUG_REPORTS_FEATURE),
     automations: AutomationsFeatureSchema.optional().default(DEFAULT_AUTOMATIONS_FEATURE),
+    connectedServices: ConnectedServicesFeatureSchema.optional().default(DEFAULT_CONNECTED_SERVICES_FEATURE),
+    updates: UpdatesFeatureSchema.optional().default(DEFAULT_UPDATES_FEATURE),
     sharing: z.object({
       session: z.object({ enabled: z.boolean() }),
       public: z.object({ enabled: z.boolean() }),

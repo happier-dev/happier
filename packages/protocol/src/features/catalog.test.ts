@@ -23,6 +23,14 @@ describe('feature catalog', () => {
     expect(isFeatureId('execution.runs')).toBe(true);
   });
 
+  it('includes connected services quotas feature id', () => {
+    expect(isFeatureId('connected.services.quotas')).toBe(true);
+  });
+
+  it('includes OTA updates feature id', () => {
+    expect(isFeatureId('updates.ota')).toBe(true);
+  });
+
   it('maps every catalog entry to a known feature id', () => {
     for (const entry of FEATURE_CATALOG) {
       expect(isFeatureId(entry.id)).toBe(true);
