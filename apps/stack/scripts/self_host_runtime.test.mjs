@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 import {
   parseSelfHostInvocation,
@@ -16,6 +18,7 @@ import {
   renderUpdaterScheduledTaskWrapperPs1,
   renderUpdaterSystemdUnit,
   renderUpdaterSystemdTimerUnit,
+  buildUpdaterScheduledTaskCreateArgs,
   renderServerEnvFile,
   renderServerServiceUnit,
   renderSelfHostStatusText,
@@ -24,6 +27,49 @@ import {
   decideSelfHostAutoUpdateReconcile,
   mergeEnvTextWithDefaults,
 } from './self_host_runtime.mjs';
+
+function b64(buf) {
+  return Buffer.from(buf).toString('base64');
+}
+
+function base64UrlToBuffer(value) {
+  const s = String(value ?? '')
+    .replace(/-/g, '+')
+    .replace(/_/g, '/')
+    .padEnd(Math.ceil(String(value ?? '').length / 4) * 4, '=');
+  return Buffer.from(s, 'base64');
+}
+
+function createMinisignKeyPair() {
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+  const jwk = publicKey.export({ format: 'jwk' });
+  const rawPublicKey = base64UrlToBuffer(jwk.x);
+  assert.equal(rawPublicKey.length, 32);
+
+  const keyId = Buffer.from('0123456789abcdef', 'hex');
+  const publicKeyBytes = Buffer.concat([Buffer.from('Ed'), keyId, rawPublicKey]);
+  const pubkeyFile = `untrusted comment: minisign public key\n${b64(publicKeyBytes)}\n`;
+  return { pubkeyFile, keyId, privateKey };
+}
+
+function signMinisignMessage({ message, keyId, privateKey }) {
+  const signature = sign(null, message, privateKey);
+  const sigLineBytes = Buffer.concat([Buffer.from('Ed'), keyId, signature]);
+  const trustedComment = 'trusted comment: test';
+  const trustedSuffix = Buffer.from(trustedComment.slice('trusted comment: '.length), 'utf-8');
+  const globalSignature = sign(null, Buffer.concat([signature, trustedSuffix]), privateKey);
+  return [
+    'untrusted comment: signature from happier stack test',
+    b64(sigLineBytes),
+    trustedComment,
+    b64(globalSignature),
+    '',
+  ].join('\n');
+}
+
+function sha256Hex(bytes) {
+  return createHash('sha256').update(bytes).digest('hex');
+}
 
 test('parseSelfHostInvocation accepts optional self-host prefix', () => {
   const parsed = parseSelfHostInvocation(['self-host', 'install', '--channel=preview']);
@@ -52,6 +98,81 @@ test('pickReleaseAsset returns matching archive and checksum assets', () => {
   assert.equal(picked.archiveUrl, 'https://example.test/server.tar.gz');
   assert.equal(picked.checksumsUrl, 'https://example.test/checksums.txt');
   assert.equal(picked.signatureUrl, 'https://example.test/checksums.txt.minisig');
+});
+
+test('self-host release installer reports archive source url', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('tar-based bundle test does not run on windows');
+    return;
+  }
+  if (spawnSync('bash', ['-lc', 'command -v tar >/dev/null 2>&1'], { stdio: 'ignore' }).status !== 0) {
+    t.skip('tar is required for bundle installation test');
+    return;
+  }
+
+  const tmp = await mkdtemp(join(tmpdir(), 'happier-self-host-bundle-test-'));
+  t.after(async () => {
+    await spawnSync('bash', ['-lc', `rm -rf "${tmp.replaceAll('"', '\\"')}"`], { stdio: 'ignore' });
+  });
+
+  const staging = join(tmp, 'staging');
+  const rootName = 'happier-server-v1.2.3-preview.1-linux-x64';
+  const rootDir = join(staging, rootName);
+  await mkdir(join(rootDir, 'generated'), { recursive: true });
+  await writeFile(join(rootDir, 'generated', 'dummy.txt'), 'ok', 'utf-8');
+
+  const binaryName = 'happier-server';
+  const binaryPath = join(rootDir, binaryName);
+  await writeFile(binaryPath, '#!/bin/sh\necho ok\n', 'utf-8');
+  spawnSync('bash', ['-lc', `chmod +x "${binaryPath.replaceAll('"', '\\"')}"`], { stdio: 'ignore' });
+
+  const archiveName = `${rootName}.tar.gz`;
+  const archivePath = join(tmp, archiveName);
+  const tar = spawnSync('tar', ['-czf', archivePath, '-C', staging, rootName], { encoding: 'utf-8' });
+  assert.equal(tar.status, 0, tar.stderr || tar.stdout);
+
+  const archiveBytes = await (await import('node:fs/promises')).readFile(archivePath);
+  const archiveSha = sha256Hex(archiveBytes);
+  const checksumsText = `${archiveSha} ${archiveName}\n`;
+  const { pubkeyFile, keyId, privateKey } = createMinisignKeyPair();
+  const sigFile = signMinisignMessage({
+    message: Buffer.from(checksumsText, 'utf-8'),
+    keyId,
+    privateKey,
+  });
+
+  const archiveUrl = `data:application/octet-stream;base64,${archiveBytes.toString('base64')}`;
+  const checksumsUrl = `data:text/plain,${encodeURIComponent(checksumsText)}`;
+  const sigUrl = `data:text/plain,${encodeURIComponent(sigFile)}`;
+
+  const bundle = {
+    version: '1.2.3-preview.1',
+    archive: { name: archiveName, url: archiveUrl },
+    checksums: { name: `checksums-happier-server-v1.2.3-preview.1.txt`, url: checksumsUrl },
+    checksumsSig: { name: `checksums-happier-server-v1.2.3-preview.1.txt.minisig`, url: sigUrl },
+  };
+
+  const installRoot = join(tmp, 'install');
+  const config = {
+    platform: process.platform,
+    dataDir: join(installRoot, 'data'),
+    versionsDir: join(installRoot, 'versions'),
+    serverBinaryPath: join(installRoot, 'bin', binaryName),
+    serverPreviousBinaryPath: join(installRoot, 'bin', `${binaryName}.previous`),
+  };
+
+  const mod = await import('./self_host_runtime.mjs');
+  assert.equal(typeof mod.installSelfHostBinaryFromBundle, 'function');
+
+  const result = await mod.installSelfHostBinaryFromBundle({
+    bundle,
+    binaryName,
+    config,
+    pubkeyFile,
+  });
+
+  assert.equal(result.version, '1.2.3-preview.1');
+  assert.equal(result.source, archiveUrl);
 });
 
 test('pickReleaseAsset rejects releases missing minisign signature assets', () => {
@@ -244,6 +365,7 @@ test('renderUpdaterLaunchdPlistXml runs self-host update without keepalive loops
 
   assert.match(plist, /<key>RunAtLoad<\/key>\s*<true\/>/);
   assert.match(plist, /<key>StartInterval<\/key>\s*<integer>3600<\/integer>/);
+  assert.doesNotMatch(plist, /<key>StartCalendarInterval<\/key>/);
   assert.doesNotMatch(plist, /<key>KeepAlive<\/key>/);
   assert.match(plist, /<key>PATH<\/key>/);
   assert.match(plist, /<string>\/Users\/me\/\.happier\/bin\/hstack<\/string>/);
@@ -254,14 +376,42 @@ test('renderUpdaterLaunchdPlistXml runs self-host update without keepalive loops
   assert.match(plist, /<string>--non-interactive<\/string>/);
 });
 
+test('renderUpdaterLaunchdPlistXml supports daily time-of-day schedules', () => {
+  const plist = renderUpdaterLaunchdPlistXml({
+    updaterLabel: 'happier-server-updater',
+    hstackPath: '/Users/me/.happier/bin/hstack',
+    channel: 'stable',
+    mode: 'user',
+    at: '03:15',
+    workingDirectory: '/Users/me/.happier/self-host',
+    stdoutPath: '/Users/me/.happier/self-host/logs/updater.out.log',
+    stderrPath: '/Users/me/.happier/self-host/logs/updater.err.log',
+  });
+  assert.match(plist, /<key>StartCalendarInterval<\/key>/);
+  assert.match(plist, /<key>Hour<\/key>\s*<integer>3<\/integer>/);
+  assert.match(plist, /<key>Minute<\/key>\s*<integer>15<\/integer>/);
+  assert.doesNotMatch(plist, /<key>StartInterval<\/key>/);
+});
+
 test('renderUpdaterSystemdTimerUnit schedules periodic updater runs', () => {
   const timer = renderUpdaterSystemdTimerUnit({
     updaterLabel: 'happier-server-updater',
     intervalMinutes: 60,
   });
   assert.match(timer, /OnUnitActiveSec=60m/);
+  assert.doesNotMatch(timer, /OnCalendar=/);
   assert.match(timer, /Unit=happier-server-updater\.service/);
   assert.match(timer, /WantedBy=timers\.target/);
+});
+
+test('renderUpdaterSystemdTimerUnit supports daily time-of-day schedules', () => {
+  const timer = renderUpdaterSystemdTimerUnit({
+    updaterLabel: 'happier-server-updater',
+    at: '03:15',
+  });
+  assert.match(timer, /OnCalendar=\*-\*-\*\s+03:15:00/);
+  assert.doesNotMatch(timer, /OnUnitActiveSec=/);
+  assert.match(timer, /Unit=happier-server-updater\.service/);
 });
 
 test('renderUpdaterScheduledTaskWrapperPs1 runs self-host update without node dependencies', () => {
@@ -279,6 +429,18 @@ test('renderUpdaterScheduledTaskWrapperPs1 runs self-host update without node de
     wrapper,
     /hstack\.exe"\s+"self-host"\s+"update"\s+"--channel=preview"\s+"--mode=user"\s+"--non-interactive"/i
   );
+});
+
+test('buildUpdaterScheduledTaskCreateArgs uses DAILY schedule when at is provided', () => {
+  const args = buildUpdaterScheduledTaskCreateArgs({
+    backend: 'schtasks-user',
+    taskName: 'Happier\\\\happier-server-updater',
+    definitionPath: 'C:\\\\Users\\\\me\\\\.happier\\\\self-host\\\\services\\\\happier-server-updater.ps1',
+    at: '03:15',
+  });
+  assert.ok(args.includes('DAILY'));
+  assert.ok(args.includes('03:15'));
+  assert.equal(args.includes('MINUTE'), false);
 });
 
 test('mergeEnvTextWithDefaults preserves overrides while backfilling new default keys', () => {
@@ -403,40 +565,40 @@ test('buildSelfHostDoctorChecks flags missing ui-web bundle when state expects u
 test('normalizeSelfHostAutoUpdateState upgrades legacy boolean config to structured config', () => {
   assert.deepEqual(
     normalizeSelfHostAutoUpdateState({ autoUpdate: true }, { fallbackIntervalMinutes: 1440 }),
-    { enabled: true, intervalMinutes: 1440 },
+    { enabled: true, intervalMinutes: 1440, at: '' },
   );
   assert.deepEqual(
     normalizeSelfHostAutoUpdateState({ autoUpdate: false }, { fallbackIntervalMinutes: 1440 }),
-    { enabled: false, intervalMinutes: 1440 },
+    { enabled: false, intervalMinutes: 1440, at: '' },
   );
 });
 
 test('normalizeSelfHostAutoUpdateState preserves explicit interval and bounds invalid values', () => {
   assert.deepEqual(
     normalizeSelfHostAutoUpdateState({ autoUpdate: { enabled: true, intervalMinutes: 60 } }, { fallbackIntervalMinutes: 1440 }),
-    { enabled: true, intervalMinutes: 60 },
+    { enabled: true, intervalMinutes: 60, at: '' },
   );
   assert.deepEqual(
     normalizeSelfHostAutoUpdateState({ autoUpdate: { enabled: true, intervalMinutes: 0 } }, { fallbackIntervalMinutes: 1440 }),
-    { enabled: true, intervalMinutes: 1440 },
+    { enabled: true, intervalMinutes: 1440, at: '' },
   );
   assert.deepEqual(
     normalizeSelfHostAutoUpdateState({}, { fallbackIntervalMinutes: 1440 }),
-    { enabled: false, intervalMinutes: 1440 },
+    { enabled: false, intervalMinutes: 1440, at: '' },
   );
 });
 
 test('decideSelfHostAutoUpdateReconcile maps configured state to an install/uninstall action', () => {
   assert.deepEqual(
     decideSelfHostAutoUpdateReconcile({ autoUpdate: true }, { fallbackIntervalMinutes: 1440 }),
-    { action: 'install', enabled: true, intervalMinutes: 1440 },
+    { action: 'install', enabled: true, intervalMinutes: 1440, at: '' },
   );
   assert.deepEqual(
     decideSelfHostAutoUpdateReconcile({ autoUpdate: false }, { fallbackIntervalMinutes: 1440 }),
-    { action: 'uninstall', enabled: false, intervalMinutes: 1440 },
+    { action: 'uninstall', enabled: false, intervalMinutes: 1440, at: '' },
   );
   assert.deepEqual(
     decideSelfHostAutoUpdateReconcile({}, { fallbackIntervalMinutes: 1440 }),
-    { action: 'uninstall', enabled: false, intervalMinutes: 1440 },
+    { action: 'uninstall', enabled: false, intervalMinutes: 1440, at: '' },
   );
 });
