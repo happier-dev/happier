@@ -176,6 +176,7 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
     expect(setIntervalSpy).toHaveBeenCalled();
     expect(tick).toBeTypeOf('function');
     const tickPromise = tick!();
+    await Promise.resolve();
     await vi.advanceTimersByTimeAsync(100);
     await tickPromise;
 
@@ -247,6 +248,7 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
     expect(setIntervalSpy).toHaveBeenCalled();
     expect(tick).toBeTypeOf('function');
     const tickPromise = tick!();
+    await Promise.resolve();
     await vi.advanceTimersByTimeAsync(100);
     await tickPromise;
 
