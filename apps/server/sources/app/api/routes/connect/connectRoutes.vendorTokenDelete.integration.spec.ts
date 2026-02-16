@@ -4,7 +4,7 @@ const deleteMany = vi.fn();
 const deleteOne = vi.fn(() => {
     throw new Error("not-found");
 });
-const findUnique = vi.fn(async () => null);
+const findUnique = vi.fn<(...args: any[]) => Promise<{ metadata: unknown } | null>>(async () => null);
 
 vi.mock("@/storage/db", () => ({
     db: {
