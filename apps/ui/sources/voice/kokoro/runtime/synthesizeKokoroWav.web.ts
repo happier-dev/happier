@@ -1,6 +1,7 @@
 import { encodeWavPcm16 } from '@/voice/kokoro/audio/encodeWavPcm16';
 import { resolveKokoroRuntimeConfig } from '@/voice/kokoro/assets/kokoroAssetSets';
 import { ensureKokoroCacheApiAvailable } from '@/voice/kokoro/assets/kokoroCacheApi';
+import { loadKokoroWebRuntime } from '@/voice/kokoro/runtime/loadKokoroWebRuntime.web';
 
 type KokoroTtsInstance = {
   generate(text: string, opts: { voice: string; speed: number }): Promise<{ audio: Float32Array; sampling_rate: number }>;
@@ -38,34 +39,19 @@ async function getKokoroTts(
   cachedKey = key;
   cachedTts = (async () => {
     await ensureKokoroCacheApiAvailable();
-    const mod: any = await import('kokoro-js');
-    const KokoroTTS = mod?.KokoroTTS;
-    const env = mod?.env;
-    if (!KokoroTTS) {
-      throw new Error('kokoro_import_failed');
-    }
-
-    // Ensure model/tokenizer downloads are cached even on platforms where Transformers.js
-    // would otherwise disable the browser cache (e.g. React Native).
-    try {
-      const transformers: any = await import('@huggingface/transformers');
-      const tEnv = transformers?.env;
-      const cacheStorage = (globalThis as any).caches;
-      if (tEnv && cacheStorage && typeof cacheStorage.open === 'function') {
-        tEnv.allowLocalModels = false;
-        tEnv.useFSCache = false;
-        tEnv.useBrowserCache = false;
-        tEnv.useCustomCache = true;
-        tEnv.customCache = await cacheStorage.open('transformers-cache');
-      }
-    } catch {
-      // ignore
-    }
+    const mod = await loadKokoroWebRuntime();
+    const KokoroTTS: any = mod.KokoroTTS;
+    const env: any = mod.env;
 
     if (env && typeof env === 'object') {
-      if (typeof cfg.wasmPaths === 'string' && cfg.wasmPaths.trim().length > 0) {
+      const wasmPaths =
+        typeof cfg.wasmPaths === 'string' && cfg.wasmPaths.trim().length > 0
+          ? cfg.wasmPaths.trim()
+          : '/vendor/kokoro/onnxruntime-web/';
+
+      if (typeof wasmPaths === 'string' && wasmPaths.trim().length > 0) {
         try {
-          env.wasmPaths = cfg.wasmPaths.trim();
+          env.wasmPaths = wasmPaths.trim();
         } catch {
           // ignore
         }
