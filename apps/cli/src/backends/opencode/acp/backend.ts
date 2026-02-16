@@ -23,8 +23,8 @@ import { buildOpenCodeFamilyPermissionEnv } from '@/backends/opencode/utils/open
 /**
  * Get the platform-specific path to the OpenCode configuration file.
  *
- * Follows Node.js app config conventions:
- * - Linux/macOS: ~/.config/opencode/opencode.json (XDG config dir)
+ * Follows platform-specific conventions:
+ * - Linux/macOS: $XDG_CONFIG_HOME/opencode/opencode.json (defaults to ~/.config when unset)
  * - Windows: %APPDATA%\opencode\opencode.json
  */
 function getOpenCodeConfigPath(): string {
@@ -32,8 +32,9 @@ function getOpenCodeConfigPath(): string {
     const appData = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming');
     return join(appData, 'opencode', 'opencode.json');
   }
-  // Linux, macOS, and others use XDG config directory
-  return join(homedir(), '.config', 'opencode', 'opencode.json');
+  // Linux, macOS, and others respect XDG_CONFIG_HOME
+  const xdgConfigHome = process.env.XDG_CONFIG_HOME || join(homedir(), '.config');
+  return join(xdgConfigHome, 'opencode', 'opencode.json');
 }
 
 /**
@@ -44,14 +45,23 @@ function getOpenCodeConfigPath(): string {
  * This function bridges that gap by reading the user's config file and formatting
  * it for the ACP backend.
  *
- * Respects existing OPENCODE_CONFIG_CONTENT if already set (user override).
+ * Precedence (highest to lowest):
+ * 1. process.env.OPENCODE_CONFIG_CONTENT (user's shell-level override)
+ * 2. optionsEnv.OPENCODE_CONFIG_CONTENT (runtime-provided config)
+ * 3. ~/.config/opencode/opencode.json (user's config file)
  */
-function readOpenCodeConfig(): string | undefined {
-  // Respect explicit override
+function readOpenCodeConfig(optionsEnv?: Record<string, string>): string | undefined {
+  // Highest priority: process-level env var (user's shell override)
   if (process.env.OPENCODE_CONFIG_CONTENT) {
     return process.env.OPENCODE_CONFIG_CONTENT;
   }
 
+  // Second priority: options env (runtime-provided config)
+  if (optionsEnv?.OPENCODE_CONFIG_CONTENT) {
+    return optionsEnv.OPENCODE_CONFIG_CONTENT;
+  }
+
+  // Lowest priority: read from config file
   const configPath = getOpenCodeConfigPath();
   if (!existsSync(configPath)) {
     return undefined;
@@ -78,7 +88,7 @@ export interface OpenCodeBackendOptions extends AgentFactoryOptions {
 }
 
 export function createOpenCodeBackend(options: OpenCodeBackendOptions): AgentBackend {
-  const openCodeConfig = readOpenCodeConfig();
+  const openCodeConfig = readOpenCodeConfig(options.env);
 
   const backendOptions: AcpBackendOptions = {
     agentName: 'opencode',
