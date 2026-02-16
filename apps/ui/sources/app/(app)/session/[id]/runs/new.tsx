@@ -55,12 +55,12 @@ export default function SessionNewRunScreen() {
     }, [enabledAgentIds, session]);
 
     const backendChoices = React.useMemo(() => {
-        if (intent !== 'review') return [...enabledAgentIds];
+        if (intent !== 'review') return enabledAgentIds.map((id) => ({ id, disabled: false }));
         return buildAvailableReviewEngineOptions({
             enabledAgentIds,
             executionRunsBackends,
             resolveAgentLabel: (id) => id, // labels are not used on this screen
-        }).map((o) => o.id);
+        }).map((o) => ({ id: o.id, disabled: o.disabled === true }));
     }, [enabledAgentIds, executionRunsBackends, intent]);
 
     const [selectedBackends, setSelectedBackends] = React.useState<string[]>(() => (initialBackend ? [initialBackend] : []));
@@ -216,21 +216,23 @@ export default function SessionNewRunScreen() {
                 <View style={{ gap: 8 }}>
                     <Text style={{ color: theme.colors.textSecondary }}>Backends</Text>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-                        {backendChoices.map((backendId) => {
+                        {backendChoices.map((choice) => {
+                            const backendId = choice.id;
                             const selected = selectedBackends.includes(backendId);
+                            const disabled = choice.disabled === true;
                             return (
                                 <Pressable
                                     key={backendId}
                                     accessibilityRole="button"
                                     accessibilityLabel={`Toggle backend ${backendId}`}
-                                    onPress={() => toggleBackend(backendId)}
+                                    onPress={disabled ? undefined : () => toggleBackend(backendId)}
                                     style={({ pressed }) => ({
                                         paddingVertical: 8,
                                         paddingHorizontal: 10,
                                         borderRadius: 8,
                                         borderWidth: 1,
                                         borderColor: theme.colors.divider,
-                                        opacity: pressed ? 0.7 : 1,
+                                        opacity: disabled ? 0.4 : pressed ? 0.7 : 1,
                                     })}
                                 >
                                     <Text style={{ color: selected ? theme.colors.text : theme.colors.textSecondary }}>

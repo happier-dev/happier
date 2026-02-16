@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { CodexLikePermissionHandler } from './CodexLikePermissionHandler';
 
@@ -136,5 +136,50 @@ describe('CodexLikePermissionHandler', () => {
     handler.setPermissionMode('read-only', 100);
     const result = await handler.handleToolCall('tool-2', 'Write', { path: '/tmp/x', content: 'hi' });
     expect(result.decision).toBe('denied');
+  });
+
+  it('resolves pending permission requests when permission mode changes to read-only', async () => {
+    const session = new FakeSession();
+    const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
+
+    const promise = handler.handleToolCall('tool-1', 'bash', { command: 'echo hi' });
+    expect(session.agentState.requests['tool-1']).toBeTruthy();
+
+    handler.setPermissionMode('read-only', 10);
+
+    const result = await promise;
+    expect(result.decision).toBe('denied');
+    expect(session.agentState.requests).toEqual({});
+    expect(session.agentState.completedRequests['tool-1']).toEqual(
+      expect.objectContaining({
+        tool: 'bash',
+        status: 'denied',
+        decision: 'denied',
+      }),
+    );
+  });
+
+  it('does not emit unhandledRejection when updateAgentState rejects while resolving pending requests', async () => {
+    const session = new FakeSession();
+    session.updateAgentState = async () => {
+      throw new Error('updateAgentState failed');
+    };
+    const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
+
+    const onUnhandled = vi.fn();
+      process.on('unhandledRejection', onUnhandled);
+    try {
+      const promise = handler.handleToolCall('tool-1', 'bash', { command: 'echo hi' });
+
+      handler.setPermissionMode('read-only', 10);
+
+      await expect(promise).resolves.toEqual({ decision: 'denied' });
+
+      // Give Node a chance to surface an unhandled rejection if one was created.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(onUnhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 });

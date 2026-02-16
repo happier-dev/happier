@@ -1,4 +1,6 @@
 import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
+import type { AgentState } from '@/api/types';
+import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
 
 type Mode = 'local' | 'remote';
 
@@ -10,7 +12,7 @@ type SessionSwitchHandler = (params: unknown) => Promise<boolean>;
 
 export type LocalRemoteModeControllerSession = {
   sendSessionEvent: (event: { type: 'switch'; mode: Mode }) => void;
-  updateAgentState: (updater: (state: Record<string, unknown>) => Record<string, unknown>) => void;
+  updateAgentState: (updater: (state: AgentState) => AgentState) => Promise<void> | void;
   keepAlive: (thinking: boolean, mode: Mode) => void;
   rpcHandlerManager: {
     registerHandler: (name: 'switch', handler: SessionSwitchHandler) => void;
@@ -35,10 +37,15 @@ export function createLocalRemoteModeController(params: {
       lastPublishedMode = nextMode;
     }
 
-    params.session.updateAgentState((currentState) => ({
-      ...currentState,
-      controlledByUser: nextMode === 'local',
-    }));
+    updateAgentStateBestEffort(
+      params.session,
+      (currentState) => ({
+        ...currentState,
+        controlledByUser: nextMode === 'local',
+      }),
+      '[localControl]',
+      'publish_mode_state',
+    );
     params.session.keepAlive(params.getThinking(), nextMode);
 
     if (nextMode === 'remote') {

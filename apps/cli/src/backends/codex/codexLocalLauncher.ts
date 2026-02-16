@@ -8,6 +8,7 @@ import os from 'node:os';
 import { join } from 'node:path';
 
 import { createManagedChildProcess } from '@/subprocess/supervision/managedChildProcess';
+import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 
 import { CodexRolloutMirror } from './localControl/codexRolloutMirror';
 import { discoverCodexRolloutFileOnce } from './localControl/rolloutDiscovery';
@@ -105,11 +106,12 @@ export async function codexLocalLauncher<TMode>(opts: {
   } catch {
     // ignore
   }
-  try {
-    opts.session.updateAgentState((current) => ({ ...(current as any), controlledByUser: true }));
-  } catch {
-    // ignore
-  }
+  updateAgentStateBestEffort(
+    opts.session,
+    (current) => ({ ...current, controlledByUser: true }),
+    '[codex]',
+    'codex_local_launcher_start',
+  );
 
   const sessionsRootDir = resolveCodexSessionsRootDir();
   mkdirSync(sessionsRootDir, { recursive: true });
@@ -153,7 +155,12 @@ export async function codexLocalLauncher<TMode>(opts: {
       return;
     }
     lastMetadataPublishAttemptMs = now;
-    opts.session.updateMetadata((current) => ({ ...current, codexSessionId: pending }));
+    updateMetadataBestEffort(
+      opts.session,
+      (current) => ({ ...current, codexSessionId: pending }),
+      '[codex]',
+      'publish_codex_session_id',
+    );
   };
 
   const doSwitch = async (): Promise<void> => {
@@ -301,11 +308,12 @@ export async function codexLocalLauncher<TMode>(opts: {
       } catch {
         // ignore
       }
-      try {
-        opts.session.updateAgentState((current) => ({ ...(current as any), controlledByUser: false }));
-      } catch {
-        // ignore
-      }
+      updateAgentStateBestEffort(
+        opts.session,
+        (current) => ({ ...current, controlledByUser: false }),
+        '[codex]',
+        'codex_local_launcher_exit',
+      );
       return { type: 'exit', code };
     }
 
@@ -371,11 +379,12 @@ export async function codexLocalLauncher<TMode>(opts: {
       } catch {
         // ignore
       }
-      try {
-        opts.session.updateAgentState((current) => ({ ...(current as any), controlledByUser: false }));
-      } catch {
-        // ignore
-      }
+      updateAgentStateBestEffort(
+        opts.session,
+        (current) => ({ ...current, controlledByUser: false }),
+        '[codex]',
+        'codex_local_launcher_switch',
+      );
       return exitReason;
     }
     try {
@@ -383,11 +392,12 @@ export async function codexLocalLauncher<TMode>(opts: {
     } catch {
       // ignore
     }
-    try {
-      opts.session.updateAgentState((current) => ({ ...(current as any), controlledByUser: false }));
-    } catch {
-      // ignore
-    }
+    updateAgentStateBestEffort(
+      opts.session,
+      (current) => ({ ...current, controlledByUser: false }),
+      '[codex]',
+      'codex_local_launcher_exit',
+    );
     return { type: 'exit', code };
   } finally {
     opts.messageQueue.setOnMessage(null);

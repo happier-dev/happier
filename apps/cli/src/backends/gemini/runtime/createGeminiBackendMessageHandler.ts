@@ -5,9 +5,8 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import {
   handleAcpModelOutputDelta,
   handleAcpStatusRunning,
-  forwardAcpPermissionRequest,
-  forwardAcpTerminalOutput,
 } from '@/agent/acp/bridge/acpCommonHandlers';
+import { createAcpAgentMessageForwarder } from '@/agent/acp/bridge/createAcpAgentMessageForwarder';
 import { logger } from '@/ui/logger';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 
@@ -23,6 +22,12 @@ export function createGeminiBackendMessageHandler(params: {
   reasoningProcessor: GeminiReasoningProcessor;
   diffProcessor: GeminiDiffProcessor;
 }): (msg: AgentMessage) => void {
+  const forwarder = createAcpAgentMessageForwarder({
+    sendAcp: (provider, body) => params.session.sendAgentMessage(provider, body),
+    provider: 'gemini' as any,
+    makeId: () => randomUUID(),
+  });
+
   return (msg: AgentMessage): void => {
     switch (msg.type) {
       case 'model-output':
@@ -122,13 +127,7 @@ export function createGeminiBackendMessageHandler(params: {
           `Executing: ${msg.toolName}${toolArgs ? ` ${toolArgs}${toolArgs.length >= 100 ? '...' : ''}` : ''}`,
           'tool',
         );
-        params.session.sendAgentMessage('gemini', {
-          type: 'tool-call',
-          name: msg.toolName,
-          callId: msg.callId,
-          input: msg.args,
-          id: randomUUID(),
-        });
+        forwarder.forward(msg);
         break;
       }
 
@@ -183,86 +182,54 @@ export function createGeminiBackendMessageHandler(params: {
           params.messageBuffer.addMessage(`Result: ${truncatedResult}`, 'result');
         }
 
-        params.session.sendAgentMessage('gemini', {
-          type: 'tool-result',
-          callId: msg.callId,
-          output: msg.result,
-          id: randomUUID(),
-        });
+        forwarder.forward(msg);
         break;
       }
 
       case 'fs-edit':
         params.messageBuffer.addMessage(`File edit: ${msg.description}`, 'tool');
         params.diffProcessor.processFsEdit(msg.path || '', msg.description, msg.diff);
-        params.session.sendAgentMessage('gemini', {
-          type: 'file-edit',
-          description: msg.description,
-          diff: msg.diff,
-          filePath: msg.path || 'unknown',
-          id: randomUUID(),
-        });
+        forwarder.forward(msg);
         break;
 
       case 'terminal-output':
-        forwardAcpTerminalOutput({
-          msg,
-          messageBuffer: params.messageBuffer,
-          session: params.session,
-          agent: 'gemini',
-          getCallId: (value) => (value as any).callId || randomUUID(),
-        });
+        if (typeof (msg as any).data === 'string' && String((msg as any).data)) {
+          params.messageBuffer.addMessage(String((msg as any).data), 'result');
+        }
+        forwarder.forward(msg);
         break;
 
       case 'permission-request':
-        forwardAcpPermissionRequest({ msg, session: params.session, agent: 'gemini' });
+        forwarder.forward(msg);
         break;
 
       case 'exec-approval-request': {
         const execApprovalMsg = msg as any;
         const callId = execApprovalMsg.call_id || execApprovalMsg.callId || randomUUID();
-        const { call_id, type, ...inputs } = execApprovalMsg;
 
         logger.debug(`[gemini] Exec approval request received: ${callId}`);
         params.messageBuffer.addMessage(`Exec approval requested: ${callId}`, 'tool');
-
-        params.session.sendAgentMessage('gemini', {
-          type: 'tool-call',
-          name: 'GeminiBash',
-          callId,
-          input: inputs,
-          id: randomUUID(),
-        });
+        forwarder.forward(msg);
         break;
       }
 
       case 'patch-apply-begin': {
         const patchBeginMsg = msg as any;
         const patchCallId = patchBeginMsg.call_id || patchBeginMsg.callId || randomUUID();
-        const { call_id, type, auto_approved, changes } = patchBeginMsg;
+        const changes = patchBeginMsg.changes;
 
         const changeCount = changes ? Object.keys(changes).length : 0;
         const filesMsg = changeCount === 1 ? '1 file' : `${changeCount} files`;
         params.messageBuffer.addMessage(`Modifying ${filesMsg}...`, 'tool');
         logger.debug(`[gemini] Patch apply begin: ${patchCallId}, files: ${changeCount}`);
-
-        params.session.sendAgentMessage('gemini', {
-          type: 'tool-call',
-          name: 'GeminiPatch',
-          callId: patchCallId,
-          input: {
-            auto_approved,
-            changes,
-          },
-          id: randomUUID(),
-        });
+        forwarder.forward(msg);
         break;
       }
 
       case 'patch-apply-end': {
         const patchEndMsg = msg as any;
         const patchEndCallId = patchEndMsg.call_id || patchEndMsg.callId || randomUUID();
-        const { call_id, type, stdout, stderr, success } = patchEndMsg;
+        const { stdout, stderr, success } = patchEndMsg;
 
         if (success) {
           const message = stdout || 'Files modified successfully';
@@ -272,17 +239,7 @@ export function createGeminiBackendMessageHandler(params: {
           params.messageBuffer.addMessage(`Error: ${errorMsg.substring(0, 200)}`, 'result');
         }
         logger.debug(`[gemini] Patch apply end: ${patchEndCallId}, success: ${success}`);
-
-        params.session.sendAgentMessage('gemini', {
-          type: 'tool-result',
-          callId: patchEndCallId,
-          output: {
-            stdout,
-            stderr,
-            success,
-          },
-          id: randomUUID(),
-        });
+        forwarder.forward(msg);
         break;
       }
 

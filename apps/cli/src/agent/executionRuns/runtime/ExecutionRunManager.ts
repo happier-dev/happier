@@ -111,13 +111,11 @@ export class ExecutionRunManager {
         try {
           return this.createBackend({ backendId: agentId, modelId, permissionMode: permissionPolicy });
         } catch (e) {
-          // Preserve legacy voice-agent semantics: non-Claude backends that fail to initialize
-          // should surface as "unsupported" so clients can fall back to alternate voice engines.
-          if (agentId !== 'claude') {
-            const message = e instanceof Error ? e.message : 'unsupported';
-            throw new VoiceAgentError('VOICE_AGENT_UNSUPPORTED', message);
-          }
-          throw e;
+          // Backend init failures should surface as "unsupported" so callers can fall back to
+          // alternate voice engines. If the backend already classified the error, preserve it.
+          if (e instanceof VoiceAgentError) throw e;
+          const message = e instanceof Error ? e.message : 'unsupported';
+          throw new VoiceAgentError('VOICE_AGENT_UNSUPPORTED', message);
         }
       },
       getNowMs: this.getNowMs,
@@ -150,8 +148,11 @@ export class ExecutionRunManager {
     const ctrl = this.controllers.get(runId);
     if (ctrl) {
       await ctrl.terminalPromise;
+      await ctrl.terminalMarkerWritePromise?.catch(() => {});
+      await this.terminalMarkerWritePromises.get(runId)?.catch(() => {});
       return;
     }
+    await this.terminalMarkerWritePromises.get(runId)?.catch(() => {});
     // If there's no controller, the run is either unknown or already terminal.
     return;
   }
@@ -172,6 +173,7 @@ export class ExecutionRunManager {
       ioMode: run.ioMode,
       status: run.status,
       startedAtMs: run.startedAtMs,
+      ...(run.resumeHandle ? { resumeHandle: run.resumeHandle } : {}),
       ...(typeof run.finishedAtMs === 'number' ? { finishedAtMs: run.finishedAtMs } : {}),
       ...(run.error ? { error: run.error } : {}),
     });

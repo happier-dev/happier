@@ -66,13 +66,17 @@ export async function handleGeminiCliCommand(context: CommandContext): Promise<v
         const credentials = await readCredentials();
         if (credentials) {
           const api = await ApiClient.create(credentials);
-          const vendorToken = await api.getVendorToken('gemini');
-          if (vendorToken?.oauth?.id_token) {
-            const parts = vendorToken.oauth.id_token.split('.');
-            if (parts.length === 3) {
-              const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-              userEmail = payload.email;
-            }
+          const { resolveConnectedServiceCredentials } = await import('@/cloud/connectedServices/resolveConnectedServiceCredentials');
+          const { decodeJwtPayload } = await import('@/cloud/decodeJwtPayload');
+          const records = await resolveConnectedServiceCredentials({
+            credentials,
+            api,
+            bindings: [{ serviceId: 'gemini', profileId: 'default' }],
+          });
+          const record = records.get('gemini');
+          if (record?.kind === 'oauth' && record.oauth.idToken) {
+            const payload = decodeJwtPayload(record.oauth.idToken);
+            userEmail = payload && typeof payload.email === 'string' ? payload.email : undefined;
           }
         }
       } catch {

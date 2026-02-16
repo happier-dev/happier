@@ -1,9 +1,9 @@
 import type { AgentBackend } from '@/agent/core/AgentBackend';
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 
-import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
-import type { ExecutionRunState } from '@/agent/executionRuns/runtime/ExecutionRunManager';
-import type { ExecutionRunController } from '@/agent/executionRuns/runtime/executionRunControllers';
+import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
+import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
+import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import type { FinishExecutionRun } from '@/agent/executionRuns/runtime/executionRunFinishRun';
 import { resumeBackendControllerForResumableRun } from '@/agent/executionRuns/runtime/resumeBackendController';
 
@@ -13,12 +13,12 @@ export async function sendBackendLongLivedRun(args: Readonly<{
   runs: Map<string, ExecutionRunState>;
   controllers: Map<string, ExecutionRunController>;
   budgetRegistry: ExecutionBudgetRegistry | null;
-  createBackend: (opts: { backendId: string; permissionMode: string }) => AgentBackend;
+  createBackend: (opts: { runId?: string; backendId: string; permissionMode: string }) => AgentBackend;
   maxTurns: number | null;
   getNowMs: () => number;
   finishRun: FinishExecutionRun;
-  sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
-  parentProvider: string;
+  sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
+  parentProvider: ACPProvider;
   writeActivityMarker: (runId: string, nowMs: number, opts?: Readonly<{ force?: boolean }>) => Promise<void>;
 }>): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
   const run = args.runs.get(args.runId);
@@ -47,6 +47,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
         controllers: args.controllers,
         budgetRegistry: args.budgetRegistry,
         createBackend: args.createBackend,
+        requireReplayCapture: run.runClass === 'long_lived',
         onModelOutput: () => {
           void args.writeActivityMarker(args.runId, args.getNowMs());
         },
@@ -99,13 +100,19 @@ export async function sendBackendLongLivedRun(args: Readonly<{
     } catch {
       // ignore
     }
+    try {
+      await ctrl2.terminalMarkerWritePromise;
+    } catch {
+      // ignore
+    }
     ctrl2.resolveTerminal();
     args.controllers.delete(args.runId);
     return { ok: false, errorCode: 'execution_run_failed', error: message };
   }
 
   const rawText = ctrl2.buffer.trim();
-  if (rawText.length > 0) {
+  const streamed = run.ioMode === 'streaming' && ctrl2.sidechainStreamBuffer.trim().length > 0;
+  if (!streamed && rawText.length > 0) {
     args.sendAcp(args.parentProvider, { type: 'message', message: rawText, sidechainId: run.sidechainId });
   }
 

@@ -276,14 +276,12 @@ export function query(config: {
             strictMcpConfig,
             canCallTool,
             settingsPath,
+            env,
             stderr,
         } = {}
     } = config
 
-    // Set entrypoint if not already set
-    if (!process.env.CLAUDE_CODE_ENTRYPOINT) {
-        process.env.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts'
-    }
+    const envOverlay = env ?? {}
 
     // Build command arguments
     const args = ['--output-format', 'stream-json', '--verbose']
@@ -342,7 +340,11 @@ export function query(config: {
 
     // Spawn Claude Code process
     // Use clean env for global claude to avoid local node_modules/.bin taking precedence
-    const spawnEnv = isCommandOnly ? getCleanEnv() : process.env
+    const baseEnv = isCommandOnly ? getCleanEnv() : process.env
+    const spawnEnv: NodeJS.ProcessEnv = { ...baseEnv, ...envOverlay }
+    if (!spawnEnv.CLAUDE_CODE_ENTRYPOINT) {
+        spawnEnv.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts'
+    }
     logDebug(`Spawning Claude Code process: ${spawnCommand} ${spawnArgs.join(' ')} (using ${isCommandOnly ? 'clean' : 'normal'} env)`)
 
     const child = spawn(spawnCommand, spawnArgs, {
@@ -435,9 +437,6 @@ export function query(config: {
         process.off('SIGTERM', cleanupOnSigterm)
         process.off('SIGINT', cleanupOnSigint)
         process.off('exit', cleanup)
-        if (process.env.CLAUDE_SDK_MCP_SERVERS) {
-            delete process.env.CLAUDE_SDK_MCP_SERVERS
-        }
     })
 
     return query

@@ -113,6 +113,7 @@ function normalizePlanBoundedCompletion(params: Readonly<{
 
 export const PlanProfile: ExecutionRunIntentProfile = {
   intent: 'plan',
+  transcriptMaterialization: 'full',
   buildPrompt: (params) => `${params.instructions}\n\n${buildPlanGuidanceBlock()}`,
   onBoundedComplete: ({ start, rawText, finishedAtMs }) =>
     normalizePlanBoundedCompletion({

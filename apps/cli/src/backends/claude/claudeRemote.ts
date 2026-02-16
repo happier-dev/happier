@@ -102,29 +102,29 @@ export async function claudeRemote(opts: {
     const disallowedTools = argOverrides.disallowedTools ?? initial.mode.disallowedTools;
     const remoteSystemPrompt = getClaudeRemoteSystemPrompt({ disableTodos: initial.mode.claudeRemoteDisableTodos === true });
 
-        const sdkOptions: QueryOptions = {
-            cwd: opts.path,
-            continue: shouldContinue || undefined,
-            resume: startFrom ?? undefined,
-            mcpServers: opts.mcpServers,
-            permissionMode: mapToClaudeMode(initial.mode.permissionMode),
-            model: argOverrides.model ?? initial.mode.model,
-            fallbackModel: argOverrides.fallbackModel ?? initial.mode.fallbackModel,
-            maxTurns: argOverrides.maxTurns,
-            customSystemPrompt: customSystemPrompt || undefined,
-            appendSystemPrompt: (appendSystemPrompt ? appendSystemPrompt + '\n\n' : '') + remoteSystemPrompt,
-            allowedTools: allowedTools ? allowedTools.concat(opts.allowedTools) : opts.allowedTools,
-            disallowedTools,
-            strictMcpConfig: argOverrides.strictMcpConfig,
-            canCallTool: (toolName: string, input: unknown, options: { signal: AbortSignal }) =>
-                opts.canCallTool(toolName, input, mode, options),
-            executable: opts.jsRuntime ?? 'node',
-            abort: opts.signal,
-            pathToClaudeCodeExecutable: (() => {
-                return resolve(join(projectPath(), 'scripts', 'claude_remote_launcher.cjs'));
-            })(),
-            settingsPath: opts.hookSettingsPath,
-        }
+    const sdkOptions: QueryOptions = {
+        cwd: opts.path,
+        continue: shouldContinue || undefined,
+        resume: startFrom ?? undefined,
+        mcpServers: opts.mcpServers,
+        permissionMode: mapToClaudeMode(initial.mode.permissionMode),
+        model: argOverrides.model ?? initial.mode.model,
+        fallbackModel: argOverrides.fallbackModel ?? initial.mode.fallbackModel,
+        maxTurns: argOverrides.maxTurns,
+        customSystemPrompt: customSystemPrompt || undefined,
+        appendSystemPrompt: (appendSystemPrompt ? appendSystemPrompt + '\n\n' : '') + remoteSystemPrompt,
+        allowedTools: allowedTools ? allowedTools.concat(opts.allowedTools) : opts.allowedTools,
+        disallowedTools,
+        strictMcpConfig: argOverrides.strictMcpConfig,
+        canCallTool: (toolName: string, input: unknown, options: { signal: AbortSignal }) =>
+            opts.canCallTool(toolName, input, mode, options),
+        executable: opts.jsRuntime ?? 'node',
+        abort: opts.signal,
+        pathToClaudeCodeExecutable: (() => {
+            return resolve(join(projectPath(), 'scripts', 'claude_remote_launcher.cjs'));
+        })(),
+        settingsPath: opts.hookSettingsPath,
+    }
 
     // Track thinking state
     let thinking = false;

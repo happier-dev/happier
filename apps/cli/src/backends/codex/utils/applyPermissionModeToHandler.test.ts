@@ -15,7 +15,8 @@ describe('applyPermissionModeToCodexPermissionHandler', () => {
   ])('normalizes "$raw" to "$expected" and updates the handler', ({ raw, expected }) => {
     const calls: string[] = [];
     const handler = {
-      setPermissionMode: (mode: PermissionMode) => calls.push(String(mode)),
+      setPermissionMode: (mode: PermissionMode, updatedAt?: number) =>
+        calls.push(`${String(mode)}:${typeof updatedAt === 'number' ? updatedAt : 'none'}`),
     };
 
     const effective = applyPermissionModeToCodexPermissionHandler({
@@ -24,6 +25,21 @@ describe('applyPermissionModeToCodexPermissionHandler', () => {
     });
 
     expect(effective).toBe(expected);
-    expect(calls).toEqual([expected]);
+    expect(calls).toEqual([`${expected}:none`]);
+  });
+
+  it('passes through permissionModeUpdatedAt when provided', () => {
+    const calls: Array<{ mode: string; updatedAt?: number }> = [];
+    const handler = {
+      setPermissionMode: (mode: PermissionMode, updatedAt?: number) => calls.push({ mode: String(mode), updatedAt }),
+    };
+
+    applyPermissionModeToCodexPermissionHandler({
+      permissionHandler: handler,
+      permissionMode: 'read-only',
+      permissionModeUpdatedAt: 1234,
+    });
+
+    expect(calls).toEqual([{ mode: 'read-only', updatedAt: 1234 }]);
   });
 });

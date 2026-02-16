@@ -13,7 +13,6 @@ function createSessionHarness() {
       sendSessionEvent: vi.fn(),
       updateAgentState: vi.fn((updater: (state: any) => any) => {
         agentState = updater(agentState);
-        return agentState;
       }),
       keepAlive: vi.fn(),
       rpcHandlerManager: {

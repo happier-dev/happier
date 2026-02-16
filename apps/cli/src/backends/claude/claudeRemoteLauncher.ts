@@ -25,6 +25,7 @@ import { ClaudeRemoteTaskOutputCollector } from './remote/sidechains/claudeRemot
 import { ClaudeRemoteSubagentFileCollector } from './remote/sidechains/claudeRemoteSubagentFileCollector';
 import { resolveHasTTY } from '@/ui/tty/resolveHasTTY';
 import { createNonBlockingStdout } from '@/ui/ink/nonBlockingStdout';
+import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 
 interface PermissionsField {
     date: number;
@@ -427,18 +428,28 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                         session.onSessionFound(sessionId, data as any);
                     },
                     onCheckpointCaptured: (checkpointId: string) => {
-                        session.client.updateMetadata((metadata: any) => ({
-                            ...metadata,
-                            claudeLastCheckpointId: checkpointId,
-                        }));
+                        updateMetadataBestEffort(
+                            session.client,
+                            (metadata) => ({
+                                ...metadata,
+                                claudeLastCheckpointId: checkpointId,
+                            }),
+                            '[remote]',
+                            'checkpoint_captured',
+                        );
                     },
                     onCapabilities: (caps: any) => {
                         if (!caps || typeof caps !== 'object') return;
-                        session.client.updateMetadata((metadata: any) => ({
-                            ...metadata,
-                            ...(Array.isArray(caps.slashCommands) ? { slashCommands: caps.slashCommands } : {}),
-                            ...(Array.isArray(caps.slashCommandDetails) ? { slashCommandDetails: caps.slashCommandDetails } : {}),
-                        }));
+                        updateMetadataBestEffort(
+                            session.client,
+                            (metadata) => ({
+                                ...metadata,
+                                ...(Array.isArray(caps.slashCommands) ? { slashCommands: caps.slashCommands } : {}),
+                                ...(Array.isArray(caps.slashCommandDetails) ? { slashCommandDetails: caps.slashCommandDetails } : {}),
+                            }),
+                            '[remote]',
+                            'capabilities_update',
+                        );
                     },
                     onThinkingChange: session.onThinkingChange,
                     claudeEnvVars: session.claudeEnvVars,

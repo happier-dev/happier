@@ -1,5 +1,5 @@
 import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
-import type { ExecutionRunState } from '@/agent/executionRuns/runtime/ExecutionRunManager';
+import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
 
 export type FinishExecutionRun = (
   runId: string,

@@ -9,11 +9,18 @@ export type VoiceAgentStartParams = Readonly<{
   agentId: AgentId;
   chatModelId: string;
   commitModelId: string;
+  commitIsolation?: boolean;
   permissionPolicy: PermissionPolicy;
   idleTtlSeconds: number;
   initialContext: string;
   verbosity?: Verbosity;
   resumeHandle?: ExecutionRunResumeHandle | null;
+  /**
+   * Optional one-time bootstrap behavior for newly created (non-resumed) sessions.
+   * - `ready_handshake`: send a bootstrap prompt and require the model to reply with `READY`.
+   * - `none` / undefined: no bootstrap; first user turn seeds the system prompt.
+   */
+  bootstrapMode?: 'ready_handshake' | 'none';
 }>;
 
 export type VoiceAgentStartResult = Readonly<{
@@ -73,6 +80,7 @@ export type VoiceAgentInstance = {
   agentId: AgentId;
   chatBackend: AgentBackend;
   chatSessionId: SessionId;
+  commitIsolation: boolean;
   commitBackend: AgentBackend | null;
   commitSessionId: SessionId | null;
   commitResumeSessionId: SessionId | null;

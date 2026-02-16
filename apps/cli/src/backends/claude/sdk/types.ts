@@ -161,6 +161,8 @@ export interface CanCallToolCallback {
  */
 export interface QueryOptions {
     abort?: AbortSignal
+    /** Environment variables to merge into the spawned Claude Code process. */
+    env?: NodeJS.ProcessEnv
     allowedTools?: string[]
     appendSystemPrompt?: string
     customSystemPrompt?: string

@@ -1,5 +1,6 @@
 import type { PermissionMode } from '@/api/types';
 import { logger } from '@/ui/logger';
+import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { randomUUID } from 'node:crypto';
 import { open as openFile } from 'node:fs/promises';
 
@@ -267,37 +268,42 @@ export class ClaudeLocalPermissionBridge {
             this.pendingRequests.delete(params.requestId);
         }
 
-        this.session.client.updateAgentState((currentState) => {
-            const requests = {
-                ...(currentState.requests ?? {}),
-            };
-            const existing = requests[params.requestId];
-            delete requests[params.requestId];
+        updateAgentStateBestEffort(
+            this.session.client,
+            (currentState) => {
+                const requests = {
+                    ...(currentState.requests ?? {}),
+                };
+                const existing = requests[params.requestId];
+                delete requests[params.requestId];
 
-            const completedEntry = {
-                ...(existing ?? {
-                    tool: params.toolName,
-                    arguments: params.toolInput,
-                    createdAt: params.createdAt,
-                }),
-                completedAt: Date.now(),
-                status: params.status,
-                ...(typeof params.reason === 'string' && params.reason.length > 0 ? { reason: params.reason } : {}),
-                ...(typeof params.mode === 'string' ? { mode: params.mode } : {}),
-                ...(Array.isArray(params.allowedTools) && params.allowedTools.length > 0
-                    ? { allowedTools: params.allowedTools }
-                    : {}),
-            };
+                const completedEntry = {
+                    ...(existing ?? {
+                        tool: params.toolName,
+                        arguments: params.toolInput,
+                        createdAt: params.createdAt,
+                    }),
+                    completedAt: Date.now(),
+                    status: params.status,
+                    ...(typeof params.reason === 'string' && params.reason.length > 0 ? { reason: params.reason } : {}),
+                    ...(typeof params.mode === 'string' ? { mode: params.mode } : {}),
+                    ...(Array.isArray(params.allowedTools) && params.allowedTools.length > 0
+                        ? { allowedTools: params.allowedTools }
+                        : {}),
+                };
 
-            return {
-                ...currentState,
-                requests,
-                completedRequests: {
-                    ...(currentState.completedRequests ?? {}),
-                    [params.requestId]: completedEntry,
-                },
-            };
-        });
+                return {
+                    ...currentState,
+                    requests,
+                    completedRequests: {
+                        ...(currentState.completedRequests ?? {}),
+                        [params.requestId]: completedEntry,
+                    },
+                };
+            },
+            '[claude-local-permissions]',
+            'complete_request',
+        );
 
         pending?.resolve(params.hookResponse);
     }
@@ -323,23 +329,28 @@ export class ClaudeLocalPermissionBridge {
             logger.debug('[claude-local-permissions] Failed to broadcast permission request', error);
         }
 
-        this.session.client.updateAgentState((currentState) => ({
-            ...currentState,
-            capabilities: {
-                ...(currentState.capabilities ?? {}),
-                askUserQuestionAnswersInPermission: true,
-                localPermissionBridgeInLocalMode: true,
-                permissionsInUiWhileLocal: true,
-            },
-            requests: {
-                ...(currentState.requests ?? {}),
-                [params.requestId]: {
-                    tool: params.toolName,
-                    arguments: params.toolInput,
-                    createdAt: params.createdAt,
+        updateAgentStateBestEffort(
+            this.session.client,
+            (currentState) => ({
+                ...currentState,
+                capabilities: {
+                    ...(currentState.capabilities ?? {}),
+                    askUserQuestionAnswersInPermission: true,
+                    localPermissionBridgeInLocalMode: true,
+                    permissionsInUiWhileLocal: true,
                 },
-            },
-        }));
+                requests: {
+                    ...(currentState.requests ?? {}),
+                    [params.requestId]: {
+                        tool: params.toolName,
+                        arguments: params.toolInput,
+                        createdAt: params.createdAt,
+                    },
+                },
+            }),
+            '[claude-local-permissions]',
+            'publish_pending_request',
+        );
     }
 
     private resolveRequestId(data: PermissionHookData): string | null {

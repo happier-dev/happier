@@ -2,6 +2,7 @@ import type { ExecutionRunIntentProfile } from '../ExecutionRunIntentProfile';
 
 export const VoiceAgentProfile: ExecutionRunIntentProfile = {
   intent: 'voice_agent',
+  transcriptMaterialization: 'none',
   buildPrompt: (params) => params.instructions,
   onBoundedComplete: ({ start, rawText, finishedAtMs }) => {
     const summary = rawText.trim().length > 0 ? rawText.trim() : 'Voice agent completed.';
@@ -22,4 +23,3 @@ export const VoiceAgentProfile: ExecutionRunIntentProfile = {
     };
   },
 };
-

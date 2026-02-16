@@ -10,7 +10,7 @@
 
 import { logger } from '@/ui/logger';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
-import type { PermissionMode } from '@/api/types';
+import type { AgentState, PermissionMode } from '@/api/types';
 import {
   BasePermissionHandler,
   type PermissionResult,
@@ -85,6 +85,84 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
       this.currentPermissionModeUpdatedAt = updatedAt;
     }
     logger.debug(`${this.getLogPrefix()} Permission mode set to: ${mode}`);
+    this.resolvePendingRequestsIfNowDecidable();
+  }
+
+  private resolvePendingRequestsIfNowDecidable(): void {
+    if (this.pendingRequests.size === 0) return;
+
+    // Snapshot to avoid Map mutation while iterating.
+    const entries = Array.from(this.pendingRequests.entries());
+    for (const [toolCallId, pending] of entries) {
+      const decision = this.resolveDecisionForToolCall(toolCallId, pending.toolName, pending.input);
+      if (!decision) continue;
+
+      // Remove from pending and resolve the in-flight promise.
+      this.pendingRequests.delete(toolCallId);
+      try {
+        pending.resolve(decision);
+      } catch {
+        // Best-effort: promise resolution should not crash the process.
+      }
+
+      // Move the request to completed in agent state and clear it from pending requests.
+      this.updateAgentStateBestEffort((currentState: AgentState) => {
+        const requests = currentState.requests ?? {};
+        const { [toolCallId]: request, ...remainingRequests } = requests;
+
+        type CompletedRequestEntry = NonNullable<AgentState['completedRequests']>[string];
+        const now = Date.now();
+        const status: CompletedRequestEntry['status'] =
+          decision.decision === 'denied' || decision.decision === 'abort' ? 'denied' : 'approved';
+        const completedEntry: CompletedRequestEntry = request
+          ? {
+              ...request,
+              completedAt: now,
+              status,
+              decision: decision.decision,
+            }
+          : {
+              tool: pending.toolName,
+              arguments: pending.input,
+              createdAt: now,
+              completedAt: now,
+              status,
+              decision: decision.decision,
+            };
+
+        return {
+          ...currentState,
+          requests: remainingRequests,
+          completedRequests: {
+            ...(currentState.completedRequests ?? {}),
+            [toolCallId]: completedEntry,
+          },
+        };
+      }, 'resolve pending request');
+    }
+  }
+
+  private resolveDecisionForToolCall(toolCallId: string, toolName: string, input: unknown): PermissionResult | null {
+    const isAlwaysAutoApprove = this.isAlwaysAutoApproveTool(toolName, toolCallId);
+
+    if ((this.currentPermissionMode === 'read-only' || this.currentPermissionMode === 'plan') && !isAlwaysAutoApprove && this.isWriteLikeToolName(toolName)) {
+      logger.debug(`${this.getLogPrefix()} Denying tool ${toolName} (${toolCallId}) in ${this.currentPermissionMode} mode`);
+      return { decision: 'denied' };
+    }
+
+    if (this.isAllowedForSession(toolName, input)) {
+      logger.debug(`${this.getLogPrefix()} Auto-approving (allowed for session) tool ${toolName} (${toolCallId})`);
+      return { decision: 'approved_for_session' };
+    }
+
+    if (this.shouldAutoApprove(toolName, toolCallId)) {
+      const decision: PermissionResult['decision'] =
+        this.currentPermissionMode === 'yolo' ? 'approved_for_session' : 'approved';
+      logger.debug(`${this.getLogPrefix()} Auto-approving tool ${toolName} (${toolCallId}) in ${this.currentPermissionMode} mode`);
+      return { decision };
+    }
+
+    return null;
   }
 
   private syncPermissionModeFromMetadataSnapshotIfNewer(): void {

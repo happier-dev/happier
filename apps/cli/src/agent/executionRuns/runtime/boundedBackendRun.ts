@@ -1,7 +1,7 @@
 import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
-import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
-import type { ExecutionRunManagerStartParams } from '@/agent/executionRuns/runtime/ExecutionRunManager';
-import type { ExecutionRunController, ExecutionRunBackendController } from '@/agent/executionRuns/runtime/executionRunControllers';
+import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
+import type { ExecutionRunManagerStartParams } from '@/agent/executionRuns/runtime/executionRunTypes';
+import type { ExecutionRunController, ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 import type { FinishExecutionRun } from '@/agent/executionRuns/runtime/executionRunFinishRun';
 
 function stripTrailingJsonObjectFromText(text: string): string {
@@ -32,13 +32,15 @@ export async function executeBoundedBackendRun(args: Readonly<{
   startedAtMs: number;
   params: ExecutionRunManagerStartParams;
   controllers: ReadonlyMap<string, ExecutionRunController>;
-  sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
-  parentProvider: string;
+  sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
+  parentProvider: ACPProvider;
   getNowMs: () => number;
   boundedTimeoutMs: number | null;
   finishRun: FinishExecutionRun;
 }>): Promise<void> {
   const { runId, callId, sidechainId, startedAtMs, params } = args;
+  const profile = resolveExecutionRunIntentProfile(params.intent);
+  const shouldMaterializeInTranscript = profile.transcriptMaterialization !== 'none';
   const ctrl = args.controllers.get(runId);
   if (!ctrl) return;
   if (ctrl.kind !== 'backend') return;
@@ -63,15 +65,16 @@ export async function executeBoundedBackendRun(args: Readonly<{
       ioMode: params.ioMode,
       startedAtMs,
     } as const;
-    const profile = resolveExecutionRunIntentProfile(params.intent);
     const prompt = profile.buildPrompt(start);
 
-    const runPromise = (async () => {
-      await backendCtrl.backend.sendPrompt(backendCtrl.childSessionId!, prompt);
+    async function runOneTurn(turnPrompt: string): Promise<void> {
+      await backendCtrl.backend.sendPrompt(backendCtrl.childSessionId!, turnPrompt);
       if (backendCtrl.backend.waitForResponseComplete) {
         await backendCtrl.backend.waitForResponseComplete();
       }
-    })();
+    }
+
+    const runPromise = runOneTurn(prompt);
 
     const timeoutMs = args.boundedTimeoutMs;
     if (typeof timeoutMs === 'number') {
@@ -91,11 +94,56 @@ export async function executeBoundedBackendRun(args: Readonly<{
 
     const rawText = backendCtrl.buffer.trim();
     const finishedAtMs = args.getNowMs();
-    const completion = profile.onBoundedComplete({
+    let completion = profile.onBoundedComplete({
       start,
       rawText,
       finishedAtMs,
     });
+
+    // Review runs rely on a strict trailing JSON object for structured findings. Models sometimes violate
+    // this contract; for resilience we attempt ONE deterministic "repair" pass.
+    if (params.intent === 'review') {
+      const errorCode = (completion as any)?.toolResultOutput?.error?.code;
+      if (completion.status === 'failed' && errorCode === 'invalid_output') {
+        const repairPrompt = [
+          'Your previous response did not include the required final JSON object.',
+          'Return ONLY valid JSON with this shape:',
+          '{',
+          '  "summary": string,',
+          '  "findings": Array<{',
+          '    "id": string,',
+          '    "title": string,',
+          '    "severity": "blocker"|"high"|"medium"|"low"|"nit",',
+          '    "category": "correctness"|"security"|"performance"|"maintainability"|"testing"|"style"|"docs",',
+          '    "summary": string,',
+          '    "filePath"?: string,',
+          '    "startLine"?: number,',
+          '    "endLine"?: number,',
+          '    "suggestion"?: string,',
+          '    "patch"?: string',
+          '  }>',
+          '}',
+          '',
+          'Content to convert:',
+          rawText,
+        ].join('\n');
+
+        // Reset buffers so the second pass is parsed deterministically.
+        backendCtrl.buffer = '';
+        backendCtrl.sidechainStreamBuffer = '';
+        backendCtrl.sidechainStreamKey = '';
+        backendCtrl.turnCount += 1;
+
+        await runOneTurn(repairPrompt);
+
+        const repairedRawText = backendCtrl.buffer.trim();
+        completion = profile.onBoundedComplete({
+          start,
+          rawText: repairedRawText,
+          finishedAtMs,
+        });
+      }
+    }
 
     const sidechainMessage = (() => {
       // Avoid leaking strict JSON into the transcript for structured intents.
@@ -114,7 +162,13 @@ export async function executeBoundedBackendRun(args: Readonly<{
       return rawText;
     })();
 
-    if (sidechainMessage && sidechainMessage.trim().length > 0) {
+    const streamed = params.ioMode === 'streaming' && backendCtrl.sidechainStreamBuffer.trim().length > 0;
+    if (shouldMaterializeInTranscript && params.intent === 'review') {
+      // Even when streaming progress, emit a final terminal summary line so users get a clear completion status.
+      if (sidechainMessage && sidechainMessage.trim().length > 0) {
+        args.sendAcp(args.parentProvider, { type: 'message', message: sidechainMessage.trim(), sidechainId });
+      }
+    } else if (shouldMaterializeInTranscript && !streamed && sidechainMessage && sidechainMessage.trim().length > 0) {
       args.sendAcp(args.parentProvider, { type: 'message', message: sidechainMessage.trim(), sidechainId });
     }
 
@@ -174,6 +228,11 @@ export async function executeBoundedBackendRun(args: Readonly<{
   } finally {
     try {
       await backendCtrl.backend.dispose();
+    } catch {
+      // ignore
+    }
+    try {
+      await backendCtrl.terminalMarkerWritePromise;
     } catch {
       // ignore
     }

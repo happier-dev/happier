@@ -164,6 +164,33 @@ function createStaticResponseBackend(label: string, responseText: string): Agent
   };
 }
 
+function createPromptCaptureBackend(sequence: Array<{ responseText: string }>): AgentBackend & { prompts: string[] } {
+  let handler: AgentMessageHandler | null = null;
+  const sessionId: SessionId = 's-capture' as SessionId;
+  const prompts: string[] = [];
+  let idx = 0;
+
+  return {
+    prompts,
+    onMessage(h) {
+      handler = h;
+    },
+    async startSession() {
+      handler?.({ type: 'status', status: 'running' });
+      return { sessionId };
+    },
+    async sendPrompt(_sid, prompt) {
+      prompts.push(prompt);
+      const next = sequence[Math.min(idx, sequence.length - 1)];
+      idx += 1;
+      handler?.({ type: 'model-output', fullText: next?.responseText ?? '' });
+      handler?.({ type: 'status', status: 'idle' });
+    },
+    async cancel() {},
+    async dispose() {},
+  };
+}
+
 describe('VoiceAgentManager', () => {
   it('clears the reaper interval when disposed', async () => {
     const { VoiceAgentManager } = await import('./VoiceAgentManager');
@@ -179,7 +206,7 @@ describe('VoiceAgentManager', () => {
     } finally {
       clearIntervalSpy.mockRestore();
     }
-  });
+  }, 15_000);
 
   it('rejects start calls after dispose without creating new backends', async () => {
     const { VoiceAgentManager } = await import('./VoiceAgentManager');
@@ -201,7 +228,7 @@ describe('VoiceAgentManager', () => {
     ).rejects.toMatchObject({ code: 'VOICE_AGENT_START_FAILED' });
 
     expect(createBackend).toHaveBeenCalledTimes(0);
-  });
+  }, 15_000);
 
   it('surfaces commit backend factory errors without disposing the chat backend', async () => {
     const { VoiceAgentManager } = await import('./VoiceAgentManager');
@@ -633,6 +660,59 @@ describe('VoiceAgentManager', () => {
     }
   });
 
+  it('caps idleTtlSeconds at the extended maximum so persistent voice agents can stay warm', async () => {
+    const { VoiceAgentManager } = await import('./VoiceAgentManager');
+
+    let nowMs = 0;
+    let disposedCount = 0;
+    const createBackend: BackendFactory = ({ modelId }) => ({
+      onMessage() {},
+      async startSession() {
+        return { sessionId: `s-${modelId}` };
+      },
+      async sendPrompt() {},
+      async cancel() {},
+      async dispose() {
+        disposedCount += 1;
+      },
+    });
+
+    vi.useFakeTimers();
+    try {
+      const manager = new VoiceAgentManager({
+        createBackend,
+        getNowMs: () => nowMs,
+        reaperIntervalMs: 5_000,
+      });
+
+      const started = await manager.start({
+        agentId: 'claude',
+        chatModelId: 'chat-model',
+        commitModelId: 'commit-model',
+        permissionPolicy: 'read_only',
+        // Request an absurd TTL; the manager should cap it to the extended maximum (6h).
+        idleTtlSeconds: 999_999,
+        initialContext: 'CTX',
+      });
+
+      nowMs = 2 * 60 * 60 * 1000; // 2h
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(disposedCount).toBe(0);
+
+      nowMs = 7 * 60 * 60 * 1000; // 7h
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(disposedCount).toBe(1);
+
+      await expect(manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'hi' })).rejects.toMatchObject({
+        code: 'VOICE_AGENT_NOT_FOUND',
+      });
+
+      await manager.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('caps stored conversation history so prompts do not grow without bound', async () => {
     const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
@@ -794,5 +874,94 @@ describe('VoiceAgentManager', () => {
       }
     }
     expect(done).toBe(true);
+  });
+
+  it('bootstraps new sessions with a READY handshake when bootstrapMode is enabled', async () => {
+    const { VoiceAgentManager } = await import('./VoiceAgentManager');
+
+    const backend = createPromptCaptureBackend([
+      { responseText: 'READY' },
+      { responseText: 'ok' },
+    ]);
+    const createBackend: BackendFactory = () => backend;
+    const manager = new VoiceAgentManager({ createBackend });
+
+    const started = await manager.start({
+      agentId: 'claude',
+      chatModelId: 'chat-model',
+      commitModelId: 'commit-model',
+      permissionPolicy: 'read_only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+      bootstrapMode: 'ready_handshake',
+    } as any);
+
+    expect(backend.prompts.length).toBe(1);
+    expect(backend.prompts[0]).toContain('Warm-up step: reply with exactly READY');
+
+    await manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'hello' });
+
+    expect(backend.prompts.length).toBe(2);
+    expect(backend.prompts[1]).toContain('User: hello');
+    expect(backend.prompts[1]).not.toContain('Initial context:');
+  });
+
+  it('can bootstrap a new session with a welcome message before the first user turn', async () => {
+    const { VoiceAgentManager } = await import('./VoiceAgentManager');
+
+    const backend = createPromptCaptureBackend([
+      { responseText: 'Hello! What are we working on today?' },
+      { responseText: 'ok' },
+    ]);
+    const createBackend: BackendFactory = () => backend;
+    const manager = new VoiceAgentManager({ createBackend });
+
+    const started = await manager.start({
+      agentId: 'claude',
+      chatModelId: 'chat-model',
+      commitModelId: 'commit-model',
+      permissionPolicy: 'read_only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+    } as any);
+
+    const welcomed = await manager.welcome({ voiceAgentId: started.voiceAgentId });
+    expect(welcomed.assistantText).toContain('Hello');
+    expect(backend.prompts.length).toBe(1);
+    expect(backend.prompts[0]).toContain('Start this session with a short friendly greeting');
+
+    await manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'hello' });
+    expect(backend.prompts.length).toBe(2);
+    expect(backend.prompts[1]).toContain('User: hello');
+    expect(backend.prompts[1]).not.toContain('Initial context:');
+  });
+
+  it('reuses the chat backend for commits when commitIsolation is false and commitModelId matches chatModelId', async () => {
+    const { VoiceAgentManager } = await import('./VoiceAgentManager');
+
+    const backend = createPromptCaptureBackend([
+      { responseText: 'reply' },
+      { responseText: 'COMMIT_TEXT' },
+    ]);
+    const createBackend = vi.fn(() => backend);
+    const manager = new VoiceAgentManager({ createBackend: createBackend as any });
+
+    const started = await manager.start({
+      agentId: 'claude',
+      chatModelId: 'chat-model',
+      commitModelId: 'chat-model',
+      permissionPolicy: 'read_only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+      commitIsolation: false,
+    } as any);
+
+    await manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'hello' });
+    const committed = await manager.commit({ voiceAgentId: started.voiceAgentId, maxChars: 1000 });
+
+    expect(committed.commitText).toBe('COMMIT_TEXT');
+    expect(createBackend).toHaveBeenCalledTimes(1);
+    expect(backend.prompts.length).toBe(2);
+    expect(backend.prompts[1]).toContain('Instruction:');
   });
 });

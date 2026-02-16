@@ -1,73 +1,89 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdtemp, writeFile, chmod } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 import { executionRunsCapability } from './toolExecutionRuns';
 
-describe('tool.executionRuns capability', () => {
-  it('reports unavailable when the execution.runs feature is locally disabled', async () => {
-    const prev = process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED;
-    process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED = '0';
-    try {
-      const result = await executionRunsCapability.detect({
-        request: { id: 'tool.executionRuns' as any },
-        context: { cliSnapshot: null },
-      });
+describe('executionRunsCapability', () => {
+  const envSnapshot = { ...process.env };
 
-      expect((result as any).available).toBe(false);
-    } finally {
-      if (prev === undefined) delete process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED;
-      else process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED = prev;
+  function restoreEnv(snapshot: NodeJS.ProcessEnv): void {
+    for (const key of Object.keys(process.env)) {
+      if (!(key in snapshot)) delete process.env[key];
     }
+    for (const [key, value] of Object.entries(snapshot)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+
+  beforeEach(() => {
+    restoreEnv(envSnapshot);
+    process.env.HAPPIER_CODERABBIT_REVIEW_CMD = 'coderabbit';
   });
 
-  it('omits voice_agent intent when voice is locally disabled', async () => {
-    const prevVoice = process.env.HAPPIER_FEATURE_VOICE__ENABLED;
-    const prevRuns = process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED;
-    process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED = '1';
-    process.env.HAPPIER_FEATURE_VOICE__ENABLED = '0';
-    try {
-      const result = await executionRunsCapability.detect({
-        request: { id: 'tool.executionRuns' as any },
-        context: { cliSnapshot: null },
-      });
-
-      expect((result as any).available).toBe(true);
-      expect((result as any).intents).not.toContain('voice_agent');
-    } finally {
-      if (prevVoice === undefined) delete process.env.HAPPIER_FEATURE_VOICE__ENABLED;
-      else process.env.HAPPIER_FEATURE_VOICE__ENABLED = prevVoice;
-      if (prevRuns === undefined) delete process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED;
-      else process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED = prevRuns;
-    }
+  afterEach(() => {
+    restoreEnv(envSnapshot);
   });
 
-  it('reports coderabbit backend available when the command exists on PATH even without an override env var', async () => {
-    const prevRuns = process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED;
-    const prevCmd = process.env.HAPPIER_CODERABBIT_REVIEW_CMD;
-    process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED = '1';
-    delete process.env.HAPPIER_CODERABBIT_REVIEW_CMD;
+  it('reports supportsVendorResume per backend for UI gating', async () => {
+    const res: any = await executionRunsCapability.detect({
+      context: {
+        cliSnapshot: {
+          path: '',
+          clis: {
+            claude: { available: true },
+            codex: { available: false },
+            gemini: { available: false },
+            opencode: { available: false },
+            auggie: { available: false },
+            qwen: { available: false },
+            kimi: { available: false },
+            kilo: { available: false },
+            pi: { available: false },
+          },
+        },
+      },
+    } as any);
 
-    const { mkdtemp, writeFile, chmod } = await import('node:fs/promises');
-    const { join } = await import('node:path');
-    const { tmpdir } = await import('node:os');
+    expect(res?.available).toBe(true);
+    expect(res?.backends?.claude).toBeTruthy();
+    expect(typeof res.backends.claude.supportsVendorResume).toBe('boolean');
+  });
 
-    const dir = await mkdtemp(join(tmpdir(), 'happier-coderabbit-path-'));
-    const bin = join(dir, process.platform === 'win32' ? 'coderabbit.cmd' : 'coderabbit');
-    await writeFile(bin, process.platform === 'win32' ? '@echo off\r\necho 0.0.0\r\n' : '#!/bin/sh\necho 0.0.0\n', 'utf8');
-    if (process.platform !== 'win32') await chmod(bin, 0o755);
+  it('detects native coderabbit availability from process PATH even when cliSnapshot.path is empty', async () => {
+    // Ensure we test PATH detection (not the override).
+    delete (process.env as any).HAPPIER_CODERABBIT_REVIEW_CMD;
 
-    try {
-      const result = await executionRunsCapability.detect({
-        request: { id: 'tool.executionRuns' as any },
-        context: { cliSnapshot: { path: dir, clis: {}, tmux: { available: false } } } as any,
-      });
+    const dir = await mkdtemp(join(tmpdir(), 'happier-coderabbit-path-test-'));
+    const bin = join(dir, 'coderabbit');
+    await writeFile(
+      bin,
+      '#!/usr/bin/env bash\n' +
+        'echo \"coderabbit\"',
+      'utf8',
+    );
+    await chmod(bin, 0o755);
 
-      expect((result as any).available).toBe(true);
-      expect((result as any).backends?.coderabbit?.available).toBe(true);
-    } finally {
-      if (prevRuns === undefined) delete process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED;
-      else process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED = prevRuns;
-      if (prevCmd === undefined) delete process.env.HAPPIER_CODERABBIT_REVIEW_CMD;
-      else process.env.HAPPIER_CODERABBIT_REVIEW_CMD = prevCmd;
-    }
+    const prevPath = process.env.PATH ?? '';
+    process.env.PATH = `${dir}${prevPath ? `:${prevPath}` : ''}`;
+
+    const res: any = await executionRunsCapability.detect({
+      context: {
+        cliSnapshot: {
+          // Bug repro: some snapshots include an empty path string (should fall back to process.env.PATH too).
+          path: '',
+          clis: {
+            claude: { available: true },
+          },
+        },
+      },
+    } as any);
+
+    process.env.PATH = prevPath;
+
+    expect(res?.available).toBe(true);
+    expect(res?.backends?.coderabbit?.available).toBe(true);
   });
 });

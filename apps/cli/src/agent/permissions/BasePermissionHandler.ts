@@ -10,6 +10,7 @@
 import { logger } from "@/ui/logger";
 import { ApiSessionClient } from "@/api/session/sessionClient";
 import { AgentState } from "@/api/types";
+import { updateAgentStateBestEffort as updateAgentStateBestEffortShared } from "@/api/session/sessionWritesBestEffort";
 import { isToolAllowedForSession, makeToolIdentifier } from './permissionToolIdentifier';
 import { recordToolTraceEvent, type ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
 
@@ -67,6 +68,10 @@ export abstract class BasePermissionHandler {
      * Returns the log prefix for this handler.
      */
     protected abstract getLogPrefix(): string;
+
+    protected updateAgentStateBestEffort(updater: (state: AgentState) => AgentState, reason: string): void {
+        updateAgentStateBestEffortShared(this.session, updater, this.getLogPrefix(), reason);
+    }
 
     constructor(
         session: ApiSessionClient,
@@ -218,7 +223,7 @@ export abstract class BasePermissionHandler {
                             : undefined);
 
                 // Move request to completed in agent state
-                this.session.updateAgentState((currentState) => {
+                this.updateAgentStateBestEffort((currentState) => {
                     const request = currentState.requests?.[response.id];
                     if (!request) return currentState;
 
@@ -240,7 +245,7 @@ export abstract class BasePermissionHandler {
                         }
                     } satisfies AgentState;
                     return res;
-                });
+                }, 'permission response completion');
 
                 logger.debug(`${this.getLogPrefix()} Permission ${response.approved ? 'approved' : 'denied'} for ${pending.toolName}`);
             }
@@ -260,7 +265,7 @@ export abstract class BasePermissionHandler {
         const allowedTools = decision === 'approved_for_session'
             ? [makeToolIdentifier(toolName, input)]
             : undefined;
-        this.session.updateAgentState((currentState) => ({
+        this.updateAgentStateBestEffort((currentState) => ({
             ...currentState,
             completedRequests: {
                 ...currentState.completedRequests,
@@ -274,7 +279,7 @@ export abstract class BasePermissionHandler {
                     ...(allowedTools ? { allowedTools } : null),
                 },
             },
-        }));
+        }), 'auto decision');
     }
 
     /**
@@ -298,7 +303,7 @@ export abstract class BasePermissionHandler {
             });
         }
 
-        this.session.updateAgentState((currentState) => ({
+        this.updateAgentStateBestEffort((currentState) => ({
             ...currentState,
             requests: {
                 ...currentState.requests,
@@ -308,7 +313,7 @@ export abstract class BasePermissionHandler {
                     createdAt: Date.now()
                 }
             }
-        }));
+        }), 'permission request add');
     }
 
     /**
@@ -338,7 +343,7 @@ export abstract class BasePermissionHandler {
             }
 
             // Clear requests in agent state
-            this.session.updateAgentState((currentState) => {
+            this.updateAgentStateBestEffort((currentState) => {
                 const pendingRequests = currentState.requests || {};
                 const completedRequests = { ...currentState.completedRequests };
 
@@ -357,7 +362,7 @@ export abstract class BasePermissionHandler {
                     requests: {},
                     completedRequests
                 };
-            });
+            }, 'reset');
 
             this.allowedToolIdentifiers.clear();
             logger.debug(`${this.getLogPrefix()} Permission handler reset`);

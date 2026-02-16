@@ -16,6 +16,7 @@ describe('buildAvailableReviewEngineOptions', () => {
 
     expect(opts).toEqual([
       { id: 'claude', label: 'agent:claude' },
+      { id: 'codex', label: 'agent:codex', disabled: true },
       { id: 'coderabbit', label: 'CodeRabbit' },
     ]);
   });

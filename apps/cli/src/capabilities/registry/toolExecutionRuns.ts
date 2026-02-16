@@ -3,6 +3,7 @@ import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { access } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { join, delimiter as PATH_DELIMITER } from 'node:path';
+import { getVendorResumeSupport } from '@/backends/catalog';
 
 function isCliAvailable(context: any, agentId: string): boolean {
   const entry = context?.cliSnapshot?.clis?.[agentId];
@@ -58,9 +59,32 @@ export const executionRunsCapability: Capability = {
 
     const coderabbitOverride =
       typeof process.env.HAPPIER_CODERABBIT_REVIEW_CMD === 'string' && process.env.HAPPIER_CODERABBIT_REVIEW_CMD.trim().length > 0;
+    const mergedPath = (() => {
+      const snapshotPath = typeof context?.cliSnapshot?.path === 'string' ? context.cliSnapshot.path.trim() : '';
+      const envPath = typeof process.env.PATH === 'string' ? process.env.PATH.trim() : '';
+      if (snapshotPath && envPath) return `${snapshotPath}${PATH_DELIMITER}${envPath}`;
+      return snapshotPath || envPath || '';
+    })();
     const coderabbitOnPath = coderabbitOverride
       ? true
-      : Boolean(await resolveCommandOnPath('coderabbit', context?.cliSnapshot?.path ?? process.env.PATH ?? null));
+      : Boolean(await resolveCommandOnPath('coderabbit', mergedPath || null));
+
+    const resolveSupportsVendorResume = async (backendId: string): Promise<boolean> => {
+      try {
+        const fn = await getVendorResumeSupport(backendId as any);
+        return fn({});
+      } catch {
+        return false;
+      }
+    };
+    const supportsVendorResumeByBackend = Object.fromEntries(
+      await Promise.all(
+        ['claude', 'codex', 'gemini', 'opencode', 'auggie', 'qwen', 'kimi', 'kilo', 'pi'].map(async (id) => [
+          id,
+          await resolveSupportsVendorResume(id),
+        ]),
+      ),
+    ) as Record<string, boolean>;
 
     return {
       available: true,
@@ -68,18 +92,55 @@ export const executionRunsCapability: Capability = {
       // Backend catalog is best-effort and intended for UI affordances (pickers, warnings).
       // Runtime enforcement still happens at execution-run start/send time.
       backends: {
-        claude: { available: true, intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'] },
-        codex: { available: isCliAvailable(context, 'codex'), intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'] },
-        gemini: { available: isCliAvailable(context, 'gemini'), intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'] },
-        opencode: { available: isCliAvailable(context, 'opencode'), intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'] },
-        auggie: { available: isCliAvailable(context, 'auggie'), intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'] },
-        qwen: { available: isCliAvailable(context, 'qwen'), intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'] },
-        kimi: { available: isCliAvailable(context, 'kimi'), intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'] },
-        kilo: { available: isCliAvailable(context, 'kilo'), intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'] },
-        pi: { available: isCliAvailable(context, 'pi'), intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'] },
+        claude: {
+          available: true,
+          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
+          supportsVendorResume: supportsVendorResumeByBackend.claude === true,
+        },
+        codex: {
+          available: isCliAvailable(context, 'codex'),
+          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
+          supportsVendorResume: supportsVendorResumeByBackend.codex === true,
+        },
+        gemini: {
+          available: isCliAvailable(context, 'gemini'),
+          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
+          supportsVendorResume: supportsVendorResumeByBackend.gemini === true,
+        },
+        opencode: {
+          available: isCliAvailable(context, 'opencode'),
+          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
+          supportsVendorResume: supportsVendorResumeByBackend.opencode === true,
+        },
+        auggie: {
+          available: isCliAvailable(context, 'auggie'),
+          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
+          supportsVendorResume: supportsVendorResumeByBackend.auggie === true,
+        },
+        qwen: {
+          available: isCliAvailable(context, 'qwen'),
+          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
+          supportsVendorResume: supportsVendorResumeByBackend.qwen === true,
+        },
+        kimi: {
+          available: isCliAvailable(context, 'kimi'),
+          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
+          supportsVendorResume: supportsVendorResumeByBackend.kimi === true,
+        },
+        kilo: {
+          available: isCliAvailable(context, 'kilo'),
+          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
+          supportsVendorResume: supportsVendorResumeByBackend.kilo === true,
+        },
+        pi: {
+          available: isCliAvailable(context, 'pi'),
+          intents: voiceEnabled ? ['review', 'plan', 'delegate', 'voice_agent'] : ['review', 'plan', 'delegate'],
+          supportsVendorResume: supportsVendorResumeByBackend.pi === true,
+        },
         coderabbit: {
           available: coderabbitOnPath,
           intents: ['review'],
+          supportsVendorResume: false,
         },
       },
     };

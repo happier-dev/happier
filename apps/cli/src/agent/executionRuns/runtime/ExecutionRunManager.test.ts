@@ -68,6 +68,18 @@ describe('ExecutionRunManager (review intent)', () => {
             // Defer to keep the completion async (closer to real backends).
             await new Promise((r) => setTimeout(r, 5));
             (this as any)._handler?.({
+              type: 'tool-call',
+              toolName: 'read_file',
+              callId: 't1',
+              args: { path: 'README.md' },
+            } satisfies any);
+            (this as any)._handler?.({
+              type: 'tool-result',
+              toolName: 'read_file',
+              callId: 't1',
+              result: 'OK',
+            } satisfies any);
+            (this as any)._handler?.({
               type: 'model-output',
               fullText: JSON.stringify({
                 findings: [
@@ -114,11 +126,21 @@ describe('ExecutionRunManager (review intent)', () => {
     await manager.waitForTerminal(started.runId);
     const final = manager.get(started.runId);
     expect(final?.status).toBe('succeeded');
-    expect(lastPrompt).toContain('Return ONLY valid JSON');
+    // Prompt contract: review runs must include a strict JSON output schema.
+    expect(lastPrompt).toContain('"findings"');
 
     const toolCall = sent.find((m) => (m.body as any)?.type === 'tool-call');
     expect(toolCall).toBeTruthy();
     expect((toolCall?.body as any).name).toBe('SubAgentRun');
+
+    const sidechainToolCall = sent.find((m) => (m.body as any)?.type === 'tool-call' && (m.body as any)?.name === 'read_file');
+    expect(sidechainToolCall).toBeTruthy();
+    expect((sidechainToolCall?.body as any)?.sidechainId).toBe(started.callId);
+    expect((sidechainToolCall?.body as any)?.callId).toBe(`sc:${started.callId}:t1`);
+
+    const sidechainToolResult = sent.find((m) => (m.body as any)?.type === 'tool-result' && (m.body as any)?.callId === `sc:${started.callId}:t1`);
+    expect(sidechainToolResult).toBeTruthy();
+    expect((sidechainToolResult?.body as any)?.sidechainId).toBe(started.callId);
 
     const sidechain = sent.find((m) => (m.body as any)?.type === 'message');
     expect((sidechain?.body as any)?.message).toContain('Summary.');
@@ -129,6 +151,204 @@ describe('ExecutionRunManager (review intent)', () => {
     expect(toolResult).toBeTruthy();
     const meta = toolResult?.meta as any;
     expect(meta?.happier?.kind).toBe('review_findings.v1');
+  });
+
+  it('returns start() before backend session provisioning completes (UI can dismiss draft immediately)', async () => {
+    const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
+
+    let handler: AgentMessageHandler | null = null;
+    let startSessionCalled = false;
+    let startSessionResolved = false;
+    let resolveStartSession!: (value: { sessionId: SessionId }) => void;
+    const startSessionPromise: Promise<{ sessionId: SessionId }> = new Promise((resolve) => {
+      resolveStartSession = (value) => {
+        startSessionResolved = true;
+        resolve(value);
+      };
+    });
+
+    const backend: AgentBackend = {
+      async startSession(): Promise<{ sessionId: SessionId }> {
+        startSessionCalled = true;
+        return await startSessionPromise;
+      },
+      async sendPrompt(_sessionId: SessionId, _prompt: string): Promise<void> {
+        handler?.({
+          type: 'model-output',
+          fullText: JSON.stringify({ summary: 'Ok', findings: [] }),
+        } as any);
+      },
+      async cancel(_sessionId: SessionId): Promise<void> {},
+      onMessage(next: AgentMessageHandler): void {
+        handler = next;
+      },
+      async dispose(): Promise<void> {},
+      async waitForResponseComplete(): Promise<void> {},
+    };
+
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: () => backend,
+      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+        sent.push({ provider, body, meta: opts?.meta });
+      },
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const startPromise = manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'review',
+      backendId: 'claude',
+      instructions: 'Review this repo.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+
+    const started: Awaited<typeof startPromise> = (await Promise.race([
+      startPromise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timed out waiting for start')), 25)),
+    ])) as any;
+
+    expect(startSessionCalled).toBe(true);
+    expect(startSessionResolved).toBe(false);
+
+    // Now allow the run to proceed and complete so the test doesn't leak background work.
+    resolveStartSession({ sessionId: 'child_session_1' as SessionId });
+    await manager.waitForTerminal(started.runId);
+    expect(manager.get(started.runId)?.status).toBe('succeeded');
+  });
+
+  it('forwards terminal output + file edits into the run sidechain transcript', async () => {
+    const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
+
+    let handler: AgentMessageHandler | null = null;
+    const backend: AgentBackend = {
+      async startSession(): Promise<{ sessionId: SessionId }> {
+        return { sessionId: 'child_session_1' as SessionId };
+      },
+      async sendPrompt(_sessionId: SessionId, _prompt: string): Promise<void> {
+        handler?.({ type: 'terminal-output', data: 'hello from terminal' } as any);
+        handler?.({
+          type: 'fs-edit',
+          description: 'Edited README',
+          path: 'README.md',
+          diff: 'diff --git a/README.md b/README.md',
+        } as any);
+        handler?.({
+          type: 'model-output',
+          fullText: JSON.stringify({ summary: 'Ok', findings: [] }),
+        } as any);
+      },
+      async cancel(_sessionId: SessionId): Promise<void> {},
+      onMessage(next: AgentMessageHandler): void {
+        handler = next;
+      },
+      async dispose(): Promise<void> {},
+      async waitForResponseComplete(): Promise<void> {},
+    };
+
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: () => backend,
+      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+        sent.push({ provider, body, meta: opts?.meta });
+      },
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'review',
+      backendId: 'claude',
+      instructions: 'Review this repo.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+
+    await manager.waitForTerminal(started.runId);
+
+    const terminal = sent.find((m) => (m.body as any)?.type === 'terminal-output')?.body as any;
+    expect(terminal).toBeTruthy();
+    expect(terminal.sidechainId).toBe(started.callId);
+    expect(String(terminal.callId ?? '')).toBe(`sc:${started.callId}:happier:terminal-output`);
+    expect(terminal.data).toBe('hello from terminal');
+
+    const terminalToolCall = sent.find(
+      (m) => (m.body as any)?.type === 'tool-call' && (m.body as any)?.callId === terminal.callId,
+    )?.body as any;
+    expect(terminalToolCall).toBeTruthy();
+    expect(terminalToolCall.name).toBe('terminal-output');
+    expect(terminalToolCall.sidechainId).toBe(started.callId);
+
+    const fileEdit = sent.find((m) => (m.body as any)?.type === 'file-edit')?.body as any;
+    expect(fileEdit).toBeTruthy();
+    expect(fileEdit.sidechainId).toBe(started.callId);
+    expect(fileEdit.filePath).toBe('README.md');
+    expect(fileEdit.description).toBe('Edited README');
+  });
+
+  it('repairs non-json review output by requesting a strict JSON reformat once', async () => {
+    const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
+    const prompts: string[] = [];
+
+    let handler: AgentMessageHandler | null = null;
+    const backend: AgentBackend = {
+      async startSession(): Promise<{ sessionId: SessionId }> {
+        return { sessionId: 'child_session_1' as SessionId };
+      },
+      async sendPrompt(_sessionId: SessionId, prompt: string): Promise<void> {
+        prompts.push(prompt);
+        // First attempt: model violates contract (no JSON).
+        if (prompts.length === 1) {
+          handler?.({ type: 'model-output', fullText: 'Not JSON, sorry.' } as any);
+          return;
+        }
+        // Second attempt: obey strict JSON.
+        handler?.({
+          type: 'model-output',
+          fullText: JSON.stringify({ summary: 'Ok', findings: [] }),
+        } as any);
+      },
+      async cancel(_sessionId: SessionId): Promise<void> {},
+      onMessage(next: AgentMessageHandler): void {
+        handler = next;
+      },
+      async dispose(): Promise<void> {},
+      async waitForResponseComplete(): Promise<void> {},
+    };
+
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: () => backend,
+      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+        sent.push({ provider, body, meta: opts?.meta });
+      },
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'review',
+      backendId: 'claude',
+      instructions: 'Review this repo.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+
+    await manager.waitForTerminal(started.runId);
+    expect(manager.get(started.runId)?.status).toBe('succeeded');
+    expect(prompts.length).toBe(2);
+    // Second prompt must demand strict JSON (repair pass).
+    expect(prompts[1]).toContain('Return ONLY valid JSON');
   });
 
   it('can apply review triage and re-emit review_findings.v1 meta updates', async () => {
@@ -265,6 +485,179 @@ describe('ExecutionRunManager (review intent)', () => {
   });
 });
 
+describe('ExecutionRunManager (memory_hints intent)', () => {
+  it('does not materialize tool-call/tool-result or sidechain messages in the carrier transcript', async () => {
+    const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: () => createStaticJsonBackend('{"ok":true}'),
+      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+        sent.push({ provider, body, meta: opts?.meta });
+      },
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'memory_hints',
+      backendId: 'claude',
+      instructions: 'Return JSON only.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+
+    await manager.waitForTerminal(started.runId);
+    const final = manager.get(started.runId);
+    expect(final?.status).toBe('succeeded');
+    expect(sent).toEqual([]);
+  });
+});
+
+describe('ExecutionRunManager (streaming sidechain)', () => {
+  it('emits streaming sidechain chunks for model-output when ioMode=streaming', async () => {
+    const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
+
+    let handler: AgentMessageHandler | null = null;
+    const backend: AgentBackend = {
+      async startSession(): Promise<{ sessionId: SessionId }> {
+        return { sessionId: 'child_session_1' as SessionId };
+      },
+      async sendPrompt(_sessionId: SessionId, _prompt: string): Promise<void> {
+        handler?.({ type: 'model-output', fullText: 'Plan in progress.\n' } as any);
+        handler?.({
+          type: 'model-output',
+          fullText:
+            'Plan in progress.\n' +
+            JSON.stringify({
+              summary: 'Ok',
+              sections: [{ title: 'One', items: ['A'] }],
+              risks: [],
+              milestones: [],
+            }),
+        } as any);
+      },
+      async cancel(_sessionId: SessionId): Promise<void> {},
+      onMessage(next: AgentMessageHandler): void {
+        handler = next;
+      },
+      async dispose(): Promise<void> {},
+      async waitForResponseComplete(): Promise<void> {},
+    };
+
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: () => backend,
+      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+        sent.push({ provider, body, meta: opts?.meta });
+      },
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'plan',
+      backendId: 'claude',
+      instructions: 'Make a plan.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'streaming',
+    });
+
+    await manager.waitForTerminal(started.runId);
+    expect(manager.get(started.runId)?.status).toBe('succeeded');
+
+    const sidechainChunks = sent.filter(
+      (m) => (m.body as any)?.type === 'message' && typeof (m.meta as any)?.happierSidechainStreamKey === 'string',
+    );
+    expect(sidechainChunks.length).toBeGreaterThanOrEqual(1);
+    const concatenated = sidechainChunks.map((m) => String((m.body as any)?.message ?? '')).join('');
+    expect(concatenated).toContain('Plan in progress');
+
+    // When streaming output is emitted, the bounded completion should not inject a duplicate
+    // "final" sidechain message without the stream key.
+    const nonStreamingSidechainMessages = sent.filter(
+      (m) => (m.body as any)?.type === 'message' && typeof (m.meta as any)?.happierSidechainStreamKey !== 'string',
+    );
+    expect(nonStreamingSidechainMessages).toHaveLength(0);
+  });
+
+  it('streams review progress without leaking the trailing strict JSON payload', async () => {
+    const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
+
+    let handler: AgentMessageHandler | null = null;
+    const backend: AgentBackend = {
+      async startSession(): Promise<{ sessionId: SessionId }> {
+        return { sessionId: 'child_session_1' as SessionId };
+      },
+      async sendPrompt(_sessionId: SessionId, _prompt: string): Promise<void> {
+        handler?.({
+          type: 'model-output',
+          fullText: 'Working...\n\n{ "summary": "Ok", ',
+        } as any);
+        handler?.({
+          type: 'model-output',
+          fullText:
+            'Working...\n\n' +
+            JSON.stringify({
+              summary: 'Ok',
+              findings: [],
+            }),
+        } as any);
+      },
+      async cancel(_sessionId: SessionId): Promise<void> {},
+      onMessage(next: AgentMessageHandler): void {
+        handler = next;
+      },
+      async dispose(): Promise<void> {},
+      async waitForResponseComplete(): Promise<void> {},
+    };
+
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: () => backend,
+      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+        sent.push({ provider, body, meta: opts?.meta });
+      },
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'review',
+      backendId: 'claude',
+      instructions: 'Review this repo.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'streaming',
+    });
+
+    await manager.waitForTerminal(started.runId);
+    expect(manager.get(started.runId)?.status).toBe('succeeded');
+
+    const sidechainChunks = sent.filter(
+      (m) => (m.body as any)?.type === 'message' && typeof (m.meta as any)?.happierSidechainStreamKey === 'string',
+    );
+    expect(sidechainChunks.length).toBeGreaterThanOrEqual(1);
+
+    const concatenated = sidechainChunks.map((m) => String((m.body as any)?.message ?? '')).join('');
+    expect(concatenated).toContain('Working');
+    expect(concatenated).not.toContain('"findings"');
+
+    // A final summary message is still allowed so users get a clear terminal note.
+    const finalNonStreaming = sent.find(
+      (m) => (m.body as any)?.type === 'message' && typeof (m.meta as any)?.happierSidechainStreamKey !== 'string',
+    );
+    expect(String((finalNonStreaming?.body as any)?.message ?? '')).toContain('Ok');
+  });
+});
+
 describe('ExecutionRunManager (long-lived runs)', () => {
   function createPromptEchoBackend(): AgentBackend {
     let handler: AgentMessageHandler | null = null;
@@ -327,5 +720,59 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     await expect
       .poll(() => sent.filter((m) => (m.body as any)?.type === 'tool-result').length, { timeout: 1_000 })
       .toBe(1);
+  });
+
+  it('streams sidechain output for long-lived runs when ioMode=streaming and avoids emitting a duplicate non-streaming message', async () => {
+    const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
+
+    let handler: AgentMessageHandler | null = null;
+    const backend: AgentBackend = {
+      async startSession(): Promise<{ sessionId: SessionId }> {
+        return { sessionId: 'child_session_1' as SessionId };
+      },
+      async sendPrompt(_sessionId: SessionId, prompt: string): Promise<void> {
+        handler?.({ type: 'model-output', fullText: `Working: ${prompt}\n` } as any);
+        handler?.({ type: 'model-output', fullText: `Working: ${prompt}\nDone.\n` } as any);
+      },
+      async cancel(_sessionId: SessionId): Promise<void> {},
+      onMessage(next: AgentMessageHandler): void {
+        handler = next;
+      },
+      async dispose(): Promise<void> {},
+      async waitForResponseComplete(): Promise<void> {},
+    };
+
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: () => backend,
+      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+        sent.push({ provider, body, meta: opts?.meta });
+      },
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'delegate',
+      backendId: 'claude',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'long_lived',
+      ioMode: 'streaming',
+    });
+
+    const sendResult = await manager.send(started.runId, { message: 'hi' });
+    expect(sendResult.ok).toBe(true);
+
+    const streaming = sent.filter(
+      (m) => (m.body as any)?.type === 'message' && typeof (m.meta as any)?.happierSidechainStreamKey === 'string',
+    );
+    expect(streaming.length).toBeGreaterThanOrEqual(1);
+
+    const nonStreaming = sent.filter(
+      (m) => (m.body as any)?.type === 'message' && typeof (m.meta as any)?.happierSidechainStreamKey !== 'string',
+    );
+    expect(nonStreaming).toHaveLength(0);
   });
 });
