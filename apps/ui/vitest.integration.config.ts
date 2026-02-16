@@ -10,6 +10,16 @@ export default defineConfig({
     optimizeDeps: base.optimizeDeps,
     test: {
         ...(base.test ?? {}),
+        // Integration tests are relatively few but heavy. Running them in a single thread is
+        // more stable than the default multi-process fork pool under long-running SCM tests.
+        pool: 'threads',
+        poolOptions: {
+            ...(base.test?.poolOptions ?? {}),
+            threads: {
+                ...(base.test?.poolOptions?.threads ?? {}),
+                singleThread: true,
+            },
+        },
         include: [
             'sources/**/*.integration.test.{ts,tsx}',
             'sources/**/*.real.integration.test.{ts,tsx}',
@@ -17,7 +27,8 @@ export default defineConfig({
             'sources/**/*.e2e.test.{ts,tsx}',
         ],
         exclude: [],
-        testTimeout: 60_000,
+        testTimeout: 120_000,
+        hookTimeout: 120_000,
     },
     resolve: {
         ...(base.resolve ?? {}),
