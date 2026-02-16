@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { encodeBase64, BOX_BUNDLE_PUBLIC_KEY_BYTES } from "@happier-dev/protocol";
 
-import { exchangeConnectedServiceOauthTokens } from "./exchangeConnectedServiceOauthTokens";
+import { ConnectedServiceOauthTimeoutError, exchangeConnectedServiceOauthTokens } from "./exchangeConnectedServiceOauthTokens";
 
 function buildRecipientPublicKeyB64Url(): string {
     const bytes = new Uint8Array(BOX_BUNDLE_PUBLIC_KEY_BYTES).fill(7);
@@ -109,7 +109,7 @@ describe("exchangeConnectedServiceOauthTokens", () => {
                 fetcher: fetchMock as any,
             });
 
-            const expectation = expect(promise).rejects.toThrow(/timed out/i);
+            const expectation = expect(promise).rejects.toBeInstanceOf(ConnectedServiceOauthTimeoutError);
             await vi.advanceTimersByTimeAsync(1500);
             await expectation;
         } finally {

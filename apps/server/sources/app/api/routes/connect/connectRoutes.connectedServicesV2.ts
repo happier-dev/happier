@@ -9,7 +9,11 @@ import {
     SealedConnectedServiceCredentialV1Schema,
     type ConnectedServiceId,
 } from "@happier-dev/protocol";
-import { exchangeConnectedServiceOauthTokens } from "./connectedServicesV2/exchangeConnectedServiceOauthTokens";
+import {
+    ConnectedServiceOauthStateMismatchError,
+    ConnectedServiceOauthTimeoutError,
+    exchangeConnectedServiceOauthTokens,
+} from "./connectedServicesV2/exchangeConnectedServiceOauthTokens";
 import {
     type ConnectedServiceCredentialMetadataV2,
     isConnectedServiceCredentialMetadataV2,
@@ -23,12 +27,55 @@ function resolveRefreshLeaseMaxMs(env: NodeJS.ProcessEnv): number {
     return parseIntEnv(env.CONNECTED_SERVICE_REFRESH_LEASE_MAX_MS, 5 * 60_000, { min: 5_000, max: 60 * 60_000 });
 }
 
-function resolveCredentialTokenString(tokenBytes: Uint8Array): string {
-    return Buffer.from(tokenBytes).toString("utf8");
+const ConnectedServiceProfileIdSchema = z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/, "Invalid profile id");
+
+const CONNECTED_SERVICE_OAUTH_PUBLIC_KEY_MAX_LEN = 512;
+const CONNECTED_SERVICE_OAUTH_CODE_MAX_LEN = 4096;
+const CONNECTED_SERVICE_OAUTH_VERIFIER_MAX_LEN = 256;
+const CONNECTED_SERVICE_OAUTH_REDIRECT_URI_MAX_LEN = 2048;
+const CONNECTED_SERVICE_OAUTH_STATE_MAX_LEN = 2048;
+
+const ConnectedServiceOauthExchangeErrorResponseSchema = z.union([
+    z.object({
+        error: z.enum([
+            "connect_oauth_state_mismatch",
+            "connect_oauth_timeout",
+            "connect_oauth_exchange_failed",
+        ]),
+    }),
+    // Fastify validation errors can occur before the handler (e.g. max-length checks). When using
+    // zod serializerCompiler, ensure we accept the default error shape for 400 responses.
+    z.object({
+        statusCode: z.literal(400),
+        error: z.string().min(1),
+        message: z.string().min(1),
+    }).passthrough(),
+]);
+
+const credentialTokenEncoder = new TextEncoder();
+const credentialTokenDecoder = new TextDecoder();
+
+function toPrismaBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+    if (bytes.buffer instanceof ArrayBuffer) {
+        const sliced = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        return new Uint8Array(sliced);
+    }
+    const buffer = new ArrayBuffer(bytes.byteLength);
+    const copy = new Uint8Array(buffer);
+    copy.set(bytes);
+    return copy;
 }
 
-function encodeCredentialTokenBytes(ciphertext: string): Uint8Array {
-    return Buffer.from(ciphertext, "utf8");
+function resolveCredentialTokenString(tokenBytes: Uint8Array): string {
+    return credentialTokenDecoder.decode(tokenBytes);
+}
+
+function encodeCredentialTokenBytes(ciphertext: string): Uint8Array<ArrayBuffer> {
+    return toPrismaBytes(credentialTokenEncoder.encode(ciphertext));
 }
 
 export function connectConnectedServicesV2Routes(app: Fastify) {
@@ -153,19 +200,25 @@ export function connectConnectedServicesV2Routes(app: Fastify) {
                 serviceId: ConnectedServiceIdSchema,
             }),
             body: z.object({
-                publicKey: z.string().min(1),
-                code: z.string().min(1),
-                verifier: z.string().min(1),
-                redirectUri: z.string().url(),
-                state: z.string().min(1).nullable().optional(),
+                publicKey: z.string().min(1).max(CONNECTED_SERVICE_OAUTH_PUBLIC_KEY_MAX_LEN),
+                code: z.string().min(1).max(CONNECTED_SERVICE_OAUTH_CODE_MAX_LEN),
+                verifier: z.string().min(1).max(CONNECTED_SERVICE_OAUTH_VERIFIER_MAX_LEN),
+                redirectUri: z.string().url().max(CONNECTED_SERVICE_OAUTH_REDIRECT_URI_MAX_LEN),
+                state: z.string().min(1).max(CONNECTED_SERVICE_OAUTH_STATE_MAX_LEN).nullable().optional(),
             }),
             response: {
                 200: z.object({ bundle: z.string().min(1) }),
-                400: z.object({ error: z.literal("connect_oauth_exchange_failed") }),
+                400: ConnectedServiceOauthExchangeErrorResponseSchema,
             },
         },
     }, async (request, reply) => {
         const serviceId = request.params.serviceId satisfies ConnectedServiceId;
+        if (serviceId === "anthropic") {
+            const state = typeof request.body.state === "string" ? request.body.state.trim() : "";
+            if (!state) {
+                return reply.code(400).send({ error: "connect_oauth_state_mismatch" });
+            }
+        }
         try {
             const exchanged = await exchangeConnectedServiceOauthTokens({
                 serviceId,
@@ -177,7 +230,13 @@ export function connectConnectedServicesV2Routes(app: Fastify) {
                 now: Date.now(),
             });
             return reply.send({ bundle: exchanged.bundleB64Url });
-        } catch {
+        } catch (error) {
+            if (error instanceof ConnectedServiceOauthTimeoutError) {
+                return reply.code(400).send({ error: "connect_oauth_timeout" });
+            }
+            if (error instanceof ConnectedServiceOauthStateMismatchError) {
+                return reply.code(400).send({ error: "connect_oauth_state_mismatch" });
+            }
             return reply.code(400).send({ error: "connect_oauth_exchange_failed" });
         }
     });
@@ -187,7 +246,7 @@ export function connectConnectedServicesV2Routes(app: Fastify) {
         schema: {
             params: z.object({
                 serviceId: ConnectedServiceIdSchema,
-                profileId: z.string().min(1),
+                profileId: ConnectedServiceProfileIdSchema,
             }),
             body: z.object({
                 sealed: SealedConnectedServiceCredentialV1Schema,
@@ -249,7 +308,7 @@ export function connectConnectedServicesV2Routes(app: Fastify) {
         schema: {
             params: z.object({
                 serviceId: ConnectedServiceIdSchema,
-                profileId: z.string().min(1),
+                profileId: ConnectedServiceProfileIdSchema,
             }),
             response: {
                 200: z.object({
@@ -299,7 +358,7 @@ export function connectConnectedServicesV2Routes(app: Fastify) {
         schema: {
             params: z.object({
                 serviceId: ConnectedServiceIdSchema,
-                profileId: z.string().min(1),
+                profileId: ConnectedServiceProfileIdSchema,
             }),
             response: {
                 200: z.object({ success: z.literal(true) }),
@@ -329,7 +388,7 @@ export function connectConnectedServicesV2Routes(app: Fastify) {
                 200: z.object({
                     serviceId: ConnectedServiceIdSchema,
                     profiles: z.array(z.object({
-                        profileId: z.string(),
+                        profileId: z.string().min(1),
                         status: z.enum(["connected", "needs_reauth"]),
                         kind: z.enum(["oauth", "token"]).nullable().optional(),
                         providerEmail: z.string().nullable().optional(),
@@ -371,7 +430,7 @@ export function connectConnectedServicesV2Routes(app: Fastify) {
         schema: {
             params: z.object({
                 serviceId: ConnectedServiceIdSchema,
-                profileId: z.string().min(1),
+                profileId: ConnectedServiceProfileIdSchema,
             }),
             body: z.object({
                 machineId: z.string().min(1),

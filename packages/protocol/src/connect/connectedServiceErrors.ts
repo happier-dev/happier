@@ -7,6 +7,7 @@ export const CONNECTED_SERVICE_ERROR_CODES = {
     credentialSealUnavailable: 'connect_credential_seal_unavailable',
     oauthStateMismatch: 'connect_oauth_state_mismatch',
     oauthTimeout: 'connect_oauth_timeout',
+    oauthExchangeFailed: 'connect_oauth_exchange_failed',
 } as const;
 
 export const ConnectedServiceErrorCodeSchema = z.enum([
@@ -16,7 +17,7 @@ export const ConnectedServiceErrorCodeSchema = z.enum([
     CONNECTED_SERVICE_ERROR_CODES.credentialSealUnavailable,
     CONNECTED_SERVICE_ERROR_CODES.oauthStateMismatch,
     CONNECTED_SERVICE_ERROR_CODES.oauthTimeout,
+    CONNECTED_SERVICE_ERROR_CODES.oauthExchangeFailed,
 ]);
 
 export type ConnectedServiceErrorCode = z.infer<typeof ConnectedServiceErrorCodeSchema>;
-

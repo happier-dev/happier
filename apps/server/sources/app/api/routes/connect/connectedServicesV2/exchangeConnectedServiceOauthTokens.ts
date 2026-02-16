@@ -9,6 +9,20 @@ import {
 } from "@happier-dev/protocol";
 import { parseIntEnv } from "@/config/env";
 
+export class ConnectedServiceOauthTimeoutError extends Error {
+    constructor() {
+        super("Token exchange timed out");
+        this.name = "ConnectedServiceOauthTimeoutError";
+    }
+}
+
+export class ConnectedServiceOauthStateMismatchError extends Error {
+    constructor() {
+        super("OAuth state mismatch");
+        this.name = "ConnectedServiceOauthStateMismatchError";
+    }
+}
+
 type OauthExchangeInput = Readonly<{
     serviceId: ConnectedServiceId;
     publicKeyB64Url: string;
@@ -32,6 +46,39 @@ type OauthExchangePayload = Readonly<{
     expiresAt: number | null;
     raw: unknown;
 }>;
+
+function resolveNonEmptyEnv(raw: string | undefined, fallback: string): string {
+    if (typeof raw !== "string") return fallback;
+    const trimmed = raw.trim();
+    return trimmed ? trimmed : fallback;
+}
+
+function resolveOpenAiCodexOauthClientId(env: NodeJS.ProcessEnv): string {
+    return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_OAUTH_CLIENT_ID, "app_EMoamEEZ73f0CkXaXp7hrann");
+}
+
+function resolveOpenAiCodexOauthTokenUrl(env: NodeJS.ProcessEnv): string {
+    return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_OAUTH_TOKEN_URL, "https://auth.openai.com/oauth/token");
+}
+
+function resolveAnthropicOauthClientId(env: NodeJS.ProcessEnv): string {
+    return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_ANTHROPIC_OAUTH_CLIENT_ID, "9d1c250a-e61b-44d9-88ed-5944d1962f5e");
+}
+
+function resolveAnthropicOauthTokenUrl(env: NodeJS.ProcessEnv): string {
+    return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_ANTHROPIC_OAUTH_TOKEN_URL, "https://console.anthropic.com/v1/oauth/token");
+}
+
+function resolveGeminiOauthClientId(env: NodeJS.ProcessEnv): string {
+    return resolveNonEmptyEnv(
+        env.HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_CLIENT_ID,
+        "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
+    );
+}
+
+function resolveGeminiOauthTokenUrl(env: NodeJS.ProcessEnv): string {
+    return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_TOKEN_URL, "https://oauth2.googleapis.com/token");
+}
 
 function parseRecipientPublicKey(publicKeyB64Url: string): Uint8Array {
     const bytes = decodeBase64(publicKeyB64Url, "base64url");
@@ -88,7 +135,7 @@ function createFetchWithTimeout(fetcher: typeof fetch, timeoutMs: number): typeo
         } catch (error) {
             const name = error && typeof error === "object" && "name" in (error as any) ? String((error as any).name) : "";
             if (name === "AbortError") {
-                throw new Error("Token exchange timed out");
+                throw new ConnectedServiceOauthTimeoutError();
             }
             throw error;
         } finally {
@@ -104,8 +151,8 @@ async function exchangeOpenAiCodex(params: Readonly<{
     now: number;
     fetcher: typeof fetch;
 }>): Promise<OauthExchangePayload> {
-    const clientId = "app_EMoamEEZ73f0CkXaXp7hrann";
-    const tokenUrl = "https://auth.openai.com/oauth/token";
+    const clientId = resolveOpenAiCodexOauthClientId(process.env);
+    const tokenUrl = resolveOpenAiCodexOauthTokenUrl(process.env);
 
     const response = await params.fetcher(tokenUrl, {
         method: "POST",
@@ -121,8 +168,7 @@ async function exchangeOpenAiCodex(params: Readonly<{
         }),
     });
     if (!response.ok) {
-        const errorText = await response.text().catch(() => "");
-        throw new Error(`Token exchange failed: ${response.status} ${errorText}`.trim());
+        throw new Error(`Token exchange failed: ${response.status}`);
     }
 
     const json = (await response.json()) as any;
@@ -156,8 +202,8 @@ async function exchangeAnthropic(params: Readonly<{
     now: number;
     fetcher: typeof fetch;
 }>): Promise<OauthExchangePayload> {
-    const clientId = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-    const tokenUrl = "https://console.anthropic.com/v1/oauth/token";
+    const clientId = resolveAnthropicOauthClientId(process.env);
+    const tokenUrl = resolveAnthropicOauthTokenUrl(process.env);
 
     const response = await params.fetcher(tokenUrl, {
         method: "POST",
@@ -172,8 +218,7 @@ async function exchangeAnthropic(params: Readonly<{
         }),
     });
     if (!response.ok) {
-        const errorText = await response.text().catch(() => "");
-        throw new Error(`Token exchange failed: ${response.status} ${errorText}`.trim());
+        throw new Error(`Token exchange failed: ${response.status}`);
     }
 
     const json = (await response.json()) as any;
@@ -206,8 +251,8 @@ async function exchangeGemini(params: Readonly<{
     now: number;
     fetcher: typeof fetch;
 }>): Promise<OauthExchangePayload> {
-    const clientId = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
-    const tokenUrl = "https://oauth2.googleapis.com/token";
+    const clientId = resolveGeminiOauthClientId(process.env);
+    const tokenUrl = resolveGeminiOauthTokenUrl(process.env);
 
     const response = await params.fetcher(tokenUrl, {
         method: "POST",
@@ -223,8 +268,7 @@ async function exchangeGemini(params: Readonly<{
         }),
     });
     if (!response.ok) {
-        const errorText = await response.text().catch(() => "");
-        throw new Error(`Token exchange failed: ${response.status} ${errorText}`.trim());
+        throw new Error(`Token exchange failed: ${response.status}`);
     }
 
     const json = (await response.json()) as any;
@@ -267,7 +311,7 @@ export async function exchangeConnectedServiceOauthTokens(params: OauthExchangeI
         }
         if (params.serviceId === "anthropic") {
             const state = params.state?.trim() ?? "";
-            if (!state) throw new Error("Missing state");
+            if (!state) throw new ConnectedServiceOauthStateMismatchError();
             return await exchangeAnthropic({
                 code: params.code,
                 verifier: params.verifier,

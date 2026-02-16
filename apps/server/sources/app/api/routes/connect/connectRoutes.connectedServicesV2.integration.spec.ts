@@ -265,6 +265,117 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
         );
     });
 
+    it("rejects oauth exchange when request fields exceed max length", async () => {
+        const user = await db.account.create({ data: { publicKey: "pk-csv2-oauth-maxlen" }, select: { id: true } });
+
+        const keyPair = tweetnacl.box.keyPair();
+        const publicKeyB64Url = Buffer.from(keyPair.publicKey).toString("base64url");
+
+        const fetchSpy = vi.fn(async () => ({
+            ok: true,
+            status: 200,
+            json: async () => ({
+                id_token: "id_token_1",
+                access_token: "access_token_1",
+                refresh_token: "refresh_token_1",
+                expires_in: 3600,
+            }),
+            text: async () => "",
+        }) as any);
+        vi.stubGlobal("fetch", fetchSpy);
+
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const res = await app.inject({
+            method: "POST",
+            url: "/v2/connect/openai-codex/oauth/exchange",
+            headers: { "content-type": "application/json", "x-test-user-id": user.id },
+            payload: {
+                publicKey: publicKeyB64Url,
+                code: "c".repeat(10_000),
+                verifier: "verifier_1",
+                redirectUri: "http://localhost:1455/auth/callback",
+            },
+        });
+
+        expect(res.statusCode).toBe(400);
+        expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("returns connect_oauth_state_mismatch when state is missing for anthropic oauth exchange", async () => {
+        const user = await db.account.create({ data: { publicKey: "pk-csv2-oauth-state-missing" }, select: { id: true } });
+
+        const keyPair = tweetnacl.box.keyPair();
+        const publicKeyB64Url = Buffer.from(keyPair.publicKey).toString("base64url");
+
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const res = await app.inject({
+            method: "POST",
+            url: "/v2/connect/anthropic/oauth/exchange",
+            headers: { "content-type": "application/json", "x-test-user-id": user.id },
+            payload: {
+                publicKey: publicKeyB64Url,
+                code: "code_1",
+                verifier: "verifier_1",
+                redirectUri: "http://localhost:1455/auth/callback",
+            },
+        });
+
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toEqual({ error: "connect_oauth_state_mismatch" });
+    });
+
+    it("returns connect_oauth_timeout when token exchange times out", async () => {
+        const envBackup = process.env.HAPPIER_CONNECTED_SERVICES_OAUTH_EXCHANGE_TIMEOUT_MS;
+        process.env.HAPPIER_CONNECTED_SERVICES_OAUTH_EXCHANGE_TIMEOUT_MS = "1000";
+        try {
+            const user = await db.account.create({ data: { publicKey: "pk-csv2-oauth-timeout" }, select: { id: true } });
+
+            const keyPair = tweetnacl.box.keyPair();
+            const publicKeyB64Url = Buffer.from(keyPair.publicKey).toString("base64url");
+
+            vi.stubGlobal("fetch", vi.fn(async (_url: any, init: any) => {
+                return await new Promise((_resolve, reject) => {
+                    init?.signal?.addEventListener?.("abort", () => {
+                        const err = new Error("AbortError");
+                        (err as any).name = "AbortError";
+                        reject(err);
+                    });
+                });
+            }));
+
+            const app = createTestApp();
+            connectRoutes(app as any);
+            await app.ready();
+
+            const res = await app.inject({
+                method: "POST",
+                url: "/v2/connect/gemini/oauth/exchange",
+                headers: { "content-type": "application/json", "x-test-user-id": user.id },
+                payload: {
+                    publicKey: publicKeyB64Url,
+                    code: "code_1",
+                    verifier: "verifier_1",
+                    redirectUri: "http://localhost:1455/auth/callback",
+                },
+            });
+
+            expect(res.statusCode).toBe(400);
+            expect(res.json()).toEqual({ error: "connect_oauth_timeout" });
+        } finally {
+            if (typeof envBackup === "string") {
+                process.env.HAPPIER_CONNECTED_SERVICES_OAUTH_EXCHANGE_TIMEOUT_MS = envBackup;
+            } else {
+                delete (process.env as any).HAPPIER_CONNECTED_SERVICES_OAUTH_EXCHANGE_TIMEOUT_MS;
+            }
+        }
+    });
+
     it("lists connected service profiles without returning plaintext secrets", async () => {
         const user = await db.account.create({ data: { publicKey: "pk-csv2-u2" }, select: { id: true } });
 
@@ -298,6 +409,26 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
             }),
         ]);
         expect(JSON.stringify(json)).not.toContain("c2VhbGVk");
+    });
+
+    it("rejects invalid connected service profile ids", async () => {
+        const user = await db.account.create({ data: { publicKey: "pk-csv2-profileid-invalid" }, select: { id: true } });
+
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const res = await app.inject({
+            method: "POST",
+            url: "/v2/connect/openai-codex/profiles/work%2Fbad/credential",
+            headers: { "content-type": "application/json", "x-test-user-id": user.id },
+            payload: {
+                sealed: { format: "account_scoped_v1", ciphertext: "c2VhbGVk" },
+                metadata: { kind: "oauth", providerEmail: "user@example.com", expiresAt: Date.now() + 3600_000 },
+            },
+        });
+
+        expect(res.statusCode).toBe(400);
     });
 
     it("treats legacy v1 vendor tokens as unsupported for v2 credential reads", async () => {

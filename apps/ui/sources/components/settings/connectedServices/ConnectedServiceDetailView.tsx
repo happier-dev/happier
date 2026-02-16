@@ -17,7 +17,12 @@ import { deleteConnectedServiceCredential, registerConnectedServiceCredentialSea
 import { sealConnectedServiceCredential } from '@/sync/domains/connectedServices/sealConnectedServiceCredential';
 import { getConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { connectedServiceProfileKey, resolveConnectedServiceProfileLabel } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
-import { buildConnectedServiceCredentialRecord, ConnectedServiceIdSchema, type ConnectedServiceId } from '@happier-dev/protocol';
+import {
+  buildConnectedServiceCredentialRecord,
+  ConnectedServiceIdSchema,
+  ConnectedServiceProfileIdSchema,
+  type ConnectedServiceId,
+} from '@happier-dev/protocol';
 import type { ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
@@ -91,7 +96,14 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
         cancelText: t('common.cancel') ?? 'Cancel',
       },
     );
-    return typeof res === 'string' ? res.trim() : null;
+    const profileId = typeof res === 'string' ? res.trim() : '';
+    if (!profileId) return null;
+    const parsed = ConnectedServiceProfileIdSchema.safeParse(profileId);
+    if (!parsed.success) {
+      await Modal.alert('Invalid profile id', 'Use letters, numbers, hyphen, or underscore (max 64).');
+      return null;
+    }
+    return parsed.data;
   };
 
   const handleDisconnect = async (profileId: string) => {

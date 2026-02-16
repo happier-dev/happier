@@ -63,6 +63,7 @@ import { waitForSessionWebhook } from './spawn/waitForSessionWebhook';
 import { resolveSpawnChildEnvironment } from './spawn/resolveSpawnChildEnvironment';
 import { createSpawnConcurrencyGate } from './spawn/createSpawnConcurrencyGate';
 import { startAutomationWorker, type AutomationWorkerHandle } from './automation/automationWorker';
+import { startMemoryWorker, type MemoryWorkerHandle } from './memory/memoryWorker';
 import { resolveConnectedServiceAuthForSpawn } from './connectedServices/resolveConnectedServiceAuthForSpawn';
 import { shouldResolveConnectedServiceAuthForSpawn } from './connectedServices/shouldResolveConnectedServiceAuthForSpawn';
 import { ConnectedServiceRefreshCoordinator } from './connectedServices/refresh/ConnectedServiceRefreshCoordinator';
@@ -70,6 +71,7 @@ import { createConnectedServicesAuthUpdatedRestartHandler } from './connectedSer
 import { ConnectedServiceQuotasCoordinator } from './connectedServices/quotas/ConnectedServiceQuotasCoordinator';
 import { createConnectedServiceQuotaFetchers } from './connectedServices/quotas/createConnectedServiceQuotaFetchers';
 import { resolveConnectedServiceQuotasDaemonOptions } from './connectedServices/quotas/resolveConnectedServiceQuotasDaemonOptions';
+import { resolveConnectedServicesQuotasEnabled } from './connectedServices/quotas/resolveConnectedServicesQuotasEnabled';
 import { startConnectedServiceQuotasLoop, type ConnectedServiceQuotasLoopHandle } from './connectedServices/quotas/startConnectedServiceQuotasLoop';
 import {
   HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY,
@@ -161,13 +163,14 @@ export async function startDaemon(): Promise<void> {
 	    const pidToTrackedSession = new Map<number, TrackedSession>();
 	    const spawnResourceCleanupByPid = new Map<number, () => void>();
 	    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
-	    const connectedServicesMaterializationBaseDir = join(configuration.happyHomeDir, 'daemon', 'connected-services', 'materialized');
-	    let connectedServiceRefreshCoordinator: ConnectedServiceRefreshCoordinator | null = null;
-	    let connectedServiceRefreshInterval: NodeJS.Timeout | null = null;
-	    let connectedServiceQuotasCoordinator: ConnectedServiceQuotasCoordinator | null = null;
-	    let connectedServiceQuotasLoopHandle: ConnectedServiceQuotasLoopHandle | null = null;
-	    let apiMachineForSessions: ApiMachineClient | null = null;
+      const connectedServicesMaterializationBaseDir = join(configuration.happyHomeDir, 'daemon', 'connected-services', 'materialized');
+      let connectedServiceRefreshCoordinator: ConnectedServiceRefreshCoordinator | null = null;
+      let connectedServiceRefreshInterval: NodeJS.Timeout | null = null;
+      let connectedServiceQuotasCoordinator: ConnectedServiceQuotasCoordinator | null = null;
+      let connectedServiceQuotasLoopHandle: ConnectedServiceQuotasLoopHandle | null = null;
+		    let apiMachineForSessions: ApiMachineClient | null = null;
       let automationWorker: AutomationWorkerHandle | null = null;
+      let memoryWorker: MemoryWorkerHandle | null = null;
 
 	    // Session spawning awaiter system
 	    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
@@ -949,7 +952,7 @@ export async function startDaemon(): Promise<void> {
 	          return false;
 	        };
         const sessionRespawnMaxRestarts = sessionRespawnMaxAttempts === 0 ? null : sessionRespawnMaxAttempts;
-        const sessionRunnerRespawnManager = createSessionRunnerRespawnManager({
+	        const sessionRunnerRespawnManager = createSessionRunnerRespawnManager({
           enabled: sessionRespawnEnabled,
           maxRestarts: sessionRespawnMaxRestarts,
           baseDelayMs: sessionRespawnBaseDelayMs,
@@ -1073,9 +1076,7 @@ export async function startDaemon(): Promise<void> {
         (connectedServiceRefreshInterval as unknown as { unref?: () => void })?.unref?.();
       }
 
-      const connectedServicesQuotasEnabled =
-        resolveBoolEnv(process.env.HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED, true) &&
-        resolveBoolEnv(process.env.HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED, true);
+      const connectedServicesQuotasEnabled = resolveConnectedServicesQuotasEnabled(process.env);
       if (connectedServicesQuotasEnabled) {
         const quotasTickMs = resolvePositiveIntEnv(
           process.env.HAPPIER_CONNECTED_SERVICES_QUOTAS_TICK_MS,
@@ -1138,18 +1139,31 @@ export async function startDaemon(): Promise<void> {
 	        apiMachineForSessions = connectedApiMachine;
 
 	        // Set RPC handlers
+	          automationWorker = startAutomationWorker({
+	            token: credentials.token,
+	            machineId,
+	            encryption: credentials.encryption,
+	            spawnSession,
+	          });
+
+	          memoryWorker = (() => {
+	            try {
+	              return startMemoryWorker({
+	                credentials,
+	                machineId,
+	              });
+	            } catch (error) {
+	              logger.warn('[DAEMON RUN] Failed to start memory worker (best-effort)', error);
+	              return null;
+	            }
+	          })();
+
 	        connectedApiMachine.setRPCHandlers({
 	          spawnSession,
 	          stopSession,
-	          requestShutdown: () => requestShutdown('happier-app')
+	          requestShutdown: () => requestShutdown('happier-app'),
+            ...(memoryWorker ? { memory: memoryWorker } : {}),
 	        });
-
-          automationWorker = startAutomationWorker({
-            token: credentials.token,
-            machineId,
-            encryption: credentials.encryption,
-            spawnSession,
-          });
 
 	        let didRefreshMachineMetadata = false;
 	        connectedApiMachine.connect({
@@ -1269,6 +1283,9 @@ export async function startDaemon(): Promise<void> {
       }
       if (automationWorker) {
         automationWorker.stop();
+      }
+      if (memoryWorker) {
+        memoryWorker.stop();
       }
       await stopControlServer();
 	      await cleanupDaemonState();

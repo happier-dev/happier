@@ -14,6 +14,14 @@ export type ConnectedServiceCredentialFormat = z.infer<typeof ConnectedServiceCr
 export const ConnectedServiceCredentialKindSchema = z.enum(['oauth', 'token']);
 export type ConnectedServiceCredentialKind = z.infer<typeof ConnectedServiceCredentialKindSchema>;
 
+export const ConnectedServiceProfileIdSchema = z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[a-zA-Z0-9][a-zA-Z0-9_:-]{0,63}$/, 'Invalid profile id');
+
+export type ConnectedServiceProfileId = z.infer<typeof ConnectedServiceProfileIdSchema>;
+
 const OauthCredentialPayloadSchema = z.object({
     accessToken: z.string().min(1),
     refreshToken: z.string().min(1),
@@ -35,7 +43,7 @@ const TokenCredentialPayloadSchema = z.object({
 const ConnectedServiceCredentialBaseSchema = z.object({
     v: z.literal(1),
     serviceId: ConnectedServiceIdSchema,
-    profileId: z.string().min(1),
+    profileId: ConnectedServiceProfileIdSchema,
     createdAt: z.number().int().nonnegative(),
     updatedAt: z.number().int().nonnegative(),
     expiresAt: z.number().int().nonnegative().nullable(),
@@ -96,7 +104,7 @@ export type ConnectedServiceQuotaMeterV1 = z.infer<typeof ConnectedServiceQuotaM
 export const ConnectedServiceQuotaSnapshotV1Schema = z.object({
     v: z.literal(1),
     serviceId: ConnectedServiceIdSchema,
-    profileId: z.string().min(1),
+    profileId: ConnectedServiceProfileIdSchema,
     fetchedAt: z.number().int().nonnegative(),
     staleAfterMs: z.number().int().min(1),
     planLabel: z.string().min(1).nullable(),

@@ -9,6 +9,10 @@ type FixtureOverrides = {
     voiceEnabled?: boolean;
     automationsEnabled?: boolean;
     automationsExistingSessionTarget?: boolean;
+    connectedServicesEnabled?: boolean;
+    connectedServicesWebOauthProxyEnabled?: boolean;
+    connectedServicesQuotasEnabled?: boolean;
+    updatesOtaEnabled?: boolean;
     oauthProviders?: Record<string, { enabled: boolean; configured: boolean }>;
     authProviders?: Record<string, { enabled: boolean; configured: boolean }>;
 };
@@ -53,6 +57,18 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
             automations: {
                 enabled: overrides.automationsEnabled ?? true,
                 existingSessionTarget: overrides.automationsExistingSessionTarget ?? false,
+            },
+            connectedServices: {
+                enabled: overrides.connectedServicesEnabled ?? true,
+                webOauthProxyEnabled: overrides.connectedServicesWebOauthProxyEnabled ?? true,
+                quotas: {
+                    enabled: overrides.connectedServicesQuotasEnabled ?? false,
+                },
+            },
+            updates: {
+                ota: {
+                    enabled: overrides.updatesOtaEnabled ?? true,
+                },
             },
             sharing: {
                 session: { enabled: true },

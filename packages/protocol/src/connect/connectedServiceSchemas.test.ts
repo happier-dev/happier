@@ -68,5 +68,55 @@ describe('connectedServiceSchemas', () => {
         });
         expect(sealed.format).toBe('account_scoped_v1');
     });
-});
 
+    it('rejects invalid profile ids', () => {
+        const now = Date.now();
+        expect(() => {
+            ConnectedServiceCredentialRecordV1Schema.parse({
+                v: 1,
+                serviceId: 'openai-codex',
+                profileId: 'work/bad',
+                kind: 'oauth',
+                createdAt: now,
+                updatedAt: now,
+                expiresAt: now + 3600_000,
+                oauth: {
+                    accessToken: 'at',
+                    refreshToken: 'rt',
+                    idToken: 'id',
+                    scope: 'openid',
+                    tokenType: 'Bearer',
+                    providerAccountId: 'acct_1',
+                    providerEmail: 'user@example.com',
+                    raw: null,
+                },
+                token: null,
+            });
+        }).toThrow();
+    });
+
+    it('accepts profile ids that contain ":"', () => {
+        const now = Date.now();
+        const rec = ConnectedServiceCredentialRecordV1Schema.parse({
+            v: 1,
+            serviceId: 'openai-codex',
+            profileId: 'work:us',
+            kind: 'oauth',
+            createdAt: now,
+            updatedAt: now,
+            expiresAt: now + 3600_000,
+            oauth: {
+                accessToken: 'at',
+                refreshToken: 'rt',
+                idToken: 'id',
+                scope: 'openid',
+                tokenType: 'Bearer',
+                providerAccountId: 'acct_1',
+                providerEmail: 'user@example.com',
+                raw: null,
+            },
+            token: null,
+        });
+        expect(rec.profileId).toBe('work:us');
+    });
+});
