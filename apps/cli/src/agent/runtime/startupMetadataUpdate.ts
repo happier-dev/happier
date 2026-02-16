@@ -1,4 +1,5 @@
 import type { Metadata, PermissionMode } from '@/api/types';
+import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 
 import {
   mergeSessionMetadataForStartup,
@@ -44,7 +45,7 @@ export function buildModelOverride(opts: {
 }
 
 export function applyStartupMetadataUpdateToSession(opts: {
-  session: { updateMetadata: (updater: (current: Metadata) => Metadata) => void };
+  session: { updateMetadata: (updater: (current: Metadata) => Metadata) => Promise<void> | void };
   next: Metadata;
   nowMs?: number;
   permissionModeOverride: PermissionModeOverride;
@@ -54,15 +55,19 @@ export function applyStartupMetadataUpdateToSession(opts: {
 }): void {
   const nowMs = typeof opts.nowMs === 'number' ? opts.nowMs : Date.now();
 
-  opts.session.updateMetadata((currentMetadata) =>
-    mergeSessionMetadataForStartup({
-      current: currentMetadata,
-      next: opts.next,
-      nowMs,
-      permissionModeOverride: opts.permissionModeOverride ?? null,
-      acpSessionModeOverride: opts.acpSessionModeOverride ?? null,
-      modelOverride: opts.modelOverride ?? null,
-      mode: opts.mode ?? 'start',
-    })
+  updateMetadataBestEffort(
+    opts.session,
+    (currentMetadata) =>
+      mergeSessionMetadataForStartup({
+        current: currentMetadata,
+        next: opts.next,
+        nowMs,
+        permissionModeOverride: opts.permissionModeOverride ?? null,
+        acpSessionModeOverride: opts.acpSessionModeOverride ?? null,
+        modelOverride: opts.modelOverride ?? null,
+        mode: opts.mode ?? 'start',
+      }),
+    '[startupMetadata]',
+    'apply_startup_metadata_update',
   );
 }

@@ -1,11 +1,31 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { reportSessionToDaemonIfRunning } from '@/agent/runtime/startupSideEffects';
+import { primeAgentStateForUi, reportSessionToDaemonIfRunning } from '@/agent/runtime/startupSideEffects';
 import type { Metadata } from '@/api/types';
 
 const metadataStub = {} as Metadata;
 
 describe('startup side effects: daemon session reporting retry', () => {
+  it('does not emit unhandledRejection when priming agent state fails', async () => {
+    const onUnhandled = vi.fn();
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const session = {
+        updateAgentState: async () => {
+          throw new Error('updateAgentState failed');
+        },
+      };
+
+      primeAgentStateForUi(session as any, '[Test]');
+
+      // Give Node a chance to surface an unhandled rejection if one was created.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(onUnhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
   it('retries transient daemon-unavailable errors and succeeds', async () => {
     const errors = [
       { error: 'No daemon running, no state file found' },

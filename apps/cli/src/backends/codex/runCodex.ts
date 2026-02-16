@@ -36,7 +36,7 @@ import {
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 import { pushTextToMessageQueueWithSpecialCommands } from '@/agent/runtime/queueSpecialCommands';
 import { normalizePermissionModeToIntent, resolvePermissionModeUpdatedAtFromMessage } from '@/agent/runtime/permission/permissionModeCanonical';
-import { maybeUpdateCodexSessionIdMetadata } from './utils/codexSessionIdMetadata';
+import { publishCodexSessionIdMetadata } from './utils/codexSessionIdMetadata';
 import { createCodexAcpRuntime } from './acp/runtime';
 import { syncCodexAcpSessionModeFromPermissionMode } from './acp/syncSessionModeFromPermissionMode';
 import { publishInFlightSteerCapability } from './utils/publishInFlightSteerCapability';
@@ -76,6 +76,8 @@ import { createLocalRemoteModeController } from '@/agent/localControl/createLoca
 import { createCodexRemoteTerminalUi } from './runtime/createCodexRemoteTerminalUi';
 import { resolveCodexStartingMode } from './utils/resolveCodexStartingMode';
 import { abortAcpRuntimeTurnIfNeeded } from '@/agent/acp/runtime/createAcpRuntime';
+import { runMetadataOverridesWatcherLoop } from './utils/metadataOverridesWatcher';
+import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 
 /**
  * Main entry point for the codex command with ink UI
@@ -98,6 +100,7 @@ export async function runCodex(opts: {
     type PermissionMode = import('@/api/types').PermissionMode;
     interface EnhancedMode {
         permissionMode: PermissionMode;
+        permissionModeUpdatedAt?: number;
         /**
          * Stable id for the originating user message (when provided by the app),
          * used for discard markers and reconciliation on remote↔local switches.
@@ -197,18 +200,23 @@ export async function runCodex(opts: {
             // This prevents the UI from mis-detecting ACP capabilities based on previous runs.
             // Note: we intentionally keep user-configured overrides (permissionMode/modelOverride/acpSessionModeOverride).
             if (!isExperimentalCodexAcpEnabled()) {
-                attachSession.updateMetadata((current) => {
-                    const meta = current as any;
-                    if (
-                        meta.acpSessionModesV1 === undefined &&
-                        meta.acpSessionModelsV1 === undefined &&
-                        meta.acpConfigOptionsV1 === undefined
-                    ) {
-                        return current;
-                    }
-                    const { acpSessionModesV1, acpSessionModelsV1, acpConfigOptionsV1, ...rest } = meta;
-                    return rest as any;
-                });
+                updateMetadataBestEffort(
+                    attachSession,
+                    (current) => {
+                        const meta = current as any;
+                        if (
+                            meta.acpSessionModesV1 === undefined &&
+                            meta.acpSessionModelsV1 === undefined &&
+                            meta.acpConfigOptionsV1 === undefined
+                        ) {
+                            return current;
+                        }
+                        const { acpSessionModesV1, acpSessionModelsV1, acpConfigOptionsV1, ...rest } = meta;
+                        return rest as any;
+                    },
+                    '[codex]',
+                    'strip_stale_acp_metadata_on_attach',
+                );
             }
         },
         onAttachMetadataSnapshotMissing: (error) => {
@@ -265,7 +273,8 @@ export async function runCodex(opts: {
                 const res = maybeUpdatePermissionModeMetadata({
                     currentPermissionMode,
                     nextPermissionMode,
-                    updateMetadata: (updater) => session.updateMetadata(updater),
+                    updateMetadata: (updater) =>
+                        updateMetadataBestEffort(session, updater, '[codex]', 'permission_mode_from_user_message'),
                     nowMs: () => updatedAt,
                 });
                 currentPermissionMode = res.currentPermissionMode;
@@ -289,6 +298,7 @@ export async function runCodex(opts: {
 
         const enhancedMode: EnhancedMode = {
             permissionMode: messagePermissionMode || 'default',
+            permissionModeUpdatedAt: currentPermissionModeUpdatedAt,
             localId: message.localId ?? null,
             model: messageModel,
         };
@@ -666,6 +676,7 @@ export async function runCodex(opts: {
             applyPermissionModeToCodexPermissionHandler({
                 permissionHandler,
                 permissionMode: currentPermissionMode ?? initialPermissionMode,
+                permissionModeUpdatedAt: currentPermissionModeUpdatedAt,
             });
         const reasoningProcessor = new ReasoningProcessor((message) => {
             // Callback to send messages directly from the processor
@@ -696,9 +707,9 @@ export async function runCodex(opts: {
     const lastCodexThreadIdPublished: { value: string | null } = { value: null };
 
     const publishCodexThreadIdToMetadata = () => {
-        maybeUpdateCodexSessionIdMetadata({
+        publishCodexSessionIdMetadata({
+            session,
             getCodexThreadId: () => (client ? client.getSessionId() : (codexAcpRuntime?.getSessionId() ?? null)),
-            updateHappySessionMetadata: (updater) => session.updateMetadata(updater),
             lastPublished: lastCodexThreadIdPublished,
         });
     };
@@ -768,6 +779,7 @@ export async function runCodex(opts: {
                     applyPermissionModeToCodexPermissionHandler({
                         permissionHandler,
                         permissionMode: intent,
+                        permissionModeUpdatedAt: updatedAt,
                     });
                     if (useCodexAcp && codexAcpRuntime) {
                         void syncCodexAcpSessionModeFromPermissionMode({
@@ -802,6 +814,19 @@ export async function runCodex(opts: {
         // sandbox/approval policy even before the next user message.
         syncRuntimeOverridesFromMetadata();
         syncModelOverrideFromMetadata();
+
+        // Keep metadata-driven overrides current even mid-turn. `waitForMetadataUpdate()` is
+        // responsible for ensuring user-scoped broadcasts are observed (via userSocket), so
+        // we run a lightweight watcher loop in the background.
+        void runMetadataOverridesWatcherLoop({
+            shouldExit: () => shouldExit,
+            getAbortSignal: () => abortController.signal,
+            waitForMetadataUpdate: (signal) => session.waitForMetadataUpdate(signal),
+            onUpdate: () => {
+                syncRuntimeOverridesFromMetadata();
+                syncModelOverrideFromMetadata();
+            },
+        });
 
         const localRemoteSwitchController = createLocalRemoteModeController({
             session,
@@ -885,6 +910,7 @@ export async function runCodex(opts: {
                 applyPermissionModeToCodexPermissionHandler({
                     permissionHandler,
                     permissionMode: message.mode.permissionMode,
+                    permissionModeUpdatedAt: message.mode.permissionModeUpdatedAt,
                 });
 
                 const specialCommand = parseSpecialCommand(message.message);

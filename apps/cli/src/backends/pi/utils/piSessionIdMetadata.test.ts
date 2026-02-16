@@ -69,4 +69,24 @@ describe('maybeUpdatePiSessionIdMetadata', () => {
     expect(calls).toBe(1);
     expect(metadata).toBe(snapshot);
   });
+
+  it('reverts lastPublished when the metadata update fails', async () => {
+    const lastPublished = { value: null as string | null };
+    let calls = 0;
+
+    maybeUpdatePiSessionIdMetadata({
+      getPiSessionId: () => 'pi-session-1',
+      updateHappySessionMetadata: async () => {
+        calls += 1;
+        throw new Error('update failed');
+      },
+      lastPublished,
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(calls).toBe(1);
+    expect(lastPublished.value).toBeNull();
+  });
 });

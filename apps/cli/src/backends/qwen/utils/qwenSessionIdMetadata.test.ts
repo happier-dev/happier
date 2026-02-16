@@ -92,4 +92,24 @@ describe('maybeUpdateQwenSessionIdMetadata', () => {
     expect(last.value).toBe('qwen-2');
     expect((metadata as Metadata & { qwenSessionId?: string }).qwenSessionId).toBe('qwen-2');
   });
+
+  it('reverts lastPublished when the metadata update fails', async () => {
+    const last = { value: null as string | null };
+    let updateCalls = 0;
+
+    maybeUpdateQwenSessionIdMetadata({
+      getQwenSessionId: () => 'qwen-1',
+      updateHappySessionMetadata: async () => {
+        updateCalls += 1;
+        throw new Error('update failed');
+      },
+      lastPublished: last,
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(updateCalls).toBe(1);
+    expect(last.value).toBeNull();
+  });
 });

@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
 import { configuration } from '@/configuration';
 import { ClaudePermissionRpcRouter } from './utils/permissionRpcRouter';
+import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 
 export type SessionFoundInfo = {
     sessionId: string;
@@ -137,11 +138,16 @@ export class Session {
         }
         this.lastPermissionMode = canonical;
         this.lastPermissionModeUpdatedAt = updatedAt;
-        this.client.updateMetadata((metadata) => ({
-            ...metadata,
-            permissionMode: canonical,
-            permissionModeUpdatedAt: updatedAt
-        }));
+        updateMetadataBestEffort(
+            this.client,
+            (metadata) => ({
+                ...metadata,
+                permissionMode: canonical,
+                permissionModeUpdatedAt: updatedAt
+            }),
+            '[Session]',
+            'set_last_permission_mode',
+        );
     }
 
     adoptLastPermissionModeFromMetadata = (mode: PermissionMode, updatedAt: number): boolean => {
@@ -225,19 +231,29 @@ export class Session {
         
         // Update metadata with Claude Code session ID
         if (prevSessionId !== sessionId) {
-            this.client.updateMetadata((metadata) => ({
-                ...metadata,
-                claudeSessionId: sessionId,
-                claudeTranscriptPath: this.transcriptPath,
-            }));
+            updateMetadataBestEffort(
+                this.client,
+                (metadata) => ({
+                    ...metadata,
+                    claudeSessionId: sessionId,
+                    claudeTranscriptPath: this.transcriptPath,
+                }),
+                '[Session]',
+                'claude_session_found',
+            );
             logger.debug(`[Session] Claude Code session ID ${sessionId} added to metadata`);
 
         } else if (nextTranscriptPath) {
             // Same session, but we learned a more precise transcript path from hooks.
-            this.client.updateMetadata((metadata) => ({
-                ...metadata,
-                claudeTranscriptPath: this.transcriptPath,
-            }));
+            updateMetadataBestEffort(
+                this.client,
+                (metadata) => ({
+                    ...metadata,
+                    claudeTranscriptPath: this.transcriptPath,
+                }),
+                '[Session]',
+                'claude_transcript_path_found',
+            );
         }
 
         // Notify callbacks when either the sessionId changes or we learned a better transcript path.

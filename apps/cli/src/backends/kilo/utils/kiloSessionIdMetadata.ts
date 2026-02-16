@@ -2,7 +2,7 @@ import type { Metadata } from '@/api/types';
 
 export function maybeUpdateKiloSessionIdMetadata(params: {
   getKiloSessionId: () => string | null;
-  updateHappySessionMetadata: (updater: (metadata: Metadata) => Metadata) => void;
+  updateHappySessionMetadata: (updater: (metadata: Metadata) => Metadata) => Promise<void> | void;
   lastPublished: { value: string | null };
 }): void {
   const raw = params.getKiloSessionId();
@@ -11,9 +11,21 @@ export function maybeUpdateKiloSessionIdMetadata(params: {
 
   if (params.lastPublished.value === next) return;
 
+  const prev = params.lastPublished.value;
   params.lastPublished.value = next;
-  params.updateHappySessionMetadata((metadata) => ({
-    ...metadata,
-    kiloSessionId: next,
-  }));
+  try {
+    const res = params.updateHappySessionMetadata((metadata) => ({
+      ...metadata,
+      kiloSessionId: next,
+    }));
+    void Promise.resolve(res).catch(() => {
+      if (params.lastPublished.value === next) {
+        params.lastPublished.value = prev;
+      }
+    });
+  } catch {
+    if (params.lastPublished.value === next) {
+      params.lastPublished.value = prev;
+    }
+  }
 }

@@ -43,19 +43,25 @@ describe('maybeUpdateKimiSessionIdMetadata', () => {
 
     maybeUpdateKimiSessionIdMetadata({
       getKimiSessionId: () => ' kimi-1 ',
-      updateHappySessionMetadata: (updater) => updates.push(updater(createTestMetadata({ name: 'keep-name' }))),
+      updateHappySessionMetadata: (updater) => {
+        updates.push(updater(createTestMetadata({ name: 'keep-name' })));
+      },
       lastPublished,
     });
 
     maybeUpdateKimiSessionIdMetadata({
       getKimiSessionId: () => 'kimi-1',
-      updateHappySessionMetadata: (updater) => updates.push(updater(createTestMetadata({ name: 'keep-name' }))),
+      updateHappySessionMetadata: (updater) => {
+        updates.push(updater(createTestMetadata({ name: 'keep-name' })));
+      },
       lastPublished,
     });
 
     maybeUpdateKimiSessionIdMetadata({
       getKimiSessionId: () => 'kimi-2',
-      updateHappySessionMetadata: (updater) => updates.push(updater(createTestMetadata({ name: 'keep-name' }))),
+      updateHappySessionMetadata: (updater) => {
+        updates.push(updater(createTestMetadata({ name: 'keep-name' })));
+      },
       lastPublished,
     });
 
@@ -80,5 +86,25 @@ describe('maybeUpdateKimiSessionIdMetadata', () => {
     expect(updates).toEqual([
       createTestMetadata({ kimiSessionId: 'kimi-next', name: 'keep-name' }),
     ]);
+  });
+
+  it('does not mark the session id as published when the metadata update fails', async () => {
+    const lastPublished = { value: null as string | null };
+    let calls = 0;
+
+    maybeUpdateKimiSessionIdMetadata({
+      getKimiSessionId: () => 'kimi-1',
+      updateHappySessionMetadata: async () => {
+        calls += 1;
+        throw new Error('update failed');
+      },
+      lastPublished,
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(calls).toBe(1);
+    expect(lastPublished.value).toBeNull();
   });
 });

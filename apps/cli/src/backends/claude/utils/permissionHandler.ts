@@ -18,6 +18,7 @@ import { isShellCommandAllowed } from '@/agent/permissions/shellCommandAllowlist
 import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
 import { extractAgentIdFromTaskResultText } from '@/backends/claude/remote/sidechains/extractAgentIdFromTaskResult';
 import type { PermissionRpcPayload } from './permissionRpc';
+import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
 
 type PermissionResponse = PermissionRpcPayload;
 
@@ -115,19 +116,24 @@ export class PermissionHandler {
     private advertiseCapabilities(): void {
         // Capability negotiation for app ↔ agent compatibility.
         // Older agents won't set this, so clients can safely fall back to legacy behavior.
-        this.session.client.updateAgentState((currentState) => {
-            const currentCaps = (currentState as any).capabilities;
-            if (currentCaps && currentCaps.askUserQuestionAnswersInPermission === true) {
-                return currentState;
-            }
-            return {
-                ...currentState,
-                capabilities: {
-                    ...(currentCaps && typeof currentCaps === 'object' ? currentCaps : {}),
-                    askUserQuestionAnswersInPermission: true,
-                },
-            };
-        });
+        updateAgentStateBestEffort(
+            this.session.client,
+            (currentState) => {
+                const currentCaps = (currentState as any).capabilities;
+                if (currentCaps && currentCaps.askUserQuestionAnswersInPermission === true) {
+                    return currentState;
+                }
+                return {
+                    ...currentState,
+                    capabilities: {
+                        ...(currentCaps && typeof currentCaps === 'object' ? currentCaps : {}),
+                        askUserQuestionAnswersInPermission: true,
+                    },
+                };
+            },
+            '[Claude]',
+            'advertise_capabilities',
+        );
     }
 
     approveToolCall(toolCallId: string, opts?: { answers?: Record<string, string> }): void {
@@ -193,29 +199,34 @@ export class PermissionHandler {
         this.handlePermissionResponse(message, pending);
 
         // Move processed request to completedRequests
-        this.session.client.updateAgentState((currentState) => {
-            const request = currentState.requests?.[id];
-            if (!request) return currentState;
-            let r = { ...currentState.requests };
-            delete r[id];
-            return {
-                ...currentState,
-                requests: r,
-                completedRequests: {
-                    ...currentState.completedRequests,
-                    [id]: {
-                        ...request,
-                        completedAt: Date.now(),
-                        status: message.approved ? 'approved' : 'denied',
-                        reason: message.reason,
-                        mode: message.mode,
-                        ...(Array.isArray(message.allowedTools ?? message.allowTools)
-                            ? { allowedTools: (message.allowedTools ?? message.allowTools)! }
-                            : null),
+        updateAgentStateBestEffort(
+            this.session.client,
+            (currentState) => {
+                const request = currentState.requests?.[id];
+                if (!request) return currentState;
+                let r = { ...currentState.requests };
+                delete r[id];
+                return {
+                    ...currentState,
+                    requests: r,
+                    completedRequests: {
+                        ...currentState.completedRequests,
+                        [id]: {
+                            ...request,
+                            completedAt: Date.now(),
+                            status: message.approved ? 'approved' : 'denied',
+                            reason: message.reason,
+                            mode: message.mode,
+                            ...(Array.isArray(message.allowedTools ?? message.allowTools)
+                                ? { allowedTools: (message.allowedTools ?? message.allowTools)! }
+                                : null),
+                        }
                     }
-                }
-            };
-        });
+                };
+            },
+            '[Claude]',
+            'complete_permission_request',
+        );
     }
     
     /**
@@ -428,23 +439,28 @@ export class PermissionHandler {
             );
 
             // Update agent state
-            this.session.client.updateAgentState((currentState) => ({
-                ...currentState,
-                capabilities: {
-                    ...(currentState.capabilities && typeof currentState.capabilities === 'object'
-                        ? currentState.capabilities
-                        : {}),
-                    askUserQuestionAnswersInPermission: true,
-                },
-                requests: {
-                    ...currentState.requests,
-                    [id]: {
-                        tool: toolName,
-                        arguments: input,
-                        createdAt: Date.now()
+            updateAgentStateBestEffort(
+                this.session.client,
+                (currentState) => ({
+                    ...currentState,
+                    capabilities: {
+                        ...(currentState.capabilities && typeof currentState.capabilities === 'object'
+                            ? currentState.capabilities
+                            : {}),
+                        askUserQuestionAnswersInPermission: true,
+                    },
+                    requests: {
+                        ...currentState.requests,
+                        [id]: {
+                            tool: toolName,
+                            arguments: input,
+                            createdAt: Date.now()
+                        }
                     }
-                }
-            }));
+                }),
+                '[Claude]',
+                'publish_permission_request',
+            );
 
             if (this.isToolTraceEnabled()) {
                 recordToolTraceEvent({
@@ -596,26 +612,31 @@ export class PermissionHandler {
         this.pendingRequests.clear();
 
         // Move all pending requests to completedRequests with canceled status
-        this.session.client.updateAgentState((currentState) => {
-            const pendingRequests = currentState.requests || {};
-            const completedRequests = { ...currentState.completedRequests };
+        updateAgentStateBestEffort(
+            this.session.client,
+            (currentState) => {
+                const pendingRequests = currentState.requests || {};
+                const completedRequests = { ...currentState.completedRequests };
 
-            // Move each pending request to completed with canceled status
-            for (const [id, request] of Object.entries(pendingRequests)) {
-                completedRequests[id] = {
-                    ...request,
-                    completedAt: Date.now(),
-                    status: 'canceled',
-                    reason: 'Session switched to local mode'
+                // Move each pending request to completed with canceled status
+                for (const [id, request] of Object.entries(pendingRequests)) {
+                    completedRequests[id] = {
+                        ...request,
+                        completedAt: Date.now(),
+                        status: 'canceled',
+                        reason: 'Session switched to local mode'
+                    };
+                }
+
+                return {
+                    ...currentState,
+                    requests: {}, // Clear all pending requests
+                    completedRequests
                 };
-            }
-
-            return {
-                ...currentState,
-                requests: {}, // Clear all pending requests
-                completedRequests
-            };
-        });
+            },
+            '[Claude]',
+            'reset_pending_requests',
+        );
     }
 
     /**

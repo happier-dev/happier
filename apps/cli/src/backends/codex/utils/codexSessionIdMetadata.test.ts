@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Metadata } from '@/api/types';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
-import { maybeUpdateCodexSessionIdMetadata } from './codexSessionIdMetadata';
+import { maybeUpdateCodexSessionIdMetadata, publishCodexSessionIdMetadata } from './codexSessionIdMetadata';
 
 describe('maybeUpdateCodexSessionIdMetadata', () => {
   it('no-ops when thread id is missing', () => {
@@ -85,5 +85,51 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
     expect(updates).toEqual([
       createTestMetadata({ codexSessionId: 'thread-next', name: 'keep-name' }),
     ]);
+  });
+
+  it('does not mark thread id as published when the metadata update fails', async () => {
+    const lastPublished = { value: null as string | null };
+    let called = 0;
+
+    maybeUpdateCodexSessionIdMetadata({
+      getCodexThreadId: () => 'thread-1',
+      updateHappySessionMetadata: async () => {
+        called++;
+        throw new Error('update failed');
+      },
+      lastPublished,
+    });
+
+    // Flush microtasks so the rejection handler can revert the optimistic publish.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(called).toBe(1);
+    expect(lastPublished.value).toBeNull();
+  });
+
+  it('retries publishing when a session.updateMetadata call fails', async () => {
+    const lastPublished = { value: null as string | null };
+    let calls = 0;
+
+    const session = {
+      updateMetadata: async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new Error('update failed');
+        }
+      },
+    };
+
+    publishCodexSessionIdMetadata({ session: session as any, getCodexThreadId: () => 'thread-1', lastPublished });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(lastPublished.value).toBeNull();
+
+    publishCodexSessionIdMetadata({ session: session as any, getCodexThreadId: () => 'thread-1', lastPublished });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(calls).toBe(2);
+    expect(lastPublished.value).toBe('thread-1');
   });
 });
