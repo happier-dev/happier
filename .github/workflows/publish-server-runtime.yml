@@ -21,6 +21,11 @@ on:
         required: true
         default: false
         type: boolean
+      release_message:
+        description: "Release message — Optional note to include at the top of the GitHub rolling release notes"
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       channel:
@@ -34,6 +39,10 @@ on:
         required: false
         default: false
         type: boolean
+      release_message:
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -236,3 +245,4 @@ jobs:
       assets_artifact_path: dist/release-assets/server
       assets_dir: dist/release-assets/server
       clobber: true
+      release_message: ${{ inputs.release_message }}

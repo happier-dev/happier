@@ -45,6 +45,10 @@ on:
         required: false
         default: true
         type: boolean
+      release_message:
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
@@ -142,6 +146,7 @@ jobs:
           PRERELEASE: ${{ inputs.prerelease }}
           GENERATE_NOTES: ${{ inputs.generate_notes }}
           NOTES: ${{ inputs.notes }}
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
         run: |
           set -euo pipefail
 
@@ -160,13 +165,20 @@ jobs:
             exit 0
           fi
 
-          if [ -z "${NOTES:-}" ]; then
-            echo "notes is required when generate_notes=false" >&2
+          if [ -z "${NOTES:-}" ] && [ -z "${RELEASE_MESSAGE:-}" ]; then
+            echo "notes or release_message is required when generate_notes=false" >&2
             exit 1
           fi
 
+          release_prefix="${RELEASE_MESSAGE:-}"
+          if [ -n "${release_prefix}" ] && [ -n "${NOTES:-}" ]; then
+            release_prefix="${release_prefix}"$'\n\n'"${NOTES}"
+          elif [ -z "${release_prefix}" ]; then
+            release_prefix="${NOTES}"
+          fi
+
           # shellcheck disable=SC2086
-          gh release create "${TAG}" ${prerelease_flag} --title "${TITLE}" --target "${SHA}" --notes "${NOTES}"
+          gh release create "${TAG}" ${prerelease_flag} --title "${TITLE}" --target "${SHA}" --notes "${release_prefix}"
 
       - name: Update rolling release notes (commit summary)
         if: ${{ inputs.rolling_tag && steps.move_rolling_tag.outputs.pushed == 'true' }}
@@ -177,6 +189,7 @@ jobs:
           SHA: ${{ inputs.target_sha }}
           OLD_SHA: ${{ steps.move_rolling_tag.outputs.old_sha }}
           NOTES: ${{ inputs.notes }}
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
           MAX_COMMITS: "200"
         run: |
           set -euo pipefail
@@ -197,7 +210,16 @@ jobs:
             notes_prefix="Rolling release."
           fi
 
-          body="$(cat <<EOF
+          body=""
+          if [ -n "${RELEASE_MESSAGE:-}" ]; then
+            body="${body}$(cat <<EOF
+          ${RELEASE_MESSAGE}
+
+          EOF
+          )"
+          fi
+
+          body="${body}$(cat <<EOF
           ${notes_prefix}
 
           EOF

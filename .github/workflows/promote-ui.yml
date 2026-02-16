@@ -75,6 +75,11 @@ on:
           - ios
           - android
           - all
+      expo_update_message:
+        description: "Deploy (Expo) — Optional EAS update message (ota); defaults to a generated message when unset"
+        required: false
+        default: ""
+        type: string
       desktop_build:
         description: "Deploy (Desktop) — Build Tauri desktop bundles (macOS/Windows/Linux)"
         required: true
@@ -135,6 +140,11 @@ on:
         description: "Deploy (Expo) — Native build platform"
         required: false
         default: all
+        type: string
+      expo_update_message:
+        description: "Deploy (Expo) — Optional EAS update message (ota); defaults to a generated message when unset"
+        required: false
+        default: ""
         type: string
       desktop_build:
         description: "Deploy (Desktop) — Build Tauri desktop bundles (macOS/Windows/Linux)"
@@ -314,6 +324,7 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           APP_ENV: ${{ inputs.environment }}
+          EXPO_UPDATE_MESSAGE: ${{ inputs.expo_update_message }}
         run: |
           set -euo pipefail
           if [ -z "${EXPO_TOKEN:-}" ]; then
@@ -326,7 +337,11 @@ jobs:
             cd apps/ui
             APP_ENV=preview NODE_ENV=preview yarn tsx sources/scripts/parseChangelog.ts
             yarn typecheck
-            npx --yes "eas-cli@${EAS_CLI_VERSION}" update --branch preview
+            update_message="${EXPO_UPDATE_MESSAGE:-}"
+            if [ -z "${update_message}" ]; then
+              update_message="Happier OTA preview ${GITHUB_SHA} (run ${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT})"
+            fi
+            npx --yes "eas-cli@${EAS_CLI_VERSION}" update --branch preview --non-interactive --message "${update_message}"
           fi
 
       - name: Resolve Expo build profile

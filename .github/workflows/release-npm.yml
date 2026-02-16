@@ -43,6 +43,11 @@ on:
         required: true
         default: false
         type: boolean
+      release_message:
+        description: "Release message — Optional note to include at the top of GitHub rolling release notes"
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       channel:
@@ -79,6 +84,11 @@ on:
         required: false
         default: false
         type: boolean
+      release_message:
+        description: "Release message — Optional note to include at the top of GitHub rolling release notes"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
@@ -644,6 +654,7 @@ jobs:
       assets_artifact: npm-pack-cli
       assets_artifact_path: dist/release-assets/cli
       assets_dir: dist/release-assets/cli
+      release_message: ${{ inputs.release_message }}
 
   mirror-cli-stable-rolling:
     if: ${{ needs.release.outputs.channel == 'production' && needs.release.outputs.cli_version != 'SKIP' }}
@@ -662,6 +673,7 @@ jobs:
       assets_artifact: npm-pack-cli
       assets_artifact_path: dist/release-assets/cli
       assets_dir: dist/release-assets/cli
+      release_message: ${{ inputs.release_message }}
 
   mirror-cli-preview:
     if: ${{ needs.release.outputs.channel == 'preview' && needs.release.outputs.cli_version != 'SKIP' }}
@@ -680,6 +692,7 @@ jobs:
       assets_artifact: npm-pack-cli
       assets_artifact_path: dist/release-assets/cli
       assets_dir: dist/release-assets/cli
+      release_message: ${{ inputs.release_message }}
 
   mirror-stack-stable:
     if: ${{ needs.release.outputs.channel == 'production' && needs.release.outputs.stack_version != 'SKIP' }}
@@ -697,6 +710,7 @@ jobs:
       assets_artifact: npm-pack-stack
       assets_artifact_path: dist/release-assets/stack
       assets_dir: dist/release-assets/stack
+      release_message: ${{ inputs.release_message }}
 
   mirror-stack-stable-rolling:
     if: ${{ needs.release.outputs.channel == 'production' && needs.release.outputs.stack_version != 'SKIP' }}
@@ -715,6 +729,7 @@ jobs:
       assets_artifact: npm-pack-stack
       assets_artifact_path: dist/release-assets/stack
       assets_dir: dist/release-assets/stack
+      release_message: ${{ inputs.release_message }}
 
   mirror-stack-preview:
     if: ${{ needs.release.outputs.channel == 'preview' && needs.release.outputs.stack_version != 'SKIP' }}
@@ -733,3 +748,4 @@ jobs:
       assets_artifact: npm-pack-stack
       assets_artifact_path: dist/release-assets/stack
       assets_dir: dist/release-assets/stack
+      release_message: ${{ inputs.release_message }}

@@ -163,6 +163,11 @@ on:
           - release preview from dev
           - release dev to main
           - reset main from dev
+      release_message:
+        description: "Release message — Optional note to include in Expo OTA metadata and GitHub rolling release notes"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
@@ -853,6 +858,7 @@ jobs:
       desktop_build: ${{ inputs.desktop_mode != 'none' }}
       desktop_publish_release: ${{ inputs.desktop_mode == 'build_and_publish' }}
       run_tests: false
+      expo_update_message: ${{ inputs.release_message }}
 
   deploy_server:
     if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',server,') && (needs.deploy_plan.outputs.deploy_server_needed == 'true' || needs.plan.outputs.bump_server != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
@@ -882,6 +888,7 @@ jobs:
       channel: preview
       source_ref: dev
       allow_stable: false
+      release_message: ${{ inputs.release_message }}
 
   publish_ui_web:
     if: always() && needs.plan.result == 'success' && inputs.dry_run != true && inputs.environment == 'preview' && contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped')
@@ -894,6 +901,7 @@ jobs:
       channel: preview
       source_ref: dev
       allow_stable: false
+      release_message: ${{ inputs.release_message }}
 
   deploy_website:
     if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || needs.plan.outputs.bump_website != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
@@ -942,6 +950,7 @@ jobs:
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
       npm_tag: ${{ inputs.environment == 'production' && 'latest' || 'next' }}
       run_tests: false
+      release_message: ${{ inputs.release_message }}
 
   release_verify:
     if: always() && needs.publish_npm.result == 'success' && inputs.environment == 'preview' && inputs.release_verify_profile != 'none'
