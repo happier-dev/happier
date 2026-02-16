@@ -4,6 +4,7 @@ import { ActionIdSchema, type ActionId } from './actionIds.js';
 import { ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';
 import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
 import { ActionInputPredicateSchema, type ActionInputPredicate } from './actionInputPredicates.js';
+import { MemorySearchQueryV1Schema } from '../memory/memorySearch.js';
 
 const ZodSchemaLike = z.custom<z.ZodTypeAny>((value) => {
   if (!value || typeof value !== 'object') return false;
@@ -200,9 +201,45 @@ const SessionOpenInputSchema = z.object({
 
 const SessionSpawnNewInputSchema = z.object({
   tag: z.string().min(1).optional(),
+  workspaceId: z.string().min(1).optional(),
+  agentId: z.string().min(1).optional(),
+  modelId: z.string().min(1).optional(),
   path: z.string().min(1).optional(),
   host: z.string().min(1).optional(),
   initialMessage: z.string().min(1).optional(),
+}).passthrough();
+
+const SessionSpawnPickerInputSchema = z.object({
+  tag: z.string().min(1).optional(),
+  agentId: z.string().min(1).optional(),
+  modelId: z.string().min(1).optional(),
+  initialMessage: z.string().min(1).optional(),
+}).passthrough();
+
+const WorkspacesListRecentInputSchema = z.object({
+  limit: z.number().int().min(1).max(50).optional(),
+}).passthrough();
+
+const PathsListRecentInputSchema = z.object({
+  machineId: z.string().min(1).optional(),
+  limit: z.number().int().min(1).max(50).optional(),
+}).passthrough();
+
+const MachinesListInputSchema = z.object({
+  limit: z.number().int().min(1).max(200).optional(),
+}).passthrough();
+
+const ServersListInputSchema = z.object({
+  limit: z.number().int().min(1).max(200).optional(),
+}).passthrough();
+
+const AgentsBackendsListInputSchema = z.object({
+  includeDisabled: z.boolean().optional(),
+}).passthrough();
+
+const AgentsModelsListInputSchema = z.object({
+  agentId: z.string().min(1),
+  machineId: z.string().min(1).optional(),
 }).passthrough();
 
 const SessionSendMessageInputSchema = z.object({
@@ -244,12 +281,33 @@ const SessionRecentMessagesInputSchema = z.object({
   maxCharsPerMessage: z.number().int().min(0).max(50_000).nullable().optional(),
 }).passthrough();
 
+const MemorySearchInputSchema = z.object({
+  machineId: z.string().min(1),
+  query: MemorySearchQueryV1Schema,
+}).passthrough();
+
+const MemoryGetWindowInputSchema = z.object({
+  machineId: z.string().min(1),
+  sessionId: z.string().min(1),
+  seqFrom: z.number().int().min(0),
+  seqTo: z.number().int().min(0),
+}).passthrough().superRefine((value, ctx) => {
+  if (value.seqFrom > value.seqTo) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'seqFrom must be <= seqTo', path: ['seqFrom'] });
+  }
+});
+
+const MemoryEnsureUpToDateInputSchema = z.object({
+  machineId: z.string().min(1),
+  sessionId: z.string().min(1).optional(),
+}).passthrough();
+
 export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
   {
     id: 'review.start',
     title: 'Start review',
     safety: 'safe',
-    placements: ['session_action_menu', 'command_palette', 'slash_command', 'voice_panel'],
+    placements: ['agent_input_chips', 'session_action_menu', 'command_palette', 'slash_command', 'voice_panel'],
     slash: { tokens: ['/h.review'] },
     bindings: { voiceClientToolName: 'startReview', mcpToolName: 'review_start' },
     inputHints: {
@@ -338,7 +396,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     id: 'plan.start',
     title: 'Start plan run',
     safety: 'safe',
-    placements: ['session_action_menu', 'command_palette', 'slash_command', 'voice_panel'],
+    placements: ['agent_input_chips', 'session_action_menu', 'command_palette', 'slash_command', 'voice_panel'],
     slash: { tokens: ['/h.plan'] },
     bindings: { voiceClientToolName: 'startPlan', mcpToolName: 'plan_start' },
     inputHints: {
@@ -379,7 +437,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     id: 'delegate.start',
     title: 'Start delegate run',
     safety: 'safe',
-    placements: ['session_action_menu', 'command_palette', 'slash_command', 'voice_panel'],
+    placements: ['agent_input_chips', 'session_action_menu', 'command_palette', 'slash_command', 'voice_panel'],
     slash: { tokens: ['/h.delegate'] },
     bindings: { voiceClientToolName: 'startDelegate', mcpToolName: 'delegate_start' },
     inputHints: {
@@ -614,7 +672,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     placements: ['command_palette', 'session_info', 'voice_panel'],
     bindings: { voiceClientToolName: 'spawnSession' },
     examples: {
-      voice: { argsExample: '{"tag":"...optional...","path":"...optional...","host":"...optional...","initialMessage":"...optional..."}' },
+      voice: { argsExample: '{"tag":"...optional...","workspaceId":"...optional...","agentId":"...optional...","modelId":"...optional...","path":"...optional...","host":"...optional...","initialMessage":"...optional..."}' },
     },
     surfaces: {
       ui_button: true,
@@ -628,12 +686,194 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       title: 'Create a new session',
       fields: [
         { path: 'tag', title: 'Tag', widget: 'text' },
+        { path: 'workspaceId', title: 'Workspace id', widget: 'text' },
+        { path: 'agentId', title: 'Agent id', widget: 'text' },
+        { path: 'modelId', title: 'Model id', widget: 'text' },
         { path: 'path', title: 'Path', widget: 'text' },
         { path: 'host', title: 'Host', widget: 'text' },
         { path: 'initialMessage', title: 'Initial message', widget: 'textarea' },
       ],
     },
     inputSchema: SessionSpawnNewInputSchema,
+  },
+  {
+    id: 'session.spawn_picker',
+    title: 'Create session (picker)',
+    description: 'Open the in-app machine + directory picker and create a new session from the user selection.',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    bindings: { voiceClientToolName: 'spawnSessionPicker' },
+    examples: {
+      voice: { argsExample: '{"tag":"...optional...","agentId":"...optional...","modelId":"...optional...","initialMessage":"...optional..."}' },
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: true,
+      voice_action_block: true,
+      mcp: false,
+      session_control_cli: false,
+    },
+    inputHints: {
+      title: 'Create a new session (picker)',
+      fields: [
+        { path: 'tag', title: 'Tag', widget: 'text' },
+        { path: 'agentId', title: 'Agent id', widget: 'text' },
+        { path: 'modelId', title: 'Model id', widget: 'text' },
+        { path: 'initialMessage', title: 'Initial message', widget: 'textarea' },
+      ],
+    },
+    inputSchema: SessionSpawnPickerInputSchema,
+  },
+  {
+    id: 'workspaces.list_recent',
+    title: 'List recent workspaces',
+    description: 'List recent workspace handles for discovery without exposing raw paths to remote providers.',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    bindings: { voiceClientToolName: 'listRecentWorkspaces' },
+    examples: {
+      voice: { argsExample: '{"limit":10}' },
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: true,
+      voice_action_block: true,
+      mcp: false,
+      session_control_cli: false,
+    },
+    inputHints: {
+      title: 'List recent workspaces',
+      fields: [{ path: 'limit', title: 'Limit', widget: 'text' }],
+    },
+    inputSchema: WorkspacesListRecentInputSchema,
+  },
+  {
+    id: 'paths.list_recent',
+    title: 'List recent paths',
+    description: 'List recent workspace directory handles (optionally filtered to a machine).',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    bindings: { voiceClientToolName: 'listRecentPaths' },
+    examples: {
+      voice: { argsExample: '{"machineId":"...optional...","limit":10}' },
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: true,
+      voice_action_block: true,
+      mcp: false,
+      session_control_cli: false,
+    },
+    inputHints: {
+      title: 'List recent paths',
+      fields: [
+        { path: 'machineId', title: 'Machine id', widget: 'text' },
+        { path: 'limit', title: 'Limit', widget: 'text' },
+      ],
+    },
+    inputSchema: PathsListRecentInputSchema,
+  },
+  {
+    id: 'machines.list',
+    title: 'List machines',
+    description: 'List machines available on the active server scope.',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    bindings: { voiceClientToolName: 'listMachines' },
+    examples: {
+      voice: { argsExample: '{"limit":50}' },
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: true,
+      voice_action_block: true,
+      mcp: false,
+      session_control_cli: false,
+    },
+    inputHints: {
+      title: 'List machines',
+      fields: [{ path: 'limit', title: 'Limit', widget: 'text' }],
+    },
+    inputSchema: MachinesListInputSchema,
+  },
+  {
+    id: 'servers.list',
+    title: 'List servers',
+    description: 'List servers configured in the client.',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    bindings: { voiceClientToolName: 'listServers' },
+    examples: {
+      voice: { argsExample: '{"limit":50}' },
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: true,
+      voice_action_block: true,
+      mcp: false,
+      session_control_cli: false,
+    },
+    inputHints: {
+      title: 'List servers',
+      fields: [{ path: 'limit', title: 'Limit', widget: 'text' }],
+    },
+    inputSchema: ServersListInputSchema,
+  },
+  {
+    id: 'agents.backends.list',
+    title: 'List agent backends',
+    description: 'List available agent backends (providers) for spawning sessions.',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    bindings: { voiceClientToolName: 'listAgentBackends' },
+    examples: {
+      voice: { argsExample: '{"includeDisabled":false}' },
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: true,
+      voice_action_block: true,
+      mcp: false,
+      session_control_cli: false,
+    },
+    inputHints: {
+      title: 'List agent backends',
+      fields: [{ path: 'includeDisabled', title: 'Include disabled', widget: 'toggle' }],
+    },
+    inputSchema: AgentsBackendsListInputSchema,
+  },
+  {
+    id: 'agents.models.list',
+    title: 'List agent models',
+    description: 'List available models for an agent backend.',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    bindings: { voiceClientToolName: 'listAgentModels' },
+    examples: {
+      voice: { argsExample: '{"agentId":"claude","machineId":"...optional..."}' },
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: true,
+      voice_action_block: true,
+      mcp: false,
+      session_control_cli: false,
+    },
+    inputHints: {
+      title: 'List agent models',
+      fields: [
+        { path: 'agentId', title: 'Agent id', widget: 'text', required: true },
+        { path: 'machineId', title: 'Machine id (optional)', widget: 'text' },
+      ],
+    },
+    inputSchema: AgentsModelsListInputSchema,
   },
   {
     id: 'session.message.send',
@@ -856,6 +1096,111 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       session_control_cli: false,
     },
     inputSchema: EmptyObjectSchema,
+  },
+  {
+    id: 'memory.search',
+    title: 'Search memory',
+    description: 'Search the local daemon memory index (opt-in).',
+    safety: 'safe',
+    placements: ['voice_panel', 'command_palette'],
+    bindings: { voiceClientToolName: 'memorySearch', mcpToolName: 'memory_search' },
+    inputHints: {
+      title: 'Search memory',
+      description: 'Search across sessions using the daemon-local memory index.',
+      fields: [
+        {
+          path: 'machineId',
+          title: 'Machine id',
+          description: 'Machine running the daemon memory index.',
+          widget: 'text',
+          required: true,
+        },
+        {
+          path: 'query.query',
+          title: 'Query',
+          description: 'What to search for.',
+          widget: 'text',
+          required: true,
+        },
+        {
+          path: 'query.mode',
+          title: 'Mode',
+          description: 'Which index to search.',
+          widget: 'select',
+          required: true,
+          options: [
+            { value: 'hints', label: 'Hints' },
+            { value: 'deep', label: 'Deep' },
+            { value: 'auto', label: 'Auto' },
+          ],
+        },
+      ],
+    },
+    examples: {
+      voice: { argsExample: '{"machineId":"{{machineId}}","query":{"v":1,"query":"openclaw","scope":{"type":"global"},"mode":"hints"}}' },
+      mcp: { argsExample: '{"machineId":"{{machineId}}","query":{"v":1,"query":"openclaw","scope":{"type":"global"},"mode":"hints"}}' },
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: true,
+      voice_action_block: true,
+      mcp: true,
+      session_control_cli: false,
+    },
+    inputSchema: MemorySearchInputSchema,
+  },
+  {
+    id: 'memory.get_window',
+    title: 'Get memory window',
+    description: 'Fetch and decrypt a transcript window (used to verify/quote a memory hit).',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    bindings: { voiceClientToolName: 'memoryGetWindow', mcpToolName: 'memory_get_window' },
+    inputHints: {
+      title: 'Get memory window',
+      description: 'Fetch and decrypt a message range from a specific session.',
+      fields: [
+        { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'seqFrom', title: 'Seq from', widget: 'text', required: true },
+        { path: 'seqTo', title: 'Seq to', widget: 'text', required: true },
+      ],
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: true,
+      voice_action_block: true,
+      mcp: true,
+      session_control_cli: false,
+    },
+    inputSchema: MemoryGetWindowInputSchema,
+  },
+  {
+    id: 'memory.ensure_up_to_date',
+    title: 'Ensure memory up to date',
+    description: 'Trigger the daemon to sync memory hints for a session (or all active sessions).',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    bindings: { voiceClientToolName: 'memoryEnsureUpToDate', mcpToolName: 'memory_ensure_up_to_date' },
+    inputHints: {
+      title: 'Ensure memory up to date',
+      description: 'Forces the daemon memory worker to process new transcript content.',
+      fields: [
+        { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
+        { path: 'sessionId', title: 'Session id (optional)', widget: 'text' },
+      ],
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: true,
+      voice_action_block: true,
+      mcp: true,
+      session_control_cli: false,
+    },
+    inputSchema: MemoryEnsureUpToDateInputSchema,
   },
 ]);
 

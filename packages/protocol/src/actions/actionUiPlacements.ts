@@ -5,6 +5,7 @@ import { z } from 'zod';
  * (header buttons, command palette, context menus, etc.) without ad-hoc wiring.
  */
 export const ACTION_UI_PLACEMENTS = [
+  'agent_input_chips',
   'session_header',
   'session_info',
   'session_action_menu',
@@ -17,4 +18,3 @@ export const ACTION_UI_PLACEMENTS = [
 
 export const ActionUiPlacementSchema = z.enum(ACTION_UI_PLACEMENTS);
 export type ActionUiPlacement = z.infer<typeof ActionUiPlacementSchema>;
-

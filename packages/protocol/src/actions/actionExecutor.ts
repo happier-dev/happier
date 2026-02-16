@@ -1,5 +1,8 @@
-import { getActionSpec } from './actionSpecs.js';
+import { getActionSpec, type ActionSurfaces } from './actionSpecs.js';
 import type { ActionId } from './actionIds.js';
+import type { ActionUiPlacement } from './actionUiPlacements.js';
+import type { MemorySearchQueryV1, MemorySearchResultV1 } from '../memory/memorySearch.js';
+import type { MemoryWindowV1 } from '../memory/memoryWindow.js';
 
 export type ActionExecuteResult =
   | Readonly<{ ok: true; result: unknown }>
@@ -17,6 +20,17 @@ export type ActionExecutorContext = Readonly<{
    * from local caches given a sessionId.
    */
   serverId?: string | null;
+
+  /**
+   * Invocation surface (UI / voice / MCP / CLI). Used for fail-closed per-surface gating.
+   */
+  surface?: keyof ActionSurfaces | null;
+
+  /**
+   * UI placement hint (session header, command palette, etc). Used for fail-closed
+   * placement gating when desired.
+   */
+  placement?: ActionUiPlacement | null;
 }>;
 
 export type ActionExecutorDeps = Readonly<{
@@ -30,7 +44,24 @@ export type ActionExecutorDeps = Readonly<{
 
   // Session navigation/spawn (client-side)
   sessionOpen: (args: Readonly<{ sessionId: string }>) => Promise<unknown>;
-  sessionSpawnNew: (args: Readonly<{ tag?: string; path?: string; host?: string; initialMessage?: string }>) => Promise<unknown>;
+  sessionSpawnNew: (args: Readonly<{
+    tag?: string;
+    workspaceId?: string;
+    agentId?: string;
+    modelId?: string;
+    path?: string;
+    host?: string;
+    initialMessage?: string;
+  }>) => Promise<unknown>;
+  sessionSpawnPicker: (args: Readonly<{ tag?: string; agentId?: string; modelId?: string; initialMessage?: string }>) => Promise<unknown>;
+
+  // Local inventory + discovery (voice)
+  workspacesListRecent: (args: Readonly<{ limit?: number }>) => Promise<unknown>;
+  pathsListRecent: (args: Readonly<{ machineId?: string; limit?: number }>) => Promise<unknown>;
+  machinesList: (args: Readonly<{ limit?: number }>) => Promise<unknown>;
+  serversList: (args: Readonly<{ limit?: number }>) => Promise<unknown>;
+  agentsBackendsList: (args: Readonly<{ includeDisabled?: boolean }>) => Promise<unknown>;
+  agentsModelsList: (args: Readonly<{ agentId: string; machineId?: string }>) => Promise<unknown>;
 
   // Session messaging (socket message event, server-scoped)
   sessionSendMessage: (args: Readonly<{ sessionId: string; message: string; serverId?: string | null }>) => Promise<unknown>;
@@ -61,8 +92,19 @@ export type ActionExecutorDeps = Readonly<{
   // Global voice controls
   resetGlobalVoiceAgent: () => Promise<void> | void;
 
+  // Daemon-local memory (machine-scoped RPC)
+  daemonMemorySearch: (args: Readonly<{ machineId: string; query: MemorySearchQueryV1; serverId?: string | null }>) => Promise<MemorySearchResultV1>;
+  daemonMemoryGetWindow: (args: Readonly<{
+    machineId: string;
+    sessionId: string;
+    seqFrom: number;
+    seqTo: number;
+    serverId?: string | null;
+  }>) => Promise<MemoryWindowV1>;
+  daemonMemoryEnsureUpToDate: (args: Readonly<{ machineId: string; sessionId?: string; serverId?: string | null }>) => Promise<unknown>;
+
   // Optional policy hook for fail-closed action disablement.
-  isActionEnabled?: (actionId: ActionId) => boolean;
+  isActionEnabled?: (actionId: ActionId, ctx: ActionExecutorContext) => boolean;
 
   // Server routing resolver (optional)
   resolveServerIdForSessionId?: (sessionId: string) => string | null;
@@ -121,13 +163,13 @@ async function fanoutStarts(params: Readonly<{
 export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   execute: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
 }> {
-  const isActionEnabled = deps.isActionEnabled ?? ((_id: ActionId) => true);
+  const isActionEnabled = deps.isActionEnabled ?? ((_id: ActionId, _ctx: ActionExecutorContext) => true);
 
   return {
     execute: async (actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<ActionExecuteResult> => {
       const ctx: ActionExecutorContext = context ?? {};
 
-      if (!isActionEnabled(actionId)) {
+      if (!isActionEnabled(actionId, ctx)) {
         return { ok: false, errorCode: 'action_disabled', error: 'action_disabled' };
       }
 
@@ -161,7 +203,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                   permissionMode: (parsed.data as any).permissionMode ?? 'read_only',
                   retentionPolicy: 'ephemeral',
                   runClass: 'bounded',
-                  ioMode: 'request_response',
+                  // Reviews should stream sidechain progress (and tool traffic) into the parent session.
+                  ioMode: 'streaming',
                   intentInput: { ...intentInputBase, engineId },
                 },
                 opts,
@@ -260,9 +303,66 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (actionId === 'session.spawn_new') {
           const res = await deps.sessionSpawnNew({
             ...(((parsed.data as any).tag) ? { tag: String((parsed.data as any).tag) } : {}),
+            ...(((parsed.data as any).workspaceId) ? { workspaceId: String((parsed.data as any).workspaceId) } : {}),
+            ...(((parsed.data as any).agentId) ? { agentId: String((parsed.data as any).agentId) } : {}),
+            ...(((parsed.data as any).modelId) ? { modelId: String((parsed.data as any).modelId) } : {}),
             ...(((parsed.data as any).path) ? { path: String((parsed.data as any).path) } : {}),
             ...(((parsed.data as any).host) ? { host: String((parsed.data as any).host) } : {}),
             ...(((parsed.data as any).initialMessage) ? { initialMessage: String((parsed.data as any).initialMessage) } : {}),
+          });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.spawn_picker') {
+          const res = await deps.sessionSpawnPicker({
+            ...(((parsed.data as any).tag) ? { tag: String((parsed.data as any).tag) } : {}),
+            ...(((parsed.data as any).agentId) ? { agentId: String((parsed.data as any).agentId) } : {}),
+            ...(((parsed.data as any).modelId) ? { modelId: String((parsed.data as any).modelId) } : {}),
+            ...(((parsed.data as any).initialMessage) ? { initialMessage: String((parsed.data as any).initialMessage) } : {}),
+          });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'workspaces.list_recent') {
+          const res = await deps.workspacesListRecent({
+            ...(typeof (parsed.data as any).limit === 'number' ? { limit: (parsed.data as any).limit } : {}),
+          });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'paths.list_recent') {
+          const res = await deps.pathsListRecent({
+            ...(((parsed.data as any).machineId) ? { machineId: String((parsed.data as any).machineId) } : {}),
+            ...(typeof (parsed.data as any).limit === 'number' ? { limit: (parsed.data as any).limit } : {}),
+          });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'machines.list') {
+          const res = await deps.machinesList({
+            ...(typeof (parsed.data as any).limit === 'number' ? { limit: (parsed.data as any).limit } : {}),
+          });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'servers.list') {
+          const res = await deps.serversList({
+            ...(typeof (parsed.data as any).limit === 'number' ? { limit: (parsed.data as any).limit } : {}),
+          });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'agents.backends.list') {
+          const res = await deps.agentsBackendsList({
+            ...(typeof (parsed.data as any).includeDisabled === 'boolean' ? { includeDisabled: (parsed.data as any).includeDisabled } : {}),
+          });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'agents.models.list') {
+          const res = await deps.agentsModelsList({
+            agentId: String((parsed.data as any).agentId),
+            ...(((parsed.data as any).machineId) ? { machineId: String((parsed.data as any).machineId) } : {}),
           });
           return { ok: true, result: res };
         }
@@ -336,6 +436,40 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: true, result: res };
         }
 
+        if (actionId === 'memory.search') {
+          const machineId = normalizeId((parsed.data as any).machineId);
+          if (!machineId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          const query = (parsed.data as any).query as MemorySearchQueryV1;
+          const res = await deps.daemonMemorySearch({ machineId, query, serverId: normalizeId(ctx.serverId) || null });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'memory.get_window') {
+          const machineId = normalizeId((parsed.data as any).machineId);
+          const sessionId = normalizeId((parsed.data as any).sessionId);
+          if (!machineId || !sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          const res = await deps.daemonMemoryGetWindow({
+            machineId,
+            sessionId,
+            seqFrom: Number((parsed.data as any).seqFrom ?? 0),
+            seqTo: Number((parsed.data as any).seqTo ?? 0),
+            serverId: normalizeId(ctx.serverId) || null,
+          });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'memory.ensure_up_to_date') {
+          const machineId = normalizeId((parsed.data as any).machineId);
+          if (!machineId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          const sessionId = normalizeId((parsed.data as any).sessionId);
+          const res = await deps.daemonMemoryEnsureUpToDate({
+            machineId,
+            ...(sessionId ? { sessionId } : {}),
+            serverId: normalizeId(ctx.serverId) || null,
+          });
+          return { ok: true, result: res };
+        }
+
         if (actionId === 'ui.voice_global.reset') {
           await deps.resetGlobalVoiceAgent();
           return { ok: true, result: { ok: true } };
@@ -348,4 +482,3 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     },
   };
 }
-

@@ -34,6 +34,12 @@ describe('Action Spec Registry', () => {
     expect(spec.bindings?.voiceClientToolName).toBe('resetGlobalVoiceAgent');
   });
 
+  it('exposes memory action specs', () => {
+    const spec = getActionSpec('memory.search');
+    expect(spec.id).toBe('memory.search');
+    expect(spec.surfaces.voice_tool).toBe(true);
+  });
+
   it('provides input hints for every ActionSpec (single source of truth for elicitation)', () => {
     for (const spec of listActionSpecs()) {
       expect((spec as any).inputHints).toBeTruthy();
@@ -209,5 +215,14 @@ describe('Action Spec Registry', () => {
     expect(byVoiceToolName.has('listSessions')).toBe(true);
     expect(byVoiceToolName.has('getSessionActivity')).toBe(true);
     expect(byVoiceToolName.has('getSessionRecentMessages')).toBe(true);
+
+    // Inventory + discovery tools (safe by default; may be gated by user settings in the UI).
+    expect(byVoiceToolName.has('spawnSessionPicker')).toBe(true);
+    expect(byVoiceToolName.has('listRecentWorkspaces')).toBe(true);
+    expect(byVoiceToolName.has('listRecentPaths')).toBe(true);
+    expect(byVoiceToolName.has('listMachines')).toBe(true);
+    expect(byVoiceToolName.has('listServers')).toBe(true);
+    expect(byVoiceToolName.has('listAgentBackends')).toBe(true);
+    expect(byVoiceToolName.has('listAgentModels')).toBe(true);
   });
 });
