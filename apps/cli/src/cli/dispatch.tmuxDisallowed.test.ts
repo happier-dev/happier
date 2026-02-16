@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const startHappyHeadlessInTmux = vi.fn(async () => {});
 
@@ -10,6 +10,7 @@ vi.mock('@/terminal/tmux/startHappyHeadlessInTmux', () => ({
 import { dispatchCli } from './dispatch';
 
 describe('dispatchCli --tmux disallowed controller commands', () => {
+  const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
     throw new Error(`process.exit(${code ?? 0})`);
   }) as any);
@@ -17,6 +18,11 @@ describe('dispatchCli --tmux disallowed controller commands', () => {
   beforeEach(() => {
     exitSpy.mockClear();
     startHappyHeadlessInTmux.mockClear();
+    consoleErrorSpy.mockClear();
+  });
+
+  afterAll(() => {
+    consoleErrorSpy.mockRestore();
   });
 
   it('rejects --tmux for session controller commands', async () => {
@@ -30,4 +36,3 @@ describe('dispatchCli --tmux disallowed controller commands', () => {
     expect(startHappyHeadlessInTmux).not.toHaveBeenCalled();
   });
 });
-
