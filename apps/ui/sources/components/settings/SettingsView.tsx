@@ -140,6 +140,14 @@ export const SettingsView = React.memo(function SettingsView() {
 
     const handleReportIssue = async () => {
         recordBugReportUserAction('settings.report_issue_open');
+        const overrideUrl = String(process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL ?? '').trim();
+        if (overrideUrl.length > 0) {
+            const supported = await Linking.canOpenURL(overrideUrl);
+            if (supported) {
+                await Linking.openURL(overrideUrl);
+                return;
+            }
+        }
         router.push('/(app)/settings/report-issue');
     };
 
