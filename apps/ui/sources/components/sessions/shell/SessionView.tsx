@@ -30,7 +30,7 @@ import { t } from '@/text';
 import { tracking, trackMessageSent } from '@/track';
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { useDeviceType, useHeaderHeight, useIsLandscape, useIsTablet } from '@/utils/platform/responsive';
-import { formatPathRelativeToHome, getSessionAvatarId, getSessionName, shouldShowAbortButtonForSessionState, useSessionStatus } from '@/utils/sessions/sessionUtils';
+import { formatPathRelativeToHome, getSessionAvatarId, getSessionName, listPendingPermissionRequests, shouldShowAbortButtonForSessionState, useSessionStatus } from '@/utils/sessions/sessionUtils';
 import { isVersionSupported, MINIMUM_CLI_VERSION } from '@/utils/system/versionUtils';
 import { getMachineCapabilitiesSnapshot, prefetchMachineCapabilities, useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
 import { describeAcpLoadSessionSupport } from '@/agents/runtime/acpRuntimeResume';
@@ -838,6 +838,9 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
                 onChangeText={setMessage}
                 sessionId={sessionId}
                 hasSendableAttachments={hasReviewCommentDrafts}
+                permissionRequests={listPendingPermissionRequests(session)}
+                canApprovePermissions={hasWriteAccess}
+                permissionDisabledReason={hasWriteAccess ? undefined : 'readOnly'}
                 permissionMode={permissionMode}
                 onPermissionModeChange={updatePermissionMode}
                 onAcpSessionModeChange={supportsAcpAgentModeOverrides(agentId) ? updateAcpSessionModeOverride : undefined}

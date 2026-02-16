@@ -54,6 +54,33 @@ describe('getSessionStatus', () => {
         expect(status.shouldShowStatus).toBe(true);
     });
 
+    it('does not return permission_required when agentState.requests is stale relative to completedRequests', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const session = createBaseSession({
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    req1: { tool: 'Bash', arguments: { command: 'ls' }, createdAt: 100 },
+                },
+                completedRequests: {
+                    req1: {
+                        tool: 'Bash',
+                        arguments: { command: 'ls' },
+                        createdAt: 100,
+                        completedAt: 200,
+                        status: 'canceled',
+                        reason: null,
+                        mode: null,
+                        allowedTools: null,
+                        decision: null,
+                    },
+                },
+            },
+        });
+        const status = getSessionStatus(session, 1_000, 0);
+        expect(status.state).toBe('waiting');
+    });
+
     it('returns thinking when session.thinking is true', async () => {
         const { getSessionStatus } = await import('./sessionUtils');
         const session = createBaseSession({ thinking: true });

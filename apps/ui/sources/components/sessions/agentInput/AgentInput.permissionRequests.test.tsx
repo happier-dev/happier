@@ -38,6 +38,15 @@ vi.mock('react-native-unistyles', () => ({
                     success: '#0a0',
                     textDestructive: '#a00',
                     surfacePressed: '#eee',
+                    permission: {
+                        acceptEdits: '#0a0',
+                        bypass: '#0a0',
+                        plan: '#0a0',
+                        readOnly: '#0a0',
+                        safeYolo: '#0a0',
+                        yolo: '#0a0',
+                    },
+                    surfaceHighest: '#fafafa',
                 },
             };
             return typeof styles === 'function' ? styles(theme) : styles;
@@ -58,6 +67,15 @@ vi.mock('react-native-unistyles', () => ({
                 success: '#0a0',
                 textDestructive: '#a00',
                 surfacePressed: '#eee',
+                permission: {
+                    acceptEdits: '#0a0',
+                    bypass: '#0a0',
+                    plan: '#0a0',
+                    readOnly: '#0a0',
+                    safeYolo: '#0a0',
+                    yolo: '#0a0',
+                },
+                surfaceHighest: '#fafafa',
             },
         },
     }),
@@ -70,10 +88,6 @@ vi.mock('@expo/vector-icons', () => ({
 
 vi.mock('expo-image', () => ({
     Image: (props: Record<string, unknown>) => React.createElement('Image', props, null),
-}));
-
-vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
-    PermissionFooter: () => null,
 }));
 
 vi.mock('@/text', () => ({
@@ -89,7 +103,6 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
         return null;
     },
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
 }));
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
@@ -127,60 +140,33 @@ vi.mock('@/components/ui/forms/MultiTextInput', () => ({
     MultiTextInput: (props: Record<string, unknown>) => React.createElement('MultiTextInput', props, null),
 }));
 
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: (props: Record<string, unknown>) => React.createElement('Switch', props, null),
+vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
+    PermissionFooter: (props: Record<string, unknown>) => React.createElement('PermissionFooter', props, null),
 }));
 
-vi.mock('@/components/ui/theme/haptics', () => ({
-    hapticsLight: () => {},
-    hapticsError: () => {},
+vi.mock('@/components/tools/normalization/policy/permissionSummary', () => ({
+    formatPermissionRequestSummary: () => 'Permission required',
 }));
 
-vi.mock('@/components/ui/feedback/Shaker', () => ({
-    Shaker: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement(React.Fragment, null, props.children),
+vi.mock('@/components/tools/normalization/parse/shellCommand', () => ({
+    extractShellCommand: () => null,
 }));
 
-vi.mock('@/components/ui/status/StatusDot', () => ({
-    StatusDot: () => null,
+vi.mock('@/components/tools/normalization/parse/parseParenIdentifier', () => ({
+    parseParenIdentifier: () => null,
 }));
 
-vi.mock('@/components/autocomplete/useActiveWord', () => ({
-    useActiveWord: () => ({ word: '', start: 0, end: 0 }),
-}));
-
-vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
-    useActiveSuggestions: () => [[], 0, () => {}, () => {}],
-}));
-
-vi.mock('@/components/autocomplete/applySuggestion', () => ({
-    applySuggestion: (text: string) => ({ text, cursorPosition: text.length }),
-}));
-
-vi.mock('@/components/ui/popover', () => ({
-    Popover: () => null,
-}));
-
-vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
-    FloatingOverlay: () => null,
-}));
-
-vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
-    useScrollEdgeFades: () => ({
-        canScrollX: false,
-        visibility: { left: false, right: false },
-        onViewportLayout: () => {},
-        onContentSizeChange: () => {},
-        onScroll: () => {},
+vi.mock('@/hooks/session/useUserMessageHistory', () => ({
+    useUserMessageHistory: () => ({
+        getPrevious: () => null,
+        getNext: () => null,
+        push: () => {},
+        resetNavigation: () => {},
     }),
 }));
 
-vi.mock('@/components/ui/scroll/ScrollEdgeFades', () => ({
-    ScrollEdgeFades: () => null,
-}));
-
-vi.mock('@/components/ui/scroll/ScrollEdgeIndicators', () => ({
-    ScrollEdgeIndicators: () => null,
+vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
+    useKeyboardHeight: () => 0,
 }));
 
 vi.mock('@/components/sessions/sourceControl/status', () => ({
@@ -188,16 +174,60 @@ vi.mock('@/components/sessions/sourceControl/status', () => ({
     useHasMeaningfulScmStatus: () => false,
 }));
 
+vi.mock('@/components/autocomplete/useActiveWord', () => ({
+    useActiveWord: () => ({ activeWord: null, setActiveWord: () => {} }),
+}));
+
+vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
+    useActiveSuggestions: () => [[], null, () => {}, () => {}],
+}));
+
+vi.mock('./components/AgentInputAutocomplete', () => ({
+    AgentInputAutocomplete: () => null,
+}));
+
+vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
+    FloatingOverlay: ({ children }: { children?: React.ReactNode }) => React.createElement('FloatingOverlay', null, children),
+}));
+
+vi.mock('@/components/ui/popover', () => ({
+    Popover: ({ children }: { children?: React.ReactNode }) => React.createElement('Popover', null, children),
+}));
+
+vi.mock('@/components/ui/scroll/ScrollEdgeFades', () => ({
+    ScrollEdgeFades: ({ children }: { children?: React.ReactNode }) => React.createElement('ScrollEdgeFades', null, children),
+}));
+
+vi.mock('@/components/ui/scroll/ScrollEdgeIndicators', () => ({
+    ScrollEdgeIndicators: () => null,
+}));
+
+vi.mock('@/components/ui/buttons/PrimaryCircleIconButton', () => ({
+    PrimaryCircleIconButton: () => null,
+}));
+
+vi.mock('@/components/ui/lists/ActionListSection', () => ({
+    ActionListSection: () => null,
+}));
+
+vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
+    useScrollEdgeFades: () => ({ scrollEdgeFadesProps: {}, onScroll: () => {}, onLayout: () => {} }),
+}));
+
+vi.mock('@/sync/domains/settings/settings', () => ({
+    getProfileEnvironmentVariables: () => ({}),
+}));
+
+vi.mock('@/sync/domains/profiles/profileUtils', () => ({
+    resolveProfileById: () => null,
+}));
+
+vi.mock('@/components/profiles/profileDisplay', () => ({
+    getProfileDisplayName: () => 'Profile',
+}));
+
 vi.mock('@/components/model/ModelPickerOverlay', () => ({
     ModelPickerOverlay: () => null,
-}));
-
-vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
-    useKeyboardHeight: () => 0,
-}));
-
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
 }));
 
 vi.mock('@/sync/acp/sessionModeControl', () => ({
@@ -206,57 +236,88 @@ vi.mock('@/sync/acp/sessionModeControl', () => ({
 }));
 
 vi.mock('@/sync/acp/configOptionsControl', () => ({
-    computeAcpConfigOptionControls: () => null,
+    computeAcpConfigOptionControls: () => [],
 }));
 
-describe('AgentInput (abort button visibility)', () => {
-    it('does not render the stop button when showAbortButton is false (even if onAbort exists)', async () => {
+vi.mock('@/components/ui/theme/haptics', () => ({
+    hapticsLight: () => {},
+    hapticsError: () => {},
+}));
+
+vi.mock('@/modal', () => ({
+    Modal: { alert: () => {} },
+}));
+
+vi.mock('@/components/ui/status/StatusDot', () => ({
+    StatusDot: () => null,
+}));
+
+vi.mock('@/components/ui/layout/layout', () => ({
+    layout: { maxWidth: 920 },
+}));
+
+vi.mock('@/constants/Typography', () => ({
+    Typography: { default: () => ({}), mono: () => ({}) },
+}));
+
+vi.mock('./ResumeChip', () => ({
+    ResumeChip: () => null,
+    formatResumeChipLabel: () => '',
+    RESUME_CHIP_ICON_NAME: 'play',
+    RESUME_CHIP_ICON_SIZE: 12,
+}));
+
+vi.mock('./PathAndResumeRow', () => ({
+    PathAndResumeRow: () => null,
+}));
+
+vi.mock('./actionBarLogic', () => ({
+    getHasAnyAgentInputActions: () => false,
+    shouldShowPathAndResumeRow: () => false,
+}));
+
+vi.mock('./inputMaxHeight', () => ({
+    computeAgentInputDefaultMaxHeight: () => 200,
+}));
+
+vi.mock('./contextWarning', () => ({
+    getContextWarning: () => null,
+}));
+
+vi.mock('./permissionChipVisibility', () => ({
+    shouldRenderPermissionChip: () => false,
+}));
+
+vi.mock('./actionMenuActions', () => ({
+    buildAgentInputActionMenuActions: () => [],
+}));
+
+vi.mock('./components/PermissionModePicker', () => ({
+    PermissionModePicker: () => null,
+}));
+
+describe('AgentInput (permission requests)', () => {
+    it('renders PermissionFooter when pending permission requests are provided', async () => {
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer;
-        act(() => {
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
             tree = renderer.create(
-                <AgentInput
-                    value=""
-                    placeholder="Type"
-                    onChangeText={() => {}}
-                    onSend={() => {}}
-                    onAbort={vi.fn()}
-                    showAbortButton={false}
-                    autocompletePrefixes={[]}
-                    autocompleteSuggestions={async () => []}
-                />
+                React.createElement(AgentInput as any, {
+                    value: '',
+                    placeholder: 'Type',
+                    onChangeText: () => {},
+                    sessionId: 's1',
+                    onSend: () => {},
+                    autocompletePrefixes: [],
+                    autocompleteSuggestions: async () => [],
+                    permissionRequests: [
+                        { id: 'req1', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 123 },
+                    ],
+                }),
             );
         });
 
-        const stopIcons = tree!.root.findAll((n: any) => n?.type === 'Octicons' && n?.props?.name === 'stop');
-        expect(stopIcons).toHaveLength(0);
-
-        act(() => tree!.unmount());
-    });
-
-    it('renders the stop button when showAbortButton is true and onAbort exists', async () => {
-        const { AgentInput } = await import('./AgentInput');
-
-        let tree: renderer.ReactTestRenderer;
-        act(() => {
-            tree = renderer.create(
-                <AgentInput
-                    value=""
-                    placeholder="Type"
-                    onChangeText={() => {}}
-                    onSend={() => {}}
-                    onAbort={vi.fn()}
-                    showAbortButton={true}
-                    autocompletePrefixes={[]}
-                    autocompleteSuggestions={async () => []}
-                />
-            );
-        });
-
-        const stopIcons = tree!.root.findAll((n: any) => n?.type === 'Octicons' && n?.props?.name === 'stop');
-        expect(stopIcons).toHaveLength(1);
-
-        act(() => tree!.unmount());
+        expect(tree!.root.findAllByType('PermissionFooter' as any)).toHaveLength(1);
     });
 });

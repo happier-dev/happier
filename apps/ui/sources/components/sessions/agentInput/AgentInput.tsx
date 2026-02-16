@@ -55,6 +55,9 @@ import { buildAgentInputActionMenuActions } from './actionMenuActions';
 import { PermissionModePicker } from './components/PermissionModePicker';
 import { computeAcpPlanModeControl, computeAcpSessionModePickerControl } from '@/sync/acp/sessionModeControl';
 import { computeAcpConfigOptionControls, type AcpConfigOptionValueId } from '@/sync/acp/configOptionsControl';
+import { PermissionFooter } from '@/components/tools/shell/permissions/PermissionFooter';
+import { formatPermissionRequestSummary } from '@/components/tools/normalization/policy/permissionSummary';
+import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 
 export type AgentInputExtraActionChipRenderContext = Readonly<{
     chipStyle: (pressed: boolean) => any;
@@ -127,6 +130,9 @@ interface AgentInputProps {
     maxWidthCap?: number | null;
     extraActionChips?: ReadonlyArray<AgentInputExtraActionChip>;
     hasSendableAttachments?: boolean;
+    permissionRequests?: ReadonlyArray<PendingPermissionRequest>;
+    canApprovePermissions?: boolean;
+    permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted';
 }
 
 function truncateWithEllipsis(value: string, maxChars: number) {
@@ -159,6 +165,32 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingVertical: 2,
         paddingBottom: 8,
         paddingHorizontal: 8,
+    },
+    permissionRequestsContainer: {
+        paddingHorizontal: 8,
+        paddingTop: 10,
+        paddingBottom: 6,
+        gap: 8,
+    },
+    permissionRequestTitle: {
+        color: theme.colors.textSecondary,
+        fontSize: 12,
+        ...Typography.default('semiBold'),
+    },
+    permissionRequestCard: {
+        backgroundColor: (theme.colors as any).surfaceHighest ?? theme.colors.input.background,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        overflow: 'hidden',
+    },
+    permissionRequestSummary: {
+        paddingHorizontal: 12,
+        paddingTop: 10,
+        paddingBottom: 2,
+        color: theme.colors.text,
+        fontSize: 13,
+        ...Typography.default(),
     },
     inputContainer: {
         flexDirection: 'row',
@@ -459,6 +491,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     const hasText = props.value.trim().length > 0;
     const hasSendableContent = hasText || props.hasSendableAttachments === true;
+
+    const pendingPermissionRequests = props.permissionRequests ?? [];
+    const canApprovePermissions = props.canApprovePermissions ?? true;
 
     const agentId: AgentId = resolveAgentIdFromFlavor(props.metadata?.flavor) ?? props.agentType ?? DEFAULT_AGENT_ID;
     const modelOptions = React.useMemo(() => getModelOptionsForSession(agentId, props.metadata ?? null), [agentId, props.metadata]);
@@ -1285,6 +1320,28 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
                 {/* Box 2: Action Area (Input + Send) */}
                 <View style={[styles.unifiedPanel, props.panelStyle]}>
+                    {props.sessionId && pendingPermissionRequests.length > 0 ? (
+                        <View style={styles.permissionRequestsContainer}>
+                            <Text style={styles.permissionRequestTitle}>{t('status.permissionRequired')}</Text>
+                            {pendingPermissionRequests.map((req) => {
+                                const summary = formatPermissionRequestSummary({ toolName: req.tool, toolInput: req.arguments });
+                                return (
+                                    <View key={req.id} style={styles.permissionRequestCard}>
+                                        <Text style={styles.permissionRequestSummary}>{summary}</Text>
+                                        <PermissionFooter
+                                            permission={{ id: req.id, status: 'pending' }}
+                                            sessionId={props.sessionId!}
+                                            toolName={req.tool}
+                                            toolInput={req.arguments}
+                                            metadata={props.metadata || null}
+                                            canApprovePermissions={canApprovePermissions}
+                                            disabledReason={props.permissionDisabledReason}
+                                        />
+                                    </View>
+                                );
+                            })}
+                        </View>
+                    ) : null}
                     {/* Input field */}
                     <View style={[styles.inputContainer, props.minHeight ? { minHeight: props.minHeight } : undefined]}>
                         <MultiTextInput
