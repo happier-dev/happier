@@ -75,4 +75,28 @@ describe('createOnChildExited', () => {
 
     expect(onUnexpectedExit).toHaveBeenCalledTimes(0);
   });
+
+  it('invokes onUnexpectedExit hook for SIGTERM when override marks it unexpected', () => {
+    const pid = 123;
+    const tracked = { pid, startedBy: 'daemon', happySessionId: 'session-1' };
+
+    const pidToTrackedSession = new Map<number, any>([[pid, tracked]]);
+    const spawnResourceCleanupByPid = new Map<number, () => void>();
+    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+
+    const onUnexpectedExit = vi.fn();
+
+    const onChildExited = createOnChildExited({
+      pidToTrackedSession,
+      spawnResourceCleanupByPid,
+      sessionAttachCleanupByPid,
+      getApiMachineForSessions: () => null,
+      onUnexpectedExit,
+      isExitUnexpectedOverride: () => true,
+    } as any);
+
+    onChildExited(pid, { reason: 'process-exited', code: null, signal: 'SIGTERM' });
+
+    expect(onUnexpectedExit).toHaveBeenCalledTimes(1);
+  });
 });

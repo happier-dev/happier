@@ -84,6 +84,14 @@ export class ExecutionBudgetRegistry {
 
   tryAcquireEphemeralTask(taskId: string, kind?: 'automation' | 'ephemeral_task'): boolean {
     const cls = kind === 'automation' ? 'automation' : 'ephemeral_task';
+    if (!taskId || typeof taskId !== 'string') return false;
+    if (this.inFlightByTokenId.has(taskId)) return true;
+
+    const inFlightEphemeral =
+      this.countInFlightForClass('automation')
+      + this.countInFlightForClass('ephemeral_task');
+    if (inFlightEphemeral >= this.maxConcurrentEphemeralTasks) return false;
+
     return this.tryAcquireToken(taskId, cls, this.maxConcurrentEphemeralTasks);
   }
 

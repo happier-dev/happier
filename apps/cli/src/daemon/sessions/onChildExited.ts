@@ -14,18 +14,29 @@ export function createOnChildExited(params: Readonly<{
   sessionAttachCleanupByPid: Map<number, () => Promise<void>>;
   getApiMachineForSessions: () => ApiMachineClient | null;
   onUnexpectedExit?: (trackedSession: TrackedSession, exit: ChildExit) => void;
+  isExitUnexpectedOverride?: (trackedSession: TrackedSession, exit: ChildExit) => boolean | null | undefined;
 }>): (pid: number, exit: ChildExit) => void {
-  const { pidToTrackedSession, spawnResourceCleanupByPid, sessionAttachCleanupByPid, getApiMachineForSessions, onUnexpectedExit } = params;
+  const {
+    pidToTrackedSession,
+    spawnResourceCleanupByPid,
+    sessionAttachCleanupByPid,
+    getApiMachineForSessions,
+    onUnexpectedExit,
+    isExitUnexpectedOverride,
+  } = params;
 
   return (pid: number, exit: ChildExit) => {
     logger.debug(`[DAEMON RUN] Removing exited process PID ${pid} from tracking`);
     const tracked = pidToTrackedSession.get(pid);
     if (tracked) {
-      const isUnexpected =
+      const isUnexpectedBase =
         exit.reason === 'process-missing' ||
         exit.reason === 'process-error' ||
         (typeof exit.code === 'number' && exit.code !== 0) ||
         (typeof exit.signal === 'string' && exit.signal.length > 0 && !['SIGTERM', 'SIGINT'].includes(exit.signal));
+      const override = isExitUnexpectedOverride ? isExitUnexpectedOverride(tracked, exit) : null;
+      const isUnexpected = typeof override === 'boolean' ? override : isUnexpectedBase;
+
       if (isUnexpected && typeof tracked.happySessionId === 'string' && tracked.happySessionId.trim().length > 0) {
         try {
           onUnexpectedExit?.(tracked, exit);

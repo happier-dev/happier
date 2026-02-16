@@ -19,6 +19,17 @@ describe('ExecutionBudgetRegistry', () => {
     expect(registry.tryAcquireEphemeralTask('task2')).toBe(true);
   });
 
+  it('treats automation and ephemeral tasks as one shared budget', () => {
+    const registry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: 1, maxConcurrentEphemeralTasks: 1 });
+
+    expect(registry.tryAcquireEphemeralTask('automation-1', 'automation')).toBe(true);
+    expect(registry.tryAcquireEphemeralTask('task-1', 'ephemeral_task')).toBe(false);
+    registry.releaseEphemeralTask('automation-1');
+    expect(registry.tryAcquireEphemeralTask('task-1', 'ephemeral_task')).toBe(true);
+
+    expect(registry.tryAcquireEphemeralTask('automation-2', 'automation')).toBe(false);
+  });
+
   it('enforces per-class caps when configured', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test exercises forward-compatible constructor shape
     const registry = new ExecutionBudgetRegistry({
