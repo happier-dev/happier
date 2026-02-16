@@ -9,6 +9,12 @@ export const AGENTS_CORE = {
         detectKey: 'claude',
         flavorAliases: [],
         cloudConnect: { vendorKey: 'anthropic', status: 'experimental' },
+        connectedServices: {
+            supportedServiceIds: ['anthropic'],
+            supportedKindsByServiceId: {
+                anthropic: ['oauth', 'token'],
+            },
+        },
         resume: { vendorResume: 'supported', vendorResumeIdField: null, runtimeGate: null },
     },
     codex: {
@@ -17,6 +23,12 @@ export const AGENTS_CORE = {
         detectKey: 'codex',
         flavorAliases: ['codex-acp', 'codex-mcp'],
         cloudConnect: { vendorKey: 'openai', status: 'experimental' },
+        connectedServices: {
+            supportedServiceIds: ['openai-codex'],
+            supportedKindsByServiceId: {
+                'openai-codex': ['oauth'],
+            },
+        },
         resume: { vendorResume: 'experimental', vendorResumeIdField: 'codexSessionId', runtimeGate: null },
     },
     opencode: {
@@ -25,6 +37,13 @@ export const AGENTS_CORE = {
         detectKey: 'opencode',
         flavorAliases: [],
         cloudConnect: null,
+        connectedServices: {
+            supportedServiceIds: ['openai-codex', 'anthropic'],
+            supportedKindsByServiceId: {
+                'openai-codex': ['oauth'],
+                anthropic: ['oauth'],
+            },
+        },
         resume: { vendorResume: 'supported', vendorResumeIdField: 'opencodeSessionId', runtimeGate: 'acpLoadSession' },
     },
     gemini: {
@@ -33,6 +52,12 @@ export const AGENTS_CORE = {
         detectKey: 'gemini',
         flavorAliases: [],
         cloudConnect: { vendorKey: 'gemini', status: 'wired' },
+        connectedServices: {
+            supportedServiceIds: ['gemini'],
+            supportedKindsByServiceId: {
+                gemini: ['oauth'],
+            },
+        },
         resume: { vendorResume: 'supported', vendorResumeIdField: 'geminiSessionId', runtimeGate: 'acpLoadSession' },
     },
     auggie: {
@@ -41,6 +66,7 @@ export const AGENTS_CORE = {
         detectKey: 'auggie',
         flavorAliases: [],
         cloudConnect: null,
+        connectedServices: null,
         resume: { vendorResume: 'supported', vendorResumeIdField: 'auggieSessionId', runtimeGate: 'acpLoadSession' },
     },
     qwen: {
@@ -49,6 +75,7 @@ export const AGENTS_CORE = {
         detectKey: 'qwen',
         flavorAliases: ['qwen-code'],
         cloudConnect: null,
+        connectedServices: null,
         resume: { vendorResume: 'supported', vendorResumeIdField: 'qwenSessionId', runtimeGate: 'acpLoadSession' },
     },
     kimi: {
@@ -57,6 +84,7 @@ export const AGENTS_CORE = {
         detectKey: 'kimi',
         flavorAliases: ['kimi-cli'],
         cloudConnect: null,
+        connectedServices: null,
         resume: { vendorResume: 'supported', vendorResumeIdField: 'kimiSessionId', runtimeGate: 'acpLoadSession' },
     },
     kilo: {
@@ -65,6 +93,7 @@ export const AGENTS_CORE = {
         detectKey: 'kilo',
         flavorAliases: ['kilocode'],
         cloudConnect: null,
+        connectedServices: null,
         resume: { vendorResume: 'supported', vendorResumeIdField: 'kiloSessionId', runtimeGate: 'acpLoadSession' },
     },
     pi: {
@@ -73,6 +102,13 @@ export const AGENTS_CORE = {
         detectKey: 'pi',
         flavorAliases: ['pi-coding-agent'],
         cloudConnect: null,
+        connectedServices: {
+            supportedServiceIds: ['openai-codex', 'anthropic'],
+            supportedKindsByServiceId: {
+                'openai-codex': ['oauth'],
+                anthropic: ['token'],
+            },
+        },
         resume: { vendorResume: 'unsupported', vendorResumeIdField: 'piSessionId', runtimeGate: null },
     },
 } as const satisfies Record<AgentId, AgentCore>;
