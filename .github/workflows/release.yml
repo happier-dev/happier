@@ -203,9 +203,6 @@ jobs:
       run_providers: false
       providers_preset: ${{ inputs.providers_preset }}
       providers_tier: ${{ inputs.providers_tier }}
-      providers_strict_keys: false
-      providers_flake_retry: true
-      providers_update_baselines: false
       run_stress: ${{ inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',stress,') }}
       run_release_contracts: true
       run_installers_smoke: false
@@ -214,8 +211,6 @@ jobs:
       run_self_host_launchd: false
       run_self_host_schtasks: false
       run_self_host_daemon: false
-      stress_repeat: "5"
-      stress_seed: ""
 
   providers:
     name: Providers Checks (providers-contracts.yml)

@@ -124,11 +124,6 @@ jobs:
       run_providers: true
       providers_preset: ${{ inputs.preset }}
       providers_tier: ${{ inputs.tier }}
-      providers_strict_keys: ${{ inputs.strict_keys }}
-      providers_flake_retry: ${{ inputs.flake_retry }}
-      providers_model_default: ${{ inputs.model_default }}
-      providers_model_overrides: ${{ inputs.model_overrides }}
-      providers_update_baselines: false
+      providers_flags: ${{ format('{{\"strict_keys\":{0},\"flake_retry\":{1},\"update_baselines\":false}}', inputs.strict_keys, inputs.flake_retry) }}
+      providers_models: ${{ format('{{\"default\":{0},\"overrides\":{1}}}', toJson(inputs.model_default), toJson(inputs.model_overrides)) }}
       run_stress: false
-      stress_repeat: "5"
-      stress_seed: ""

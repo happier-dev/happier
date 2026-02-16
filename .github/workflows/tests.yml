@@ -49,34 +49,18 @@ on:
         required: false
         default: smoke
         type: string
-      providers_opencode_version:
+      providers_opencode:
         required: false
-        default: "1.1.52"
+        default: "1.1.52|c7c1e622aff3d457358385e28dff33ffa8401cb9067e865a9f35a2f94e899490"
         type: string
-      providers_opencode_sha256:
+      providers_flags:
         required: false
-        default: "c7c1e622aff3d457358385e28dff33ffa8401cb9067e865a9f35a2f94e899490"
+        default: '{"strict_keys":false,"flake_retry":true,"update_baselines":false}'
         type: string
-      providers_strict_keys:
+      providers_models:
         required: false
-        default: false
-        type: boolean
-      providers_flake_retry:
-        required: false
-        default: true
-        type: boolean
-      providers_model_default:
-        required: false
-        default: ""
+        default: '{"default":"","overrides":""}'
         type: string
-      providers_model_overrides:
-        required: false
-        default: ""
-        type: string
-      providers_update_baselines:
-        required: false
-        default: false
-        type: boolean
       run_stress:
         required: false
         default: false
@@ -113,13 +97,9 @@ on:
         required: false
         default: false
         type: boolean
-      stress_repeat:
+      stress_config:
         required: false
-        default: "5"
-        type: string
-      stress_seed:
-        required: false
-        default: ""
+        default: '{"repeat":"5","seed":""}'
         type: string
 
 concurrency:
@@ -1241,8 +1221,7 @@ jobs:
       - name: Install provider CLIs
         env:
           PRESET: ${{ inputs.providers_preset }}
-          OPENCODE_VERSION: ${{ inputs.providers_opencode_version }}
-          OPENCODE_TARBALL_SHA256: ${{ inputs.providers_opencode_sha256 }}
+          OPENCODE_SPEC: ${{ inputs.providers_opencode }}
         run: |
           set -euo pipefail
 
@@ -1270,7 +1249,13 @@ jobs:
 
           if [ "$need_opencode" = "1" ]; then
             # Avoid `curl ... | bash` by downloading a pinned, checksummed release artifact.
-            version="${OPENCODE_VERSION#v}"
+            opencode_version="${OPENCODE_SPEC%%|*}"
+            opencode_sha256=""
+            if [ "$opencode_version" != "$OPENCODE_SPEC" ]; then
+              opencode_sha256="${OPENCODE_SPEC#*|}"
+            fi
+
+            version="${opencode_version#v}"
             asset="opencode-linux-x64-baseline.tar.gz"
             url="https://github.com/anomalyco/opencode/releases/download/v${version}/${asset}"
 
@@ -1280,8 +1265,8 @@ jobs:
             tmp_dir="$(mktemp -d)"
             curl -fsSL -o "$tmp_dir/$asset" "$url"
 
-            if [ -n "${OPENCODE_TARBALL_SHA256:-}" ]; then
-              echo "${OPENCODE_TARBALL_SHA256}  $tmp_dir/$asset" | sha256sum -c -
+            if [ -n "${opencode_sha256:-}" ]; then
+              echo "${opencode_sha256}  $tmp_dir/$asset" | sha256sum -c -
             fi
 
             tar -xzf "$tmp_dir/$asset" -C "$tmp_dir"
@@ -1330,17 +1315,17 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           CODEX_API_KEY: ${{ secrets.CODEX_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          HAPPIER_E2E_PROVIDER_MODEL: ${{ inputs.providers_model_default }}
-          HAPPY_E2E_PROVIDER_MODEL: ${{ inputs.providers_model_default }}
-          HAPPIER_E2E_PROVIDER_MODELS: ${{ inputs.providers_model_overrides }}
-          HAPPY_E2E_PROVIDER_MODELS: ${{ inputs.providers_model_overrides }}
+          HAPPIER_E2E_PROVIDER_MODEL: ${{ fromJSON(inputs.providers_models).default }}
+          HAPPY_E2E_PROVIDER_MODEL: ${{ fromJSON(inputs.providers_models).default }}
+          HAPPIER_E2E_PROVIDER_MODELS: ${{ fromJSON(inputs.providers_models).overrides }}
+          HAPPY_E2E_PROVIDER_MODELS: ${{ fromJSON(inputs.providers_models).overrides }}
         run: |
           set -euo pipefail
 
           flags=()
-          if [ "${{ inputs.providers_strict_keys }}" = "true" ]; then flags+=("--strict-keys"); fi
-          if [ "${{ inputs.providers_flake_retry }}" != "true" ]; then flags+=("--no-flake-retry"); fi
-          if [ "${{ inputs.providers_update_baselines }}" = "true" ]; then flags+=("--update-baselines"); fi
+          if [ "${{ fromJSON(inputs.providers_flags).strict_keys }}" = "true" ]; then flags+=("--strict-keys"); fi
+          if [ "${{ fromJSON(inputs.providers_flags).flake_retry }}" != "true" ]; then flags+=("--no-flake-retry"); fi
+          if [ "${{ fromJSON(inputs.providers_flags).update_baselines }}" = "true" ]; then flags+=("--update-baselines"); fi
 
           yarn workspace @happier-dev/tests providers:run "${{ inputs.providers_preset }}" "${{ inputs.providers_tier }}" "${flags[@]}"
 
@@ -1381,8 +1366,8 @@ jobs:
       - name: Run stress suite
         env:
           CI: "1"
-          HAPPIER_E2E_REPEAT: ${{ inputs.stress_repeat }}
-          HAPPIER_E2E_SEED: ${{ inputs.stress_seed }}
+          HAPPIER_E2E_REPEAT: ${{ fromJSON(inputs.stress_config).repeat }}
+          HAPPIER_E2E_SEED: ${{ fromJSON(inputs.stress_config).seed }}
           HAPPIER_E2E_FLAKE_RETRY: "1"
         run: yarn test:stress
 

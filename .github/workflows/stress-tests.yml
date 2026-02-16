@@ -39,12 +39,8 @@ jobs:
       run_providers: false
       providers_preset: all
       providers_tier: smoke
-      providers_strict_keys: false
-      providers_flake_retry: false
-      providers_update_baselines: false
       run_stress: true
-      stress_repeat: "10"
-      stress_seed: ""
+      stress_config: '{"repeat":"10","seed":""}'
 
   stress-manual:
     if: github.event_name == 'workflow_dispatch'
@@ -60,9 +56,5 @@ jobs:
       run_providers: false
       providers_preset: all
       providers_tier: smoke
-      providers_strict_keys: false
-      providers_flake_retry: false
-      providers_update_baselines: false
       run_stress: true
-      stress_repeat: ${{ inputs.repeat }}
-      stress_seed: ${{ inputs.seed }}
+      stress_config: ${{ format('{{\"repeat\":{0},\"seed\":{1}}}', toJson(inputs.repeat), toJson(inputs.seed)) }}
