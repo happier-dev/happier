@@ -10,7 +10,23 @@ vi.mock('react-native', () => ({
 }));
 
 vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (fn: any) => fn({ colors: { surfaceHigh: '#222', textSecondary: '#aaa', text: '#eee' } }) },
+    StyleSheet: {
+        create: (arg: any) => {
+            const theme = { colors: { surfaceHigh: '#222', textSecondary: '#aaa', text: '#eee' } };
+            return typeof arg === 'function' ? arg(theme) : arg;
+        },
+    },
+    useUnistyles: () => ({
+        theme: {
+            colors: {
+                textSecondary: '#aaa',
+                text: '#eee',
+                warning: '#f90',
+                success: '#0a0',
+                textDestructive: '#a00',
+            },
+        },
+    }),
 }));
 
 vi.mock('@/components/tools/renderers/system/StructuredResultView', () => ({
@@ -18,6 +34,31 @@ vi.mock('@/components/tools/renderers/system/StructuredResultView', () => ({
 }));
 
 describe('SubAgentRunView', () => {
+    it('renders sidechain text messages while running (detailLevel=full)', async () => {
+        const { SubAgentRunView } = await import('./SubAgentRunView');
+
+        let tree!: renderer.ReactTestRenderer;
+        renderer.act(() => {
+            tree = renderer.create(
+                <SubAgentRunView
+                    tool={{
+                        state: 'running',
+                        input: { intent: 'plan' },
+                        result: null,
+                    } as any}
+                    metadata={null as any}
+                    messages={[
+                        { kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'Working...', isThinking: false },
+                    ] as any}
+                    detailLevel="full"
+                />,
+            );
+        });
+
+        const text = tree.root.findAllByType('Text').map((n: any) => String(n.props.children)).join('\n');
+        expect(text).toContain('Working...');
+    });
+
     it('renders a review digest from findingsDigest v2 shape', async () => {
         const { SubAgentRunView } = await import('./SubAgentRunView');
 

@@ -1,16 +1,8 @@
-import type { FeatureId } from '@happier-dev/protocol';
+import { parseBooleanEnv, type FeatureId } from '@happier-dev/protocol';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { resolveUiFeatureToggleEnabled } from './featureRegistry';
 
 type FeatureLocalPolicyResolver = (settings: Settings) => boolean;
-
-function parseBooleanEnv(raw: string | undefined, fallback: boolean): boolean {
-    const value = (raw ?? '').trim().toLowerCase();
-    if (!value) return fallback;
-    if (value === '1' || value === 'true' || value === 'yes' || value === 'on') return true;
-    if (value === '0' || value === 'false' || value === 'no' || value === 'off') return false;
-    return fallback;
-}
 
 const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPolicyResolver>>> = {
     automations: (settings) => resolveUiFeatureToggleEnabled(settings, 'automations'),
