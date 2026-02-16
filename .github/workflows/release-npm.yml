@@ -670,6 +670,7 @@ jobs:
       generate_notes: false
       notes: "Rolling stable build (npm dist-tag: latest)."
       clobber: true
+      prune_assets: true
       assets_artifact: npm-pack-cli
       assets_artifact_path: dist/release-assets/cli
       assets_dir: dist/release-assets/cli
@@ -689,6 +690,7 @@ jobs:
       generate_notes: false
       notes: "Rolling preview build (npm dist-tag: next)."
       clobber: true
+      prune_assets: true
       assets_artifact: npm-pack-cli
       assets_artifact_path: dist/release-assets/cli
       assets_dir: dist/release-assets/cli
@@ -726,6 +728,7 @@ jobs:
       generate_notes: false
       notes: "Rolling stable build (npm dist-tag: latest)."
       clobber: true
+      prune_assets: true
       assets_artifact: npm-pack-stack
       assets_artifact_path: dist/release-assets/stack
       assets_dir: dist/release-assets/stack
@@ -745,6 +748,7 @@ jobs:
       generate_notes: false
       notes: "Rolling preview build (npm dist-tag: next)."
       clobber: true
+      prune_assets: true
       assets_artifact: npm-pack-stack
       assets_artifact_path: dist/release-assets/stack
       assets_dir: dist/release-assets/stack

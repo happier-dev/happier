@@ -45,6 +45,10 @@ on:
         required: false
         default: true
         type: boolean
+      prune_assets:
+        required: false
+        default: false
+        type: boolean
       release_message:
         required: false
         default: ""
@@ -242,6 +246,28 @@ jobs:
           fi
 
           gh release edit "${TAG}" --title "${TITLE}" --notes "${body}"
+
+      - name: Prune rolling release assets (best-effort)
+        if: ${{ inputs.prune_assets && (!inputs.rolling_tag || steps.move_rolling_tag.outputs.pushed == 'true') }}
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          echo "Pruning existing assets for release '${TAG}'..."
+          asset_ids="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.assets[].id')"
+          if [ -z "${asset_ids}" ]; then
+            echo "No existing assets to prune (or release not yet resolvable)."
+            exit 0
+          fi
+
+          while IFS= read -r asset_id; do
+            if [ -z "${asset_id}" ]; then
+              continue
+            fi
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" >/dev/null 2>&1 || true
+          done <<< "${asset_ids}"
 
       - name: Upload assets
         if: ${{ (!inputs.rolling_tag || steps.move_rolling_tag.outputs.pushed == 'true') && (inputs.assets != '' || inputs.assets_dir != '') }}
