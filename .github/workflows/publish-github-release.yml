@@ -247,7 +247,7 @@ jobs:
 
           gh release edit "${TAG}" --title "${TITLE}" --notes "${body}"
 
-      - name: Prune rolling release assets (best-effort)
+      - name: Prune rolling release assets
         if: ${{ inputs.prune_assets && (!inputs.rolling_tag || steps.move_rolling_tag.outputs.pushed == 'true') }}
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
@@ -256,9 +256,21 @@ jobs:
           set -euo pipefail
 
           echo "Pruning existing assets for release '${TAG}'..."
-          asset_ids="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.assets[].id')"
+          release_api="repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}"
+
+          gh_err_file="$(mktemp)"
+          if ! asset_ids="$(gh api "${release_api}" --jq '.assets[].id' 2>"${gh_err_file}")"; then
+            if grep -q "HTTP 404" "${gh_err_file}"; then
+              echo "Release '${TAG}' not found yet; skipping pruning."
+              exit 0
+            fi
+            echo "::error::Failed to fetch release assets for '${TAG}'."
+            cat "${gh_err_file}"
+            exit 1
+          fi
+
           if [ -z "${asset_ids}" ]; then
-            echo "No existing assets to prune (or release not yet resolvable)."
+            echo "No existing assets to prune."
             exit 0
           fi
 
@@ -266,7 +278,8 @@ jobs:
             if [ -z "${asset_id}" ]; then
               continue
             fi
-            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" >/dev/null 2>&1 || true
+            echo "Deleting release asset id ${asset_id}..."
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" >/dev/null
           done <<< "${asset_ids}"
 
       - name: Upload assets
