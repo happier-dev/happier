@@ -7,7 +7,6 @@ import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import { RPC_METHODS, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpc';
 
 import { apiSocket } from '../api/session/apiSocket';
-import { sync } from '../sync';
 import type { MachineMetadata } from '../domains/state/storageTypes';
 import { buildSpawnHappySessionRpcParams, type SpawnHappySessionRpcParams, type SpawnSessionOptions } from '../domains/session/spawn/spawnSessionPayload';
 import { isPlainObject, normalizeSpawnSessionResult } from './_shared';
@@ -335,6 +334,7 @@ export async function machineUpdateMetadata(
     let currentMetadata = { ...metadata };
     let retryCount = 0;
 
+    const { sync } = await import('../sync');
     const machineEncryption = sync.encryption.getMachineEncryption(machineId);
     if (!machineEncryption) {
         throw new Error(`Machine encryption not found for ${machineId}`);
