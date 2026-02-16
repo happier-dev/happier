@@ -1,0 +1,43 @@
+---
+title: App environment variables (Expo)
+description: Local `.env.local` workflow for build-time `EXPO_PUBLIC_*` flags.
+---
+
+The Happier app (`apps/ui`) uses Expo. Expo supports loading `.env*` files for **local** development and then inlining `EXPO_PUBLIC_*` variables into the JS bundle at bundle/build time.
+
+## Local overrides (recommended)
+
+To keep repo-local settings out of Git, use a local env file:
+
+```bash
+cd apps/ui
+cp .env.local.example .env.local
+```
+
+Then edit `apps/ui/.env.local` and restart the dev server (Metro) so the bundle is rebuilt with the new values.
+
+## Disabling features at build time
+
+You can disable specific UI features at build time by setting:
+
+- `EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY`
+
+Example:
+
+```bash
+EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY=voice,social.friends
+```
+
+This is a comma-separated list of **feature ids** (for example `voice`, `social.friends`, `bugReports`, `connected.services`).
+
+## Security note (important)
+
+Only `EXPO_PUBLIC_*` variables are inlined into the app bundle. Treat all `EXPO_PUBLIC_*` values as **public** (never store secrets here).
+
+## EAS builds (cloud)
+
+EAS build workers do not use your local `.env.local`. For cloud builds, set these variables in one of:
+
+- `apps/ui/eas.json` under `build.<profile>.env`, or
+- the Expo project’s EAS environment variables UI (and ensure the build profile sets the matching `"environment"`).
+
