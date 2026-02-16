@@ -543,6 +543,10 @@ describe('settings', () => {
             expect((settingsDefaults as any).toolViewExpandedDetailLevelByToolName).toEqual({});
             expect(settingsDefaults.toolViewShowDebugByDefault).toBe(false);
             expect(settingsDefaults.terminalConnectLegacySecretExportEnabled).toBe(false);
+            expect((settingsDefaults as any).connectedServicesDefaultProfileByServiceId).toEqual({});
+            expect((settingsDefaults as any).connectedServicesProfileLabelByKey).toEqual({});
+            expect((settingsDefaults as any).connectedServicesQuotaPinnedMeterIdsByKey).toEqual({});
+            expect((settingsDefaults as any).connectedServicesQuotaSummaryStrategyByKey).toEqual({});
             expect((settingsDefaults as any).expGemini).toBeUndefined();
             expect((settingsDefaults as any).sessionDefaultPermissionModeClaude).toBeUndefined();
             expect((settingsDefaults as any).sessionDefaultPermissionModeCodex).toBeUndefined();

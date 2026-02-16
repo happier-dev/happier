@@ -17,6 +17,22 @@ function hasOwn(obj: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
+const QUOTA_BADGES_POLL_MS = 30_000;
+const QUOTA_BADGES_MISS_RETRY_MS = 30_000;
+const QUOTA_BADGES_ERROR_BACKOFF_MIN_MS = 30_000;
+const QUOTA_BADGES_ERROR_BACKOFF_MAX_MS = 5 * 60_000;
+
+type SnapshotCacheEntry = Readonly<{
+  snapshot: ConnectedServiceQuotaSnapshotV1 | null;
+  nextFetchAtMs: number;
+  consecutiveErrors: number;
+}>;
+
+function computeErrorBackoffMs(consecutiveErrors: number): number {
+  const exp = QUOTA_BADGES_ERROR_BACKOFF_MIN_MS * Math.pow(2, Math.max(0, consecutiveErrors - 1));
+  return Math.max(QUOTA_BADGES_ERROR_BACKOFF_MIN_MS, Math.min(QUOTA_BADGES_ERROR_BACKOFF_MAX_MS, Math.trunc(exp)));
+}
+
 export function useConnectedServiceQuotaBadges(
   profiles: ReadonlyArray<ProfileRef>,
 ): Record<string, Array<{ meterId: string; text: string }>> {
@@ -25,18 +41,28 @@ export function useConnectedServiceQuotaBadges(
   const settings = useSettings();
   const quotasEnabled = useFeatureEnabled('connected.services.quotas');
 
-  const [snapshotsByKey, setSnapshotsByKey] = React.useState<Record<string, ConnectedServiceQuotaSnapshotV1 | null>>({});
-  const snapshotsByKeyRef = React.useRef(snapshotsByKey);
+  const [pollSeq, setPollSeq] = React.useState(0);
   React.useEffect(() => {
-    snapshotsByKeyRef.current = snapshotsByKey;
-  }, [snapshotsByKey]);
+    if (!quotasEnabled) return;
+    if (!credentials) return;
+    const handle = setInterval(() => setPollSeq((value) => value + 1), QUOTA_BADGES_POLL_MS);
+    return () => clearInterval(handle);
+  }, [quotasEnabled, credentials]);
+
+  const [cacheByKey, setCacheByKey] = React.useState<Record<string, SnapshotCacheEntry>>({});
+  const cacheByKeyRef = React.useRef(cacheByKey);
+  React.useEffect(() => {
+    cacheByKeyRef.current = cacheByKey;
+  }, [cacheByKey]);
 
   const pinnedByKey = settings.connectedServicesQuotaPinnedMeterIdsByKey;
+  const strategyByKey = settings.connectedServicesQuotaSummaryStrategyByKey;
 
   React.useEffect(() => {
     if (!quotasEnabled) return;
     if (!credentials) return;
 
+    const now = Date.now();
     const toFetch: Array<{ key: string; serviceId: ConnectedServiceId; profileId: string }> = [];
     for (const profile of profiles) {
       const serviceIdRaw = String(profile.serviceId ?? '').trim();
@@ -47,7 +73,8 @@ export function useConnectedServiceQuotaBadges(
       const key = connectedServiceProfileKey({ serviceId, profileId });
       const pinned = pinnedByKey[key] ?? [];
       if (pinned.length === 0) continue;
-      if (hasOwn(snapshotsByKeyRef.current, key)) continue;
+      const cached = cacheByKeyRef.current[key];
+      if (cached && now < cached.nextFetchAtMs) continue;
       toFetch.push({ key, serviceId, profileId });
     }
     if (toFetch.length === 0) return;
@@ -62,16 +89,40 @@ export function useConnectedServiceQuotaBadges(
           });
           const opened = sealed ? openConnectedServiceQuotaSnapshot(credentials, sealed.sealed) : null;
           if (controller.signal.aborted) return;
-          setSnapshotsByKey((prev) => (hasOwn(prev, entry.key) ? prev : { ...prev, [entry.key]: opened }));
+          setCacheByKey((prev) => {
+            const existing = prev[entry.key];
+            const nextFetchAtMs = opened
+              ? now + Math.max(QUOTA_BADGES_POLL_MS, Math.trunc(opened.staleAfterMs ?? QUOTA_BADGES_POLL_MS))
+              : now + QUOTA_BADGES_MISS_RETRY_MS;
+            return {
+              ...prev,
+              [entry.key]: {
+                snapshot: opened,
+                nextFetchAtMs,
+                consecutiveErrors: 0,
+              },
+            };
+          });
         } catch {
           if (controller.signal.aborted) return;
-          setSnapshotsByKey((prev) => (hasOwn(prev, entry.key) ? prev : { ...prev, [entry.key]: null }));
+          setCacheByKey((prev) => {
+            const existing = prev[entry.key];
+            const consecutiveErrors = (existing?.consecutiveErrors ?? 0) + 1;
+            return {
+              ...prev,
+              [entry.key]: {
+                snapshot: existing?.snapshot ?? null,
+                nextFetchAtMs: now + computeErrorBackoffMs(consecutiveErrors),
+                consecutiveErrors,
+              },
+            };
+          });
         }
       }));
     })();
 
     return () => controller.abort();
-  }, [quotasEnabled, credentials, profiles, pinnedByKey]);
+  }, [quotasEnabled, credentials, profiles, pinnedByKey, pollSeq]);
 
   const badgesByKey: Record<string, Array<{ meterId: string; text: string }>> = {};
   if (!quotasEnabled) return badgesByKey;
@@ -89,9 +140,12 @@ export function useConnectedServiceQuotaBadges(
       badgesByKey[key] = [];
       continue;
     }
+    const rawStrategy = strategyByKey[key];
+    const strategy = rawStrategy === 'min_remaining' ? 'min_remaining' : 'primary';
     badgesByKey[key] = computeConnectedServiceQuotaSummaryBadges({
-      snapshot: snapshotsByKey[key] ?? null,
+      snapshot: cacheByKey[key]?.snapshot ?? null,
       pinnedMeterIds,
+      strategy,
     });
   }
 

@@ -26,6 +26,7 @@ export const ConnectedServiceDetailProfilesGroup = React.memo(function Connected
   defaultProfileId: string;
   profileLabelsByKey: Readonly<Record<string, string>>;
   pinnedMeterIdsByKey: Readonly<Record<string, ReadonlyArray<string>>>;
+  quotaSummaryStrategyByKey: Readonly<Record<string, 'primary' | 'min_remaining' | undefined>>;
   quotaSnapshotsByKey: Readonly<Record<string, ConnectedServiceQuotaSnapshotV1 | null>>;
   quotasEnabled: boolean;
   onDisconnect: (profileId: string) => void;
@@ -52,10 +53,13 @@ export const ConnectedServiceDetailProfilesGroup = React.memo(function Connected
 
         const quotaKey = connectedServiceProfileKey({ serviceId: props.serviceId, profileId });
         const pinnedMeterIds = props.pinnedMeterIdsByKey[quotaKey] ?? [];
+        const rawStrategy = props.quotaSummaryStrategyByKey[quotaKey];
+        const strategy = rawStrategy === 'min_remaining' ? 'min_remaining' : 'primary';
         const badges = props.quotasEnabled
           ? computeConnectedServiceQuotaSummaryBadges({
             snapshot: props.quotaSnapshotsByKey[quotaKey] ?? null,
             pinnedMeterIds,
+            strategy,
           })
           : [];
 

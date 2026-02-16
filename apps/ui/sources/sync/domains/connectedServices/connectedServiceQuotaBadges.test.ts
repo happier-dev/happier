@@ -71,5 +71,29 @@ describe('computeConnectedServiceQuotaSummaryBadges', () => {
 
     expect(badges[0]?.text).toContain('80%');
   });
-});
 
+  it('can order badges by least remaining when strategy=min_remaining', () => {
+    const snapshot: ConnectedServiceQuotaSnapshotV1 = {
+      v: 1,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      fetchedAt: 1,
+      staleAfterMs: 1000,
+      planLabel: null,
+      accountLabel: null,
+      meters: [
+        { meterId: 'session', label: 'Session', used: null, limit: null, unit: 'unknown', utilizationPct: 10, resetsAt: null, status: 'ok', details: {} },
+        { meterId: 'weekly', label: 'Weekly', used: null, limit: null, unit: 'unknown', utilizationPct: 80, resetsAt: null, status: 'ok', details: {} },
+      ],
+    };
+
+    const badges = computeConnectedServiceQuotaSummaryBadges({
+      snapshot,
+      pinnedMeterIds: ['session', 'weekly'],
+      strategy: 'min_remaining',
+    });
+
+    expect(badges.map((b) => b.meterId)).toEqual(['weekly', 'session']);
+    expect(badges[0]?.text).toContain('Weekly');
+  });
+});

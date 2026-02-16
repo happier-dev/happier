@@ -275,6 +275,7 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
         defaultProfileId={defaultProfileId}
         profileLabelsByKey={settings.connectedServicesProfileLabelByKey}
         pinnedMeterIdsByKey={settings.connectedServicesQuotaPinnedMeterIdsByKey}
+        quotaSummaryStrategyByKey={settings.connectedServicesQuotaSummaryStrategyByKey}
         quotaSnapshotsByKey={quotaSnapshotsByKey}
         quotasEnabled={quotasEnabled}
         onDisconnect={(profileId) => void handleDisconnect(profileId)}

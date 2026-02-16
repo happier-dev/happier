@@ -40,6 +40,10 @@ export async function handleUpdateAccountSocketUpdate(params: {
             accountUpdate.connectedServices !== undefined
                 ? accountUpdate.connectedServices
                 : currentProfile.connectedServices,
+        connectedServicesV2:
+            accountUpdate.connectedServicesV2 !== undefined
+                ? accountUpdate.connectedServicesV2
+                : currentProfile.connectedServicesV2,
         timestamp: updateCreatedAt, // Update timestamp to latest
     };
 

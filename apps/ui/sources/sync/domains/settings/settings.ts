@@ -387,6 +387,10 @@ const SettingsSchemaBase = z.object({
 	    lastUsedProfile: z.string().nullable().describe('Last selected profile for new sessions'),
     secrets: z.array(SavedSecretSchema).default([]).describe('Saved secrets (encrypted settings). Values are never re-displayed in UI.'),
     secretBindingsByProfileId: z.record(z.string(), z.record(z.string(), z.string())).default({}).describe('Default saved secret ID per profile and env var name'),
+    connectedServicesDefaultProfileByServiceId: z.record(z.string(), z.string()).default({}).describe('Default connected service profileId per serviceId (used for new-session bindings)'),
+    connectedServicesProfileLabelByKey: z.record(z.string(), z.string()).default({}).describe('User-defined label per connected service profile, keyed by "serviceId/profileId"'),
+    connectedServicesQuotaPinnedMeterIdsByKey: z.record(z.string(), z.array(z.string())).default({}).describe('Pinned connected service quota meter ids per profile, keyed by "serviceId/profileId"'),
+    connectedServicesQuotaSummaryStrategyByKey: z.record(z.string(), z.enum(['primary', 'min_remaining'])).default({}).describe('Connected service quota summary strategy per profile, keyed by "serviceId/profileId"'),
     // Favorite directories for quick path selection
     favoriteDirectories: z.array(z.string()).describe('User-defined favorite directories for quick access in path selection'),
     // Favorite machines for quick machine selection
@@ -522,6 +526,10 @@ export const settingsDefaults: Settings = {
     lastUsedProfile: null,
     secrets: [],
     secretBindingsByProfileId: {},
+    connectedServicesDefaultProfileByServiceId: {},
+    connectedServicesProfileLabelByKey: {},
+    connectedServicesQuotaPinnedMeterIdsByKey: {},
+    connectedServicesQuotaSummaryStrategyByKey: {},
     // Favorite directories (empty by default)
     favoriteDirectories: [],
     // Favorite machines (empty by default)
