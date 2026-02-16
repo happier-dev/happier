@@ -206,7 +206,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ui-web-assets
-          path: dist/release-assets/ui-web/**
+          path: dist/release-assets/ui-web
           retention-days: 7
 
   publish:
@@ -224,7 +224,6 @@ jobs:
       generate_notes: false
       notes: ${{ needs.build.outputs.notes }}
       assets_artifact: ui-web-assets
-      assets_artifact_path: dist/release-assets
+      assets_artifact_path: dist/release-assets/ui-web
       assets_dir: dist/release-assets/ui-web
       clobber: true
-

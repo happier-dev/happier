@@ -79,6 +79,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Create GitHub App token (release bot)
         id: app_token
@@ -95,6 +96,8 @@ jobs:
         run: |
           set -euo pipefail
           git remote set-url origin "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # Ensure we aren't still using GITHUB_TOKEN credentials from checkout.
+          git config --local --unset-all http.https://github.com/.extraheader 2>/dev/null || true
 
       - name: Download release assets artifact
         if: ${{ inputs.assets_artifact != '' }}

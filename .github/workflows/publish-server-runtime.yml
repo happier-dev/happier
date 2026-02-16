@@ -215,7 +215,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: server-runtime-assets
-          path: dist/release-assets/server/**
+          path: dist/release-assets/server
           retention-days: 7
 
   publish:
@@ -233,7 +233,6 @@ jobs:
       generate_notes: false
       notes: ${{ needs.build.outputs.notes }}
       assets_artifact: server-runtime-assets
-      assets_artifact_path: dist/release-assets
+      assets_artifact_path: dist/release-assets/server
       assets_dir: dist/release-assets/server
       clobber: true
-
