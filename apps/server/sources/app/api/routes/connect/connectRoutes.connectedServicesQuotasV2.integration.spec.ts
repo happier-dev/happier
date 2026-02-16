@@ -187,6 +187,35 @@ describe("connectRoutes (connected services quotas v2) sealed quota snapshot end
         expect(body.metadata.refreshRequestedAt).toBeGreaterThan(0);
     });
 
+    it("accepts a refresh request even when no quota snapshot exists yet", async () => {
+        const user = await db.account.create({ data: { publicKey: "pk-quota-refresh-missing" }, select: { id: true } });
+
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const refresh = await app.inject({
+            method: "POST",
+            url: "/v2/connect/openai-codex/profiles/work/quotas/refresh",
+            headers: { "x-test-user-id": user.id, "content-type": "application/json" },
+            payload: JSON.stringify({}),
+        });
+        expect(refresh.statusCode).toBe(200);
+
+        const row = await (db as any).serviceAccountQuotaSnapshot?.findUnique?.({
+            where: { accountId_vendor_profileId: { accountId: user.id, vendor: "openai-codex", profileId: "work" } },
+            select: { metadata: true },
+        });
+        expect(row?.metadata).toBeTruthy();
+
+        const get = await app.inject({
+            method: "GET",
+            url: "/v2/connect/openai-codex/profiles/work/quotas",
+            headers: { "x-test-user-id": user.id },
+        });
+        expect(get.statusCode).toBe(404);
+    });
+
     it("includes refreshRequestedAt in metadata even when it is 0", async () => {
         const user = await db.account.create({ data: { publicKey: "pk-quota-refresh-zero" }, select: { id: true } });
 

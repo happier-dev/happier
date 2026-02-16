@@ -14,12 +14,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function encodeQuotaSnapshotBytes(ciphertext: string): Uint8Array {
-    return Buffer.from(ciphertext, "utf8");
+const quotaSnapshotEncoder = new TextEncoder();
+const quotaSnapshotDecoder = new TextDecoder();
+
+function toPrismaBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+    if (bytes.buffer instanceof ArrayBuffer) {
+        const sliced = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        return new Uint8Array(sliced);
+    }
+    const buffer = new ArrayBuffer(bytes.byteLength);
+    const copy = new Uint8Array(buffer);
+    copy.set(bytes);
+    return copy;
+}
+
+function encodeQuotaSnapshotBytes(ciphertext: string): Uint8Array<ArrayBuffer> {
+    return toPrismaBytes(quotaSnapshotEncoder.encode(ciphertext));
 }
 
 function decodeQuotaSnapshotCiphertext(bytes: Uint8Array): string {
-    return Buffer.from(bytes).toString("utf8");
+    return quotaSnapshotDecoder.decode(bytes);
 }
 
 export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
@@ -118,10 +132,16 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
                 ? row.status
                 : "ok";
 
+        const ciphertext = decodeQuotaSnapshotCiphertext(row.snapshot);
+        if (!ciphertext.trim()) {
+            // A refresh request may have created a placeholder row before the daemon uploaded a real snapshot.
+            return reply.code(404).send({ error: "connect_quotas_not_found" });
+        }
+
         return reply.send({
             sealed: {
                 format,
-                ciphertext: decodeQuotaSnapshotCiphertext(row.snapshot),
+                ciphertext,
             },
             metadata: {
                 fetchedAt: row.fetchedAt ? row.fetchedAt.getTime() : Date.now(),
@@ -141,7 +161,6 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
             }),
             response: {
                 200: z.object({ success: z.literal(true) }),
-                404: z.object({ error: z.literal("connect_quotas_not_found") }),
             },
         },
     }, async (request, reply) => {
@@ -149,21 +168,31 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
         const serviceId = request.params.serviceId satisfies ConnectedServiceId;
         const profileId = request.params.profileId;
 
-        const existing = await db.serviceAccountQuotaSnapshot.findUnique({
-            where: { accountId_vendor_profileId: { accountId: userId, vendor: serviceId, profileId } },
-            select: { id: true, metadata: true },
-        });
-        if (!existing) return reply.code(404).send({ error: "connect_quotas_not_found" });
+        const where = { accountId_vendor_profileId: { accountId: userId, vendor: serviceId, profileId } };
+        const existing = await db.serviceAccountQuotaSnapshot.findUnique({ where, select: { metadata: true } });
 
-        const nextMetadata =
-            isRecord(existing.metadata)
-                ? { ...existing.metadata, refreshRequestedAt: Date.now() }
-                : { refreshRequestedAt: Date.now() };
+        const baseMetadata = isRecord(existing?.metadata) ? existing?.metadata : {};
+        const nextMetadata: Record<string, unknown> = {
+            ...baseMetadata,
+            v: 1,
+            format: "account_scoped_v1",
+            refreshRequestedAt: Date.now(),
+        };
 
-        await db.serviceAccountQuotaSnapshot.update({
-            where: { id: existing.id },
-            data: {
+        await db.serviceAccountQuotaSnapshot.upsert({
+            where,
+            update: {
                 updatedAt: new Date(),
+                metadata: nextMetadata,
+            },
+            create: {
+                accountId: userId,
+                vendor: serviceId,
+                profileId,
+                snapshot: encodeQuotaSnapshotBytes(""),
+                status: null,
+                fetchedAt: null,
+                staleAfterMs: 0,
                 metadata: nextMetadata,
             },
         });
