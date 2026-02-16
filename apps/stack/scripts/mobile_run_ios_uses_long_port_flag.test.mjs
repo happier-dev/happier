@@ -18,11 +18,11 @@ function parseKeyValueLines(text) {
   return out;
 }
 
-test('hstack mobile --run-ios passes --port to Expo so the native build and dev server use the same Metro port', async () => {
+test('hstack mobile --run-ios passes --port (long flag) so Expo uses the requested Metro port', async () => {
   const rootDir = getStackRootFromMeta(import.meta.url);
   const mobileScript = join(rootDir, 'scripts', 'mobile.mjs');
 
-  const tmp = await mkdtemp(join(tmpdir(), 'hstack-mobile-runios-port-'));
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-mobile-runios-longport-'));
   const repoDir = join(tmp, 'repo');
   const storageDir = join(tmp, 'storage');
 
@@ -51,8 +51,6 @@ exit 1
     const expoBin = join(uiDir, 'node_modules', '.bin', 'expo');
     await mkdir(join(uiDir, 'node_modules', '.bin'), { recursive: true });
 
-    // Stub Expo CLI: print argv + env-derived ports and exit successfully.
-    // Use an absolute node shebang so the test can safely clear PATH.
     await writeFile(
       expoBin,
       `#!${process.execPath}
@@ -71,8 +69,7 @@ process.exit(0);
 
     const env = {
       ...process.env,
-      // Ensure xcrun runs fast/deterministically in tests.
-      // Include system paths so env.mjs won't prepend /usr/bin ahead of our stub.
+      // Ensure our xcrun stub wins over /usr/bin/xcrun even after env.mjs normalizes PATH.
       PATH: `${binDir}:/usr/bin:/bin`,
       HAPPIER_STACK_REPO_DIR: repoDir,
       HAPPIER_STACK_HOME_DIR: join(tmp, 'home'),
@@ -83,20 +80,26 @@ process.exit(0);
       HAPPIER_STACK_ENV_FILE: join(tmp, 'nonexistent-env'),
     };
 
-    const res = await runNodeCapture([mobileScript, '--run-ios', '--no-metro'], { cwd: rootDir, env });
+    const res = await runNodeCapture([mobileScript, '--run-ios', '--no-metro', '--port=14362'], { cwd: rootDir, env });
+    assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
     const kv = parseKeyValueLines(res.stdout);
-
     const args = JSON.parse(kv.ARGS ?? '[]');
-    const port = kv.RCT_METRO_PORT ?? '';
 
-    assert.ok(port, `expected RCT_METRO_PORT to be set\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-    assert.equal(kv.EXPO_PACKAGER_PORT, port, `expected EXPO_PACKAGER_PORT to match\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-    assert.ok(!args.includes('-p'), `expected expo args to not include -p\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
     assert.ok(!args.includes('--no-bundler'), `expected expo args to not include --no-bundler\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
     assert.ok(args.includes('--port'), `expected expo args to include --port\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+    assert.ok(!args.includes('-p'), `expected expo args to not include -p\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
     const portIdx = args.indexOf('--port');
-    assert.ok(portIdx >= 0 && args[portIdx + 1] === port, `expected --port to match RCT_METRO_PORT\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-    assert.notEqual(port, '8081', `expected non-default port to reduce collisions\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+    assert.ok(portIdx >= 0 && args[portIdx + 1] === '14362', `expected --port 14362\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+    assert.equal(
+      kv.RCT_METRO_PORT,
+      '14362',
+      `expected RCT_METRO_PORT to be set from hstack --port\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
+    );
+    assert.equal(
+      kv.EXPO_PACKAGER_PORT,
+      '14362',
+      `expected EXPO_PACKAGER_PORT to match\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
+    );
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }

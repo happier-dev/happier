@@ -84,10 +84,16 @@ function usageText() {
     '    [--server-url=<url>] [--webapp-url=<url>] [--public-server-url=<url>]',
     '    [--json]',
     '',
+    '  hstack remote server setup --ssh <user@host> [--preview|--stable] [--channel <stable|preview>]',
+    '    [--mode <user|system>]',
+    '    [--env KEY=VALUE]...',
+    '    [--json]',
+    '',
     'notes:',
     '  - This command runs remote operations over ssh.',
     '  - It installs the Happier CLI on the remote host, pairs credentials, and optionally installs/starts the daemon service.',
     '  - Default service mode is user; set --service none to skip daemon service setup.',
+    '  - Remote server setup installs the self-host runtime as a service (default: user mode).',
   ].join('\n');
 }
 
@@ -115,6 +121,43 @@ function resolveService(argv) {
   }
   const v = String(picked.slice('--service='.length)).trim().toLowerCase();
   return v || 'user';
+}
+
+function resolveMode(argv) {
+  if (argv.includes('--system')) return 'system';
+  if (argv.includes('--user')) return 'user';
+  const picked = argv.find((a) => a === '--mode' || a.startsWith('--mode='));
+  if (!picked) return 'user';
+  if (picked === '--mode') {
+    const idx = argv.indexOf('--mode');
+    const v = String(argv[idx + 1] ?? '').trim().toLowerCase();
+    return v || 'user';
+  }
+  const v = String(picked.slice('--mode='.length)).trim().toLowerCase();
+  return v || 'user';
+}
+
+function collectEnvValues(argv) {
+  const args = Array.isArray(argv) ? argv.map(String) : [];
+  const values = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i] ?? '';
+    if (a === '--env') {
+      const next = args[i + 1] ?? '';
+      if (!next || next.startsWith('--')) {
+        throw new Error('[remote] missing value for --env (expected KEY=VALUE)');
+      }
+      values.push(String(next));
+      i += 1;
+      continue;
+    }
+    if (a.startsWith('--env=')) {
+      const raw = a.slice('--env='.length);
+      if (!raw) throw new Error('[remote] missing value for --env (expected KEY=VALUE)');
+      values.push(String(raw));
+    }
+  }
+  return values;
 }
 
 async function runRemoteDaemonSetup(argvRaw) {
@@ -209,6 +252,71 @@ async function runRemoteDaemonSetup(argvRaw) {
   });
 }
 
+async function runRemoteServerSetup(argvRaw) {
+  const argv0 = argvRaw.slice();
+  const json = wantsJson(argv0);
+
+  let args = argv0.slice();
+  const ssh = takeFlagValue(args, '--ssh');
+  args = ssh.rest;
+  if (!ssh.value) {
+    process.stderr.write('Missing required flag: --ssh <user@host>\n');
+    process.exit(2);
+  }
+
+  const channel = resolveChannel(argv0);
+  if (channel !== 'stable' && channel !== 'preview') {
+    throw new Error(`[remote] invalid --channel value: ${channel}`);
+  }
+
+  const mode = resolveMode(argv0);
+  if (mode !== 'user' && mode !== 'system') {
+    throw new Error(`[remote] invalid --mode value: ${mode} (expected user or system)`);
+  }
+
+  const envValues = collectEnvValues(argv0);
+
+  const installUrl = 'https://happier.dev/install';
+  const remoteHstack = '$HOME/.happier/bin/hstack';
+
+  // Always disable auto-service setup in the installer so this command controls remote service behavior.
+  const installCmd = [
+    `curl -fsSL ${installUrl} |`,
+    `HAPPIER_CHANNEL=${channel} HAPPIER_WITH_DAEMON=0 HAPPIER_NONINTERACTIVE=1 bash`,
+  ].join(' ');
+
+  await runSsh({ target: ssh.value, command: installCmd });
+
+  const envArgs = envValues.map((value) => `--env ${safeBashSingleQuote(value)}`).join(' ');
+  const baseSelfHostCmd = [
+    remoteHstack,
+    'self-host',
+    'install',
+    `--channel=${channel}`,
+    `--mode=${mode}`,
+    '--without-cli',
+    '--non-interactive',
+    '--json',
+  ].join(' ');
+  const selfHostCmd = `${mode === 'system' ? 'sudo -E ' : ''}${baseSelfHostCmd}${envArgs ? ` ${envArgs}` : ''}`;
+
+  await runSsh({ target: ssh.value, command: selfHostCmd });
+
+  printResult({
+    json,
+    data: { ok: true, ssh: ssh.value, channel, mode, env: envValues },
+    text: json
+      ? null
+      : [
+          '✓ Remote server setup complete',
+          `- ssh: ${ssh.value}`,
+          `- channel: ${channel}`,
+          `- mode: ${mode}`,
+          `- env: ${envValues.length ? envValues.join(', ') : '(none)'}`,
+        ].join('\n'),
+  });
+}
+
 async function main() {
   const argvRaw = process.argv.slice(2);
   if (argvRaw.length === 0 || wantsHelp(argvRaw)) {
@@ -222,6 +330,10 @@ async function main() {
 
   if (top === 'daemon' && sub === 'setup') {
     await runRemoteDaemonSetup(argvRaw);
+    return;
+  }
+  if (top === 'server' && sub === 'setup') {
+    await runRemoteServerSetup(argvRaw);
     return;
   }
 

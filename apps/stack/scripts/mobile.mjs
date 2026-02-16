@@ -130,8 +130,8 @@ async function main() {
   const stackCtx = resolveStackContext({ env, autostart });
   const { stackMode, runtimeStatePath, stackName, envPath } = stackCtx;
 
-  // Expo/React Native native build steps can probe the Metro port even when we pass `--no-bundler`.
-  // Defaulting to 8081 makes builds much more likely to fail late if another Metro/Expo starts on the same port.
+  // Expo CLI resolves a Metro port early, but it won't actually bind it until late in the native build.
+  // If we stick to the default 8081, builds are much more likely to fail late if another Metro/Expo claims 8081 mid-build.
   //
   // Strategy:
   // - If the user explicitly sets --port or HAPPIER_STACK_MOBILE_PORT, honor it.
@@ -333,11 +333,8 @@ async function main() {
     }
 
     const configuration = kv.get('--configuration') ?? 'Debug';
-    const buildMetroPort = (env.RCT_METRO_PORT ?? env.EXPO_PACKAGER_PORT ?? '').toString().trim();
-    const args = ['run:ios', '--no-bundler', '--no-build-cache', '--configuration', configuration];
-    if (buildMetroPort) {
-      args.push('-p', buildMetroPort);
-    }
+    const metroPort = String(env.RCT_METRO_PORT ?? portRaw ?? '8081');
+    const args = ['run:ios', '--port', metroPort, '--no-build-cache', '--configuration', configuration];
     if (device) {
       args.push('-d', device);
     }
