@@ -128,8 +128,6 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS = '25';
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_POLL_MS = '5';
 
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(0));
     vi.resetModules();
 
     let tick: (() => Promise<void>) | undefined;
