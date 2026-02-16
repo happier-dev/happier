@@ -921,8 +921,6 @@ describe('automationWorker integration', () => {
   it('does not execute runs when daemon execution budget has no ephemeral task capacity', async () => {
     const now = Date.now();
     const template = buildEncryptedTemplateCiphertext({
-      kind: 'automation_template_v1',
-      type: 'new_session',
       agent: 'claude',
       directory: '/tmp/happier-automation',
       prompt: 'Hello',
