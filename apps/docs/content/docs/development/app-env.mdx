@@ -41,3 +41,10 @@ EAS build workers do not use your local `.env.local`. For cloud builds, set thes
 - `apps/ui/eas.json` under `build.<profile>.env`, or
 - the Expo project’s EAS environment variables UI (and ensure the build profile sets the matching `"environment"`).
 
+If you’re using `hstack` stacks and you’ve set **non-public** Expo config env vars (for example `EXPO_APP_*`, `EXPO_EAS_PROJECT_ID`, `EXPO_UPDATES_URL`) in a stack env file, you can sync them into EAS with:
+
+```bash
+hstack stack eas <stack> env:sync --environment production
+```
+
+See: `/docs/hstack/mobile-ios` (EAS builds per stack).

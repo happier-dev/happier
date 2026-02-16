@@ -17,6 +17,7 @@ Tip: most commands support `--help` and `--json`.
 
 - Setup: `hstack setup --profile=dev|selfhost`
 - Run: `hstack start` / `hstack dev`
+- Interactive runner (preferred): `hstack tui <...>` (example: `hstack tui stack dev dev --mobile`)
 - Stop: `hstack stop`
 - Diagnose: `hstack where`, `hstack doctor`, `hstack logs`
 - Contribute: `hstack contrib status|ensure-dev|sync|extract|pr`
@@ -65,6 +66,31 @@ Stack-scoped app CLI (runs the Happier CLI/daemon in stack context):
 PR stacks:
 
 - `hstack stack pr <name> --repo=<pr-url|number> [--dev|--start] [--server-flavor=light|full] [--db-provider=...] [--database-url=...]`
+
+---
+
+## Mobile (iOS)
+
+- Install the shared dev-client app (USB iPhone): `hstack mobile-dev-client --install`
+- Install an isolated per-stack app (Release, no Metro): `hstack stack mobile:install <stack> [--device=...] [--name=...]`
+- Regenerate native projects (Pods, deployment target patches): `hstack mobile --prebuild [--clean]`
+
+See: `/docs/hstack/mobile-ios`.
+
+---
+
+## EAS (Expo Application Services)
+
+EAS wrapper (runs EAS CLI from `apps/ui`, best-effort ensures deps are installed):
+
+- Cloud build: `hstack stack eas <stack> ios|android [--profile production] [--interactive|--non-interactive]`
+- Pass-through: `hstack stack eas <stack> <eas args...>`
+
+Sync stack env → EAS Environment Variables UI (project settings):
+
+- `hstack stack eas <stack> env:sync --environment production [--dry-run] [--hide-values]`
+
+See: `/docs/hstack/mobile-ios` (EAS builds per stack).
 
 ---
 

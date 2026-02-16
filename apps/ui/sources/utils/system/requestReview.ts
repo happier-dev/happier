@@ -12,12 +12,8 @@ import {
 import { sync } from '@/sync/sync';
 import { storage as syncStorage } from '@/sync/domains/state/storage';
 import { Platform } from 'react-native';
-import type { FeatureId } from '@happier-dev/protocol';
-import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 
 const localStorage = new MMKV();
-
-const STORE_REVIEW_PROMPTS_FEATURE_ID = 'app.ui.storeReviewPrompts' as const satisfies FeatureId;
 
 const LOCAL_KEYS = {
     STORE_REVIEW_LAST_SHOWN: 'review_store_last_shown',
@@ -31,10 +27,6 @@ const lock = new AsyncLock();
 
 export function requestReview() {
     if (Platform.OS === 'web') {
-        return;
-    }
-
-    if (getFeatureBuildPolicyDecision(STORE_REVIEW_PROMPTS_FEATURE_ID) === 'deny') {
         return;
     }
 

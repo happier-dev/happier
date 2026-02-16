@@ -29,8 +29,6 @@ import { resolveSupportUsAction } from '@/components/settings/supportUsBehavior'
 import { recordBugReportUserAction } from '@/utils/system/bugReportActionTrail';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import type { FeatureId } from '@happier-dev/protocol';
-import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { getActiveServerSnapshot, listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { useActiveSelectionMachineGroups } from '@/components/settings/server/hooks/useActiveSelectionMachineGroups';
 import { ActiveSelectionMachinesSection } from '@/components/settings/server/sections/ActiveSelectionMachinesSection';
@@ -45,7 +43,6 @@ export const SettingsView = React.memo(function SettingsView() {
     const isPro = __DEV__ || voiceEntitlement;
     const usageReportingEnabled = useFeatureEnabled('usage.reporting');
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
-    const showChangelog = getFeatureBuildPolicyDecision('app.ui.changelog' as const satisfies FeatureId) !== 'deny';
     const useProfiles = useSetting('useProfiles');
     const terminalUseTmux = useSetting('sessionUseTmux');
     const automationsSupport = useAutomationsSupport();
@@ -456,17 +453,15 @@ export const SettingsView = React.memo(function SettingsView() {
 
             {/* About */}
             <ItemGroup title={t('settings.about')} footer={t('settings.aboutFooter')}>
-                {showChangelog ? (
-                    <Item
-                        title={t('settings.whatsNew')}
-                        subtitle={t('settings.whatsNewSubtitle')}
-                        icon={<Ionicons name="sparkles-outline" size={29} color="#FF9500" />}
-                        onPress={() => {
-                            trackWhatsNewClicked();
-                            router.push('/(app)/changelog');
-                        }}
-                    />
-                ) : null}
+                <Item
+                    title={t('settings.whatsNew')}
+                    subtitle={t('settings.whatsNewSubtitle')}
+                    icon={<Ionicons name="sparkles-outline" size={29} color="#FF9500" />}
+                    onPress={() => {
+                        trackWhatsNewClicked();
+                        router.push('/(app)/changelog');
+                    }}
+                />
                 <Item
                     title={t('settings.github')}
                     icon={<Ionicons name="logo-github" size={29} color={theme.colors.text} />}
