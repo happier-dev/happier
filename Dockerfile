@@ -204,6 +204,7 @@ COPY --from=server-builder --chown=node:node /repo/packages/protocol /repo/packa
 COPY --from=server-builder --chown=node:node /repo/apps/server /repo/apps/server
 COPY --from=server-builder /repo/apps/server/scripts/run-server.sh /usr/local/bin/run-server
 RUN chmod +x /usr/local/bin/run-server
+RUN mkdir -p /data && chown -R node:node /data
 USER node
 EXPOSE 3005
 CMD ["run-server"]
