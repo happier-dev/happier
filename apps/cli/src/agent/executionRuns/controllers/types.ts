@@ -5,9 +5,12 @@ export type ExecutionRunBackendController = {
   backend: AgentBackend;
   childSessionId: SessionId | null;
   buffer: string;
+  sidechainStreamBuffer: string;
+  sidechainStreamKey: string;
   cancelled: boolean;
   turnCount: number;
   lastMarkerWriteAtMs: number;
+  terminalMarkerWritePromise?: Promise<void>;
   terminalPromise: Promise<void>;
   resolveTerminal: () => void;
 };
@@ -17,6 +20,7 @@ export type ExecutionRunVoiceAgentController = {
   voiceAgentId: string;
   cancelled: boolean;
   lastMarkerWriteAtMs: number;
+  terminalMarkerWritePromise?: Promise<void>;
   terminalPromise: Promise<void>;
   resolveTerminal: () => void;
   transcript: Readonly<{ persistenceMode: 'ephemeral' | 'persistent'; epoch: number }>;
