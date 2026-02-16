@@ -39,6 +39,18 @@ const CLI_FEATURE_REGISTRY: Readonly<Partial<Record<FeatureId, CliFeatureDefinit
     serverRequired: false,
     serverEnabled: (features) => features.features.voice.enabled === true,
   },
+  'connected.services': {
+    id: 'connected.services',
+    serverRequired: true,
+    serverEnabled: (features) => features.features.connectedServices.enabled === true,
+  },
+  'connected.services.quotas': {
+    id: 'connected.services.quotas',
+    serverRequired: true,
+    serverEnabled: (features) =>
+      features.features.connectedServices.enabled === true &&
+      features.features.connectedServices.quotas?.enabled === true,
+  },
 };
 
 export function getCliFeatureDefinition(featureId: FeatureId): CliFeatureDefinition {

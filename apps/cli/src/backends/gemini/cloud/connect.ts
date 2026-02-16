@@ -9,6 +9,6 @@ export const geminiCloudConnect: CloudConnectTarget = {
   vendorDisplayName: 'Google Gemini',
   vendorKey: AGENTS_CORE.gemini.cloudConnect!.vendorKey,
   status: AGENTS_CORE.gemini.cloudConnect!.status,
-  authenticate: authenticateGemini,
+  authenticate: (opts) => authenticateGemini(opts),
   postConnect: updateLocalGeminiCredentials,
 };

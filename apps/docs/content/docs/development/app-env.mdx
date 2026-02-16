@@ -30,6 +30,25 @@ EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY=voice,social.friends
 
 This is a comma-separated list of **feature ids** (for example `voice`, `social.friends`, `bugReports`, `connected.services`).
 
+### Connected services build gates
+
+Connected services also has explicit build-time gates:
+
+- `EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED` (default: `true`)
+- `EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED` (default: `false`)
+
+Examples:
+
+```bash
+# Completely disable Connected Services in the UI bundle
+EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED=0
+```
+
+```bash
+# Enable Connected Services quota UI surfaces
+EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED=1
+```
+
 ## Security note (important)
 
 Only `EXPO_PUBLIC_*` variables are inlined into the app bundle. Treat all `EXPO_PUBLIC_*` values as **public** (never store secrets here).

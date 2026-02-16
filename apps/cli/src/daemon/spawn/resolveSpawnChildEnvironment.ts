@@ -33,11 +33,36 @@ export async function resolveSpawnChildEnvironment(params: {
   logDebug: (message: string) => void;
   logInfo: (message: string) => void;
   logWarn: (message: string) => void;
+  connectedServiceAuth?: {
+    env: Record<string, string>;
+    cleanupOnFailure: (() => void) | null;
+    cleanupOnExit: (() => void) | null;
+  } | null;
 }): Promise<ResolveSpawnChildEnvironmentResult> {
+  const connectedCleanupOnFailure = params.connectedServiceAuth?.cleanupOnFailure ?? null;
+  const connectedCleanupOnExit = params.connectedServiceAuth?.cleanupOnExit ?? null;
+
   let cleanupOnFailure: (() => void) | null = null;
   let cleanupOnExit: (() => void) | null = null;
 
+  const chainCleanup = (first: (() => void) | null, second: (() => void) | null) => {
+    if (!first) return second;
+    if (!second) return first;
+    return () => {
+      try {
+        first();
+      } finally {
+        second();
+      }
+    };
+  };
+
   const authEnv: Record<string, string> = {};
+  if (!params.options.token && params.connectedServiceAuth?.env) {
+    Object.assign(authEnv, params.connectedServiceAuth.env);
+    cleanupOnFailure = connectedCleanupOnFailure;
+    cleanupOnExit = connectedCleanupOnExit;
+  }
   if (params.options.token) {
     if (params.daemonSpawnHooks?.buildAuthEnv) {
       const built = await params.daemonSpawnHooks.buildAuthEnv({ token: params.options.token });
@@ -47,6 +72,8 @@ export async function resolveSpawnChildEnvironment(params: {
     } else {
       authEnv.CLAUDE_CODE_OAUTH_TOKEN = params.options.token;
     }
+    cleanupOnFailure = chainCleanup(connectedCleanupOnFailure, cleanupOnFailure);
+    cleanupOnExit = chainCleanup(connectedCleanupOnExit, cleanupOnExit);
   }
 
   let profileEnv: Record<string, string> = {};

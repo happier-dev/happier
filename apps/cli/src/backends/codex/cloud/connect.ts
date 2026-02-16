@@ -8,5 +8,5 @@ export const codexCloudConnect: CloudConnectTarget = {
   vendorDisplayName: 'OpenAI Codex',
   vendorKey: AGENTS_CORE.codex.cloudConnect!.vendorKey,
   status: AGENTS_CORE.codex.cloudConnect!.status,
-  authenticate: authenticateCodex,
+  authenticate: (opts) => authenticateCodex(opts),
 };

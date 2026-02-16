@@ -12,13 +12,14 @@ function parseBooleanEnv(raw: string | undefined, fallback: boolean): boolean {
     return fallback;
 }
 
-const LOCAL_POLICY_BY_FEATURE: Readonly<Record<FeatureId, FeatureLocalPolicyResolver>> = {
+const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPolicyResolver>>> = {
     automations: (settings) => resolveUiFeatureToggleEnabled(settings, 'automations'),
     // Existing-session targeting is a subordinate capability of automations; keep it tied to the parent toggle.
     'automations.existingSessionTarget': (settings) => resolveUiFeatureToggleEnabled(settings, 'automations'),
     'execution.runs': (settings) => resolveUiFeatureToggleEnabled(settings, 'execution.runs'),
     voice: () => true,
-    'connected.services': () => true,
+    'connected.services': () =>
+        parseBooleanEnv(process.env.EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED, true),
     'connected.services.quotas': () =>
         parseBooleanEnv(process.env.EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED, false),
     'updates.ota': () => parseBooleanEnv(process.env.EXPO_PUBLIC_HAPPIER_FEATURE_UPDATES_OTA__ENABLED, true),
@@ -44,5 +45,7 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Record<FeatureId, FeatureLocalPolicyReso
 };
 
 export function resolveLocalFeaturePolicyEnabled(featureId: FeatureId, settings: Settings): boolean {
-    return LOCAL_POLICY_BY_FEATURE[featureId](settings);
+    const resolver = LOCAL_POLICY_BY_FEATURE[featureId];
+    if (!resolver) return true;
+    return resolver(settings);
 }

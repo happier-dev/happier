@@ -4,10 +4,12 @@ const deleteMany = vi.fn();
 const deleteOne = vi.fn(() => {
     throw new Error("not-found");
 });
+const findUnique = vi.fn(async () => null);
 
 vi.mock("@/storage/db", () => ({
     db: {
         serviceAccountToken: {
+            findUnique,
             delete: deleteOne,
             deleteMany,
         },
@@ -39,6 +41,8 @@ describe("connectRoutes (vendor token delete)", () => {
         vi.resetModules();
         deleteMany.mockReset();
         deleteOne.mockClear();
+        findUnique.mockReset();
+        findUnique.mockResolvedValue(null);
     });
 
     it("treats DELETE /v1/connect/:vendor as idempotent when the token is missing", async () => {
@@ -52,9 +56,27 @@ describe("connectRoutes (vendor token delete)", () => {
         await handler({ userId: "u1", params: { vendor: "openai" } }, reply);
 
         expect(deleteMany).toHaveBeenCalledWith({
-            where: { accountId: "u1", vendor: "openai" },
+            where: { accountId: "u1", vendor: "openai", profileId: "default" },
         });
         expect(reply.send).toHaveBeenCalledWith({ success: true });
     });
-});
 
+    it("returns 409 when a v2 credential exists for the vendor", async () => {
+        const { connectRoutes } = await import("./connectRoutes");
+        const app = new FakeApp();
+        connectRoutes(app as any);
+
+        const handler = app.routes.get("DELETE /v1/connect/:vendor");
+        const reply = replyStub();
+
+        findUnique.mockResolvedValue({
+            metadata: { v: 2, format: "account_scoped_v1", kind: "oauth" },
+        });
+
+        await handler({ userId: "u1", params: { vendor: "openai" } }, reply);
+
+        expect(deleteMany).not.toHaveBeenCalled();
+        expect(reply.code).toHaveBeenCalledWith(409);
+        expect(reply.send).toHaveBeenCalledWith({ error: "connect_credential_conflict" });
+    });
+});

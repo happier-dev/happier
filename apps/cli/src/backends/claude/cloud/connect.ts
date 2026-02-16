@@ -8,5 +8,5 @@ export const claudeCloudConnect: CloudConnectTarget = {
   vendorDisplayName: 'Anthropic Claude',
   vendorKey: AGENTS_CORE.claude.cloudConnect!.vendorKey,
   status: AGENTS_CORE.claude.cloudConnect!.status,
-  authenticate: authenticateClaude,
+  authenticate: (opts) => authenticateClaude(opts),
 };

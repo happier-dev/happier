@@ -8,13 +8,17 @@
 import { randomBytes } from 'crypto';
 import { openBrowser } from '@/ui/openBrowser';
 import { generatePkceCodes } from '@/cloud/pkce';
-import { startLoopbackOauthPkceFlow } from '@/cloud/loopbackOauthPkce';
+import type { CloudConnectAuthenticateOptions } from '@/cloud/connectTypes';
+import { startOauthPkceWithPasteFallback } from '@/cloud/oauthPkceWithPasteFallback';
+import { promptInput } from '@/terminal/prompts/promptInput';
 
 export interface CodexAuthTokens {
     id_token: string;
     access_token: string;
     refresh_token: string;
     account_id: string;
+    expires_in?: number;
+    expires_at?: number | null;
 }
 
 // Configuration
@@ -90,7 +94,38 @@ async function exchangeCodeForTokens(
         access_token: data.access_token || data.id_token,
         refresh_token: data.refresh_token,
         account_id: accountId,
+        expires_in: typeof data.expires_in === 'number' ? data.expires_in : undefined,
+        expires_at: null,
     };
+}
+
+export async function exchangeCodexAuthorizationCodeForTokens(params: Readonly<{
+  code: string;
+  verifier: string;
+  redirectUri: string;
+  now: number;
+}>): Promise<Readonly<{
+  accessToken: string;
+  refreshToken: string;
+  idToken: string;
+  accountId: string;
+  expiresAt: number | null;
+}>> {
+  const redirectUrl = new URL(params.redirectUri);
+  const port = Number.parseInt(redirectUrl.port || '80', 10);
+  const tokens = await exchangeCodeForTokens(params.code, params.verifier, port);
+
+  const expiresAt = typeof tokens.expires_in === 'number' && Number.isFinite(tokens.expires_in) && tokens.expires_in > 0
+    ? params.now + Math.trunc(tokens.expires_in) * 1000
+    : null;
+
+  return {
+    idToken: tokens.id_token,
+    accessToken: tokens.access_token,
+    refreshToken: tokens.refresh_token,
+    accountId: tokens.account_id,
+    expiresAt,
+  };
 }
 
 /**
@@ -105,13 +140,20 @@ async function exchangeCodeForTokens(
  * 
  * @returns Promise resolving to CodexAuthTokens with all token information
  */
-export async function authenticateCodex(): Promise<CodexAuthTokens> {
+export async function authenticateCodex(opts?: CloudConnectAuthenticateOptions): Promise<CodexAuthTokens> {
     // console.log('🚀 Starting Codex authentication...');
-    const tokens = await startLoopbackOauthPkceFlow({
+    const mode = opts?.paste ? 'paste' : 'loopback';
+    const timeoutMs = typeof opts?.timeoutSeconds === 'number' && Number.isFinite(opts.timeoutSeconds)
+        ? Math.max(1, Math.trunc(opts.timeoutSeconds)) * 1000
+        : undefined;
+
+    const tokens = await startOauthPkceWithPasteFallback({
+        mode,
         defaultPort: DEFAULT_PORT,
         callbackPath: '/auth/callback',
         generateState,
         generatePkce: generatePkceCodes,
+        timeoutMs,
         buildAuthorizationUrl: ({ redirectUri, state, challenge }) => {
             const params = [
                 ['response_type', 'code'],
@@ -129,7 +171,14 @@ export async function authenticateCodex(): Promise<CodexAuthTokens> {
                 .join('&');
             return `${AUTH_BASE_URL}/oauth/authorize?${queryString}`;
         },
+        onAuthorizationUrl: ({ authorizationUrl }) => {
+            console.log('\nOpen this URL in a browser to authenticate:\n');
+            console.log(authorizationUrl);
+            console.log('\nAfter login, paste the final redirected URL here.\n');
+        },
+        promptForPastedRedirectUrl: () => promptInput('Paste redirect URL: '),
         openAuthorizationUrl: async ({ authorizationUrl }) => {
+            if (opts?.noOpen) return;
             console.log('📋 Opening browser for authentication...');
             console.log(`If browser doesn't open, visit:\n${authorizationUrl}\n`);
             await openBrowser(authorizationUrl);

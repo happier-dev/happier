@@ -1,4 +1,4 @@
-import { parseCallbackUrl, generatePKCE, generateState, PKCECodes, ClaudeAuthTokens } from '@/utils/auth/oauth';
+import { parseOauthCallbackUrl, generatePkceCodes, generateOauthState, type PkceCodes } from '@/utils/auth/oauthCore';
 import * as React from 'react';
 import { ActivityIndicator, Platform, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -104,9 +104,9 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 export type OAuthViewConfig = {
-    authUrl: (pkce: PKCECodes, state: string, redirectUri: string) => string;
-    tokenExchange: (code: string, verifier: string, state: string) => Promise<ClaudeAuthTokens>;
-    onSuccess?: (tokens: ClaudeAuthTokens) => void;
+    authUrl: (pkce: PkceCodes, state: string, redirectUri: string) => string;
+    tokenExchange: (code: string, verifier: string, state: string) => Promise<unknown>;
+    onSuccess?: (tokens: unknown) => void;
     onError?: (error: string) => void;
     redirectUri?: string;
     backgroundColor?: string;
@@ -136,8 +136,8 @@ export const OAuthView = React.memo((props: {
         let mounted = true;
 
         (async () => {
-            const pkce = await generatePKCE();
-            const state = generateState();
+            const pkce = await generatePkceCodes();
+            const state = generateOauthState();
             const redirectUri = props.config.redirectUri || 'http://localhost:54545/callback';
             const url = props.config.authUrl(pkce, state, redirectUri);
 
@@ -221,7 +221,7 @@ export const OAuthViewRender = React.memo((props: {
         const { url } = navState;
 
         // Parse callback URL
-        const callbackData = parseCallbackUrl(url);
+        const callbackData = parseOauthCallbackUrl({ url, redirectUri: props.parameters.redirectUri });
 
         if (callbackData.code && callbackData.state) {
             // Prevent multiple processing
@@ -254,15 +254,16 @@ export const OAuthViewRender = React.memo((props: {
                     // Default success behavior
                     Modal.alert(
                         t('common.success'),
-                        t('settings.claudeAuthSuccess')
+                        t('common.ok')
                     );
                 }
-            } catch (err: any) {
+            } catch (err: unknown) {
                 if (process.env.EXPO_PUBLIC_DEBUG) {
                     // eslint-disable-next-line no-console
                     console.error('Token exchange failed:', err);
                 }
-                const errorMessage = err.message || t('errors.tokenExchangeFailed');
+                const errorMessage =
+                    err instanceof Error && err.message ? err.message : t('errors.tokenExchangeFailed');
                 setError(errorMessage);
                 props.config.onError?.(errorMessage);
 
@@ -331,7 +332,7 @@ export const OAuthViewRender = React.memo((props: {
                 limitsNavigationsToAppBoundDomains={false}
                 onNavigationStateChange={handleNavigationStateChange}
                 onShouldStartLoadWithRequest={(request) => {
-                    const callbackData = parseCallbackUrl(request.url);
+                    const callbackData = parseOauthCallbackUrl({ url: request.url, redirectUri: props.parameters.redirectUri });
                     if (callbackData.code || callbackData.error) {
                         handleNavigationStateChange({ url: request.url });
                         return false;

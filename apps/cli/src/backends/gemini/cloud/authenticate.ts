@@ -7,8 +7,10 @@
 
 import { randomBytes } from 'crypto';
 import { generatePkceCodes } from '@/cloud/pkce';
-import { startLoopbackOauthPkceFlow } from '@/cloud/loopbackOauthPkce';
 import { openBrowser } from '@/ui/openBrowser';
+import type { CloudConnectAuthenticateOptions } from '@/cloud/connectTypes';
+import { startOauthPkceWithPasteFallback } from '@/cloud/oauthPkceWithPasteFallback';
+import { promptInput } from '@/terminal/prompts/promptInput';
 
 export interface GeminiAuthTokens {
     access_token: string;
@@ -21,7 +23,6 @@ export interface GeminiAuthTokens {
 
 // Google OAuth Configuration for Gemini
 const CLIENT_ID = '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com';
-const CLIENT_SECRET = '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';
 const AUTHORIZE_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const DEFAULT_PORT = 54545;
@@ -30,6 +31,34 @@ const SCOPES = [
     'https://www.googleapis.com/auth/userinfo.email',
     'https://www.googleapis.com/auth/userinfo.profile',
 ].join(' ');
+
+export async function exchangeGeminiAuthorizationCodeForTokens(params: Readonly<{
+    code: string;
+    verifier: string;
+    redirectUri: string;
+}>): Promise<GeminiAuthTokens> {
+    const response = await fetch(TOKEN_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+            grant_type: 'authorization_code',
+            client_id: CLIENT_ID,
+            code: params.code,
+            code_verifier: params.verifier,
+            redirect_uri: params.redirectUri,
+        }),
+    });
+
+    if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Token exchange failed: ${error}`);
+    }
+
+    const data = (await response.json()) as GeminiAuthTokens;
+    return data;
+}
 
 /**
  * Generate random state for OAuth security
@@ -46,28 +75,11 @@ async function exchangeCodeForTokens(
     verifier: string,
     port: number
 ): Promise<GeminiAuthTokens> {
-    const response = await fetch(TOKEN_URL, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: new URLSearchParams({
-            grant_type: 'authorization_code',
-            client_id: CLIENT_ID,
-            client_secret: CLIENT_SECRET,
-            code: code,
-            code_verifier: verifier,
-            redirect_uri: `http://localhost:${port}/oauth2callback`,
-        }),
+    return exchangeGeminiAuthorizationCodeForTokens({
+        code,
+        verifier,
+        redirectUri: `http://localhost:${port}/oauth2callback`,
     });
-    
-    if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Token exchange failed: ${error}`);
-    }
-    
-    const data = await response.json() as GeminiAuthTokens;
-    return data;
 }
 
 /**
@@ -82,15 +94,22 @@ async function exchangeCodeForTokens(
  * 
  * @returns Promise resolving to GeminiAuthTokens with all token information
  */
-export async function authenticateGemini(): Promise<GeminiAuthTokens> {
+export async function authenticateGemini(opts?: CloudConnectAuthenticateOptions): Promise<GeminiAuthTokens> {
     console.log('🚀 Starting Google Gemini authentication...');
 
     try {
-        const tokens = await startLoopbackOauthPkceFlow({
+        const mode = opts?.paste ? 'paste' : 'loopback';
+        const timeoutMs = typeof opts?.timeoutSeconds === 'number' && Number.isFinite(opts.timeoutSeconds)
+            ? Math.max(1, Math.trunc(opts.timeoutSeconds)) * 1000
+            : undefined;
+
+        const tokens = await startOauthPkceWithPasteFallback({
+            mode,
             defaultPort: DEFAULT_PORT,
             callbackPath: '/oauth2callback',
             generateState,
             generatePkce: generatePkceCodes,
+            timeoutMs,
             onPortResolved: ({ defaultPort, port, usedFallback }) => {
                 if (usedFallback) {
                     console.log(`Port ${defaultPort} is in use, finding an available port...`);
@@ -111,7 +130,14 @@ export async function authenticateGemini(): Promise<GeminiAuthTokens> {
                 });
                 return `${AUTHORIZE_URL}?${params}`;
             },
+            onAuthorizationUrl: ({ authorizationUrl }) => {
+                console.log('\nOpen this URL in a browser to authenticate:\n');
+                console.log(authorizationUrl);
+                console.log('\nAfter login, paste the final redirected URL here.\n');
+            },
+            promptForPastedRedirectUrl: () => promptInput('Paste redirect URL: '),
             openAuthorizationUrl: async ({ authorizationUrl }) => {
+                if (opts?.noOpen) return;
                 console.log('\n📋 Opening browser for authentication...');
                 console.log('If browser doesn\'t open, visit this URL:');
                 console.log(`\n${authorizationUrl}\n`);

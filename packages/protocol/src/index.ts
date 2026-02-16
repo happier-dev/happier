@@ -11,6 +11,42 @@ export {
 } from './crypto/accountScopedCipher.js';
 
 export {
+  ConnectedServiceCredentialFormatSchema,
+  ConnectedServiceCredentialKindSchema,
+  ConnectedServiceCredentialRecordV1Schema,
+  ConnectedServiceIdSchema,
+  ConnectedServiceQuotaMeterV1Schema,
+  ConnectedServiceQuotaSnapshotV1Schema,
+  ConnectedServiceQuotaUnitV1Schema,
+  SealedConnectedServiceCredentialV1Schema,
+  SealedConnectedServiceQuotaSnapshotV1Schema,
+  type ConnectedServiceCredentialFormat,
+  type ConnectedServiceCredentialKind,
+  type ConnectedServiceCredentialRecordV1,
+  type ConnectedServiceId,
+  type ConnectedServiceQuotaMeterV1,
+  type ConnectedServiceQuotaSnapshotV1,
+  type ConnectedServiceQuotaUnitV1,
+  type SealedConnectedServiceCredentialV1,
+  type SealedConnectedServiceQuotaSnapshotV1,
+} from './connect/connectedServiceSchemas.js';
+
+export {
+  openConnectedServiceCredentialCiphertext,
+  openConnectedServiceQuotaSnapshotCiphertext,
+  sealConnectedServiceCredentialCiphertext,
+  sealConnectedServiceQuotaSnapshotCiphertext,
+} from './connect/connectedServiceCipher.js';
+
+export {
+  CONNECTED_SERVICE_ERROR_CODES,
+  ConnectedServiceErrorCodeSchema,
+  type ConnectedServiceErrorCode,
+} from './connect/connectedServiceErrors.js';
+
+export { buildConnectedServiceCredentialRecord } from './connect/buildConnectedServiceCredentialRecord.js';
+
+export {
   BOX_BUNDLE_MIN_BYTES,
   BOX_BUNDLE_NONCE_BYTES,
   BOX_BUNDLE_PUBLIC_KEY_BYTES,

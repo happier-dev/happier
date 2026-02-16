@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { z } from 'zod';
 import { logger } from '@/ui/logger'
 import type { AgentState, CreateSessionResponse, Metadata, Session, Machine, MachineMetadata, DaemonState } from '@/api/types'
 import { ApiSessionClient } from './session/sessionClient';
@@ -15,6 +16,16 @@ import {
   shouldReturnMinimalMachineForGetOrCreateMachineError,
   shouldReturnNullForGetOrCreateSessionError,
 } from './client/offlineErrors';
+import {
+  ConnectedServiceIdSchema,
+  SealedConnectedServiceCredentialV1Schema,
+  SealedConnectedServiceQuotaSnapshotV1Schema,
+} from '@happier-dev/protocol';
+import type {
+  ConnectedServiceId,
+  SealedConnectedServiceCredentialV1,
+  SealedConnectedServiceQuotaSnapshotV1,
+} from '@happier-dev/protocol';
 
 export class MachineIdConflictError extends Error {
   readonly machineId: string;
@@ -22,6 +33,17 @@ export class MachineIdConflictError extends Error {
     super(`Machine id conflict: ${machineId} is already registered to a different account on this server`);
     this.name = 'MachineIdConflictError';
     this.machineId = machineId;
+  }
+}
+
+export class ConnectedServiceCredentialUnsupportedFormatError extends Error {
+  readonly serviceId: ConnectedServiceId;
+  readonly profileId: string;
+  constructor(serviceId: ConnectedServiceId, profileId: string) {
+    super(`Connected service credential is in an unsupported legacy format (${serviceId}/${profileId}). Reconnect it in Happier.`);
+    this.name = 'ConnectedServiceCredentialUnsupportedFormatError';
+    this.serviceId = serviceId;
+    this.profileId = profileId;
   }
 }
 
@@ -316,87 +338,306 @@ export class ApiClient {
   }
 
   /**
-   * Get vendor API token from the server
-   * Returns the token if it exists, null otherwise
+   * Register a sealed connected service credential (v2).
+   *
+   * The server stores the ciphertext as-is and only keeps non-secret metadata for UX.
    */
-  async getVendorToken(vendor: 'openai' | 'anthropic' | 'gemini'): Promise<any | null> {
+  async registerConnectedServiceCredentialSealed(params: {
+    serviceId: ConnectedServiceId;
+    profileId: string;
+    sealed: SealedConnectedServiceCredentialV1;
+    metadata?: {
+      kind: 'oauth' | 'token';
+      providerEmail?: string | null;
+      providerAccountId?: string | null;
+      expiresAt?: number | null;
+    };
+  }): Promise<void> {
     const serverUrl = resolveServerHttpBaseUrl();
+    const serviceId = encodeURIComponent(params.serviceId);
+    const profileId = encodeURIComponent(params.profileId);
+
     try {
-      const response = await axios.get(
-        `${serverUrl}/v1/connect/${vendor}/token`,
+      const response = await axios.post(
+        `${serverUrl}/v2/connect/${serviceId}/profiles/${profileId}/credential`,
+        {
+          sealed: params.sealed,
+          ...(params.metadata ? { metadata: params.metadata } : {}),
+        },
         {
           headers: {
             'Authorization': `Bearer ${this.credential.token}`,
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
           },
-          timeout: 5000
-        }
+          timeout: 5000,
+        },
       );
 
-      if (response.status === 404) {
-        logger.debug(`[API] No vendor token found for ${vendor}`);
-        return null;
-      }
-
-      if (response.status !== 200) {
+      if (response.status !== 200 && response.status !== 201) {
         throw new Error(`Server returned status ${response.status}`);
       }
 
-      // Log raw response for debugging
-      logger.debug(`[API] Raw vendor token response:`, {
-        status: response.status,
-        dataKeys: Object.keys(response.data || {}),
-        hasToken: 'token' in (response.data || {}),
-        tokenType: typeof response.data?.token,
+      logger.debug(`[API] Connected service credential registered`, {
+        serviceId: params.serviceId,
+        profileId: params.profileId,
       });
-
-      // Token is returned as JSON string, parse it
-      let tokenData: any = null;
-      if (response.data?.token) {
-        if (typeof response.data.token === 'string') {
-          try {
-            tokenData = JSON.parse(response.data.token);
-          } catch (parseError) {
-            logger.debug(`[API] Failed to parse token as JSON, using as string:`, parseError);
-            tokenData = response.data.token;
-          }
-        } else if (response.data.token !== null) {
-          // Token exists and is not null
-          tokenData = response.data.token;
-        } else {
-          // Token is explicitly null - treat as not found
-          logger.debug(`[API] Token is null for ${vendor}, treating as not found`);
-          return null;
-        }
-      } else if (response.data && typeof response.data === 'object') {
-        // Maybe the token is directly in response.data
-        // But check if it's { token: null } - treat as not found
-        if (response.data.token === null && Object.keys(response.data).length === 1) {
-          logger.debug(`[API] Response contains only null token for ${vendor}, treating as not found`);
-          return null;
-        }
-        tokenData = response.data;
-      }
-      
-      // Final check: if tokenData is null or { token: null }, return null
-      if (tokenData === null || (tokenData && typeof tokenData === 'object' && tokenData.token === null && Object.keys(tokenData).length === 1)) {
-        logger.debug(`[API] Token data is null for ${vendor}`);
-        return null;
-      }
-      
-      logger.debug(`[API] Vendor token for ${vendor} retrieved successfully`, {
-        tokenDataType: typeof tokenData,
-        tokenDataKeys: tokenData && typeof tokenData === 'object' ? Object.keys(tokenData) : 'not an object',
-      });
-      return tokenData;
-    } catch (error: any) {
-      if (error.response?.status === 404) {
-        logger.debug(`[API] No vendor token found for ${vendor}`);
-        return null;
-      }
-      // Never log raw Axios errors: they can contain bearer tokens or vendor keys.
-      logger.debug(`[API] [ERROR] Failed to get vendor token:`, serializeAxiosErrorForLog(error));
-      return null;
+    } catch (error) {
+      // Never log raw Axios errors: they can contain bearer tokens or provider secrets.
+      logger.debug(`[API] [ERROR] Failed to register connected service credential:`, serializeAxiosErrorForLog(error));
+      throw new Error(`Failed to register connected service credential: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  }
+
+  async getConnectedServiceCredentialSealed(params: {
+    serviceId: ConnectedServiceId;
+    profileId: string;
+  }): Promise<{
+    sealed: SealedConnectedServiceCredentialV1;
+    metadata: {
+      kind: 'oauth' | 'token';
+      providerEmail?: string | null;
+      providerAccountId?: string | null;
+      expiresAt?: number | null;
+    };
+  } | null> {
+    const serverUrl = resolveServerHttpBaseUrl();
+    const serviceId = encodeURIComponent(params.serviceId);
+    const profileId = encodeURIComponent(params.profileId);
+
+    try {
+      const response = await axios.get(
+        `${serverUrl}/v2/connect/${serviceId}/profiles/${profileId}/credential`,
+        {
+          headers: {
+            'Authorization': `Bearer ${this.credential.token}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 5000,
+        },
+      );
+      if (response.status !== 200) {
+        throw new Error(`Server returned status ${response.status}`);
+      }
+      const schema = z.object({
+        sealed: SealedConnectedServiceCredentialV1Schema,
+        metadata: z.object({
+          kind: z.enum(['oauth', 'token']),
+          providerEmail: z.string().nullable().optional(),
+          providerAccountId: z.string().nullable().optional(),
+          expiresAt: z.number().nullable().optional(),
+        }),
+      });
+      const parsed = schema.safeParse(response.data);
+      if (!parsed.success) {
+        throw new Error('Invalid connected service credential response');
+      }
+      return parsed.data;
+    } catch (error: unknown) {
+      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+      const code = (() => {
+        if (!axios.isAxiosError(error)) return undefined;
+        const data = error.response?.data;
+        if (!data || typeof data !== 'object' || Array.isArray(data)) return undefined;
+        const rec = data as Record<string, unknown>;
+        return typeof rec.error === 'string' ? rec.error : undefined;
+      })();
+      if (status === 404) {
+        return null;
+      }
+      if (status === 409 && code === 'connect_credential_unsupported_format') {
+        throw new ConnectedServiceCredentialUnsupportedFormatError(params.serviceId, params.profileId);
+      }
+      logger.debug(`[API] [ERROR] Failed to get connected service credential:`, serializeAxiosErrorForLog(error));
+      throw new Error(`Failed to get connected service credential: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async listConnectedServiceProfiles(params: {
+    serviceId: ConnectedServiceId;
+  }): Promise<{
+    serviceId: ConnectedServiceId;
+    profiles: Array<{
+      profileId: string;
+      status: 'connected' | 'needs_reauth';
+      kind?: 'oauth' | 'token' | null;
+      providerEmail?: string | null;
+      providerAccountId?: string | null;
+      expiresAt?: number | null;
+      lastUsedAt?: number | null;
+    }>;
+  }> {
+    const serverUrl = resolveServerHttpBaseUrl();
+    const serviceId = encodeURIComponent(params.serviceId);
+    const response = await axios.get(
+      `${serverUrl}/v2/connect/${serviceId}/profiles`,
+      {
+        headers: {
+          'Authorization': `Bearer ${this.credential.token}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 5000,
+      },
+    );
+    if (response.status !== 200) {
+      throw new Error(`Server returned status ${response.status}`);
+    }
+    const schema = z.object({
+      serviceId: ConnectedServiceIdSchema,
+      profiles: z.array(
+        z.object({
+          profileId: z.string().min(1),
+          status: z.enum(['connected', 'needs_reauth']),
+          kind: z.enum(['oauth', 'token']).nullable().optional(),
+          providerEmail: z.string().nullable().optional(),
+          providerAccountId: z.string().nullable().optional(),
+          expiresAt: z.number().nullable().optional(),
+          lastUsedAt: z.number().nullable().optional(),
+        }),
+      ),
+    });
+    const parsed = schema.safeParse(response.data);
+    if (!parsed.success) {
+      throw new Error('Invalid connected service profiles response');
+    }
+    return parsed.data;
+  }
+
+  /**
+   * Register a sealed connected service quota snapshot (v2).
+   *
+   * The server stores the ciphertext as-is and only keeps non-secret metadata for UX.
+   */
+  async registerConnectedServiceQuotaSnapshotSealed(params: {
+    serviceId: ConnectedServiceId;
+    profileId: string;
+    sealed: SealedConnectedServiceQuotaSnapshotV1;
+    metadata: {
+      fetchedAt: number;
+      staleAfterMs: number;
+      status: 'ok' | 'unavailable' | 'estimated' | 'error';
+    };
+  }): Promise<void> {
+    const serverUrl = resolveServerHttpBaseUrl();
+    const serviceId = encodeURIComponent(params.serviceId);
+    const profileId = encodeURIComponent(params.profileId);
+
+    try {
+      const response = await axios.post(
+        `${serverUrl}/v2/connect/${serviceId}/profiles/${profileId}/quotas`,
+        {
+          sealed: params.sealed,
+          metadata: params.metadata,
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${this.credential.token}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 5000,
+        },
+      );
+
+      if (response.status !== 200 && response.status !== 201) {
+        throw new Error(`Server returned status ${response.status}`);
+      }
+
+      logger.debug(`[API] Connected service quota snapshot registered`, {
+        serviceId: params.serviceId,
+        profileId: params.profileId,
+      });
+    } catch (error) {
+      logger.debug(`[API] [ERROR] Failed to register connected service quota snapshot:`, serializeAxiosErrorForLog(error));
+      throw new Error(
+        `Failed to register connected service quota snapshot: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
+  }
+
+  async getConnectedServiceQuotaSnapshotSealed(params: {
+    serviceId: ConnectedServiceId;
+    profileId: string;
+  }): Promise<{
+    sealed: SealedConnectedServiceQuotaSnapshotV1;
+    metadata: {
+      fetchedAt: number;
+      staleAfterMs: number;
+      status: 'ok' | 'unavailable' | 'estimated' | 'error';
+    };
+  } | null> {
+    const serverUrl = resolveServerHttpBaseUrl();
+    const serviceId = encodeURIComponent(params.serviceId);
+    const profileId = encodeURIComponent(params.profileId);
+
+    try {
+      const response = await axios.get(
+        `${serverUrl}/v2/connect/${serviceId}/profiles/${profileId}/quotas`,
+        {
+          headers: {
+            'Authorization': `Bearer ${this.credential.token}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 5000,
+        },
+      );
+      if (response.status !== 200) {
+        throw new Error(`Server returned status ${response.status}`);
+      }
+      const schema = z.object({
+        sealed: SealedConnectedServiceQuotaSnapshotV1Schema,
+        metadata: z.object({
+          fetchedAt: z.number(),
+          staleAfterMs: z.number(),
+          status: z.enum(['ok', 'unavailable', 'estimated', 'error']),
+          refreshRequestedAt: z.number().optional(),
+        }),
+      });
+      const parsed = schema.safeParse(response.data);
+      if (!parsed.success) {
+        throw new Error('Invalid connected service quota snapshot response');
+      }
+      return parsed.data;
+    } catch (error: unknown) {
+      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+      if (status === 404) return null;
+
+      logger.debug(`[API] [ERROR] Failed to get connected service quota snapshot:`, serializeAxiosErrorForLog(error));
+      throw new Error(
+        `Failed to get connected service quota snapshot: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
+  }
+
+  async acquireConnectedServiceRefreshLease(params: {
+    serviceId: ConnectedServiceId;
+    profileId: string;
+    machineId: string;
+    leaseMs: number;
+  }): Promise<{ acquired: boolean; leaseUntil: number }> {
+    const serverUrl = resolveServerHttpBaseUrl();
+    const serviceId = encodeURIComponent(params.serviceId);
+    const profileId = encodeURIComponent(params.profileId);
+    const response = await axios.post(
+      `${serverUrl}/v2/connect/${serviceId}/profiles/${profileId}/refresh-lease`,
+      { machineId: params.machineId, leaseMs: params.leaseMs },
+      {
+        headers: {
+          'Authorization': `Bearer ${this.credential.token}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 5000,
+      },
+    );
+    if (response.status !== 200) {
+      throw new Error(`Server returned status ${response.status}`);
+    }
+    const schema = z.object({
+      acquired: z.boolean(),
+      leaseUntil: z.number(),
+    });
+    const parsed = schema.safeParse(response.data);
+    if (!parsed.success) {
+      throw new Error('Invalid connected service refresh lease response');
+    }
+    return parsed.data;
   }
 }
