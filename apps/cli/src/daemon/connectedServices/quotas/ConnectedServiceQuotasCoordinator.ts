@@ -36,6 +36,17 @@ type QuotaApi = Readonly<{
         metadata: Readonly<{ kind: string }>;
       }>
   >;
+  listConnectedServiceProfiles?: (args: Readonly<{ serviceId: ConnectedServiceId }>) => Promise<
+    Readonly<{
+      serviceId: ConnectedServiceId;
+      profiles: ReadonlyArray<
+        Readonly<{
+          profileId: string;
+          status: 'connected' | 'needs_reauth';
+        }>
+      >;
+    }>
+  >;
   registerConnectedServiceQuotaSnapshotSealed: (args: Readonly<{
     serviceId: ConnectedServiceId;
     profileId: string;
@@ -74,6 +85,11 @@ function deriveQuotaSnapshotStatus(snapshot: ConnectedServiceQuotaSnapshotV1): '
   return 'ok';
 }
 
+type FailureState = Readonly<{
+  consecutiveFailures: number;
+  nextAllowedAt: number;
+}>;
+
 export class ConnectedServiceQuotasCoordinator {
   private readonly api: QuotaApi;
   private readonly credentials: Credentials;
@@ -81,7 +97,14 @@ export class ConnectedServiceQuotasCoordinator {
   private readonly now: () => number;
   private readonly randomBytes: (length: number) => Uint8Array;
   private readonly fetchTimeoutMs: number;
+  private readonly failureBackoffMinMs: number;
+  private readonly failureBackoffMaxMs: number;
+  private readonly failureBackoffJitterPct: number;
+  private readonly discoveryEnabled: boolean;
+  private readonly discoveryIntervalMs: number;
   private readonly spawnTargetsByPid = new Map<number, SpawnTarget>();
+  private readonly failureStateByBindingKey = new Map<string, FailureState>();
+  private lastDiscoveryAt = 0;
 
   public constructor(params: Readonly<{
     api: QuotaApi;
@@ -90,6 +113,11 @@ export class ConnectedServiceQuotasCoordinator {
     now: () => number;
     randomBytes: (length: number) => Uint8Array;
     fetchTimeoutMs?: number;
+    failureBackoffMinMs?: number;
+    failureBackoffMaxMs?: number;
+    failureBackoffJitterPct?: number;
+    discoveryEnabled?: boolean;
+    discoveryIntervalMs?: number;
   }>) {
     this.api = params.api;
     this.credentials = params.credentials;
@@ -100,6 +128,23 @@ export class ConnectedServiceQuotasCoordinator {
       typeof params.fetchTimeoutMs === 'number' && Number.isFinite(params.fetchTimeoutMs)
         ? Math.max(1, Math.trunc(params.fetchTimeoutMs))
         : 15_000;
+    this.failureBackoffMinMs =
+      typeof params.failureBackoffMinMs === 'number' && Number.isFinite(params.failureBackoffMinMs)
+        ? Math.max(1, Math.trunc(params.failureBackoffMinMs))
+        : 30_000;
+    this.failureBackoffMaxMs =
+      typeof params.failureBackoffMaxMs === 'number' && Number.isFinite(params.failureBackoffMaxMs)
+        ? Math.max(this.failureBackoffMinMs, Math.trunc(params.failureBackoffMaxMs))
+        : 10 * 60_000;
+    this.failureBackoffJitterPct =
+      typeof params.failureBackoffJitterPct === 'number' && Number.isFinite(params.failureBackoffJitterPct)
+        ? Math.min(1, Math.max(0, params.failureBackoffJitterPct))
+        : 0.2;
+    this.discoveryEnabled = typeof params.discoveryEnabled === 'boolean' ? params.discoveryEnabled : true;
+    this.discoveryIntervalMs =
+      typeof params.discoveryIntervalMs === 'number' && Number.isFinite(params.discoveryIntervalMs)
+        ? Math.max(1, Math.trunc(params.discoveryIntervalMs))
+        : 60_000;
   }
 
   public registerSpawnTarget(params: Readonly<{
@@ -115,6 +160,36 @@ export class ConnectedServiceQuotasCoordinator {
     const pid = Math.trunc(Number(pidRaw));
     if (!Number.isFinite(pid) || pid <= 0) return;
     this.spawnTargetsByPid.delete(pid);
+  }
+
+  private makeBindingKey(params: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>): string {
+    return `${params.serviceId}\u0000${params.profileId}`;
+  }
+
+  private computeJitteredBackoffMs(baseMs: number): number {
+    const jitterPct = this.failureBackoffJitterPct;
+    if (jitterPct <= 0) return Math.max(1, Math.trunc(baseMs));
+    const bytes = this.randomBytes(4);
+    const u32 =
+      ((bytes[0] ?? 0) << 24) |
+      ((bytes[1] ?? 0) << 16) |
+      ((bytes[2] ?? 0) << 8) |
+      (bytes[3] ?? 0);
+    const normalized = (u32 >>> 0) / 0xffffffff;
+    const factor = (1 - jitterPct) + normalized * (2 * jitterPct);
+    return Math.max(1, Math.trunc(baseMs * factor));
+  }
+
+  private applyFailureBackoff(params: Readonly<{ now: number; key: string }>): void {
+    const existing = this.failureStateByBindingKey.get(params.key);
+    const consecutiveFailures = Math.min((existing?.consecutiveFailures ?? 0) + 1, 30);
+    const expMs = this.failureBackoffMinMs * Math.pow(2, consecutiveFailures - 1);
+    const cappedMs = Math.min(expMs, this.failureBackoffMaxMs);
+    const jitteredMs = this.computeJitteredBackoffMs(cappedMs);
+    this.failureStateByBindingKey.set(params.key, {
+      consecutiveFailures,
+      nextAllowedAt: params.now + jitteredMs,
+    });
   }
 
   public async tickOnce(): Promise<void> {
@@ -139,23 +214,62 @@ export class ConnectedServiceQuotasCoordinator {
       }
     }
 
+    if (this.discoveryEnabled && typeof this.api.listConnectedServiceProfiles === 'function') {
+      const discoveryDue = this.lastDiscoveryAt <= 0 || now - this.lastDiscoveryAt >= this.discoveryIntervalMs;
+      if (discoveryDue) {
+        this.lastDiscoveryAt = now;
+        for (const serviceId of this.quotaFetchersByServiceId.keys()) {
+          try {
+            const result = await this.api.listConnectedServiceProfiles({ serviceId });
+            const profiles = Array.isArray(result?.profiles) ? result.profiles : [];
+            for (const prof of profiles) {
+              if (!prof || typeof prof !== 'object') continue;
+              if (prof.status !== 'connected') continue;
+              const profileId = typeof prof.profileId === 'string' ? String(prof.profileId).trim() : '';
+              if (!profileId) continue;
+              const existing = bindingsByServiceId.get(serviceId);
+              if (existing) {
+                existing.add(profileId);
+              } else {
+                bindingsByServiceId.set(serviceId, new Set([profileId]));
+              }
+            }
+          } catch {
+            // Best-effort only.
+            continue;
+          }
+        }
+      }
+    }
+
     for (const [serviceId, profileIds] of bindingsByServiceId.entries()) {
       const fetcher = this.quotaFetchersByServiceId.get(serviceId);
       if (!fetcher) continue;
 
       for (const profileId of profileIds) {
         try {
+          const bindingKey = this.makeBindingKey({ serviceId, profileId });
           const existing = await this.api.getConnectedServiceQuotaSnapshotSealed({ serviceId, profileId });
+          const forcedRefresh = (() => {
+            const fetchedAt = Number(existing?.metadata?.fetchedAt ?? 0);
+            const refreshRequestedAt = Number(existing?.metadata?.refreshRequestedAt ?? 0);
+            return Number.isFinite(refreshRequestedAt) && refreshRequestedAt > 0 && refreshRequestedAt > fetchedAt;
+          })();
+
+          const failureState = this.failureStateByBindingKey.get(bindingKey);
+          if (!forcedRefresh && failureState && now < failureState.nextAllowedAt) {
+            continue;
+          }
+
           if (existing?.metadata) {
             const fetchedAt = Number(existing.metadata.fetchedAt ?? 0);
             const staleAfterMs = Number(existing.metadata.staleAfterMs ?? 0);
             const refreshRequestedAt = Number(existing.metadata.refreshRequestedAt ?? 0);
             if (Number.isFinite(fetchedAt) && Number.isFinite(staleAfterMs) && fetchedAt > 0 && staleAfterMs > 0) {
-              const forcedRefresh =
-                Number.isFinite(refreshRequestedAt) &&
-                refreshRequestedAt > 0 &&
-                refreshRequestedAt > fetchedAt;
-              if (!forcedRefresh && now < fetchedAt + staleAfterMs) continue;
+              if (!forcedRefresh && now < fetchedAt + staleAfterMs) {
+                this.failureStateByBindingKey.delete(bindingKey);
+                continue;
+              }
             }
           }
 
@@ -219,7 +333,10 @@ export class ConnectedServiceQuotasCoordinator {
             sealed: { format: 'account_scoped_v1', ciphertext: sealed },
             metadata: { fetchedAt: snapshot.fetchedAt, staleAfterMs: snapshot.staleAfterMs, status },
           });
+          this.failureStateByBindingKey.delete(bindingKey);
         } catch {
+          const bindingKey = this.makeBindingKey({ serviceId, profileId });
+          this.applyFailureBackoff({ now, key: bindingKey });
           // Best-effort only.
           continue;
         }

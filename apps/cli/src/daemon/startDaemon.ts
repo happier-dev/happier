@@ -1078,21 +1078,33 @@ export async function startDaemon(): Promise<void> {
 
       const connectedServicesQuotasEnabled = resolveConnectedServicesQuotasEnabled(process.env);
       if (connectedServicesQuotasEnabled) {
-        const quotasTickMs = resolvePositiveIntEnv(
-          process.env.HAPPIER_CONNECTED_SERVICES_QUOTAS_TICK_MS,
-          60_000,
-          { min: 5_000, max: 30 * 60_000 },
-        );
-        const { fetchTimeoutMs } = resolveConnectedServiceQuotasDaemonOptions(process.env);
+	        const quotasTickMs = resolvePositiveIntEnv(
+	          process.env.HAPPIER_CONNECTED_SERVICES_QUOTAS_TICK_MS,
+	          60_000,
+	          { min: 5_000, max: 30 * 60_000 },
+	        );
+	        const {
+	          fetchTimeoutMs,
+	          discoveryEnabled,
+	          discoveryIntervalMs,
+	          failureBackoffMinMs,
+	          failureBackoffMaxMs,
+	          failureBackoffJitterPct,
+	        } = resolveConnectedServiceQuotasDaemonOptions(process.env);
 
-        connectedServiceQuotasCoordinator = new ConnectedServiceQuotasCoordinator({
-          api,
-          credentials,
-          quotaFetchers: createConnectedServiceQuotaFetchers(process.env),
-          fetchTimeoutMs,
-          now: () => Date.now(),
-          randomBytes: (length) => randomBytes(length),
-        });
+	        connectedServiceQuotasCoordinator = new ConnectedServiceQuotasCoordinator({
+	          api,
+	          credentials,
+	          quotaFetchers: createConnectedServiceQuotaFetchers(process.env),
+	          fetchTimeoutMs,
+	          discoveryEnabled,
+	          discoveryIntervalMs,
+	          failureBackoffMinMs,
+	          failureBackoffMaxMs,
+	          failureBackoffJitterPct,
+	          now: () => Date.now(),
+	          randomBytes: (length) => randomBytes(length),
+	        });
 
         connectedServiceQuotasLoopHandle = startConnectedServiceQuotasLoop({
           enabled: true,

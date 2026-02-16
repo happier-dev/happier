@@ -729,4 +729,170 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     await expect(coordinator.tickOnce()).resolves.toBeUndefined();
     expect(api.registerConnectedServiceQuotaSnapshotSealed).not.toHaveBeenCalled();
   });
+
+  it('applies a failure backoff window per binding', async () => {
+    let now = 1_000_000;
+
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    if (credentials.encryption.type !== 'legacy') throw new Error('fixture');
+
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: 'user@example.com',
+      },
+    });
+
+    const sealedCredentialCiphertext = sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: record,
+      randomBytes: (length) => randomBytes(length),
+    });
+    const sealedCredential: SealedCredentialResponse = {
+      sealed: { format: 'account_scoped_v1', ciphertext: sealedCredentialCiphertext },
+      metadata: { kind: 'oauth' },
+    };
+
+    const api = {
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
+      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
+    } satisfies QuotaApi;
+    (api as unknown as { listConnectedServiceProfiles: unknown }).listConnectedServiceProfiles = vi.fn(async () => ({
+      serviceId: 'openai-codex',
+      profiles: [{ profileId: 'work', status: 'connected' }],
+    }));
+
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      fetch: vi.fn(async () => {
+        throw new Error('provider down');
+      }),
+    };
+
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => new Uint8Array(length).fill(1),
+      failureBackoffMinMs: 10_000,
+      failureBackoffMaxMs: 60_000,
+      failureBackoffJitterPct: 0,
+      discoveryEnabled: false,
+    } as unknown as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]);
+
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: { 'openai-codex': { source: 'connected', profileId: 'work' } },
+      },
+    });
+
+    await coordinator.tickOnce();
+    await coordinator.tickOnce();
+
+    expect(fetcher.fetch).toHaveBeenCalledTimes(1);
+
+    now += 10_000;
+    await coordinator.tickOnce();
+    expect(fetcher.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('can discover connected profiles when enabled', async () => {
+    const now = 1_000_000;
+
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    if (credentials.encryption.type !== 'legacy') throw new Error('fixture');
+
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: 'user@example.com',
+      },
+    });
+
+    const sealedCredentialCiphertext = sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: record,
+      randomBytes: (length) => randomBytes(length),
+    });
+    const sealedCredential: SealedCredentialResponse = {
+      sealed: { format: 'account_scoped_v1', ciphertext: sealedCredentialCiphertext },
+      metadata: { kind: 'oauth' },
+    };
+
+    let uploadedCiphertext: string | null = null;
+    const api = {
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
+      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async (params: RegisterArgs) => {
+        uploadedCiphertext = params.sealed.ciphertext;
+      }),
+    } satisfies QuotaApi;
+    (api as unknown as { listConnectedServiceProfiles: unknown }).listConnectedServiceProfiles = vi.fn(async () => ({
+      serviceId: 'openai-codex',
+      profiles: [{ profileId: 'work', status: 'connected' }],
+    }));
+
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      fetch: vi.fn(async (): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
+        v: 1,
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        fetchedAt: now,
+        staleAfterMs: 300_000,
+        planLabel: 'Pro',
+        accountLabel: null,
+        meters: [],
+      })),
+    };
+
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      discoveryEnabled: true,
+      discoveryIntervalMs: 1,
+      failureBackoffJitterPct: 0,
+    } as unknown as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]);
+
+    await coordinator.tickOnce();
+
+    expect((api as any).listConnectedServiceProfiles).toHaveBeenCalled();
+    expect(fetcher.fetch).toHaveBeenCalledTimes(1);
+    expect(typeof uploadedCiphertext).toBe('string');
+  });
 });
