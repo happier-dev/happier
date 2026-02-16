@@ -236,4 +236,5 @@ jobs:
       assets_artifact_path: dist/release-assets/ui-web
       assets_dir: dist/release-assets/ui-web
       clobber: true
+      prune_assets: ${{ needs.build.outputs.rolling_tag == 'true' }}
       release_message: ${{ inputs.release_message }}
