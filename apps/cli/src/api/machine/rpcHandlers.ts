@@ -20,11 +20,14 @@ import psList from 'ps-list';
 import type { DaemonExecutionRunEntry, DaemonExecutionRunProcessInfo } from '@happier-dev/protocol';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
+import type { MemoryWorkerHandle } from '@/daemon/memory/memoryWorker';
+import { registerMachineMemoryRpcHandlers } from './rpcHandlers.memory';
 
 export type MachineRpcHandlers = {
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   stopSession: (sessionId: string) => Promise<boolean>;
   requestShutdown: () => void;
+  memory?: MemoryWorkerHandle;
 };
 
 async function toCanonicalPath(path: string): Promise<string | null> {
@@ -59,6 +62,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
 }>): void {
   const { rpcHandlerManager, handlers } = params;
   const { spawnSession, stopSession, requestShutdown } = handlers;
+  const memoryWorker = handlers.memory ?? null;
 
   // Register spawn session handler
   rpcHandlerManager.registerHandler(RPC_METHODS.SPAWN_HAPPY_SESSION, async (params: any) => {
@@ -199,6 +203,13 @@ export function registerMachineRpcHandlers(params: Readonly<{
         return result;
     }
   });
+
+  if (memoryWorker) {
+    registerMachineMemoryRpcHandlers({
+      rpcHandlerManager,
+      memoryWorker,
+    });
+  }
 
   rpcHandlerManager.registerHandler(RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY, async (raw: unknown) => {
     const parsed = SessionContinueWithReplayRpcParamsSchema.safeParse(raw);

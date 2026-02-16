@@ -83,6 +83,12 @@ interface Settings {
    * Kept for backwards compatibility with older call sites.
    */
   lastChangesCursorByAccountId?: Record<string, number>
+
+  /**
+   * Device-local daemon memory settings (schema v5+; stored as an opaque JSON payload).
+   * Parsed/normalized by `settings/memorySettings.ts`.
+   */
+  memory?: unknown
 }
 
 const defaultSettings: Settings = {

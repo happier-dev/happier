@@ -61,6 +61,9 @@ class Configuration {
   public readonly executionBudgetMaxConcurrentTotalPerSession: number | null
   public readonly executionBudgetMaxConcurrentByClass: Readonly<Record<string, number>>
 
+  // Memory search (daemon-local indexing) limits.
+  public readonly memoryMaxTranscriptWindowMessages: number
+
   constructor() {
     // Check if we're running as daemon based on process args
     const args = process.argv.slice(2)
@@ -174,6 +177,15 @@ class Configuration {
       }
     }
     this.executionBudgetMaxConcurrentByClass = Object.freeze(parsedBudgetByClass);
+
+    const memoryWindowRaw = Number.parseInt(String(process.env.HAPPIER_MEMORY_MAX_TRANSCRIPT_WINDOW_MESSAGES ?? ''), 10);
+    // Default: 250 messages. Hard bounds protect daemon from excessive replay windows.
+    // Min 50 ensures meaningful windows; max 500 matches server enforcement.
+    if (Number.isFinite(memoryWindowRaw) && memoryWindowRaw >= 50) {
+      this.memoryMaxTranscriptWindowMessages = Math.min(500, Math.trunc(memoryWindowRaw));
+    } else {
+      this.memoryMaxTranscriptWindowMessages = 250;
+    }
 
     this.currentCliVersion = packageJson.version
 

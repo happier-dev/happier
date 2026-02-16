@@ -47,11 +47,12 @@ export class ApiMachineClient {
     setRPCHandlers({
         spawnSession,
         stopSession,
-        requestShutdown
+        requestShutdown,
+        memory,
     }: MachineRpcHandlers) {
         registerMachineRpcHandlers({
             rpcHandlerManager: this.rpcHandlerManager,
-            handlers: { spawnSession, stopSession, requestShutdown }
+            handlers: { spawnSession, stopSession, requestShutdown, ...(memory ? { memory } : {}) }
         });
     }
 

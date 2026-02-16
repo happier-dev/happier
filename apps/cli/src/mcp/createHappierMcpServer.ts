@@ -10,6 +10,8 @@ import { createActionSpecMcpTools } from '@/mcp/tools/actionSpecTools';
 import { isActionEnabledByEnv } from '@/settings/actionsSettings';
 import { createActionExecutor, listActionSpecs, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { ExecutionRunIntentSchema } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { MemorySearchResultV1Schema, MemoryWindowV1Schema, type MemorySearchResultV1, type MemoryWindowV1 } from '@happier-dev/protocol';
 import { z } from 'zod';
 
 export { HAPPIER_MCP_TOOL_NAMES } from '@/mcp/happierMcpToolCatalog';
@@ -49,6 +51,17 @@ export function createHappierMcpServer(client: HappyMcpSessionClient): { mcp: Mc
     executionRunSend: async (_sessionId, request) => await sessionScopedRpc('execution.run.send', request),
     executionRunStop: async (_sessionId, request) => await sessionScopedRpc('execution.run.stop', request),
     executionRunAction: async (_sessionId, request) => await sessionScopedRpc('execution.run.action', request),
+
+    daemonMemorySearch: async ({ query }): Promise<MemorySearchResultV1> => {
+      const res = await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_SEARCH, query);
+      return MemorySearchResultV1Schema.parse(res);
+    },
+    daemonMemoryGetWindow: async ({ sessionId, seqFrom, seqTo }): Promise<MemoryWindowV1> => {
+      const res = await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_GET_WINDOW, { v: 1, sessionId, seqFrom, seqTo });
+      return MemoryWindowV1Schema.parse(res);
+    },
+    daemonMemoryEnsureUpToDate: async ({ sessionId }) =>
+      await sessionScopedRpc(RPC_METHODS.DAEMON_MEMORY_ENSURE_UP_TO_DATE, sessionId ? { sessionId } : {}),
 
     // Not exposed as MCP tools today; satisfy executor deps to keep a single shared implementation.
     sessionOpen: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.open' }),

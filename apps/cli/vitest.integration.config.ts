@@ -22,6 +22,15 @@ export default defineConfig({
         environment: 'node',
         testTimeout: 60_000,
         hookTimeout: 60_000,
+        // These integration tests mutate `process.env` (PATH overrides, server URLs, etc).
+        // Running in a single fork avoids cross-file environment races that can make
+        // CLI-probe tests flaky under parallel pools.
+        pool: 'forks',
+        poolOptions: {
+            forks: {
+                singleFork: true,
+            },
+        },
         include: [
             'src/**/*.integration.test.ts',
             'src/**/*.real.integration.test.ts',
