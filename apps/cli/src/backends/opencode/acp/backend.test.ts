@@ -137,6 +137,7 @@ describe('createOpenCodeBackend config file reading', () => {
     const dir = makeTempDir('happier-opencode-config-');
     tempDirs.push(dir);
     process.env.HOME = dir;
+    process.env.XDG_CONFIG_HOME = join(dir, '.config');
     return dir;
   }
 
