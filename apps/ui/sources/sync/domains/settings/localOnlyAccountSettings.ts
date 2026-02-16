@@ -19,4 +19,3 @@ export function pickLocalOnlyAccountSettings(settings: Settings): Partial<Settin
         ...pickLocalOnlyTerminalConnectSettings(settings),
     };
 }
-

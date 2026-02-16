@@ -3,8 +3,11 @@ import {
     buildExecutionRunsGuidanceBlock,
     coerceExecutionRunsGuidanceEntries,
 } from '@/sync/domains/settings/executionRunsGuidance';
+import { resolveLocalFeaturePolicyEnabled } from '@/sync/domains/features/featureLocalPolicy';
 
 function buildExecutionRunsGuidanceBlockFromSettings(settings: Record<string, unknown>): string {
+    // Guidance is only meaningful when execution runs are enabled.
+    if (!resolveLocalFeaturePolicyEnabled('execution.runs', settings as any)) return '';
     if ((settings as any).executionRunsGuidanceEnabled !== true) return '';
     const maxCharsRaw = (settings as any).executionRunsGuidanceMaxChars;
     const maxChars = typeof maxCharsRaw === 'number' && Number.isFinite(maxCharsRaw) && maxCharsRaw >= 200

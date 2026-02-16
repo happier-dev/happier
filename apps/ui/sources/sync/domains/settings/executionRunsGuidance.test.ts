@@ -32,11 +32,14 @@ describe('executionRunsGuidance', () => {
         const entry1 = { id: '1', description: 'Rule one' };
         const entry2 = { id: '2', description: 'Rule two' };
 
-        const one = buildExecutionRunsGuidanceBlock({ entries: [entry1], maxChars: 10_000 });
+        const full = buildExecutionRunsGuidanceBlock({ entries: [entry1, entry2], maxChars: 10_000 });
+        const ruleTwoStart = full.text.indexOf('\n- Rule two');
+        expect(ruleTwoStart).toBeGreaterThan(0);
+
         const capped = buildExecutionRunsGuidanceBlock({
             entries: [entry1, entry2],
-            // Budget that fits exactly the single-entry block.
-            maxChars: one.text.length,
+            // Budget that fits exactly up to the start of rule two, ensuring rule two does not fit.
+            maxChars: ruleTwoStart,
         });
 
         expect(capped.includedCount).toBe(1);
@@ -72,5 +75,23 @@ describe('executionRunsGuidance', () => {
         expect(result.text).toContain('## Example tool calls (MCP)');
         expect(result.text).toContain('- mcp.execution.run');
         expect(result.text).toContain('- mcp.execution.list');
+    });
+
+    it('includes explicit MCP delegation instructions when rules are present', () => {
+        const result = buildExecutionRunsGuidanceBlock({
+            entries: [
+                {
+                    id: '1',
+                    description: 'Delegate reviews to a review run',
+                    suggestedIntent: 'review',
+                },
+            ],
+            maxChars: 10_000,
+        });
+
+        expect(result.text).toContain('Delegating via MCP');
+        expect(result.text).toContain('execution_run_start');
+        expect(result.text).toContain('execution_run_get');
+        expect(result.text).toContain('execution_run_stop');
     });
 });
