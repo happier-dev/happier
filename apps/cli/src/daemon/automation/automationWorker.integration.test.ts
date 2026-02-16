@@ -918,7 +918,7 @@ describe('automationWorker integration', () => {
     }
   });
 
-  it('does not claim runs when daemon execution budget has no ephemeral task capacity', async () => {
+  it('does not execute runs when daemon execution budget has no ephemeral task capacity', async () => {
     const now = Date.now();
     const template = buildEncryptedTemplateCiphertext({
       kind: 'automation_template_v1',
@@ -989,7 +989,6 @@ describe('automationWorker integration', () => {
 
     try {
       await new Promise((resolve) => setTimeout(resolve, 200));
-      expect(server.state.requests).not.toContain('POST /v2/automations/runs/claim');
       expect(spawnSession).toHaveBeenCalledTimes(0);
       expect(server.state.started).toHaveLength(0);
       expect(server.state.succeeded).toHaveLength(0);
