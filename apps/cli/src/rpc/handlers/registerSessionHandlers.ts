@@ -104,6 +104,14 @@ export interface SpawnSessionOptions {
      * - TMUX_SESSION_NAME / TMUX_TMPDIR
      */
     environmentVariables?: Record<string, string>;
+
+    /**
+     * Optional: per-session bindings to Happier Connected Services profiles.
+     *
+     * This payload must NOT include secrets. The daemon uses it to fetch sealed credentials from the cloud
+     * and decrypt/materialize them locally for the provider runtime.
+     */
+    connectedServices?: unknown;
 }
 
 export type SpawnSessionResult =
