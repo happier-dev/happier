@@ -143,4 +143,12 @@ describe('app.config.js', () => {
         const plugin = (exp.plugins ?? []).find((entry: any) => Array.isArray(entry) && entry[0] === 'react-native-audio-api');
         expect(plugin).toEqual(['react-native-audio-api', expect.objectContaining({ iosBackgroundMode: false })]);
     });
+
+    it('does not include unused optional native plugins in the default config', () => {
+        const exp = withCleanEnv(() => getPublicConfig());
+        const pluginNames = (exp.plugins ?? []).map((entry: any) => (Array.isArray(entry) ? entry[0] : entry));
+
+        expect(pluginNames).not.toContain('expo-location');
+        expect(pluginNames).not.toContain('expo-calendar');
+    });
 });
