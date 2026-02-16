@@ -115,6 +115,7 @@ jobs:
         run: |
           set -euo pipefail
 
+          old_sha="$(git rev-parse -q --verify "refs/tags/${TAG}^{commit}" 2>/dev/null || true)"
           pushed="false"
           git tag -f "${TAG}" "${SHA}"
 
@@ -129,6 +130,7 @@ jobs:
             echo "::warning::Rolling tag push failed (tag protections or permissions). Skipping asset upload for ${TAG}."
           fi
 
+          echo "old_sha=${old_sha}" >> "${GITHUB_OUTPUT}"
           echo "pushed=${pushed}" >> "${GITHUB_OUTPUT}"
 
       - name: Ensure release exists
@@ -165,6 +167,59 @@ jobs:
 
           # shellcheck disable=SC2086
           gh release create "${TAG}" ${prerelease_flag} --title "${TITLE}" --target "${SHA}" --notes "${NOTES}"
+
+      - name: Update rolling release notes (commit summary)
+        if: ${{ inputs.rolling_tag && steps.move_rolling_tag.outputs.pushed == 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+          TAG: ${{ inputs.tag }}
+          TITLE: ${{ inputs.title }}
+          SHA: ${{ inputs.target_sha }}
+          OLD_SHA: ${{ steps.move_rolling_tag.outputs.old_sha }}
+          NOTES: ${{ inputs.notes }}
+          MAX_COMMITS: "200"
+        run: |
+          set -euo pipefail
+
+          max="${MAX_COMMITS}"
+          compare_url=""
+          commit_count=""
+          commits=""
+
+          if [ -n "${OLD_SHA:-}" ] && [ "${OLD_SHA}" != "${SHA}" ]; then
+            compare_url="https://github.com/${GITHUB_REPOSITORY}/compare/${OLD_SHA}...${SHA}"
+            commit_count="$(git rev-list --count "${OLD_SHA}..${SHA}")"
+            commits="$(git log --max-count="${max}" --pretty=format:'- %h %s' "${OLD_SHA}..${SHA}")"
+          fi
+
+          notes_prefix="${NOTES:-}"
+          if [ -z "${notes_prefix}" ]; then
+            notes_prefix="Rolling release."
+          fi
+
+          body="$(cat <<EOF
+          ${notes_prefix}
+
+          EOF
+          )"
+
+          if [ -n "${commit_count:-}" ]; then
+            body="${body}$(cat <<EOF
+
+          ### Commits (${commit_count})
+
+          ${commits}
+
+          Full diff: ${compare_url}
+          EOF
+          )"
+
+            if [ "${commit_count}" -gt "${max}" ]; then
+              body="${body}"$'\n'"(Showing first ${max} commits; see Full diff for the complete list.)"
+            fi
+          fi
+
+          gh release edit "${TAG}" --title "${TITLE}" --notes "${body}"
 
       - name: Upload assets
         if: ${{ (!inputs.rolling_tag || steps.move_rolling_tag.outputs.pushed == 'true') && (inputs.assets != '' || inputs.assets_dir != '') }}

@@ -634,7 +634,7 @@ jobs:
     secrets: inherit
     with:
       tag: ui-preview
-      title: UI Preview
+      title: Happier UI Preview
       target_sha: ${{ needs.prepare_assets.outputs.target_sha }}
       prerelease: true
       rolling_tag: true
@@ -652,7 +652,7 @@ jobs:
     secrets: inherit
     with:
       tag: ui-v${{ needs.prepare_assets.outputs.ui_version }}
-      title: UI v${{ needs.prepare_assets.outputs.ui_version }}
+      title: Happier UI v${{ needs.prepare_assets.outputs.ui_version }}
       target_sha: ${{ needs.prepare_assets.outputs.target_sha }}
       prerelease: false
       rolling_tag: false
@@ -669,7 +669,7 @@ jobs:
     secrets: inherit
     with:
       tag: ui-stable
-      title: UI Stable
+      title: Happier UI Stable
       target_sha: ${{ needs.prepare_assets.outputs.target_sha }}
       prerelease: false
       rolling_tag: true

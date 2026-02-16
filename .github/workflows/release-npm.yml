@@ -635,7 +635,7 @@ jobs:
     secrets: inherit
     with:
       tag: cli-v${{ needs.release.outputs.cli_version }}
-      title: CLI v${{ needs.release.outputs.cli_version }}
+      title: Happier CLI v${{ needs.release.outputs.cli_version }}
       target_sha: ${{ needs.release.outputs.sha }}
       prerelease: false
       rolling_tag: false
@@ -652,7 +652,7 @@ jobs:
     secrets: inherit
     with:
       tag: cli-stable
-      title: CLI Stable
+      title: Happier CLI Stable
       target_sha: ${{ needs.release.outputs.sha }}
       prerelease: false
       rolling_tag: true
@@ -670,7 +670,7 @@ jobs:
     secrets: inherit
     with:
       tag: cli-preview
-      title: CLI Preview
+      title: Happier CLI Preview
       target_sha: ${{ needs.release.outputs.sha }}
       prerelease: true
       rolling_tag: true
@@ -688,7 +688,7 @@ jobs:
     secrets: inherit
     with:
       tag: stack-v${{ needs.release.outputs.stack_version }}
-      title: Stack v${{ needs.release.outputs.stack_version }}
+      title: Happier Stack v${{ needs.release.outputs.stack_version }}
       target_sha: ${{ needs.release.outputs.sha }}
       prerelease: false
       rolling_tag: false
@@ -705,7 +705,7 @@ jobs:
     secrets: inherit
     with:
       tag: stack-stable
-      title: Stack Stable
+      title: Happier Stack Stable
       target_sha: ${{ needs.release.outputs.sha }}
       prerelease: false
       rolling_tag: true
@@ -723,7 +723,7 @@ jobs:
     secrets: inherit
     with:
       tag: stack-preview
-      title: Stack Preview
+      title: Happier Stack Preview
       target_sha: ${{ needs.release.outputs.sha }}
       prerelease: true
       rolling_tag: true

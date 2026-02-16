@@ -612,14 +612,14 @@ jobs:
 
           if [ "${env_name}" = "production" ]; then
             echo "tag=ui-v${app_version}" >> "$GITHUB_OUTPUT"
-            echo "title=UI v${app_version}" >> "$GITHUB_OUTPUT"
+            echo "title=Happier UI v${app_version}" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
             echo "rolling_tag=false" >> "$GITHUB_OUTPUT"
             echo "generate_notes=true" >> "$GITHUB_OUTPUT"
             echo "notes=" >> "$GITHUB_OUTPUT"
           else
             echo "tag=ui-preview" >> "$GITHUB_OUTPUT"
-            echo "title=UI Preview" >> "$GITHUB_OUTPUT"
+            echo "title=Happier UI Preview" >> "$GITHUB_OUTPUT"
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
             echo "rolling_tag=true" >> "$GITHUB_OUTPUT"
             echo "generate_notes=false" >> "$GITHUB_OUTPUT"

@@ -151,13 +151,13 @@ jobs:
           channel="${{ inputs.channel }}"
           if [ "$channel" = "preview" ]; then
             echo "tag=server-preview" >> "$GITHUB_OUTPUT"
-            echo "title=Server Preview" >> "$GITHUB_OUTPUT"
+            echo "title=Happier Server Preview" >> "$GITHUB_OUTPUT"
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
             echo "rolling_tag=true" >> "$GITHUB_OUTPUT"
             echo "notes=Rolling preview server runtime release." >> "$GITHUB_OUTPUT"
           else
             echo "tag=server-stable" >> "$GITHUB_OUTPUT"
-            echo "title=Server Stable" >> "$GITHUB_OUTPUT"
+            echo "title=Happier Server Stable" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
             echo "rolling_tag=true" >> "$GITHUB_OUTPUT"
             echo "notes=Stable server runtime release." >> "$GITHUB_OUTPUT"

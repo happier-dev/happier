@@ -158,13 +158,13 @@ jobs:
           channel="${{ inputs.channel }}"
           if [ "$channel" = "preview" ]; then
             echo "tag=ui-web-preview" >> "$GITHUB_OUTPUT"
-            echo "title=UI Web Bundle Preview" >> "$GITHUB_OUTPUT"
+            echo "title=Happier UI Web Bundle Preview" >> "$GITHUB_OUTPUT"
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
             echo "rolling_tag=true" >> "$GITHUB_OUTPUT"
             echo "notes=Rolling preview UI web bundle release." >> "$GITHUB_OUTPUT"
           else
             echo "tag=ui-web-stable" >> "$GITHUB_OUTPUT"
-            echo "title=UI Web Bundle Stable" >> "$GITHUB_OUTPUT"
+            echo "title=Happier UI Web Bundle Stable" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
             echo "rolling_tag=true" >> "$GITHUB_OUTPUT"
             echo "notes=Stable UI web bundle release." >> "$GITHUB_OUTPUT"
