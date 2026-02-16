@@ -1,0 +1,4 @@
+# Native EAS builds do not need web-only vendored assets.
+public/monaco/
+public/vendor/
+

@@ -270,6 +270,9 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
+          # Speed up installs for mobile-only and unit-test flows (desktop/web builds happen elsewhere).
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
         run: yarn install --frozen-lockfile --ignore-engines
 
       - name: Bump app version (source ref)

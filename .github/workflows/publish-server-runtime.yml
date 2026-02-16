@@ -138,6 +138,8 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
+          # Speed up installs: server runtime publishing does not require UI web-only vendored assets.
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
         run: yarn install --frozen-lockfile --ignore-engines
 
       - name: Run release contract tests

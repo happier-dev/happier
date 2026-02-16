@@ -78,7 +78,7 @@
     "pretypecheck": "yarn -s build:shared",
     "prebuild": "yarn -s build:shared",
     "pretest": "yarn -s build:shared",
-    "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');if(!fs.existsSync('scripts/unpack-tools.cjs'))process.exit(0);const r=cp.spawnSync(process.execPath,['scripts/unpack-tools.cjs'],{stdio:'inherit'});process.exit(r.status??1);\"",
+    "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');try{const gate=require('../../scripts/postinstall/shouldRunPostinstall.cjs');if(!gate.shouldRunPostinstall({workspace:'cli',scope:process.env.HAPPIER_INSTALL_SCOPE||''}))process.exit(0);}catch{}if(!fs.existsSync('scripts/unpack-tools.cjs'))process.exit(0);const r=cp.spawnSync(process.execPath,['scripts/unpack-tools.cjs'],{stdio:'inherit'});process.exit(r.status??1);\"",
     "tool:trace:extract": "tsx scripts/tool-trace-extract.ts",
     "tool:trace:fixtures:v1": "tsx scripts/tool-trace-fixtures-v1.ts",
     "// ==== Dev/Stable Variant Management ====": "",
@@ -105,6 +105,7 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.14.1",
     "@anthropic-ai/claude-agent-sdk": "^0.2.31",
+    "@huggingface/transformers": "^3.8.1",
     "@happier-dev/agents": "0.0.0",
     "@happier-dev/cli-common": "0.0.0",
     "@happier-dev/protocol": "0.0.0",

@@ -35,6 +35,8 @@ jobs:
       env:
         YARN_PRODUCTION: "false"
         npm_config_production: "false"
+        # Speed up installs: CLI smoke tests do not require UI web-only vendored assets.
+        HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
       run: yarn install --frozen-lockfile --ignore-engines
 
     - name: Build package
@@ -120,6 +122,8 @@ jobs:
       env:
         YARN_PRODUCTION: "false"
         npm_config_production: "false"
+        # Speed up installs: CLI smoke tests do not require UI web-only vendored assets.
+        HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
       run: yarn install --frozen-lockfile --ignore-engines
 
     - name: Build package
