@@ -161,6 +161,7 @@ export const en = {
     settings: {
         title: 'Settings',
         connectedAccounts: 'Connected Accounts',
+        connectedAccountsDisabled: 'Connected services are disabled.',
         connectAccount: 'Connect account',
         github: 'GitHub',
         machines: 'Machines',
@@ -172,6 +173,8 @@ export const en = {
         appearanceSubtitle: 'Customize how the app looks',
         voiceAssistant: 'Voice Assistant',
         voiceAssistantSubtitle: 'Configure voice interaction preferences',
+        memorySearch: 'Local Memory Search',
+        memorySearchSubtitle: 'Search across past conversations (device-local)',
         featuresTitle: 'Features',
         featuresSubtitle: 'Enable or disable app features',
         developer: 'Developer',
@@ -913,7 +916,7 @@ export const en = {
 
     components: {
         emptyMainScreen: {
-            // Used by EmptyMainScreen component
+            // Used by SessionGettingStartedGuidance component
             readyToCode: 'Ready to code?',
             installCli: 'Install the Happier CLI',
             runIt: 'Run it',
@@ -1549,6 +1552,8 @@ export const en = {
             recentMessagesCountInvalid: 'Please enter a number between 0 and 50.',
             shareToolNames: 'Share tool names',
             shareToolNamesSubtitle: 'Include tool names/descriptions in voice context',
+            shareDeviceInventory: 'Share device inventory',
+            shareDeviceInventorySubtitle: 'Allow voice to list recent workspaces, machines, and servers',
             shareToolArgs: 'Share tool arguments',
             shareToolArgsSubtitle: 'Include tool arguments (may include paths or secrets)',
             sharePermissionRequests: 'Share permission requests',

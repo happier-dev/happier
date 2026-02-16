@@ -148,6 +148,7 @@ export const ca: TranslationStructure = {
     settings: {
         title: 'Configuració',
         connectedAccounts: 'Comptes connectats',
+        connectedAccountsDisabled: 'Connected services are disabled.',
         connectAccount: 'Connectar compte',
         github: 'GitHub',
         machines: 'Màquines',
@@ -159,6 +160,8 @@ export const ca: TranslationStructure = {
         appearanceSubtitle: 'Personalitza l\'aspecte de l\'aplicació',
         voiceAssistant: 'Assistent de veu',
         voiceAssistantSubtitle: 'Configura les preferències d\'interacció per veu',
+        memorySearch: 'Cerca de memòria local',
+        memorySearchSubtitle: 'Cerca en converses anteriors (al dispositiu)',
         featuresTitle: 'Funcions',
         featuresSubtitle: 'Activa o desactiva les funcions de l\'aplicació',
         developer: 'Desenvolupador',
@@ -899,7 +902,7 @@ deps: {
 
     components: {
         emptyMainScreen: {
-            // Used by EmptyMainScreen component
+            // Used by SessionGettingStartedGuidance component
             readyToCode: 'Llest per programar?',
             installCli: 'Instal·la el Happier CLI',
             runIt: 'Executa\'l',
@@ -1510,6 +1513,8 @@ deps: {
             recentMessagesCountInvalid: 'Introdueix un número entre 0 i 50.',
             shareToolNames: 'Comparteix noms d’eines',
             shareToolNamesSubtitle: 'Inclou noms/descripcions d’eines al context de veu',
+            shareDeviceInventory: 'Share device inventory',
+            shareDeviceInventorySubtitle: 'Allow voice to list recent workspaces, machines, and servers',
             shareToolArgs: 'Comparteix arguments d’eines',
             shareToolArgsSubtitle: 'Inclou arguments d’eines (pot incloure rutes o secrets)',
             sharePermissionRequests: 'Comparteix sol·licituds de permisos',

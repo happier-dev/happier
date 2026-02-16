@@ -135,6 +135,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     settings: {
         title: '設定',
         connectedAccounts: '已連結帳戶',
+        connectedAccountsDisabled: 'Connected services are disabled.',
         connectAccount: '連結帳戶',
         github: 'GitHub',
         machines: '裝置',
@@ -146,6 +147,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         appearanceSubtitle: '自訂應用程式外觀',
         voiceAssistant: '語音助理',
         voiceAssistantSubtitle: '設定語音互動偏好',
+        memorySearch: '本地記憶搜尋',
+        memorySearchSubtitle: '在裝置本地搜尋過往對話',
         featuresTitle: '功能',
         featuresSubtitle: '啟用或停用應用程式功能',
         developer: '開發者',
@@ -486,7 +489,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 
     components: {
         emptyMainScreen: {
-            // Used by EmptyMainScreen component
+            // Used by SessionGettingStartedGuidance component
             readyToCode: '準備開始寫程式？',
             installCli: '安裝 Happier CLI',
             runIt: '執行它',
@@ -913,6 +916,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             recentMessagesCountInvalid: '請輸入 0 到 50 之間的數字。',
             shareToolNames: '分享工具名稱',
             shareToolNamesSubtitle: '在語音內容中包含工具名稱/描述',
+            shareDeviceInventory: 'Share device inventory',
+            shareDeviceInventorySubtitle: 'Allow voice to list recent workspaces, machines, and servers',
             shareToolArgs: '分享工具參數',
             shareToolArgsSubtitle: '包含工具參數（可能包含路徑或秘密）',
             sharePermissionRequests: '分享權限請求',

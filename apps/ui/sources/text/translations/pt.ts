@@ -161,6 +161,7 @@ export const pt: TranslationStructure = {
   settings: {
     title: "Configurações",
     connectedAccounts: "Contas conectadas",
+    connectedAccountsDisabled: "Connected services are disabled.",
     connectAccount: "Conectar conta",
     github: "GitHub",
     machines: "Máquinas",
@@ -172,6 +173,8 @@ export const pt: TranslationStructure = {
     appearanceSubtitle: "Personalize a aparência do aplicativo",
     voiceAssistant: "Assistente de voz",
     voiceAssistantSubtitle: "Configure as preferências de interação por voz",
+    memorySearch: "Pesquisa de memória local",
+    memorySearchSubtitle: "Pesquise em conversas anteriores (no dispositivo)",
     featuresTitle: "Recursos",
     featuresSubtitle: "Ativar ou desativar recursos do aplicativo",
     developer: "Desenvolvedor",
@@ -1051,7 +1054,7 @@ export const pt: TranslationStructure = {
 
   components: {
     emptyMainScreen: {
-      // Used by EmptyMainScreen component
+      // Used by SessionGettingStartedGuidance component
       readyToCode: "Pronto para programar?",
       installCli: "Instale o Happier CLI",
       runIt: "Execute",
@@ -1764,6 +1767,8 @@ export const pt: TranslationStructure = {
       recentMessagesCountInvalid: "Digite um número entre 0 e 50.",
       shareToolNames: "Compartilhar nomes de ferramentas",
       shareToolNamesSubtitle: "Inclui nomes/descrições de ferramentas no contexto de voz",
+      shareDeviceInventory: "Share device inventory",
+      shareDeviceInventorySubtitle: "Allow voice to list recent workspaces, machines, and servers",
       shareToolArgs: "Compartilhar argumentos de ferramentas",
       shareToolArgsSubtitle: "Inclui argumentos de ferramentas (pode incluir caminhos ou segredos)",
       sharePermissionRequests: "Compartilhar solicitações de permissão",
