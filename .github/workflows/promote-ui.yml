@@ -324,7 +324,7 @@ jobs:
             yarn --cwd apps/ui ota:production
           else
             cd apps/ui
-            APP_ENV=preview NODE_ENV=preview tsx sources/scripts/parseChangelog.ts
+            APP_ENV=preview NODE_ENV=preview yarn tsx sources/scripts/parseChangelog.ts
             yarn typecheck
             npx --yes "eas-cli@${EAS_CLI_VERSION}" update --branch preview
           fi
