@@ -5,9 +5,10 @@ import type { Command } from './types';
 import { buildCommandPaletteCommands } from './buildCommandPaletteCommands';
 
 const createSessionActionDraftSpy = vi.fn();
+let mockedState: any = null;
 vi.mock('@/sync/domains/state/storage', () => ({
   storage: {
-    getState: () => ({ createSessionActionDraft: createSessionActionDraftSpy }),
+    getState: () => mockedState,
   },
 }));
 
@@ -19,6 +20,7 @@ describe('buildCommandPaletteCommands', () => {
   it('includes ActionSpec-derived commands when enabled (execution runs + voice)', async () => {
     const pushes: string[] = [];
     const executorCalls: Array<{ actionId: string }> = [];
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
 
     const cmds = buildCommandPaletteCommands({
       sessionsById: {},
@@ -65,6 +67,7 @@ describe('buildCommandPaletteCommands', () => {
   it('shows an alert when a session-scoped ActionSpec command is used without an active session', async () => {
     const alerts: Array<{ title: string; message: string }> = [];
     const pushes: string[] = [];
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
 
     const cmds = buildCommandPaletteCommands({
       sessionsById: {},
@@ -93,6 +96,7 @@ describe('buildCommandPaletteCommands', () => {
 
   it('does not inject coderabbit-specific config into review.start drafts', async () => {
     createSessionActionDraftSpy.mockClear();
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
 
     const cmds = buildCommandPaletteCommands({
       sessionsById: {

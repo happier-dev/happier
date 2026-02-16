@@ -1,6 +1,7 @@
 import { AgentContentView } from '@/components/sessions/transcript/AgentContentView';
 import { AgentInput } from '@/components/sessions/agentInput';
 import type { AgentInputExtraActionChip, AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/AgentInput';
+import { buildSessionAgentInputActionChips } from '@/components/sessions/agentInput/actionChips/buildSessionAgentInputActionChips';
 import { getSuggestions } from '@/components/autocomplete/suggestions';
 import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView';
 import { SessionHeaderActionMenu } from '@/components/sessions/actions/SessionHeaderActionMenu';
@@ -296,6 +297,7 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
     const activeServerId = getActiveServerSnapshot().serverId;
     const capabilityServerId = activeServerId;
     const alwaysShowContextSize = useSetting('alwaysShowContextSize');
+    const actionsSettingsV1 = useSetting('actionsSettingsV1');
     const voice = useSetting('voice') as any;
     const voiceProviderId = voice?.providerId ?? 'off';
     const voiceSnap = useVoiceSessionSnapshot();
@@ -775,11 +777,10 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
     const shouldShowInput = inactiveUi.shouldShowInput;
     const reviewCommentDraftCount = reviewCommentDrafts.length;
     const extraActionChips: ReadonlyArray<AgentInputExtraActionChip> | undefined = React.useMemo(() => {
-        if (!reviewCommentsEnabled) return undefined;
-        if (reviewCommentDraftCount === 0) return undefined;
+        const chips: AgentInputExtraActionChip[] = [];
 
-        return [
-            {
+        if (reviewCommentsEnabled && reviewCommentDraftCount > 0) {
+            chips.push({
                 key: 'review-comments',
                 render: (ctx: AgentInputExtraActionChipRenderContext) => (
                     <Pressable
@@ -814,9 +815,18 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                         </View>
                     </Pressable>
                 ),
-            },
-        ];
-    }, [reviewCommentDraftCount, reviewCommentDrafts, reviewCommentsEnabled, sessionId]);
+            });
+        }
+
+        const defaultBackendId = (() => {
+            const raw = (session as any)?.metadata?.agent;
+            if (typeof raw === 'string' && raw.trim().length > 0) return raw;
+            return typeof agentId === 'string' && agentId.trim().length > 0 ? agentId : null;
+        })();
+        chips.push(...buildSessionAgentInputActionChips({ sessionId, defaultBackendId, instructionsText: message }));
+
+        return chips.length > 0 ? chips : undefined;
+    }, [actionsSettingsV1, agentId, message, reviewCommentDraftCount, reviewCommentDrafts, reviewCommentsEnabled, session, sessionId]);
 
     const input = shouldShowInput ? (
         <View>

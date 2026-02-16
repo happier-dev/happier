@@ -74,7 +74,7 @@ function buildActionSlashCommands(state: any): CommandItem[] {
     const out: CommandItem[] = [];
     for (const spec of listActionSpecs()) {
         if (spec.surfaces.ui_slash_command !== true) continue;
-        if (!isActionEnabledInState(state as any, spec.id)) continue;
+        if (!isActionEnabledInState(state as any, spec.id, { surface: 'ui_slash_command', placement: 'slash_command' } as any)) continue;
         const tokens = spec.slash?.tokens ?? [];
         for (const token of tokens) {
             if (typeof token !== 'string') continue;

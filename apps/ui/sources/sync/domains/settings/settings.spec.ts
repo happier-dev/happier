@@ -190,14 +190,23 @@ describe('settings', () => {
 
         it('defaults actions settings', () => {
             const parsed = settingsParse({} as any);
-            expect((parsed as any).actionsSettingsV1).toEqual({ v: 1, disabledActionIds: [] });
+            expect((parsed as any).actionsSettingsV1).toEqual({ v: 1, actions: {} });
         });
 
         it('keeps valid actions settings action ids when one entry is invalid', () => {
             const parsed = settingsParse({
-                actionsSettingsV1: { v: 1, disabledActionIds: ['review.start', 'unknown.action'] },
+                actionsSettingsV1: {
+                    v: 1,
+                    actions: {
+                        'review.start': { enabled: false },
+                        'unknown.action': { enabled: false },
+                    },
+                },
             } as any);
-            expect((parsed as any).actionsSettingsV1).toEqual({ v: 1, disabledActionIds: ['review.start'] });
+            expect((parsed as any).actionsSettingsV1).toEqual({
+                v: 1,
+                actions: { 'review.start': { enabled: false, enabledPlacements: [], disabledSurfaces: [], disabledPlacements: [] } },
+            });
         });
 
         it('defaults files diff syntax highlighting and editor settings', () => {

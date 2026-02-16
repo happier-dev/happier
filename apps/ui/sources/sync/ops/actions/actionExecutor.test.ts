@@ -15,6 +15,13 @@ describe('createActionExecutor', () => {
             executionRunAction: async () => ({}),
             sessionOpen: async () => ({}),
             sessionSpawnNew: async () => ({}),
+            sessionSpawnPicker: async () => ({}),
+            workspacesListRecent: async () => ({ items: [] }),
+            pathsListRecent: async () => ({ items: [] }),
+            machinesList: async () => ({ items: [] }),
+            serversList: async () => ({ items: [] }),
+            agentsBackendsList: async () => ({ items: [] }),
+            agentsModelsList: async () => ({ items: [] }),
             sessionSendMessage: async () => ({}),
             sessionPermissionRespond: async () => ({}),
             sessionTargetPrimarySet: async () => ({}),
@@ -23,10 +30,13 @@ describe('createActionExecutor', () => {
             sessionActivityGet: async () => ({}),
             sessionRecentMessagesGet: async () => ({}),
             resetGlobalVoiceAgent: async () => {},
-            isActionEnabled: (actionId: ActionId) => actionId !== 'review.start',
+            daemonMemorySearch: async () => ({ v: 1, ok: true, hits: [] }),
+            daemonMemoryGetWindow: async () => ({ v: 1, snippets: [], citations: [] }),
+            daemonMemoryEnsureUpToDate: async () => ({ ok: true }),
+            isActionEnabled: (actionId: ActionId, ctx: any) => !(actionId === 'review.start' && ctx?.surface === 'voice_tool'),
         });
 
-        const res = await executor.execute('review.start' as ActionId, {});
+        const res = await executor.execute('review.start' as ActionId, {}, { surface: 'voice_tool' } as any);
         expect(res.ok).toBe(false);
         if (!res.ok) {
             expect(res.errorCode).toBe('action_disabled');

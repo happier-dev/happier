@@ -19,7 +19,7 @@ describe('suggestionCommands', () => {
     it('omits disabled UI action-registry slash commands', async () => {
         storage.setState({
             sessions: { s1: { metadata: undefined } },
-            settings: { actionsSettingsV1: { v: 1, disabledActionIds: ['review.start'] } },
+            settings: { actionsSettingsV1: { v: 1, actions: { 'review.start': { disabledSurfaces: ['ui_slash_command'] } } } },
         } as any);
         const { getAllCommands } = await import('./suggestionCommands');
         const commands = getAllCommands('s1');

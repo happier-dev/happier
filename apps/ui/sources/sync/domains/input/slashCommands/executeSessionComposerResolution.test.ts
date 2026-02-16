@@ -30,7 +30,11 @@ describe('executeSessionComposerResolution', () => {
     });
 
     expect(handled).toBe(true);
-    expect(actionExecutor.execute).toHaveBeenCalledWith('ui.voice_global.reset', {}, { defaultSessionId: 's1' });
+    expect(actionExecutor.execute).toHaveBeenCalledWith('ui.voice_global.reset', {}, {
+      defaultSessionId: 's1',
+      surface: 'ui_slash_command',
+      placement: 'slash_command',
+    });
     expect(setMessage).toHaveBeenCalledWith('');
   });
 
@@ -128,7 +132,7 @@ describe('executeSessionComposerResolution', () => {
         changeType: 'committed',
         base: { kind: 'none' },
       }),
-      { defaultSessionId: 's1' },
+      { defaultSessionId: 's1', surface: 'ui_slash_command', placement: 'slash_command' },
     );
   });
 

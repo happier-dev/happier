@@ -116,7 +116,7 @@ describe('SessionActionDraftCard', () => {
     expect(executeSpy).toHaveBeenCalledWith(
       'plan.start',
       { sessionId: 's1', backendIds: ['claude'], instructions: 'Plan this.' },
-      { defaultSessionId: 's1' },
+      { defaultSessionId: 's1', surface: 'ui_button', placement: 'session_action_menu' },
     );
 
     // Should transition to running then succeeded.

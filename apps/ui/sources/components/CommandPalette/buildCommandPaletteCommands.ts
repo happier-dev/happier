@@ -4,6 +4,7 @@ import { listActionSpecs } from '@happier-dev/protocol';
 import type { Command } from './types';
 import { storage } from '@/sync/domains/state/storage';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
+import { buildActionDraftInput } from '@/sync/domains/actions/buildActionDraftInput';
 
 function normalizeId(value: unknown): string {
   return String(value ?? '').trim();
@@ -119,7 +120,10 @@ export function buildCommandPaletteCommands(params: Readonly<{
     });
   }
 
-  const actionSpecs = listActionSpecs().filter((spec) => isActionEnabledInState(storage.getState() as any, spec.id));
+  const state = storage.getState() as any;
+  const actionSpecs = listActionSpecs().filter((spec) =>
+    isActionEnabledInState(state as any, spec.id, { surface: 'ui_button', placement: 'command_palette' } as any),
+  );
   const commandPaletteActionSpecs = actionSpecs.filter((spec) => (spec.placements ?? []).includes('command_palette'));
   const byId = new Map(commandPaletteActionSpecs.map((spec) => [spec.id, spec]));
 
@@ -144,28 +148,16 @@ export function buildCommandPaletteCommands(params: Readonly<{
           if (!sessionId) return;
           const session = sessionsById?.[sessionId] ?? null;
           const agentId = normalizeId((session as any)?.metadata?.agent) || 'claude';
-          if (entry.intent === 'review') {
-            storage.getState().createSessionActionDraft(sessionId, {
-              actionId: 'review.start',
-              input: {
-                sessionId,
-                engineIds: [agentId],
-                instructions: '',
-                changeType: 'committed',
-                base: { kind: 'none' },
-              },
-            });
-          } else if (entry.intent === 'plan') {
-            storage.getState().createSessionActionDraft(sessionId, {
-              actionId: 'plan.start',
-              input: { sessionId, backendIds: [agentId], instructions: '' },
-            });
-          } else {
-            storage.getState().createSessionActionDraft(sessionId, {
-              actionId: 'delegate.start',
-              input: { sessionId, backendIds: [agentId], instructions: '' },
-            });
-          }
+
+          storage.getState().createSessionActionDraft(sessionId, {
+            actionId: entry.spec.id as any,
+            input: buildActionDraftInput({
+              actionId: entry.spec.id as any,
+              sessionId,
+              defaultBackendId: agentId,
+              instructions: '',
+            }),
+          });
           nav.navigateToSession(sessionId);
         },
       });

@@ -15,7 +15,7 @@ import {
     SCM_REMOTE_CONFIRM_POLICIES,
 } from '@/scm/settings/preferences';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
-import { ActionIdSchema } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
 import { VoiceSettingsSchema, voiceSettingsDefaults, voiceSettingsParse } from './voiceSettings';
 
 //
@@ -281,11 +281,6 @@ const ExecutionRunsGuidanceEntrySchema = z.object({
     exampleToolCalls: z.array(z.string()).optional(),
 });
 
-const ActionsSettingsV1SettingsSchema = z.object({
-    v: z.literal(1),
-    disabledActionIds: z.array(z.string()).default([]),
-}).passthrough();
-
 const SettingsSchemaBase = z.object({
     // Schema version for compatibility detection
     schemaVersion: z.number().default(SUPPORTED_SCHEMA_VERSION).describe('Settings schema version for compatibility checks'),
@@ -315,7 +310,7 @@ const SettingsSchemaBase = z.object({
     scmCommitMessageGeneratorBackendId: z.string().describe('Backend id used for one-shot LLM commit message generation'),
     scmCommitMessageGeneratorInstructions: z.string().describe('User instructions appended to SCM commit message generation prompts'),
     scmIncludeCoAuthoredBy: z.boolean().describe('Whether to include Co-Authored-By credits in generated commit messages'),
-    actionsSettingsV1: ActionsSettingsV1SettingsSchema.describe('Global actions enable/disable settings'),
+    actionsSettingsV1: ActionsSettingsV1Schema.describe('Global action settings (enablement + surface/placement overrides)'),
 
     // Files/diff rendering options (flat; used by CodeLines surfaces)
     filesDiffSyntaxHighlightingMode: z.enum(['off', 'simple', 'advanced']).describe('Diff/file syntax highlighting mode'),
@@ -464,7 +459,7 @@ export const settingsDefaults: Settings = {
     scmCommitMessageGeneratorBackendId: 'claude',
     scmCommitMessageGeneratorInstructions: '',
     scmIncludeCoAuthoredBy: false,
-    actionsSettingsV1: { v: 1, disabledActionIds: [] },
+    actionsSettingsV1: { v: 1, actions: {} },
 
     filesDiffSyntaxHighlightingMode: 'simple',
     filesChangedFilesRowDensity: 'comfortable',
@@ -624,24 +619,11 @@ export function settingsParse(settings: unknown): Settings {
             return;
         }
 
-        // Special-case actions settings: validate per action id, keep valid ones.
+        // Special-case actions settings: validate and filter unknown action ids.
         if (key === 'actionsSettingsV1') {
-            const parsedSettings = ActionsSettingsV1SettingsSchema.safeParse(input[key]);
+            const parsedSettings = ActionsSettingsV1Schema.safeParse(input[key]);
             if (parsedSettings.success) {
-                const rawIds = Array.isArray(parsedSettings.data.disabledActionIds)
-                    ? parsedSettings.data.disabledActionIds
-                    : [];
-                const out: string[] = [];
-                const seen = new Set<string>();
-                for (const rawId of rawIds) {
-                    const parsedId = ActionIdSchema.safeParse(rawId);
-                    if (!parsedId.success) continue;
-                    const id = parsedId.data;
-                    if (seen.has(id)) continue;
-                    seen.add(id);
-                    out.push(id);
-                }
-                result.actionsSettingsV1 = { v: 1, disabledActionIds: out };
+                result.actionsSettingsV1 = parsedSettings.data as any;
             }
             return;
         }
