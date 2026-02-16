@@ -173,10 +173,15 @@ describe('CodeLinesView (web)', () => {
         renderer.act(() => {
             tree2 = renderer.create(view);
         });
-        await flushReactAsyncWork();
-
-        const calls2 = rowSpy.mock.calls.map((c) => c[0]);
-        expect(calls2.some((p: any) => Array.isArray(p.advancedTokens) && p.advancedTokens.length > 0)).toBe(true);
+        let hasAdvanced2 = false;
+        for (let i = 0; i < 10; i++) {
+            // eslint-disable-next-line no-await-in-loop
+            await flushReactAsyncWork();
+            const calls2 = rowSpy.mock.calls.map((c) => c[0]);
+            hasAdvanced2 = calls2.some((p: any) => Array.isArray(p.advancedTokens) && p.advancedTokens.length > 0);
+            if (hasAdvanced2) break;
+        }
+        expect(hasAdvanced2).toBe(true);
         expect(createHighlighterSpy).toHaveBeenCalledTimes(2);
 
         expect(tree2.root.findAllByType('CodeLineRow' as any).length).toBe(1);

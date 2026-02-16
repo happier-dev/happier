@@ -1,5 +1,6 @@
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
+import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DaemonExecutionRunMarkerSchema, type DaemonExecutionRunMarker } from '@happier-dev/protocol';
@@ -17,7 +18,9 @@ function resolveExecutionRunMarkerPath(runId: string): string {
 }
 
 async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
-  const tmpPath = `${filePath}.tmp`;
+  // Use a unique temp path per write to avoid cross-call corruption when multiple writers
+  // update the same marker concurrently.
+  const tmpPath = `${filePath}.tmp.${process.pid}.${randomUUID()}`;
   try {
     await writeFile(tmpPath, JSON.stringify(value, null, 2), 'utf-8');
     try {

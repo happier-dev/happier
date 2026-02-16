@@ -117,10 +117,14 @@ describe('createOpenCodeBackend config file reading', () => {
   const originalPlatform = process.platform;
 
   afterEach(() => {
-    // Restore process env
-    process.env = { ...originalProcessEnv };
-    delete process.env.OPENCODE_CONFIG_CONTENT;
-    delete process.env.XDG_CONFIG_HOME;
+    // Restore process env without reassigning `process.env` (which breaks native lookups
+    // like `os.homedir()` reading from updated env vars within the same process).
+    for (const key of Object.keys(process.env)) {
+      if (!(key in originalProcessEnv)) delete process.env[key];
+    }
+    for (const [key, value] of Object.entries(originalProcessEnv)) {
+      process.env[key] = value;
+    }
 
     // Clean up temp dirs
     while (tempDirs.length > 0) {
@@ -132,6 +136,7 @@ describe('createOpenCodeBackend config file reading', () => {
   function makeTempConfigDir(): string {
     const dir = makeTempDir('happier-opencode-config-');
     tempDirs.push(dir);
+    process.env.HOME = dir;
     return dir;
   }
 
@@ -182,12 +187,6 @@ describe('createOpenCodeBackend config file reading', () => {
       const workDir = makeTempConfigDir();
       const config = { model: 'zai/glm-5', small_model: 'zai/glm-4.5-air' };
       writeConfigFile(workDir, config);
-
-      // Mock homedir to use our temp dir
-      vi.doMock('node:os', () => ({
-        homedir: () => workDir,
-        platform: () => 'linux',
-      }));
 
       const backend = createOpenCodeBackend({ cwd: workDir, env: {} }) as unknown as AcpBackendLike;
       expect(backend.options.env.OPENCODE_CONFIG_CONTENT).toBe(JSON.stringify(config));
