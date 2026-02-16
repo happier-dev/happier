@@ -67,6 +67,15 @@ import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useProfile } from '@/sync/store/hooks';
+import {
+    ConnectedServicesAuthModal,
+    CONNECTED_SERVICES_BINDINGS_KEY,
+    type ConnectedServicesProfileOption,
+    type ConnectedServicesServiceBinding,
+} from '@/components/sessions/new/components/ConnectedServicesAuthModal';
+import { resolveConnectedServiceDefaultProfileId, resolveConnectedServiceProfileLabel } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
+import { filterConnectedServiceV2ProfilesForAgent } from '@/sync/domains/connectedServices/filterConnectedServiceV2ProfilesForAgent';
 import { useNewSessionServerTargetState } from '@/components/sessions/new/hooks/serverTarget/useNewSessionServerTargetState';
 import { useNewSessionAgentTypeState } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentTypeState';
 import { useNewSessionMachinePathState } from '@/components/sessions/new/hooks/screenModel/useNewSessionMachinePathState';
@@ -1441,10 +1450,108 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         });
     }, [router, targetServerId]);
 
+    const accountProfile = useProfile();
     const agentOptionState = agentNewSessionOptionStateByAgentId[agentType] ?? null;
+    const connectedServicesFeatureEnabled = useFeatureEnabled('connected.services');
+    const agentCore = React.useMemo(() => getAgentCore(agentType), [agentType]);
+
+    const supportedConnectedServiceIds = React.useMemo(() => {
+        if (!connectedServicesFeatureEnabled) return [];
+        const ids = agentCore?.connectedServices?.supportedServiceIds;
+        return Array.isArray(ids) ? ids : [];
+    }, [agentCore, connectedServicesFeatureEnabled]);
+
+    const connectedServiceProfileOptionsByServiceId = React.useMemo(() => {
+        const out: Record<string, ConnectedServicesProfileOption[]> = {};
+        const rows = accountProfile?.connectedServicesV2 ?? [];
+        for (const entry of rows) {
+            const serviceId = entry.serviceId;
+            if (supportedConnectedServiceIds.length > 0 && !supportedConnectedServiceIds.includes(serviceId)) continue;
+            const rawProfiles = entry.profiles ?? [];
+            const profiles = filterConnectedServiceV2ProfilesForAgent({
+                agentCore,
+                serviceId,
+                profiles: rawProfiles,
+            });
+            out[serviceId] = profiles.map((p): ConnectedServicesProfileOption => {
+                const profileId = String(p.profileId ?? '').trim();
+                const label = profileId
+                    ? resolveConnectedServiceProfileLabel({
+                        labelsByKey: settings.connectedServicesProfileLabelByKey,
+                        serviceId,
+                        profileId,
+                    })
+                    : null;
+                return {
+                    profileId,
+                    status: p.status === 'connected' ? 'connected' : 'needs_reauth',
+                    providerEmail: p.providerEmail ?? null,
+                    label,
+                };
+            }).filter((p) => p.profileId.length > 0);
+        }
+        return out;
+    }, [accountProfile, agentCore, settings.connectedServicesProfileLabelByKey, supportedConnectedServiceIds]);
+
+    const connectedServicesBindingsByServiceId = React.useMemo(() => {
+        const raw = agentOptionState?.[CONNECTED_SERVICES_BINDINGS_KEY];
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+        return raw as Record<string, ConnectedServicesServiceBinding | undefined>;
+    }, [agentOptionState]);
+
+    const connectedServicesBindings = React.useMemo(() => {
+        if (supportedConnectedServiceIds.length === 0) return null;
+
+        const bindingsByServiceId: Record<string, { source: 'native' | 'connected'; profileId?: string }> = {};
+        let connectedCount = 0;
+        for (const serviceId of supportedConnectedServiceIds) {
+            const options = connectedServiceProfileOptionsByServiceId[serviceId] ?? [];
+            const connected = options.filter((o) => o.status === 'connected');
+            const binding = connectedServicesBindingsByServiceId[serviceId];
+            const mode = binding?.source === 'connected' ? 'connected' : 'native';
+
+            if (mode === 'connected') {
+                if (connected.length === 0) {
+                    bindingsByServiceId[serviceId] = { source: 'native' };
+                    continue;
+                }
+                const connectedProfileIds = connected.map((o) => o.profileId);
+                const explicit = (binding?.profileId ?? '').trim();
+                const selected = explicit && connectedProfileIds.includes(explicit)
+                    ? explicit
+                    : resolveConnectedServiceDefaultProfileId({
+                        serviceId,
+                        connectedProfileIds,
+                        defaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
+                    }) ?? connected[0]!.profileId;
+                if (!selected) {
+                    bindingsByServiceId[serviceId] = { source: 'native' };
+                    continue;
+                }
+                bindingsByServiceId[serviceId] = { source: 'connected', profileId: selected };
+                connectedCount += 1;
+                continue;
+            }
+
+            bindingsByServiceId[serviceId] = { source: 'native' };
+        }
+
+        return connectedCount > 0 ? { v: 1 as const, bindingsByServiceId } : null;
+    }, [
+        connectedServiceProfileOptionsByServiceId,
+        connectedServicesBindingsByServiceId,
+        settings.connectedServicesDefaultProfileByServiceId,
+        supportedConnectedServiceIds,
+    ]);
+
     const agentNewSessionOptions = React.useMemo(() => {
-        return buildNewSessionOptionsFromUiState({ agentId: agentType, agentOptionState });
-    }, [agentOptionState, agentType]);
+        const base = buildNewSessionOptionsFromUiState({ agentId: agentType, agentOptionState }) ?? {};
+        const merged: Record<string, unknown> = { ...base };
+        if (connectedServicesBindings) {
+            merged.connectedServices = connectedServicesBindings;
+        }
+        return Object.keys(merged).length > 0 ? merged : null;
+    }, [agentOptionState, agentType, connectedServicesBindings]);
 
     const { handleCreateSession } = useCreateNewSession({
         router,
@@ -1510,6 +1617,57 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             return { ...prev, [agentType]: nextForAgent };
         });
     }, [agentType]);
+
+    const openConnectedServicesAuthModal = React.useCallback(() => {
+        if (supportedConnectedServiceIds.length === 0) return;
+
+        Modal.show({
+            component: ConnectedServicesAuthModal,
+            props: {
+                supportedServiceIds: supportedConnectedServiceIds,
+                profileOptionsByServiceId: connectedServiceProfileOptionsByServiceId,
+                bindingsByServiceId: connectedServicesBindingsByServiceId,
+                setBindingForService: (serviceId: string, binding: ConnectedServicesServiceBinding) => {
+                    setAgentOptionStateForCurrentAgent(CONNECTED_SERVICES_BINDINGS_KEY, {
+                        ...connectedServicesBindingsByServiceId,
+                        [serviceId]: binding,
+                    });
+                },
+                defaultProfileIdByServiceId: settings.connectedServicesDefaultProfileByServiceId,
+                onOpenSettings: () => router.push('/(app)/settings/connected-services'),
+            },
+        });
+    }, [
+        connectedServiceProfileOptionsByServiceId,
+        connectedServicesBindingsByServiceId,
+        settings.connectedServicesDefaultProfileByServiceId,
+        router,
+        setAgentOptionStateForCurrentAgent,
+        supportedConnectedServiceIds,
+    ]);
+
+    const connectedServicesAuthChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
+        if (supportedConnectedServiceIds.length === 0) return null;
+        const connectedCount = supportedConnectedServiceIds.filter((serviceId) => connectedServicesBindingsByServiceId[serviceId]?.source === 'connected').length;
+        const label = connectedCount > 0 ? `Auth: ${connectedCount}` : 'Auth';
+        return {
+            key: 'new-session-connected-services-auth',
+            render: ({ chipStyle, iconColor, showLabel, textStyle }) => (
+                <Pressable
+                    onPress={openConnectedServicesAuthModal}
+                    hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
+                    style={(p) => chipStyle(p.pressed)}
+                >
+                    <Ionicons name="key-outline" size={16} color={iconColor} />
+                    {showLabel ? (
+                        <Text numberOfLines={1} style={textStyle}>
+                            {label}
+                        </Text>
+                    ) : null}
+                </Pressable>
+            ),
+        };
+    }, [connectedServicesBindingsByServiceId, openConnectedServicesAuthModal, supportedConnectedServiceIds]);
 
     const serverPickerActionChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
         if (!showServerPickerChip) return null;
@@ -1603,6 +1761,9 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             setAgentOptionState: setAgentOptionStateForCurrentAgent,
         }) ?? [];
         const chips: AgentInputExtraActionChip[] = [];
+        if (connectedServicesAuthChip) {
+            chips.push(connectedServicesAuthChip);
+        }
         if (shouldShowAutomationActionChips({ automationsEnabled: automationFeatureEnabled })) {
             chips.push(automationActionChip);
         }
@@ -1613,6 +1774,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         agentType,
         automationFeatureEnabled,
         automationActionChip,
+        connectedServicesAuthChip,
         serverPickerActionChip,
         setAgentOptionStateForCurrentAgent,
     ]);

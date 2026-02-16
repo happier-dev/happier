@@ -43,6 +43,7 @@ export const SettingsView = React.memo(function SettingsView() {
     const isPro = __DEV__ || voiceEntitlement;
     const usageReportingEnabled = useFeatureEnabled('usage.reporting');
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
+    const connectedServicesEnabled = useFeatureEnabled('connected.services');
     const useProfiles = useSetting('useProfiles');
     const terminalUseTmux = useSetting('sessionUseTmux');
     const automationsSupport = useAutomationsSupport();
@@ -414,6 +415,14 @@ export const SettingsView = React.memo(function SettingsView() {
                     icon={<Ionicons name="sparkles-outline" size={29} color="#FF9500" />}
                     onPress={() => router.push('/(app)/settings/providers')}
                 />
+                {connectedServicesEnabled ? (
+                    <Item
+                        title={'Connected services'}
+                        subtitle={'Claude/Codex subscriptions and OAuth profiles'}
+                        icon={<Ionicons name="key-outline" size={29} color="#007AFF" />}
+                        onPress={() => router.push('/(app)/settings/connected-services')}
+                    />
+                ) : null}
                 {useProfiles && (
                     <Item
                         title={t('settings.profiles')}
