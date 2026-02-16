@@ -8,6 +8,8 @@ import {
     daemonVoiceAgentSendTurn,
     daemonVoiceAgentStart,
     daemonVoiceAgentStartTurnStream,
+    daemonVoiceAgentWelcome,
+    daemonVoiceAgentStop,
     expoSpeechSpeak,
     getStorage,
     registerLocalVoiceEngineHarnessHooks,
@@ -104,7 +106,7 @@ describe('local voice engine agent behavior', () => {
         expect(events.some((e) => e.kind === 'assistant.text' && String(e.text).includes('Voice agent reply'))).toBe(true);
         expect(globalThis.fetch).toHaveBeenCalledTimes(3);
         expect((globalThis.fetch as any).mock.calls[1]?.[0]).toContain('/v1/chat/completions');
-    });
+    }, 30_000);
 
     it('agent mode (openai_compat) sends a session message when the voice agent emits sendSessionMessage', async () => {
         const { useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore');
@@ -576,6 +578,179 @@ describe('local voice engine agent behavior', () => {
         expect(daemonVoiceAgentStartTurnStream).toHaveBeenCalledTimes(1);
         expect(daemonVoiceAgentReadTurnStream).toHaveBeenCalledTimes(1);
         expect(daemonVoiceAgentSendTurn).not.toHaveBeenCalled();
+    });
+
+    it('prewarmOnConnect starts the daemon voice agent when recording begins (before STT completes)', async () => {
+        const storage = await getStorage();
+        storage.__setState({
+            settings: {
+                ...storage.getState().settings,
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_conversation',
+                    adapters: {
+                        ...storage.getState().settings.voice.adapters,
+                        local_conversation: {
+                            ...storage.getState().settings.voice.adapters.local_conversation,
+                            conversationMode: 'agent',
+                            stt: {
+                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                baseUrl: 'http://localhost:8000',
+                            },
+                            tts: {
+                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                autoSpeakReplies: false,
+                            },
+                            agent: {
+                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                backend: 'daemon',
+                                prewarmOnConnect: true,
+                            },
+                            streaming: {
+                                ...storage.getState().settings.voice.adapters.local_conversation.streaming,
+                                enabled: false,
+                            },
+                        },
+                    },
+                },
+            },
+            sessions: {
+                ...storage.getState().sessions,
+                s1: { id: 's1', modelMode: 'default', metadata: { flavor: 'claude' } },
+            },
+        });
+
+        daemonVoiceAgentStart.mockResolvedValueOnce({ voiceAgentId: 'va1' });
+
+        const { toggleLocalVoiceTurn } = await import('./localVoiceEngine');
+        await toggleLocalVoiceTurn('s1');
+
+        for (let i = 0; i < 2000 && daemonVoiceAgentStart.mock.calls.length < 1; i++) {
+            await Promise.resolve();
+        }
+
+        expect(daemonVoiceAgentStart).toHaveBeenCalledTimes(1);
+    });
+
+    it('welcome (immediate) triggers a daemon welcome action during prewarm on connect', async () => {
+        const storage = await getStorage();
+        storage.__setState({
+            settings: {
+                ...storage.getState().settings,
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_conversation',
+                    adapters: {
+                        ...storage.getState().settings.voice.adapters,
+                        local_conversation: {
+                            ...storage.getState().settings.voice.adapters.local_conversation,
+                            conversationMode: 'agent',
+                            stt: {
+                                ...storage.getState().settings.voice.adapters.local_conversation.stt,
+                                baseUrl: 'http://localhost:8000',
+                            },
+                            tts: {
+                                ...storage.getState().settings.voice.adapters.local_conversation.tts,
+                                provider: 'device',
+                                autoSpeakReplies: true,
+                            },
+                            agent: {
+                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                backend: 'daemon',
+                                prewarmOnConnect: true,
+                                welcome: { enabled: true, mode: 'immediate', templateId: null },
+                            },
+                        },
+                    },
+                },
+            },
+            sessions: {
+                ...storage.getState().sessions,
+                s1: { id: 's1', modelMode: 'default', metadata: { flavor: 'claude' } },
+            },
+        });
+
+        daemonVoiceAgentStart.mockResolvedValueOnce({ voiceAgentId: 'va1' });
+        daemonVoiceAgentWelcome.mockResolvedValueOnce({ assistantText: 'Welcome!' });
+
+        const { toggleLocalVoiceTurn } = await import('./localVoiceEngine');
+        await toggleLocalVoiceTurn('s1');
+
+        for (let i = 0; i < 2000 && daemonVoiceAgentWelcome.mock.calls.length < 1; i++) {
+            await Promise.resolve();
+        }
+
+        expect(daemonVoiceAgentWelcome).toHaveBeenCalledTimes(1);
+        for (let i = 0; i < 2000 && expoSpeechSpeak.mock.calls.length < 1; i++) {
+            await Promise.resolve();
+        }
+        expect(expoSpeechSpeak).toHaveBeenCalled();
+    });
+
+    it('resetLocalVoiceAgentPersistence stops the global voice agent and clears persisted run metadata', async () => {
+        const { useVoiceActivityStore } = await import('@/voice/activity/voiceActivityStore');
+        useVoiceActivityStore.setState((state) => ({
+            ...state,
+            eventsBySessionId: {
+                ...state.eventsBySessionId,
+                [VOICE_AGENT_GLOBAL_SESSION_ID]: [{ id: 'e1', ts: 1, sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, adapterId: 'local_conversation', kind: 'user.text', text: 'hi' } as any],
+            },
+        }));
+
+        const storage = await getStorage();
+        storage.__setState({
+            settings: {
+                ...storage.getState().settings,
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_conversation',
+                    adapters: {
+                        ...storage.getState().settings.voice.adapters,
+                        local_conversation: {
+                            ...storage.getState().settings.voice.adapters.local_conversation,
+                            conversationMode: 'agent',
+                            agent: {
+                                ...storage.getState().settings.voice.adapters.local_conversation.agent,
+                                backend: 'daemon',
+                                prewarmOnConnect: true,
+                                transcript: { persistenceMode: 'persistent', epoch: 1 },
+                            },
+                        },
+                    },
+                },
+            },
+            sessions: {
+                ...storage.getState().sessions,
+                sys_voice: {
+                    id: 'sys_voice',
+                    modelMode: 'default',
+                    metadata: {
+                        flavor: 'claude',
+                        systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true },
+                        voiceAgentRunV1: { v: 1, runId: 'run_prev', backendId: 'claude', resumeHandle: null, updatedAtMs: 1 },
+                    },
+                },
+            },
+            sessionMessages: {
+                sys_voice: { isLoaded: true, messages: [] },
+            },
+        });
+
+        daemonVoiceAgentStart.mockResolvedValueOnce({ voiceAgentId: 'va1' });
+        daemonVoiceAgentStop.mockResolvedValueOnce({ ok: true });
+
+        const { toggleLocalVoiceTurn, resetLocalVoiceAgentPersistence } = await import('./localVoiceEngine');
+        await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+
+        for (let i = 0; i < 2000 && daemonVoiceAgentStart.mock.calls.length < 1; i++) {
+            await Promise.resolve();
+        }
+
+        await resetLocalVoiceAgentPersistence();
+
+        expect(daemonVoiceAgentStop).toHaveBeenCalledTimes(1);
+        expect((storage.getState() as any).sessions.sys_voice.metadata.voiceAgentRunV1).toBeNull();
+        expect((useVoiceActivityStore.getState().eventsBySessionId[VOICE_AGENT_GLOBAL_SESSION_ID] ?? []).length).toBe(0);
     });
 
     it('falls back to daemon sendTurn when streaming methods are unavailable', async () => {

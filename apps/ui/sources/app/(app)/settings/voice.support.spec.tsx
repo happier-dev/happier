@@ -7,10 +7,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const setVoiceProviderId = vi.fn();
 const setVoice = vi.fn();
 const decryptSecretValue = vi.fn<(value: unknown) => string | null>(() => null);
+const resetGlobalVoiceAgentPersistenceSpy = vi.fn(async () => {});
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { colors: {} } }),
-}));
+vi.mock('react-native-unistyles', () => {
+    const theme = { colors: {} };
+    return {
+        useUnistyles: () => ({ theme }),
+        StyleSheet: {
+            create: (factory: any) => (typeof factory === 'function' ? {} : factory),
+            absoluteFillObject: {},
+        },
+    };
+});
 
 vi.mock('expo-router', () => ({
     useRouter: () => ({ push: vi.fn() }),
@@ -30,6 +38,10 @@ vi.mock('@/modal', () => ({
         confirm: vi.fn(),
         alert: vi.fn(),
     },
+}));
+
+vi.mock('@/voice/agent/resetGlobalVoiceAgentPersistence', () => ({
+    resetGlobalVoiceAgentPersistence: () => resetGlobalVoiceAgentPersistenceSpy(),
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -109,7 +121,7 @@ const voiceState: any = {
             assistantLanguage: null,
             billingMode: 'happier',
             tts: {
-                voiceId: 'MClEFoImJXBTgLwdLI5n',
+                voiceId: 'EST9Ui6982FZPSi7gCHi',
                 modelId: null,
                 voiceSettings: {
                     stability: null,
@@ -384,6 +396,147 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         await pressByTitle('settingsVoice.local.mediatorVerbosity');
 
         expect((Modal as any).confirm).not.toHaveBeenCalled();
+    });
+
+    it('disables provider resume when the selected fixed agent does not support vendor resume', async () => {
+        voiceState.providerId = 'local_conversation';
+        voiceState.adapters.local_conversation.conversationMode = 'agent';
+        voiceState.adapters.local_conversation.agent.agentSource = 'agent';
+        voiceState.adapters.local_conversation.agent.agentId = 'unknown-agent';
+        voiceState.adapters.local_conversation.agent.transcript = { persistenceMode: 'persistent', epoch: 1 };
+
+        const VoiceSettingsScreen = (await import('./voice')).default;
+
+        let tree!: ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(React.createElement(VoiceSettingsScreen));
+        });
+        await act(async () => {});
+
+        const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
+        const resumabilityDropdown = dropdowns.find((d: any) => Array.isArray(d.props?.items) && d.props.items.some((i: any) => i?.id === 'provider_resume'));
+        expect(resumabilityDropdown).toBeTruthy();
+
+        const providerResumeItem = resumabilityDropdown!.props.items.find((i: any) => i?.id === 'provider_resume');
+        expect(providerResumeItem?.disabled).toBe(true);
+    });
+
+    it('can toggle voice agent commit isolation', async () => {
+        voiceState.providerId = 'local_conversation';
+        voiceState.adapters.local_conversation.conversationMode = 'agent';
+        voiceState.adapters.local_conversation.agent.backend = 'daemon';
+        voiceState.adapters.local_conversation.agent.commitIsolation = false;
+
+        const VoiceSettingsScreen = (await import('./voice')).default;
+
+        let tree!: ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(React.createElement(VoiceSettingsScreen));
+        });
+        await act(async () => {});
+
+        const commitIsolationItem = tree.root
+            .findAll((n) => n.props?.title === 'Commit isolation')
+            .find((n) => typeof n.props?.onPress === 'function');
+        expect(commitIsolationItem).toBeTruthy();
+
+        await act(async () => {
+            commitIsolationItem!.props.onPress?.();
+        });
+        await act(async () => {});
+
+        expect(setVoice).toHaveBeenCalledWith(
+            expect.objectContaining({
+                adapters: expect.objectContaining({
+                    local_conversation: expect.objectContaining({
+                        agent: expect.objectContaining({
+                            commitIsolation: true,
+                        }),
+                    }),
+                }),
+            }),
+        );
+    });
+
+    it('can reset persistent local voice agent state and bumps the transcript epoch', async () => {
+        const { Modal } = await import('@/modal');
+
+        voiceState.providerId = 'local_conversation';
+        voiceState.adapters.local_conversation.conversationMode = 'agent';
+        voiceState.adapters.local_conversation.agent.transcript = { persistenceMode: 'persistent', epoch: 1 };
+
+        resetGlobalVoiceAgentPersistenceSpy.mockClear();
+        (Modal as any).confirm.mockResolvedValueOnce(true);
+
+        const VoiceSettingsScreen = (await import('./voice')).default;
+
+        let tree!: ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(React.createElement(VoiceSettingsScreen));
+        });
+        await act(async () => {});
+
+        const resetItem = tree.root
+            .findAll((n) => n.props?.title === 'Reset voice agent')
+            .find((n) => typeof n.props?.onPress === 'function');
+        expect(resetItem).toBeTruthy();
+
+        await act(async () => {
+            resetItem!.props.onPress?.();
+        });
+        await act(async () => {});
+
+        expect(resetGlobalVoiceAgentPersistenceSpy).toHaveBeenCalledTimes(1);
+        expect(setVoice).toHaveBeenCalledWith(
+            expect.objectContaining({
+                adapters: expect.objectContaining({
+                    local_conversation: expect.objectContaining({
+                        agent: expect.objectContaining({
+                            transcript: expect.objectContaining({ epoch: 2 }),
+                        }),
+                    }),
+                }),
+            }),
+        );
+        (Modal as any).confirm.mockClear();
+    });
+
+    it('clamps voice agent idle TTL to 6 hours', async () => {
+        const { Modal } = await import('@/modal');
+
+        voiceState.providerId = 'local_conversation';
+        voiceState.adapters.local_conversation.conversationMode = 'agent';
+
+        (Modal as any).prompt.mockResolvedValueOnce('999999');
+
+        const VoiceSettingsScreen = (await import('./voice')).default;
+
+        let tree!: ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(React.createElement(VoiceSettingsScreen));
+        });
+        await act(async () => {});
+
+        const idleTtlItem = tree.root
+            .findAll((n) => n.props?.title === 'settingsVoice.local.mediatorIdleTtl')
+            .find((n) => typeof n.props?.onPress === 'function');
+        expect(idleTtlItem).toBeTruthy();
+
+        await act(async () => {
+            idleTtlItem!.props.onPress?.();
+        });
+        await act(async () => {});
+
+        expect(setVoice).toHaveBeenCalledWith(
+            expect.objectContaining({
+                adapters: expect.objectContaining({
+                    local_conversation: expect.objectContaining({
+                        agent: expect.objectContaining({ idleTtlSeconds: 21600 }),
+                    }),
+                }),
+            }),
+        );
+        (Modal as any).prompt.mockClear();
     });
 
     it('does not use confirm modals for local TTS format selection', async () => {

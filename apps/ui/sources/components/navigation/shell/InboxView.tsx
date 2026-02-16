@@ -18,7 +18,6 @@ import { Header } from '@/components/navigation/Header';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { FeedItemCard } from '@/components/inbox/cards/FeedItemCard';
-import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { RequireFriendsIdentityForFriends } from '@/components/friends/RequireFriendsIdentityForFriends';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
 
@@ -148,7 +147,6 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                             headerShadowVisible={false}
                             headerTransparent={true}
                         />
-                        <VoiceSurface variant="sidebar" />
                     </View>
                 )}
                 <RequireFriendsIdentityForFriends>
@@ -170,7 +168,6 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                             headerShadowVisible={false}
                             headerTransparent={true}
                         />
-                        <VoiceSurface variant="sidebar" />
                     </View>
                 )}
                 <RecoveryKeyReminderBanner />
@@ -194,7 +191,6 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                             headerShadowVisible={false}
                             headerTransparent={true}
                         />
-                        <VoiceSurface variant="sidebar" />
                     </View>
                 )}
                 <RecoveryKeyReminderBanner />
@@ -224,7 +220,6 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                         headerShadowVisible={false}
                         headerTransparent={true}
                     />
-                    <VoiceSurface variant="sidebar" />
                 </View>
             )}
             <ScrollView contentContainerStyle={{

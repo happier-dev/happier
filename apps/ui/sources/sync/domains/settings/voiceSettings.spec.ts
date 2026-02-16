@@ -12,6 +12,7 @@ describe('voiceSettings', () => {
   it('defaults include opt-out privacy settings', () => {
     expect((voiceSettingsDefaults as any).privacy?.shareToolNames).toBe(true);
     expect((voiceSettingsDefaults as any).privacy?.sharePermissionRequests).toBe(true);
+    expect((voiceSettingsDefaults as any).privacy?.shareDeviceInventory).toBe(true);
     expect((voiceSettingsDefaults as any).privacy?.shareFilePaths).toBe(false);
     expect((voiceSettingsDefaults as any).privacy?.shareToolArgs).toBe(false);
   });
@@ -35,7 +36,9 @@ describe('voiceSettings', () => {
 
   it('defaults include ElevenLabs TTS voice selection', () => {
     expect((voiceSettingsDefaults as any).adapters?.realtime_elevenlabs?.tts?.voiceId).toBeTypeOf('string');
-    expect(String((voiceSettingsDefaults as any).adapters?.realtime_elevenlabs?.tts?.voiceId)).toBe('MClEFoImJXBTgLwdLI5n');
+    expect(String((voiceSettingsDefaults as any).adapters?.realtime_elevenlabs?.tts?.voiceId)).toBe('EST9Ui6982FZPSi7gCHi');
+    expect((voiceSettingsDefaults as any).adapters?.realtime_elevenlabs?.welcome?.enabled).toBe(false);
+    expect((voiceSettingsDefaults as any).adapters?.realtime_elevenlabs?.welcome?.mode).toBe('immediate');
   });
 
   it('defaults include local voice agent transcript persistence settings', () => {

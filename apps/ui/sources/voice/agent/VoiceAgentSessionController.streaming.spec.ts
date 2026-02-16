@@ -1,14 +1,15 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const start = vi.fn(async () => ({ voiceAgentId: 'm1' }));
-const startTurnStream = vi.fn(async () => ({ streamId: 'stream-1' }));
+const startTurnStream = vi.fn(async (_args: unknown) => ({ streamId: 'stream-1' }));
 const readTurnStream = vi.fn();
 const cancelTurnStream = vi.fn(async () => ({ ok: true }));
 const sendTurn = vi.fn(async () => ({ assistantText: 'fallback', actions: [] }));
+const welcome = vi.fn(async () => ({ assistantText: 'Welcome!' }));
 const commit = vi.fn(async () => ({ commitText: 'commit' }));
 const stop = vi.fn(async () => ({ ok: true }));
 
@@ -19,6 +20,7 @@ vi.mock('@/voice/agent/daemonVoiceAgentClient', () => ({
     readTurnStream = readTurnStream;
     cancelTurnStream = cancelTurnStream;
     sendTurn = sendTurn;
+    welcome = welcome;
     commit = commit;
     stop = stop;
   },
@@ -69,8 +71,13 @@ vi.mock('@/sync/domains/state/storage', () => ({
 }));
 
 describe('VoiceAgentSessionController (streaming)', () => {
+  let createVoiceAgentSessionController: () => any;
+
+  beforeAll(async () => {
+    ({ createVoiceAgentSessionController } = await import('./VoiceAgentSessionController'));
+  }, 60_000);
+
   beforeEach(() => {
-    vi.resetModules();
     getState.mockReset();
 	    getState.mockImplementation(() => ({
 	      settings: {
@@ -108,6 +115,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
     }));
     cancelTurnStream.mockClear();
     sendTurn.mockClear();
+    welcome.mockClear();
     commit.mockClear();
     stop.mockClear();
   });
@@ -117,7 +125,6 @@ describe('VoiceAgentSessionController (streaming)', () => {
   });
 
   it('uses configured maxEvents when reading the streamed turn', async () => {
-    const { createVoiceAgentSessionController } = await import('./VoiceAgentSessionController');
     const controller = createVoiceAgentSessionController();
 
     await controller.sendTurn('s1', 'hello');
@@ -129,6 +136,175 @@ describe('VoiceAgentSessionController (streaming)', () => {
     );
   });
 
+  it('injects a one-time welcome instruction into the first user turn when welcome is enabled (on_first_turn)', async () => {
+    getState.mockImplementation(() => ({
+      settings: {
+        voice: {
+          providerId: 'local_conversation',
+          adapters: {
+            local_conversation: {
+              streaming: {
+                enabled: true,
+                turnReadPollIntervalMs: 50,
+                turnReadMaxEvents: 7,
+                turnStreamTimeoutMs: 1200,
+              },
+              agent: {
+                backend: 'daemon',
+                welcome: { enabled: true, mode: 'on_first_turn', templateId: null },
+                transcript: { persistenceMode: 'ephemeral', epoch: 0 },
+              },
+              networkTimeoutMs: 15_000,
+            },
+          },
+        },
+      },
+      sessions: {
+        sys_voice: { id: 'sys_voice', modelMode: 'default', metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } } },
+        s1: { id: 's1', modelMode: 'default', metadata: { flavor: 'claude' } },
+      },
+      sessionMessages: {},
+    }));
+
+    const controller = createVoiceAgentSessionController();
+    await controller.sendTurn('s1', 'hello');
+
+    expect(startTurnStream).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userText: expect.stringContaining('greeting'),
+      }),
+    );
+  });
+
+  it('can emit an immediate welcome via ensureRunningAndMaybeWelcome, and does not inject a greeting into the next user turn', async () => {
+    getState.mockImplementation(() => ({
+      settings: {
+        voice: {
+          providerId: 'local_conversation',
+          adapters: {
+            local_conversation: {
+              streaming: {
+                enabled: true,
+                turnReadPollIntervalMs: 50,
+                turnReadMaxEvents: 7,
+                turnStreamTimeoutMs: 1200,
+              },
+              agent: {
+                backend: 'daemon',
+                welcome: { enabled: true, mode: 'immediate', templateId: null },
+                transcript: { persistenceMode: 'ephemeral', epoch: 0 },
+              },
+              networkTimeoutMs: 15_000,
+            },
+          },
+        },
+      },
+      sessions: {
+        sys_voice: {
+          id: 'sys_voice',
+          modelMode: 'default',
+          metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } },
+        },
+        s1: { id: 's1', modelMode: 'default', metadata: { flavor: 'claude' } },
+      },
+      sessionMessages: {},
+    }));
+
+    const controller = createVoiceAgentSessionController();
+    const welcomed = await controller.ensureRunningAndMaybeWelcome('s1');
+    expect(welcomed).toBe('Welcome!');
+    expect(welcome).toHaveBeenCalledTimes(1);
+
+    await controller.sendTurn('s1', 'hello');
+    const payload = (startTurnStream.mock.calls[0]?.[0] as any)?.userText ?? '';
+    expect(String(payload)).not.toContain('greeting');
+  });
+
+  it('does not use ready_handshake bootstrap when immediate welcome is enabled (welcome acts as the bootstrap prompt)', async () => {
+    getState.mockImplementation(() => ({
+      settings: {
+        voice: {
+          providerId: 'local_conversation',
+          adapters: {
+            local_conversation: {
+              streaming: {
+                enabled: true,
+                turnReadPollIntervalMs: 50,
+                turnReadMaxEvents: 7,
+                turnStreamTimeoutMs: 1200,
+              },
+              tts: { autoSpeakReplies: true },
+              agent: {
+                backend: 'daemon',
+                prewarmOnConnect: true,
+                welcome: { enabled: true, mode: 'immediate', templateId: null },
+                transcript: { persistenceMode: 'ephemeral', epoch: 0 },
+              },
+              networkTimeoutMs: 15_000,
+            },
+          },
+        },
+      },
+      sessions: {
+        sys_voice: {
+          id: 'sys_voice',
+          modelMode: 'default',
+          metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } },
+        },
+        s1: { id: 's1', modelMode: 'default', metadata: { flavor: 'claude' } },
+      },
+      sessionMessages: {},
+    }));
+
+    const controller = createVoiceAgentSessionController();
+    await controller.ensureRunningAndMaybeWelcome('s1');
+
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ bootstrapMode: 'none' }));
+    expect(welcome).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses ready_handshake bootstrap when prewarm is enabled but auto-speak is disabled (even if welcome immediate is enabled)', async () => {
+    getState.mockImplementation(() => ({
+      settings: {
+        voice: {
+          providerId: 'local_conversation',
+          adapters: {
+            local_conversation: {
+              streaming: {
+                enabled: true,
+                turnReadPollIntervalMs: 50,
+                turnReadMaxEvents: 7,
+                turnStreamTimeoutMs: 1200,
+              },
+              tts: { autoSpeakReplies: false },
+              agent: {
+                backend: 'daemon',
+                prewarmOnConnect: true,
+                welcome: { enabled: true, mode: 'immediate', templateId: null },
+                transcript: { persistenceMode: 'ephemeral', epoch: 0 },
+              },
+              networkTimeoutMs: 15_000,
+            },
+          },
+        },
+      },
+      sessions: {
+        sys_voice: {
+          id: 'sys_voice',
+          modelMode: 'default',
+          metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } },
+        },
+        s1: { id: 's1', modelMode: 'default', metadata: { flavor: 'claude' } },
+      },
+      sessionMessages: {},
+    }));
+
+    const controller = createVoiceAgentSessionController();
+    await controller.ensureRunning('s1');
+
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ bootstrapMode: 'ready_handshake' }));
+  });
+
   it('times out using configured turnStreamTimeoutMs (not a hard-coded poll count)', async () => {
     vi.useFakeTimers();
     readTurnStream.mockImplementation(async () => ({
@@ -138,20 +314,19 @@ describe('VoiceAgentSessionController (streaming)', () => {
       done: false,
     }));
 
-    const { createVoiceAgentSessionController } = await import('./VoiceAgentSessionController');
     const controller = createVoiceAgentSessionController();
 
     let settled = false;
     let rejectedError: unknown = null;
-    controller.sendTurn('s1', 'hello').then(
-      () => {
-        settled = true;
-      },
-      (err) => {
-        settled = true;
-        rejectedError = err;
-      },
-    );
+	    controller.sendTurn('s1', 'hello').then(
+	      () => {
+	        settled = true;
+	      },
+	      (err: unknown) => {
+	        settled = true;
+	        rejectedError = err;
+	      },
+	    );
 
     // Advance past the configured 1200ms timeout.
     await vi.advanceTimersByTimeAsync(2000);
@@ -194,7 +369,6 @@ describe('VoiceAgentSessionController (streaming)', () => {
 		      sessionMessages: {},
 		    }));
 
-    const { createVoiceAgentSessionController } = await import('./VoiceAgentSessionController');
     const controller = createVoiceAgentSessionController();
 
     await expect(controller.sendTurn('s1', 'hello')).resolves.toMatchObject({ assistantText: 'ok' });
@@ -210,7 +384,6 @@ describe('VoiceAgentSessionController (streaming)', () => {
     // Global agent has no real session encryption key; it must borrow a real session id for daemon RPC.
     useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
 
-    const { createVoiceAgentSessionController } = await import('./VoiceAgentSessionController');
     const controller = createVoiceAgentSessionController();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
@@ -285,7 +458,6 @@ describe('VoiceAgentSessionController (streaming)', () => {
       },
     }));
 
-    const { createVoiceAgentSessionController } = await import('./VoiceAgentSessionController');
     const controller = createVoiceAgentSessionController();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
@@ -303,5 +475,45 @@ describe('VoiceAgentSessionController (streaming)', () => {
         initialContext: expect.stringContaining('ASSIST'),
       }),
     );
+  });
+
+  it('passes resume=true to stream_start when provider-resume is enabled for a persistent global agent', async () => {
+    useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
+
+    getState.mockImplementation(() => ({
+      settings: {
+        voice: {
+          providerId: 'local_conversation',
+          adapters: {
+            local_conversation: {
+              streaming: {
+                enabled: true,
+                turnReadPollIntervalMs: 50,
+                turnReadMaxEvents: 7,
+                turnStreamTimeoutMs: 1200,
+              },
+              agent: {
+                backend: 'daemon',
+                resumabilityMode: 'provider_resume',
+                providerResume: { fallbackToReplay: false },
+                transcript: { persistenceMode: 'persistent', epoch: 0 },
+              },
+              networkTimeoutMs: 15_000,
+            },
+          },
+        },
+      },
+      sessions: {
+        sys_voice: { id: 'sys_voice', modelMode: 'default', metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } } },
+        s1: { id: 's1', modelMode: 'default', metadata: { flavor: 'claude' } },
+      },
+      sessionMessages: {},
+    }));
+
+    const controller = createVoiceAgentSessionController();
+
+    await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
+
+    expect(startTurnStream).toHaveBeenCalledWith(expect.objectContaining({ resume: true }));
   });
 });

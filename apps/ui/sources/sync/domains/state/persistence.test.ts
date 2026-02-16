@@ -206,6 +206,32 @@ describe('persistence', () => {
             expect(loadPendingSettings()).toEqual({});
         });
 
+        it('salvages voice pending delta even when nested fields are invalid (preserves BYO apiKey)', () => {
+            store.set('pending-settings', JSON.stringify({
+                voice: {
+                    providerId: 'realtime_elevenlabs',
+                    // Invalid nested type that would fail strict VoiceSettingsSchema parsing.
+                    privacy: { recentMessagesCount: 'nope' },
+                    adapters: {
+                        realtime_elevenlabs: {
+                            billingMode: 'byo',
+                            byo: {
+                                agentId: 'agent_1',
+                                apiKey: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'abc' } },
+                            },
+                        },
+                    },
+                },
+            }));
+
+            const pending = loadPendingSettings() as any;
+            expect(Object.keys(pending).sort()).toEqual(['voice']);
+            expect(pending.voice?.adapters?.realtime_elevenlabs?.byo?.agentId).toBe('agent_1');
+            expect(pending.voice?.adapters?.realtime_elevenlabs?.byo?.apiKey).toEqual(
+                { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'abc' } },
+            );
+        });
+
         it('keeps valid secrets delta and does not inject other defaults', () => {
             store.set('pending-settings', JSON.stringify({
                 secrets: [{

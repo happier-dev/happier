@@ -19,6 +19,9 @@ const VoicePrivacySchema = z.object({
   recentMessagesCount: z.number().int().min(0).max(50).default(3),
   shareToolNames: z.boolean().default(true),
   sharePermissionRequests: z.boolean().default(true),
+  // Allow voice tools to list non-sensitive device inventory (recent workspaces, machines, servers).
+  // When disabled, inventory/discovery voice tools should fail closed.
+  shareDeviceInventory: z.boolean().default(true),
   // Privacy hardening: do not share file paths or tool arguments with voice providers by default.
   shareFilePaths: z.boolean().default(false),
   shareToolArgs: z.boolean().default(false),
@@ -43,6 +46,13 @@ const VoiceUiSchema = z.object({
 const VoiceRealtimeElevenLabsSchema = z.object({
   assistantLanguage: z.string().nullable().default(null),
   billingMode: z.enum(['happier', 'byo']).default('happier'),
+  welcome: z
+    .object({
+      enabled: z.boolean().default(false),
+      mode: z.enum(['immediate', 'on_first_turn']).default('immediate'),
+      templateId: z.string().nullable().default(null),
+    })
+    .default({ enabled: false, mode: 'immediate', templateId: null }),
   tts: z
     .object({
       voiceId: z.string().default(DEFAULT_ELEVENLABS_VOICE_ID),
@@ -264,10 +274,12 @@ export function voiceSettingsParse(input: unknown): VoiceSettings {
     if (s4.success) base.privacy.shareToolNames = s4.data;
     const s5 = parseBool('sharePermissionRequests');
     if (s5.success) base.privacy.sharePermissionRequests = s5.data;
-    const s6 = parseBool('shareFilePaths');
-    if (s6.success) base.privacy.shareFilePaths = s6.data;
-    const s7 = parseBool('shareToolArgs');
-    if (s7.success) base.privacy.shareToolArgs = s7.data;
+    const s6 = parseBool('shareDeviceInventory');
+    if (s6.success) base.privacy.shareDeviceInventory = s6.data;
+    const s7 = parseBool('shareFilePaths');
+    if (s7.success) base.privacy.shareFilePaths = s7.data;
+    const s8 = parseBool('shareToolArgs');
+    if (s8.success) base.privacy.shareToolArgs = s8.data;
   }
 
   // Privacy hardening: never allow sharing file paths or tool args over voice transport.
