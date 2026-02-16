@@ -63,8 +63,6 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS = '25';
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_POLL_MS = '5';
 
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(0));
     vi.resetModules();
 
     let tick: (() => Promise<void>) | undefined;
@@ -175,10 +173,7 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
 
     expect(setIntervalSpy).toHaveBeenCalled();
     expect(tick).toBeTypeOf('function');
-    const tickPromise = tick!();
-    await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(100);
-    await tickPromise;
+    await tick!();
 
     expect(spawnHappyCLI).toHaveBeenCalledWith(
       ['daemon', 'start-sync'],
@@ -197,8 +192,6 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS = '40';
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_POLL_MS = '5';
 
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(0));
     vi.resetModules();
 
     let tick: (() => Promise<void>) | undefined;
@@ -247,10 +240,7 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
 
     expect(setIntervalSpy).toHaveBeenCalled();
     expect(tick).toBeTypeOf('function');
-    const tickPromise = tick!();
-    await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(100);
-    await tickPromise;
+    await tick!();
 
     expect(spawnHappyCLI).toHaveBeenCalledWith(
       ['daemon', 'start-sync'],
