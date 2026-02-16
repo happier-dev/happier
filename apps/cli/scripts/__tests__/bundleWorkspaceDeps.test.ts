@@ -80,4 +80,28 @@ describe('bundleWorkspaceDeps', () => {
     expect(bundledCommonPkgJson.scripts).toBeUndefined();
     expect(bundledCommonPkgJson.name).toBe('@happier-dev/cli-common');
   });
+
+  it('declares external runtime dependencies required by bundled workspace packages', () => {
+    const repoRoot = resolve(__dirname, '..', '..', '..', '..');
+    const cliPackageJson = JSON.parse(readFileSync(resolve(repoRoot, 'apps', 'cli', 'package.json'), 'utf8'));
+    const bundledWorkspacePackagePaths = [
+      resolve(repoRoot, 'packages', 'agents', 'package.json'),
+      resolve(repoRoot, 'packages', 'cli-common', 'package.json'),
+      resolve(repoRoot, 'packages', 'protocol', 'package.json'),
+    ];
+
+    const cliDependencyNames = new Set(Object.keys(cliPackageJson.dependencies ?? {}));
+    const requiredExternalDependencies = new Set<string>();
+    for (const packageJsonPath of bundledWorkspacePackagePaths) {
+      const bundledPackageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+      for (const dependencyName of Object.keys(bundledPackageJson.dependencies ?? {})) {
+        if (!dependencyName.startsWith('@happier-dev/')) {
+          requiredExternalDependencies.add(dependencyName);
+        }
+      }
+    }
+
+    const missingDependencies = [...requiredExternalDependencies].filter((name) => !cliDependencyNames.has(name));
+    expect(missingDependencies).toEqual([]);
+  });
 });

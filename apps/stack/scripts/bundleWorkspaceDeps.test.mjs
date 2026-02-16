@@ -2,9 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { bundleWorkspaceDeps } from './bundleWorkspaceDeps.mjs';
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 function writeJson(path, value) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
@@ -90,4 +93,26 @@ test('bundleWorkspaceDeps throws when cli-common package.json is malformed', () 
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }
+});
+
+test('declares external runtime dependencies required by bundled workspace packages', () => {
+  const stackPackageJson = JSON.parse(readFileSync(resolve(repoRoot, 'apps', 'stack', 'package.json'), 'utf8'));
+  const bundledWorkspacePackagePaths = [
+    resolve(repoRoot, 'packages', 'cli-common', 'package.json'),
+    resolve(repoRoot, 'packages', 'release-runtime', 'package.json'),
+  ];
+
+  const stackDependencyNames = new Set(Object.keys(stackPackageJson.dependencies ?? {}));
+  const requiredExternalDependencies = new Set();
+  for (const packageJsonPath of bundledWorkspacePackagePaths) {
+    const bundledPackageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+    for (const dependencyName of Object.keys(bundledPackageJson.dependencies ?? {})) {
+      if (!dependencyName.startsWith('@happier-dev/')) {
+        requiredExternalDependencies.add(dependencyName);
+      }
+    }
+  }
+
+  const missingDependencies = [...requiredExternalDependencies].filter((name) => !stackDependencyNames.has(name));
+  assert.deepEqual(missingDependencies, []);
 });
