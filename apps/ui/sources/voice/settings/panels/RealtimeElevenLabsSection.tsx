@@ -11,8 +11,13 @@ import type { SecretString } from '@/sync/encryption/secretSettings';
 import { t } from '@/text';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
-import { createHappierElevenLabsAgent, updateHappierElevenLabsAgent } from '@/realtime/elevenlabs/autoprovision';
+import {
+  createHappierElevenLabsAgent,
+  findExistingHappierElevenLabsAgents,
+  updateHappierElevenLabsAgent,
+} from '@/realtime/elevenlabs/autoprovision';
 import { listElevenLabsVoices, type ElevenLabsVoiceSummary } from '@/realtime/elevenlabs/elevenLabsVoices';
+import { showElevenLabsAgentReuseDialog } from '@/voice/settings/modals/showElevenLabsAgentReuseDialog';
 
 function normalizeSecretStringPromptInput(value: string | null): SecretString | null {
   if (value === null) return null;
@@ -27,9 +32,10 @@ export function RealtimeElevenLabsSection(props: {
 }) {
   const { theme } = useUnistyles();
   const cfg = props.voice.adapters.realtime_elevenlabs;
-  const isByo = props.voice.providerId === 'realtime_elevenlabs' && cfg.billingMode === 'byo';
+  const enabled = props.voice.providerId === 'realtime_elevenlabs';
+  const isByo = enabled && cfg.billingMode === 'byo';
   const [busy, setBusy] = React.useState<null | 'autoprovCreate' | 'autoprovUpdate'>(null);
-  const [openMenu, setOpenMenu] = React.useState<null | 'voiceId' | 'modelId' | 'speakerBoost'>(null);
+  const [openMenu, setOpenMenu] = React.useState<null | 'voiceId' | 'modelId' | 'speakerBoost' | 'welcomeMode'>(null);
   const [voiceCatalog, setVoiceCatalog] = React.useState<ReadonlyArray<ElevenLabsVoiceSummary> | null>(null);
   const [voiceCatalogStatus, setVoiceCatalogStatus] = React.useState<'idle' | 'loading' | 'error'>('idle');
   const [previewingVoiceId, setPreviewingVoiceId] = React.useState<string | null>(null);
@@ -61,6 +67,20 @@ export function RealtimeElevenLabsSection(props: {
         realtime_elevenlabs: {
           ...cfg,
           tts: { ...tts, ...patch },
+        },
+      },
+    });
+  };
+
+  const welcome = cfg.welcome ?? { enabled: false, mode: 'immediate' as const, templateId: null as string | null };
+  const setWelcome = (patch: Partial<typeof welcome>) => {
+    props.setVoice({
+      ...props.voice,
+      adapters: {
+        ...props.voice.adapters,
+        realtime_elevenlabs: {
+          ...cfg,
+          welcome: { ...welcome, ...patch },
         },
       },
     });
@@ -167,11 +187,52 @@ export function RealtimeElevenLabsSection(props: {
     return voiceCatalog.find((v) => v.voiceId === tts.voiceId) ?? null;
   }, [tts.voiceId, voiceCatalog]);
 
-  if (!isByo) return null;
+  if (!enabled) return null;
 
   return (
     <>
-      <ItemGroup title={t('settingsVoice.byo.title')} footer={configured ? t('settingsVoice.byo.configured') : undefined}>
+      <ItemGroup title="Call">
+        <DropdownMenu
+          open={openMenu === 'welcomeMode'}
+          onOpenChange={(next) => setOpenMenu(next ? 'welcomeMode' : null)}
+          variant="selectable"
+          search={false}
+          selectedId={welcome.mode ?? 'immediate'}
+          showCategoryTitles={false}
+          matchTriggerWidth={true}
+          connectToTrigger={true}
+          rowKind="item"
+          popoverBoundaryRef={props.popoverBoundaryRef}
+          trigger={({ open, toggle }) => (
+            <Item
+              title="Welcome message"
+              subtitle="Optional greeting at the start of the call."
+              detail={welcome.enabled ? (welcome.mode === 'on_first_turn' ? 'On first turn' : 'Immediate') : 'Off'}
+              rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
+              onPress={toggle}
+              showChevron={false}
+              selected={false}
+            />
+          )}
+          items={[
+            { id: 'off', title: 'Off', subtitle: 'No greeting.' },
+            { id: 'immediate', title: 'Immediate', subtitle: 'Greet as soon as the call connects.' },
+            { id: 'on_first_turn', title: 'On first turn', subtitle: 'Greet at the start of the first reply.' },
+          ]}
+          onSelect={(id) => {
+            if (id === 'off') {
+              setWelcome({ enabled: false });
+            } else {
+              setWelcome({ enabled: true, mode: id as any });
+            }
+            setOpenMenu(null);
+          }}
+        />
+      </ItemGroup>
+
+      {!isByo ? null : (
+        <>
+          <ItemGroup title={t('settingsVoice.byo.title')} footer={configured ? t('settingsVoice.byo.configured') : undefined}>
         <Item
           title={t('settingsVoice.byo.apiKeyTitle')}
           subtitle={t('settingsVoice.byo.apiKeyDescription')}
@@ -499,30 +560,54 @@ export function RealtimeElevenLabsSection(props: {
           title={t('settingsVoice.byo.autoprovCreate')}
           subtitle={t('settingsVoice.byo.autoprovCreateSubtitle')}
           detail={busy === 'autoprovCreate' ? t('common.loading') : undefined}
-          disabled={busy !== null || !apiKey}
-          onPress={() => {
-            void (async () => {
-              if (!apiKey) {
-                Modal.alert(t('common.error'), t('settingsVoice.byo.notConfigured'));
-                return;
-              }
-              setBusy('autoprovCreate');
-              try {
-                const res = await createHappierElevenLabsAgent({
-                  apiKey,
-                  tts: {
-                    voiceId: cfg.tts.voiceId,
-                    modelId: cfg.tts.modelId,
-                    voiceSettings: cfg.tts.voiceSettings,
-                  },
-                });
-                setByo({ agentId: res.agentId });
-                Modal.alert(t('common.success'), t('settingsVoice.byo.autoprovCreated', { agentId: res.agentId }));
-              } catch {
-                Modal.alert(t('common.error'), t('settingsVoice.byo.autoprovFailed'));
-              } finally {
-                setBusy(null);
-              }
+	          disabled={busy !== null || !apiKey}
+	          onPress={() => {
+	            void (async () => {
+	              if (!apiKey) {
+	                Modal.alert(t('common.error'), t('settingsVoice.byo.notConfigured'));
+	                return;
+	              }
+	              setBusy('autoprovCreate');
+	              try {
+	                const existing = await findExistingHappierElevenLabsAgents({ apiKey });
+	                if (existing.length > 0) {
+	                  const reuse = existing[0]!;
+	                  const decision = await showElevenLabsAgentReuseDialog({
+	                    existingAgentId: reuse.agentId,
+	                    existingAgentName: reuse.name,
+	                  });
+	                  if (decision === 'cancel') return;
+	                  if (decision === 'update_existing') {
+	                    await updateHappierElevenLabsAgent({
+	                      apiKey,
+	                      agentId: reuse.agentId,
+	                      tts: {
+	                        voiceId: cfg.tts.voiceId,
+	                        modelId: cfg.tts.modelId,
+	                        voiceSettings: cfg.tts.voiceSettings,
+	                      },
+	                    });
+	                    setByo({ agentId: reuse.agentId });
+	                    Modal.alert(t('common.success'), t('settingsVoice.byo.autoprovUpdated'));
+	                    return;
+	                  }
+	                }
+
+	                const res = await createHappierElevenLabsAgent({
+	                  apiKey,
+	                  tts: {
+	                    voiceId: cfg.tts.voiceId,
+	                    modelId: cfg.tts.modelId,
+	                    voiceSettings: cfg.tts.voiceSettings,
+	                  },
+	                });
+	                setByo({ agentId: res.agentId });
+	                Modal.alert(t('common.success'), t('settingsVoice.byo.autoprovCreated', { agentId: res.agentId }));
+	              } catch {
+	                Modal.alert(t('common.error'), t('settingsVoice.byo.autoprovFailed'));
+	              } finally {
+	                setBusy(null);
+	              }
             })();
           }}
         />
@@ -598,6 +683,8 @@ export function RealtimeElevenLabsSection(props: {
           }}
         />
       </ItemGroup>
+        </>
+      )}
     </>
   );
 }

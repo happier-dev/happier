@@ -75,6 +75,11 @@ type TestSettings = {
       realtime_elevenlabs: {
         assistantLanguage: string | null;
         billingMode: 'happier' | 'byo';
+        welcome?: {
+          enabled: boolean;
+          mode: 'immediate' | 'on_first_turn';
+          templateId: string | null;
+        };
         byo: {
           agentId: string | null;
           apiKey: { value?: string } | null;
@@ -93,6 +98,7 @@ function makeDefaultSettings(): TestSettings {
         realtime_elevenlabs: {
           assistantLanguage: null,
           billingMode: 'happier',
+          welcome: { enabled: false, mode: 'immediate', templateId: null },
           byo: { agentId: null, apiKey: null },
         },
       },
@@ -209,6 +215,29 @@ describe('Realtime voice modes', () => {
   });
 
   describe('happier voice lifecycle', () => {
+    it('appends welcome instructions to the initial context when enabled (immediate)', async () => {
+      fetchHappierVoiceToken.mockResolvedValueOnce({
+        allowed: true,
+        token: 'conv_token',
+        leaseId: 'lease_1',
+        expiresAtMs: Date.now() + 60_000,
+      });
+
+      state.settings.voice.adapters.realtime_elevenlabs.welcome = { enabled: true, mode: 'immediate', templateId: null };
+
+      const { registerVoiceSession, startRealtimeSession } = await import('./RealtimeSession');
+      const { session, startSession } = makeVoiceSession('conv_0');
+      registerVoiceSession(session);
+
+      await startRealtimeSession('s1', 'BASE_CTX');
+
+      expect(startSession).toHaveBeenCalledTimes(1);
+      // `makeVoiceSession` returns a typed mock; extracting args via `mock.calls` needs casting in this test harness.
+      const startArgs = (startSession as any).mock.calls[0]?.[0];
+      expect(String(startArgs?.initialContext ?? '')).toContain('BASE_CTX');
+      expect(String(startArgs?.initialContext ?? '')).toContain('Start this session with a short friendly greeting');
+    });
+
     it('starts Happier Voice via server token minting', async () => {
       fetchHappierVoiceToken.mockResolvedValueOnce({
         allowed: true,
