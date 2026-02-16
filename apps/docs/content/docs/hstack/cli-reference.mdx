@@ -158,9 +158,36 @@ Provision a remote machine over SSH (install Happier, pair credentials, optional
 
 - `hstack remote daemon setup --ssh user@host [--channel stable|preview] [--service user|none]`
 
-See: `/docs/hstack/remote-daemon`.
+Provision a remote machine over SSH to run the self-hosted server as a managed service:
+
+- `hstack remote server setup --ssh user@host [--channel stable|preview] [--mode user|system] [--env KEY=VALUE]...`
+
+See:
+
+- `/docs/hstack/remote-daemon`
+- `/docs/hstack/remote-server`
 
 ---
+
+## Self-host runtime (`self-host`)
+
+Install and manage the self-host runtime (server + optional UI web bundle) as a managed service:
+
+- Install: `hstack self-host install [--channel stable|preview] [--mode user|system]`
+- Status: `hstack self-host status`
+- Manual update: `hstack self-host update`
+- Roll back: `hstack self-host rollback --to <version>`
+
+Auto-update scheduling (opt-in):
+
+- Enable daily window: `hstack self-host install --auto-update --auto-update-at=03:15`
+- Change schedule after install: `hstack self-host config set --auto-update --auto-update-at=03:15`
+
+Config inspection / tweaks:
+
+- View: `hstack self-host config view`
+- Set (and apply scheduler changes): `hstack self-host config set ...`
+- Set (write only): `hstack self-host config set ... --no-apply`
 
 ## Contributor workflows (`contrib`)
 

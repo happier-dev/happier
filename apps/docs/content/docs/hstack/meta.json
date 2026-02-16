@@ -16,6 +16,7 @@
     "server-flavors",
     "remote-access",
     "remote-daemon",
+    "remote-server",
     "paths-and-env",
     "menubar",
     "mobile-ios",

@@ -1,0 +1,93 @@
+---
+title: Remote server setup (SSH)
+description: Install Happier Self-Host Server on a remote host over SSH, with optional env overrides.
+---
+
+This page documents `hstack remote server setup`, a workflow to provision a **remote machine** (VPS, home server, dev box) over SSH:
+
+- installs the `hstack` toolchain on the remote host (via the standard installer)
+- runs the existing guided installer: `hstack self-host install`
+- installs the server runtime as a managed service (default: **user** mode)
+
+If you want to provision a remote machine for **CLI + daemon** usage (pairing/auth included), see: `/docs/hstack/remote-daemon`.
+
+## Quickstart
+
+```bash
+hstack remote server setup --ssh user@host
+```
+
+Default behavior:
+
+- uses the **stable** channel (set `--channel preview` when you want preview binaries)
+- installs the self-host service in **user** mode
+- uses the self-host defaults (SQLite, local files, `PORT=3005`)
+
+## Preview vs stable channel
+
+```bash
+hstack remote server setup --ssh user@host --channel preview
+```
+
+Equivalent shortcuts:
+
+```bash
+hstack remote server setup --ssh user@host --preview
+hstack remote server setup --ssh user@host --stable
+```
+
+## User vs system service
+
+User service (default):
+
+```bash
+hstack remote server setup --ssh user@host --mode user
+```
+
+System service:
+
+```bash
+hstack remote server setup --ssh user@host --mode system
+```
+
+Notes:
+
+- `--mode system` runs the remote install with `sudo -E` and may prompt for a password, depending on the host’s sudo policy.
+- User mode is recommended unless you specifically need system-wide service semantics.
+
+## Override server configuration (env)
+
+You can pass repeated `--env KEY=VALUE` flags. These become overrides in the generated `server.env` on the remote host.
+
+Example: change the listen port:
+
+```bash
+hstack remote server setup --ssh user@host \
+  --env PORT=3999
+```
+
+Example: use Postgres instead of SQLite:
+
+```bash
+hstack remote server setup --ssh user@host \
+  --env HAPPIER_DB_PROVIDER=postgres \
+  --env DATABASE_URL=postgresql://user:pass@db:5432/happier
+```
+
+Tip: for the full server env surface, see `/docs/deployment/env`.
+
+## Auto-update scheduling (daily window)
+
+Auto-update is opt-in. Remote server setup does not pick a schedule by default.
+
+After provisioning, you can configure the remote host’s update window by running:
+
+```bash
+ssh user@host "~/.happier/bin/hstack self-host config set --auto-update --auto-update-at=03:15"
+```
+
+## Requirements
+
+- SSH access to the remote host (`ssh user@host`)
+- Remote host has `bash` and `curl`
+- Remote host must be a Unix-like OS (Linux/macOS). Windows hosts are not supported for this SSH flow.

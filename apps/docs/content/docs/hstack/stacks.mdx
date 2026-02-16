@@ -37,11 +37,11 @@ hstack stack new exp2
 Power users: choose a DB provider without extra prompts:
 
 ```bash
-# Light flavor (default): embedded Postgres via pglite (PG_Light)
-hstack stack new exp-light --server=happier-server-light --db-provider=pglite
+# Light flavor (default): SQLite (no Docker)
+hstack stack new exp-light --server=happier-server-light --db-provider=sqlite
 
-# Light flavor (optional): SQLite
-hstack stack new exp-sqlite --server=happier-server-light --db-provider=sqlite
+# Light flavor (optional): embedded Postgres via PGlite (PG_Light)
+hstack stack new exp-pglite --server=happier-server-light --db-provider=pglite
 
 # Full server (default): Postgres (Docker-managed per stack)
 hstack stack new exp-full --server=happier-server --db-provider=postgres
@@ -110,7 +110,13 @@ the stack-scoped infra config in the stack env file (so restarts are stable):
 
 ## Run a stack
 
-Dev mode:
+Dev mode (interactive, recommended):
+
+```bash
+hstack tui stack dev exp1
+```
+
+Dev mode (non-interactive / no TUI):
 
 ```bash
 hstack stack dev exp1
@@ -122,7 +128,13 @@ Dev mode (background):
 hstack stack dev exp1 --background
 ```
 
-Production-like mode:
+Production-like mode (interactive):
+
+```bash
+hstack tui stack start exp1
+```
+
+Production-like mode (non-interactive / no TUI):
 
 ```bash
 hstack stack start exp1
@@ -207,6 +219,8 @@ These commands run with the stack env file applied:
 - `hstack stack wt <name> -- <wt args...>`
 - `hstack stack tailscale:status|enable|disable|url <name>`
 - `hstack stack service:* <name>`
+
+Tip: `hstack stack eas <name> env:sync --environment production` syncs the stack’s `EXPO_*` config values into the Expo project’s EAS Environment Variables.
 
 Global/non-stack commands:
 

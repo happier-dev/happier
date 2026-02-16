@@ -52,6 +52,8 @@ happier server add --name company --server-url https://YOUR_SERVER_URL --webapp-
 happier auth login
 ```
 
+`--use` sets the default server, so subsequent commands (like `happier daemon start`) will target it automatically.
+
 Then use the same mobile-first flow:
 
 - Scan the terminal QR from `happier auth login` in the Happier mobile app (recommended), or use the web link.
@@ -92,11 +94,12 @@ happier --server personal daemon service install
 happier --server company daemon service install
 ```
 
-Then verify:
+Then verify (cross-platform):
 
 ```bash
-happier daemon service list
 happier daemon status --all
+happier --server personal daemon service status
+happier --server company daemon service status
 ```
 
 For complete profile/switching behavior and CLI reference, see [Features → Multi-server](/docs/features/multi-server).

@@ -2079,7 +2079,7 @@
   resolved "https://registry.yarnpkg.com/@huggingface/jinja/-/jinja-0.5.5.tgz#cdfc4c29fc64515d76e73487ffeeea546e8c1d5e"
   integrity sha512-xRlzazC+QZwr6z4ixEqYHo9fgwhTZ3xNSdljlKfUFGZSdlvt166DljRELFUfFytlYOYvo3vTisA/AFOuOAzFQQ==
 
-"@huggingface/transformers@^3.5.1":
+"@huggingface/transformers@^3.5.1", "@huggingface/transformers@^3.8.1":
   version "3.8.1"
   resolved "https://registry.yarnpkg.com/@huggingface/transformers/-/transformers-3.8.1.tgz#317da003865322396796173223eeaaf0f9723f0a"
   integrity sha512-tsTk4zVjImqdqjS8/AOZg2yNLd1z9S5v+7oUPpXaasDRwEDhB+xnglK1k5cad26lL5/ZIaeREgWWy0bs9y9pPA==
