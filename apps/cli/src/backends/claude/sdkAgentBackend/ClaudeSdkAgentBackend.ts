@@ -32,7 +32,9 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
   private readonly listeners: AgentMessageHandler[] = [];
   private readonly promptStream = new PushableAsyncIterable<SDKMessage>();
   private readonly abortController = new AbortController();
+  private readonly env: NodeJS.ProcessEnv;
   private stderrAppender: BoundedTextFileAppender | null = null;
+  private readonly toolNameByCallId = new Map<string, string>();
 
   private readonly localSessionId: SessionId = `voice-agent-claude-${randomUUID()}`;
   private readonly acceptedSessionIds = new Set<SessionId>();
@@ -54,8 +56,10 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
       modelId: string;
       permissionPolicy: ClaudeSdkPermissionPolicy;
       settingsPath?: string;
+      env?: NodeJS.ProcessEnv;
     }>,
   ) {
+    this.env = this.opts.env ?? {};
     this.acceptedSessionIds.add(this.localSessionId);
     this.vendorSessionIdPromise = new Promise<SessionId>((resolve) => {
       this.resolveVendorSessionId = resolve;
@@ -121,6 +125,7 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
         model: model ?? undefined,
         canCallTool,
         settingsPath: this.opts.settingsPath,
+        env: this.env,
         ...(params.resume ? { resume: params.resume } : {}),
         abort: this.abortController.signal,
         stderr: (data) => {
@@ -229,8 +234,48 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
       return;
     }
 
+    if (type === 'user') {
+      // Tool results are emitted as user-content blocks in the Claude SDK stream.
+      const user = msg as any;
+      const content = user?.message?.content;
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (!block || typeof block !== 'object') continue;
+          if ((block as any).type !== 'tool_result') continue;
+          const callId = typeof (block as any).tool_use_id === 'string' ? String((block as any).tool_use_id) : '';
+          if (!callId) continue;
+          const toolName = this.toolNameByCallId.get(callId) ?? 'unknown';
+          this.emit({
+            type: 'tool-result',
+            toolName,
+            callId,
+            result: (block as any).content,
+          });
+        }
+      }
+      return;
+    }
+
     if (type === 'assistant') {
       const assistant = msg as SDKAssistantMessage;
+      // Tool calls are emitted as assistant-content blocks in the Claude SDK stream.
+      const assistantContent = assistant?.message?.content;
+      if (Array.isArray(assistantContent)) {
+        for (const block of assistantContent) {
+          if (!block || typeof block !== 'object') continue;
+          if ((block as any).type !== 'tool_use') continue;
+          const callId = typeof (block as any).id === 'string' ? String((block as any).id) : '';
+          const toolName = typeof (block as any).name === 'string' ? String((block as any).name) : '';
+          if (!callId || !toolName) continue;
+          this.toolNameByCallId.set(callId, toolName);
+          const rawInput = (block as any).input;
+          const args =
+            rawInput && typeof rawInput === 'object' && !Array.isArray(rawInput)
+              ? (rawInput as Record<string, unknown>)
+              : {};
+          this.emit({ type: 'tool-call', toolName, callId, args });
+        }
+      }
       const text = this.extractAssistantText(assistant);
       if (!text) return;
       const pending = this.pendingTurn;
@@ -248,6 +293,11 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
     if (type === 'result') {
       const result = msg as SDKResultMessage;
       this.noteVendorSessionId(result.session_id);
+      this.emitTokenCountTelemetry(result);
+      if (result.subtype === 'success') {
+        // A completed turn means tool call ids won't be reused; keep memory bounded.
+        this.toolNameByCallId.clear();
+      }
       if (result.subtype === 'success') {
         const pending = this.pendingTurn;
         if (pending) {
@@ -266,6 +316,35 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
       this.emit({ type: 'status', status: 'error', detail: String(result.subtype) });
       return;
     }
+  }
+
+  private emitTokenCountTelemetry(result: SDKResultMessage): void {
+    const usage = (result as any)?.usage;
+    if (!usage || typeof usage !== 'object' || Array.isArray(usage)) return;
+
+    const asNum = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined);
+
+    const inputTokens = asNum((usage as any).input_tokens);
+    const outputTokens = asNum((usage as any).output_tokens);
+    const cacheReadTokens = asNum((usage as any).cache_read_input_tokens);
+    const cacheCreationTokens = asNum((usage as any).cache_creation_input_tokens);
+
+    if (inputTokens == null && outputTokens == null && cacheReadTokens == null && cacheCreationTokens == null) return;
+
+    const payload: Record<string, unknown> = {
+      type: 'token-count',
+      ...(inputTokens != null ? { input_tokens: inputTokens } : {}),
+      ...(outputTokens != null ? { output_tokens: outputTokens } : {}),
+      ...(cacheReadTokens != null ? { cache_read_input_tokens: cacheReadTokens } : {}),
+      ...(cacheCreationTokens != null ? { cache_creation_input_tokens: cacheCreationTokens } : {}),
+    };
+
+    const cost = (result as any)?.total_cost_usd;
+    if (typeof cost === 'number' && Number.isFinite(cost) && cost >= 0) {
+      payload.cost = cost;
+    }
+
+    this.emit(payload as any);
   }
 
   private noteVendorSessionId(sessionIdRaw: unknown): void {

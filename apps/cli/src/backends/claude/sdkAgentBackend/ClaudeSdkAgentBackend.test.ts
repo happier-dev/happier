@@ -11,12 +11,14 @@ const readline = require('node:readline');
 
 const logPath = process.env.FAKE_CLAUDE_LOG_PATH || '';
 if (logPath) {
-  fs.appendFileSync(logPath, JSON.stringify({ argv: process.argv.slice(2) }) + '\\n', 'utf8');
+  fs.appendFileSync(logPath, JSON.stringify({ argv: process.argv.slice(2), env: { XDG_STATE_HOME: process.env.XDG_STATE_HOME || null } }) + '\\n', 'utf8');
 }
 
 const toolName = process.env.FAKE_CLAUDE_TOOL_NAME || '';
 const hangTurn = process.env.FAKE_CLAUDE_HANG_TURN === '1';
 const multiChunk = process.env.FAKE_CLAUDE_MULTI_CHUNK === '1';
+const emitToolFlow = process.env.FAKE_CLAUDE_EMIT_TOOL_FLOW === '1';
+const emitUsage = process.env.FAKE_CLAUDE_EMIT_USAGE === '1';
 
 let turn = 0;
 let didInit = false;
@@ -54,12 +56,20 @@ rl.on('line', (line) => {
       const behavior = msg2.response.response && msg2.response.response.behavior;
       const label = behavior === 'allow' ? 'TOOL_ALLOWED' : 'TOOL_DENIED';
       process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: label }] } }) + '\\n');
-      process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: turn, total_cost_usd: 0, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: sessionId }) + '\\n');
+      process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: turn, total_cost_usd: emitUsage ? 0.123 : 0, usage: emitUsage ? { input_tokens: 11, output_tokens: 22, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 } : undefined, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: sessionId }) + '\\n');
     };
     rl.on('line', onControl);
     return;
   }
   if (hangTurn && turn === 1) {
+    return;
+  }
+  if (emitToolFlow && turn === 1) {
+    const toolUseId = 'toolu_1';
+    process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: toolUseId, name: 'read', input: { path: 'README.md' } }] } }) + '\\n');
+    process.stdout.write(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'OK' }] } }) + '\\n');
+    process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'TOOL_DONE' }] } }) + '\\n');
+    process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: turn, total_cost_usd: emitUsage ? 0.123 : 0, usage: emitUsage ? { input_tokens: 11, output_tokens: 22, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 } : undefined, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: sessionId }) + '\\n');
     return;
   }
   if (multiChunk) {
@@ -68,7 +78,7 @@ rl.on('line', (line) => {
   } else {
     process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'FAKE_ASSIST_' + turn }] } }) + '\\n');
   }
-  process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: turn, total_cost_usd: 0, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: sessionId }) + '\\n');
+  process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: turn, total_cost_usd: emitUsage ? 0.123 : 0, usage: emitUsage ? { input_tokens: 11, output_tokens: 22, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 } : undefined, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: sessionId }) + '\\n');
 });
 rl.on('close', () => process.exit(0));
 `;
@@ -92,8 +102,11 @@ async function withFakeClaudeBackend(
     toolName?: string;
     hangTurn?: boolean;
     multiChunk?: boolean;
+    emitToolFlow?: boolean;
+    emitUsage?: boolean;
     modelId?: string;
     includeLogPath?: boolean;
+    env?: Record<string, string>;
   }>,
   run: (ctx: BackendRunContext) => Promise<void>,
 ): Promise<void> {
@@ -119,12 +132,15 @@ async function withFakeClaudeBackend(
     }
     process.env.FAKE_CLAUDE_HANG_TURN = params.hangTurn ? '1' : '0';
     process.env.FAKE_CLAUDE_MULTI_CHUNK = params.multiChunk ? '1' : '0';
+    process.env.FAKE_CLAUDE_EMIT_TOOL_FLOW = params.emitToolFlow ? '1' : '0';
+    process.env.FAKE_CLAUDE_EMIT_USAGE = params.emitUsage ? '1' : '0';
 
     const { ClaudeSdkAgentBackend } = await import('./ClaudeSdkAgentBackend');
     backend = new ClaudeSdkAgentBackend({
       cwd: dir,
       modelId: params.modelId ?? 'chat-model',
       permissionPolicy: params.permissionPolicy,
+      env: params.env,
     });
 
     await run({
@@ -160,6 +176,8 @@ describe('ClaudeSdkAgentBackend', () => {
     delete process.env.FAKE_CLAUDE_TOOL_NAME;
     delete process.env.FAKE_CLAUDE_HANG_TURN;
     delete process.env.FAKE_CLAUDE_MULTI_CHUNK;
+    delete process.env.FAKE_CLAUDE_EMIT_TOOL_FLOW;
+    delete process.env.FAKE_CLAUDE_EMIT_USAGE;
     if (originalDebug === undefined) {
       delete process.env.DEBUG;
     } else {
@@ -229,6 +247,66 @@ describe('ClaudeSdkAgentBackend', () => {
         expect(await argvLog).toContain('chat-model');
 
         expect(statuses.filter((s) => s === 'running')).toHaveLength(1);
+      },
+    );
+  });
+
+  it('passes explicit env overrides through to the spawned process', async () => {
+    delete process.env.DEBUG;
+
+    const previousState = process.env.XDG_STATE_HOME;
+    try {
+      process.env.XDG_STATE_HOME = '/tmp/xdg-state-parent';
+
+      await withFakeClaudeBackend(
+        {
+          dirPrefix: 'happier-claude-sdk-env-',
+          permissionPolicy: 'no_tools',
+          env: {
+            XDG_STATE_HOME: '/tmp/xdg-state-override',
+          },
+        },
+        async ({ backend, logPath }) => {
+          const { sessionId } = await backend.startSession();
+          await backend.sendPrompt(sessionId, 'hi');
+
+          const argvLog = await (await import('node:fs/promises')).readFile(logPath, 'utf8');
+          const firstLine = argvLog.trim().split('\n')[0] ?? '';
+          const parsed = JSON.parse(firstLine) as any;
+          expect(parsed.env?.XDG_STATE_HOME).toBe('/tmp/xdg-state-override');
+        },
+      );
+    } finally {
+      if (previousState === undefined) delete process.env.XDG_STATE_HOME;
+      else process.env.XDG_STATE_HOME = previousState;
+    }
+  });
+
+  it('emits token-count telemetry when Claude result includes usage and cost', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-usage-',
+        permissionPolicy: 'no_tools',
+        emitUsage: true,
+      },
+      async ({ backend }) => {
+        const tokens: any[] = [];
+        backend.onMessage((msg: any) => {
+          if (msg.type === 'token-count') tokens.push(msg);
+        });
+
+        const { sessionId } = await backend.startSession();
+        await backend.sendPrompt(sessionId, 'hi');
+
+        expect(tokens.length).toBeGreaterThan(0);
+        const last = tokens[tokens.length - 1] as any;
+        expect(last.input_tokens).toBe(11);
+        expect(last.output_tokens).toBe(22);
+        expect(last.cache_read_input_tokens).toBe(3);
+        expect(last.cache_creation_input_tokens).toBe(4);
+        expect(last.cost).toBe(0.123);
       },
     );
   });
@@ -362,6 +440,44 @@ describe('ClaudeSdkAgentBackend', () => {
             (e) => e?.name === 'vendor_session_id' && e?.payload && e.payload.sessionId === '1433467f-ff14-4292-b5b2-2aac77a808f0',
           ),
         ).toBe(true);
+      },
+    );
+  });
+
+  it('emits tool-call and tool-result messages when Claude returns tool_use/tool_result blocks', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-tools-',
+        permissionPolicy: 'no_tools',
+        emitToolFlow: true,
+      },
+      async ({ backend }) => {
+        const toolCalls: any[] = [];
+        const toolResults: any[] = [];
+        backend.onMessage((msg: any) => {
+          if (msg.type === 'tool-call') toolCalls.push(msg);
+          if (msg.type === 'tool-result') toolResults.push(msg);
+        });
+
+        const { sessionId } = await backend.startSession();
+        await backend.sendPrompt(sessionId, 'hi');
+
+        expect(toolCalls).toHaveLength(1);
+        expect(toolCalls[0]).toMatchObject({
+          type: 'tool-call',
+          toolName: 'read',
+          callId: 'toolu_1',
+        });
+
+        expect(toolResults).toHaveLength(1);
+        expect(toolResults[0]).toMatchObject({
+          type: 'tool-result',
+          toolName: 'read',
+          callId: 'toolu_1',
+          result: 'OK',
+        });
       },
     );
   });
