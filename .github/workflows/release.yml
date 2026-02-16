@@ -951,19 +951,46 @@ jobs:
   release_verify:
     if: always() && needs.publish_npm.result == 'success' && inputs.environment == 'preview' && inputs.release_verify_profile != 'none'
     needs: [publish_npm]
-    continue-on-error: true
+    runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: read
-    uses: ./.github/workflows/release-verify.yml
-    with:
-      channel: preview
-      run_installers_smoke: true
-      run_binary_smoke: true
-      run_self_host_systemd: ${{ inputs.release_verify_profile == 'full' }}
-      run_self_host_launchd: ${{ inputs.release_verify_profile == 'full' }}
-      run_self_host_schtasks: ${{ inputs.release_verify_profile == 'full' }}
-      run_self_host_daemon: ${{ inputs.release_verify_profile == 'full' }}
+      actions: write
+    steps:
+      - name: Trigger release verify workflow (best-effort)
+        env:
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+          TOKEN: ${{ github.token }}
+          RUN_SELF_HOST: ${{ inputs.release_verify_profile == 'full' }}
+        run: |
+          set -euo pipefail
+
+          payload="$(
+            cat <<JSON
+          {
+            "ref": "${REF}",
+            "inputs": {
+              "channel": "preview",
+              "run_installers_smoke": "true",
+              "run_binary_smoke": "true",
+              "run_self_host_systemd": "${RUN_SELF_HOST}",
+              "run_self_host_launchd": "${RUN_SELF_HOST}",
+              "run_self_host_schtasks": "${RUN_SELF_HOST}",
+              "run_self_host_daemon": "${RUN_SELF_HOST}"
+            }
+          }
+          JSON
+          )"
+
+          echo "Dispatching release-verify.yml for preview (profile: ${{ inputs.release_verify_profile }})"
+          if ! curl -fsSL \
+            -X POST \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${REPO}/actions/workflows/release-verify.yml/dispatches" \
+            -d "${payload}"; then
+            echo "::warning::Failed to dispatch release-verify.yml (continuing)"
+          fi
 
   sync_dev:
     if: inputs.dry_run != true && inputs.environment == 'production' && (vars.RELEASE_SYNC_DEV_FROM_MAIN == '' || vars.RELEASE_SYNC_DEV_FROM_MAIN == 'true')
