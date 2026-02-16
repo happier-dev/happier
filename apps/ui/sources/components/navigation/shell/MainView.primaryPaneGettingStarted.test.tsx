@@ -4,8 +4,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const routerPushSpy = vi.hoisted(() => vi.fn());
-
 const sessionListState = vi.hoisted(() => ({
     data: [] as any[] | null,
 }));
@@ -20,7 +18,7 @@ vi.mock('react-native', async (importOriginal) => {
         },
         View: 'View',
         Text: 'Text',
-        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+        Pressable: 'Pressable',
         ActivityIndicator: 'ActivityIndicator',
     };
 });
@@ -35,27 +33,30 @@ vi.mock('react-native-unistyles', () => ({
                 textSecondary: '#777',
                 status: { connected: '#0f0', connecting: '#ff0', disconnected: '#f00', error: '#f00', default: '#777' },
                 surface: '#fff',
+                button: { primary: { background: '#0a84ff', tint: '#fff' } },
                 fab: { background: '#0a84ff' },
             },
         },
     }),
     StyleSheet: {
-        create: (factory: any) => factory({
-            colors: {
-                groupped: { background: '#fff' },
-                header: { tint: '#111' },
-                text: '#111',
-                textSecondary: '#777',
-                status: { connected: '#0f0', connecting: '#ff0', disconnected: '#f00', error: '#f00', default: '#777' },
-                surface: '#fff',
-                fab: { background: '#0a84ff' },
-            },
-        }),
+        create: (factory: any) =>
+            factory({
+                colors: {
+                    groupped: { background: '#fff' },
+                    header: { tint: '#111' },
+                    text: '#111',
+                    textSecondary: '#777',
+                    status: { connected: '#0f0', connecting: '#ff0', disconnected: '#f00', error: '#f00', default: '#777' },
+                    surface: '#fff',
+                    button: { primary: { background: '#0a84ff', tint: '#fff' } },
+                    fab: { background: '#0a84ff' },
+                },
+            }),
     },
 }));
 
 vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
+    useRouter: () => ({ push: async () => {} }),
 }));
 
 vi.mock('@expo/vector-icons', () => ({
@@ -152,25 +153,19 @@ vi.mock('@/components/navigation/ConnectionStatusControl', () => ({
     ConnectionStatusControl: 'ConnectionStatusControl',
 }));
 
-function findPressableByLabel(tree: renderer.ReactTestRenderer, label: string) {
-    return tree.root.find((node) => (node.type as unknown) === 'Pressable' && node.props.accessibilityLabel === label);
-}
-
-describe('MainView sidebar actions', () => {
+describe('MainView (tablet primary pane)', () => {
     beforeEach(() => {
-        routerPushSpy.mockReset();
         sessionListState.data = [];
     });
 
-    it('does not render sidebar action buttons (automations and new session)', async () => {
+    it('shows getting started guidance instead of a blank view', async () => {
         const { MainView } = await import('./MainView');
 
         let tree: renderer.ReactTestRenderer | null = null;
         act(() => {
-            tree = renderer.create(<MainView variant="sidebar" />);
+            tree = renderer.create(<MainView variant="phone" />);
         });
 
-        expect(() => findPressableByLabel(tree!, 'New session')).toThrow();
-        expect(() => findPressableByLabel(tree!, 'Open automations')).toThrow();
+        expect(() => tree!.root.findByType('SessionGettingStartedGuidance')).not.toThrow();
     });
 });

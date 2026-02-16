@@ -5,7 +5,7 @@ import { useFriendRequests, useSocketStatus } from '@/sync/domains/state/storage
 import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { useRouter } from 'expo-router';
-import { EmptySessionsTablet } from '@/components/ui/empty/EmptySessionsTablet';
+import { SessionGettingStartedGuidance } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
 import { SessionsList } from '@/components/sessions/shell/SessionsList';
 import { FABWide } from '@/components/ui/buttons/FABWide';
 import { TabBar, TabType } from '@/components/ui/navigation/TabBar';
@@ -265,7 +265,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
             return (
                 <View style={styles.sidebarContentContainer}>
                     <View style={styles.emptyStateContainer}>
-                        <EmptySessionsTablet />
+                        <SessionGettingStartedGuidance variant="sidebar" />
                     </View>
                 </View>
             );
@@ -282,9 +282,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     // Phone variant
     // Tablet in phone mode - special case (when showing index view on tablets, show empty view)
     if (isTablet) {
-        // Just show an empty view on tablets for the index view
-        // The sessions list is shown in the sidebar, so the main area should be blank
-        return <View style={styles.emptyStateContentContainer} />;
+        return <SessionGettingStartedGuidance variant="primaryPane" />;
     }
 
     // Regular phone mode with tabs

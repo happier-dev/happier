@@ -1,7 +1,8 @@
 import * as React from 'react';
-import { Pressable, View, Text } from 'react-native';
+import { Pressable, View, Platform } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { useLocalSettingMutable } from '@/sync/domains/state/storage';
+import { SidebarCollapseIcon } from './SidebarIcons';
 
 const styles = StyleSheet.create((theme) => ({
     container: {
@@ -22,10 +23,6 @@ const styles = StyleSheet.create((theme) => ({
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.colors.divider,
     },
-    buttonText: {
-        color: theme.colors.text,
-        fontSize: 12,
-    },
 }));
 
 export const CollapsedSidebarView = React.memo(() => {
@@ -33,14 +30,16 @@ export const CollapsedSidebarView = React.memo(() => {
 
     return (
         <View style={styles.container}>
-            <Pressable
-                testID="sidebar-expand-button"
-                onPress={() => setSidebarCollapsed(false)}
-                style={styles.button}
-                accessibilityRole="button"
-            >
-                <Text style={styles.buttonText}>{'>'}</Text>
-            </Pressable>
+            {Platform.OS === 'web' ? (
+                <Pressable
+                    testID="sidebar-expand-button"
+                    onPress={() => setSidebarCollapsed(false)}
+                    style={styles.button}
+                    accessibilityRole="button"
+                >
+                    <SidebarCollapseIcon />
+                </Pressable>
+            ) : null}
         </View>
     );
 });
