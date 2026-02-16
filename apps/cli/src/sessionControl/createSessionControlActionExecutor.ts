@@ -32,9 +32,20 @@ export function createSessionControlActionExecutor(params: Readonly<{
     executionRunAction: async (_sessionId, request) =>
       await callExecutionRunRpc(SESSION_RPC_METHODS.EXECUTION_RUN_ACTION, request),
 
+    daemonMemorySearch: async () => notSupported(),
+    daemonMemoryGetWindow: async () => notSupported(),
+    daemonMemoryEnsureUpToDate: async () => notSupported(),
+
     // These actions are not exposed on the session-control CLI surface today.
     sessionOpen: async () => notSupported(),
     sessionSpawnNew: async () => notSupported(),
+    sessionSpawnPicker: async () => notSupported(),
+    workspacesListRecent: async () => notSupported(),
+    pathsListRecent: async () => notSupported(),
+    machinesList: async () => notSupported(),
+    serversList: async () => notSupported(),
+    agentsBackendsList: async () => notSupported(),
+    agentsModelsList: async () => notSupported(),
     sessionSendMessage: async () => notSupported(),
     sessionPermissionRespond: async () => notSupported(),
     sessionTargetPrimarySet: async () => notSupported(),
@@ -52,4 +63,3 @@ export function createSessionControlActionExecutor(params: Readonly<{
 
   return createActionExecutor(deps);
 }
-

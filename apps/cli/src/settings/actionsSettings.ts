@@ -1,35 +1,48 @@
-import type { ActionId } from '@happier-dev/protocol';
-import { ActionIdSchema } from '@happier-dev/protocol';
+import {
+  ActionsSettingsV1Schema,
+  isActionEnabledByActionsSettings,
+  listActionSpecs,
+  type ActionId,
+  type ActionSurfaces,
+  type ActionUiPlacement,
+} from '@happier-dev/protocol';
 
-export function readDisabledActionIdsFromEnv(): readonly ActionId[] {
-  const raw = typeof process.env.HAPPIER_ACTIONS_DISABLED_ACTION_IDS === 'string'
-    ? process.env.HAPPIER_ACTIONS_DISABLED_ACTION_IDS.trim()
-    : '';
-  if (!raw) return [];
+const ENV_KEY = 'HAPPIER_ACTIONS_SETTINGS_V1';
 
-  let parsed: unknown = null;
+export function readActionsSettingsFromEnv(): { v: 1; actions: Record<ActionId, any> } {
+  const raw = typeof process.env[ENV_KEY] === 'string' ? String(process.env[ENV_KEY]).trim() : '';
+  if (!raw) return { v: 1 as const, actions: {} as Record<ActionId, any> };
+
+  let parsedJson: unknown = null;
   try {
-    parsed = JSON.parse(raw);
+    parsedJson = JSON.parse(raw);
   } catch {
-    return [];
+    return { v: 1 as const, actions: {} as Record<ActionId, any> };
   }
-  if (!Array.isArray(parsed)) return [];
 
-  const out: ActionId[] = [];
-  const seen = new Set<string>();
-  for (const item of parsed) {
-    const result = ActionIdSchema.safeParse(item);
-    if (!result.success) continue;
-    const id = result.data;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    out.push(id);
-  }
-  return out;
+  const parsed = ActionsSettingsV1Schema.safeParse(parsedJson);
+  return parsed.success ? (parsed.data as any) : ({ v: 1 as const, actions: {} as Record<ActionId, any> } as any);
 }
 
-export function isActionEnabledByEnv(actionId: ActionId): boolean {
-  const disabled = readDisabledActionIdsFromEnv();
-  return !disabled.includes(actionId);
+export function isActionEnabledByEnv(
+  actionId: ActionId,
+  ctx?: Readonly<{ surface?: keyof ActionSurfaces | null; placement?: ActionUiPlacement | null }>,
+): boolean {
+  return isActionEnabledByActionsSettings(actionId, readActionsSettingsFromEnv() as any, {
+    surface: ctx?.surface ?? null,
+    placement: ctx?.placement ?? null,
+  });
+}
+
+export function listDisabledActionIdsForSurfaceFromEnv(surface: keyof ActionSurfaces): readonly ActionId[] {
+  const settings = readActionsSettingsFromEnv();
+  const disabled: ActionId[] = [];
+  for (const spec of listActionSpecs()) {
+    if (!isActionEnabledByActionsSettings(spec.id as any, settings as any, { surface, placement: null })) {
+      disabled.push(spec.id as any);
+    }
+  }
+  disabled.sort((a, b) => String(a).localeCompare(String(b)));
+  return disabled;
 }
 

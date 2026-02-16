@@ -7,8 +7,8 @@ import { logger } from '@/ui/logger';
 
 import { HAPPIER_MCP_TOOLS } from '@/mcp/happierMcpToolCatalog';
 import { createActionSpecMcpTools } from '@/mcp/tools/actionSpecTools';
-import { readDisabledActionIdsFromEnv, isActionEnabledByEnv } from '@/settings/actionsSettings';
-import { createActionExecutor, getActionSpec, listActionSpecs, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { isActionEnabledByEnv } from '@/settings/actionsSettings';
+import { createActionExecutor, listActionSpecs, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { ExecutionRunIntentSchema } from '@happier-dev/protocol';
 import { z } from 'zod';
 
@@ -35,20 +35,8 @@ export function createHappierMcpServer(client: HappyMcpSessionClient): { mcp: Mc
     version: '1.0.0',
   });
 
-  const disabledActionIds = readDisabledActionIdsFromEnv();
-  const disabledMcpToolNames = new Set<string>();
-  for (const actionId of disabledActionIds) {
-    try {
-      const spec = getActionSpec(actionId as any);
-      const mcpToolName = typeof spec.bindings?.mcpToolName === 'string' ? spec.bindings.mcpToolName.trim() : '';
-      if (mcpToolName) disabledMcpToolNames.add(mcpToolName);
-    } catch {
-      // ignore
-    }
-  }
-
   const actionSpecTools = createActionSpecMcpTools({
-    isActionEnabled: (id) => isActionEnabledByEnv(id),
+    isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: 'mcp' }),
   });
 
   const sessionScopedRpc = async (method: string, params: unknown) =>
@@ -65,6 +53,13 @@ export function createHappierMcpServer(client: HappyMcpSessionClient): { mcp: Mc
     // Not exposed as MCP tools today; satisfy executor deps to keep a single shared implementation.
     sessionOpen: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.open' }),
     sessionSpawnNew: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.spawn_new' }),
+    sessionSpawnPicker: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.spawn_picker' }),
+    workspacesListRecent: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:workspaces.list_recent' }),
+    pathsListRecent: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:paths.list_recent' }),
+    machinesList: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:machines.list' }),
+    serversList: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:servers.list' }),
+    agentsBackendsList: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:agents.backends.list' }),
+    agentsModelsList: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:agents.models.list' }),
     sessionSendMessage: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.message.send' }),
     sessionPermissionRespond: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.permission.respond' }),
     sessionTargetPrimarySet: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.target.primary.set' }),
@@ -74,17 +69,24 @@ export function createHappierMcpServer(client: HappyMcpSessionClient): { mcp: Mc
     sessionRecentMessagesGet: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.messages.recent.get' }),
     resetGlobalVoiceAgent: async () => {},
 
-    isActionEnabled: (id) => isActionEnabledByEnv(id),
+    isActionEnabled: (id, ctx) => isActionEnabledByEnv(id, { surface: ctx.surface ?? 'mcp', placement: ctx.placement ?? null }),
   };
 
   const executor = createActionExecutor(deps);
 
   const actionToolNameToId = new Map<string, string>();
+  const allActionToolNames = new Set<string>();
   for (const spec of listActionSpecs()) {
     if (spec.surfaces.mcp !== true) continue;
+    if (!isActionEnabledByEnv(spec.id as any, { surface: 'mcp' })) continue;
     const toolName = typeof spec.bindings?.mcpToolName === 'string' ? spec.bindings.mcpToolName.trim() : '';
     if (!toolName) continue;
     actionToolNameToId.set(toolName, spec.id);
+  }
+  for (const spec of listActionSpecs()) {
+    if (spec.surfaces.mcp !== true) continue;
+    const toolName = typeof spec.bindings?.mcpToolName === 'string' ? spec.bindings.mcpToolName.trim() : '';
+    if (toolName) allActionToolNames.add(toolName);
   }
 
   const handlersByName: Record<string, (args: any) => Promise<any>> = {
@@ -167,7 +169,8 @@ export function createHappierMcpServer(client: HappyMcpSessionClient): { mcp: Mc
   const enabledTools = HAPPIER_MCP_TOOLS.filter((tool) => {
     if (tool.name === 'change_title') return true;
     if (tool.name === 'action_spec_list' || tool.name === 'action_spec_get') return true;
-    if (disabledMcpToolNames.has(tool.name)) return false;
+    // Hide disabled action-backed tools so clients don't discover handlers they cannot call.
+    if (allActionToolNames.has(tool.name)) return actionToolNameToId.has(tool.name);
     return true;
   });
 
@@ -197,7 +200,7 @@ export function createHappierMcpServer(client: HappyMcpSessionClient): { mcp: Mc
             }
           }
 
-          const res = await executor.execute(actionId as any, args, { defaultSessionId: client.sessionId });
+          const res = await executor.execute(actionId as any, args, { defaultSessionId: client.sessionId, surface: 'mcp' });
           if (!res.ok) {
             return {
               content: [{ type: 'text' as const, text: JSON.stringify({ errorCode: res.errorCode, error: res.error }) }],

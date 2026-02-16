@@ -140,8 +140,13 @@ describe('startHappyServer (MCP integration)', () => {
   });
 
   it('hides disabled action-spec tools and rejects action_spec_get for disabled actions', async () => {
-    const prev = process.env.HAPPIER_ACTIONS_DISABLED_ACTION_IDS;
-    process.env.HAPPIER_ACTIONS_DISABLED_ACTION_IDS = JSON.stringify(['review.start']);
+    const prev = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
+      v: 1,
+      actions: {
+        'review.start': { enabled: true, disabledSurfaces: ['mcp'], disabledPlacements: [] },
+      },
+    });
 
     const rpcHandlerManager = new RpcHandlerManager({
       scopePrefix: 'sess_mcp_disabled_1',
@@ -181,8 +186,8 @@ describe('startHappyServer (MCP integration)', () => {
       expect(parsed.errorCode).toBe('action_disabled');
     } finally {
       server.stop();
-      if (prev === undefined) delete process.env.HAPPIER_ACTIONS_DISABLED_ACTION_IDS;
-      else process.env.HAPPIER_ACTIONS_DISABLED_ACTION_IDS = prev;
+      if (prev === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+      else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = prev;
     }
   });
 
