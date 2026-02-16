@@ -11,9 +11,45 @@ on:
         options:
           - preview
           - stable
+      source_ref:
+        description: "Source ref to build from (auto => preview:dev, stable:main)"
+        required: true
+        default: auto
+        type: string
       push_latest:
         description: "Also push the floating channel tag (preview or latest)"
         required: true
+        default: true
+        type: boolean
+      build_relay:
+        description: "Build/push relay-server image"
+        required: true
+        default: true
+        type: boolean
+      build_devcontainer:
+        description: "Build/push devcontainer image"
+        required: true
+        default: true
+        type: boolean
+  workflow_call:
+    inputs:
+      channel:
+        required: true
+        type: string
+      source_ref:
+        required: false
+        default: auto
+        type: string
+      push_latest:
+        required: false
+        default: true
+        type: boolean
+      build_relay:
+        required: false
+        default: true
+        type: boolean
+      build_devcontainer:
+        required: false
         default: true
         type: boolean
 
@@ -26,14 +62,32 @@ jobs:
     runs-on: ubuntu-latest
     environment: release-shared
     steps:
-      - name: Guard stable channel
-        if: ${{ inputs.channel == 'stable' && github.ref_name != 'main' }}
+      - name: Resolve source ref
+        id: resolve_source
+        shell: bash
         run: |
-          echo "Stable Docker publishing is only allowed from main (current ref: ${GITHUB_REF_NAME})." >&2
+          set -euo pipefail
+          channel="${{ inputs.channel }}"
+          src="${{ inputs.source_ref }}"
+          if [ "$src" = "auto" ]; then
+            if [ "$channel" = "preview" ]; then
+              src="dev"
+            else
+              src="main"
+            fi
+          fi
+          echo "ref=$src" >> "$GITHUB_OUTPUT"
+
+      - name: Guard stable channel
+        if: ${{ inputs.channel == 'stable' && steps.resolve_source.outputs.ref != 'main' }}
+        run: |
+          echo "Stable Docker publishing must build from main (resolved ref: '${{ steps.resolve_source.outputs.ref }}')." >&2
           exit 1
 
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.resolve_source.outputs.ref }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -54,7 +108,7 @@ jobs:
           set -euo pipefail
 
           channel="${{ inputs.channel }}"
-          sha="${GITHUB_SHA}"
+          sha="$(git rev-parse HEAD)"
           short_sha="${sha:0:12}"
 
           if [ "$channel" = "stable" ]; then
@@ -78,8 +132,10 @@ jobs:
 
           echo "relay_tags=$relay_tags" >> "$GITHUB_OUTPUT"
           echo "dev_tags=$dev_tags" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
       - name: Build & push relay-server
+        if: ${{ inputs.build_relay == true }}
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -92,9 +148,10 @@ jobs:
           tags: ${{ steps.tags.outputs.relay_tags }}
           labels: |
             org.opencontainers.image.source=${{ github.repositoryUrl }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ steps.tags.outputs.sha }}
 
       - name: Build & push devcontainer
+        if: ${{ inputs.build_devcontainer == true }}
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -104,4 +161,4 @@ jobs:
           tags: ${{ steps.tags.outputs.dev_tags }}
           labels: |
             org.opencontainers.image.source=${{ github.repositoryUrl }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ steps.tags.outputs.sha }}
