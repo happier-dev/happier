@@ -44,7 +44,7 @@ function createSessionStub(): ApiSessionClient {
     sendAgentMessageCommitted: async () => {},
     sendUserTextMessageCommitted: async () => {},
     fetchRecentTranscriptTextItemsForAcpImport: async () => [],
-    updateMetadata: () => {},
+    updateMetadata: async () => {},
     keepAlive: () => {},
     sendAgentMessage: () => {},
   };

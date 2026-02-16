@@ -46,7 +46,7 @@ describe('Codex ACP runtime permission mode wiring', () => {
 
     const session: Pick<ApiSessionClient, 'sendAgentMessage' | 'updateMetadata' | 'keepAlive'> = {
       sendAgentMessage(_provider, _body, _opts) {},
-      updateMetadata(_handler) {},
+      async updateMetadata(_handler) {},
       keepAlive(_thinking, _mode) {},
     };
     const messageBuffer: Pick<MessageBuffer, 'addMessage' | 'removeLastMessage' | 'updateLastMessage'> = {

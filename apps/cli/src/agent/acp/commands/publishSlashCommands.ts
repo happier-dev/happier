@@ -1,5 +1,5 @@
-import { logger } from '@/ui/logger';
 import type { AcpReplayHistorySessionClient } from '@/agent/acp/sessionClient';
+import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 
 export type SlashCommandDetail = {
   command: string;
@@ -40,8 +40,9 @@ export function publishSlashCommandsToMetadata(params: {
   const { session, details } = params;
   const names = details.map((d) => d.command);
 
-  try {
-    session.updateMetadata((metadata: any) => {
+  updateMetadataBestEffort(
+    session,
+    (metadata) => {
       const prevNames = Array.isArray(metadata?.slashCommands) ? metadata.slashCommands : [];
       const prevDetails = Array.isArray(metadata?.slashCommandDetails) ? metadata.slashCommandDetails : [];
       const sameNames = JSON.stringify(prevNames) === JSON.stringify(names);
@@ -53,8 +54,8 @@ export function publishSlashCommandsToMetadata(params: {
         slashCommands: names,
         slashCommandDetails: details,
       };
-    });
-  } catch (error) {
-    logger.debug('[ACP] Failed to publish slash commands to metadata (non-fatal)', { error });
-  }
+    },
+    '[ACP]',
+    'publish_slash_commands',
+  );
 }

@@ -855,29 +855,32 @@ export class AcpBackend implements AgentBackend {
               || result.decision === 'approved_for_session'
               || result.decision === 'approved_execpolicy_amendment';
 
+            const outcome = pickPermissionOutcome(options as PermissionOptionLike[], result.decision);
+            if (outcome.outcome === 'selected') {
+              this.lastSelectedPermissionOptionIdByToolCallId.set(toolCallId, outcome.optionId);
+            } else {
+              this.lastSelectedPermissionOptionIdByToolCallId.delete(toolCallId);
+            }
+
             await this.respondToPermission(permissionId, isApproved);
+
             if (result.decision === 'denied' || result.decision === 'abort') {
               // When the user declines a permission prompt, abort the in-flight prompt turn so the
               // agent doesn't continue and retry tool calls. This matches our non-ACP behavior.
+              //
+              // Important: still return the actual permission outcome (e.g. "deny") so ACP agents
+              // can distinguish an explicit rejection from a transport cancellation.
               const requestSessionId =
                 typeof (extendedParams as any).sessionId === 'string'
                   ? String((extendedParams as any).sessionId)
                   : (this.acpSessionId ?? '');
               void this.cancel(requestSessionId);
               this.clearTrackedToolCall(toolCallId, `permission decision=${result.decision}`);
-              this.lastSelectedPermissionOptionIdByToolCallId.delete(toolCallId);
-              return { outcome: { outcome: 'cancelled' } };
+              return { outcome };
             }
 
             if (!isApproved) {
               this.clearTrackedToolCall(toolCallId, `permission decision=${result.decision}`);
-            }
-
-            const outcome = pickPermissionOutcome(options as PermissionOptionLike[], result.decision);
-            if (outcome.outcome === 'selected') {
-              this.lastSelectedPermissionOptionIdByToolCallId.set(toolCallId, outcome.optionId);
-            } else {
-              this.lastSelectedPermissionOptionIdByToolCallId.delete(toolCallId);
             }
             return { outcome };
           } catch (error) {
