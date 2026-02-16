@@ -14,10 +14,26 @@ function createBundleFixture(prefix = 'happy-stack-bundle-workspace-deps-') {
   const repoRoot = mkdtempSync(join(tmpdir(), prefix));
   const stackDir = resolve(repoRoot, 'apps', 'stack');
   const cliCommonDir = resolve(repoRoot, 'packages', 'cli-common');
+  const releaseRuntimeDir = resolve(repoRoot, 'packages', 'release-runtime');
   writeJson(resolve(repoRoot, 'package.json'), { name: 'repo', private: true });
   writeFileSync(resolve(repoRoot, 'yarn.lock'), '# lock\n', 'utf8');
   mkdirSync(resolve(cliCommonDir, 'dist'), { recursive: true });
+  mkdirSync(resolve(releaseRuntimeDir, 'dist'), { recursive: true });
   mkdirSync(stackDir, { recursive: true });
+
+  // bundleWorkspaceDeps also bundles @happier-dev/release-runtime. Keep a minimal, build-like
+  // workspace package present so these tests focus on bundling behavior instead of fixture setup.
+  writeJson(resolve(releaseRuntimeDir, 'package.json'), {
+    name: '@happier-dev/release-runtime',
+    version: '0.0.0',
+    type: 'module',
+    main: './dist/index.js',
+    types: './dist/index.d.ts',
+    exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
+    scripts: { postinstall: 'echo should-not-run' },
+  });
+  writeFileSync(resolve(releaseRuntimeDir, 'dist', 'index.js'), 'export const release = 1;\n', 'utf8');
+
   return { repoRoot, stackDir, cliCommonDir };
 }
 
