@@ -48,6 +48,8 @@ export {
 
 export { buildConnectedServiceCredentialRecord } from './connect/buildConnectedServiceCredentialRecord.js';
 
+export { parseBooleanEnv, parseOptionalBooleanEnv } from './env/parseBooleanEnv.js';
+
 export {
   BOX_BUNDLE_MIN_BYTES,
   BOX_BUNDLE_NONCE_BYTES,

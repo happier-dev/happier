@@ -1,6 +1,8 @@
 import Constants from 'expo-constants';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 
+import { parseOptionalBooleanEnv } from '@happier-dev/protocol';
+
 export interface AppConfig {
     variant?: string;
     postHogKey?: string;
@@ -12,11 +14,8 @@ export interface AppConfig {
 }
 
 function parseBooleanEnv(value: string | undefined): boolean | undefined {
-    if (!value) return undefined;
-    const v = value.trim().toLowerCase();
-    if (v === '1' || v === 'true' || v === 'yes' || v === 'on') return true;
-    if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
-    return undefined;
+    const parsed = parseOptionalBooleanEnv(value);
+    return parsed === null ? undefined : parsed;
 }
 
 /**
