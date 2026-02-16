@@ -1,6 +1,34 @@
 {
   "buildPolicy": {
-    "allow": [],
-    "deny": []
+    "allow": [
+      "updates.ota",
+      "auth.recovery.providerReset",
+      "auth.ui.recoveryKeyReminder",
+      "app.analytics",
+      "app.ui.storeReviewPrompts",
+      "app.ui.sessionGettingStartedGuidance",
+      "bugReports",
+      "session.typeSelector",
+      "zen.navigation",
+      "usage.reporting",
+      "messages.thinkingVisibility",
+      "codex.resume.mcp",
+      "codex.resume.acp"
+    ],
+    "deny": [
+      "automations",
+      "automations.existingSessionTarget",
+      "execution.runs",
+      "voice",
+      "social.friends",
+      "connected.services",
+      "connected.services.quotas",
+      "app.ui.changelog",
+      "scm.writeOperations",
+      "files.reviewComments",
+      "files.diffSyntaxHighlighting",
+      "files.editor",
+      "files.syntaxHighlighting.advanced"
+    ]
   }
 }

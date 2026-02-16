@@ -1,26 +1,13 @@
 {
   "buildPolicy": {
     "allow": [
-      "automations",
-      "automations.existingSessionTarget",
-      "execution.runs",
-      "voice",
-      "connected.services",
-      "connected.services.quotas",
       "updates.ota",
-      "social.friends",
       "auth.recovery.providerReset",
       "auth.ui.recoveryKeyReminder",
       "app.analytics",
       "app.ui.storeReviewPrompts",
       "app.ui.sessionGettingStartedGuidance",
-      "app.ui.changelog",
       "bugReports",
-      "scm.writeOperations",
-      "files.reviewComments",
-      "files.diffSyntaxHighlighting",
-      "files.editor",
-      "files.syntaxHighlighting.advanced",
       "session.typeSelector",
       "zen.navigation",
       "usage.reporting",
@@ -28,6 +15,20 @@
       "codex.resume.mcp",
       "codex.resume.acp"
     ],
-    "deny": []
+    "deny": [
+      "automations",
+      "automations.existingSessionTarget",
+      "execution.runs",
+      "voice",
+      "social.friends",
+      "connected.services",
+      "connected.services.quotas",
+      "app.ui.changelog",
+      "scm.writeOperations",
+      "files.reviewComments",
+      "files.diffSyntaxHighlighting",
+      "files.editor",
+      "files.syntaxHighlighting.advanced"
+    ]
   }
 }
