@@ -136,7 +136,9 @@ describe('createOpenCodeBackend config file reading', () => {
   function makeTempConfigDir(): string {
     const dir = makeTempDir('happier-opencode-config-');
     tempDirs.push(dir);
-    process.env.HOME = dir;
+    // `os.homedir()` is not reliably driven by `process.env.HOME` (e.g. on Linux it may come
+    // from the passwd database), so use XDG_CONFIG_HOME to force the config root.
+    process.env.XDG_CONFIG_HOME = join(dir, '.config');
     return dir;
   }
 

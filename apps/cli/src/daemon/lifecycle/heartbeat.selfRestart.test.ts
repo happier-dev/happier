@@ -133,6 +133,14 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
     vi.useFakeTimers();
     vi.resetModules();
 
+    let tick: (() => Promise<void>) | undefined;
+    const setIntervalSpy = vi
+      .spyOn(global, 'setInterval')
+      .mockImplementation(((handler: (...args: any[]) => any) => {
+        tick = handler as unknown as () => Promise<void>;
+        return 1 as any;
+      }) as any);
+
     vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ version: '2.0.0' }) as any);
     vi.mocked(spawnHappyCLI).mockReturnValue({ unref: vi.fn() } as any);
     vi.mocked(readDaemonState).mockResolvedValue({
@@ -164,7 +172,11 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
       requestShutdown: vi.fn(),
     });
 
-    await vi.advanceTimersByTimeAsync(60);
+    expect(setIntervalSpy).toHaveBeenCalled();
+    expect(tick).toBeTypeOf('function');
+    const tickPromise = tick!();
+    await vi.advanceTimersByTimeAsync(100);
+    await tickPromise;
 
     expect(spawnHappyCLI).toHaveBeenCalledWith(
       ['daemon', 'start-sync'],
@@ -185,6 +197,14 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
 
     vi.useFakeTimers();
     vi.resetModules();
+
+    let tick: (() => Promise<void>) | undefined;
+    const setIntervalSpy = vi
+      .spyOn(global, 'setInterval')
+      .mockImplementation(((handler: (...args: any[]) => any) => {
+        tick = handler as unknown as () => Promise<void>;
+        return 1 as any;
+      }) as any);
 
     vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ version: '2.0.0' }) as any);
     vi.mocked(spawnHappyCLI).mockReturnValue({ unref: vi.fn() } as any);
@@ -222,7 +242,11 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
       requestShutdown: vi.fn(),
     });
 
-    await vi.advanceTimersByTimeAsync(80);
+    expect(setIntervalSpy).toHaveBeenCalled();
+    expect(tick).toBeTypeOf('function');
+    const tickPromise = tick!();
+    await vi.advanceTimersByTimeAsync(100);
+    await tickPromise;
 
     expect(spawnHappyCLI).toHaveBeenCalledWith(
       ['daemon', 'start-sync'],
