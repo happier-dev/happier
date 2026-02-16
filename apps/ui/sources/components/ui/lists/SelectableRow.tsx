@@ -159,6 +159,7 @@ export function SelectableRow(props: SelectableRowProps) {
             style={({ pressed }) => ([
                 styles.row,
                 rowVariantStyle,
+                Platform.OS === 'web' && disabled ? ({ cursor: 'not-allowed' } as any) : null,
                 pressed && !disabled
                     ? (variant === 'selectable' ? styles.rowSelectablePressed : styles.rowPressed)
                     : null,
@@ -198,4 +199,3 @@ export function SelectableRow(props: SelectableRowProps) {
         </Pressable>
     );
 }
-

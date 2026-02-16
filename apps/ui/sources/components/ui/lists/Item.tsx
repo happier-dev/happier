@@ -20,6 +20,7 @@ import { useItemGroupRowPosition } from '@/components/ui/lists/ItemGroupRowPosit
 import { getItemGroupRowCornerRadii } from '@/components/ui/lists/itemGroupRowCorners';
 
 export interface ItemProps {
+    testID?: string;
     title: string;
     subtitle?: React.ReactNode;
     subtitleLines?: number; // set 0 or undefined for auto/multiline
@@ -155,6 +156,7 @@ export const Item = React.memo<ItemProps>((props) => {
     const longPressTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     
     const {
+        testID,
         title,
         subtitle,
         subtitleLines,
@@ -386,6 +388,7 @@ export const Item = React.memo<ItemProps>((props) => {
     if (isInteractive) {
         return (
             <Pressable
+                testID={testID}
                 onPress={handlePress}
                 onLongPress={onLongPress}
                 onPressIn={handlePressIn}
@@ -410,6 +413,7 @@ export const Item = React.memo<ItemProps>((props) => {
 
                     return [
                         { backgroundColor, opacity: disabled ? 0.5 : 1 },
+                        isWeb && (disabled || loading) ? ({ cursor: 'not-allowed' } as any) : null,
                         roundedCornersStyle,
                         pressableStyle,
                     ];
@@ -425,5 +429,9 @@ export const Item = React.memo<ItemProps>((props) => {
         );
     }
 
-    return <View style={[{ opacity: disabled ? 0.5 : 1 }, pressableStyle]}>{content}</View>;
+    return (
+        <View testID={testID} style={[{ opacity: disabled ? 0.5 : 1 }, pressableStyle]}>
+            {content}
+        </View>
+    );
 });

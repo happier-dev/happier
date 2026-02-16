@@ -125,7 +125,7 @@ export const OAuthView = React.memo((props: {
     }
 
     const [parameters, setParameters] = React.useState<{
-        pkce: PKCECodes;
+        pkce: PkceCodes;
         state: string;
         url: string;
         redirectUri: string;
@@ -177,7 +177,7 @@ export const OAuthView = React.memo((props: {
 export const OAuthViewRender = React.memo((props: {
     name: string;
     config: OAuthViewConfig;
-    parameters: { pkce: PKCECodes; state: string; url: string; redirectUri: string };
+    parameters: { pkce: PkceCodes; state: string; url: string; redirectUri: string };
     onRetry: () => void;
     backgroundColor?: string;
     foregroundColor?: string;
