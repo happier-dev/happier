@@ -36,6 +36,7 @@ export function runSidechainsPhase(params: Readonly<{
             let userMsg: ReducerMessage = {
                 id: mid,
                 realID: msg.id,
+                seq: typeof msg.seq === 'number' ? msg.seq : null,
                 role: 'user',
                 createdAt: msg.createdAt,
                 text: msg.content[0].prompt,
@@ -49,20 +50,44 @@ export function runSidechainsPhase(params: Readonly<{
             // Process agent content in sidechain
             for (let c of msg.content) {
                 if (c.type === 'text') {
-                    let mid = allocateId();
-                    let textMsg: ReducerMessage = {
-                        id: mid,
-                        realID: msg.id,
-                        role: 'agent',
-                        createdAt: msg.createdAt,
-                        text: c.text,
-                        isThinking: false,
-                        tool: null,
-                        event: null,
-                        meta: msg.meta,
-                    };
-                    state.messages.set(mid, textMsg);
-                    existingSidechain.push(textMsg);
+                    const streamKey =
+                        msg.meta && typeof (msg.meta as any).happierSidechainStreamKey === 'string'
+                            ? String((msg.meta as any).happierSidechainStreamKey)
+                            : null;
+
+                    const last = existingSidechain[existingSidechain.length - 1];
+                    const canMerge =
+                        streamKey &&
+                        last &&
+                        last.role === 'agent' &&
+                        !last.isThinking &&
+                        typeof last.text === 'string' &&
+                        last.meta &&
+                        typeof (last.meta as any).happierSidechainStreamKey === 'string' &&
+                        String((last.meta as any).happierSidechainStreamKey) === streamKey;
+
+                    if (canMerge) {
+                        last.text = String(last.text ?? '') + String(c.text ?? '');
+                        // Sidechain children must never be emitted as root-level transcript messages.
+                        // Marking the owning Task/SubAgentRun tool-call as changed (below) is sufficient
+                        // to refresh the child transcript in both the task view and the main session view.
+                    } else {
+                        let mid = allocateId();
+                        let textMsg: ReducerMessage = {
+                            id: mid,
+                            realID: msg.id,
+                            seq: typeof msg.seq === 'number' ? msg.seq : null,
+                            role: 'agent',
+                            createdAt: msg.createdAt,
+                            text: c.text,
+                            isThinking: false,
+                            tool: null,
+                            event: null,
+                            meta: msg.meta,
+                        };
+                        state.messages.set(mid, textMsg);
+                        existingSidechain.push(textMsg);
+                    }
                 } else if (c.type === 'thinking') {
                     const chunk = typeof c.thinking === 'string' ? normalizeThinkingChunk(c.thinking) : '';
                     if (!chunk.trim()) {
@@ -81,6 +106,7 @@ export function runSidechainsPhase(params: Readonly<{
 	                        let textMsg: ReducerMessage = {
 	                            id: mid,
                             realID: msg.id,
+                            seq: typeof msg.seq === 'number' ? msg.seq : null,
                             role: 'agent',
                             createdAt: msg.createdAt,
                             text: wrapThinkingText(chunk),
@@ -127,6 +153,7 @@ export function runSidechainsPhase(params: Readonly<{
                     let toolMsg: ReducerMessage = {
                         id: mid,
                         realID: msg.id,
+                        seq: typeof msg.seq === 'number' ? msg.seq : null,
                         role: 'agent',
                         createdAt: msg.createdAt,
                         text: null,

@@ -217,7 +217,7 @@ export async function fetchAndApplyMessages(params: {
                 params.onTaskLifecycleEvent?.(lifecycleEvent);
             }
             // Normalize the decrypted message
-            const normalized = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content);
+            const normalized = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content, { seq: decrypted.seq ?? undefined });
             if (normalized) {
                 normalizedMessages.push(normalized);
             }
@@ -367,7 +367,7 @@ export async function fetchAndApplyOlderMessages(params: {
             // Older pages can include historical lifecycle markers (task_complete/turn_aborted) that
             // should not clobber current in-flight UI state. Lifecycle handling is reserved for
             // newer/socket flows.
-            const normalized = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content);
+            const normalized = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content, { seq: decrypted.seq ?? undefined });
             if (normalized) {
                 normalizedMessages.push(normalized);
             }
@@ -445,7 +445,7 @@ export async function fetchAndApplyNewerMessages(params: {
             if (lifecycleEvent) {
                 params.onTaskLifecycleEvent?.(lifecycleEvent);
             }
-            const normalized = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content);
+            const normalized = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content, { seq: decrypted.seq ?? undefined });
             if (normalized) {
                 normalizedMessages.push(normalized);
             }

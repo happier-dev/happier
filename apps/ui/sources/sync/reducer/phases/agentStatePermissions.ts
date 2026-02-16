@@ -146,6 +146,7 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                     state.messages.set(mid, {
                         id: mid,
                         realID: null,
+                        seq: null,
                         role: 'agent',
                         createdAt: request.createdAt || Date.now(),
                         text: null,
@@ -343,6 +344,7 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                     state.messages.set(mid, {
                         id: mid,
                         realID: null,
+                        seq: null,
                         role: 'agent',
                         createdAt: completed.createdAt || Date.now(),
                         text: null,

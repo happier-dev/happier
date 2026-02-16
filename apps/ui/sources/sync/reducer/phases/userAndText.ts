@@ -30,6 +30,8 @@ export function runUserAndTextPhase(params: Readonly<{
 
     let lastMainThinkingMessageId = params.lastMainThinkingMessageId;
     let lastMainThinkingCreatedAt = params.lastMainThinkingCreatedAt;
+    let lastMainStreamMessageId: string | null = null;
+    let lastMainStreamKey: string | null = null;
 
     //
     // Phase 1: Process non-sidechain user messages and text messages
@@ -51,6 +53,7 @@ export function runUserAndTextPhase(params: Readonly<{
             state.messages.set(mid, {
                 id: mid,
                 realID: msg.id,
+                seq: typeof msg.seq === 'number' ? msg.seq : null,
                 role: 'user',
                 createdAt: msg.createdAt,
                 text: msg.content.text,
@@ -68,6 +71,8 @@ export function runUserAndTextPhase(params: Readonly<{
             changed.add(mid);
             lastMainThinkingMessageId = null;
             lastMainThinkingCreatedAt = null;
+            lastMainStreamMessageId = null;
+            lastMainStreamKey = null;
         } else if (msg.role === 'agent') {
             // Check if we've seen this agent message before
             if (state.messageIds.has(msg.id)) {
@@ -85,6 +90,31 @@ export function runUserAndTextPhase(params: Readonly<{
             // Process text and thinking content (tool calls handled in Phase 2)
             for (let c of msg.content) {
                 if (c.type === 'text') {
+                    const streamKey =
+                        msg.meta && typeof (msg.meta as any).happierStreamKey === 'string'
+                            ? String((msg.meta as any).happierStreamKey)
+                            : null;
+
+                    const canMerge =
+                        streamKey
+                        && lastMainStreamMessageId
+                        && lastMainStreamKey === streamKey
+                        && (() => {
+                            const prev = state.messages.get(lastMainStreamMessageId!);
+                            return prev?.role === 'agent' && !prev.isThinking && typeof prev.text === 'string';
+                        })();
+
+                    if (canMerge) {
+                        const prev = state.messages.get(lastMainStreamMessageId!);
+                        if (prev && typeof prev.text === 'string') {
+                            prev.text = prev.text + String(c.text ?? '');
+                            changed.add(lastMainStreamMessageId!);
+                        }
+                        lastMainThinkingMessageId = null;
+                        lastMainThinkingCreatedAt = null;
+                        continue;
+                    }
+
                     if (c.text.trim() === 'No response requested.') {
                         cancelRunningTools({
                             state,
@@ -97,6 +127,7 @@ export function runUserAndTextPhase(params: Readonly<{
                     state.messages.set(mid, {
                         id: mid,
                         realID: msg.id,
+                        seq: typeof msg.seq === 'number' ? msg.seq : null,
                         role: 'agent',
                         createdAt: msg.createdAt,
                         text: c.text,
@@ -108,11 +139,15 @@ export function runUserAndTextPhase(params: Readonly<{
                     changed.add(mid);
                     lastMainThinkingMessageId = null;
                     lastMainThinkingCreatedAt = null;
+                    lastMainStreamMessageId = mid;
+                    lastMainStreamKey = streamKey;
                 } else if (c.type === 'thinking') {
                     const chunk = typeof c.thinking === 'string' ? normalizeThinkingChunk(c.thinking) : '';
                     if (!chunk.trim()) {
                         continue;
                     }
+                    lastMainStreamMessageId = null;
+                    lastMainStreamKey = null;
 
                     const prevThinkingId = lastMainThinkingMessageId;
                     const canAppendToPrevious =
@@ -136,6 +171,7 @@ export function runUserAndTextPhase(params: Readonly<{
                         state.messages.set(mid, {
                             id: mid,
                             realID: msg.id,
+                            seq: typeof msg.seq === 'number' ? msg.seq : null,
                             role: 'agent',
                             createdAt: msg.createdAt,
                             text: wrapThinkingText(chunk),
@@ -154,6 +190,8 @@ export function runUserAndTextPhase(params: Readonly<{
                     // timeline ordering (thinking → tool → thinking).
                     lastMainThinkingMessageId = null;
                     lastMainThinkingCreatedAt = null;
+                    lastMainStreamMessageId = null;
+                    lastMainStreamKey = null;
 
                     const existingMessageId = state.toolIdToMessageId.get(c.id);
                     if (existingMessageId) {
@@ -208,6 +246,7 @@ export function runUserAndTextPhase(params: Readonly<{
                     state.messages.set(mid, {
                         id: mid,
                         realID: msg.id,
+                        seq: typeof msg.seq === 'number' ? msg.seq : null,
                         role: 'agent',
                         createdAt: msg.createdAt,
                         text: null,

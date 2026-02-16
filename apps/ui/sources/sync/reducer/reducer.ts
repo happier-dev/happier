@@ -173,6 +173,7 @@ function isPermissionRequestToolCall(toolId: string, input: unknown): boolean {
 export type ReducerMessage = {
     id: string;
     realID: string | null;
+    seq: number | null;
     createdAt: number;
     role: 'user' | 'agent';
     text: string | null;
@@ -502,6 +503,7 @@ function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: Reduc
         const displayText = typeof reducerMsg.meta?.displayText === 'string' ? reducerMsg.meta.displayText : undefined;
         return {
             id: reducerMsg.id,
+            ...(typeof reducerMsg.seq === 'number' ? { seq: reducerMsg.seq } : {}),
             localId: null,
             createdAt: reducerMsg.createdAt,
             kind: 'user-text',
@@ -512,6 +514,7 @@ function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: Reduc
     } else if (reducerMsg.role === 'agent' && reducerMsg.text !== null) {
         return {
             id: reducerMsg.id,
+            ...(typeof reducerMsg.seq === 'number' ? { seq: reducerMsg.seq } : {}),
             localId: null,
             createdAt: reducerMsg.createdAt,
             kind: 'agent-text',
@@ -537,6 +540,7 @@ function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: Reduc
 
         return {
             id: reducerMsg.id,
+            ...(typeof reducerMsg.seq === 'number' ? { seq: reducerMsg.seq } : {}),
             localId: null,
             createdAt: reducerMsg.createdAt,
             kind: 'tool-call',
@@ -547,6 +551,7 @@ function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: Reduc
     } else if (reducerMsg.role === 'agent' && reducerMsg.event !== null) {
         return {
             id: reducerMsg.id,
+            ...(typeof reducerMsg.seq === 'number' ? { seq: reducerMsg.seq } : {}),
             createdAt: reducerMsg.createdAt,
             kind: 'agent-event',
             event: reducerMsg.event,
