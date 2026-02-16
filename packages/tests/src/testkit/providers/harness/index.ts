@@ -45,7 +45,7 @@ import { loadProvidersFromCliSpecs } from '../specs/providerSpecs';
 import { waitForAcpSidechainMessages } from '../assertions';
 import { scenarioCatalog } from '../scenarios/scenarioCatalog';
 import { resolveProviderAuthOverlay } from './providerAuthOverlay';
-import { applyHomeIsolationEnv } from './harnessEnv';
+import { applyCliDevTsxTsconfigEnv, applyHomeIsolationEnv } from './harnessEnv';
 import { resolveAcpToolPermissionPromptExpectation } from '../permissions/acpPermissionPrompts';
 import {
   extractFatalAgentErrorMessage,
@@ -1083,11 +1083,14 @@ async function runOneScenario(params: {
       encryptionVariant: 'legacy',
     });
 
-      const cliEnv: NodeJS.ProcessEnv = {
-        ...authedCliEnv,
-        HAPPIER_SESSION_ATTACH_FILE: attachFile,
-        HAPPIER_STACK_TOOL_TRACE_FILE: params.traceFile,
-      };
+      const cliEnv: NodeJS.ProcessEnv = applyCliDevTsxTsconfigEnv({
+        repoRootDir: repoRootDir(),
+        env: {
+          ...authedCliEnv,
+          HAPPIER_SESSION_ATTACH_FILE: attachFile,
+          HAPPIER_STACK_TOOL_TRACE_FILE: params.traceFile,
+        },
+      });
 
       // Some code paths (daemon startup via spawnHappyCLI) execute the built CLI entrypoint.
       // Re-check dist before each phase, but do not rebuild it here. Rebuilding dist while other

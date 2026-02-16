@@ -64,6 +64,23 @@ test('buildLaunchdPlistXml includes StartInterval when provided', () => {
   assert.match(plist, /<key>StartInterval<\/key>\s*<integer>3600<\/integer>/);
 });
 
+test('buildLaunchdPlistXml includes StartCalendarInterval when provided', () => {
+  const plist = buildLaunchdPlistXml({
+    label: 'dev.happier.daily',
+    programArgs: ['/usr/bin/true'],
+    env: {},
+    stdoutPath: '/tmp/out.log',
+    stderrPath: '/tmp/err.log',
+    workingDirectory: '/tmp',
+    keepAliveOnFailure: false,
+    startCalendarInterval: { hour: 3, minute: 15 },
+  });
+  assert.match(plist, /<key>StartCalendarInterval<\/key>/);
+  assert.match(plist, /<key>Hour<\/key>\s*<integer>3<\/integer>/);
+  assert.match(plist, /<key>Minute<\/key>\s*<integer>15<\/integer>/);
+  assert.doesNotMatch(plist, /<key>StartInterval<\/key>/);
+});
+
 test('buildServiceDefinition writes expected service definition paths', () => {
   const linux = buildServiceDefinition({
     backend: 'systemd-user',

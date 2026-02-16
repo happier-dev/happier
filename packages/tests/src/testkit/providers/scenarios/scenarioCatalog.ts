@@ -346,6 +346,7 @@ async function waitForAssistantMessageContaining(params: {
 }): Promise<void> {
   const deadline = Date.now() + params.timeoutMs;
   let afterSeq = typeof params.afterSeqStart === 'number' ? params.afterSeqStart : 0;
+  const streamedTextByKey = new Map<string, string>();
   const requiredSubstring = typeof params.requiredSubstring === 'string' && params.requiredSubstring.length > 0
     ? params.requiredSubstring
     : null;
@@ -375,6 +376,12 @@ async function waitForAssistantMessageContaining(params: {
         if (params.allowAnyAssistantMessage === true) return;
 
         const candidateTexts: string[] = [];
+        const meta = decrypted.meta && typeof decrypted.meta === 'object' ? (decrypted.meta as Record<string, unknown>) : null;
+        const streamKey = meta && typeof meta.happierStreamKey === 'string' ? String(meta.happierStreamKey) : null;
+        const sidechainStreamKey =
+          meta && typeof meta.happierSidechainStreamKey === 'string' ? String(meta.happierSidechainStreamKey) : null;
+        const anyStreamKey = streamKey ?? sidechainStreamKey;
+
         if (role === 'assistant') {
           if (typeof decrypted.content === 'string') {
             candidateTexts.push(decrypted.content);
@@ -401,6 +408,12 @@ async function waitForAssistantMessageContaining(params: {
               : null;
             if (data?.type === 'message' && typeof data.message === 'string') {
               candidateTexts.push(data.message);
+              if (anyStreamKey) {
+                const prev = streamedTextByKey.get(anyStreamKey) ?? '';
+                const next = prev + data.message;
+                streamedTextByKey.set(anyStreamKey, next);
+                candidateTexts.push(next);
+              }
             }
           }
         }
@@ -1661,21 +1674,33 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
     assertProviderId(provider, 'claude');
     return {
       id: 'agent_sdk_partial_messages_smoke',
-      title: 'agent sdk: includePartialMessages does not break tool-trace session flow',
+      title: 'agent sdk: includePartialMessages does not break tool-trace session flow (Read)',
       tier: 'extended',
       yolo: true,
       messageMeta: { ...agentSdkRemoteMetaBase, claudeRemoteIncludePartialMessages: true },
       maxTraceEvents: { toolCalls: 1, toolResults: 1, permissionRequests: 1 },
-      prompt: () =>
+      setup: async ({ workspaceDir }) => {
+        await writeFile(join(workspaceDir, 'partial-messages-read.txt'), `AGENTSDK_PARTIAL_OK_${Date.now()}\n`, 'utf8');
+      },
+      prompt: ({ workspaceDir }) =>
         [
           'Run exactly one tool call:',
-          '- Use the Bash tool to run: echo AGENTSDK_PARTIAL_OK',
+          '- Use the Read tool (not Bash) to read the file at this absolute path:',
+          join(workspaceDir, 'partial-messages-read.txt'),
           '- Then reply DONE.',
           '',
           'Do not use any other tool.',
         ].join('\n'),
-      requiredFixtureKeys: ['claude/claude/tool-call/Bash', 'claude/claude/tool-result/Bash'],
-      requiredTraceSubstrings: ['AGENTSDK_PARTIAL_OK'],
+      requiredFixtureKeys: ['claude/claude/tool-call/Read', 'claude/claude/tool-result/Read'],
+      verify: async ({ fixtures, workspaceDir }) => {
+        const examples = fixtures?.examples;
+        if (!examples || typeof examples !== 'object') throw new Error('Invalid fixtures: missing examples');
+        const calls = (examples['claude/claude/tool-call/Read'] ?? []) as any[];
+        if (!Array.isArray(calls) || calls.length === 0) throw new Error('Missing Read tool-call fixtures');
+        const expectedPath = join(workspaceDir, 'partial-messages-read.txt');
+        const hasPath = calls.some((e) => hasStringSubstring(e?.payload?.input, expectedPath));
+        if (!hasPath) throw new Error('Read tool-call did not include expected file path');
+      },
     };
   },
 

@@ -46,6 +46,7 @@ export function buildLaunchdPlistXml(params: Readonly<{
   workingDirectory?: string;
   keepAliveOnFailure?: boolean;
   startIntervalSec?: number;
+  startCalendarInterval?: Readonly<{ hour: number; minute: number }>;
 }>): string {
   const label = String(params.label ?? '').trim();
   if (!label) throw new Error('label is required');
@@ -85,6 +86,29 @@ export function buildLaunchdPlistXml(params: Readonly<{
     ? `\n    <key>StartInterval</key>\n    <integer>${interval}</integer>\n`
     : '';
 
+  const calendar = params.startCalendarInterval;
+  const calHourRaw = Number(calendar?.hour);
+  const calMinuteRaw = Number(calendar?.minute);
+  const calHour = Number.isFinite(calHourRaw) ? Math.floor(calHourRaw) : NaN;
+  const calMinute = Number.isFinite(calMinuteRaw) ? Math.floor(calMinuteRaw) : NaN;
+  const hasCalendar = Number.isFinite(calHour)
+    && Number.isFinite(calMinute)
+    && calHour >= 0
+    && calHour <= 23
+    && calMinute >= 0
+    && calMinute <= 59;
+  const startCalendarInterval = hasCalendar
+    ? (
+        `\n    <key>StartCalendarInterval</key>\n` +
+        `    <dict>\n` +
+        `      <key>Hour</key>\n` +
+        `      <integer>${calHour}</integer>\n` +
+        `      <key>Minute</key>\n` +
+        `      <integer>${calMinute}</integer>\n` +
+        `    </dict>\n`
+      )
+    : '';
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -100,7 +124,7 @@ ${programArgsXml}
     <key>RunAtLoad</key>
     <true/>
 ${keepAlive}
-${startInterval}
+${startCalendarInterval || startInterval}
 ${workingDirXml}    <key>StandardOutPath</key>
     <string>${xmlEscape(stdoutPath)}</string>
     <key>StandardErrorPath</key>
