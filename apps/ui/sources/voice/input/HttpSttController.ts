@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 
 import { sync } from '@/sync/sync';
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { fetchWithTimeout, resolveVoiceNetworkTimeoutMs } from '@/voice/runtime/fetchWithTimeout';
 import { buildOpenAiTranscriptionRequest } from '@/voice/local/openaiCompat';
 import { RecordingPresets } from 'expo-audio';
@@ -40,16 +41,16 @@ export async function transcribeRecordedAudioWithHttpStt(params: {
     ? `recording${(RecordingPresets.HIGH_QUALITY as any).extension}`
     : 'recording.m4a';
 
-  const transcriptionReq = await (async () => {
-    if (Platform.OS === 'web' && uri.startsWith('blob:')) {
-      const blob = await (await fetch(uri)).blob();
-      return buildOpenAiTranscriptionRequest({
-        baseUrl: sttBaseUrl,
-        apiKey: sttApiKey,
-        model: sttModel,
-        file: { kind: 'web', blob, name: fileName.replace(/\.m4a$/i, '.webm') },
-      });
-    }
+	  const transcriptionReq = await (async () => {
+	    if (Platform.OS === 'web' && uri.startsWith('blob:')) {
+	      const blob = await (await runtimeFetch(uri)).blob();
+	      return buildOpenAiTranscriptionRequest({
+	        baseUrl: sttBaseUrl,
+	        apiKey: sttApiKey,
+	        model: sttModel,
+	        file: { kind: 'web', blob, name: fileName.replace(/\.m4a$/i, '.webm') },
+	      });
+	    }
     return buildOpenAiTranscriptionRequest({
       baseUrl: sttBaseUrl,
       apiKey: sttApiKey,

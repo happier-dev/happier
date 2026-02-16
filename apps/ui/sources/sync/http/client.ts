@@ -1,5 +1,8 @@
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
+
+export { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 export class StaleServerGenerationError extends Error {
     constructor() {
@@ -111,7 +114,7 @@ export async function serverFetch(
     let response: Response | null = null;
     try {
         for (let attempt = 0; attempt < 2; attempt += 1) {
-            response = await fetch(requestUrl, {
+            response = await runtimeFetch(requestUrl, {
                 ...init,
                 headers,
                 signal: requestController.signal,

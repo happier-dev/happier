@@ -6,6 +6,7 @@ import { createRpcCallError } from '@/sync/runtime/rpcErrors';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { StaleServerGenerationError } from '@/sync/http/client';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
 
 //
 // Types
@@ -237,7 +238,7 @@ class ApiSocket {
             ...options?.headers
         };
 
-        const response = await fetch(url, {
+        const response = await runtimeFetch(url, {
             ...options,
             headers
         });

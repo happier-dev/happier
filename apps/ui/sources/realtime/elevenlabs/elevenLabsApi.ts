@@ -1,3 +1,5 @@
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
+
 function clampInt(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.max(min, Math.min(max, Math.trunc(value)));
@@ -37,7 +39,7 @@ export async function elevenLabsFetchJson(params: {
   const timeoutMs = params.timeoutMs ?? getElevenLabsApiTimeoutMs();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${baseUrl}${params.path}`, {
+    const res = await runtimeFetch(`${baseUrl}${params.path}`, {
       ...withXiApiKey(params.apiKey, params.init),
       signal: controller.signal,
     });

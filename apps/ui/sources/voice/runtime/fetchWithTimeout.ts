@@ -1,3 +1,5 @@
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
+
 function isAbortError(error: unknown): boolean {
   return Boolean(error && typeof error === 'object' && (error as any).name === 'AbortError');
 }
@@ -16,7 +18,7 @@ export async function fetchWithTimeout(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(input, {
+    return await runtimeFetch(input, {
       ...(init ?? {}),
       signal: controller.signal,
     });
@@ -29,4 +31,3 @@ export async function fetchWithTimeout(
     clearTimeout(timeout);
   }
 }
-

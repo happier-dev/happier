@@ -1,3 +1,5 @@
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
+
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
 }
@@ -63,7 +65,7 @@ async function fetchSessionDataKey(params: Readonly<{
   const timeoutId = controller ? setTimeout(() => controller.abort(), Math.max(1, params.timeoutMs)) : null;
 
   try {
-    const response = await fetch(`${params.serverUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}`, {
+    const response = await runtimeFetch(`${params.serverUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}`, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${params.token}`,
@@ -121,4 +123,3 @@ export function resetScopedSessionDataKeyCacheForTests(): void {
   sessionDataKeyCache.clear();
   tokenCacheKeyByToken.clear();
 }
-

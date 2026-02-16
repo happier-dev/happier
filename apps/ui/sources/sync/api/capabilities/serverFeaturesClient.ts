@@ -4,6 +4,7 @@ import { serverFetch } from '@/sync/http/client';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { parseServerFeatures } from './serverFeaturesParse';
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
 
 const TTL_READY_MS = 10 * 60 * 1000;
 const TTL_UNSUPPORTED_ENDPOINT_MISSING_MS = 60 * 60 * 1000;
@@ -128,7 +129,7 @@ export async function getServerFeaturesSnapshot(params?: {
 
         try {
             const response = isExplicitServerRequest
-                ? await fetch(joinBaseAndPath(explicitServerUrl!, '/v1/features'), {
+                ? await runtimeFetch(joinBaseAndPath(explicitServerUrl!, '/v1/features'), {
                     method: 'GET',
                     signal: controller.signal,
                 })
