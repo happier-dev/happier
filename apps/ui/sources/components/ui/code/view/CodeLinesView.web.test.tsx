@@ -63,59 +63,9 @@ async function flushReactAsyncWork(): Promise<void> {
 }
 
 describe('CodeLinesView (web)', () => {
-    it('computes Shiki tokens when advanced syntax highlighting is enabled', async () => {
-        rowSpy.mockClear();
-        createHighlighterSpy.mockClear();
-        const { CodeLinesView } = await import('./CodeLinesView.web');
-
-        let tree!: renderer.ReactTestRenderer;
-        renderer.act(() => {
-            tree = renderer.create(
-                <CodeLinesView
-                    lines={[
-                        {
-                            id: 'f:1',
-                            sourceIndex: 0,
-                            kind: 'file',
-                            oldLine: null,
-                            newLine: 1,
-                            renderPrefixText: '',
-                            renderCodeText: 'const x = 1;',
-                            renderIsHeaderLine: false,
-                            selectable: false,
-                        },
-                    ]}
-                    syntaxHighlighting={{
-                        mode: 'advanced',
-                        language: 'typescript',
-                        maxBytes: 1_000_000,
-                        maxLines: 10_000,
-                        maxLineLength: 10_000,
-                    }}
-                />,
-            );
-        });
-
-        // The row will be rendered at least once; after async tokenization, it should receive advancedTokens.
-        let hasAdvanced = false;
-        for (let i = 0; i < 10; i++) {
-            // eslint-disable-next-line no-await-in-loop
-            await flushReactAsyncWork();
-            const calls = rowSpy.mock.calls.map((c) => c[0]);
-            if (calls.length === 0) continue;
-            hasAdvanced = calls.some((p: any) => Array.isArray(p.advancedTokens) && p.advancedTokens.length > 0);
-            if (hasAdvanced) break;
-        }
-        expect(hasAdvanced).toBe(true);
-
-        // Keep tree referenced to avoid act warnings about unmounted trees.
-        expect(tree.root.findAllByType('CodeLineRow' as any).length).toBe(1);
-    });
-
     it('retries highlighter initialization after a cached failure', async () => {
         rowSpy.mockClear();
         createHighlighterSpy.mockReset();
-        vi.resetModules();
         createHighlighterSpy
             .mockImplementationOnce(async () => {
                 throw new Error('shiki_init_failed');
@@ -173,17 +123,61 @@ describe('CodeLinesView (web)', () => {
         renderer.act(() => {
             tree2 = renderer.create(view);
         });
-        let hasAdvanced2 = false;
-        for (let i = 0; i < 10; i++) {
-            // eslint-disable-next-line no-await-in-loop
-            await flushReactAsyncWork();
-            const calls2 = rowSpy.mock.calls.map((c) => c[0]);
-            hasAdvanced2 = calls2.some((p: any) => Array.isArray(p.advancedTokens) && p.advancedTokens.length > 0);
-            if (hasAdvanced2) break;
-        }
-        expect(hasAdvanced2).toBe(true);
+        await flushReactAsyncWork();
+
+        const calls2 = rowSpy.mock.calls.map((c) => c[0]);
+        expect(calls2.some((p: any) => Array.isArray(p.advancedTokens) && p.advancedTokens.length > 0)).toBe(true);
         expect(createHighlighterSpy).toHaveBeenCalledTimes(2);
 
         expect(tree2.root.findAllByType('CodeLineRow' as any).length).toBe(1);
+    });
+
+    it('computes Shiki tokens when advanced syntax highlighting is enabled', async () => {
+        rowSpy.mockClear();
+        createHighlighterSpy.mockClear();
+        const { CodeLinesView } = await import('./CodeLinesView.web');
+
+        let tree!: renderer.ReactTestRenderer;
+        renderer.act(() => {
+            tree = renderer.create(
+                <CodeLinesView
+                    lines={[
+                        {
+                            id: 'f:1',
+                            sourceIndex: 0,
+                            kind: 'file',
+                            oldLine: null,
+                            newLine: 1,
+                            renderPrefixText: '',
+                            renderCodeText: 'const x = 1;',
+                            renderIsHeaderLine: false,
+                            selectable: false,
+                        },
+                    ]}
+                    syntaxHighlighting={{
+                        mode: 'advanced',
+                        language: 'typescript',
+                        maxBytes: 1_000_000,
+                        maxLines: 10_000,
+                        maxLineLength: 10_000,
+                    }}
+                />,
+            );
+        });
+
+        // The row will be rendered at least once; after async tokenization, it should receive advancedTokens.
+        let hasAdvanced = false;
+        for (let i = 0; i < 10; i++) {
+            // eslint-disable-next-line no-await-in-loop
+            await flushReactAsyncWork();
+            const calls = rowSpy.mock.calls.map((c) => c[0]);
+            if (calls.length === 0) continue;
+            hasAdvanced = calls.some((p: any) => Array.isArray(p.advancedTokens) && p.advancedTokens.length > 0);
+            if (hasAdvanced) break;
+        }
+        expect(hasAdvanced).toBe(true);
+
+        // Keep tree referenced to avoid act warnings about unmounted trees.
+        expect(tree.root.findAllByType('CodeLineRow' as any).length).toBe(1);
     });
 });
