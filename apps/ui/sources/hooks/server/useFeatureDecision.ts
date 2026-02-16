@@ -3,7 +3,7 @@ import type { FeatureDecision, FeatureId } from '@happier-dev/protocol';
 
 import { useSettings } from '@/sync/domains/state/storage';
 import {
-    resolveFeatureDecision,
+    resolveRuntimeFeatureDecisionFromSnapshot,
     useServerFeaturesRuntimeSnapshot,
 } from '@/sync/domains/features/featureDecisionRuntime';
 
@@ -13,7 +13,7 @@ export function useFeatureDecision(featureId: FeatureId): FeatureDecision | null
 
     return React.useMemo(
         () =>
-            resolveFeatureDecision({
+            resolveRuntimeFeatureDecisionFromSnapshot({
                 featureId,
                 settings,
                 snapshot,
