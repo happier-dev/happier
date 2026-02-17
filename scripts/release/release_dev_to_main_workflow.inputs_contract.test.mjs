@@ -56,7 +56,11 @@ test('release workflow derives promote mode from confirm and uses grouped toggle
   assert.match(raw, /confirm="\$\{\{ inputs\.confirm \}\}"/, 'confirm should be read as the only promotion selector');
   assert.doesNotMatch(raw, /inputs\.promote_mode/, 'workflow should not read promote_mode input anymore');
 
-  assert.match(raw, /inputs\.checks_profile == 'custom' && contains\(format\(',\{0\},', inputs\.custom_checks\), ',e2e_core,'\)/);
+  assert.match(
+    raw,
+    /inputs\.checks_profile == 'custom' && \(contains\(format\(',\{0\},', inputs\.custom_checks\), ',e2e_core,'\)\s+\|\|\s+contains\(format\(',\{0\},', inputs\.custom_checks\), ',e2e_core_slow,'\)\)/,
+  );
+  assert.match(raw, /inputs\.checks_profile == 'custom' && contains\(format\(',\{0\},', inputs\.custom_checks\), ',e2e_core_slow,'\)/);
   assert.match(raw, /inputs\.checks_profile == 'custom' && contains\(format\(',\{0\},', inputs\.custom_checks\), ',server_db_contract,'\)/);
   assert.match(raw, /inputs\.checks_profile == 'custom' && contains\(format\(',\{0\},', inputs\.custom_checks\), ',build_website,'\)/);
   assert.match(raw, /inputs\.checks_profile == 'custom' && contains\(format\(',\{0\},', inputs\.custom_checks\), ',build_docs,'\)/);
