@@ -11,6 +11,8 @@ import { getProjectPath } from "./utils/path";
 import { projectPath } from "@/projectPath";
 import { systemPrompt } from "./utils/systemPrompt";
 import { restoreStdinBestEffort } from "@/ui/ink/restoreStdinBestEffort";
+import { isClaudeCliJavaScriptFile, resolveClaudeCliPath } from "./utils/resolveClaudeCliPath";
+import { isBun } from "@/utils/runtime";
 
 /**
  * Error thrown when the Claude process exits with a non-zero exit code.
@@ -231,27 +233,50 @@ export async function claudeLocal(opts: {
                 args.push(...opts.claudeArgs)
             }
 
-            if (!claudeCliPath || !existsSync(claudeCliPath)) {
-                throw new Error('Claude local launcher not found. Please ensure HAPPIER_PROJECT_ROOT is set correctly for development.');
-            }
-
             // Prepare environment variables
             // Note: Local mode uses global Claude installation with --session-id flag
             // Launcher only intercepts fetch for thinking state tracking
-            const env = {
+            const env: NodeJS.ProcessEnv = {
                 ...process.env,
-                ...opts.claudeEnvVars
+                ...opts.claudeEnvVars,
+                // Keep behavior consistent with our wrapper script.
+                DISABLE_AUTOUPDATER: '1',
             }
 
-            logger.debug(`[ClaudeLocal] Spawning launcher: ${claudeCliPath}`);
+            const resolvedClaudeCliPath = resolveClaudeCliPath();
+            const shouldUseNodeLauncher = isClaudeCliJavaScriptFile(resolvedClaudeCliPath);
+
+            if (shouldUseNodeLauncher) {
+                if (!claudeCliPath || !existsSync(claudeCliPath)) {
+                    throw new Error('Claude local launcher not found. Please ensure HAPPIER_PROJECT_ROOT is set correctly for development.');
+                }
+
+                // Avoid re-running auto-discovery inside the node wrapper (saves filesystem work).
+                if (!env.HAPPIER_CLAUDE_PATH && !env.HAPPY_CLAUDE_PATH) {
+                    env.HAPPIER_CLAUDE_PATH = resolvedClaudeCliPath;
+                }
+            }
+
+            logger.debug(
+                `[ClaudeLocal] Spawning ${shouldUseNodeLauncher ? 'node launcher' : 'Claude'}: ${shouldUseNodeLauncher ? claudeCliPath : resolvedClaudeCliPath}`,
+            );
             logger.debug(`[ClaudeLocal] Args: ${JSON.stringify(args)}`);
 
-            const child = spawn('node', [claudeCliPath, ...args], {
-                stdio: ['inherit', 'inherit', 'inherit', 'pipe'],
-                signal: opts.abort,
-                cwd: opts.path,
-                env,
-            });
+            const nodeExecutable = isBun() ? 'node' : process.execPath;
+
+            const child = shouldUseNodeLauncher
+                ? spawn(nodeExecutable, [claudeCliPath, ...args], {
+                    stdio: ['inherit', 'inherit', 'inherit', 'pipe'],
+                    signal: opts.abort,
+                    cwd: opts.path,
+                    env,
+                })
+                : spawn(resolvedClaudeCliPath, args, {
+                    stdio: ['inherit', 'inherit', 'inherit', 'ignore'],
+                    signal: opts.abort,
+                    cwd: opts.path,
+                    env,
+                });
 
             // Forward signals to child process to prevent orphaned processes
             // Note: signal: opts.abort handles programmatic abort (mode switching),
@@ -259,7 +284,7 @@ export async function claudeLocal(opts: {
             attachProcessSignalForwardingToChild(child);
 
             // Listen to the custom fd (fd 3) for thinking state tracking
-            if (child.stdio[3]) {
+            if (shouldUseNodeLauncher && child.stdio[3]) {
                 const rl = createInterface({
                     input: child.stdio[3] as any,
                     crlfDelay: Infinity

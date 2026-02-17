@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { claudeLocal } from './claudeLocal';
 
 // Use vi.hoisted to ensure mock functions are available when vi.mock factory runs
-const { mockSpawn, mockClaudeFindLastSession } = vi.hoisted(() => ({
+const { mockSpawn, mockClaudeFindLastSession, mockResolveClaudeCliPath, mockIsClaudeCliJavaScriptFile } = vi.hoisted(() => ({
     mockSpawn: vi.fn(),
-    mockClaudeFindLastSession: vi.fn()
+    mockClaudeFindLastSession: vi.fn(),
+    mockResolveClaudeCliPath: vi.fn(),
+    mockIsClaudeCliJavaScriptFile: vi.fn(),
 }));
 
 vi.mock('node:child_process', () => ({
@@ -29,6 +31,11 @@ vi.mock('./utils/systemPrompt', () => ({
     systemPrompt: () => 'test-system-prompt'
 }));
 
+vi.mock('./utils/resolveClaudeCliPath', () => ({
+    resolveClaudeCliPath: mockResolveClaudeCliPath,
+    isClaudeCliJavaScriptFile: mockIsClaudeCliJavaScriptFile,
+}));
+
 vi.mock('node:fs', async () => {
     const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
     return {
@@ -46,6 +53,9 @@ describe('claudeLocal --continue handling', () => {
     let onSessionFound: (sessionId: string) => void;
 
     beforeEach(() => {
+        mockResolveClaudeCliPath.mockReturnValue('/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js');
+        mockIsClaudeCliJavaScriptFile.mockImplementation((path: unknown) => String(path ?? '').endsWith('.js'));
+
         // Mock spawn to resolve immediately
         mockSpawn.mockReturnValue({
             stdio: [null, null, null, null],
@@ -102,6 +112,21 @@ describe('claudeLocal --continue handling', () => {
 
         // Should notify about the session
         expect(onSessionFound).toHaveBeenCalledWith('123e4567-e89b-12d3-a456-426614174000');
+    });
+
+    it('should spawn the Node launcher using process.execPath when running under Node', async () => {
+        mockClaudeFindLastSession.mockReturnValue(null);
+
+        await claudeLocal({
+            abort: new AbortController().signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            claudeArgs: [],
+        });
+
+        expect(mockSpawn).toHaveBeenCalled();
+        expect(mockSpawn.mock.calls[0]?.[0]).toBe(process.execPath);
     });
 
     it('should create new session when --continue but no sessions exist', async () => {
@@ -302,5 +327,92 @@ describe('claudeLocal --continue handling', () => {
             onSessionFound,
             claudeArgs: [],
         })).resolves.toBeTruthy();
+    });
+});
+
+describe('claudeLocal launcher selection', () => {
+    let onSessionFound: (sessionId: string) => void;
+
+    beforeEach(() => {
+        // Mock spawn to resolve immediately
+        mockSpawn.mockReturnValue({
+            stdio: [null, null, null, null],
+            on: vi.fn((event, callback) => {
+                if (event === 'exit') {
+                    process.nextTick(() => callback(0));
+                }
+            }),
+            addListener: vi.fn(),
+            removeListener: vi.fn(),
+            kill: vi.fn(),
+            stdout: { on: vi.fn() },
+            stderr: { on: vi.fn() },
+            stdin: {
+                on: vi.fn(),
+                end: vi.fn(),
+            },
+        });
+
+        onSessionFound = vi.fn<(sessionId: string) => void>();
+
+        vi.clearAllMocks();
+    });
+
+    it('spawns Claude directly when resolved CLI path is a binary', async () => {
+        mockResolveClaudeCliPath.mockReturnValue('/opt/homebrew/bin/claude');
+        mockIsClaudeCliJavaScriptFile.mockReturnValue(false);
+
+        await claudeLocal({
+            abort: new AbortController().signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            claudeArgs: [],
+        });
+
+        expect(mockSpawn).toHaveBeenCalled();
+        expect(mockSpawn.mock.calls[0][0]).toBe('/opt/homebrew/bin/claude');
+        const spawnArgs = mockSpawn.mock.calls[0][1];
+        expect(spawnArgs).not.toContain('claude_local_launcher.cjs');
+    });
+
+    it('spawns the node launcher when resolved CLI path is a JS file, and passes the resolved path via env', async () => {
+        mockResolveClaudeCliPath.mockReturnValue('/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js');
+        mockIsClaudeCliJavaScriptFile.mockReturnValue(true);
+
+        const originalHappierClaudePath = process.env.HAPPIER_CLAUDE_PATH;
+        const originalHappyClaudePath = process.env.HAPPY_CLAUDE_PATH;
+        delete process.env.HAPPIER_CLAUDE_PATH;
+        delete process.env.HAPPY_CLAUDE_PATH;
+
+        try {
+            await claudeLocal({
+                abort: new AbortController().signal,
+                sessionId: null,
+                path: '/tmp',
+                onSessionFound,
+                claudeArgs: [],
+            });
+        } finally {
+            if (typeof originalHappierClaudePath === 'string') {
+                process.env.HAPPIER_CLAUDE_PATH = originalHappierClaudePath;
+            } else {
+                delete process.env.HAPPIER_CLAUDE_PATH;
+            }
+            if (typeof originalHappyClaudePath === 'string') {
+                process.env.HAPPY_CLAUDE_PATH = originalHappyClaudePath;
+            } else {
+                delete process.env.HAPPY_CLAUDE_PATH;
+            }
+        }
+
+        expect(mockSpawn).toHaveBeenCalled();
+        expect(mockSpawn.mock.calls[0][0]).toBe(process.execPath);
+        const spawnArgs = mockSpawn.mock.calls[0][1];
+        expect(spawnArgs[0]).toMatch(/claude_local_launcher\.cjs$/);
+
+        const spawnOpts = mockSpawn.mock.calls[0][2];
+        expect(spawnOpts?.env?.HAPPIER_CLAUDE_PATH).toBe('/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js');
+        expect(spawnOpts?.env?.DISABLE_AUTOUPDATER).toBe('1');
     });
 });
