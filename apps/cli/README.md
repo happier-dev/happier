@@ -144,7 +144,7 @@ happier claude zhipu
 happier claude zhipu "explain this code"
 ```
 
-This switches Claude to use the config from the specified directory (via `CLAUDE_CONFIG_DIR`).
+This switches Claude to use the config from the specified directory.
 
 ### Session Options (agent commands)
 

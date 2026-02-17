@@ -17,8 +17,8 @@ We wanted to use Z.ai's GLM models alongside Anthropic's Claude models. So, I tr
 **CLI Command (`apps/cli/src/backends/claude/cli/command.ts`)**:
 - Syntax: `happier claude [variant-name] [claude-args...]`
 - Checks if first argument is a defined variant
-- Sets `CLAUDE_CONFIG_DIR` environment variable before spawning Claude CLI
-- Provides helpful error messages for unknown variants
+- Switches Claude to use the variant's config directory
+- Displays confirmation when variant is matched
 
 ### Tests
 
@@ -63,13 +63,13 @@ happier claude minimax
 
 ### Why This Approach?
 
-`CLAUDE_CONFIG_DIR` must be set before the Claude CLI process starts. By setting it before spawning the process, Happier becomes the switch point between different Claude installations, each configured with their own model backends, API keys, and settings.
+The variant config directory must be set before the Claude CLI process starts. By setting it at spawn time, Happier becomes the switch point between different Claude installations, each configured with their own model backends, API keys, and settings.
 
 ### Configuration Precedence
 
-The variant's `configDir` is passed via `CLAUDE_CONFIG_DIR` environment variable, which the Claude CLI uses to locate its settings. This takes precedence over:
+When a variant is specified, its config directory takes precedence over:
 - Default `~/.claude` directory
-- Any `CLAUDE_CONFIG_DIR` set in the parent environment
+- Any config directory set in the parent environment
 
 ## Migration
 
