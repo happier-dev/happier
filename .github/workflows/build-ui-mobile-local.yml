@@ -81,6 +81,7 @@ jobs:
     name: Build (android)
     if: ${{ inputs.platform == 'all' || inputs.platform == 'android' }}
     runs-on: ubuntu-latest
+    environment: release-shared
     env:
       EAS_CLI_VERSION: 18.0.1
       APP_ENV: ${{ inputs.environment }}
@@ -231,6 +232,7 @@ jobs:
     name: Build (ios)
     if: ${{ inputs.platform == 'all' || inputs.platform == 'ios' }}
     runs-on: macos-latest
+    environment: release-shared
     env:
       EAS_CLI_VERSION: 18.0.1
       APP_ENV: ${{ inputs.environment }}
