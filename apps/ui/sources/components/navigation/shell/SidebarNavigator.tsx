@@ -71,8 +71,8 @@ export const SidebarNavigator = React.memo(() => {
                             onPress={() => setSidebarCollapsed(true)}
                             style={{
                                 position: 'absolute',
-                                top: 12,
-                                right: -24,
+                                top: 14,
+                                right: -38,
                                 width: 28,
                                 height: 28,
                                 borderRadius: 8,

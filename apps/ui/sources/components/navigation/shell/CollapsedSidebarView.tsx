@@ -17,11 +17,7 @@ const styles = StyleSheet.create((theme) => ({
     button: {
         alignItems: 'center',
         justifyContent: 'center',
-        height: 40,
-        borderRadius: 10,
-        backgroundColor: theme.colors.surface,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.divider,
+        marginTop: 8
     },
 }));
 
