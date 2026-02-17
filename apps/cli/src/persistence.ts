@@ -35,7 +35,23 @@ function bestEffortChmodSync(path: string, mode: number): void {
 
 // Settings schema version: Integer for overall Settings structure compatibility.
 // Incremented when Settings structure changes.
-export const SUPPORTED_SCHEMA_VERSION = 5;
+export const SUPPORTED_SCHEMA_VERSION = 6;
+
+/**
+ * Custom Claude configuration variant.
+ * Allows users to define alternate Claude CLI configurations.
+ */
+export type ClaudeVariant = {
+  /**
+   * Absolute path to the Claude config directory.
+   * The directory should contain a settings.json file compatible with Claude CLI.
+   */
+  configDir: string
+  /**
+   * Optional human-readable description of this variant.
+   */
+  description?: string
+}
 
 interface Settings {
   // Schema version for backwards compatibility
@@ -70,6 +86,11 @@ interface Settings {
    * Keyed by server id, then server account id.
    */
   lastChangesCursorByServerIdByAccountId?: Record<string, Record<string, number>>
+  /**
+   * Custom Claude configuration variants (schema v6+).
+   * Maps variant name to variant configuration.
+   */
+  claudeVariants?: Record<string, ClaudeVariant>
 
   // ---- Derived fields (not persisted in v5+) ----
   /**
@@ -103,6 +124,7 @@ const defaultSettings: Settings = {
   machineIdByServerId: {},
   machineIdConfirmedByServerByServerId: {},
   lastChangesCursorByServerIdByAccountId: {},
+  claudeVariants: {},
 }
 
 /**
@@ -171,8 +193,17 @@ function migrateSettings(raw: any, fromVersion: number): any {
     migrated.schemaVersion = 5;
   }
 
+  // Migration from v5 to v6 (claude variants)
+  if (fromVersion < 6) {
+    // Initialize empty claudeVariants object for existing users
+    if (!migrated.claudeVariants || typeof migrated.claudeVariants !== 'object') {
+      migrated.claudeVariants = {};
+    }
+    migrated.schemaVersion = 6;
+  }
+
   // Future migrations go here:
-  // if (fromVersion < 6) { ... }
+  // if (fromVersion < 7) { ... }
 
   return migrated;
 }

@@ -50,6 +50,21 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
     args.shift();
   }
 
+  // Check if the first argument is a custom Claude variant (e.g., `happier claude zhipu`)
+  let claudeConfigDir: string | undefined = undefined;
+  if (args.length > 0 && !args[0].startsWith('-')) {
+    const potentialVariant = args[0];
+    const settings = await readSettings();
+    const variant = settings.claudeVariants?.[potentialVariant];
+    if (variant?.configDir) {
+      claudeConfigDir = variant.configDir;
+      args.shift(); // Remove variant name from args
+      console.error(`[Happier] Using Claude variant "${potentialVariant}" with config dir: ${claudeConfigDir}`);
+    } else {
+      console.error(`[Happier] Unknown variant "${potentialVariant}". Available variants: ${Object.keys(settings.claudeVariants || {}).join(', ') || 'none'}`);
+    }
+  }
+
   const strippedArgs = stripHappyInternalSettingsFlag(args);
 
   // Parse command line arguments for main command
@@ -245,6 +260,11 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
       session: null,
     });
     options.terminalRuntime = context.terminalRuntime;
+    // Apply Claude variant config directory if specified
+    if (claudeConfigDir) {
+      options.claudeEnvVars = options.claudeEnvVars || {};
+      options.claudeEnvVars['CLAUDE_CONFIG_DIR'] = claudeConfigDir;
+    }
     await runClaude(credentials, options);
   } catch (error) {
     console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');
