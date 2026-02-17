@@ -143,7 +143,8 @@ jobs:
 
       - name: Ensure release exists
         env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ inputs.tag }}
           TITLE: ${{ inputs.title }}
           SHA: ${{ inputs.target_sha }}
@@ -187,7 +188,8 @@ jobs:
       - name: Update rolling release notes (commit summary)
         if: ${{ inputs.rolling_tag && steps.move_rolling_tag.outputs.pushed == 'true' }}
         env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ inputs.tag }}
           TITLE: ${{ inputs.title }}
           SHA: ${{ inputs.target_sha }}
@@ -250,7 +252,8 @@ jobs:
       - name: Prune rolling release assets
         if: ${{ inputs.prune_assets && (!inputs.rolling_tag || steps.move_rolling_tag.outputs.pushed == 'true') }}
         env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
@@ -285,7 +288,8 @@ jobs:
       - name: Upload assets
         if: ${{ (!inputs.rolling_tag || steps.move_rolling_tag.outputs.pushed == 'true') && (inputs.assets != '' || inputs.assets_dir != '') }}
         env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ inputs.tag }}
           ASSETS: ${{ inputs.assets }}
           ASSETS_DIR: ${{ inputs.assets_dir }}
