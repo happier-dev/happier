@@ -1,10 +1,17 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { createOpenCodeBackend } from './backend';
+
+// Mock the logger to avoid console output during tests
+vi.mock('@/ui/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+  },
+}));
 
 type AcpBackendLike = {
   options: {
