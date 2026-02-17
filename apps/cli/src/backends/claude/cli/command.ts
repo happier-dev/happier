@@ -52,17 +52,16 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
 
   // Check if the first argument is a custom Claude variant (e.g., `happier claude zhipu`)
   let claudeConfigDir: string | undefined = undefined;
+  const settings = await readSettings();
   if (args.length > 0 && !args[0].startsWith('-')) {
     const potentialVariant = args[0];
-    const settings = await readSettings();
     const variant = settings.claudeVariants?.[potentialVariant];
     if (variant?.configDir) {
       claudeConfigDir = variant.configDir;
       args.shift(); // Remove variant name from args
       console.error(`[Happier] Using Claude variant "${potentialVariant}" with config dir: ${claudeConfigDir}`);
-    } else {
-      console.error(`[Happier] Unknown variant "${potentialVariant}". Available variants: ${Object.keys(settings.claudeVariants || {}).join(', ') || 'none'}`);
     }
+    // If not a variant, let the argument fall through silently as a Claude CLI positional argument
   }
 
   const strippedArgs = stripHappyInternalSettingsFlag(args);
@@ -183,7 +182,6 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
   }
 
   // Resolve Chrome mode: explicit flag > settings > false
-  const settings = await readSettings();
   const chromeEnabled = chromeOverride ?? settings.chromeMode ?? false;
   if (chromeEnabled && !(options.claudeArgs || []).includes('--chrome')) {
     options.claudeArgs = [...(options.claudeArgs || []), '--chrome'];
