@@ -57,7 +57,7 @@ async function listAllStackNames() {
 async function main() {
   const rootDir = getRootDir(import.meta.url);
   const argv = process.argv.slice(2);
-  const { flags, kv } = parseArgs(argv);
+  const { flags, kv: argsKv } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
 
   if (wantsHelp(argv, { flags })) {
@@ -65,7 +65,7 @@ async function main() {
     return;
   }
 
-  const exceptStacks = new Set(parseCsv(kv.get('--except-stacks')));
+  const exceptStacks = new Set(parseCsv(argsKv.get('--except-stacks')));
   const yes = flags.has('--yes');
   const aggressive = flags.has('--aggressive');
   const sweepOwned = flags.has('--sweep-owned');
@@ -187,4 +187,3 @@ main().catch((err) => {
   console.error('[stop] failed:', err);
   process.exit(1);
 });
-
