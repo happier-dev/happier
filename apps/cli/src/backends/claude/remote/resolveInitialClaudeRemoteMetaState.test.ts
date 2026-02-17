@@ -9,6 +9,8 @@ describe('resolveInitialClaudeRemoteMetaState', () => {
     });
 
     expect(resolved.claudeRemoteAgentSdkEnabled).toBe(true);
+    // Default should be enabled unless explicitly disabled by user settings.
+    expect(resolved.claudeLocalPermissionBridgeEnabled).toBe(true);
   });
 
   it('seeds claude remote meta state from account defaults', () => {

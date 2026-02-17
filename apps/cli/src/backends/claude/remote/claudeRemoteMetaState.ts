@@ -16,7 +16,7 @@ export const DEFAULT_CLAUDE_REMOTE_META_STATE: ClaudeRemoteMetaState = Object.fr
     claudeRemoteAgentSdkEnabled: true,
     claudeRemoteSettingSources: 'project',
     claudeRemoteIncludePartialMessages: false,
-    claudeLocalPermissionBridgeEnabled: false,
+    claudeLocalPermissionBridgeEnabled: true,
     claudeLocalPermissionBridgeWaitIndefinitely: false,
     claudeLocalPermissionBridgeTimeoutSeconds: 600,
     claudeRemoteEnableFileCheckpointing: false,

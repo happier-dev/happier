@@ -9,7 +9,7 @@ describe('settingsParse provider plugin defaults', () => {
         expect((settings as any).claudeRemoteAgentSdkEnabled).toBe(true);
         expect((settings as any).claudeRemoteSettingSources).toBe('project');
         expect((settings as any).claudeRemoteIncludePartialMessages).toBe(false);
-        expect((settings as any).claudeLocalPermissionBridgeEnabled).toBe(false);
+        expect((settings as any).claudeLocalPermissionBridgeEnabled).toBe(true);
         expect((settings as any).claudeLocalPermissionBridgeWaitIndefinitely).toBe(false);
         expect((settings as any).claudeLocalPermissionBridgeTimeoutSeconds).toBe(600);
         expect((settings as any).claudeRemoteEnableFileCheckpointing).toBe(false);

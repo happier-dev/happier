@@ -30,7 +30,7 @@ export const CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS = Object.freeze({
   claudeRemoteAgentSdkEnabled: true,
   claudeRemoteSettingSources: 'project' as 'project' | 'user_project' | 'none',
   claudeRemoteIncludePartialMessages: false,
-  claudeLocalPermissionBridgeEnabled: false,
+  claudeLocalPermissionBridgeEnabled: true,
   claudeLocalPermissionBridgeWaitIndefinitely: false,
   claudeLocalPermissionBridgeTimeoutSeconds: 600,
   claudeRemoteEnableFileCheckpointing: false,
