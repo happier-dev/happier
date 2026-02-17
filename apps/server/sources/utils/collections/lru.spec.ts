@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LRUSet } from "./lru";
+import { LRUSet, LRUTtlMap } from "./lru";
 
 describe("LRUSet", () => {
     it.each([0, -1])(
@@ -166,5 +166,63 @@ describe("LRUSet", () => {
         expect(lru.delete(1)).toBe(false);
         expect(lru.toArray()).toEqual([]);
         expect(Array.from(lru.values())).toEqual([]);
+    });
+});
+
+describe("LRUTtlMap", () => {
+    it.each([0, -1])("throws when maxSize is %i", (maxSize) => {
+        expect(() => new LRUTtlMap({ maxSize })).toThrow(/maxSize must be greater than 0/i);
+    });
+
+    it("returns undefined for missing keys", () => {
+        const lru = new LRUTtlMap<string, number>({ maxSize: 2 });
+        expect(lru.get("missing")).toBeUndefined();
+        expect(lru.size).toBe(0);
+    });
+
+    it("evicts least recently used entry when capacity is exceeded", () => {
+        const lru = new LRUTtlMap<string, number>({ maxSize: 2 });
+        lru.set("a", 1);
+        lru.set("b", 2);
+        expect(lru.get("a")).toBe(1); // touch "a" to keep it
+        lru.set("c", 3); // should evict "b"
+
+        expect(lru.get("b")).toBeUndefined();
+        expect(lru.get("a")).toBe(1);
+        expect(lru.get("c")).toBe(3);
+        expect(lru.size).toBe(2);
+    });
+
+    it("expires entries after ttlMs since last access", () => {
+        let nowMs = 0;
+        const lru = new LRUTtlMap<string, number>({
+            maxSize: 2,
+            ttlMs: 10,
+            now: () => nowMs,
+        });
+
+        lru.set("a", 1);
+        expect(lru.get("a")).toBe(1);
+
+        nowMs += 11;
+        expect(lru.get("a")).toBeUndefined();
+        expect(lru.size).toBe(0);
+    });
+
+    it("refreshes ttl window on access", () => {
+        let nowMs = 0;
+        const lru = new LRUTtlMap<string, number>({
+            maxSize: 2,
+            ttlMs: 10,
+            now: () => nowMs,
+        });
+
+        lru.set("a", 1);
+
+        nowMs += 9;
+        expect(lru.get("a")).toBe(1); // refresh at t=9
+
+        nowMs += 9; // t=18, still within 10ms of last access
+        expect(lru.get("a")).toBe(1);
     });
 });

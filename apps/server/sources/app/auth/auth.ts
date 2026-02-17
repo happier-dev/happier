@@ -1,16 +1,11 @@
 import * as privacyKit from "privacy-kit";
 import { createHash } from "node:crypto";
 import { log } from "@/utils/logging/log";
+import { LRUTtlMap } from "@/utils/collections/lru";
 import {
     isOAuthStateUnavailableError,
     OAuthStateUnavailableError,
 } from "./oauthStateErrors";
-
-interface TokenCacheEntry {
-    userId: string;
-    extras?: any;
-    cachedAt: number;
-}
 
 interface TokenGeneratorLike {
     new: (payload: any) => Promise<string>;
@@ -40,10 +35,25 @@ type OAuthStatePayload = Readonly<{
 }>;
 
 class AuthModule {
-    private tokenCache = new Map<string, TokenCacheEntry>();
+    private tokenCache: LRUTtlMap<string, { userId: string; extras?: any }> | null = null;
     private tokens: AuthTokens | null = null;
     private oauthStateTokens: OAuthStateTokens | null = null;
     private oauthStateTokensInitPromise: Promise<OAuthStateTokens> | null = null;
+
+    private resolveAuthTokenCacheTtlMsFromEnv(env: NodeJS.ProcessEnv): number {
+        const raw = (env.AUTH_TOKEN_CACHE_TTL_SECONDS ?? "").toString().trim();
+        const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+        const seconds = Number.isFinite(parsed) && parsed > 0 ? parsed : 600;
+        const clampedSeconds = Math.max(1, Math.min(86_400, seconds));
+        return clampedSeconds * 1000;
+    }
+
+    private resolveAuthTokenCacheMaxEntriesFromEnv(env: NodeJS.ProcessEnv): number {
+        const raw = (env.AUTH_TOKEN_CACHE_MAX_ENTRIES ?? "").toString().trim();
+        const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+        const maxEntries = Number.isFinite(parsed) && parsed >= 0 ? parsed : 4096;
+        return Math.max(0, Math.min(200_000, maxEntries));
+    }
     
     private resolveOauthStateTtlMsFromEnv(env: NodeJS.ProcessEnv): number {
         const raw = (env.OAUTH_STATE_TTL_SECONDS ?? "").toString().trim();
@@ -182,6 +192,17 @@ class AuthModule {
         const masterSecret = this.requireMasterSecret(process.env);
 
         this.tokens = await this.createPersistentAuthTokens(masterSecret);
+
+        const tokenCacheMaxEntries = this.resolveAuthTokenCacheMaxEntriesFromEnv(process.env);
+        if (tokenCacheMaxEntries > 0) {
+            const tokenCacheTtlMs = this.resolveAuthTokenCacheTtlMsFromEnv(process.env);
+            this.tokenCache = new LRUTtlMap({
+                maxSize: tokenCacheMaxEntries,
+                ttlMs: tokenCacheTtlMs,
+            });
+        } else {
+            this.tokenCache = null;
+        }
         
         log({ module: 'auth' }, 'Auth module initialized');
     }
@@ -197,20 +218,16 @@ class AuthModule {
         }
         
         const token = await this.tokens.generator.new(payload);
-        
-        // Cache the token immediately
-        this.tokenCache.set(token, {
-            userId,
-            extras,
-            cachedAt: Date.now()
-        });
+
+        // Cache the token to avoid repeated verifier work for hot tokens.
+        this.tokenCache?.set(token, { userId, extras });
         
         return token;
     }
     
     async verifyToken(token: string): Promise<{ userId: string; extras?: any } | null> {
         // Check cache first
-        const cached = this.tokenCache.get(token);
+        const cached = this.tokenCache?.get(token);
         if (cached) {
             return {
                 userId: cached.userId,
@@ -231,13 +248,8 @@ class AuthModule {
             
             const userId = verified.user as string;
             const extras = verified.extras;
-            
-            // Cache the result permanently
-            this.tokenCache.set(token, {
-                userId,
-                extras,
-                cachedAt: Date.now()
-            });
+
+            this.tokenCache?.set(token, { userId, extras });
             
             return { userId, extras };
             
@@ -248,36 +260,36 @@ class AuthModule {
     }
     
     invalidateUserTokens(userId: string): void {
-        // Remove all tokens for a specific user
-        // This is expensive but rarely needed
+        // Remove all tokens for a specific user. This is expensive but rarely needed.
+        if (!this.tokenCache) {
+            return;
+        }
+
+        const tokensToDelete: string[] = [];
         for (const [token, entry] of this.tokenCache.entries()) {
             if (entry.userId === userId) {
-                this.tokenCache.delete(token);
+                tokensToDelete.push(token);
             }
+        }
+        for (const token of tokensToDelete) {
+            this.tokenCache.delete(token);
         }
         
         log({ module: 'auth' }, `Invalidated tokens for user: ${userId}`);
     }
     
     invalidateToken(token: string): void {
-        this.tokenCache.delete(token);
+        this.tokenCache?.delete(token);
     }
     
     getCacheStats(): { size: number; oldestEntry: number | null } {
-        if (this.tokenCache.size === 0) {
+        if (!this.tokenCache || this.tokenCache.size === 0) {
             return { size: 0, oldestEntry: null };
         }
-        
-        let oldest = Date.now();
-        for (const entry of this.tokenCache.values()) {
-            if (entry.cachedAt < oldest) {
-                oldest = entry.cachedAt;
-            }
-        }
-        
+
         return {
             size: this.tokenCache.size,
-            oldestEntry: oldest
+            oldestEntry: this.tokenCache.peekOldestAccessedAt()
         };
     }
     
@@ -358,8 +370,8 @@ class AuthModule {
 
     // Cleanup old entries (optional - can be called periodically)
     cleanup(): void {
-        // Note: Since tokens are cached "forever" as requested,
-        // we don't do automatic cleanup. This method exists if needed later.
+        this.tokenCache?.pruneExpired();
+
         const stats = this.getCacheStats();
         log({ module: 'auth' }, `Token cache size: ${stats.size} entries`);
     }
