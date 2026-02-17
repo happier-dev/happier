@@ -13,7 +13,7 @@ export function useAutomationsSupport(scope?: FeatureScopeParams): AutomationsSu
         featureId: 'automations',
         fallback: false,
         scope,
-        select: (features) => features.features.automations.existingSessionTarget === true,
+        select: (features) => features.features.automations.existingSessionTarget.enabled === true,
     });
 
     return {

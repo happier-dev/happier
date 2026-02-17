@@ -80,7 +80,12 @@ describe('syncAutomations', () => {
                 return {
                     ok: true,
                     status: 200,
-                    json: async () => createRootLayoutFeaturesResponse({ automations: { enabled: false, existingSessionTarget: false } }),
+                    json: async () =>
+                        createRootLayoutFeaturesResponse({
+                            features: {
+                                automations: { enabled: false, existingSessionTarget: { enabled: false } },
+                            },
+                        }),
                 } as unknown as Response;
             }
             if (url.pathname === '/v2/automations') {
@@ -112,7 +117,12 @@ describe('syncAutomations', () => {
                 return {
                     ok: true,
                     status: 200,
-                    json: async () => createRootLayoutFeaturesResponse({ automations: { enabled: true, existingSessionTarget: true } }),
+                    json: async () =>
+                        createRootLayoutFeaturesResponse({
+                            features: {
+                                automations: { enabled: true, existingSessionTarget: { enabled: true } },
+                            },
+                        }),
                 } as unknown as Response;
             }
             if (url.pathname === '/v2/automations') {
@@ -145,7 +155,12 @@ describe('syncAutomations', () => {
                 return {
                     ok: true,
                     status: 200,
-                    json: async () => createRootLayoutFeaturesResponse({ automations: { enabled: true, existingSessionTarget: true } }),
+                    json: async () =>
+                        createRootLayoutFeaturesResponse({
+                            features: {
+                                automations: { enabled: true, existingSessionTarget: { enabled: true } },
+                            },
+                        }),
                 } as unknown as Response;
             }
             if (url.pathname === '/v2/automations') {
