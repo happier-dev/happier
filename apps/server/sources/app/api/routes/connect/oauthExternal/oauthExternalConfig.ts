@@ -1,8 +1,8 @@
 import { isLoopbackHostname } from "@/utils/network/urlSafety";
-import { readAuthFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
+import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
 
 export function isProviderResetEnabled(env: NodeJS.ProcessEnv): boolean {
-    return readAuthFeatureEnv(env).recoveryProviderResetEnabled;
+    return isServerFeatureEnabledForRequest("auth.recovery.providerReset", env);
 }
 
 function parseAllowedOAuthReturnSchemes(env: NodeJS.ProcessEnv): Set<string> {

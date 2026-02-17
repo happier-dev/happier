@@ -5,7 +5,7 @@ import { resolveProviderModules } from "@/app/auth/providers/providerModules";
 
 export type OAuthProviderId = AuthProviderId;
 
-export type OAuthProviderStatusSchema = FeaturesResponse["features"]["oauth"]["providers"][string];
+export type OAuthProviderStatusSchema = FeaturesResponse["capabilities"]["oauth"]["providers"][string];
 
 export function resolveOAuthProviderRegistry(env: NodeJS.ProcessEnv): readonly OAuthFlowProvider[] {
     return Object.freeze(resolveProviderModules(env).flatMap((m) => (m.oauth ? [m.oauth] : [])));

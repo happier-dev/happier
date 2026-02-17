@@ -7,6 +7,7 @@ import { ConnectedServiceIdSchema, SealedConnectedServiceCredentialV1Schema, typ
 
 import { encodeCredentialTokenBytes, decodeCredentialTokenString } from "./credentialTokenCodec";
 import { type ConnectedServiceCredentialMetadataV2, isConnectedServiceCredentialMetadataV2 } from "./credentialMetadataV2";
+import { NotFoundSchema } from "../../../schemas/notFoundSchema";
 
 export function registerConnectedServiceV1ShimRoutes(app: Fastify, params: Readonly<{ credentialMaxLen: number }>): void {
   const credentialMaxLen = params.credentialMaxLen;
@@ -89,7 +90,7 @@ export function registerConnectedServiceV1ShimRoutes(app: Fastify, params: Reado
             expiresAt: z.number().int().nonnegative().nullable().optional(),
           }),
         }),
-        404: z.object({ error: z.literal("connect_credential_not_found") }),
+        404: z.union([NotFoundSchema, z.object({ error: z.literal("connect_credential_not_found") })]),
         409: z.object({ error: z.literal("connect_credential_unsupported_format") }),
       },
     },
@@ -122,4 +123,3 @@ export function registerConnectedServiceV1ShimRoutes(app: Fastify, params: Reado
     });
   });
 }
-

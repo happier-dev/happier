@@ -103,6 +103,22 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
         await db.account.deleteMany().catch(() => {});
     });
 
+    it("returns 404 not_found when connected services are disabled (and does so before auth)", async () => {
+        process.env.HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED = "0";
+
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const res = await app.inject({
+            method: "GET",
+            url: "/v1/connect/tokens",
+        });
+
+        expect(res.statusCode).toBe(404);
+        expect(res.json()).toEqual({ error: "not_found" });
+    });
+
     it("does not return decrypted tokens from GET endpoints", async () => {
         const user = await db.account.create({ data: { publicKey: "pk-vendor-tokens-u1" }, select: { id: true } });
 

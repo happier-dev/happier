@@ -120,6 +120,7 @@ describe("connectRoutes (connected services quotas v2) sealed quota snapshot end
     });
 
     it("stores and returns sealed quota snapshots when enabled", async () => {
+        process.env.HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED = "1";
         const user = await db.account.create({ data: { publicKey: "pk-quota-enabled" }, select: { id: true } });
 
         const app = createTestApp();
@@ -152,6 +153,7 @@ describe("connectRoutes (connected services quotas v2) sealed quota snapshot end
     });
 
     it("accepts a refresh request and exposes refreshRequestedAt in metadata", async () => {
+        process.env.HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED = "1";
         const user = await db.account.create({ data: { publicKey: "pk-quota-refresh" }, select: { id: true } });
 
         const app = createTestApp();
@@ -188,6 +190,7 @@ describe("connectRoutes (connected services quotas v2) sealed quota snapshot end
     });
 
     it("accepts a refresh request even when no quota snapshot exists yet", async () => {
+        process.env.HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED = "1";
         const user = await db.account.create({ data: { publicKey: "pk-quota-refresh-missing" }, select: { id: true } });
 
         const app = createTestApp();
@@ -217,6 +220,7 @@ describe("connectRoutes (connected services quotas v2) sealed quota snapshot end
     });
 
     it("includes refreshRequestedAt in metadata even when it is 0", async () => {
+        process.env.HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED = "1";
         const user = await db.account.create({ data: { publicKey: "pk-quota-refresh-zero" }, select: { id: true } });
 
         const app = createTestApp();

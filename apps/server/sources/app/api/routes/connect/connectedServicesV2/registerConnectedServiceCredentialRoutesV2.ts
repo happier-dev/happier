@@ -12,6 +12,7 @@ import {
 import { encodeCredentialTokenBytes, decodeCredentialTokenString } from "./credentialTokenCodec";
 import { ConnectedServiceProfileIdSchema } from "./profileIdSchema";
 import { type ConnectedServiceCredentialMetadataV2, isConnectedServiceCredentialMetadataV2 } from "./credentialMetadataV2";
+import { NotFoundSchema } from "../../../schemas/notFoundSchema";
 
 export function registerConnectedServiceCredentialRoutesV2(
   app: Fastify,
@@ -98,7 +99,7 @@ export function registerConnectedServiceCredentialRoutesV2(
             expiresAt: z.number().int().nonnegative().nullable().optional(),
           }),
         }),
-        404: z.object({ error: z.literal("connect_credential_not_found") }),
+        404: z.union([NotFoundSchema, z.object({ error: z.literal("connect_credential_not_found") })]),
         409: z.object({ error: z.literal("connect_credential_unsupported_format") }),
       },
     },
@@ -140,7 +141,7 @@ export function registerConnectedServiceCredentialRoutesV2(
       }),
       response: {
         200: z.object({ success: z.literal(true) }),
-        404: z.object({ error: z.literal("connect_credential_not_found") }),
+        404: z.union([NotFoundSchema, z.object({ error: z.literal("connect_credential_not_found") })]),
       },
     },
   }, async (request, reply) => {
@@ -158,4 +159,3 @@ export function registerConnectedServiceCredentialRoutesV2(
     return reply.send({ success: true });
   });
 }
-

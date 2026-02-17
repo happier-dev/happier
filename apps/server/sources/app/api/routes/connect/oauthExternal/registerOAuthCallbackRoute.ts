@@ -13,6 +13,7 @@ import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { validateUsername } from "@/app/social/usernamePolicy";
 import { deleteOAuthStateAttemptBestEffort, loadValidOAuthStateAttempt } from "../connectRoutes.oauthStateAttempt";
 import { log } from "@/utils/logging/log";
+import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
 import {
     buildRedirectUrl,
     resolveOAuthPendingTtlMsFromEnv,
@@ -82,6 +83,10 @@ export function registerOAuthCallbackRoute(app: Fastify) {
 
         const flow = oauthState.flow;
         const redirectBaseParams: Record<string, string> = { flow };
+
+        if (flow === "connect" && !isServerFeatureEnabledForRequest("connectedServices", process.env)) {
+            return reply.redirect(buildRedirectUrl(webAppUrl, { ...redirectBaseParams, error: "connect_disabled" }));
+        }
 
         if (oauthError) {
             return reply.redirect(buildRedirectUrl(webAppUrl, { ...redirectBaseParams, error: oauthError }));

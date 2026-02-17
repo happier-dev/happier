@@ -5,6 +5,7 @@ import { db } from "@/storage/db";
 import { ConnectedServiceIdSchema, type ConnectedServiceId } from "@happier-dev/protocol";
 
 import { ConnectedServiceProfileIdSchema } from "./profileIdSchema";
+import { NotFoundSchema } from "../../../schemas/notFoundSchema";
 
 export function registerConnectedServiceRefreshLeaseRoutesV2(
   app: Fastify,
@@ -28,7 +29,7 @@ export function registerConnectedServiceRefreshLeaseRoutesV2(
           acquired: z.boolean(),
           leaseUntil: z.number().int().nonnegative(),
         }),
-        404: z.object({ error: z.literal("connect_credential_not_found") }),
+        404: z.union([NotFoundSchema, z.object({ error: z.literal("connect_credential_not_found") })]),
       },
     },
   }, async (request, reply) => {
@@ -67,4 +68,3 @@ export function registerConnectedServiceRefreshLeaseRoutesV2(
     return reply.send({ acquired: true, leaseUntil: updated.refreshLeaseExpiresAt?.getTime() ?? now });
   });
 }
-

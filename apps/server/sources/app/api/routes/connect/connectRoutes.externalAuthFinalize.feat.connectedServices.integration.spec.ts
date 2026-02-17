@@ -611,8 +611,10 @@ describe("connectRoutes (external auth finalize) (integration)", () => {
         process.env.AUTH_ANONYMOUS_SIGNUP_ENABLED = "0";
         process.env.AUTH_SIGNUP_PROVIDERS = "github";
 
-        // Default: provider reset enabled unless explicitly disabled.
-        delete process.env.AUTH_RECOVERY_PROVIDER_RESET_ENABLED;
+        process.env.HAPPIER_FEATURE_AUTH_RECOVERY__PROVIDER_RESET_ENABLED = "1";
+        process.env.GITHUB_CLIENT_ID = "cid";
+        process.env.GITHUB_CLIENT_SECRET = "secret";
+        process.env.GITHUB_REDIRECT_URL = "https://server.example.test/v1/oauth/github/callback";
 
         const { body: body1, publicKeyHex: pk1 } = createAuthBody(21);
         const { body: body2, publicKeyHex: pk2 } = createAuthBody(22);
@@ -766,7 +768,10 @@ describe("connectRoutes (external auth finalize) (integration)", () => {
         process.env.AUTH_ANONYMOUS_SIGNUP_ENABLED = "0";
         process.env.AUTH_SIGNUP_PROVIDERS = "github";
 
-        delete process.env.AUTH_RECOVERY_PROVIDER_RESET_ENABLED;
+        process.env.HAPPIER_FEATURE_AUTH_RECOVERY__PROVIDER_RESET_ENABLED = "1";
+        process.env.GITHUB_CLIENT_ID = "cid";
+        process.env.GITHUB_CLIENT_SECRET = "secret";
+        process.env.GITHUB_REDIRECT_URL = "https://server.example.test/v1/oauth/github/callback";
 
         const { body: body1, publicKeyHex: pk1 } = createAuthBody(31);
         const { body: body2, publicKeyHex: pk2 } = createAuthBody(32);
@@ -936,7 +941,10 @@ describe("connectRoutes (external auth finalize) (integration)", () => {
     it("deletes the newly created account when identity detach fails during provider reset", async () => {
         process.env.AUTH_ANONYMOUS_SIGNUP_ENABLED = "0";
         process.env.AUTH_SIGNUP_PROVIDERS = "github";
-        delete process.env.AUTH_RECOVERY_PROVIDER_RESET_ENABLED;
+        process.env.HAPPIER_FEATURE_AUTH_RECOVERY__PROVIDER_RESET_ENABLED = "1";
+        process.env.GITHUB_CLIENT_ID = "cid";
+        process.env.GITHUB_CLIENT_SECRET = "secret";
+        process.env.GITHUB_REDIRECT_URL = "https://server.example.test/v1/oauth/github/callback";
 
         const { body: body1, publicKeyHex: pk1 } = createAuthBody(41);
         const { body: body2, publicKeyHex: pk2 } = createAuthBody(42);

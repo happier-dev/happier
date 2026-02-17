@@ -7,6 +7,7 @@ import {
     SealedConnectedServiceQuotaSnapshotV1Schema,
     type ConnectedServiceId,
 } from "@happier-dev/protocol";
+import { NotFoundSchema } from "../../schemas/notFoundSchema";
 
 const MAX_QUOTA_SNAPSHOT_CIPHERTEXT_CHARS = 200_000;
 
@@ -107,7 +108,7 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
                         refreshRequestedAt: z.number().int().nonnegative().optional(),
                     }),
                 }),
-                404: z.object({ error: z.literal("connect_quotas_not_found") }),
+                404: z.union([NotFoundSchema, z.object({ error: z.literal("connect_quotas_not_found") })]),
             },
         },
     }, async (request, reply) => {
@@ -209,7 +210,7 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
             }),
             response: {
                 200: z.object({ success: z.literal(true) }),
-                404: z.object({ error: z.literal("connect_quotas_not_found") }),
+                404: z.union([NotFoundSchema, z.object({ error: z.literal("connect_quotas_not_found") })]),
             },
         },
     }, async (request, reply) => {
