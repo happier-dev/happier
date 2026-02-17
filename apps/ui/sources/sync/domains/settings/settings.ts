@@ -15,7 +15,7 @@ import {
     SCM_REMOTE_CONFIRM_POLICIES,
 } from '@/scm/settings/preferences';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
-import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema, DEFAULT_NOTIFICATIONS_SETTINGS_V1, NotificationsSettingsV1Schema } from '@happier-dev/protocol';
 import { VoiceSettingsSchema, voiceSettingsDefaults, voiceSettingsParse } from './voiceSettings';
 
 //
@@ -311,6 +311,7 @@ const SettingsSchemaBase = z.object({
     scmCommitMessageGeneratorInstructions: z.string().describe('User instructions appended to SCM commit message generation prompts'),
     scmIncludeCoAuthoredBy: z.boolean().describe('Whether to include Co-Authored-By credits in generated commit messages'),
     actionsSettingsV1: ActionsSettingsV1Schema.describe('Global action settings (enablement + surface/placement overrides)'),
+    notificationsSettingsV1: NotificationsSettingsV1Schema.describe('Push notification preferences (account-level)'),
 
     // Files/diff rendering options (flat; used by CodeLines surfaces)
     filesDiffSyntaxHighlightingMode: z.enum(['off', 'simple', 'advanced']).describe('Diff/file syntax highlighting mode'),
@@ -464,6 +465,7 @@ export const settingsDefaults: Settings = {
     scmCommitMessageGeneratorInstructions: '',
     scmIncludeCoAuthoredBy: false,
     actionsSettingsV1: { v: 1, actions: {} },
+    notificationsSettingsV1: DEFAULT_NOTIFICATIONS_SETTINGS_V1,
 
     filesDiffSyntaxHighlightingMode: 'simple',
     filesChangedFilesRowDensity: 'comfortable',
