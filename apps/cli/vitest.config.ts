@@ -16,6 +16,10 @@ if (mergedTestEnv.HAPPIER_SERVER_URL && !mergedTestEnv.HAPPIER_WEBAPP_URL) {
     mergedTestEnv.HAPPIER_WEBAPP_URL = mergedTestEnv.HAPPIER_SERVER_URL;
 }
 
+// CLI tests should not inherit embedded build-policy gating (set in CI).
+// Clear it by default so feature tests can opt-in explicitly per case.
+mergedTestEnv.HAPPIER_FEATURE_POLICY_ENV = '';
+
 export default defineConfig({
     test: {
         // Multiple CLI unit tests mutate `process.env.HAPPIER_HOME_DIR` / config at runtime.

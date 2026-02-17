@@ -9,5 +9,8 @@ export default defineConfig({
     globals: false,
     // These suites are process/socket heavy and should run deterministically.
     fileParallelism: false,
+    env: {
+      HAPPIER_FEATURE_POLICY_ENV: '',
+    },
   },
 });

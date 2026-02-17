@@ -22,6 +22,9 @@ export default defineConfig({
         testTimeout: 20_000,
         globals: false,
         environment: 'node',
+        env: {
+            HAPPIER_FEATURE_POLICY_ENV: '',
+        },
         setupFiles: [resolve('./sources/dev/vitestSetup.ts')],
         include: ['sources/**/*.{spec,test}.{ts,tsx}'],
         exclude: [

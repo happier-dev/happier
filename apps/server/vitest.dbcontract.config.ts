@@ -13,6 +13,9 @@ export default defineConfig({
         isolate: true,
         testTimeout: 60_000,
         hookTimeout: 60_000,
+        env: {
+            HAPPIER_FEATURE_POLICY_ENV: "",
+        },
     },
     // Restrict tsconfig resolution to server only.
     // Otherwise vite-tsconfig-paths may scan the repo and attempt to parse Expo tsconfigs.

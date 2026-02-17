@@ -10,5 +10,8 @@ export default defineConfig({
     // Provider E2E contract tests start real local servers, so prefer process-based isolation.
     pool: 'forks',
     globals: false,
+    env: {
+      HAPPIER_FEATURE_POLICY_ENV: '',
+    },
   },
 });

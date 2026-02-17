@@ -27,6 +27,6 @@
   },
   "scripts": {
     "prepack": "node ./scripts/bundleWorkspaceDeps.mjs",
-    "test": "node --test"
+    "test": "HAPPIER_FEATURE_POLICY_ENV= node --test"
   }
 }

@@ -7,6 +7,8 @@ export default defineConfig({
     testTimeout: 300_000,
     hookTimeout: 300_000,
     globals: false,
+    env: {
+      HAPPIER_FEATURE_POLICY_ENV: '',
+    },
   },
 });
-

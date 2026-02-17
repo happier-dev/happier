@@ -2,6 +2,10 @@ import { afterEach, beforeEach, vi } from 'vitest';
 
 import { installVitestRnShim } from './vitestRnShim';
 
+// UI tests should not inherit embedded build-policy gating (set in CI).
+// Clear it by default so feature tests can opt-in explicitly per case.
+process.env.HAPPIER_FEATURE_POLICY_ENV = '';
+
 const originalConsoleError = console.error;
 console.error = (...args: unknown[]) => {
     if (typeof args[0] === 'string' && args[0].includes('react-test-renderer is deprecated')) {

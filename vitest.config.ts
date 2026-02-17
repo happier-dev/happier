@@ -8,7 +8,9 @@ export default defineConfig({
     test: {
         globals: false,
         environment: 'node',
+        env: {
+            HAPPIER_FEATURE_POLICY_ENV: '',
+        },
         exclude: ['**/.project/**', '**/node_modules/**', '**/dist/**'],
     },
 })
-

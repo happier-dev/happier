@@ -18,6 +18,7 @@ export default defineConfig({
     // Without isolation, those mocks can contaminate other files depending on execution order.
     isolate: true,
     env: {
+      HAPPIER_FEATURE_POLICY_ENV: '',
       S3_HOST: 'localhost',
       S3_PORT: '9000',
       S3_USE_SSL: 'false',

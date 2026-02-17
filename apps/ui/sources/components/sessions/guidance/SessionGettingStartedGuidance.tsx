@@ -50,20 +50,22 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingBottom: 20,
     },
     title: {
+        width: '100%',
+        maxWidth: 720,
+        gap: 28,
         marginTop: 10,
-        marginBottom: 12,
-        textAlign: 'center',
         fontSize: 22,
         color: theme.colors.text,
         ...Typography.default('semiBold'),
     },
     subtitle: {
+        width: '100%',
+        maxWidth: 720,
+        gap: 28,
         marginBottom: 16,
-        textAlign: 'center',
         fontSize: 16,
         color: theme.colors.textSecondary,
         ...Typography.default(),
-        maxWidth: 520,
     },
     terminalText: {
         ...Typography.mono(),
@@ -116,13 +118,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexBasis: 0,
     },
     codeCopyButton: {
-        padding: 4,
         marginTop: 1,
     },
     buttonsContainer: {
         alignItems: 'center',
         width: '100%',
-        marginTop: 8,
+        marginTop: 20,
         gap: 12,
     },
     buttonWrapper: {
@@ -284,8 +285,7 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
             contentContainerStyle={styles.contentContainer}
             keyboardShouldPersistTaps="handled"
         >
-            <Text style={styles.title}>{title}</Text>
-            <Text style={styles.subtitle}>{subtitle}</Text>
+            
             {steps.length > 0 ? (
                 <View style={styles.stepsContainer}>
                     {steps.map((step) => (
@@ -321,7 +321,7 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
                         <RoundButton
                             title={t('components.emptySessionsTablet.startNewSessionButton')}
                             onPress={model.onStartNewSession}
-                            size="large"
+                            size="normal"
                         />
                     </View>
                 ) : null}
@@ -332,7 +332,7 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
                             title={t('components.emptyMainScreen.openCamera')}
                             onPress={model.onConnectTerminal}
                             loading={Boolean(model.connectIsLoading)}
-                            size="large"
+                            size="normal"
                         />
                     </View>
                 ) : null}
@@ -343,7 +343,7 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
                             title={t('connect.enterUrlManually')}
                             onPress={model.onEnterUrlManually}
                             loading={Boolean(model.connectIsLoading)}
-                            size={Platform.OS === 'web' ? 'large' : 'normal'}
+                            size="normal"
                             display={Platform.OS === 'web' ? undefined : 'inverted'}
                         />
                     </View>

@@ -64,7 +64,7 @@
     "release:build:binaries:server": "node scripts/release/build-server-binaries.mjs",
     "release:verify:artifacts": "node scripts/release/verify-artifacts.mjs",
     "release:publish:manifests": "node scripts/release/publish-manifests.mjs",
-    "test:release:contracts": "node --test scripts/release/*.test.mjs",
+    "test:release:contracts": "HAPPIER_FEATURE_POLICY_ENV= node --test scripts/release/*.test.mjs",
     "release:sync:installers": "node scripts/release/sync-installers.mjs",
     "release:check:installers": "node scripts/release/sync-installers.mjs --check"
   },

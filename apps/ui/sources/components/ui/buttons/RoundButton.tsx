@@ -5,10 +5,10 @@ import { Typography } from '@/constants/Typography';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 export type RoundButtonSize = 'large' | 'normal' | 'small';
-const sizes: { [key in RoundButtonSize]: { height: number, fontSize: number, hitSlop: number, pad: number } } = {
-    large: { height: 48, fontSize: 21, hitSlop: 0, pad: Platform.OS == 'ios' ? 0 : -1 },
-    normal: { height: 32, fontSize: 16, hitSlop: 8, pad: Platform.OS == 'ios' ? 1 : -2 },
-    small: { height: 24, fontSize: 14, hitSlop: 12, pad: Platform.OS == 'ios' ? -1 : -1 }
+const sizes: { [key in RoundButtonSize]: { fontSize: number, hitSlop: number, pad: number } } = {
+    large: { fontSize: 21, hitSlop: 0, pad: Platform.OS == 'ios' ? 0 : -1 },
+    normal: { fontSize: 16, hitSlop: 8, pad: Platform.OS == 'ios' ? 1 : -2 },
+    small: { fontSize: 14, hitSlop: 12, pad: Platform.OS == 'ios' ? -1 : -1 }
 }
 
 export type RoundButtonDisplay = 'default' | 'inverted';
@@ -26,8 +26,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     contentContainer: {
         alignItems: 'center',
         justifyContent: 'center',
-        minWidth: 64,
         paddingHorizontal: 16,
+        paddingVertical: 8,
         borderRadius: 9999,
     },
     text: {
@@ -85,7 +85,7 @@ export const RoundButton = React.memo((props: { size?: RoundButtonSize, display?
             style={(p) => ([
                 {
                     borderWidth: 1,
-                    borderRadius: size.height / 2,
+                    borderRadius: 10,
                     backgroundColor: display.backgroundColor,
                     borderColor: display.borderColor,
                     opacity: props.disabled ? 0.5 : 1,
@@ -99,8 +99,7 @@ export const RoundButton = React.memo((props: { size?: RoundButtonSize, display?
         >
             <View 
                 style={[
-                    styles.contentContainer,
-                    { height: size.height - 2 }
+                    styles.contentContainer
                 ]}
             >
                 {doLoading && (

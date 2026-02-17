@@ -10,3 +10,6 @@ const defaultHomeDir = join(tmpdir(), `happier-dev-test-${process.pid}`);
 process.env.HAPPIER_HOME_DIR = defaultHomeDir;
 mkdirSync(defaultHomeDir, { recursive: true });
 
+// CLI tests should not inherit embedded build-policy gating (set in CI).
+// Clear it by default so feature tests can opt-in explicitly per case.
+process.env.HAPPIER_FEATURE_POLICY_ENV = '';
