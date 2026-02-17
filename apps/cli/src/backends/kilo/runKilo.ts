@@ -12,7 +12,6 @@ import { runStandardAcpProvider, type StandardAcpProviderRunOptions } from '@/ag
 
 import { KiloTerminalDisplay } from '@/backends/kilo/ui/KiloTerminalDisplay';
 import { createKiloAcpRuntime } from '@/backends/kilo/acp/runtime';
-import { createKiloReadyPushNotifier } from '@/backends/kilo/readyPush';
 
 export async function runKilo(opts: StandardAcpProviderRunOptions & {
   credentials: Credentials;
@@ -37,13 +36,6 @@ export async function runKilo(opts: StandardAcpProviderRunOptions & {
       onThinkingChange: setThinking,
       getPermissionMode,
     }),
-    createSendReady: ({ session, api }) => {
-      const readyPushNotifier = createKiloReadyPushNotifier({ api, sessionId: session.sessionId });
-      return () => {
-        session.sendSessionEvent({ type: 'ready' });
-        readyPushNotifier.maybeSend();
-      };
-    },
     onAttachMetadataSnapshotMissing: (error) => {
       logger.debug(
         '[kilo] Failed to fetch session metadata snapshot before attach startup update; continuing without metadata write (non-fatal)',
