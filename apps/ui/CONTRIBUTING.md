@@ -179,6 +179,32 @@ This controls:
 - Intent filters (Android)
 - Other variant-specific configuration
 
+## Local Expo config overrides (`app.local.js`)
+
+For local development (or fork-specific tweaks without editing `app.config.js`), you can create an optional file:
+
+- `apps/ui/app.local.js` (gitignored)
+
+If present, it is loaded at the start of `app.config.js` and **deep-merged** on top of the base Expo config.
+
+Example (`apps/ui/app.local.js`):
+
+```js
+module.exports = {
+  expo: {
+    ios: {
+      infoPlist: {
+        NSPhotoLibraryUsageDescription: 'My fork: used for sharing images.',
+      },
+    },
+  },
+};
+```
+
+Advanced:
+- Set `EXPO_APP_LOCAL_CONFIG_PATH` to load a different override file (useful for keeping multiple variants locally).
+- The module can also export a function: `({ variant, baseConfig }) => ({ expo: { ... } })`.
+
 ## Deep Linking
 
 Only **production** variant has deep linking configured:
