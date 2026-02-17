@@ -23,14 +23,29 @@ COPY packages/audio-stream-native/package.json packages/audio-stream-native/
 COPY packages/sherpa-native/package.json packages/sherpa-native/
 
 RUN yarn config set registry https://registry.npmjs.org/ \
-    && for attempt in 1 2 3; do \
-      yarn install --frozen-lockfile --ignore-engines && break; \
-      if [ "$attempt" -lt 3 ]; then \
-        echo "yarn install failed (attempt ${attempt}/3), retrying..."; \
-        sleep 5; \
-      else \
+    && is_transient_yarn_error() { \
+      grep -Eq 'Request failed "(5[0-9]{2}|429)' "$1" && return 0; \
+      grep -Eq 'EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up' "$1" && return 0; \
+      return 1; \
+    }; \
+    for attempt in 1 2 3; do \
+      if yarn install --frozen-lockfile --ignore-engines > /tmp/yarn-install.log 2>&1; then \
+        cat /tmp/yarn-install.log; \
+        break; \
+      fi; \
+      if is_transient_yarn_error /tmp/yarn-install.log; then \
+        cat /tmp/yarn-install.log; \
+        if [ "$attempt" -lt 3 ]; then \
+          echo "yarn install failed due to transient network/registry issue (attempt ${attempt}/3), retrying..."; \
+          sleep 5; \
+          continue; \
+        fi; \
+        echo "yarn install failed with repeated transient network/registry failures after ${attempt} attempts." >&2; \
         exit 1; \
       fi; \
+      cat /tmp/yarn-install.log >&2; \
+      echo "yarn install failed with a non-transient error (attempt ${attempt}); not retrying." >&2; \
+      exit 1; \
     done
 
 # Shared deps (debian) for server builds (needs toolchain for native deps)
@@ -54,14 +69,29 @@ COPY packages/audio-stream-native/package.json packages/audio-stream-native/
 COPY packages/sherpa-native/package.json packages/sherpa-native/
 
 RUN yarn config set registry https://registry.npmjs.org/ \
-    && for attempt in 1 2 3; do \
-      yarn install --frozen-lockfile --ignore-engines && break; \
-      if [ "$attempt" -lt 3 ]; then \
-        echo "yarn install failed (attempt ${attempt}/3), retrying..."; \
-        sleep 5; \
-      else \
+    && is_transient_yarn_error() { \
+      grep -Eq 'Request failed "(5[0-9]{2}|429)' "$1" && return 0; \
+      grep -Eq 'EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up' "$1" && return 0; \
+      return 1; \
+    }; \
+    for attempt in 1 2 3; do \
+      if yarn install --frozen-lockfile --ignore-engines > /tmp/yarn-install.log 2>&1; then \
+        cat /tmp/yarn-install.log; \
+        break; \
+      fi; \
+      if is_transient_yarn_error /tmp/yarn-install.log; then \
+        cat /tmp/yarn-install.log; \
+        if [ "$attempt" -lt 3 ]; then \
+          echo "yarn install failed due to transient network/registry issue (attempt ${attempt}/3), retrying..."; \
+          sleep 5; \
+          continue; \
+        fi; \
+        echo "yarn install failed with repeated transient network/registry failures after ${attempt} attempts." >&2; \
         exit 1; \
       fi; \
+      cat /tmp/yarn-install.log >&2; \
+      echo "yarn install failed with a non-transient error (attempt ${attempt}); not retrying." >&2; \
+      exit 1; \
     done
 
 #
