@@ -55,6 +55,14 @@ on:
           - ota
           - native
           - native_submit
+      expo_builder:
+        description: "Deploy (Expo) — Native build runner (eas_cloud uses Expo build servers; eas_local builds on GitHub runners)"
+        required: true
+        default: eas_cloud
+        type: choice
+        options:
+          - eas_cloud
+          - eas_local
       expo_profile:
         description: "Deploy (Expo) — EAS build profile (auto: preview→preview, production→production). Use *-apk profiles to produce installable Android APKs and publish to GitHub Releases."
         required: true
@@ -131,6 +139,11 @@ on:
         required: false
         default: none
         type: string
+      expo_builder:
+        description: "Deploy (Expo) — Native build runner (eas_cloud uses Expo build servers; eas_local builds on GitHub runners)"
+        required: false
+        default: eas_cloud
+        type: string
       expo_profile:
         description: "Deploy (Expo) — EAS build profile (auto: preview→preview, production→production). Use *-apk profiles to produce installable Android APKs and publish to GitHub Releases."
         required: false
@@ -187,6 +200,8 @@ jobs:
     outputs:
       source_ref: ${{ steps.resolve.outputs.ref }}
       release_sha: ${{ steps.release_sha.outputs.sha }}
+      app_version: ${{ steps.app_version.outputs.version }}
+      expo_profile: ${{ steps.expo_profile.outputs.profile }}
       deploy_ref: ${{ steps.deploy_meta.outputs.ref }}
       deploy_sha: ${{ steps.deploy_meta.outputs.sha }}
       mobile_tag: ${{ steps.mobile_meta.outputs.tag }}
@@ -323,6 +338,18 @@ jobs:
           set -euo pipefail
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve app version
+        id: app_version
+        if: inputs.expo_action == 'native' || inputs.expo_action == 'native_submit'
+        run: |
+          set -euo pipefail
+          v="$(node -p 'require("./apps/ui/package.json").version' | tr -d '\n')"
+          if [ -z "${v:-}" ]; then
+            echo "Unable to resolve app version from apps/ui/package.json" >&2
+            exit 1
+          fi
+          echo "version=${v}" >> "$GITHUB_OUTPUT"
+
       - name: Expo OTA update
         if: inputs.expo_action == 'ota'
         env:
@@ -355,6 +382,7 @@ jobs:
           set -euo pipefail
           env_name="${{ inputs.environment }}"
           action="${{ inputs.expo_action }}"
+          builder="${{ inputs.expo_builder }}"
           profile="${{ inputs.expo_profile }}"
 
           if [ "${profile}" = "auto" ]; then
@@ -365,12 +393,13 @@ jobs:
           {
             echo "### Expo"
             echo "- action: \`${action}\`"
+            echo "- builder: \`${builder}\`"
             echo "- environment: \`${env_name}\`"
             echo "- build profile: \`${profile}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Expo native build
-        if: inputs.expo_action == 'native' || inputs.expo_action == 'native_submit'
+        if: ${{ (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') && inputs.expo_builder == 'eas_cloud' }}
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           APP_ENV: ${{ inputs.environment }}
@@ -384,7 +413,7 @@ jobs:
           npx --yes "eas-cli@${EAS_CLI_VERSION}" build --platform "${{ inputs.expo_platform }}" --profile "${{ steps.expo_profile.outputs.profile }}" --non-interactive --json > /tmp/eas_build.json
 
       - name: Dump EAS build details (always)
-        if: ${{ always() && (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') }}
+        if: ${{ always() && (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') && inputs.expo_builder == 'eas_cloud' }}
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
@@ -473,7 +502,7 @@ jobs:
 
       - name: Download Android APK (EAS *-apk profiles)
         id: download_apk
-        if: ${{ (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') && (inputs.expo_platform == 'android' || inputs.expo_platform == 'all') && endsWith(steps.expo_profile.outputs.profile, '-apk') }}
+        if: ${{ (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') && inputs.expo_builder == 'eas_cloud' && (inputs.expo_platform == 'android' || inputs.expo_platform == 'all') && endsWith(steps.expo_profile.outputs.profile, '-apk') }}
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           APP_ENV: ${{ inputs.environment }}
@@ -594,7 +623,7 @@ jobs:
           echo "asset_path=${out}" >> "$GITHUB_OUTPUT"
 
       - name: Warn when *-apk profile excludes Android platform
-        if: ${{ (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') && endsWith(steps.expo_profile.outputs.profile, '-apk') && !(inputs.expo_platform == 'android' || inputs.expo_platform == 'all') }}
+        if: ${{ (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') && inputs.expo_builder == 'eas_cloud' && endsWith(steps.expo_profile.outputs.profile, '-apk') && !(inputs.expo_platform == 'android' || inputs.expo_platform == 'all') }}
         run: |
           echo "::warning::expo_profile '${{ steps.expo_profile.outputs.profile }}' targets APK artifacts, but expo_platform='${{ inputs.expo_platform }}' excludes Android. Mobile APK release will be skipped."
 
@@ -608,7 +637,7 @@ jobs:
 
       - name: Compute mobile release metadata
         id: mobile_meta
-        if: inputs.expo_action == 'native' || inputs.expo_action == 'native_submit'
+        if: ${{ (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') && inputs.expo_builder == 'eas_cloud' }}
         env:
           DOWNLOAD_APK_OUTCOME: ${{ steps.download_apk.outcome }}
         run: |
@@ -646,7 +675,7 @@ jobs:
           fi
 
       - name: Expo submit
-        if: inputs.expo_action == 'native_submit'
+        if: ${{ inputs.expo_action == 'native_submit' && inputs.expo_builder == 'eas_cloud' }}
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
@@ -802,6 +831,41 @@ jobs:
       generate_notes: ${{ needs.promote.outputs.mobile_generate_notes == 'true' }}
       notes: ${{ needs.promote.outputs.mobile_notes }}
       assets_artifact: ui-mobile-assets
+      assets_artifact_path: dist/ui-mobile
+      assets_dir: dist/ui-mobile
+      clobber: true
+
+  expo_local_build:
+    name: Expo native build (local runners)
+    if: ${{ (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') && inputs.expo_builder == 'eas_local' }}
+    needs: [promote]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-ui-mobile-local.yml
+    secrets: inherit
+    with:
+      environment: ${{ inputs.environment }}
+      platform: ${{ inputs.expo_platform }}
+      profile: ${{ needs.promote.outputs.expo_profile }}
+      action: ${{ inputs.expo_action == 'native_submit' && 'build_and_submit' || 'build_only' }}
+
+  publish_mobile_local:
+    name: Publish mobile assets (GitHub Release)
+    if: ${{ (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') && inputs.expo_builder == 'eas_local' && (inputs.expo_platform == 'android' || inputs.expo_platform == 'all') && endsWith(needs.promote.outputs.expo_profile, '-apk') }}
+    needs: [promote, expo_local_build]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-ui-release.yml
+    secrets: inherit
+    with:
+      tag: ${{ inputs.environment == 'production' && format('ui-v{0}', needs.promote.outputs.app_version) || 'ui-preview' }}
+      title: ${{ inputs.environment == 'production' && format('Happier UI v{0}', needs.promote.outputs.app_version) || 'Happier UI Preview' }}
+      target_sha: ${{ needs.promote.outputs.release_sha }}
+      prerelease: ${{ inputs.environment != 'production' }}
+      rolling_tag: ${{ inputs.environment != 'production' }}
+      generate_notes: ${{ inputs.environment == 'production' }}
+      notes: ${{ inputs.environment == 'production' && '' || 'Rolling preview build.' }}
+      assets_artifact: ui-mobile-${{ inputs.environment }}-android
       assets_artifact_path: dist/ui-mobile
       assets_dir: dist/ui-mobile
       clobber: true

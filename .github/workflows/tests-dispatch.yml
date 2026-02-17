@@ -13,7 +13,7 @@ on:
           - fast
           - custom
       custom_checks:
-        description: "Custom — Comma-separated checks used only when profile=custom (ui,server,cli,stack,typecheck,daemon_e2e,e2e_core,server_db_contract,providers,stress,release_contracts,installers_smoke,binary_smoke,self_host_systemd,self_host_launchd,self_host_schtasks,self_host_daemon)"
+        description: "Custom — Comma-separated checks used only when profile=custom (ui,server,cli,stack,typecheck,daemon_e2e,e2e_core,e2e_core_slow,server_db_contract,providers,stress,release_contracts,installers_smoke,binary_smoke,self_host_systemd,self_host_launchd,self_host_schtasks,self_host_daemon)"
         required: true
         default: ""
         type: string
@@ -56,6 +56,7 @@ jobs:
       run_typecheck: ${{ steps.flags.outputs.run_typecheck }}
       run_cli_daemon_e2e: ${{ steps.flags.outputs.run_cli_daemon_e2e }}
       run_e2e_core: ${{ steps.flags.outputs.run_e2e_core }}
+      run_e2e_core_slow: ${{ steps.flags.outputs.run_e2e_core_slow }}
       run_server_db_contract: ${{ steps.flags.outputs.run_server_db_contract }}
       run_providers: ${{ steps.flags.outputs.run_providers }}
       run_stress: ${{ steps.flags.outputs.run_stress }}
@@ -95,6 +96,7 @@ jobs:
             run_typecheck=true
             run_cli_daemon_e2e=true
             run_e2e_core=true
+            run_e2e_core_slow=true
             run_server_db_contract=true
             run_providers=false
             run_stress=false
@@ -112,7 +114,8 @@ jobs:
             run_stack=true
             run_typecheck=true
             run_cli_daemon_e2e=false
-            run_e2e_core=false
+            run_e2e_core=true
+            run_e2e_core_slow=false
             run_server_db_contract=false
             run_providers=false
             run_stress=false
@@ -131,6 +134,7 @@ jobs:
             run_typecheck=false
             run_cli_daemon_e2e=false
             run_e2e_core=false
+            run_e2e_core_slow=false
             run_server_db_contract=false
             run_providers=false
             run_stress=false
@@ -149,6 +153,7 @@ jobs:
             if has typecheck; then run_typecheck=true; fi
             if has daemon_e2e; then run_cli_daemon_e2e=true; fi
             if has e2e_core; then run_e2e_core=true; fi
+            if has e2e_core_slow; then run_e2e_core=true; run_e2e_core_slow=true; fi
             if has server_db_contract; then run_server_db_contract=true; fi
             if has providers; then run_providers=true; fi
             if has stress; then run_stress=true; fi
@@ -169,6 +174,7 @@ jobs:
             echo "run_typecheck=${run_typecheck}"
             echo "run_cli_daemon_e2e=${run_cli_daemon_e2e}"
             echo "run_e2e_core=${run_e2e_core}"
+            echo "run_e2e_core_slow=${run_e2e_core_slow}"
             echo "run_server_db_contract=${run_server_db_contract}"
             echo "run_providers=${run_providers}"
             echo "run_stress=${run_stress}"
@@ -193,6 +199,7 @@ jobs:
       run_typecheck: ${{ needs.resolve.outputs.run_typecheck == 'true' }}
       run_cli_daemon_e2e: ${{ needs.resolve.outputs.run_cli_daemon_e2e == 'true' }}
       run_e2e_core: ${{ needs.resolve.outputs.run_e2e_core == 'true' }}
+      run_e2e_core_slow: ${{ needs.resolve.outputs.run_e2e_core_slow == 'true' }}
       run_server_db_contract: ${{ needs.resolve.outputs.run_server_db_contract == 'true' }}
       run_providers: ${{ needs.resolve.outputs.run_providers == 'true' }}
       providers_preset: ${{ inputs.providers_preset }}
@@ -206,4 +213,3 @@ jobs:
       run_self_host_launchd: ${{ needs.resolve.outputs.run_self_host_launchd == 'true' }}
       run_self_host_schtasks: ${{ needs.resolve.outputs.run_self_host_schtasks == 'true' }}
       run_self_host_daemon: ${{ needs.resolve.outputs.run_self_host_daemon == 'true' }}
-

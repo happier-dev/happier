@@ -37,7 +37,7 @@ on:
           - smoke
           - extended
       custom_checks:
-        description: "Checks (CUST) — Comma-separated toggles used only when checks_profile=custom: e2e_core,server_db_contract,stress,cli_smoke_linux,build_website,build_docs"
+        description: "Checks (CUST) — Comma-separated toggles used only when checks_profile=custom: e2e_core,e2e_core_slow,server_db_contract,stress,cli_smoke_linux,build_website,build_docs"
         required: true
         default: e2e_core,server_db_contract,cli_smoke_linux,build_website,build_docs
         type: string
@@ -83,6 +83,14 @@ on:
           - ota
           - native
           - native_submit
+      ui_expo_builder:
+        description: "Deploy — UI native build runner (eas_cloud uses Expo build servers; eas_local builds on GitHub runners)"
+        required: true
+        default: eas_cloud
+        type: choice
+        options:
+          - eas_cloud
+          - eas_local
       ui_expo_profile:
         description: "Deploy — UI EAS build profile (auto recommended). Use *-apk profiles to produce installable Android APKs and publish to GitHub Releases."
         required: true
@@ -203,7 +211,8 @@ jobs:
       run_stack: true
       run_typecheck: true
       run_cli_daemon_e2e: true
-      run_e2e_core: ${{ inputs.checks_profile == 'full' || (inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',e2e_core,')) }}
+      run_e2e_core: ${{ inputs.checks_profile == 'full' || (inputs.checks_profile == 'custom' && (contains(format(',{0},', inputs.custom_checks), ',e2e_core,') || contains(format(',{0},', inputs.custom_checks), ',e2e_core_slow,'))) }}
+      run_e2e_core_slow: ${{ inputs.checks_profile == 'full' || (inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',e2e_core_slow,')) }}
       run_server_db_contract: ${{ inputs.checks_profile == 'full' || (inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',server_db_contract,')) }}
       run_providers: false
       providers_preset: ${{ inputs.providers_preset }}
@@ -410,7 +419,7 @@ jobs:
             echo "- bump_app_override: \`${{ inputs.bump_app_override }}\`"
             echo "- bump_cli_override: \`${{ inputs.bump_cli_override }}\`"
             echo "- bump_stack_override: \`${{ inputs.bump_stack_override }}\`"
-            echo "- ui_expo_action: \`${{ inputs.ui_expo_action }}\` (platform=\`${{ inputs.ui_expo_platform }}\`, profile=\`${{ inputs.ui_expo_profile }}\`)"
+            echo "- ui_expo_action: \`${{ inputs.ui_expo_action }}\` (builder=\`${{ inputs.ui_expo_builder }}\`, platform=\`${{ inputs.ui_expo_platform }}\`, profile=\`${{ inputs.ui_expo_profile }}\`)"
             echo "- desktop_mode: \`${{ inputs.desktop_mode }}\`"
             echo ""
             echo "- commits to release (main..dev): \`${{ steps.plan.outputs.commit_count }}\`"
@@ -853,6 +862,7 @@ jobs:
       bump: none
       deploy_web: ${{ inputs.environment == 'production' }}
       expo_action: ${{ inputs.ui_expo_action }}
+      expo_builder: ${{ inputs.ui_expo_builder }}
       expo_profile: ${{ inputs.ui_expo_profile }}
       expo_platform: ${{ inputs.ui_expo_platform }}
       desktop_build: ${{ inputs.desktop_mode != 'none' }}

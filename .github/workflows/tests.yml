@@ -37,6 +37,10 @@ on:
         required: false
         default: true
         type: boolean
+      run_e2e_core_slow:
+        required: false
+        default: false
+        type: boolean
       run_providers:
         required: false
         default: false
@@ -1123,13 +1127,9 @@ jobs:
 
   e2e-core:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_e2e_core }}
-    name: Core E2E (packages/tests, server-light, ${{ matrix.db }})
+    name: Core E2E (fast, packages/tests, server-light, sqlite)
     runs-on: ubuntu-22.04
     timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        db: [pglite, sqlite]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -1170,14 +1170,69 @@ jobs:
         env:
           CI: "1"
           HAPPIER_E2E_SAVE_ARTIFACTS: "0"
-          HAPPIER_E2E_DB_PROVIDER: ${{ matrix.db }}
-        run: yarn test:e2e
+          HAPPIER_E2E_DB_PROVIDER: sqlite
+        run: yarn test:e2e:core:fast
 
       - name: Upload e2e artifacts (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: core-e2e-artifacts-${{ matrix.db }}
+          name: core-e2e-artifacts-fast-sqlite
+          path: .project/logs/e2e
+
+  e2e-core-slow:
+    if: ${{ github.event_name == 'workflow_call' && inputs.run_e2e_core_slow }}
+    name: Core E2E (slow, packages/tests, server-light, sqlite)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node (GitHub Actions)
+        if: env.ACT != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Setup Node (act)
+        if: env.ACT == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install Sapling
+        run: |
+          bash scripts/ci/install_sapling_ubuntu22.sh
+
+      - name: Verify Sapling CLI
+        run: sl --version
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Run core e2e suite (slow)
+        env:
+          CI: "1"
+          HAPPIER_E2E_SAVE_ARTIFACTS: "0"
+          HAPPIER_E2E_DB_PROVIDER: sqlite
+        run: yarn test:e2e:core:slow
+
+      - name: Upload e2e artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-e2e-artifacts-slow-sqlite
           path: .project/logs/e2e
 
   release_actor_guard:
