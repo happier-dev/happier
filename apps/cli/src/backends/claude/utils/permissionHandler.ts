@@ -19,6 +19,8 @@ import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
 import { extractAgentIdFromTaskResultText } from '@/backends/claude/remote/sidechains/extractAgentIdFromTaskResult';
 import type { PermissionRpcPayload } from './permissionRpc';
 import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { sendPermissionRequestPushNotificationForActiveAccount } from '@/settings/notifications/permissionRequestPush';
+import { configuration } from '@/configuration';
 
 type PermissionResponse = PermissionRpcPayload;
 
@@ -145,11 +147,67 @@ export class PermissionHandler {
         if (!id) {
             return false;
         }
-        if (!this.pendingRequests.has(id)) {
+        if (this.pendingRequests.has(id)) {
+            this.applyPermissionResponse(message);
+            return true;
+        }
+
+        // Late/deduped response handling:
+        // Mobile approvals can arrive after the in-memory pending map was cleared (abort/reconnect paths).
+        // We still want to resolve the *UI* state surface (agentState requests -> completedRequests)
+        // so the app doesn't get stuck showing an unresolvable prompt.
+        if (!this.hasOutstandingAgentStateRequest(id)) {
             return false;
         }
-        this.applyPermissionResponse(message);
+
+        this.applyLatePermissionResponse(message);
         return true;
+    }
+
+    private hasOutstandingAgentStateRequest(id: string): boolean {
+        try {
+            const snapshot = (this.session.client as any).getAgentStateSnapshot?.() ?? null;
+            const requests = snapshot?.requests;
+            if (!requests || typeof requests !== 'object') return false;
+            return id in (requests as Record<string, unknown>);
+        } catch {
+            return false;
+        }
+    }
+
+    private applyLatePermissionResponse(message: PermissionResponse): void {
+        const id = message.id;
+        this.responses.set(id, { ...message, receivedAt: Date.now() });
+
+        updateAgentStateBestEffort(
+            this.session.client,
+            (currentState) => {
+                const request = currentState.requests?.[id];
+                if (!request) return currentState;
+                const nextRequests = { ...currentState.requests };
+                delete nextRequests[id];
+                return {
+                    ...currentState,
+                    requests: nextRequests,
+                    completedRequests: {
+                        ...currentState.completedRequests,
+                        [id]: {
+                            ...request,
+                            completedAt: Date.now(),
+                            status: message.approved ? 'approved' : 'denied',
+                            reason: message.reason,
+                            mode: message.mode,
+                            ...(Array.isArray(message.allowedTools ?? message.allowTools)
+                                ? { allowedTools: (message.allowedTools ?? message.allowTools)! }
+                                : null),
+                            ...(message.answers && typeof message.answers === 'object' ? { answers: message.answers } : null),
+                        },
+                    },
+                };
+            },
+            '[Claude]',
+            'complete_permission_request_late',
+        );
     }
 
     private applyPermissionResponse(message: PermissionResponse): void {
@@ -301,7 +359,24 @@ export class PermissionHandler {
     /**
      * Creates the canCallTool callback for the SDK
      */
-    handleToolCall = async (toolName: string, input: unknown, mode: EnhancedMode, options: { signal: AbortSignal }): Promise<PermissionResult> => {
+    handleToolCall = async (
+        toolName: string,
+        input: unknown,
+        mode: EnhancedMode,
+        options: {
+            signal: AbortSignal;
+            /**
+             * Optional tool use id supplied by upstream runtimes (e.g. Agent SDK).
+             * When provided, we must use it directly instead of trying to infer it
+             * from transcript/tool_use events (which may not have been observed yet).
+             */
+            toolUseId?: string | null;
+            agentId?: string | null;
+            suggestions?: unknown;
+            blockedPath?: string | null;
+            decisionReason?: string | null;
+        },
+    ): Promise<PermissionResult> => {
         const rewrittenInput = this.rewriteToolInput(toolName, input);
 
         // Check if tool is explicitly allowed
@@ -343,10 +418,11 @@ export class PermissionHandler {
         // Approval flow
         //
 
-        let toolCallId = this.resolveToolCallId(toolName, input);
+        const providedToolUseId = typeof options?.toolUseId === 'string' ? options.toolUseId.trim() : '';
+        let toolCallId = providedToolUseId.length > 0 ? providedToolUseId : this.resolveToolCallId(toolName, input);
         if (!toolCallId) { // What if we got permission before tool call
             await delay(1000);
-            toolCallId = this.resolveToolCallId(toolName, input);
+            toolCallId = providedToolUseId.length > 0 ? providedToolUseId : this.resolveToolCallId(toolName, input);
             if (!toolCallId) {
                 throw new Error(`Could not resolve tool call ID for ${toolName}`);
             }
@@ -355,6 +431,22 @@ export class PermissionHandler {
     }
 
     private rewriteToolInput(toolName: string, input: unknown): unknown {
+        if (toolName === 'Task' || toolName === 'task') {
+            if (configuration.claudeTaskAllowRunInBackground) return input;
+            if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
+
+            const record = input as Record<string, unknown>;
+            const requestedBackground =
+                record.run_in_background === true || (record as any).runInBackground === true;
+            if (!requestedBackground) return input;
+
+            const next: Record<string, unknown> = { ...record, run_in_background: false };
+            if ('runInBackground' in next) {
+                delete (next as any).runInBackground;
+            }
+            return next;
+        }
+
         // TaskOutput is a provider tool; models sometimes pass TaskOutput the Task's "taskId" instead of its "agentId".
         // We can deterministically rewrite when we observed the Task tool_result that includes both ids.
         if (toolName !== 'TaskOutput' && toolName !== 'task_output') return input;
@@ -426,17 +518,19 @@ export class PermissionHandler {
                 this.onPermissionRequestCallback(id);
             }
             
-            // Send push notification
-            this.session.api.push().sendToAllDevices(
-                'Permission Request',
-                `Claude wants to ${getToolName(toolName)}`,
-                {
-                    sessionId: this.session.client.sessionId,
-                    requestId: id,
-                    tool: toolName,
-                    type: 'permission_request'
+            // Send push notification (best-effort; gated by per-account preferences).
+            if (this.session.pushSender) {
+                try {
+                    sendPermissionRequestPushNotificationForActiveAccount({
+                        pushSender: this.session.pushSender,
+                        sessionId: this.session.client.sessionId,
+                        permissionId: id,
+                        toolName: getToolName(toolName),
+                    });
+                } catch {
+                    // ignore
                 }
-            );
+            }
 
             // Update agent state
             updateAgentStateBestEffort(
