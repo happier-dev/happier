@@ -13,6 +13,17 @@ const STACK_WRAPPER_CLEAR_UNPREFIXED_KEYS = [
   'HAPPIER_PUBLIC_SERVER_URL',
   'HAPPIER_WEBAPP_URL',
   'HAPPIER_HOME_DIR',
+  'APP_ENV',
+  'EXPO_UPDATES_CHANNEL',
+  'EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV',
+  'EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_ALLOW',
+  'EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY',
+  // Runtime feature policy knobs should be stack-local; stale values from a prior stack can
+  // silently bleed into a newly selected stack and override expected defaults.
+  'HAPPIER_FEATURE_POLICY_ENV',
+  'HAPPIER_EMBEDDED_POLICY_ENV',
+  'HAPPIER_BUILD_FEATURES_ALLOW',
+  'HAPPIER_BUILD_FEATURES_DENY',
 ];
 
 function stringifyEnv(env) {
