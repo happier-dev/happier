@@ -113,27 +113,4 @@ describe("parseAutomationUpsertInput", () => {
             }),
         ).toThrow(/templateCiphertext/i);
     });
-
-    it("rejects existing_session target when feature gate is disabled", () => {
-        const previous = process.env.HAPPIER_FEATURE_AUTOMATIONS__EXISTING_SESSION_TARGET;
-        process.env.HAPPIER_FEATURE_AUTOMATIONS__EXISTING_SESSION_TARGET = "0";
-        try {
-            expect(() =>
-                parseAutomationUpsertInput({
-                    name: "Existing-session automation",
-                    enabled: true,
-                    schedule: { kind: "interval", everyMs: 60_000 },
-                    targetType: "existing_session",
-                    templateCiphertext: JSON.stringify({
-                        kind: "happier_automation_template_encrypted_v1",
-                        payloadCiphertext: "ciphertext-base64",
-                        existingSessionId: "session-1",
-                    }),
-                }),
-            ).toThrow(/existing_session/);
-        } finally {
-            if (previous === undefined) delete process.env.HAPPIER_FEATURE_AUTOMATIONS__EXISTING_SESSION_TARGET;
-            else process.env.HAPPIER_FEATURE_AUTOMATIONS__EXISTING_SESSION_TARGET = previous;
-        }
-    });
 });

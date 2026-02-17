@@ -1,5 +1,5 @@
 import { type Fastify } from "../../types";
-import { resolveServerFeaturePayload } from "@/app/features/catalog/resolveServerFeaturePayload";
+import { createServerFeatureGatedRouteApp } from "@/app/features/catalog/serverFeatureGate";
 
 import { registerAutomationAssignmentRoutes } from "./registerAutomationAssignmentRoutes";
 import { registerAutomationCrudRoutes } from "./registerAutomationCrudRoutes";
@@ -7,12 +7,10 @@ import { registerAutomationDaemonRoutes } from "./registerAutomationDaemonRoutes
 import { registerAutomationRunRoutes } from "./registerAutomationRunRoutes";
 
 export function automationRoutes(app: Fastify): void {
-    if (!resolveServerFeaturePayload(process.env).features.automations.enabled) {
-        return;
-    }
+    const gated = createServerFeatureGatedRouteApp(app, "automations", process.env);
 
-    registerAutomationCrudRoutes(app);
-    registerAutomationAssignmentRoutes(app);
-    registerAutomationDaemonRoutes(app);
-    registerAutomationRunRoutes(app);
+    registerAutomationCrudRoutes(gated);
+    registerAutomationAssignmentRoutes(gated);
+    registerAutomationDaemonRoutes(gated);
+    registerAutomationRunRoutes(gated);
 }

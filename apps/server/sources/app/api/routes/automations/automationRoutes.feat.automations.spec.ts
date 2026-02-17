@@ -83,8 +83,13 @@ describe("automationRoutes", () => {
         const app = createFakeRouteApp();
         automationRoutes(app as any);
 
-        expect(() => getRouteHandler(app, "GET", "/v2/automations")).toThrow();
-        expect(() => getRouteHandler(app, "POST", "/v2/automations/runs/claim")).toThrow();
+        expect(() => getRouteHandler(app, "GET", "/v2/automations")).not.toThrow();
+        expect(() => getRouteHandler(app, "POST", "/v2/automations/runs/claim")).not.toThrow();
+
+        const listHandler = getRouteHandler(app, "GET", "/v2/automations");
+        const reply = createReplyStub();
+        await listHandler({ userId: "u1" }, reply);
+        expect(reply.code).toHaveBeenCalledWith(404);
     });
 
     it("creates an automation from POST /v2/automations", async () => {

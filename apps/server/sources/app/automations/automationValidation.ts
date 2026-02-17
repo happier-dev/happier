@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { readAutomationsFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
+import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
 
 import { computeNextDueAtForAutomation } from "./automationSchedulingService";
 
@@ -117,7 +117,7 @@ export function parseAutomationUpsertInput(raw: unknown): AutomationUpsertInput 
 
     if (
         parsed.data.targetType === "existing_session"
-        && !readAutomationsFeatureEnv(process.env).existingSessionTarget
+        && !isServerFeatureEnabledForRequest("automations.existingSessionTarget", process.env)
     ) {
         throw new AutomationValidationError("targetType existing_session is disabled by server configuration");
     }
@@ -138,7 +138,7 @@ export function parseAutomationPatchInput(raw: unknown): AutomationPatchInput {
 
     if (
         parsed.data.targetType === "existing_session"
-        && !readAutomationsFeatureEnv(process.env).existingSessionTarget
+        && !isServerFeatureEnabledForRequest("automations.existingSessionTarget", process.env)
     ) {
         throw new AutomationValidationError("targetType existing_session is disabled by server configuration");
     }
