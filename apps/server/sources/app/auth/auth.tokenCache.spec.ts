@@ -5,8 +5,7 @@ const ORIGINAL_ENV = { ...process.env };
 function restoreEnv(): void {
     for (const key of Object.keys(process.env)) {
         if (!(key in ORIGINAL_ENV)) {
-            // @ts-expect-error - process.env is string indexable at runtime.
-            delete process.env[key];
+            delete (process.env as Record<string, string | undefined>)[key];
         }
     }
     for (const [key, value] of Object.entries(ORIGINAL_ENV)) {
@@ -58,4 +57,3 @@ describe("auth (token cache)", () => {
         expect(auth.getCacheStats().size).toBe(2);
     });
 });
-
