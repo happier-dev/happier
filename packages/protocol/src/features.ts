@@ -173,7 +173,7 @@ export const FeaturesResponseSchema = z.preprocess(coerceFeaturesResponsePayload
       }),
     }),
     oauth: z.object({
-      providers: z.record(OAuthProviderStatusSchema),
+      providers: z.record(z.string(), OAuthProviderStatusSchema),
     }),
     auth: z.object({
       signup: z.object({
@@ -198,6 +198,7 @@ export const FeaturesResponseSchema = z.preprocess(coerceFeaturesResponsePayload
         }),
       }),
       providers: z.record(
+        z.string(),
         z.object({
           enabled: z.boolean(),
           configured: z.boolean(),
