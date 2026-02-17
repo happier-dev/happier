@@ -75,7 +75,7 @@ export function libsodiumDecryptForSecretKey(
  */
 export function encryptLegacy(data: any, secret: Uint8Array): Uint8Array {
   const nonce = getRandomBytes(tweetnacl.secretbox.nonceLength);
-  const encrypted = tweetnacl.secretbox(new TextEncoder().encode(JSON.stringify(data)), nonce, secret);
+  const encrypted = tweetnacl.secretbox(new TextEncoder().encode(safeJsonStringify(data)), nonce, secret);
   const result = new Uint8Array(nonce.length + encrypted.length);
   result.set(nonce);
   result.set(encrypted, nonce.length);
@@ -110,7 +110,7 @@ export function encryptWithDataKey(data: any, dataKey: Uint8Array): Uint8Array {
   const nonce = getRandomBytes(12); // GCM uses 12-byte nonces
   const cipher = createCipheriv('aes-256-gcm', dataKey, nonce);
 
-  const plaintext = new TextEncoder().encode(JSON.stringify(data));
+  const plaintext = new TextEncoder().encode(safeJsonStringify(data));
   const encrypted = Buffer.concat([
     cipher.update(plaintext),
     cipher.final()
@@ -126,6 +126,15 @@ export function encryptWithDataKey(data: any, dataKey: Uint8Array): Uint8Array {
   bundle.set(new Uint8Array(authTag), 13 + encrypted.length);
 
   return bundle;
+}
+
+function safeJsonStringify(data: unknown): string {
+  return JSON.stringify(data, (_key, value) => {
+    if (typeof value === 'bigint') {
+      return `${value}n`;
+    }
+    return value;
+  });
 }
 
 /**
