@@ -1,7 +1,7 @@
 ---
 name: api-builder
 description: "Backend API specialist for route handlers, validation, and data flow"
-model: codex
+model: inherit
 palRole: "{{project.palRoles.api-builder}}"
 allowed_tools:
   - Read

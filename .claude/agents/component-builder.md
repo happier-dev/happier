@@ -1,7 +1,7 @@
 ---
 name: component-builder
 description: "UI component specialist for accessible, responsive interfaces"
-model: claude
+model: inherit
 palRole: "{{project.palRoles.component-builder}}"
 allowed_tools:
   - Read

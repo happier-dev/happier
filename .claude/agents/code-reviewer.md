@@ -1,7 +1,7 @@
 ---
 name: code-reviewer
 description: "Code quality reviewer ensuring TDD compliance and actionable feedback"
-model: claude
+model: inherit
 palRole: "{{project.palRoles.code-reviewer}}"
 allowed_tools:
   - Read

@@ -1,7 +1,7 @@
 ---
 name: test-engineer
 description: "Test automation and TDD guardian ensuring coverage and reliability"
-model: codex
+model: inherit
 palRole: "{{project.palRoles.test-engineer}}"
 allowed_tools:
   - Read

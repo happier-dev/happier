@@ -1,7 +1,7 @@
 ---
 name: e2e-tests-engineer
 description: "Web E2E tests engineer (Playwright-first) focused on real, unmocked behavior and flake-free tests"
-model: codex
+model: inherit
 allowed_tools:
   - Read
   - Edit
