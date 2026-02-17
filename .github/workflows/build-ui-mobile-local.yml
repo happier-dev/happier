@@ -413,19 +413,46 @@ jobs:
           name: ui-mobile-${{ inputs.environment }}-android
           path: .
 
-      - name: Verify build artifact
+      - name: Resolve downloaded build artifact path
+        id: artifact
         env:
           EAS_BUILD_OUT: ${{ steps.meta.outputs.out }}
         run: |
           set -euo pipefail
-          if [ ! -f "${EAS_BUILD_OUT}" ]; then
-            echo "Missing build output at: ${EAS_BUILD_OUT}" >&2
-            exit 1
+
+          rel="${EAS_BUILD_OUT}"
+          artifact_dir="ui-mobile-${{ inputs.environment }}-android"
+
+          candidates=(
+            "${GITHUB_WORKSPACE}/${rel}"
+            "${GITHUB_WORKSPACE}/${artifact_dir}/${rel}"
+          )
+
+          for candidate in "${candidates[@]}"; do
+            if [ -f "${candidate}" ]; then
+              echo "path=${candidate}" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+
+          base="$(basename "${rel}")"
+          found="$(find "${GITHUB_WORKSPACE}" -maxdepth 6 -type f -path '*/dist/ui-mobile/*' -name "${base}" -print -quit || true)"
+          if [ -n "${found:-}" ] && [ -f "${found}" ]; then
+            echo "path=${found}" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          echo "Unable to find downloaded build output for submit." >&2
+          echo "Expected (relative): ${rel}" >&2
+          echo "Searched (candidates):" >&2
+          printf ' - %s\n' "${candidates[@]}" >&2
+          echo "Found files under dist/ui-mobile:" >&2
+          find "${GITHUB_WORKSPACE}" -maxdepth 6 -type f -path '*/dist/ui-mobile/*' -print >&2 || true
+          exit 1
 
       - name: EAS submit (local binary)
         env:
-          EAS_BUILD_OUT: ${{ steps.meta.outputs.out }}
+          SUBMIT_PATH: ${{ steps.artifact.outputs.path }}
         run: |
           set -euo pipefail
           if [ -z "${EXPO_TOKEN:-}" ]; then
@@ -433,10 +460,9 @@ jobs:
             exit 1
           fi
           cd apps/ui
-          abs_out="${GITHUB_WORKSPACE}/${EAS_BUILD_OUT}"
           if ! npx --yes "eas-cli@${EAS_CLI_VERSION}" submit \
             --platform "${EAS_PLATFORM}" \
-            --path "${abs_out}" \
+            --path "${SUBMIT_PATH}" \
             --profile production \
             --non-interactive; then
             if [ "${{ inputs.environment }}" = "preview" ]; then
@@ -500,19 +526,46 @@ jobs:
           name: ui-mobile-${{ inputs.environment }}-ios
           path: .
 
-      - name: Verify build artifact
+      - name: Resolve downloaded build artifact path
+        id: artifact
         env:
           EAS_BUILD_OUT: ${{ steps.meta.outputs.out }}
         run: |
           set -euo pipefail
-          if [ ! -f "${EAS_BUILD_OUT}" ]; then
-            echo "Missing build output at: ${EAS_BUILD_OUT}" >&2
-            exit 1
+
+          rel="${EAS_BUILD_OUT}"
+          artifact_dir="ui-mobile-${{ inputs.environment }}-ios"
+
+          candidates=(
+            "${GITHUB_WORKSPACE}/${rel}"
+            "${GITHUB_WORKSPACE}/${artifact_dir}/${rel}"
+          )
+
+          for candidate in "${candidates[@]}"; do
+            if [ -f "${candidate}" ]; then
+              echo "path=${candidate}" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+
+          base="$(basename "${rel}")"
+          found="$(find "${GITHUB_WORKSPACE}" -maxdepth 6 -type f -path '*/dist/ui-mobile/*' -name "${base}" -print -quit || true)"
+          if [ -n "${found:-}" ] && [ -f "${found}" ]; then
+            echo "path=${found}" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          echo "Unable to find downloaded build output for submit." >&2
+          echo "Expected (relative): ${rel}" >&2
+          echo "Searched (candidates):" >&2
+          printf ' - %s\n' "${candidates[@]}" >&2
+          echo "Found files under dist/ui-mobile:" >&2
+          find "${GITHUB_WORKSPACE}" -maxdepth 6 -type f -path '*/dist/ui-mobile/*' -print >&2 || true
+          exit 1
 
       - name: EAS submit (local binary)
         env:
-          EAS_BUILD_OUT: ${{ steps.meta.outputs.out }}
+          SUBMIT_PATH: ${{ steps.artifact.outputs.path }}
         run: |
           set -euo pipefail
           if [ -z "${EXPO_TOKEN:-}" ]; then
@@ -520,10 +573,9 @@ jobs:
             exit 1
           fi
           cd apps/ui
-          abs_out="${GITHUB_WORKSPACE}/${EAS_BUILD_OUT}"
           if ! npx --yes "eas-cli@${EAS_CLI_VERSION}" submit \
             --platform "${EAS_PLATFORM}" \
-            --path "${abs_out}" \
+            --path "${SUBMIT_PATH}" \
             --profile production \
             --non-interactive; then
             if [ "${{ inputs.environment }}" = "preview" ]; then
