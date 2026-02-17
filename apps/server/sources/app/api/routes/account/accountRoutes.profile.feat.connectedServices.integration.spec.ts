@@ -155,7 +155,7 @@ describe("Account profile (integration)", () => {
         );
     });
 
-    it("GET /v1/account/profile returns empty connectedServicesV2 when connected services feature is disabled", async () => {
+    it("GET /v1/account/profile returns empty connectedServices + connectedServicesV2 when connected services feature is disabled", async () => {
         process.env.HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED = "0";
 
         await withAuthenticatedTestApp(
@@ -166,8 +166,6 @@ describe("Account profile (integration)", () => {
                     select: { id: true },
                 });
 
-                // Legacy vendor tokens should still be reflected in the v1 connectedServices field,
-                // even when connected services v2 is disabled.
                 await db.serviceAccountToken.create({
                     data: {
                         accountId: account.id,
@@ -196,7 +194,7 @@ describe("Account profile (integration)", () => {
 
                 expect(res.statusCode).toBe(200);
                 const body = res.json() as any;
-                expect(body.connectedServices).toEqual(expect.arrayContaining(["openai"]));
+                expect(body.connectedServices).toEqual([]);
                 expect(body.connectedServicesV2).toEqual([]);
             },
         );
