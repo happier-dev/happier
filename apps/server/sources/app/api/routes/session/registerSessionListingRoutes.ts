@@ -25,6 +25,7 @@ export function registerSessionListingRoutes(app: Fastify) {
                     seq: true,
                     createdAt: true,
                     updatedAt: true,
+                    archivedAt: true,
                     metadata: true,
                     metadataVersion: true,
                     agentState: true,
@@ -52,6 +53,7 @@ export function registerSessionListingRoutes(app: Fastify) {
                             seq: true,
                             createdAt: true,
                             updatedAt: true,
+                            archivedAt: true,
                             metadata: true,
                             metadataVersion: true,
                             agentState: true,
@@ -74,6 +76,7 @@ export function registerSessionListingRoutes(app: Fastify) {
                 updatedAt: v.updatedAt.getTime(),
                 active: v.active,
                 activeAt: v.lastActiveAt.getTime(),
+                archivedAt: v.archivedAt?.getTime() ?? null,
                 metadata: v.metadata,
                 metadataVersion: v.metadataVersion,
                 agentState: v.agentState,
@@ -92,6 +95,7 @@ export function registerSessionListingRoutes(app: Fastify) {
                     updatedAt: v.updatedAt.getTime(),
                     active: v.active,
                     activeAt: v.lastActiveAt.getTime(),
+                    archivedAt: v.archivedAt?.getTime() ?? null,
                     metadata: v.metadata,
                     metadataVersion: v.metadataVersion,
                     agentState: v.agentState,
@@ -137,6 +141,7 @@ export function registerSessionListingRoutes(app: Fastify) {
                 seq: true,
                 createdAt: true,
                 updatedAt: true,
+                archivedAt: true,
                 metadata: true,
                 metadataVersion: true,
                 agentState: true,
@@ -155,6 +160,7 @@ export function registerSessionListingRoutes(app: Fastify) {
                 updatedAt: v.updatedAt.getTime(),
                 active: v.active,
                 activeAt: v.lastActiveAt.getTime(),
+                archivedAt: v.archivedAt?.getTime() ?? null,
                 metadata: v.metadata,
                 metadataVersion: v.metadataVersion,
                 agentState: v.agentState,
@@ -205,6 +211,7 @@ export function registerSessionListingRoutes(app: Fastify) {
                 accountId: true,
                 createdAt: true,
                 updatedAt: true,
+                archivedAt: true,
                 metadata: true,
                 metadataVersion: true,
                 agentState: true,
@@ -241,6 +248,7 @@ export function registerSessionListingRoutes(app: Fastify) {
                 updatedAt: v.updatedAt.getTime(),
                 active: v.active,
                 activeAt: v.lastActiveAt.getTime(),
+                archivedAt: v.archivedAt?.getTime() ?? null,
                 metadata: v.metadata,
                 metadataVersion: v.metadataVersion,
                 agentState: v.agentState,
@@ -264,6 +272,109 @@ export function registerSessionListingRoutes(app: Fastify) {
         });
     });
 
+    app.get('/v2/sessions/archived', {
+        preHandler: app.authenticate,
+        schema: {
+            querystring: z.object({
+                cursor: z.string().optional(),
+                limit: z.coerce.number().int().min(1).max(200).default(50),
+            }).optional(),
+        },
+    }, async (request, reply) => {
+        const userId = request.userId;
+        const { cursor, limit = 50 } = request.query || {};
+
+        let cursorSessionId: string | undefined;
+        if (cursor) {
+            if (cursor.startsWith('cursor_v1_')) {
+                cursorSessionId = cursor.substring(10);
+            } else {
+                return reply.code(400).send({ error: 'Invalid cursor format' });
+            }
+        }
+
+        const where: Prisma.SessionWhereInput = {
+            archivedAt: { not: null },
+            OR: [
+                { accountId: userId },
+                { shares: { some: { sharedWithUserId: userId } } },
+            ],
+        };
+        if (cursorSessionId) {
+            where.id = { lt: cursorSessionId };
+        }
+
+        const sessions = await db.session.findMany({
+            where,
+            orderBy: { id: 'desc' as const },
+            take: limit + 1,
+            select: {
+                id: true,
+                seq: true,
+                accountId: true,
+                createdAt: true,
+                updatedAt: true,
+                archivedAt: true,
+                metadata: true,
+                metadataVersion: true,
+                agentState: true,
+                agentStateVersion: true,
+                dataEncryptionKey: true,
+                pendingCount: true,
+                pendingVersion: true,
+                active: true,
+                lastActiveAt: true,
+                shares: {
+                    where: { sharedWithUserId: userId },
+                    select: {
+                        encryptedDataKey: true,
+                        accessLevel: true,
+                        canApprovePermissions: true,
+                    },
+                },
+            },
+        });
+
+        const hasNext = sessions.length > limit;
+        const resultSessions = hasNext ? sessions.slice(0, limit) : sessions;
+        let nextCursor: string | null = null;
+        if (hasNext && resultSessions.length > 0) {
+            const lastSession = resultSessions[resultSessions.length - 1];
+            nextCursor = `cursor_v1_${lastSession.id}`;
+        }
+
+        return reply.send({
+            sessions: resultSessions.map((v) => ({
+                id: v.id,
+                seq: v.seq,
+                createdAt: v.createdAt.getTime(),
+                updatedAt: v.updatedAt.getTime(),
+                active: v.active,
+                activeAt: v.lastActiveAt.getTime(),
+                archivedAt: v.archivedAt?.getTime() ?? null,
+                metadata: v.metadata,
+                metadataVersion: v.metadataVersion,
+                agentState: v.agentState,
+                agentStateVersion: v.agentStateVersion,
+                pendingCount: v.pendingCount,
+                pendingVersion: v.pendingVersion,
+                dataEncryptionKey: v.accountId === userId
+                    ? encodeDataEncryptionKey(v.dataEncryptionKey)
+                    : (v.shares[0]?.encryptedDataKey ? Buffer.from(v.shares[0].encryptedDataKey).toString('base64') : null),
+                share: v.accountId === userId
+                    ? null
+                    : (v.shares[0]
+                        ? {
+                            accessLevel: v.shares[0].accessLevel,
+                            canApprovePermissions: v.shares[0].canApprovePermissions,
+                        }
+                        : null),
+            })),
+            nextCursor,
+            hasNext,
+        });
+    });
+
     app.get('/v2/sessions/:sessionId', {
         preHandler: app.authenticate,
         schema: {
@@ -279,6 +390,7 @@ export function registerSessionListingRoutes(app: Fastify) {
                         updatedAt: z.number(),
                         active: z.boolean(),
                         activeAt: z.number(),
+                        archivedAt: z.number().nullable(),
                         metadata: z.string(),
                         metadataVersion: z.number(),
                         agentState: z.string().nullable(),
@@ -315,6 +427,7 @@ export function registerSessionListingRoutes(app: Fastify) {
                 accountId: true,
                 createdAt: true,
                 updatedAt: true,
+                archivedAt: true,
                 metadata: true,
                 metadataVersion: true,
                 agentState: true,
@@ -347,6 +460,7 @@ export function registerSessionListingRoutes(app: Fastify) {
                 updatedAt: session.updatedAt.getTime(),
                 active: session.active,
                 activeAt: session.lastActiveAt.getTime(),
+                archivedAt: session.archivedAt?.getTime() ?? null,
                 metadata: session.metadata,
                 metadataVersion: session.metadataVersion,
                 agentState: session.agentState,

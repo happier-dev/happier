@@ -27,15 +27,30 @@ export const randomKeyNaked = vi.fn(() => "upd-id");
 export const createSessionMessage = vi.fn();
 export const patchSession = vi.fn();
 export const checkSessionAccess = vi.fn(async () => ({ level: "owner" }));
+export const requireAccessLevel = vi.fn((access: any, required: any) => {
+    const levels = ["view", "edit", "admin", "owner"];
+    const userLevel = levels.indexOf(access?.level);
+    const requiredLevel = levels.indexOf(required);
+    return userLevel >= requiredLevel;
+});
+export const getSessionParticipantUserIds = vi.fn<(...args: any[]) => Promise<string[]>>(async () => []);
 
 export const sessionFindMany = vi.fn<(...args: any[]) => Promise<any[]>>(async () => []);
 export const sessionFindFirst = vi.fn<(...args: any[]) => Promise<any | null>>(async () => null);
+export const sessionFindUnique = vi.fn<(...args: any[]) => Promise<any | null>>(async () => null);
+export const sessionUpdate = vi.fn<(...args: any[]) => Promise<any>>(async () => {
+    throw new Error("sessionUpdate not configured for test");
+});
 export const sessionMessageFindMany = vi.fn<(...args: any[]) => Promise<any[]>>(async () => []);
 export const sessionShareFindMany = vi.fn<(...args: any[]) => Promise<any[]>>(async () => []);
 
 export const txSessionFindFirst = vi.fn<(...args: any[]) => Promise<any | null>>(async () => null);
+export const txSessionFindUnique = vi.fn<(...args: any[]) => Promise<any | null>>(async () => null);
 export const txSessionCreate = vi.fn<(...args: any[]) => Promise<any>>(async () => {
     throw new Error("txSessionCreate not configured for test");
+});
+export const txSessionUpdate = vi.fn<(...args: any[]) => Promise<any>>(async () => {
+    throw new Error("txSessionUpdate not configured for test");
 });
 
 export const catchupFetchesInc = vi.fn();
@@ -64,6 +79,11 @@ vi.mock("@/app/session/sessionWriteService", () => ({
 
 vi.mock("@/app/share/accessControl", () => ({
     checkSessionAccess,
+    requireAccessLevel,
+}));
+
+vi.mock("@/app/share/sessionParticipants", () => ({
+    getSessionParticipantUserIds,
 }));
 
 vi.mock("@/storage/db", () => ({
@@ -71,6 +91,8 @@ vi.mock("@/storage/db", () => ({
         session: {
             findMany: sessionFindMany,
             findFirst: sessionFindFirst,
+            findUnique: sessionFindUnique,
+            update: sessionUpdate,
         },
         sessionShare: { findMany: sessionShareFindMany },
         sessionMessage: {
@@ -81,11 +103,19 @@ vi.mock("@/storage/db", () => ({
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 vi.mock("@/app/session/sessionDelete", () => ({ sessionDelete: vi.fn(async () => true) }));
-vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged: vi.fn(async () => 1) }));
+export const markAccountChanged = vi.fn(async () => 1);
+vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
 vi.mock("@/app/share/types", () => ({ PROFILE_SELECT: {}, toShareUserProfile: vi.fn() }));
 vi.mock("@/storage/inTx", () => ({
     inTx: vi.fn(async (fn: any) =>
-        await fn({ session: { create: txSessionCreate, findFirst: txSessionFindFirst } }),
+        await fn({
+            session: {
+                create: txSessionCreate,
+                findFirst: txSessionFindFirst,
+                findUnique: txSessionFindUnique,
+                update: txSessionUpdate,
+            },
+        }),
     ),
     afterTx: vi.fn(),
 }));
@@ -94,13 +124,22 @@ export function resetSessionRouteMocks(): void {
     vi.clearAllMocks();
     randomKeyNaked.mockReturnValue("upd-id");
     checkSessionAccess.mockResolvedValue({ level: "owner" });
+    getSessionParticipantUserIds.mockResolvedValue([]);
     sessionFindMany.mockResolvedValue([]);
     sessionFindFirst.mockResolvedValue(null);
+    sessionFindUnique.mockResolvedValue(null);
+    sessionUpdate.mockImplementation(async () => {
+        throw new Error("sessionUpdate not configured for test");
+    });
     sessionMessageFindMany.mockResolvedValue([]);
     sessionShareFindMany.mockResolvedValue([]);
     txSessionFindFirst.mockResolvedValue(null);
+    txSessionFindUnique.mockResolvedValue(null);
     txSessionCreate.mockImplementation(async () => {
         throw new Error("txSessionCreate not configured for test");
+    });
+    txSessionUpdate.mockImplementation(async () => {
+        throw new Error("txSessionUpdate not configured for test");
     });
 }
 

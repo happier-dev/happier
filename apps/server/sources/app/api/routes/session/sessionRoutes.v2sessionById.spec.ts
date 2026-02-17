@@ -21,6 +21,7 @@ describe("sessionRoutes v2 session by id", () => {
             accountId: "u1",
             createdAt: now,
             updatedAt: now,
+            archivedAt: null,
             metadata: "m1",
             metadataVersion: 2,
             agentState: null,
@@ -41,6 +42,7 @@ describe("sessionRoutes v2 session by id", () => {
                 id: "s1",
                 dataEncryptionKey: "AQID",
                 share: null,
+                archivedAt: null,
             }),
         });
     });
@@ -53,6 +55,7 @@ describe("sessionRoutes v2 session by id", () => {
             accountId: "owner",
             createdAt: now,
             updatedAt: now,
+            archivedAt: null,
             metadata: "m2",
             metadataVersion: 1,
             agentState: null,
@@ -79,6 +82,7 @@ describe("sessionRoutes v2 session by id", () => {
                 id: "s2",
                 dataEncryptionKey: "BAU=",
                 share: { accessLevel: "edit", canApprovePermissions: true },
+                archivedAt: null,
             }),
         });
     });
