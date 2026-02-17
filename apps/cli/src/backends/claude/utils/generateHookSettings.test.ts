@@ -27,7 +27,10 @@ describe('generateHookSettingsFile', () => {
     createdFiles.push(filePath);
 
     const parsed = JSON.parse(readFileSync(filePath, 'utf8')) as any;
-    expect(parsed.hooks?.SessionStart?.[0]?.hooks?.[0]?.command).toContain('session_hook_forwarder.cjs');
+    const command = parsed.hooks?.SessionStart?.[0]?.hooks?.[0]?.command as string;
+    expect(command).toContain('session_hook_forwarder.cjs');
+    // Prefer execPath over `node` so hooks still work when PATH is minimal (common on Windows/GUI contexts).
+    expect(command).toContain(process.execPath);
     expect(parsed.hooks?.PermissionRequest).toBeUndefined();
   });
 

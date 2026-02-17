@@ -11,6 +11,7 @@ import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { projectPath } from '@/projectPath';
 import { readClaudeSettings, type ClaudeSettings } from './claudeSettings';
+import { isBun } from '@/utils/runtime';
 
 export interface GenerateHookSettingsOptions {
     enableLocalPermissionBridge?: boolean;
@@ -38,7 +39,9 @@ export function generateHookSettingsFile(port: number, options: GenerateHookSett
 
     // Path to the hook forwarder script
     const forwarderScript = resolve(projectPath(), 'scripts', 'session_hook_forwarder.cjs');
-    const hookCommand = `node "${forwarderScript}" ${port}`;
+    // Prefer the current Node binary when available to avoid PATH-related failures on Windows.
+    const nodeExecutable = isBun() ? 'node' : process.execPath;
+    const hookCommand = `${JSON.stringify(nodeExecutable)} ${JSON.stringify(forwarderScript)} ${port}`;
 
     const hooks: Record<string, unknown> = {
         SessionStart: [
@@ -60,7 +63,7 @@ export function generateHookSettingsFile(port: number, options: GenerateHookSett
             typeof options.permissionHookSecret === 'string' && options.permissionHookSecret.length > 0
                 ? ` ${JSON.stringify(options.permissionHookSecret)}`
                 : '';
-        const permissionCommand = `node "${permissionForwarderScript}" ${port}${secretPart}`;
+        const permissionCommand = `${JSON.stringify(nodeExecutable)} ${JSON.stringify(permissionForwarderScript)} ${port}${secretPart}`;
 
         hooks.PermissionRequest = [
             {
