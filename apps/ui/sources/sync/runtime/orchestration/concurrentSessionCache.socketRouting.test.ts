@@ -119,6 +119,8 @@ describe('concurrent session cache socket routing', () => {
                 }),
             }),
         );
+        const opts = ioSpy.mock.calls[0]?.[1] as any;
+        expect(opts).not.toHaveProperty('transports');
 
         stopConcurrentSessionCacheSync();
     });
@@ -299,11 +301,11 @@ describe('concurrent session cache socket routing', () => {
         const serverCItems = cacheByServer['server-c'] ?? [];
 
         const serverBSessionIds = serverBItems
-            .flatMap((item: any) => (item?.type === 'active-sessions' ? item.sessions : []))
-            .map((session: any) => session.id);
+            .filter((item: any) => item?.type === 'session' && item?.section === 'active')
+            .map((item: any) => item.session.id);
         const serverCSessionIds = serverCItems
-            .flatMap((item: any) => (item?.type === 'active-sessions' ? item.sessions : []))
-            .map((session: any) => session.id);
+            .filter((item: any) => item?.type === 'session' && item?.section === 'active')
+            .map((item: any) => item.session.id);
 
         expect(serverBSessionIds).toContain('session-b');
         expect(serverBSessionIds).not.toContain('session-c');

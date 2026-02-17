@@ -126,16 +126,18 @@ describe('machineRpcWithServerScope', () => {
 
         expect(result).toEqual({ decoded: true });
         expect(machineRpcSpy).not.toHaveBeenCalled();
-        expect(ioSpy).toHaveBeenCalledWith(
-            'https://server-b.example.test',
-            expect.objectContaining({
-                path: '/v1/updates',
-                auth: expect.objectContaining({
-                    token: 'token-b',
-                    clientType: 'user-scoped',
+            expect(ioSpy).toHaveBeenCalledWith(
+                'https://server-b.example.test',
+                expect.objectContaining({
+                    path: '/v1/updates',
+                    auth: expect.objectContaining({
+                        token: 'token-b',
+                        clientType: 'user-scoped',
+                    }),
                 }),
-            }),
-        );
+            );
+            const opts = ioSpy.mock.calls[0]?.[1] as any;
+            expect(opts).not.toHaveProperty('transports');
         expect(machineEncryption.encryptRaw).toHaveBeenCalledWith({ value: 2 });
         expect(machineEncryption.decryptRaw).toHaveBeenCalledWith('encrypted-result');
         expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);

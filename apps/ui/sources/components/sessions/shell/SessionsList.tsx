@@ -1,12 +1,9 @@
 import React from 'react';
-import { View, FlatList } from 'react-native';
+import { View, FlatList, Pressable } from 'react-native';
 import { Text } from '@/components/ui/text/StyledText';
-import { usePathname } from 'expo-router';
-import { SessionListViewItem } from '@/sync/domains/state/storage';
-import { ActiveSessionsGroup } from './ActiveSessionsGroup';
-import { ActiveSessionsGroupCompact } from './ActiveSessionsGroupCompact';
+import { usePathname, useRouter } from 'expo-router';
+import { SessionListViewItem, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useSetting } from '@/sync/domains/state/storage';
 import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet } from 'react-native-unistyles';
@@ -15,9 +12,11 @@ import { requestReview } from '@/utils/system/requestReview';
 import { UpdateBanner } from '@/components/ui/feedback/UpdateBanner';
 import { RecoveryKeyReminderBanner } from '@/components/account/RecoveryKeyReminderBanner';
 import { layout } from '@/components/ui/layout/layout';
-import { SessionItem } from './SessionItem';
-import { getEffectiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
-import { getActiveServerSnapshot, listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import { useResolvedActiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
+import { SessionGroupDragList, type SessionGroupRowModel } from './SessionGroupDragList';
+import { SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
+import { formatPathRelativeToHome } from '@/utils/sessions/sessionUtils';
+import { t } from '@/text';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -44,247 +43,123 @@ const stylesheet = StyleSheet.create((theme) => ({
         letterSpacing: 0.1,
         ...Typography.default('semiBold'),
     },
-    projectGroup: {
-        paddingHorizontal: 16,
-        paddingVertical: 10,
-        backgroundColor: theme.colors.surface,
+    groupHeaderSection: {
+        backgroundColor: theme.colors.groupped.background,
+        paddingHorizontal: 24,
+        paddingTop: 10,
+        paddingBottom: 6,
     },
-    projectGroupTitle: {
+    groupHeaderTitle: {
         fontSize: 13,
         fontWeight: '600',
-        color: theme.colors.text,
+        color: theme.colors.groupped.sectionTitle,
         ...Typography.default('semiBold'),
     },
-    projectGroupSubtitle: {
+    groupHeaderSubtitle: {
         fontSize: 11,
         color: theme.colors.textSecondary,
         marginTop: 2,
         ...Typography.default(),
     },
-        sessionItem: {
-            height: 88,
-            flexDirection: 'row',
-            alignItems: 'center',
-            paddingHorizontal: 16,
-            backgroundColor: theme.colors.surface,
-        },
-        sessionItemCompact: {
-            height: 72,
-            paddingHorizontal: 14,
-        },
-        sessionItemContainer: {
-            marginHorizontal: 16,
-            marginBottom: 1,
-            overflow: 'hidden',
-        },
-    sessionItemFirst: {
-        borderTopLeftRadius: 12,
-        borderTopRightRadius: 12,
-    },
-    sessionItemLast: {
-        borderBottomLeftRadius: 12,
-        borderBottomRightRadius: 12,
-    },
-    sessionItemSingle: {
-        borderRadius: 12,
-    },
-    sessionItemContainerFirst: {
-        borderTopLeftRadius: 12,
-        borderTopRightRadius: 12,
-    },
-    sessionItemContainerLast: {
-        borderBottomLeftRadius: 12,
-        borderBottomRightRadius: 12,
-        marginBottom: 12,
-    },
-    sessionItemContainerSingle: {
-        borderRadius: 12,
-        marginBottom: 12,
-    },
-    sessionItemSelected: {
-        backgroundColor: theme.colors.surfaceSelected,
-    },
-        sessionContent: {
-            flex: 1,
-            marginLeft: 16,
-            justifyContent: 'center',
-        },
-        sessionContentCompact: {
-            marginLeft: 12,
-        },
-    sessionTitleRow: {
+    headerActions: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 2,
-        gap: 6,
+        justifyContent: 'flex-end',
+        paddingHorizontal: 24,
+        paddingTop: 8,
+        paddingBottom: 4,
+        backgroundColor: theme.colors.groupped.background,
     },
-        sessionTitle: {
-            fontSize: 15,
-            fontWeight: '500',
-            flex: 1,
-            ...Typography.default('semiBold'),
-        },
-        sessionTitleCompact: {
-            fontSize: 14,
-        },
-    sessionTitleConnected: {
-        color: theme.colors.text,
+    footerContainer: {
+        paddingHorizontal: 16,
+        paddingTop: 12,
     },
-    sessionTitleDisconnected: {
-        color: theme.colors.textSecondary,
-    },
-    serverBadgeContainer: {
-        borderRadius: 999,
-        paddingHorizontal: 8,
-        paddingVertical: 2,
+    footerButton: {
+        backgroundColor: theme.colors.surface,
+        borderRadius: 12,
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+        alignItems: 'center',
+        justifyContent: 'center',
         borderWidth: 1,
         borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.groupped.background,
-        maxWidth: 140,
     },
-    serverBadgeText: {
-        fontSize: 10,
+    footerButtonText: {
+        fontSize: 14,
         color: theme.colors.textSecondary,
-        ...Typography.default('semiBold'),
-    },
-        sessionSubtitle: {
-            fontSize: 13,
-            color: theme.colors.textSecondary,
-            marginBottom: 4,
-            ...Typography.default(),
-        },
-        sessionSubtitleCompact: {
-            fontSize: 12,
-            marginBottom: 3,
-        },
-    statusRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-        statusDotContainer: {
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: 16,
-            marginTop: 2,
-            marginRight: 4,
-        },
-        statusDotContainerCompact: {
-            marginTop: 1,
-        },
-        statusText: {
-            fontSize: 12,
-            fontWeight: '500',
-            lineHeight: 16,
-            ...Typography.default(),
-        },
-        statusTextCompact: {
-            fontSize: 11,
-            lineHeight: 14,
-        },
-        avatarContainer: {
-            position: 'relative',
-            width: 48,
-            height: 48,
-        },
-        avatarContainerCompact: {
-            width: 40,
-            height: 40,
-        },
-        pendingCountContainer: {
-            position: 'absolute',
-            top: -4,
-            right: -6,
-            minWidth: 18,
-            height: 18,
-            paddingHorizontal: 6,
-            borderRadius: 999,
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: theme.colors.input.background,
-            borderWidth: 1,
-            borderColor: theme.colors.groupped?.background ?? 'transparent',
-        },
-        pendingCountContainerCompact: {
-            top: -3,
-            right: -5,
-            minWidth: 16,
-            height: 16,
-            paddingHorizontal: 5,
-        },
-        pendingCountText: {
-            fontSize: 11,
-            color: theme.colors.textSecondary,
-            ...Typography.default('semiBold'),
-        },
-        draftIconContainer: {
-            position: 'absolute',
-            bottom: -2,
-            right: -2,
-            width: 18,
-        height: 18,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-        draftIconOverlay: {
-            color: theme.colors.textSecondary,
-        },
-        draftIconContainerCompact: {
-            width: 16,
-            height: 16,
-            bottom: -1,
-            right: -1,
-        },
-    artifactsSection: {
-        paddingHorizontal: 16,
-        paddingBottom: 12,
-        backgroundColor: theme.colors.groupped.background,
-    },
-    swipeAction: {
-        width: 112,
-        height: '100%',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: theme.colors.status.error,
-    },
-    swipeActionText: {
-        marginTop: 4,
-        fontSize: 12,
-        color: '#FFFFFF',
-        textAlign: 'center',
         ...Typography.default('semiBold'),
     },
 }));
+
+type SessionListHeaderItem = Extract<SessionListViewItem, { type: 'header' }>;
+type SessionListSessionItem = Extract<SessionListViewItem, { type: 'session' }> & { selected?: boolean };
+
+type SessionListBlock =
+    | Readonly<{
+          type: 'server-header';
+          key: string;
+          title: string;
+          serverId?: string;
+      }>
+    | Readonly<{
+          type: 'section-header';
+          key: string;
+          title: string;
+          headerKind: 'active' | 'inactive';
+      }>
+    | Readonly<{
+          type: 'group';
+          key: string;
+          groupKey: string;
+          header: SessionListHeaderItem;
+          rows: ReadonlyArray<SessionGroupRowModel>;
+      }>;
 
 export function SessionsList() {
     const styles = stylesheet;
     const safeArea = useSafeAreaInsets();
     const data = useVisibleSessionListViewData();
     const pathname = usePathname();
+    const router = useRouter();
     const isTablet = useIsTablet();
+    const [pinnedSessionKeysV1, setPinnedSessionKeysV1] = useSettingMutable('pinnedSessionKeysV1');
+    const [sessionListGroupOrderV1, setSessionListGroupOrderV1] = useSettingMutable('sessionListGroupOrderV1');
     const compactSessionView = useSetting('compactSessionView');
-    const serverSelectionGroups = useSetting('serverSelectionGroups');
-    const serverSelectionActiveTargetKind = useSetting('serverSelectionActiveTargetKind');
-    const serverSelectionActiveTargetId = useSetting('serverSelectionActiveTargetId');
-    const showServerBadge = React.useMemo(() => {
-        const activeSnapshot = getActiveServerSnapshot();
-        const selection = getEffectiveServerSelectionFromRawSettings({
-            activeServerId: activeSnapshot.serverId,
-            availableServerIds: listServerProfiles().map((profile) => profile.id),
-            settings: {
-                serverSelectionGroups,
-                serverSelectionActiveTargetKind,
-                serverSelectionActiveTargetId,
-            },
-        });
-        return selection.enabled && selection.presentation === 'flat-with-badge';
-    }, [serverSelectionActiveTargetId, serverSelectionActiveTargetKind, serverSelectionGroups]);
+    const compactSessionViewMinimal = useSetting('compactSessionViewMinimal');
+    const selection = useResolvedActiveServerSelection();
+    const selectedServerCount = selection.allowedServerIds?.length ?? 0;
+    const showServerBadge = selection.enabled && selection.presentation === 'flat-with-badge' && selectedServerCount > 1;
+    const showPinnedServerBadge = selection.enabled && selectedServerCount > 1;
     const selectable = isTablet;
-    const dataWithSelected = selectable ? React.useMemo(() => {
-        return data?.map(item => ({
+    const dataWithSelected = React.useMemo(() => {
+        if (!data) return data;
+        if (!selectable) return data;
+        return data.map((item) => ({
             ...item,
-            selected: pathname.startsWith(`/session/${item.type === 'session' ? item.session.id : ''}`)
+            selected: pathname.startsWith(`/session/${item.type === 'session' ? item.session.id : ''}`),
         }));
-    }, [data, pathname]) : data;
+    }, [data, pathname, selectable]);
+
+    const pinnedKeySet = React.useMemo(() => {
+        return new Set(Array.isArray(pinnedSessionKeysV1) ? pinnedSessionKeysV1 : []);
+    }, [pinnedSessionKeysV1]);
+
+    const pinnedKeyList = Array.isArray(pinnedSessionKeysV1) ? pinnedSessionKeysV1 : [];
+    const currentGroupOrderMap = sessionListGroupOrderV1 ?? {};
+
+    const hasMultipleMachines = React.useMemo(() => {
+        if (!dataWithSelected) return false;
+        const machineIds = new Set<string>();
+        for (const item of dataWithSelected) {
+            if (!item || item.type !== 'session') continue;
+            const machineId = String(item.session?.metadata?.machineId ?? '').trim();
+            const host = String(item.session?.metadata?.host ?? '').trim();
+            const key = machineId || host;
+            if (key) machineIds.add(key);
+            if (machineIds.size > 1) return true;
+        }
+        return false;
+    }, [dataWithSelected]);
 
     // Request review
     React.useEffect(() => {
@@ -300,106 +175,198 @@ export function SessionsList() {
         );
     }
 
-    const keyExtractor = React.useCallback((item: SessionListViewItem & { selected?: boolean }, index: number) => {
-        const serverPrefix = item.serverId ? `${item.serverId}:` : '';
-        switch (item.type) {
-            case 'header': return `${serverPrefix}header-${item.title}-${index}`;
-            case 'active-sessions': return `${serverPrefix}active-sessions`;
-            case 'project-group': return `${serverPrefix}project-group-${item.machine.id}-${item.displayPath}-${index}`;
-            case 'session': return `${serverPrefix}session-${item.session.id}`;
-        }
-    }, []);
+    const blocks: SessionListBlock[] = React.useMemo(() => {
+        const blocks: SessionListBlock[] = [];
+        const items = (dataWithSelected ?? []) as Array<SessionListViewItem | (SessionListSessionItem & { selected?: boolean })>;
 
-        const renderItem = React.useCallback(({ item, index }: { item: SessionListViewItem & { selected?: boolean }, index: number }) => {
-        switch (item.type) {
-            case 'header':
-                return (
-                    <View style={styles.headerSection}>
-                        <Text style={styles.headerText}>
-                            {item.headerKind === 'server' ? `Server: ${item.title}` : item.title}
-                        </Text>
-                    </View>
-                );
+        let currentGroupHeader: SessionListHeaderItem | null = null;
+        let currentGroupRows: SessionGroupRowModel[] = [];
 
-            case 'active-sessions':
-                // Extract just the session ID from pathname (e.g., /session/abc123/file -> abc123)
-                let selectedId: string | undefined;
-                if (isTablet && pathname.startsWith('/session/')) {
-                    const parts = pathname.split('/');
-                    selectedId = parts[2]; // parts[0] is empty, parts[1] is 'session', parts[2] is the ID
+        const flushGroup = () => {
+            if (!currentGroupHeader) return;
+            const groupKey = String(currentGroupHeader.groupKey ?? '').trim();
+            if (!groupKey || currentGroupRows.length === 0) {
+                currentGroupHeader = null;
+                currentGroupRows = [];
+                return;
+            }
+            blocks.push({
+                type: 'group',
+                key: `group:${groupKey}`,
+                groupKey,
+                header: currentGroupHeader,
+                rows: currentGroupRows,
+            });
+            currentGroupHeader = null;
+            currentGroupRows = [];
+        };
+
+        for (const item of items) {
+            if (item.type === 'header') {
+                if (item.headerKind === 'server') {
+                    flushGroup();
+                    blocks.push({
+                        type: 'server-header',
+                        key: `server:${String(item.serverId ?? item.title ?? '').trim() || 'unknown'}`,
+                        title: item.title,
+                        serverId: item.serverId,
+                    });
+                    continue;
+                }
+                if (item.headerKind === 'active' || item.headerKind === 'inactive') {
+                    flushGroup();
+                    blocks.push({
+                        type: 'section-header',
+                        key: `section:${item.headerKind}:${String(item.serverId ?? '')}:${item.title}`,
+                        title: item.title,
+                        headerKind: item.headerKind,
+                    });
+                    continue;
+                }
+                flushGroup();
+                currentGroupHeader = item;
+                continue;
+            }
+
+            if (item.type === 'session') {
+                const groupKey = String(item.groupKey ?? '').trim();
+                if (!groupKey) continue;
+
+                if (!currentGroupHeader || String(currentGroupHeader.groupKey ?? '').trim() !== groupKey) {
+                    // Group header missing; start a synthetic header so we still render the group block.
+                    currentGroupHeader = { type: 'header', title: '', headerKind: item.groupKind ?? 'date', groupKey };
+                    currentGroupRows = [];
                 }
 
-                const ActiveComponent = compactSessionView ? ActiveSessionsGroupCompact : ActiveSessionsGroup;
-                return (
-                    <ActiveComponent
-                        sessions={item.sessions}
-                        selectedSessionId={selectedId}
-                        serverId={item.serverId}
-                    />
-                );
+                const sessionKey = typeof item.serverId === 'string' ? `${item.serverId}:${item.session.id}` : null;
+                const pinned = item.pinned === true || (sessionKey ? pinnedKeySet.has(sessionKey) : false);
+                const pathSubtitle = item.session?.metadata?.path
+                    ? formatPathRelativeToHome(item.session.metadata.path, item.session.metadata.homeDir)
+                    : '';
+                const machineLabel = String(item.session?.metadata?.host ?? '').trim();
+                const computedSubtitle = hasMultipleMachines
+                    ? (machineLabel && pathSubtitle ? `${machineLabel} · ${pathSubtitle}` : machineLabel || pathSubtitle)
+                    : pathSubtitle;
+                const isGroupedByPath = item.groupKind === 'project' && item.variant === 'no-path';
+                const subtitle = isGroupedByPath ? null : computedSubtitle;
 
-            case 'project-group':
+                currentGroupRows.push({
+                    key: sessionKey ?? item.session.id,
+                    session: item.session,
+                    subtitle,
+                    serverId: item.serverId,
+                    serverName: item.serverName,
+                    showServerBadge: pinned ? showPinnedServerBadge : showServerBadge,
+                    pinned,
+                    onTogglePinned:
+                        sessionKey
+                            ? () => {
+                                  if (pinnedKeySet.has(sessionKey)) {
+                                      setPinnedSessionKeysV1(pinnedKeyList.filter((k) => k !== sessionKey));
+                                  } else {
+                                      setPinnedSessionKeysV1([...pinnedKeyList, sessionKey]);
+                                  }
+                              }
+                            : null,
+                    selected: (item as SessionListSessionItem).selected,
+                    variant: item.variant,
+                });
+            }
+        }
+
+        flushGroup();
+        return blocks;
+    }, [
+        dataWithSelected,
+        hasMultipleMachines,
+        pinnedKeyList,
+        pinnedKeySet,
+        setPinnedSessionKeysV1,
+        showPinnedServerBadge,
+        showServerBadge,
+    ]);
+
+    const keyExtractor = React.useCallback((item: SessionListBlock) => item.key, []);
+
+    const renderItem = React.useCallback(({ item }: { item: SessionListBlock }) => {
+        switch (item.type) {
+            case 'server-header':
                 return (
-                    <View style={styles.projectGroup}>
-                        <Text style={styles.projectGroupTitle}>
-                            {item.displayPath}
-                        </Text>
-                        <Text style={styles.projectGroupSubtitle}>
-                            {item.machine.metadata?.displayName || item.machine.metadata?.host || item.machine.id}
-                        </Text>
+                    <View style={styles.headerSection}>
+                        <Text style={styles.headerText}>{`Server: ${item.title}`}</Text>
                     </View>
                 );
-
-                case 'session':
-                // Determine card styling based on position within date group
-                const prevItem = index > 0 && dataWithSelected ? dataWithSelected[index - 1] : null;
-                const nextItem = index < (dataWithSelected?.length || 0) - 1 && dataWithSelected ? dataWithSelected[index + 1] : null;
-
-                const isFirst = prevItem?.type === 'header' || prevItem?.type === 'project-group';
-                const isLast = nextItem?.type === 'header' || nextItem?.type === 'project-group' || nextItem == null || nextItem?.type === 'active-sessions';
-                const isSingle = isFirst && isLast;
-
-                    return (
-                        <SessionItem
-                            session={item.session}
-                            serverId={item.serverId}
-                            serverName={item.serverName}
-                            showServerBadge={showServerBadge}
-                            selected={item.selected}
-                            isFirst={isFirst}
-                            isLast={isLast}
-                            isSingle={isSingle}
-                            variant={item.variant}
-                            compact={compactSessionView}
+            case 'section-header':
+                return (
+                    <View style={styles.headerSection}>
+                        <Text style={styles.headerText}>{item.title}</Text>
+                    </View>
+                );
+            case 'group':
+                return (
+                    <View>
+                        {item.header.title && item.header.headerKind === 'project' ? (
+                            <View style={styles.groupHeaderSection}>
+                                <Text style={styles.groupHeaderTitle}>{item.header.title}</Text>
+                                {hasMultipleMachines && item.header.subtitle ? (
+                                    <Text style={styles.groupHeaderSubtitle}>{item.header.subtitle}</Text>
+                                ) : null}
+                            </View>
+                        ) : item.header.title ? (
+                            <View style={styles.headerSection}>
+                                <Text style={styles.headerText}>{item.header.title}</Text>
+                            </View>
+                        ) : null}
+                        <SessionGroupDragList
+                            groupKey={item.groupKey}
+                            rows={item.rows}
+                            compact={Boolean(compactSessionView)}
+                            compactMinimal={Boolean(compactSessionView && compactSessionViewMinimal)}
+                            onReorderKeys={(orderedKeys) => {
+                                const trimmed = Array.isArray(orderedKeys) ? orderedKeys.filter(Boolean) : [];
+                                const capped = trimmed.slice(0, SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP);
+                                setSessionListGroupOrderV1({ ...(currentGroupOrderMap ?? {}), [item.groupKey]: capped });
+                            }}
                         />
-                    );
-            }
-        }, [pathname, dataWithSelected, compactSessionView, showServerBadge]);
-
-
-    // Remove this section as we'll use FlatList for all items now
-
+                    </View>
+                );
+        }
+    }, [compactSessionView, compactSessionViewMinimal, currentGroupOrderMap, hasMultipleMachines, setSessionListGroupOrderV1, styles]);
 
     const HeaderComponent = React.useCallback(() => {
         return (
             <View>
                 <RecoveryKeyReminderBanner />
                 <UpdateBanner />
+                <View style={styles.headerActions} />
             </View>
         );
-    }, []);
+    }, [styles]);
 
-    // Footer removed - all sessions now shown inline
+    const FooterComponent = React.useCallback(() => {
+        return (
+            <View style={styles.footerContainer}>
+                <Pressable
+                    style={styles.footerButton}
+                    onPress={() => router.push('/session/archived')}
+                    accessibilityRole="button"
+                >
+                    <Text style={styles.footerButtonText}>{t('sessionInfo.archivedSessions')}</Text>
+                </Pressable>
+            </View>
+        );
+    }, [router, styles.footerButton, styles.footerButtonText, styles.footerContainer]);
 
     return (
         <View style={styles.container}>
             <View style={styles.contentContainer}>
                 <FlatList
-                    data={dataWithSelected}
+                    data={blocks}
                     renderItem={renderItem}
                     keyExtractor={keyExtractor}
                     contentContainerStyle={{ paddingBottom: safeArea.bottom + 128, maxWidth: layout.maxWidth }}
                     ListHeaderComponent={HeaderComponent}
+                    ListFooterComponent={FooterComponent}
                 />
             </View>
         </View>

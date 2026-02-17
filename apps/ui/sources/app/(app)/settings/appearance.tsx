@@ -8,6 +8,7 @@ import { useRouter } from 'expo-router';
 import * as Localization from 'expo-localization';
 import { useUnistyles, UnistylesRuntime } from 'react-native-unistyles';
 import { Switch } from '@/components/ui/forms/Switch';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Appearance } from 'react-native';
 import * as SystemUI from 'expo-system-ui';
 import { darkTheme, lightTheme } from '@/theme';
@@ -34,8 +35,37 @@ export default React.memo(function AppearanceSettingsScreen() {
     const [avatarStyle, setAvatarStyle] = useSettingMutable('avatarStyle');
     const [showFlavorIcons, setShowFlavorIcons] = useSettingMutable('showFlavorIcons');
     const [compactSessionView, setCompactSessionView] = useSettingMutable('compactSessionView');
+    const [compactSessionViewMinimal, setCompactSessionViewMinimal] = useSettingMutable('compactSessionViewMinimal');
+    const [hideInactiveSessions, setHideInactiveSessions] = useSettingMutable('hideInactiveSessions');
+    const [sessionListActiveGroupingV1, setSessionListActiveGroupingV1] = useSettingMutable('sessionListActiveGroupingV1');
+    const [sessionListInactiveGroupingV1, setSessionListInactiveGroupingV1] = useSettingMutable('sessionListInactiveGroupingV1');
     const [themePreference, setThemePreference] = useLocalSettingMutable('themePreference');
     const [preferredLanguage] = useSettingMutable('preferredLanguage');
+    const [openGroupingMenu, setOpenGroupingMenu] = React.useState<null | 'active' | 'inactive'>(null);
+
+    const groupingMenuItems = React.useMemo((): DropdownMenuItem[] => {
+        return [
+            {
+                id: 'project',
+                title: t('settingsFeatures.sessionListGrouping.projectTitle'),
+                subtitle: t('settingsFeatures.sessionListGrouping.projectSubtitle'),
+            },
+            {
+                id: 'date',
+                title: t('settingsFeatures.sessionListGrouping.dateTitle'),
+                subtitle: t('settingsFeatures.sessionListGrouping.dateSubtitle'),
+            },
+        ];
+    }, []);
+
+    const selectGrouping = React.useCallback((itemId: string, section: 'active' | 'inactive') => {
+        if (itemId !== 'project' && itemId !== 'date') return;
+        if (section === 'active') {
+            setSessionListActiveGroupingV1(itemId);
+            return;
+        }
+        setSessionListInactiveGroupingV1(itemId);
+    }, [setSessionListActiveGroupingV1, setSessionListInactiveGroupingV1]);
     
     // Ensure we have a valid style for display, defaulting to gradient for unknown values
     const displayStyle: KnownAvatarStyle = isKnownAvatarStyle(avatarStyle) ? avatarStyle : 'gradient';
@@ -134,6 +164,77 @@ export default React.memo(function AppearanceSettingsScreen() {
                             onValueChange={setCompactSessionView}
                         />
                     }
+                />
+                {compactSessionView ? (
+                    <Item
+                        title={t('settingsAppearance.compactSessionViewMinimal')}
+                        subtitle={t('settingsAppearance.compactSessionViewMinimalDescription')}
+                        icon={<Ionicons name="remove-outline" size={29} color="#5856D6" />}
+                        rightElement={
+                            <Switch
+                                value={compactSessionViewMinimal}
+                                onValueChange={setCompactSessionViewMinimal}
+                            />
+                        }
+                    />
+                ) : null}
+                <Item
+                    title={t('settingsFeatures.hideInactiveSessions')}
+                    subtitle={t('settingsFeatures.hideInactiveSessionsSubtitle')}
+                    icon={<Ionicons name="eye-off-outline" size={29} color="#FF9500" />}
+                    rightElement={
+                        <Switch
+                            value={hideInactiveSessions}
+                            onValueChange={setHideInactiveSessions}
+                        />
+                    }
+                    showChevron={false}
+                />
+                <DropdownMenu
+                    open={openGroupingMenu === 'active'}
+                    onOpenChange={(next) => setOpenGroupingMenu(next ? 'active' : null)}
+                    variant="selectable"
+                    search={false}
+                    selectedId={sessionListActiveGroupingV1 as any}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    trigger={({ open, toggle }) => (
+                        <Item
+                            title={t('settingsFeatures.sessionListActiveGrouping')}
+                            subtitle={t('settingsFeatures.sessionListActiveGroupingSubtitle')}
+                            icon={<Ionicons name="folder-open-outline" size={29} color="#007AFF" />}
+                            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color="#8E8E93" />}
+                            onPress={toggle}
+                            showChevron={false}
+                        />
+                    )}
+                    items={groupingMenuItems}
+                    onSelect={(itemId) => selectGrouping(itemId, 'active')}
+                />
+                <DropdownMenu
+                    open={openGroupingMenu === 'inactive'}
+                    onOpenChange={(next) => setOpenGroupingMenu(next ? 'inactive' : null)}
+                    variant="selectable"
+                    search={false}
+                    selectedId={sessionListInactiveGroupingV1 as any}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    trigger={({ open, toggle }) => (
+                        <Item
+                            title={t('settingsFeatures.sessionListInactiveGrouping')}
+                            subtitle={t('settingsFeatures.sessionListInactiveGroupingSubtitle')}
+                            icon={<Ionicons name="calendar-outline" size={29} color="#34C759" />}
+                            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color="#8E8E93" />}
+                            onPress={toggle}
+                            showChevron={false}
+                        />
+                    )}
+                    items={groupingMenuItems}
+                    onSelect={(itemId) => selectGrouping(itemId, 'inactive')}
                 />
                 <Item
                     title={t('settingsAppearance.inlineToolCalls')}

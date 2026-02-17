@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import { buildSessionListViewData } from './sessionListViewData';
 
@@ -124,24 +124,23 @@ describe('buildSessionListViewData', () => {
 
         const summary = data.map((item) => {
             switch (item.type) {
-                case 'active-sessions':
-                    return `active:${item.sessions.map((s) => s.id).join(',')}`;
-                case 'project-group':
-                    return `group:${item.machine.id}:${item.displayPath}`;
-                case 'session':
-                    return `session:${item.session.id}:${item.variant ?? 'default'}`;
                 case 'header':
-                    return `header:${item.title}`;
+                    return `header:${item.headerKind ?? 'unknown'}:${item.title}`;
+                case 'session':
+                    return `session:${item.session.id}:${item.section ?? 'unknown'}:${item.variant ?? 'default'}`;
             }
         });
 
         expect(summary).toEqual([
-            'active:active',
-            'group:m1:~/repoA',
-            'session:a2:no-path',
-            'session:a1:no-path',
-            'group:m2:~/repoB',
-            'session:b1:no-path',
+            'header:active:Active',
+            'header:project:~/repoA',
+            'session:active:active:no-path',
+            'header:inactive:Inactive',
+            'header:project:~/repoB',
+            'session:b1:inactive:no-path',
+            'header:project:~/repoA',
+            'session:a2:inactive:no-path',
+            'session:a1:inactive:no-path',
         ]);
     });
 
@@ -158,8 +157,8 @@ describe('buildSessionListViewData', () => {
         };
 
         const data = buildSessionListViewData(sessions, { [machine.id]: machine }, { groupInactiveSessionsByProject: true });
-        const group = data.find((i) => i.type === 'project-group') as any;
-        expect(group?.displayPath).toBe('/home/userfoo/repo');
+        const header = data.find((i) => i.type === 'header' && i.headerKind === 'project') as any;
+        expect(header?.title).toBe('/home/userfoo/repo');
     });
 
     it('propagates server scope metadata to all list rows when provided', () => {
@@ -196,6 +195,69 @@ describe('buildSessionListViewData', () => {
         for (const item of data) {
             expect((item as any).serverId).toBe('server-a');
             expect((item as any).serverName).toBe('Server A');
+        }
+    });
+
+    it('can group active sessions by project while grouping inactive sessions by date', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(2026, 1, 17, 12, 0, 0));
+
+        try {
+            const machine = makeMachine({
+                id: 'm1',
+                metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' },
+            });
+
+            const sessions: Record<string, Session> = {
+                act1: makeSession({
+                    id: 'act1',
+                    active: true,
+                    createdAt: new Date(2026, 1, 17, 8, 0, 0).getTime(),
+                    updatedAt: new Date(2026, 1, 17, 8, 0, 0).getTime(),
+                    metadata: { machineId: 'm1', path: '/home/u/repoA', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+                }),
+                act2: makeSession({
+                    id: 'act2',
+                    active: true,
+                    createdAt: new Date(2026, 1, 17, 9, 0, 0).getTime(),
+                    updatedAt: new Date(2026, 1, 17, 9, 0, 0).getTime(),
+                    metadata: { machineId: 'm1', path: '/home/u/repoB', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+                }),
+                in1: makeSession({
+                    id: 'in1',
+                    createdAt: new Date(2026, 1, 16, 7, 0, 0).getTime(),
+                    updatedAt: new Date(2026, 1, 17, 7, 0, 0).getTime(),
+                    metadata: { machineId: 'm1', path: '/home/u/repoC', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+                }),
+            };
+
+            const data = buildSessionListViewData(sessions, { [machine.id]: machine }, {
+                groupInactiveSessionsByProject: false,
+                activeGroupingV1: 'project',
+                inactiveGroupingV1: 'date',
+            });
+
+            const summary = data.map((item) => {
+                switch (item.type) {
+                    case 'header':
+                        return `header:${item.headerKind ?? 'unknown'}:${item.title}`;
+                    case 'session':
+                        return `session:${item.session.id}:${item.section ?? 'unknown'}:${item.variant ?? 'default'}`;
+                }
+            });
+
+            expect(summary).toEqual([
+                'header:active:Active',
+                'header:project:~/repoB',
+                'session:act2:active:no-path',
+                'header:project:~/repoA',
+                'session:act1:active:no-path',
+                'header:inactive:Inactive',
+                'header:date:Yesterday',
+                'session:in1:inactive:default',
+            ]);
+        } finally {
+            vi.useRealTimers();
         }
     });
 });

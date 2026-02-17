@@ -7,8 +7,13 @@ vi.mock('socket.io-client', () => ({
 }));
 
 describe('createEphemeralServerSocketClient', () => {
+    const previousForceWebsocket = process.env.EXPO_PUBLIC_HAPPIER_SOCKET_FORCE_WEBSOCKET;
+
     afterEach(() => {
         ioSpy.mockReset();
+        vi.resetModules();
+        if (previousForceWebsocket === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_SOCKET_FORCE_WEBSOCKET;
+        else process.env.EXPO_PUBLIC_HAPPIER_SOCKET_FORCE_WEBSOCKET = previousForceWebsocket;
     });
 
     it('connects with user-scoped auth and resolves when socket connects', async () => {
@@ -39,5 +44,30 @@ describe('createEphemeralServerSocketClient', () => {
                 }),
             }),
         );
+        const opts = ioSpy.mock.calls[0]?.[1] as any;
+        expect(opts).not.toHaveProperty('transports');
+    });
+
+    it('can force websocket-only via config flag', async () => {
+        process.env.EXPO_PUBLIC_HAPPIER_SOCKET_FORCE_WEBSOCKET = '1';
+
+        const fakeSocket = {
+            on: vi.fn((event: string, cb: () => void) => {
+                if (event === 'connect') cb();
+            }),
+            off: vi.fn(),
+            disconnect: vi.fn(),
+        };
+        ioSpy.mockReturnValue(fakeSocket);
+
+        const { createEphemeralServerSocketClient } = await import('./createEphemeralServerSocketClient');
+        await createEphemeralServerSocketClient({
+            serverUrl: 'https://server-b.example.test',
+            token: 'token-b',
+            timeoutMs: 5000,
+        });
+
+        const opts = ioSpy.mock.calls[0]?.[1] as any;
+        expect(opts.transports).toEqual(['websocket']);
     });
 });

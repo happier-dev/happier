@@ -4,17 +4,15 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const navigateSpy = vi.fn();
-
 vi.mock('react-native-gesture-handler', () => ({
-    Swipeable: 'Swipeable',
+    Swipeable: (props: any) => React.createElement('Swipeable', props),
 }));
 
 vi.mock('react-native', async () => {
     const stub = await import('@/dev/reactNativeStub');
     return {
         ...stub,
-        Platform: { ...stub.Platform, OS: 'web' },
+        Platform: { ...stub.Platform, OS: 'ios' },
     };
 });
 
@@ -44,7 +42,7 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
 }));
 
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
-    useNavigateToSession: () => navigateSpy,
+    useNavigateToSession: () => vi.fn(),
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -52,12 +50,15 @@ vi.mock('@/utils/platform/responsive', () => ({
 }));
 
 vi.mock('@/hooks/ui/useHappyAction', () => ({
-    useHappyAction: (_fn: unknown) => [false, vi.fn()],
+    useHappyAction: (fn: any) => [false, fn],
 }));
 
+const stopSpy = vi.fn(async () => ({ success: true }));
+const archiveSpy = vi.fn(async () => ({ success: true, archivedAt: 1 }));
+
 vi.mock('@/sync/ops', () => ({
-    sessionStopWithServerScope: vi.fn(async () => ({ success: true })),
-    sessionArchiveWithServerScope: vi.fn(async () => ({ success: true })),
+    sessionStopWithServerScope: stopSpy,
+    sessionArchiveWithServerScope: archiveSpy,
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
@@ -65,17 +66,20 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useProfile: () => ({ id: 'u1' }),
 }));
 
+const modalAlertSpy = vi.fn();
+vi.mock('@/modal', () => ({
+    Modal: { alert: modalAlertSpy },
+}));
+
 vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
-
-describe('SessionItem navigation', () => {
-    it('passes serverId when navigating to a session', async () => {
-        navigateSpy.mockClear();
+describe('SessionItem server-scoped mutations', () => {
+    it('stops active sessions using server scope when serverId is provided', async () => {
+        archiveSpy.mockClear();
+        stopSpy.mockClear();
+        modalAlertSpy.mockClear();
 
         const { SessionItem } = await import('./SessionItem');
 
@@ -113,25 +117,34 @@ describe('SessionItem navigation', () => {
             );
         });
 
-        expect(tree).not.toBeNull();
-        const pressable = (tree as any).root.findByType('Pressable');
+        const swipeable = (tree as any).root.findByType('Swipeable');
         await act(async () => {
-            pressable.props.onPress();
+            swipeable.props.renderRightActions().props.onPress();
         });
 
-        expect(navigateSpy).toHaveBeenCalledTimes(1);
-        expect(navigateSpy).toHaveBeenCalledWith('sess_1', { serverId: 'server_a' });
+        expect(modalAlertSpy).toHaveBeenCalledTimes(1);
+        const actions = modalAlertSpy.mock.calls[0][2];
+        await act(async () => {
+            actions[1].onPress();
+        });
+
+        expect(stopSpy).toHaveBeenCalledWith('sess_1', { serverId: 'server_a' });
+        expect(archiveSpy).not.toHaveBeenCalled();
     });
 
-    it('hides avatars in minimal compact mode', async () => {
+    it('archives inactive sessions using server scope when serverId is provided', async () => {
+        archiveSpy.mockClear();
+        stopSpy.mockClear();
+        modalAlertSpy.mockClear();
+
         const { SessionItem } = await import('./SessionItem');
 
         const session = {
-            id: 'sess_min',
+            id: 'sess_2',
             seq: 1,
             createdAt: 1,
             updatedAt: 1,
-            active: true,
+            active: false,
             activeAt: 1,
             metadata: null,
             metadataVersion: 1,
@@ -139,7 +152,7 @@ describe('SessionItem navigation', () => {
             agentStateVersion: 1,
             thinking: false,
             thinkingAt: 0,
-            presence: 'online',
+            presence: 'offline',
         } as any;
 
         let tree: renderer.ReactTestRenderer | null = null;
@@ -147,21 +160,31 @@ describe('SessionItem navigation', () => {
             tree = renderer.create(
                 <SessionItem
                     session={session}
-                    serverId="server_a"
-                    serverName="Server A"
+                    serverId="server_b"
+                    serverName="Server B"
                     showServerBadge={true}
                     selected={false}
                     isFirst={true}
                     isLast={true}
                     isSingle={true}
                     variant="default"
-                    compact={true}
-                    compactMinimal={true}
+                    compact={false}
                 />,
             );
         });
 
-        const avatars = (tree as any).root.findAllByType('Avatar');
-        expect(avatars).toHaveLength(0);
+        const swipeable = (tree as any).root.findByType('Swipeable');
+        await act(async () => {
+            swipeable.props.renderRightActions().props.onPress();
+        });
+
+        expect(modalAlertSpy).toHaveBeenCalledTimes(1);
+        const actions = modalAlertSpy.mock.calls[0][2];
+        await act(async () => {
+            actions[1].onPress();
+        });
+
+        expect(archiveSpy).toHaveBeenCalledWith('sess_2', { serverId: 'server_b' });
+        expect(stopSpy).not.toHaveBeenCalled();
     });
 });

@@ -11,7 +11,7 @@ import { useSession, useIsDataReady, useSetting } from '@/sync/domains/state/sto
 import { getSessionName, useSessionStatus, formatOSPlatform, formatPathRelativeToHome, getSessionAvatarId } from '@/utils/sessions/sessionUtils';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
-import { sessionArchive, sessionDelete, sessionRename } from '@/sync/ops';
+import { sessionArchiveWithServerScope, sessionDelete, sessionRename, sessionStop } from '@/sync/ops';
 import { useUnistyles } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
@@ -148,13 +148,39 @@ function SessionInfoContent({ session }: { session: Session }) {
         }
     }, [session]);
 
-    // Use HappyAction for archiving - it handles errors automatically
+    const canStopSession = !session.accessLevel;
+    const isArchivedSession = session.archivedAt != null;
+    const canArchiveSession = canManageSharing && !session.active && !isArchivedSession;
+
+    const [stoppingSession, performStop] = useHappyAction(async () => {
+        const result = await sessionStop(session.id);
+        if (!result.success) {
+            throw new HappyError(result.message || t('sessionInfo.failedToStopSession'), false);
+        }
+        router.back();
+        router.back();
+    });
+
+    const handleStopSession = useCallback(() => {
+        Modal.alert(
+            t('sessionInfo.stopSession'),
+            t('sessionInfo.stopSessionConfirm'),
+            [
+                { text: t('common.cancel'), style: 'cancel' },
+                {
+                    text: t('sessionInfo.stopSession'),
+                    style: 'destructive',
+                    onPress: performStop
+                }
+            ]
+        );
+    }, [performStop]);
+
     const [archivingSession, performArchive] = useHappyAction(async () => {
-        const result = await sessionArchive(session.id);
+        const result = await sessionArchiveWithServerScope(session.id, { serverId: null });
         if (!result.success) {
             throw new HappyError(result.message || t('sessionInfo.failedToArchiveSession'), false);
         }
-        // Success - navigate back
         router.back();
         router.back();
     });
@@ -378,7 +404,15 @@ function SessionInfoContent({ session }: { session: Session }) {
                             onPress={() => router.push(`/session/${session.id}/sharing`)}
                         />
                     )}
-                    {sessionStatus.isConnected && (
+                    {sessionStatus.isConnected && canStopSession && (
+                        <Item
+                            title={t('sessionInfo.stopSession')}
+                            subtitle={t('sessionInfo.stopSessionSubtitle')}
+                            icon={<Ionicons name="stop-circle-outline" size={29} color="#FF3B30" />}
+                            onPress={handleStopSession}
+                        />
+                    )}
+                    {canArchiveSession && (
                         <Item
                             title={t('sessionInfo.archiveSession')}
                             subtitle={t('sessionInfo.archiveSessionSubtitle')}

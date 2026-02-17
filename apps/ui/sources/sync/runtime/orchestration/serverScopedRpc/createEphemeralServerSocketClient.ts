@@ -1,16 +1,18 @@
 import { io } from 'socket.io-client';
 
 import type { ScopedSocketClient, ScopedSocketConnectParams } from './serverScopedRpcTypes';
+import { resolveSocketIoTransports } from '@/sync/runtime/socketIoTransports';
 
 export async function createEphemeralServerSocketClient(params: ScopedSocketConnectParams): Promise<ScopedSocketClient> {
     return await new Promise<ScopedSocketClient>((resolve, reject) => {
+        const transports = resolveSocketIoTransports();
         const socket = io(params.serverUrl, {
             path: '/v1/updates',
             auth: {
                 token: params.token,
                 clientType: 'user-scoped' as const,
             },
-            transports: ['websocket'],
+            ...(transports ? { transports } : null),
             reconnection: false,
         });
 

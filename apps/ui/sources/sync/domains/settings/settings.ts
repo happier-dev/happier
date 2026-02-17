@@ -364,6 +364,9 @@ const SettingsSchemaBase = z.object({
     avatarStyle: z.string().describe('Avatar display style'),
     showFlavorIcons: z.boolean().describe('Whether to show AI provider icons in avatars'),
     compactSessionView: z.boolean().describe('Whether to use compact view for active sessions'),
+    compactSessionViewMinimal: z.boolean().describe('Whether compact session view should use the minimal (no-avatar) layout'),
+    sessionListActiveGroupingV1: z.enum(['project', 'date']).describe('How to group active sessions in the session list'),
+    sessionListInactiveGroupingV1: z.enum(['project', 'date']).describe('How to group inactive sessions in the session list'),
     hideInactiveSessions: z.boolean().describe('Hide inactive sessions in the main list'),
     groupInactiveSessionsByProject: z.boolean().describe('Group inactive sessions by project in the main list'),
     showEnvironmentBadge: z.boolean().describe('Show current app environment badge near the sidebar title'),
@@ -398,6 +401,12 @@ const SettingsSchemaBase = z.object({
     favoriteMachines: z.array(z.string()).describe('User-defined favorite machines (machine IDs) for quick access in machine selection'),
     // Favorite profiles for quick profile selection (built-in or custom profile IDs)
     favoriteProfiles: z.array(z.string()).describe('User-defined favorite profiles (profile IDs) for quick access in profile selection'),
+    // Pinned sessions in the main session list.
+    // Keys are `${serverId}:${sessionId}` (serverId is required for correctness in multi-server mode).
+    pinnedSessionKeysV1: z.array(z.string()).default([]).describe('Pinned session keys (format: serverId:sessionId)'),
+    // Manual per-group session ordering overrides for the session list.
+    // Map: groupKey -> ordered list of session keys (serverId:sessionId).
+    sessionListGroupOrderV1: z.record(z.string(), z.array(z.string())).default({}).describe('Manual ordering overrides by groupKey'),
     // Dismissed CLI warning banners (supports both per-machine and global dismissal)
     dismissedCLIWarnings: z.object({
         perMachine: z.record(z.string(), z.record(z.string(), z.boolean()).default({})).default({}),
@@ -507,6 +516,9 @@ export const settingsDefaults: Settings = {
     avatarStyle: 'brutalist',
     showFlavorIcons: true,
     compactSessionView: false,
+    compactSessionViewMinimal: false,
+    sessionListActiveGroupingV1: 'project',
+    sessionListInactiveGroupingV1: 'date',
     hideInactiveSessions: false,
     groupInactiveSessionsByProject: false,
     showEnvironmentBadge: true,
@@ -538,6 +550,10 @@ export const settingsDefaults: Settings = {
     favoriteMachines: [],
     // Favorite profiles (empty by default)
     favoriteProfiles: [],
+    // Pinned session keys (empty by default)
+    pinnedSessionKeysV1: [],
+    // Manual per-group ordering overrides (empty by default)
+    sessionListGroupOrderV1: {},
     // Dismissed CLI warnings (empty by default)
     dismissedCLIWarnings: { perMachine: {}, global: {} },
     terminalConnectLegacySecretExportEnabled: false,
@@ -653,10 +669,10 @@ export function settingsParse(settings: unknown): Settings {
             if (debug) {
                 dbgSettings('settingsParse: invalid field', {
                     key: String(key),
-                    issues: parsedField.error.issues.map((i) => ({
-                        path: i.path,
-                        code: i.code,
-                        message: i.message,
+                    issues: parsedField.error.issues.map((issue) => ({
+                        path: issue.path,
+                        code: issue.code,
+                        message: issue.message,
                     })),
                 });
             }
@@ -666,6 +682,14 @@ export function settingsParse(settings: unknown): Settings {
     // Migration: Convert old 'zh' language code to 'zh-Hans'
     if (result.preferredLanguage === 'zh') {
         result.preferredLanguage = 'zh-Hans';
+    }
+
+    // Migration: seed new session list grouping preferences from legacy toggles when missing.
+    // Preserve explicit sessionList* values when present.
+    if (!('sessionListInactiveGroupingV1' in input) && ('groupInactiveSessionsByProject' in input)) {
+        if (result.groupInactiveSessionsByProject === true) {
+            result.sessionListInactiveGroupingV1 = 'project';
+        }
     }
 
     if (result.serverSelectionActiveTargetKind !== "server" && result.serverSelectionActiveTargetKind !== "group") {

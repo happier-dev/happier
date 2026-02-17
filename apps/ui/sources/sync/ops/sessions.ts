@@ -11,6 +11,10 @@ import type { AgentId } from '@/agents/catalog/catalog';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { encodeBase64 } from '@/encryption/base64';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { resolveServerScopedSessionContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedSessionContext';
+import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
+import { createEphemeralServerSocketClient } from '@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient';
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import type { SessionContinueWithReplayRpcResult, SpawnSessionResult } from '@happier-dev/protocol';
 import { SessionContinueWithReplayRpcResultSchema, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -572,19 +576,19 @@ export async function sessionKill(sessionId: string): Promise<SessionKillRespons
     }
 }
 
-export interface SessionArchiveResponse {
+export interface SessionStopResponse {
     success: boolean;
     message?: string;
 }
 
 /**
- * Archive a session.
+ * Stop a session.
  *
  * Primary behavior: kill the session process (same as previous "archive" behavior).
  * Fallback: if the session RPC method is unavailable (e.g. session crashed / disconnected),
  * mark the session inactive server-side so it no longer appears "online".
  */
-export async function sessionArchive(sessionId: string): Promise<SessionArchiveResponse> {
+export async function sessionStop(sessionId: string): Promise<SessionStopResponse> {
     const killResult = await sessionKill(sessionId);
     if (killResult.success) {
         return { success: true };
@@ -608,10 +612,143 @@ export async function sessionArchive(sessionId: string): Promise<SessionArchiveR
     return { success: false, message };
 }
 
+export async function sessionStopWithServerScope(
+    sessionId: string,
+    opts?: Readonly<{ serverId?: string | null }>,
+): Promise<SessionStopResponse> {
+    const killResult = await (async (): Promise<SessionKillResponse> => {
+        try {
+            const response = await sessionRpcWithServerScope<SessionKillResponse, SessionKillRequest>({
+                sessionId,
+                serverId: opts?.serverId ?? null,
+                method: 'killSession',
+                payload: {},
+            });
+            return assertRpcResponseWithSuccess<SessionKillResponse>(response);
+        } catch (error) {
+            return {
+                success: false,
+                message: error instanceof Error ? error.message : 'Unknown error',
+                errorCode: readRpcErrorCode(error),
+            };
+        }
+    })();
+
+    if (killResult.success) {
+        return { success: true };
+    }
+
+    const message = killResult.message || 'Failed to archive session';
+    const isRpcMethodUnavailable = isRpcMethodNotAvailableError({
+        rpcErrorCode: killResult.errorCode,
+        message,
+    });
+
+    if (isRpcMethodUnavailable) {
+        const context = await resolveServerScopedSessionContext({ serverId: opts?.serverId ?? null });
+        try {
+            if (context.scope === 'active') {
+                apiSocket.send('session-end', { sid: sessionId, time: Date.now() });
+            } else {
+                const socket = await createEphemeralServerSocketClient({
+                    serverUrl: context.targetServerUrl,
+                    token: context.token,
+                    timeoutMs: context.timeoutMs,
+                });
+                try {
+                    socket.emit('session-end', { sid: sessionId, time: Date.now() });
+                } finally {
+                    socket.disconnect();
+                }
+            }
+        } catch {
+            // Best-effort: server will also eventually time out stale sessions.
+        }
+        return { success: true };
+    }
+
+    return { success: false, message };
+}
+
+export interface SessionArchiveResponse {
+    success: boolean;
+    archivedAt?: number | null;
+    message?: string;
+}
+
+async function archiveRequestWithContext(params: Readonly<{
+    sessionId: string;
+    serverId?: string | null;
+    action: 'archive' | 'unarchive';
+}>): Promise<Response> {
+    const context = await resolveServerScopedSessionContext({ serverId: params.serverId ?? null });
+    const path = `/v2/sessions/${params.sessionId}/${params.action}`;
+
+    if (context.scope === 'active') {
+        return await apiSocket.request(path, { method: 'POST' });
+    }
+
+    return await runtimeFetch(`${context.targetServerUrl}${path}`, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${context.token}`,
+        },
+    });
+}
+
+async function applyArchivedAtToLocalSession(sessionId: string, archivedAt: number | null): Promise<void> {
+    const session = storage.getState().sessions[sessionId];
+    if (!session) return;
+    storage.getState().applySessions([
+        {
+            ...session,
+            archivedAt,
+            updatedAt: nowServerMs(),
+        },
+    ]);
+}
+
+export async function sessionArchiveWithServerScope(
+    sessionId: string,
+    opts?: Readonly<{ serverId?: string | null }>,
+): Promise<SessionArchiveResponse> {
+    try {
+        const response = await archiveRequestWithContext({ sessionId, serverId: opts?.serverId ?? null, action: 'archive' });
+        if (!response.ok) {
+            const message = await response.text().catch(() => '');
+            return { success: false, message: message || 'Failed to archive session' };
+        }
+        const json = await response.json().catch(() => ({}));
+        const archivedAt = typeof (json as any)?.archivedAt === 'number' ? (json as any).archivedAt : null;
+        await applyArchivedAtToLocalSession(sessionId, archivedAt);
+        return { success: true, archivedAt };
+    } catch (error) {
+        return { success: false, message: error instanceof Error ? error.message : 'Unknown error' };
+    }
+}
+
+export async function sessionUnarchiveWithServerScope(
+    sessionId: string,
+    opts?: Readonly<{ serverId?: string | null }>,
+): Promise<SessionArchiveResponse> {
+    try {
+        const response = await archiveRequestWithContext({ sessionId, serverId: opts?.serverId ?? null, action: 'unarchive' });
+        if (!response.ok) {
+            const message = await response.text().catch(() => '');
+            return { success: false, message: message || 'Failed to unarchive session' };
+        }
+        await response.json().catch(() => null);
+        await applyArchivedAtToLocalSession(sessionId, null);
+        return { success: true, archivedAt: null };
+    } catch (error) {
+        return { success: false, message: error instanceof Error ? error.message : 'Unknown error' };
+    }
+}
+
 /**
  * Permanently delete a session from the server
  * This will remove the session and all its associated data (messages, usage reports, access keys)
- * The session should be inactive/archived before deletion
+ * The session should be inactive before deletion
  */
 export async function sessionDelete(sessionId: string): Promise<{ success: boolean; message?: string }> {
     try {
@@ -633,6 +770,42 @@ export async function sessionDelete(sessionId: string): Promise<{ success: boole
         return {
             success: false,
             message: error instanceof Error ? error.message : 'Unknown error'
+        };
+    }
+}
+
+export async function sessionDeleteWithServerScope(
+    sessionId: string,
+    opts?: Readonly<{ serverId?: string | null }>,
+): Promise<{ success: boolean; message?: string }> {
+    const context = await resolveServerScopedSessionContext({ serverId: opts?.serverId ?? null });
+    try {
+        if (context.scope === 'active') {
+            const response = await apiSocket.request(`/v1/sessions/${sessionId}`, { method: 'DELETE' });
+            if (response.ok) {
+                await response.json().catch(() => null);
+                return { success: true };
+            }
+            const error = await response.text().catch(() => '');
+            return { success: false, message: error || 'Failed to delete session' };
+        }
+
+        const response = await runtimeFetch(`${context.targetServerUrl}/v1/sessions/${sessionId}`, {
+            method: 'DELETE',
+            headers: {
+                Authorization: `Bearer ${context.token}`,
+            },
+        });
+        if (response.ok) {
+            await response.json().catch(() => null);
+            return { success: true };
+        }
+        const error = await response.text().catch(() => '');
+        return { success: false, message: error || 'Failed to delete session' };
+    } catch (error) {
+        return {
+            success: false,
+            message: error instanceof Error ? error.message : 'Unknown error',
         };
     }
 }

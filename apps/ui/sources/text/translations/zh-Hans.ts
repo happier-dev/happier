@@ -344,6 +344,8 @@ export const zhHans: TranslationStructure = {
     showFlavorIconsDescription: "在会话头像上显示 AI 提供商图标",
     compactSessionView: "紧凑会话视图",
     compactSessionViewDescription: "以更紧凑的布局显示活跃会话",
+    compactSessionViewMinimal: "极简紧凑视图",
+    compactSessionViewMinimalDescription: "隐藏头像并显示更紧凑的会话行布局",
   },
 
   settingsFeatures: {
@@ -389,6 +391,8 @@ export const zhHans: TranslationStructure = {
     expVoiceAuthFlow: "Voice auth flow",
     expVoiceAuthFlowSubtitle:
       "Use authenticated voice token flow (paywall-aware)",
+    voice: "语音",
+    voiceSubtitle: "启用语音功能",
     expFriends: "好友",
     expFriendsSubtitle: "启用好友功能（收件箱标签页与会话分享）",
     webFeatures: "Web 功能",
@@ -411,6 +415,16 @@ export const zhHans: TranslationStructure = {
     markdownCopyV2Subtitle: "长按打开复制模态框",
     hideInactiveSessions: "隐藏非活跃会话",
     hideInactiveSessionsSubtitle: "仅在列表中显示活跃的聊天",
+    sessionListActiveGrouping: "活跃会话分组",
+    sessionListActiveGroupingSubtitle: "选择侧边栏中活跃会话的分组方式",
+    sessionListInactiveGrouping: "非活跃会话分组",
+    sessionListInactiveGroupingSubtitle: "选择侧边栏中非活跃会话的分组方式",
+    sessionListGrouping: {
+      projectTitle: "项目",
+      projectSubtitle: "按机器 + 路径分组会话",
+      dateTitle: "日期",
+      dateSubtitle: "按最近活动日期分组会话",
+    },
     groupInactiveSessionsByProject: "按项目分组非活跃会话",
     groupInactiveSessionsByProjectSubtitle: "按项目整理非活跃聊天",
     environmentBadge: "Environment badge",
@@ -896,6 +910,8 @@ export const zhHans: TranslationStructure = {
     // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
     killSession: "终止会话",
     killSessionConfirm: "您确定要终止此会话吗？",
+    stopSession: "停止会话",
+    stopSessionConfirm: "您确定要停止此会话吗？",
     archiveSession: "归档会话",
     archiveSessionConfirm: "您确定要归档此会话吗？",
     happySessionIdCopied: "Happier 会话 ID 已复制到剪贴板",
@@ -926,6 +942,7 @@ export const zhHans: TranslationStructure = {
     metadataCopied: "元数据已复制到剪贴板",
     failedToCopyMetadata: "复制元数据失败",
     failedToKillSession: "终止会话失败",
+    failedToStopSession: "停止会话失败",
     failedToArchiveSession: "归档会话失败",
     connectionStatus: "连接状态",
     created: "创建时间",
@@ -936,7 +953,13 @@ export const zhHans: TranslationStructure = {
     viewMachine: "查看设备",
     viewMachineSubtitle: "查看设备详情和会话",
     killSessionSubtitle: "立即终止会话",
-    archiveSessionSubtitle: "归档此会话并停止它",
+    stopSessionSubtitle: "停止会话进程",
+    archiveSessionSubtitle: "将此会话移至已归档",
+    archivedSessions: "已归档会话",
+    unarchiveSession: "取消归档会话",
+    unarchiveSessionConfirm: "您确定要取消归档此会话吗？",
+    unarchiveSessionSubtitle: "将此会话移回到非活动",
+    failedToUnarchiveSession: "取消归档会话失败",
     metadata: "元数据",
     host: "主机",
     path: "路径",
@@ -1350,6 +1373,21 @@ export const zhHans: TranslationStructure = {
       title: "Tool detail overrides",
       footer:
         "Override the detail level for specific tools. Overrides apply to the canonical tool name (V2), after legacy normalization.",
+    },
+    permissions: {
+      title: "Permissions",
+      entrySubtitle: "Open permissions settings",
+      footer:
+        "Configure default permissions and how changes apply to running sessions.",
+      applyChangesFooter:
+        "Choose when permission changes take effect for running sessions.",
+      backendFooter:
+        "Set the default permission mode used when starting sessions with this backend.",
+      defaultPermissionModeTitle: "Default permission mode",
+      applyTiming: {
+        immediateTitle: "Apply immediately",
+        nextPromptTitle: "Apply on next message",
+      },
     },
     defaultPermissions: {
       title: "Default permissions",

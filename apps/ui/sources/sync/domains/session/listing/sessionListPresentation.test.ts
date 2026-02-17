@@ -69,7 +69,7 @@ describe('applySessionListPresentation', () => {
             if (item.type === 'session') {
                 return `session:${item.session.id}:${item.serverId}`;
             }
-            return item.type;
+            return 'unreachable';
         })).toEqual([
             'header:server:Server A',
             'header:date:Today',

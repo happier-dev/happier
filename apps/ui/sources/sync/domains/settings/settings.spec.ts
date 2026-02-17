@@ -367,6 +367,14 @@ describe('settings', () => {
             expect((parsed as any).sessionBusySteerSendPolicy).toBe('server_pending');
         });
 
+        it('migrates legacy groupInactiveSessionsByProject into sessionListInactiveGroupingV1 when missing', () => {
+            const parsed = settingsParse({
+                groupInactiveSessionsByProject: true,
+            } as any);
+
+            expect((parsed as any).sessionListInactiveGroupingV1).toBe('project');
+        });
+
         it('migrates legacy lastUsedPermissionMode into per-agent defaults when missing', () => {
             const parsed = settingsParse({
                 lastUsedAgent: 'claude',
@@ -547,6 +555,14 @@ describe('settings', () => {
             expect((settingsDefaults as any).connectedServicesProfileLabelByKey).toEqual({});
             expect((settingsDefaults as any).connectedServicesQuotaPinnedMeterIdsByKey).toEqual({});
             expect((settingsDefaults as any).connectedServicesQuotaSummaryStrategyByKey).toEqual({});
+            expect((settingsDefaults as any).pinnedSessionKeysV1).toEqual([]);
+            expect((settingsDefaults as any).sessionListGroupOrderV1).toEqual({});
+            expect((settingsDefaults as any).notificationsSettingsV1).toEqual({
+                v: 1,
+                pushEnabled: true,
+                ready: true,
+                permissionRequest: true,
+            });
             expect((settingsDefaults as any).expGemini).toBeUndefined();
             expect((settingsDefaults as any).sessionDefaultPermissionModeClaude).toBeUndefined();
             expect((settingsDefaults as any).sessionDefaultPermissionModeCodex).toBeUndefined();

@@ -133,7 +133,11 @@ type SessionsDomainDependencies = {
     machines: Record<string, Machine>;
     sessionMessages: Record<string, SessionMessages>;
     // Keep resilient: older settings payloads (or partial boot states) may not yet include this key.
-    settings: { groupInactiveSessionsByProject?: boolean };
+    settings: {
+        groupInactiveSessionsByProject?: boolean;
+        sessionListActiveGroupingV1?: 'project' | 'date';
+        sessionListInactiveGroupingV1?: 'project' | 'date';
+    };
 };
 
 // UI-only "optimistic processing" marker.
@@ -400,6 +404,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 sessions: mergedSessions,
                 machines: state.machines,
                 groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
+                activeGroupingV1: state.settings.sessionListActiveGroupingV1,
+                inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
             });
 
             // Update project manager with current sessions and machines
@@ -481,6 +487,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 sessions: updatedSessions,
                 machines: state.machines,
                 groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
+                activeGroupingV1: state.settings.sessionListActiveGroupingV1,
+                inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
             });
 
             return {
@@ -612,6 +620,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 sessions: nextSessions,
                 machines: state.machines,
                 groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
+                activeGroupingV1: state.settings.sessionListActiveGroupingV1,
+                inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
             });
 
             const existingTimeout = optimisticThinkingTimeoutBySessionId.get(sessionId);
@@ -636,6 +646,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                         sessions: next,
                         machines: s.machines,
                         groupInactiveSessionsByProject: s.settings.groupInactiveSessionsByProject === true,
+                        activeGroupingV1: s.settings.sessionListActiveGroupingV1,
+                        inactiveGroupingV1: s.settings.sessionListInactiveGroupingV1,
                     });
                     return {
                         ...s,
@@ -682,6 +694,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 sessions: nextSessions,
                 machines: state.machines,
                 groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
+                activeGroupingV1: state.settings.sessionListActiveGroupingV1,
+                inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
             });
 
             return {
@@ -944,6 +958,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 sessions: remainingSessions,
                 machines: state.machines,
                 groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
+                activeGroupingV1: state.settings.sessionListActiveGroupingV1,
+                inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
             });
             
             return {

@@ -204,6 +204,11 @@ export interface Session {
     active: boolean,
     activeAt: number,
     /**
+     * Global server-side archive marker. Archived sessions should be hidden from the main list by default.
+     * Optional for mixed-version safety with older servers.
+     */
+    archivedAt?: number | null,
+    /**
      * Server-side pending queue (V2) summary fields.
      * Optional for mixed-version safety with older servers.
      */

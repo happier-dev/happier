@@ -13,7 +13,7 @@ vi.mock('../../api/session/apiSocket', () => ({
 }));
 
 // ops.ts imports ./sync, which pulls in Expo-native modules in node/vitest.
-// sessionArchive doesn't use sync, so we provide a lightweight mock.
+// sessionStop doesn't use sync, so we provide a lightweight mock.
 vi.mock('../../sync', () => ({
   sync: {
     encryption: {
@@ -23,10 +23,10 @@ vi.mock('../../sync', () => ({
   },
 }));
 
-import { sessionArchive } from '../../ops';
+import { sessionStop } from '../../ops';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
-describe('sessionArchive', () => {
+describe('sessionStop', () => {
   beforeEach(() => {
     mockSend.mockReset();
     mockSessionRPC.mockReset();
@@ -37,7 +37,7 @@ describe('sessionArchive', () => {
     err.rpcErrorCode = RPC_ERROR_CODES.METHOD_NOT_AVAILABLE;
     mockSessionRPC.mockRejectedValue(err);
 
-    const res = await sessionArchive('sid-1');
+    const res = await sessionStop('sid-1');
     expect(res).toEqual({ success: true });
     expect(mockSend).toHaveBeenCalledWith(
       'session-end',
@@ -48,7 +48,7 @@ describe('sessionArchive', () => {
   it('keeps backward compatibility by falling back to the legacy error message', async () => {
     mockSessionRPC.mockRejectedValue(new Error('RPC method not available'));
 
-    const res = await sessionArchive('sid-2');
+    const res = await sessionStop('sid-2');
     expect(res).toEqual({ success: true });
     expect(mockSend).toHaveBeenCalledWith(
       'session-end',
@@ -59,7 +59,7 @@ describe('sessionArchive', () => {
   it('returns an error for non-RPC-method-unavailable failures', async () => {
     mockSessionRPC.mockRejectedValue(new Error('boom'));
 
-    const res = await sessionArchive('sid-3');
+    const res = await sessionStop('sid-3');
     expect(res).toEqual({ success: false, message: 'boom' });
     expect(mockSend).not.toHaveBeenCalled();
   });

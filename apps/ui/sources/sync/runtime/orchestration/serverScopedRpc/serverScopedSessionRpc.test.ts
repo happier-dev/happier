@@ -134,6 +134,8 @@ describe('sessionRpcWithServerScope', () => {
         }),
       }),
     );
+    const opts = ioSpy.mock.calls[0]?.[1] as any;
+    expect(opts).not.toHaveProperty('transports');
     expect(initializeSessions).toHaveBeenCalledWith(new Map([['session-1', expect.any(Uint8Array)]]));
     expect(sessionEncryption.encryptRaw).toHaveBeenCalledWith({ value: 2 });
     expect(fakeSocket.timeout).toHaveBeenCalledWith(5000);
@@ -145,4 +147,3 @@ describe('sessionRpcWithServerScope', () => {
     expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);
   });
 });
-

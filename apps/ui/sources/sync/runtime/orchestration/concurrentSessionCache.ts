@@ -14,6 +14,7 @@ import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { resolveSocketIoTransports } from '@/sync/runtime/socketIoTransports';
 
 type ConcurrentTarget = Readonly<{
     id: string;
@@ -228,6 +229,8 @@ async function refreshServerSnapshot(entry: ManagedConcurrentServer): Promise<vo
         machinesById,
         {
             groupInactiveSessionsByProject: Boolean(storage.getState().settings.groupInactiveSessionsByProject),
+            activeGroupingV1: storage.getState().settings.sessionListActiveGroupingV1,
+            inactiveGroupingV1: storage.getState().settings.sessionListInactiveGroupingV1,
             serverScope: {
                 serverId: entry.id,
                 serverName: entry.serverName,
@@ -291,13 +294,14 @@ function stopManagedServer(serverId: string): void {
 }
 
 function createManagedServer(target: ConcurrentTarget, credentials: AuthCredentials): ManagedConcurrentServer {
+    const transports = resolveSocketIoTransports();
     const socket = io(target.serverUrl, {
         path: '/v1/updates',
         auth: {
             token: credentials.token,
             clientType: 'user-scoped' as const,
         },
-        transports: ['websocket'],
+        ...(transports ? { transports } : null),
         reconnection: true,
         reconnectionDelay: 1000,
         reconnectionDelayMax: 5000,

@@ -647,6 +647,9 @@ export const ja: TranslationStructure = {
     compactSessionView: "コンパクトセッション表示",
     compactSessionViewDescription:
       "アクティブなセッションをコンパクトなレイアウトで表示",
+    compactSessionViewMinimal: "最小コンパクト表示",
+    compactSessionViewMinimalDescription:
+      "アバターを非表示にして、より小さなセッション行レイアウトで表示",
   },
 
   settingsFeatures: {
@@ -692,6 +695,8 @@ export const ja: TranslationStructure = {
     expVoiceAuthFlow: "Voice auth flow",
     expVoiceAuthFlowSubtitle:
       "Use authenticated voice token flow (paywall-aware)",
+    voice: "音声",
+    voiceSubtitle: "音声機能を有効化",
     expFriends: "友だち",
     expFriendsSubtitle: "友だち機能（受信箱タブとセッション共有）を有効化",
     webFeatures: "Web機能",
@@ -714,6 +719,18 @@ export const ja: TranslationStructure = {
     markdownCopyV2Subtitle: "長押しでコピーモーダルを開く",
     hideInactiveSessions: "非アクティブセッションを非表示",
     hideInactiveSessionsSubtitle: "アクティブなチャットのみをリストに表示",
+    sessionListActiveGrouping: "アクティブセッションのグループ化",
+    sessionListActiveGroupingSubtitle:
+      "サイドバーでアクティブセッションをどのようにグループ化するか選択します",
+    sessionListInactiveGrouping: "非アクティブセッションのグループ化",
+    sessionListInactiveGroupingSubtitle:
+      "サイドバーで非アクティブセッションをどのようにグループ化するか選択します",
+    sessionListGrouping: {
+      projectTitle: "プロジェクト",
+      projectSubtitle: "マシン + パスでセッションをグループ化",
+      dateTitle: "日付",
+      dateSubtitle: "最終アクティビティの日付でセッションをグループ化",
+    },
     groupInactiveSessionsByProject:
       "非アクティブセッションをプロジェクト別にグループ化",
     groupInactiveSessionsByProjectSubtitle:
@@ -1228,6 +1245,8 @@ export const ja: TranslationStructure = {
     // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
     killSession: "セッションを終了",
     killSessionConfirm: "このセッションを終了してもよろしいですか？",
+    stopSession: "セッションを停止",
+    stopSessionConfirm: "このセッションを停止してもよろしいですか？",
     archiveSession: "セッションをアーカイブ",
     archiveSessionConfirm: "このセッションをアーカイブしてもよろしいですか？",
     happySessionIdCopied:
@@ -1266,6 +1285,7 @@ export const ja: TranslationStructure = {
     metadataCopied: "メタデータがクリップボードにコピーされました",
     failedToCopyMetadata: "メタデータのコピーに失敗しました",
     failedToKillSession: "セッションの終了に失敗しました",
+    failedToStopSession: "セッションの停止に失敗しました",
     failedToArchiveSession: "セッションのアーカイブに失敗しました",
     connectionStatus: "接続状態",
     created: "作成日時",
@@ -1276,7 +1296,13 @@ export const ja: TranslationStructure = {
     viewMachine: "マシンを表示",
     viewMachineSubtitle: "マシンの詳細とセッションを表示",
     killSessionSubtitle: "セッションを即座に終了",
-    archiveSessionSubtitle: "このセッションをアーカイブして停止",
+    stopSessionSubtitle: "セッションプロセスを停止",
+    archiveSessionSubtitle: "このセッションをアーカイブへ移動",
+    archivedSessions: "アーカイブ済みセッション",
+    unarchiveSession: "アーカイブ解除",
+    unarchiveSessionConfirm: "このセッションのアーカイブを解除してもよろしいですか？",
+    unarchiveSessionSubtitle: "このセッションを非アクティブに戻す",
+    failedToUnarchiveSession: "セッションのアーカイブ解除に失敗しました",
     metadata: "メタデータ",
     host: "ホスト",
     path: "パス",
@@ -1696,6 +1722,21 @@ export const ja: TranslationStructure = {
       title: "Tool detail overrides",
       footer:
         "Override the detail level for specific tools. Overrides apply to the canonical tool name (V2), after legacy normalization.",
+    },
+    permissions: {
+      title: "Permissions",
+      entrySubtitle: "Open permissions settings",
+      footer:
+        "Configure default permissions and how changes apply to running sessions.",
+      applyChangesFooter:
+        "Choose when permission changes take effect for running sessions.",
+      backendFooter:
+        "Set the default permission mode used when starting sessions with this backend.",
+      defaultPermissionModeTitle: "Default permission mode",
+      applyTiming: {
+        immediateTitle: "Apply immediately",
+        nextPromptTitle: "Apply on next message",
+      },
     },
     defaultPermissions: {
       title: "Default permissions",

@@ -668,6 +668,9 @@ export const it: TranslationStructure = {
     compactSessionView: "Vista sessioni compatta",
     compactSessionViewDescription:
       "Mostra le sessioni attive in un layout più compatto",
+    compactSessionViewMinimal: "Vista compatta minima",
+    compactSessionViewMinimalDescription:
+      "Rimuovi gli avatar e mostra un layout di riga sessione molto compatto",
   },
 
   settingsFeatures: {
@@ -714,6 +717,8 @@ export const it: TranslationStructure = {
     expVoiceAuthFlow: "Voice auth flow",
     expVoiceAuthFlowSubtitle:
       "Use authenticated voice token flow (paywall-aware)",
+    voice: "Voce",
+    voiceSubtitle: "Abilita le funzioni vocali",
     expFriends: "Amici",
     expFriendsSubtitle: "Abilita le funzioni Amici (scheda Posta in arrivo e condivisione sessioni)",
     webFeatures: "Funzionalità web",
@@ -738,6 +743,18 @@ export const it: TranslationStructure = {
     markdownCopyV2Subtitle: "Pressione lunga apre la finestra di copia",
     hideInactiveSessions: "Nascondi sessioni inattive",
     hideInactiveSessionsSubtitle: "Mostra solo le chat attive nella tua lista",
+    sessionListActiveGrouping: "Raggruppamento sessioni attive",
+    sessionListActiveGroupingSubtitle:
+      "Scegli come raggruppare le sessioni attive nella barra laterale",
+    sessionListInactiveGrouping: "Raggruppamento sessioni inattive",
+    sessionListInactiveGroupingSubtitle:
+      "Scegli come raggruppare le sessioni inattive nella barra laterale",
+    sessionListGrouping: {
+      projectTitle: "Progetto",
+      projectSubtitle: "Raggruppa le sessioni per macchina + percorso",
+      dateTitle: "Data",
+      dateSubtitle: "Raggruppa le sessioni per data dell'ultima attività",
+    },
     groupInactiveSessionsByProject: "Raggruppa sessioni inattive per progetto",
     groupInactiveSessionsByProjectSubtitle:
       "Organizza le chat inattive per progetto",
@@ -1262,6 +1279,8 @@ export const it: TranslationStructure = {
     // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
     killSession: "Termina sessione",
     killSessionConfirm: "Sei sicuro di voler terminare questa sessione?",
+    stopSession: "Ferma sessione",
+    stopSessionConfirm: "Sei sicuro di voler fermare questa sessione?",
     archiveSession: "Archivia sessione",
     archiveSessionConfirm: "Sei sicuro di voler archiviare questa sessione?",
     happySessionIdCopied: "ID sessione Happier copiato negli appunti",
@@ -1293,6 +1312,7 @@ export const it: TranslationStructure = {
     metadataCopied: "Metadati copiati negli appunti",
     failedToCopyMetadata: "Impossibile copiare i metadati",
     failedToKillSession: "Impossibile terminare la sessione",
+    failedToStopSession: "Impossibile fermare la sessione",
     failedToArchiveSession: "Impossibile archiviare la sessione",
     connectionStatus: "Stato connessione",
     created: "Creato",
@@ -1303,7 +1323,13 @@ export const it: TranslationStructure = {
     viewMachine: "Visualizza macchina",
     viewMachineSubtitle: "Visualizza dettagli e sessioni della macchina",
     killSessionSubtitle: "Termina immediatamente la sessione",
-    archiveSessionSubtitle: "Archivia questa sessione e fermala",
+    stopSessionSubtitle: "Ferma il processo della sessione",
+    archiveSessionSubtitle: "Sposta questa sessione in Archiviate",
+    archivedSessions: "Session archiviate",
+    unarchiveSession: "Rimuovi dall'archivio",
+    unarchiveSessionConfirm: "Sei sicuro di voler rimuovere questa sessione dall'archivio?",
+    unarchiveSessionSubtitle: "Sposta questa sessione di nuovo tra Inattive",
+    failedToUnarchiveSession: "Impossibile rimuovere la sessione dall'archivio",
     metadata: "Metadati",
     host: "Host",
     path: "Percorso",
@@ -1728,6 +1754,21 @@ export const it: TranslationStructure = {
       title: "Tool detail overrides",
       footer:
         "Override the detail level for specific tools. Overrides apply to the canonical tool name (V2), after legacy normalization.",
+    },
+    permissions: {
+      title: "Permissions",
+      entrySubtitle: "Open permissions settings",
+      footer:
+        "Configure default permissions and how changes apply to running sessions.",
+      applyChangesFooter:
+        "Choose when permission changes take effect for running sessions.",
+      backendFooter:
+        "Set the default permission mode used when starting sessions with this backend.",
+      defaultPermissionModeTitle: "Default permission mode",
+      applyTiming: {
+        immediateTitle: "Apply immediately",
+        nextPromptTitle: "Apply on next message",
+      },
     },
     defaultPermissions: {
       title: "Default permissions",
