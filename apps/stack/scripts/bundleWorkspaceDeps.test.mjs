@@ -95,24 +95,71 @@ test('bundleWorkspaceDeps throws when cli-common package.json is malformed', () 
   }
 });
 
-test('declares external runtime dependencies required by bundled workspace packages', () => {
-  const stackPackageJson = JSON.parse(readFileSync(resolve(repoRoot, 'apps', 'stack', 'package.json'), 'utf8'));
-  const bundledWorkspacePackagePaths = [
-    resolve(repoRoot, 'packages', 'cli-common', 'package.json'),
-    resolve(repoRoot, 'packages', 'release-runtime', 'package.json'),
-  ];
+test('bundleWorkspaceDeps vendors external runtime dependency trees for bundled workspace packages', () => {
+  const { repoRoot, stackDir, cliCommonDir } = createBundleFixture('happy-stack-bundle-workspace-deps-vendor-tree-');
+  try {
+    const depADir = resolve(repoRoot, 'node_modules', 'dep-a');
+    const depBDir = resolve(repoRoot, 'node_modules', 'dep-b');
+    mkdirSync(depADir, { recursive: true });
+    mkdirSync(depBDir, { recursive: true });
 
-  const stackDependencyNames = new Set(Object.keys(stackPackageJson.dependencies ?? {}));
-  const requiredExternalDependencies = new Set();
-  for (const packageJsonPath of bundledWorkspacePackagePaths) {
-    const bundledPackageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
-    for (const dependencyName of Object.keys(bundledPackageJson.dependencies ?? {})) {
-      if (!dependencyName.startsWith('@happier-dev/')) {
-        requiredExternalDependencies.add(dependencyName);
-      }
-    }
+    writeJson(resolve(cliCommonDir, 'package.json'), {
+      name: '@happier-dev/cli-common',
+      version: '0.0.0',
+      type: 'module',
+      main: './dist/index.js',
+      types: './dist/index.d.ts',
+      exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
+      dependencies: {
+        'dep-a': '^1.0.0',
+      },
+    });
+    writeFileSync(resolve(cliCommonDir, 'dist', 'index.js'), 'export const z = 3;\n', 'utf8');
+
+    writeJson(resolve(depADir, 'package.json'), {
+      name: 'dep-a',
+      version: '1.0.0',
+      main: 'index.js',
+      dependencies: {
+        'dep-b': '^1.0.0',
+      },
+    });
+    writeFileSync(resolve(depADir, 'index.js'), 'module.exports = { a: true };\n', 'utf8');
+
+    writeJson(resolve(depBDir, 'package.json'), { name: 'dep-b', version: '1.0.0', main: 'index.js' });
+    writeFileSync(resolve(depBDir, 'index.js'), 'module.exports = { b: true };\n', 'utf8');
+
+    bundleWorkspaceDeps({ repoRoot, stackDir });
+
+    assert.equal(
+      JSON.parse(
+        readFileSync(
+          resolve(stackDir, 'node_modules', '@happier-dev', 'cli-common', 'node_modules', 'dep-a', 'package.json'),
+          'utf8',
+        ),
+      ).name,
+      'dep-a',
+    );
+    assert.equal(
+      JSON.parse(
+        readFileSync(
+          resolve(
+            stackDir,
+            'node_modules',
+            '@happier-dev',
+            'cli-common',
+            'node_modules',
+            'dep-a',
+            'node_modules',
+            'dep-b',
+            'package.json',
+          ),
+          'utf8',
+        ),
+      ).name,
+      'dep-b',
+    );
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
   }
-
-  const missingDependencies = [...requiredExternalDependencies].filter((name) => !stackDependencyNames.has(name));
-  assert.deepEqual(missingDependencies, []);
 });

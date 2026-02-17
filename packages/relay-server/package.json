@@ -18,6 +18,9 @@
   "bundledDependencies": [
     "@happier-dev/release-runtime"
   ],
+  "dependencies": {
+    "@happier-dev/release-runtime": "0.0.0"
+  },
   "engines": {
     "node": ">=22"
   },

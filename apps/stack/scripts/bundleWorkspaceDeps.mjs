@@ -1,7 +1,11 @@
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { bundleWorkspacePackages, findRepoRoot } from '@happier-dev/cli-common/workspaces';
+import {
+  bundleWorkspacePackages,
+  findRepoRoot,
+  vendorBundledPackageRuntimeDependencies,
+} from '../../../packages/cli-common/dist/workspaces/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -23,6 +27,13 @@ export function bundleWorkspaceDeps(opts = {}) {
   ];
 
   bundleWorkspacePackages({ bundles });
+
+  for (const b of bundles) {
+    vendorBundledPackageRuntimeDependencies({
+      srcPackageJsonPath: resolve(b.srcDir, 'package.json'),
+      destPackageDir: b.destDir,
+    });
+  }
 }
 
 const invokedAsMain = (() => {

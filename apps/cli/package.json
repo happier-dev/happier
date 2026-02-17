@@ -106,7 +106,6 @@
     "@agentclientprotocol/sdk": "^0.14.1",
     "@anthropic-ai/claude-agent-sdk": "^0.2.31",
     "@huggingface/transformers": "^3.8.1",
-    "@noble/hashes": "^1.8.0",
     "@happier-dev/agents": "0.0.0",
     "@happier-dev/cli-common": "0.0.0",
     "@happier-dev/protocol": "0.0.0",
@@ -139,12 +138,11 @@
     "tar": "^7.5.2",
     "tmp": "^0.2.5",
     "tweetnacl": "^1.0.3",
-    "zod": "3.25.76",
-    "base64-js": "^1.5.1",
-    "zod-to-json-schema": "3.25.1"
+    "zod": "3.25.76"
   },
   "devDependencies": {
     "@eslint/compat": "^1",
+    "@noble/hashes": "^1.8.0",
     "@types/node": ">=20",
     "cross-env": "^10.1.0",
     "dotenv": "^16.6.1",

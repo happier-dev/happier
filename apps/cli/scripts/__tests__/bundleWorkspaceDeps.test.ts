@@ -81,27 +81,94 @@ describe('bundleWorkspaceDeps', () => {
     expect(bundledCommonPkgJson.name).toBe('@happier-dev/cli-common');
   });
 
-  it('declares external runtime dependencies required by bundled workspace packages', () => {
-    const repoRoot = resolve(__dirname, '..', '..', '..', '..');
-    const cliPackageJson = JSON.parse(readFileSync(resolve(repoRoot, 'apps', 'cli', 'package.json'), 'utf8'));
-    const bundledWorkspacePackagePaths = [
-      resolve(repoRoot, 'packages', 'agents', 'package.json'),
-      resolve(repoRoot, 'packages', 'cli-common', 'package.json'),
-      resolve(repoRoot, 'packages', 'protocol', 'package.json'),
-    ];
+  it('vendors the external runtime dependency tree for bundled workspace packages', () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'happy-bundle-workspace-deps-tree-'));
+    writeJson(resolve(repoRoot, 'package.json'), { name: 'repo', private: true });
+    writeFileSync(resolve(repoRoot, 'yarn.lock'), '# lock\n', 'utf8');
 
-    const cliDependencyNames = new Set(Object.keys(cliPackageJson.dependencies ?? {}));
-    const requiredExternalDependencies = new Set<string>();
-    for (const packageJsonPath of bundledWorkspacePackagePaths) {
-      const bundledPackageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
-      for (const dependencyName of Object.keys(bundledPackageJson.dependencies ?? {})) {
-        if (!dependencyName.startsWith('@happier-dev/')) {
-          requiredExternalDependencies.add(dependencyName);
-        }
-      }
+    const protocolDir = resolve(repoRoot, 'packages', 'protocol');
+    const happyCliDir = resolve(repoRoot, 'apps', 'cli');
+
+    const depADir = resolve(repoRoot, 'node_modules', 'dep-a');
+    const depBDir = resolve(repoRoot, 'node_modules', 'dep-b');
+
+    mkdirSync(resolve(protocolDir, 'dist'), { recursive: true });
+    mkdirSync(happyCliDir, { recursive: true });
+    mkdirSync(depADir, { recursive: true });
+    mkdirSync(depBDir, { recursive: true });
+
+    writeJson(resolve(protocolDir, 'package.json'), {
+      name: '@happier-dev/protocol',
+      version: '0.0.0',
+      type: 'module',
+      main: './dist/index.js',
+      types: './dist/index.d.ts',
+      exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
+      dependencies: {
+        'dep-a': '^1.0.0',
+      },
+    });
+    writeFileSync(resolve(protocolDir, 'dist', 'index.js'), 'export const y = 2;\n', 'utf8');
+
+    writeJson(resolve(depADir, 'package.json'), {
+      name: 'dep-a',
+      version: '1.0.0',
+      main: 'index.js',
+      dependencies: {
+        'dep-b': '^1.0.0',
+      },
+    });
+    writeFileSync(resolve(depADir, 'index.js'), 'module.exports = { a: true };\n', 'utf8');
+
+    writeJson(resolve(depBDir, 'package.json'), { name: 'dep-b', version: '1.0.0', main: 'index.js' });
+    writeFileSync(resolve(depBDir, 'index.js'), 'module.exports = { b: true };\n', 'utf8');
+
+    // Minimal stubs for other bundled workspace packages.
+    for (const pkg of [
+      { name: '@happier-dev/agents', dir: resolve(repoRoot, 'packages', 'agents') },
+      { name: '@happier-dev/cli-common', dir: resolve(repoRoot, 'packages', 'cli-common') },
+    ]) {
+      mkdirSync(resolve(pkg.dir, 'dist'), { recursive: true });
+      writeJson(resolve(pkg.dir, 'package.json'), {
+        name: pkg.name,
+        version: '0.0.0',
+        type: 'module',
+        main: './dist/index.js',
+        types: './dist/index.d.ts',
+        exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
+        dependencies: {
+          '@happier-dev/protocol': '0.0.0',
+        },
+      });
+      writeFileSync(resolve(pkg.dir, 'dist', 'index.js'), 'export const x = 1;\n', 'utf8');
     }
 
-    const missingDependencies = [...requiredExternalDependencies].filter((name) => !cliDependencyNames.has(name));
-    expect(missingDependencies).toEqual([]);
+    bundleWorkspaceDeps({ repoRoot, happyCliDir });
+
+    // dep-a is vendored because protocol declares it.
+    expect(() =>
+      readFileSync(
+        resolve(happyCliDir, 'node_modules', '@happier-dev', 'protocol', 'node_modules', 'dep-a', 'package.json'),
+        'utf8',
+      ),
+    ).not.toThrow();
+
+    // dep-b is vendored transitively because dep-a depends on it.
+    expect(() =>
+      readFileSync(
+        resolve(
+          happyCliDir,
+          'node_modules',
+          '@happier-dev',
+          'protocol',
+          'node_modules',
+          'dep-a',
+          'node_modules',
+          'dep-b',
+          'package.json',
+        ),
+        'utf8',
+      ),
+    ).not.toThrow();
   });
 });
