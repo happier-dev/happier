@@ -2,7 +2,6 @@ import type { FeatureBuildPolicy } from './buildPolicy.js';
 import { parseFeatureBuildPolicy } from './buildPolicy.js';
 
 import {
-  DEFAULT_EMBEDDED_FEATURE_POLICY_ENV,
   EMBEDDED_FEATURE_BUILD_POLICY_RAW,
 } from './embeddedFeaturePolicies.generated.js';
 
@@ -17,9 +16,14 @@ export function resolveEmbeddedFeaturePolicyEnv(value: unknown): EmbeddedFeature
   return null;
 }
 
-export function resolveEmbeddedFeatureBuildPolicy(envName?: EmbeddedFeaturePolicyEnv): FeatureBuildPolicy {
-  const env = envName ?? (DEFAULT_EMBEDDED_FEATURE_POLICY_ENV satisfies EmbeddedFeaturePolicyEnv);
-  const raw = EMBEDDED_FEATURE_BUILD_POLICY_RAW[env];
+export function resolveEmbeddedFeatureBuildPolicy(
+  envName?: EmbeddedFeaturePolicyEnv | null,
+): FeatureBuildPolicy {
+  if (!envName) {
+    return { allow: [], deny: [] };
+  }
+
+  const raw = EMBEDDED_FEATURE_BUILD_POLICY_RAW[envName];
   return parseFeatureBuildPolicy(raw);
 }
 
@@ -42,4 +46,3 @@ export function resolveFeatureBuildPolicyFromEnvOrEmbedded(input: Readonly<{
   });
   return mergeFeatureBuildPolicies(embedded, override);
 }
-
