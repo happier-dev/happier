@@ -1,7 +1,7 @@
 import React from 'react';
 import { Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { FEATURE_IDS } from '@happier-dev/protocol';
+import { FEATURE_IDS, featureRequiresServerSnapshot, readServerEnabledBit, type FeatureId } from '@happier-dev/protocol';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -15,6 +15,9 @@ import {
     listUiFeatureToggleDefinitions,
     resolveUiFeatureToggleEnabled,
 } from '@/sync/domains/features/featureRegistry';
+import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
+import { useEffectiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
+import { useServerFeaturesMainSelectionSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 
 export default React.memo(function FeaturesSettingsScreen() {
     const [experiments, setExperiments] = useSettingMutable('experiments');
@@ -24,8 +27,6 @@ export default React.memo(function FeaturesSettingsScreen() {
     const [agentInputHistoryScope, setAgentInputHistoryScope] = useSettingMutable('agentInputHistoryScope');
     const [commandPaletteEnabled, setCommandPaletteEnabled] = useLocalSettingMutable('commandPaletteEnabled');
     const [markdownCopyV2, setMarkdownCopyV2] = useLocalSettingMutable('markdownCopyV2');
-    const [hideInactiveSessions, setHideInactiveSessions] = useSettingMutable('hideInactiveSessions');
-    const [groupInactiveSessionsByProject, setGroupInactiveSessionsByProject] = useSettingMutable('groupInactiveSessionsByProject');
     const [showEnvironmentBadge, setShowEnvironmentBadge] = useSettingMutable('showEnvironmentBadge');
     const [useEnhancedSessionWizard, setUseEnhancedSessionWizard] = useSettingMutable('useEnhancedSessionWizard');
     const [useMachinePickerSearch, setUseMachinePickerSearch] = useSettingMutable('useMachinePickerSearch');
@@ -33,8 +34,57 @@ export default React.memo(function FeaturesSettingsScreen() {
     const [devModeEnabled] = useLocalSettingMutable('devModeEnabled');
 
     const toggleDefinitions = React.useMemo(() => listUiFeatureToggleDefinitions(), []);
-    const standardToggleDefinitions = toggleDefinitions.filter((d) => !d.isExperimental);
-    const experimentalToggleDefinitions = toggleDefinitions.filter((d) => d.isExperimental);
+    const selection = useEffectiveServerSelection();
+
+    const shouldProbeServerForToggleVisibility = React.useMemo(() => {
+        for (const def of toggleDefinitions) {
+            if (getFeatureBuildPolicyDecision(def.featureId) === 'deny') continue;
+            if (featureRequiresServerSnapshot(def.featureId)) return true;
+        }
+        return false;
+    }, [toggleDefinitions]);
+
+    const serverSnapshot = useServerFeaturesMainSelectionSnapshot(selection.serverIds, { enabled: shouldProbeServerForToggleVisibility });
+
+    const isToggleHardDisabledByServer = React.useCallback(
+        (featureId: FeatureId): boolean => {
+            if (!featureRequiresServerSnapshot(featureId)) return false;
+            if (serverSnapshot.status !== 'ready') return false;
+            if (serverSnapshot.serverIds.length === 0) return false;
+
+            for (const serverId of serverSnapshot.serverIds) {
+                const snapshot = serverSnapshot.snapshotsByServerId[serverId];
+                if (!snapshot) {
+                    // Unexpected in ready state; do not hide based on incomplete data.
+                    return false;
+                }
+                if (snapshot.status === 'error') {
+                    // Probe failures are not definitive; keep the toggle visible.
+                    return false;
+                }
+                if (snapshot.status === 'unsupported') {
+                    return true;
+                }
+
+                const enabled = readServerEnabledBit(snapshot.features, featureId) === true;
+                if (!enabled) return true;
+            }
+
+            return false;
+        },
+        [serverSnapshot],
+    );
+
+    const visibleToggleDefinitions = React.useMemo(() => {
+        return toggleDefinitions.filter((d) => {
+            if (getFeatureBuildPolicyDecision(d.featureId) === 'deny') return false;
+            if (isToggleHardDisabledByServer(d.featureId)) return false;
+            return true;
+        });
+    }, [isToggleHardDisabledByServer, toggleDefinitions]);
+
+    const standardToggleDefinitions = visibleToggleDefinitions.filter((d) => !d.isExperimental);
+    const experimentalToggleDefinitions = visibleToggleDefinitions.filter((d) => d.isExperimental);
 
     const seedExperimentalFeatureToggleDefaults = React.useCallback(() => {
         const defaults = buildUiFeatureToggleDefaults({ experimentalOnly: true });
@@ -53,20 +103,6 @@ export default React.memo(function FeaturesSettingsScreen() {
                     subtitle={t('settingsFeatures.markdownCopyV2Subtitle')}
                     icon={<Ionicons name="text-outline" size={29} color="#34C759" />}
                     rightElement={<Switch value={markdownCopyV2} onValueChange={setMarkdownCopyV2} />}
-                    showChevron={false}
-                />
-                <Item
-                    title={t('settingsFeatures.hideInactiveSessions')}
-                    subtitle={t('settingsFeatures.hideInactiveSessionsSubtitle')}
-                    icon={<Ionicons name="eye-off-outline" size={29} color="#FF9500" />}
-                    rightElement={<Switch value={hideInactiveSessions} onValueChange={setHideInactiveSessions} />}
-                    showChevron={false}
-                />
-                <Item
-                    title={t('settingsFeatures.groupInactiveSessionsByProject')}
-                    subtitle={t('settingsFeatures.groupInactiveSessionsByProjectSubtitle')}
-                    icon={<Ionicons name="folder-outline" size={29} color="#007AFF" />}
-                    rightElement={<Switch value={groupInactiveSessionsByProject} onValueChange={setGroupInactiveSessionsByProject} />}
                     showChevron={false}
                 />
                 <Item
