@@ -103,8 +103,8 @@ jobs:
       EAS_PLATFORM: android
       # Local Android release builds can exceed default heap limits during D8 dex merging.
       # Raise heap and reduce concurrent workers for reliability on GitHub-hosted runners.
-      JAVA_TOOL_OPTIONS: -Xmx6g
-      GRADLE_OPTS: -Dorg.gradle.jvmargs="-Xmx6g -Dfile.encoding=UTF-8" -Dkotlin.daemon.jvm.options=-Xmx2g -Dorg.gradle.workers.max=2
+      JAVA_TOOL_OPTIONS: -Xmx6g -Dfile.encoding=UTF-8
+      GRADLE_OPTS: -Xmx6g -Dfile.encoding=UTF-8 -Dorg.gradle.workers.max=2 -Dkotlin.daemon.jvm.options=-Xmx2g
     steps:
       - name: Checkout
         uses: actions/checkout@v4
