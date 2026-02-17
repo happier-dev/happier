@@ -12,9 +12,8 @@ export async function openBugReportFallbackIssueUrl(
     issueUrl: string,
     deps: Partial<OpenBugReportFallbackDependencies> = {},
 ): Promise<boolean> {
-    const canOpenUrl = deps.canOpenUrl ?? Linking.canOpenURL;
     const openUrl = deps.openUrl ?? Linking.openURL;
-    const showAlert = deps.showAlert ?? Modal.alert;
+    const showAlert = deps.showAlert ?? ((title: string, message: string) => Modal.alert(title, message));
 
     const normalizedUrl = String(issueUrl ?? '').trim();
     if (!/^https?:\/\//i.test(normalizedUrl)) {
@@ -23,12 +22,6 @@ export async function openBugReportFallbackIssueUrl(
     }
 
     try {
-        const supported = await canOpenUrl(normalizedUrl);
-        if (!supported) {
-            await showAlert('Cannot open issue link', `Please open this URL manually:\n\n${normalizedUrl}`);
-            return false;
-        }
-
         await openUrl(normalizedUrl);
         return true;
     } catch {

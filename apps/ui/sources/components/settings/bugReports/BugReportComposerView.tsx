@@ -23,7 +23,7 @@ import {
 } from './BugReportComposerSections';
 import { BugReportSimilarIssuesSection } from './BugReportSimilarIssuesSection';
 import { bugReportComposerStyles } from './bugReportComposerStyles';
-import { DEFAULT_BUG_REPORT_FEATURE, type BugReportsFeature } from './bugReportFeatureDefaults';
+import { DEFAULT_BUG_REPORT_CAPABILITIES, type BugReportsFeature } from './bugReportFeatureDefaults';
 import { useBugReportComposerModel } from './hooks/useBugReportComposerModel';
 
 export const BugReportComposerView = React.memo(function BugReportComposerView() {
@@ -34,14 +34,14 @@ export const BugReportComposerView = React.memo(function BugReportComposerView()
   const profile = useProfile();
   const serverUrlDefault = React.useMemo(() => getActiveServerSnapshot().serverUrl, []);
   const bugReportsEnabled = useFeatureEnabled('bugReports');
-  const bugReportsServerDetails = useFeatureDetails<BugReportsFeature>({
+  const bugReportsCapabilities = useFeatureDetails({
     featureId: 'bugReports',
-    fallback: DEFAULT_BUG_REPORT_FEATURE,
-    select: (features) => features.features.bugReports,
+    fallback: DEFAULT_BUG_REPORT_CAPABILITIES,
+    select: (features) => features.capabilities.bugReports,
   });
   const bugReportsFeature = React.useMemo<BugReportsFeature>(
-    () => ({ ...bugReportsServerDetails, enabled: bugReportsEnabled }),
-    [bugReportsEnabled, bugReportsServerDetails],
+    () => ({ ...bugReportsCapabilities, enabled: bugReportsEnabled }),
+    [bugReportsEnabled, bugReportsCapabilities],
   );
 
   const model = useBugReportComposerModel({

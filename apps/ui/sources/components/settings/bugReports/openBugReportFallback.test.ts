@@ -1,26 +1,19 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Platform } from 'react-native';
 
-import { openBugReportFallbackIssueUrl } from './openBugReportFallback';
+vi.mock('@/text', () => ({
+    t: (key: string) => key,
+}));
 
 describe('openBugReportFallbackIssueUrl', () => {
-    it('opens the fallback issue URL when supported', async () => {
-        const canOpenUrl = vi.fn(async () => true);
-        const openUrl = vi.fn(async () => {});
-        const showAlert = vi.fn(async () => {});
+    const originalOs = Platform.OS;
 
-        const opened = await openBugReportFallbackIssueUrl('https://github.com/happier-dev/happier/issues/new', {
-            canOpenUrl,
-            openUrl,
-            showAlert,
-        });
-
-        expect(opened).toBe(true);
-        expect(canOpenUrl).toHaveBeenCalledTimes(1);
-        expect(openUrl).toHaveBeenCalledTimes(1);
-        expect(showAlert).not.toHaveBeenCalled();
+    beforeEach(() => {
+        Platform.OS = originalOs;
     });
 
-    it('shows an alert and returns false when URL cannot be opened', async () => {
+    it('opens the fallback issue URL when openUrl succeeds', async () => {
+        const { openBugReportFallbackIssueUrl } = await import('./openBugReportFallback');
         const canOpenUrl = vi.fn(async () => false);
         const openUrl = vi.fn(async () => {});
         const showAlert = vi.fn(async () => {});
@@ -31,13 +24,14 @@ describe('openBugReportFallbackIssueUrl', () => {
             showAlert,
         });
 
-        expect(opened).toBe(false);
-        expect(canOpenUrl).toHaveBeenCalledTimes(1);
-        expect(openUrl).not.toHaveBeenCalled();
-        expect(showAlert).toHaveBeenCalledTimes(1);
+        expect(opened).toBe(true);
+        expect(openUrl).toHaveBeenCalledTimes(1);
+        expect(showAlert).not.toHaveBeenCalled();
+        expect(canOpenUrl).not.toHaveBeenCalled();
     });
 
-    it('returns false and shows alert when openURL throws', async () => {
+    it('shows an alert and returns false when openUrl throws', async () => {
+        const { openBugReportFallbackIssueUrl } = await import('./openBugReportFallback');
         const canOpenUrl = vi.fn(async () => true);
         const openUrl = vi.fn(async () => {
             throw new Error('open failed');
@@ -51,12 +45,13 @@ describe('openBugReportFallbackIssueUrl', () => {
         });
 
         expect(opened).toBe(false);
-        expect(canOpenUrl).toHaveBeenCalledTimes(1);
         expect(openUrl).toHaveBeenCalledTimes(1);
         expect(showAlert).toHaveBeenCalledTimes(1);
+        expect(canOpenUrl).not.toHaveBeenCalled();
     });
 
     it('rejects non-http(s) URLs', async () => {
+        const { openBugReportFallbackIssueUrl } = await import('./openBugReportFallback');
         const canOpenUrl = vi.fn(async () => true);
         const openUrl = vi.fn(async () => {});
         const showAlert = vi.fn(async () => {});
@@ -71,5 +66,33 @@ describe('openBugReportFallbackIssueUrl', () => {
         expect(canOpenUrl).not.toHaveBeenCalled();
         expect(openUrl).not.toHaveBeenCalled();
         expect(showAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses the default Modal.alert dependency on web without throwing', async () => {
+        Platform.OS = 'web';
+
+        const { Modal } = await import('@/modal');
+        const { openBugReportFallbackIssueUrl } = await import('./openBugReportFallback');
+
+        let modalType: string | null = null;
+        Modal.setFunctions((config) => {
+            modalType = config.type;
+            return 'alert-1';
+        }, () => {}, () => {});
+
+        const canOpenUrl = vi.fn(async () => false);
+        const openUrl = vi.fn(async () => {
+            throw new Error('open failed');
+        });
+
+        await expect(
+            openBugReportFallbackIssueUrl('https://github.com/happier-dev/happier/issues/new', {
+                canOpenUrl,
+                openUrl,
+            }),
+        ).resolves.toBe(false);
+
+        expect(modalType).toBe('alert');
+        expect(canOpenUrl).not.toHaveBeenCalled();
     });
 });
