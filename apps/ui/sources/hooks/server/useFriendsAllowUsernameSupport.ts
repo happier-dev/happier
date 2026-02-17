@@ -11,5 +11,5 @@ export function useFriendsAllowUsernameSupport(): boolean | null | undefined {
     const snapshot = useServerFeaturesRuntimeSnapshot();
     if (snapshot.status === 'loading') return undefined;
     if (snapshot.status !== 'ready') return false;
-    return snapshot.features.features.social.friends.allowUsername === true;
+    return snapshot.features.capabilities.social.friends.allowUsername === true;
 }

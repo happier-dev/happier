@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { HappyError } from '@/utils/errors/errors';
-import { sendFriendRequest } from './apiFriends';
+import { getFriendsList, sendFriendRequest } from './apiFriends';
 
 vi.mock('@/utils/timing/time', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/utils/timing/time')>();
@@ -54,15 +54,10 @@ describe('sendFriendRequest', () => {
         });
     });
 
-    it('throws a typed HappyError when the server disables friends', async () => {
-        mockError(400, { error: 'friends-disabled' });
+    it('returns null when the friends routes are not available (404)', async () => {
+        mockError(404, { error: 'not_found' });
 
-        await expect(sendFriendRequest(credentials, 'u2')).rejects.toMatchObject({
-            name: 'HappyError',
-            message: 'friends-disabled',
-            status: 400,
-            kind: 'config',
-        });
+        await expect(sendFriendRequest(credentials, 'u2')).resolves.toBeNull();
     });
 
     it('falls back to default HappyError message when 400 payload is not JSON', async () => {
@@ -88,5 +83,13 @@ describe('sendFriendRequest', () => {
         mockError(503, { error: 'temporarily_unavailable' });
 
         await expect(sendFriendRequest(credentials, 'u2')).rejects.toThrow('Failed to add friend: 503');
+    });
+});
+
+describe('getFriendsList', () => {
+    it('returns an empty array when the friends routes are not available (404)', async () => {
+        mockError(404, { error: 'not_found' });
+
+        await expect(getFriendsList(credentials)).resolves.toEqual([]);
     });
 });

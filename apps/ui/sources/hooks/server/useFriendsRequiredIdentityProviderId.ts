@@ -11,5 +11,5 @@ export function useFriendsRequiredIdentityProviderId(): string | null | undefine
     const snapshot = useServerFeaturesRuntimeSnapshot();
     if (snapshot.status === 'loading') return undefined;
     if (snapshot.status !== 'ready') return null;
-    return normalizeProviderId(snapshot.features.features.social.friends.requiredIdentityProviderId) ?? null;
+    return normalizeProviderId(snapshot.features.capabilities.social.friends.requiredIdentityProviderId) ?? null;
 }

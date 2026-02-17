@@ -158,9 +158,6 @@ export async function sendFriendRequest(
                 if (response.status === 400 && message === 'username-required') {
                     throw new HappyError(message, false, { status: 400, kind: 'auth' });
                 }
-                if (response.status === 400 && message === 'friends-disabled') {
-                    throw new HappyError(message, false, { status: 400, kind: 'config' });
-                }
                 throw new HappyError(message, false);
             }
             throw new Error(`Failed to add friend: ${response.status}`);
@@ -198,6 +195,9 @@ export async function getFriendsList(
         }, { includeAuth: false });
 
         if (!response.ok) {
+            if (response.status === 404) {
+                return [];
+            }
             if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
                 let message = 'Failed to get friends list';
                 try {
