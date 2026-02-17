@@ -13,7 +13,7 @@ const VoiceLocalTtsOpenAiCompatSchema = z
     voice: z.string().default('alloy'),
     format: z.enum(['mp3', 'wav']).default('mp3'),
   })
-  .default({});
+  .prefault({});
 
 const VoiceLocalTtsLocalNeuralSchema = z
   .object({
@@ -25,7 +25,7 @@ const VoiceLocalTtsLocalNeuralSchema = z
     voiceId: z.string().nullable().default(null),
     speed: z.number().min(0.5).max(2).nullable().default(null),
   })
-  .default({});
+  .prefault({});
 
 const VoiceLocalTtsGoogleCloudSchema = z
   .object({
@@ -37,7 +37,7 @@ const VoiceLocalTtsGoogleCloudSchema = z
     speakingRate: z.number().min(0.25).max(4).nullable().default(null),
     pitch: z.number().min(-20).max(20).nullable().default(null),
   })
-  .default({});
+  .prefault({});
 
 const VoiceLocalTtsSchemaV2 = z.object({
   provider: VoiceLocalTtsProviderSchema.default('openai_compat'),

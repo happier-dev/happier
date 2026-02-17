@@ -128,7 +128,7 @@ export const DiffInputV2Schema = BaseEnvelopeSchema.extend({
 }).passthrough();
 
 export const PatchInputV2Schema = BaseEnvelopeSchema.extend({
-  changes: z.record(z.unknown()).optional(),
+  changes: z.record(z.string(), z.unknown()).optional(),
   file_paths: z.array(FilePathSchema).optional(),
 }).passthrough();
 
@@ -243,7 +243,7 @@ export const AskUserQuestionInputV2Schema = BaseEnvelopeSchema.extend({
 }).passthrough();
 
 export const AskUserQuestionResultV2Schema = BaseEnvelopeSchema.extend({
-  answers: z.record(z.string()).optional(),
+  answers: z.record(z.string(), z.string()).optional(),
 }).passthrough();
 
 export const SubAgentRunInputV2Schema = BaseEnvelopeSchema.extend({

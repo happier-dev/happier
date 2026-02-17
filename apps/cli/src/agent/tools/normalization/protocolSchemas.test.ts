@@ -53,11 +53,11 @@ describe('protocol tool v2 schemas', () => {
     it('provides per-tool input/result schemas for known tools', () => {
         const bashInputSchema = getToolInputSchemaV2('Bash');
         const parsedInput = bashInputSchema.parse({ command: 'echo hello' });
-        expect(parsedInput.command).toBe('echo hello');
+        expect(parsedInput).toMatchObject({ command: 'echo hello' });
 
         const bashResultSchema = getToolResultSchemaV2('Bash');
         const parsedResult = bashResultSchema.parse({ stdout: 'hello\n', exit_code: 0 });
-        expect(parsedResult.exit_code).toBe(0);
+        expect(parsedResult).toMatchObject({ exit_code: 0 });
     });
 
     it('rejects Diff.files entries with empty old/new text pairs', () => {

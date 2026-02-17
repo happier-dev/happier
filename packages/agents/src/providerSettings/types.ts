@@ -1,8 +1,10 @@
-import type * as z from 'zod';
+import type { z, ZodTypeAny } from 'zod';
 
 import type { AgentId } from '../types.js';
 
-export type ProviderSettingsBuildShape = (zod: typeof z) => z.ZodRawShape;
+export type ProviderSettingsShape = Readonly<Record<string, ZodTypeAny>>;
+
+export type ProviderSettingsBuildShape = (zod: typeof z) => ProviderSettingsShape;
 
 export type ProviderSettingsBuildMessageMetaExtras = (args: Readonly<{
   agentId: AgentId;
@@ -22,4 +24,3 @@ export type ProviderSettingsDefinition = Readonly<{
   buildOutgoingMessageMetaExtras?: ProviderSettingsBuildMessageMetaExtras;
   resolveSpawnExtras?: ProviderSettingsResolveSpawnExtras;
 }>;
-

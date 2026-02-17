@@ -25,8 +25,10 @@ function unwrap(schema: z.ZodTypeAny): { schema: z.ZodTypeAny; optional: boolean
       current = (current as any)._def.innerType;
       continue;
     }
-    if (current instanceof z.ZodEffects) {
-      current = (current as any)._def.schema;
+    if (current instanceof z.ZodPipe) {
+      // Zod v4 represents transforms/pipes as a `ZodPipe` with `in`/`out` schemas.
+      // For input contracts, we want to reflect the *input* schema shape.
+      current = (current as any)._def.in;
       continue;
     }
     break;
@@ -46,7 +48,7 @@ function schemaToJson(schema: z.ZodTypeAny): JsonSchema {
 
   const out: JsonSchema = (() => {
     if (core instanceof z.ZodObject) {
-      const shape = (core as any).shape ?? ((core as any)._def?.shape ? (core as any)._def.shape() : {});
+      const shape = (core as any).shape ?? (core as any)._def?.shape ?? {};
       const properties: Record<string, unknown> = {};
       const required: string[] = [];
       for (const [key, value] of Object.entries(shape ?? {})) {
@@ -55,8 +57,8 @@ function schemaToJson(schema: z.ZodTypeAny): JsonSchema {
         if (!unwrapped.optional) required.push(key);
       }
 
-      const unknownKeys = (core as any)._def?.unknownKeys;
-      const passthrough = unknownKeys === 'passthrough';
+      const catchall = (core as any)._def?.catchall;
+      const passthrough = catchall instanceof z.ZodUnknown;
 
       return {
         type: 'object',
@@ -67,7 +69,7 @@ function schemaToJson(schema: z.ZodTypeAny): JsonSchema {
     }
 
     if (core instanceof z.ZodArray) {
-      const inner = (core as any)._def?.type;
+      const inner = (core as any)._def?.element;
       return { type: 'array', items: inner ? schemaToJson(inner) : {} };
     }
 
@@ -76,7 +78,11 @@ function schemaToJson(schema: z.ZodTypeAny): JsonSchema {
     if (core instanceof z.ZodBoolean) return { type: 'boolean' };
 
     if (core instanceof z.ZodLiteral) {
-      const value = (core as any)._def?.value;
+      const def = (core as any)._def;
+      const value =
+        def?.value ??
+        (Array.isArray(def?.values) ? def.values[0] : undefined) ??
+        (def?.values instanceof Set ? Array.from(def.values)[0] : undefined);
       if (value === null) return { type: 'null' };
       if (typeof value === 'string') return { type: 'string', enum: [value] };
       if (typeof value === 'number') return { type: 'number', enum: [value] };
@@ -86,12 +92,8 @@ function schemaToJson(schema: z.ZodTypeAny): JsonSchema {
     }
 
     if (core instanceof z.ZodEnum) {
-      const values = (core as any)._def?.values;
-      return { type: 'string', ...(Array.isArray(values) ? { enum: values } : {}) };
-    }
-
-    if (core instanceof z.ZodNativeEnum) {
-      const values = Object.values((core as any)._def?.values ?? {}).filter((v) => typeof v === 'string');
+      const entries = (core as any)._def?.entries;
+      const values = Object.values(entries ?? {}).filter((v) => typeof v === 'string');
       return { type: 'string', ...(values.length > 0 ? { enum: values } : {}) };
     }
 
@@ -101,8 +103,8 @@ function schemaToJson(schema: z.ZodTypeAny): JsonSchema {
     }
 
     if (core instanceof z.ZodDiscriminatedUnion) {
-      const options = Array.from((core as any)._def?.options?.values?.() ?? []);
-      return { oneOf: options.map((s: any) => schemaToJson(s)) };
+      const options = (core as any)._def?.options ?? [];
+      return { oneOf: Array.isArray(options) ? options.map((s: any) => schemaToJson(s)) : [] };
     }
 
     // Fallback: accept any object.

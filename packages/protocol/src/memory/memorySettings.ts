@@ -28,6 +28,7 @@ export const MemoryHintsSettingsV1Schema = z
   .passthrough();
 
 export type MemoryHintsSettingsV1 = z.infer<typeof MemoryHintsSettingsV1Schema>;
+const DEFAULT_MEMORY_HINTS_SETTINGS: MemoryHintsSettingsV1 = MemoryHintsSettingsV1Schema.parse({});
 
 export const MemoryDeepSettingsV1Schema = z
   .object({
@@ -45,6 +46,7 @@ export const MemoryDeepSettingsV1Schema = z
   .passthrough();
 
 export type MemoryDeepSettingsV1 = z.infer<typeof MemoryDeepSettingsV1Schema>;
+const DEFAULT_MEMORY_DEEP_SETTINGS: MemoryDeepSettingsV1 = MemoryDeepSettingsV1Schema.parse({});
 
 export const MemoryEmbeddingsSettingsV1Schema = z
   .object({
@@ -57,6 +59,7 @@ export const MemoryEmbeddingsSettingsV1Schema = z
   .passthrough();
 
 export type MemoryEmbeddingsSettingsV1 = z.infer<typeof MemoryEmbeddingsSettingsV1Schema>;
+const DEFAULT_MEMORY_EMBEDDINGS_SETTINGS: MemoryEmbeddingsSettingsV1 = MemoryEmbeddingsSettingsV1Schema.parse({});
 
 export const MemoryBudgetsSettingsV1Schema = z
   .object({
@@ -66,6 +69,7 @@ export const MemoryBudgetsSettingsV1Schema = z
   .passthrough();
 
 export type MemoryBudgetsSettingsV1 = z.infer<typeof MemoryBudgetsSettingsV1Schema>;
+const DEFAULT_MEMORY_BUDGETS_SETTINGS: MemoryBudgetsSettingsV1 = MemoryBudgetsSettingsV1Schema.parse({});
 
 export const MemoryWorkerSettingsV1Schema = z
   .object({
@@ -77,6 +81,7 @@ export const MemoryWorkerSettingsV1Schema = z
   .passthrough();
 
 export type MemoryWorkerSettingsV1 = z.infer<typeof MemoryWorkerSettingsV1Schema>;
+const DEFAULT_MEMORY_WORKER_SETTINGS: MemoryWorkerSettingsV1 = MemoryWorkerSettingsV1Schema.parse({});
 
 export const MemorySettingsV1Schema = z
   .object({
@@ -86,11 +91,11 @@ export const MemorySettingsV1Schema = z
     defaultScope: MemoryDefaultScopeV1Schema.default({ type: 'global' }),
     backfillPolicy: z.enum(['new_only', 'last_30_days', 'all_history']).default('new_only'),
     deleteOnDisable: z.boolean().default(false),
-    hints: MemoryHintsSettingsV1Schema.default({}),
-    deep: MemoryDeepSettingsV1Schema.default({}),
-    embeddings: MemoryEmbeddingsSettingsV1Schema.default({}),
-    budgets: MemoryBudgetsSettingsV1Schema.default({}),
-    worker: MemoryWorkerSettingsV1Schema.default({}),
+    hints: MemoryHintsSettingsV1Schema.prefault(DEFAULT_MEMORY_HINTS_SETTINGS),
+    deep: MemoryDeepSettingsV1Schema.prefault(DEFAULT_MEMORY_DEEP_SETTINGS),
+    embeddings: MemoryEmbeddingsSettingsV1Schema.prefault(DEFAULT_MEMORY_EMBEDDINGS_SETTINGS),
+    budgets: MemoryBudgetsSettingsV1Schema.prefault(DEFAULT_MEMORY_BUDGETS_SETTINGS),
+    worker: MemoryWorkerSettingsV1Schema.prefault(DEFAULT_MEMORY_WORKER_SETTINGS),
   })
   .passthrough();
 
@@ -102,4 +107,3 @@ export function normalizeMemorySettings(raw: unknown): MemorySettingsV1 {
   const parsed = MemorySettingsV1Schema.safeParse(raw);
   return parsed.success ? parsed.data : DEFAULT_MEMORY_SETTINGS;
 }
-

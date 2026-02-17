@@ -1,4 +1,4 @@
-import * as z from 'zod';
+import { z } from 'zod';
 import { dbgSettings, isSettingsSyncDebugEnabled } from './debugSettings';
 import { SecretStringSchema } from '../../encryption/secretSettings';
 import { pruneSecretBindings } from './secretBindings';
@@ -433,8 +433,8 @@ export const SettingsSchema = SettingsSchemaBase.extend(PROVIDER_SETTINGS_SHAPE)
 
 const SettingsSchemaPartial = SettingsSchema.partial();
 
-export type KnownSettings = z.infer<typeof SettingsSchema>;
-export type Settings = z.infer<typeof SettingsSchema> & Record<string, unknown>;
+export type KnownSettings = z.infer<typeof SettingsSchemaBase>;
+export type Settings = KnownSettings & Record<string, unknown>;
 
 //
 // Defaults
@@ -642,7 +642,7 @@ export function settingsParse(settings: unknown): Settings {
             return;
         }
 
-        const schema = SettingsSchema.shape[key];
+        const schema = SettingsSchema.shape[key] as z.ZodTypeAny;
         const parsedField = schema.safeParse(input[key]);
         if (parsedField.success) {
             result[key] = parsedField.data;
@@ -684,7 +684,7 @@ export function settingsParse(settings: unknown): Settings {
     const hasMachineSearch = 'useMachinePickerSearch' in input;
     const hasPathSearch = 'usePathPickerSearch' in input;
     if (!hasMachineSearch && !hasPathSearch) {
-        const legacy = SettingsSchema.shape.usePickerSearch.safeParse(input.usePickerSearch);
+        const legacy = (SettingsSchema.shape.usePickerSearch as z.ZodTypeAny).safeParse(input.usePickerSearch);
         if (legacy.success && legacy.data === true) {
             result.useMachinePickerSearch = true;
             result.usePathPickerSearch = true;

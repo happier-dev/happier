@@ -129,7 +129,7 @@ export const SessionHistoryRawMessageSchema = z.object({
   id: z.string().min(1),
   createdAt: z.number().int().nonnegative(),
   role: z.string().min(1),
-  raw: z.record(z.unknown()),
+  raw: z.record(z.string(), z.unknown()),
 }).passthrough();
 export type SessionHistoryRawMessage = z.infer<typeof SessionHistoryRawMessageSchema>;
 

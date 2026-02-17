@@ -237,8 +237,8 @@ export const EphemeralUpdateSchema = z.discriminatedUnion('type', [
     type: z.literal('usage'),
     id: z.string(),
     key: z.string(),
-    tokens: z.record(z.number()),
-    cost: z.record(z.number()),
+    tokens: z.record(z.string(), z.number()),
+    cost: z.record(z.string(), z.number()),
     timestamp: TimestampMsSchema,
   }).passthrough(),
   z.object({

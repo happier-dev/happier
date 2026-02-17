@@ -14,9 +14,9 @@ export const E2eRequiredBinarySchema = z.union([
 export const E2eCliSpecSchema = z.object({
   subcommand: z.string().min(1),
   extraArgs: z.array(z.string()).optional(),
-  env: z.record(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
   // Map CLI env var -> test-runner env var
-  envFrom: z.record(z.string()).optional(),
+  envFrom: z.record(z.string(), z.string()).optional(),
 });
 
 export const E2eCliProviderAuthOverlaySchema = z.object({
@@ -40,7 +40,7 @@ export const E2eCliProviderAuthOverlaySchema = z.object({
    *
    * These are merged on top of the base CLI env computed by the E2E harness.
    */
-  env: z.record(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
   /**
    * Env vars to remove for this auth mode.
    *

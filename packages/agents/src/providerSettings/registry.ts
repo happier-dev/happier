@@ -1,4 +1,4 @@
-import type * as z from 'zod';
+import * as zod from 'zod';
 
 import type { AgentId } from '../types.js';
 
@@ -19,7 +19,7 @@ export function getProviderSettingsDefinition(providerId: AgentId): ProviderSett
   return (ALL_DEFINITIONS.find((d) => d.providerId === providerId) ?? null) as ProviderSettingsDefinition | null;
 }
 
-export function assertProviderSettingsRegistryValid(zod: typeof z): void {
+export function assertProviderSettingsRegistryValid(): void {
   const seenProviders = new Set<string>();
   const seenKeys = new Set<string>();
 
@@ -50,4 +50,3 @@ export function assertProviderSettingsRegistryValid(zod: typeof z): void {
     }
   }
 }
-

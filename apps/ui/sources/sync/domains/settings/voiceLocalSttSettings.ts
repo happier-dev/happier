@@ -11,7 +11,7 @@ const VoiceLocalSttOpenAiCompatSchema = z
     apiKey: SecretStringSchema.nullable().default(null),
     model: z.string().default('whisper-1'),
   })
-  .default({});
+  .prefault({});
 
 const VoiceLocalSttGoogleGeminiSchema = z
   .object({
@@ -19,14 +19,14 @@ const VoiceLocalSttGoogleGeminiSchema = z
     model: z.string().default('gemini-2.5-flash'),
     language: z.string().nullable().default(null),
   })
-  .default({});
+  .prefault({});
 
 const VoiceLocalSttLocalNeuralSchema = z
   .object({
     assetId: z.string().nullable().default('sherpa-onnx-streaming-zipformer-en-20M-2023-02-17'),
     language: z.string().nullable().default(null),
   })
-  .default({});
+  .prefault({});
 
 const VoiceLocalSttSchemaV2 = z.object({
   provider: VoiceLocalSttProviderSchema.default('openai_compat'),

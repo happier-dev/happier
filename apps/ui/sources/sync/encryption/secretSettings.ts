@@ -1,4 +1,4 @@
-import * as z from 'zod';
+import { z } from 'zod';
 
 import { encodeBase64, decodeBase64 } from '@/encryption/base64';
 import sodium from '@/encryption/libsodium.lib';
@@ -154,4 +154,3 @@ export function sealSecretsDeep<T>(input: T, key: Uint8Array | null): T {
     }
     return out;
 }
-

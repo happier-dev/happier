@@ -1,4 +1,4 @@
-import * as z from 'zod';
+import { z } from 'zod';
 
 import { buildCodexProviderSettingsShape, CODEX_PROVIDER_SETTINGS_DEFAULTS } from '@happier-dev/agents';
 

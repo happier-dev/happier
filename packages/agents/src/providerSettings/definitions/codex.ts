@@ -1,6 +1,6 @@
-import type * as z from 'zod';
+import type { z } from 'zod';
 
-import type { ProviderSettingsDefinition } from '../types.js';
+import type { ProviderSettingsDefinition, ProviderSettingsShape } from '../types.js';
 
 export type CodexBackendMode = 'mcp' | 'mcp_resume' | 'acp';
 
@@ -10,7 +10,7 @@ export const CODEX_PROVIDER_SETTINGS_DEFAULTS = Object.freeze({
   codexAcpInstallSpec: '',
 });
 
-export function buildCodexProviderSettingsShape(zod: typeof z): z.ZodRawShape {
+export function buildCodexProviderSettingsShape(zod: typeof z): ProviderSettingsShape {
   return {
     codexBackendMode: zod.enum(['mcp', 'mcp_resume', 'acp']),
     codexMcpResumeInstallSpec: zod.string(),
@@ -35,4 +35,3 @@ export const CODEX_PROVIDER_SETTINGS_DEFINITION: ProviderSettingsDefinition = Ob
   buildOutgoingMessageMetaExtras: () => ({}),
   resolveSpawnExtras: ({ settings }) => resolveCodexSpawnExtrasFromSettings(settings),
 });
-

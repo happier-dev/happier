@@ -178,7 +178,7 @@ function parsePendingSettings(raw: unknown): Partial<Settings> {
             return;
         }
 
-        const schema = SettingsSchema.shape[key];
+        const schema = SettingsSchema.shape[key] as z.ZodTypeAny;
         const parsed = schema.safeParse(input[key]);
         if (parsed.success) {
             (out as any)[key] = parsed.data;

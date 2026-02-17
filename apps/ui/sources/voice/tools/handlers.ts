@@ -12,6 +12,11 @@ function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
 }
 
+function asPlainObject(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
 type ToolOk = { ok: true } & Record<string, unknown>;
 type ToolError = { ok: false; errorCode: string; errorMessage: string } & Record<string, unknown>;
 
@@ -96,7 +101,11 @@ export function createVoiceToolHandlers(
     const parsed = spec.inputSchema.safeParse(parameters ?? {});
     if (!parsed.success) return jsonError('invalid_parameters', 'invalid_parameters');
 
-    const resolved = resolveSessionIdOrError(parsed.data.sessionId ?? null);
+    const data = asPlainObject(parsed.data);
+    if (!data) return jsonError('invalid_parameters', 'invalid_parameters');
+
+    const sessionIdParam = typeof data.sessionId === 'string' ? data.sessionId : null;
+    const resolved = resolveSessionIdOrError(sessionIdParam);
     if (!resolved.ok) return jsonError('session_not_selected', resolved.error);
 
     const sessionId = resolved.sessionId;
@@ -117,9 +126,12 @@ export function createVoiceToolHandlers(
       }
     }
 
+    const message = typeof data.message === 'string' ? data.message : null;
+    if (!message) return jsonError('invalid_parameters', 'invalid_parameters');
+
     const res = await executor.execute(
       'session.message.send',
-      { sessionId, message: parsed.data.message },
+      { sessionId, message },
       { serverId: targetServerId, defaultSessionId: deps.resolveSessionId(null) },
     );
     if (!res.ok) {
@@ -137,7 +149,7 @@ export function createVoiceToolHandlers(
       sessionId,
       resolveAdapterId(),
       'sendSessionMessage',
-      `Sent to session: ${String(parsed.data.message).slice(0, 200)}`,
+      `Sent to session: ${String(message).slice(0, 200)}`,
     );
     return jsonOk({ status: 'sent', sessionId });
   };
@@ -147,7 +159,11 @@ export function createVoiceToolHandlers(
     const parsed = spec.inputSchema.safeParse(parameters ?? {});
     if (!parsed.success) return jsonError('invalid_parameters', 'invalid_parameters');
 
-    const resolved = resolveSessionIdOrError(parsed.data.sessionId ?? null);
+    const data = asPlainObject(parsed.data);
+    if (!data) return jsonError('invalid_parameters', 'invalid_parameters');
+
+    const sessionIdParam = typeof data.sessionId === 'string' ? data.sessionId : null;
+    const resolved = resolveSessionIdOrError(sessionIdParam);
     if (!resolved.ok) return jsonError('session_not_selected', resolved.error);
     const sessionId = resolved.sessionId;
 
@@ -160,7 +176,7 @@ export function createVoiceToolHandlers(
 
     const requestIds = Object.keys(requests);
     const requestId = (() => {
-      const explicit = normalizeId(parsed.data.requestId);
+      const explicit = normalizeId(data.requestId);
       if (explicit) return explicit;
       if (requestIds.length === 1) return requestIds[0];
       return null;
@@ -172,10 +188,13 @@ export function createVoiceToolHandlers(
       return jsonError('permission_request_not_found', 'permission_request_not_found', { sessionId, requestId });
     }
 
+    const decision = data.decision === 'allow' || data.decision === 'deny' ? data.decision : null;
+    if (!decision) return jsonError('invalid_parameters', 'invalid_parameters');
+
     const targetServerId = resolveSessionServerIdFromCaches(sessionId);
     const res = await executor.execute(
       'session.permission.respond',
-      { sessionId, decision: parsed.data.decision, requestId },
+      { sessionId, decision, requestId },
       { serverId: targetServerId, defaultSessionId: deps.resolveSessionId(null) },
     );
 
@@ -184,12 +203,12 @@ export function createVoiceToolHandlers(
       return jsonError('permission_update_failed', 'permission_update_failed', { sessionId, requestId });
     }
 
-    trackPermissionResponse(parsed.data.decision === 'allow');
+    trackPermissionResponse(decision === 'allow');
     voiceActivityController.appendActionExecuted(
       sessionId,
       resolveAdapterId(),
       'processPermissionRequest',
-      `${parsed.data.decision === 'allow' ? 'Allowed' : 'Denied'} permission request: ${requestId}`,
+      `${decision === 'allow' ? 'Allowed' : 'Denied'} permission request: ${requestId}`,
     );
     return jsonOk({ status: 'done', sessionId, requestId });
   };

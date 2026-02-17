@@ -40,7 +40,7 @@ const VoiceUiSchema = z.object({
   surfaceLocation: z.enum(['sidebar', 'session', 'auto']).default('auto'),
   activityFeedEnabled: z.boolean().default(false),
   activityFeedAutoExpandOnStart: z.boolean().default(false),
-  updates: VoiceUiUpdatesSchema.default({}),
+  updates: VoiceUiUpdatesSchema.prefault({}),
 });
 
 const VoiceRealtimeElevenLabsSchema = z.object({
@@ -65,9 +65,9 @@ const VoiceRealtimeElevenLabsSchema = z.object({
           useSpeakerBoost: z.boolean().nullable().default(null),
           speed: z.number().min(0.5).max(2).nullable().default(null),
         })
-        .default({}),
+        .prefault({}),
     })
-    .default({}),
+    .prefault({}),
   byo: z
     .object({
       agentId: z.string().nullable().default(null),
@@ -78,8 +78,8 @@ const VoiceRealtimeElevenLabsSchema = z.object({
 
 const VoiceLocalConversationSchema = z.object({
   conversationMode: z.enum(['direct_session', 'agent']).default('direct_session'),
-  stt: VoiceLocalSttSchema.default({}),
-  tts: VoiceLocalTtsSchema.default({}),
+  stt: VoiceLocalSttSchema.prefault({}),
+  tts: VoiceLocalTtsSchema.prefault({}),
   networkTimeoutMs: z.number().int().min(1000).max(60000).default(15000),
   handsFree: z
     .object({
@@ -89,7 +89,7 @@ const VoiceLocalConversationSchema = z.object({
           silenceMs: z.number().int().min(0).max(5000).default(450),
           minSpeechMs: z.number().int().min(0).max(5000).default(120),
         })
-        .default({}),
+        .prefault({}),
     })
     .default({ enabled: false, endpointing: { silenceMs: 450, minSpeechMs: 120 } }),
 	  agent: z
@@ -122,11 +122,11 @@ const VoiceLocalConversationSchema = z.object({
 	      commitIsolation: z.boolean().default(false),
 	      // Persist global voice agent conversation state for resumability across app reloads and daemon restarts.
 	      transcript: z
-	        .object({
-	          persistenceMode: z.enum(['ephemeral', 'persistent']).default('ephemeral'),
-	          epoch: z.number().int().min(0).default(0),
-	        })
-	        .default({}),
+        .object({
+          persistenceMode: z.enum(['ephemeral', 'persistent']).default('ephemeral'),
+          epoch: z.number().int().min(0).default(0),
+        })
+        .prefault({}),
 	      chatModelSource: z.enum(['session', 'custom']).default('custom'),
 	      chatModelId: z.string().default('default'),
 	      commitModelSource: z.enum(['chat', 'session', 'custom']).default('chat'),
@@ -140,10 +140,10 @@ const VoiceLocalConversationSchema = z.object({
           temperature: z.number().min(0).max(2).default(0.4),
           maxTokens: z.number().int().nullable().default(null),
         })
-        .default({}),
+        .prefault({}),
       verbosity: z.enum(['short', 'balanced']).default('short'),
     })
-    .default({}),
+    .prefault({}),
 	  streaming: z
 	    .object({
       enabled: z.boolean().default(false),
@@ -166,8 +166,8 @@ const VoiceLocalConversationSchema = z.object({
 });
 
 const VoiceLocalDirectSchema = z.object({
-  stt: VoiceLocalSttSchema.default({}),
-  tts: VoiceLocalTtsSchema.default({}),
+  stt: VoiceLocalSttSchema.prefault({}),
+  tts: VoiceLocalTtsSchema.prefault({}),
   networkTimeoutMs: z.number().int().min(1000).max(60000).default(15000),
   handsFree: z
     .object({
@@ -177,7 +177,7 @@ const VoiceLocalDirectSchema = z.object({
           silenceMs: z.number().int().min(0).max(5000).default(450),
           minSpeechMs: z.number().int().min(0).max(5000).default(120),
         })
-        .default({}),
+        .prefault({}),
     })
     .default({ enabled: false, endpointing: { silenceMs: 450, minSpeechMs: 120 } }),
 });
@@ -185,15 +185,15 @@ const VoiceLocalDirectSchema = z.object({
 export const VoiceSettingsSchema = z.object({
   providerId: VoiceProviderIdSchema.default('realtime_elevenlabs'),
   assistantLanguage: z.string().nullable().default(null),
-  ui: VoiceUiSchema.default({}),
-  privacy: VoicePrivacySchema.default({}),
+  ui: VoiceUiSchema.prefault({}),
+  privacy: VoicePrivacySchema.prefault({}),
   adapters: z
     .object({
-      realtime_elevenlabs: VoiceRealtimeElevenLabsSchema.default({}),
-      local_direct: VoiceLocalDirectSchema.default({}),
-      local_conversation: VoiceLocalConversationSchema.default({}),
+      realtime_elevenlabs: VoiceRealtimeElevenLabsSchema.prefault({}),
+      local_direct: VoiceLocalDirectSchema.prefault({}),
+      local_conversation: VoiceLocalConversationSchema.prefault({}),
     })
-    .default({}),
+    .prefault({}),
 });
 
 export type VoiceSettings = z.infer<typeof VoiceSettingsSchema>;

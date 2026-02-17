@@ -1,6 +1,6 @@
-import type * as z from 'zod';
+import type { z } from 'zod';
 
-import type { ProviderSettingsDefinition } from '../types.js';
+import type { ProviderSettingsDefinition, ProviderSettingsShape } from '../types.js';
 
 export const MAX_CLAUDE_REMOTE_ADVANCED_OPTIONS_JSON_CHARS = 16_384;
 
@@ -40,7 +40,7 @@ export const CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS = Object.freeze({
   claudeRemoteAdvancedOptionsJson: '',
 });
 
-export function buildClaudeRemoteProviderSettingsShape(zod: typeof z): z.ZodRawShape {
+export function buildClaudeRemoteProviderSettingsShape(zod: typeof z): ProviderSettingsShape {
   return {
     claudeRemoteAgentSdkEnabled: zod.boolean(),
     claudeRemoteSettingSources: zod.enum(['project', 'user_project', 'none']),

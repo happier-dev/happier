@@ -14,7 +14,6 @@ export const SessionActionDraftSchema = z.object({
     actionId: z.string().min(1),
     createdAt: z.number().finite(),
     status: SessionActionDraftStatusSchema,
-    input: z.record(z.unknown()),
+    input: z.record(z.string(), z.unknown()),
     error: z.string().nullable().optional(),
 }).strict();
-

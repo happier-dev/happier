@@ -29,15 +29,17 @@ export const CodeRabbitReviewEngineInputSchema = z
   })
   .strict();
 export type CodeRabbitReviewEngineInput = z.infer<typeof CodeRabbitReviewEngineInputSchema>;
+const DEFAULT_CODERABBIT_REVIEW_ENGINE_INPUT: CodeRabbitReviewEngineInput = CodeRabbitReviewEngineInputSchema.parse({});
 
 export const ReviewEngineInputsSchema = z
   .object({
     // Default to `{}` so surfaces don't need to inject an "empty config" object
     // just to satisfy schema validation when the engine is selected.
-    coderabbit: CodeRabbitReviewEngineInputSchema.optional().default({}),
+    coderabbit: CodeRabbitReviewEngineInputSchema.optional().default(DEFAULT_CODERABBIT_REVIEW_ENGINE_INPUT),
   })
   .passthrough();
 export type ReviewEngineInputs = z.infer<typeof ReviewEngineInputsSchema>;
+const DEFAULT_REVIEW_ENGINE_INPUTS: ReviewEngineInputs = ReviewEngineInputsSchema.parse({});
 
 export const ReviewStartInputSchema = z
   .object({
@@ -46,7 +48,7 @@ export const ReviewStartInputSchema = z
     instructions: z.string().trim().min(1),
     changeType: ReviewChangeTypeSchema.default('committed'),
     base: ReviewBaseSchema.default({ kind: 'none' }),
-    engines: ReviewEngineInputsSchema.default({}),
+    engines: ReviewEngineInputsSchema.prefault(DEFAULT_REVIEW_ENGINE_INPUTS),
     permissionMode: z.string().min(1).default('read_only'),
   })
   .passthrough()
