@@ -1,4 +1,4 @@
-import type { FeaturesResponse } from '@/app/features/types';
+import type { FeaturesPayloadDelta } from '@/app/features/types';
 
 import { resolveAutomationsFeature } from '@/app/features/automationsFeature';
 import { resolveBugReportsFeature } from '@/app/features/bugReportsFeature';
@@ -10,7 +10,7 @@ import { resolveAuthFeature } from '@/app/features/authFeature';
 import { resolveConnectedServicesFeature } from '@/app/features/connectedServicesFeature';
 import { resolveUpdatesFeature } from '@/app/features/updatesFeature';
 
-export type ServerFeatureResolver = (env: NodeJS.ProcessEnv) => Partial<FeaturesResponse['features']>;
+export type ServerFeatureResolver = (env: NodeJS.ProcessEnv) => FeaturesPayloadDelta;
 
 export const serverFeatureRegistry: readonly ServerFeatureResolver[] = Object.freeze([
     (env) => resolveBugReportsFeature(env),

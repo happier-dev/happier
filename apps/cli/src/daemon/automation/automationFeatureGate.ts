@@ -1,7 +1,7 @@
-import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
+import { resolveCliGlobalOnlyFeatureDecision } from '@/features/featureDecisionGlobalOnly';
 
 export function getAutomationWorkerFeatureDecision(env: NodeJS.ProcessEnv) {
-  return resolveCliFeatureDecision({
+  return resolveCliGlobalOnlyFeatureDecision({
     featureId: 'automations',
     env,
   });
@@ -12,7 +12,7 @@ export function isAutomationWorkerEnabled(env: NodeJS.ProcessEnv): boolean {
 }
 
 export function isExistingSessionAutomationTargetEnabled(env: NodeJS.ProcessEnv): boolean {
-  return resolveCliFeatureDecision({
+  return resolveCliGlobalOnlyFeatureDecision({
     featureId: 'automations.existingSessionTarget',
     env,
   }).state === 'enabled';

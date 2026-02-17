@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -147,6 +147,7 @@ describe('core e2e: connected services v2 materialize codex auth.json on spawn',
     }, { timeoutMs: 20_000 });
 
     const materializationKey = 'connected-services-e2e-1';
+    const materializationDirSegment = createHash('sha256').update(materializationKey, 'utf8').digest('hex');
     const spawnRes = await daemonControlPostJson<{ success?: boolean; sessionId?: string }>({
       port: daemonPort,
       path: '/spawn-session',
@@ -186,7 +187,7 @@ describe('core e2e: connected services v2 materialize codex auth.json on spawn',
         'daemon',
         'connected-services',
         'materialized',
-        materializationKey,
+        materializationDirSegment,
         'codex',
         'codex-home',
         'auth.json',
@@ -216,4 +217,3 @@ describe('core e2e: connected services v2 materialize codex auth.json on spawn',
     }).catch(() => {});
   }, 240_000);
 });
-

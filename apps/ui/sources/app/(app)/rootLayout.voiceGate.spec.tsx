@@ -85,7 +85,8 @@ vi.mock('@/sync/sync', () => ({
 vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
     getReadyServerFeatures: async () =>
         createRootLayoutFeaturesResponse({
-            voice: { enabled: false, configured: false, provider: null },
+            features: { voice: { enabled: true, happierVoice: { enabled: false } } },
+            capabilities: { voice: { configured: false, provider: null, requested: true, disabledByBuildPolicy: false } },
         }),
 }));
 

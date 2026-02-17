@@ -44,6 +44,7 @@ describe("voiceRoutes (session complete)", () => {
             ...originalEnv,
             HAPPIER_FEATURE_VOICE__ENABLED: "1",
             ELEVENLABS_API_KEY: "el_key",
+            ELEVENLABS_AGENT_ID: "agent_dev",
         };
         leaseFindFirst.mockResolvedValue({
             id: "lease_1",
@@ -93,6 +94,22 @@ describe("voiceRoutes (session complete)", () => {
             }),
         );
         expect(conversationUpsert).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns 404 when Happier Voice is disabled", async () => {
+        process.env.HAPPIER_FEATURE_VOICE__ENABLED = "0";
+
+        const { voiceRoutes } = await import("./voiceRoutes");
+        const app = new FakeApp();
+        voiceRoutes(app as any);
+
+        const handler = app.routes.get("POST /v1/voice/session/complete");
+        const reply = replyStub();
+        const res = await handler({ userId: "u1", body: { leaseId: "lease_1", providerConversationId: "conv_123" } }, reply);
+
+        expect(reply.code).toHaveBeenCalledWith(404);
+        expect(res).toEqual({ ok: false, reason: "not_found" });
+        expect(globalThis.fetch).not.toHaveBeenCalled();
     });
 
     it("returns 503 when persisting the conversation fails", async () => {

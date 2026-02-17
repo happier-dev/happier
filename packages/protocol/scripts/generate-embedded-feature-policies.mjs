@@ -29,7 +29,7 @@ function parseArgs(argv) {
 function normalizePolicyEnv(raw) {
   const normalized = String(raw ?? '').trim().toLowerCase();
   if (normalized === 'production' || normalized === 'prod' || normalized === 'stable') return 'production';
-  if (normalized === 'preview' || normalized === 'dev' || normalized === 'development') return 'preview';
+  if (normalized === 'preview') return 'preview';
   return null;
 }
 

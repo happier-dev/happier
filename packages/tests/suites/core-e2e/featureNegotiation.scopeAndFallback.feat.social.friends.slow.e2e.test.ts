@@ -37,8 +37,8 @@ describe('core e2e: feature negotiation scope and fallback', () => {
         Authorization: `Bearer ${auth.token}`,
       },
     });
-    expect(friends.status).toBe(200);
-    expect(Array.isArray(friends.data?.friends)).toBe(true);
+    expect(friends.status).toBe(404);
+    expect(friends.data?.error).toBe("not_found");
   }, 180_000);
 
   it('enables social.friends when username mode is allowed without oauth provider config', async () => {

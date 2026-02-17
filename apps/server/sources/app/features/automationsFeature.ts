@@ -1,19 +1,16 @@
-import type { FeaturesResponse } from "./types";
+import type { FeaturesPayloadDelta } from "./types";
 import { readAutomationsFeatureEnv } from "./catalog/readFeatureEnv";
-import { isServerFeatureEnabledByBuildPolicy } from "./catalog/serverFeatureBuildPolicy";
 
-export function resolveAutomationsFeature(env: NodeJS.ProcessEnv): Pick<FeaturesResponse["features"], "automations"> {
+export function resolveAutomationsFeature(env: NodeJS.ProcessEnv): FeaturesPayloadDelta {
     const config = readAutomationsFeatureEnv(env);
-    const buildEnabled = isServerFeatureEnabledByBuildPolicy("automations", env);
-    const enabled = buildEnabled && config.enabled;
-    const existingSessionTargetEnabled =
-        enabled &&
-        isServerFeatureEnabledByBuildPolicy("automations.existingSessionTarget", env) &&
-        config.existingSessionTarget;
+    const enabled = config.enabled;
+    const existingSessionTargetEnabled = config.existingSessionTarget;
     return {
-        automations: {
-            enabled,
-            existingSessionTarget: existingSessionTargetEnabled,
+        features: {
+            automations: {
+                enabled,
+                existingSessionTarget: { enabled: existingSessionTargetEnabled },
+            },
         },
     };
 }

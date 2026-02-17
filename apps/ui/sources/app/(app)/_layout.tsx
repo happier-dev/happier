@@ -275,7 +275,7 @@ export default function RootLayout() {
                 const features = await getReadyServerFeatures();
                 if (cancelled) return;
                 if (!features) return;
-                if (features.features.voice.enabled !== false) return;
+                if (features.features.voice.happierVoice.enabled === true) return;
                 const voice = (storage.getState().settings as any)?.voice ?? null;
                 const providerId = voice?.providerId ?? 'off';
                 const billingMode = voice?.adapters?.realtime_elevenlabs?.billingMode ?? 'happier';
@@ -461,6 +461,18 @@ export default function RootLayout() {
                 name="settings/profiles"
                 options={{
                     headerTitle: t('settingsFeatures.profiles'),
+                }}
+            />
+            <Stack.Screen
+                name="settings/session/tool-rendering"
+                options={{
+                    headerTitle: t('settingsSession.toolRendering.title'),
+                }}
+            />
+            <Stack.Screen
+                name="settings/session/permissions"
+                options={{
+                    headerTitle: t('settingsSession.permissions.title'),
                 }}
             />
             <Stack.Screen

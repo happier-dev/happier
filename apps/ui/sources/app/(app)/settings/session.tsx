@@ -14,95 +14,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import type { BusySteerSendPolicy, MessageSendMode } from '@/sync/domains/session/control/submitMode';
-import { getPermissionModeLabelForAgentType, getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
-import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
-import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
-import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { getPermissionApplyTimingSubtitleKey } from './sessionI18n';
-
-type ToolViewDetailLevel = 'title' | 'summary' | 'full';
-type ToolDetailLevelTranslationKey =
-    | 'settingsSession.toolDetailLevel.defaultTitle'
-    | 'settingsSession.toolDetailLevel.defaultSubtitle'
-    | 'settingsSession.toolDetailLevel.titleOnlyTitle'
-    | 'settingsSession.toolDetailLevel.titleOnlySubtitle'
-    | 'settingsSession.toolDetailLevel.summaryTitle'
-    | 'settingsSession.toolDetailLevel.summarySubtitle'
-    | 'settingsSession.toolDetailLevel.fullTitle'
-    | 'settingsSession.toolDetailLevel.fullSubtitle';
-
-const TOOL_DETAIL_LEVEL_OPTIONS = [
-    {
-        key: 'title',
-        titleKey: 'settingsSession.toolDetailLevel.titleOnlyTitle',
-        subtitleKey: 'settingsSession.toolDetailLevel.titleOnlySubtitle',
-    },
-    {
-        key: 'summary',
-        titleKey: 'settingsSession.toolDetailLevel.summaryTitle',
-        subtitleKey: 'settingsSession.toolDetailLevel.summarySubtitle',
-    },
-    {
-        key: 'full',
-        titleKey: 'settingsSession.toolDetailLevel.fullTitle',
-        subtitleKey: 'settingsSession.toolDetailLevel.fullSubtitle',
-    },
- ] as const satisfies ReadonlyArray<{
-    key: ToolViewDetailLevel;
-    titleKey:
-        | 'settingsSession.toolDetailLevel.titleOnlyTitle'
-        | 'settingsSession.toolDetailLevel.summaryTitle'
-        | 'settingsSession.toolDetailLevel.fullTitle';
-    subtitleKey:
-        | 'settingsSession.toolDetailLevel.titleOnlySubtitle'
-        | 'settingsSession.toolDetailLevel.summarySubtitle'
-        | 'settingsSession.toolDetailLevel.fullSubtitle';
-}>;
-
-const TOOL_DETAIL_LEVEL_WITH_DEFAULT_OPTIONS = [
-    {
-        key: 'default',
-        titleKey: 'settingsSession.toolDetailLevel.defaultTitle',
-        subtitleKey: 'settingsSession.toolDetailLevel.defaultSubtitle',
-    },
-    ...TOOL_DETAIL_LEVEL_OPTIONS,
-] as const satisfies ReadonlyArray<{
-    key: ToolViewDetailLevel | 'default';
-    titleKey:
-        | 'settingsSession.toolDetailLevel.defaultTitle'
-        | 'settingsSession.toolDetailLevel.titleOnlyTitle'
-        | 'settingsSession.toolDetailLevel.summaryTitle'
-        | 'settingsSession.toolDetailLevel.fullTitle';
-    subtitleKey:
-        | 'settingsSession.toolDetailLevel.defaultSubtitle'
-        | 'settingsSession.toolDetailLevel.titleOnlySubtitle'
-        | 'settingsSession.toolDetailLevel.summarySubtitle'
-        | 'settingsSession.toolDetailLevel.fullSubtitle';
-}>;
-
-const TOOL_OVERRIDE_KEYS: Array<{ toolName: string; title: string }> = [
-    { toolName: 'Bash', title: 'Bash' },
-    { toolName: 'Read', title: 'Read' },
-    { toolName: 'Write', title: 'Write' },
-    { toolName: 'Edit', title: 'Edit' },
-    { toolName: 'MultiEdit', title: 'MultiEdit' },
-    { toolName: 'Glob', title: 'Glob' },
-    { toolName: 'Grep', title: 'Grep' },
-    { toolName: 'LS', title: 'LS' },
-    { toolName: 'CodeSearch', title: 'CodeSearch' },
-    { toolName: 'TodoWrite', title: 'TodoWrite' },
-    { toolName: 'TodoRead', title: 'TodoRead' },
-    { toolName: 'WebFetch', title: 'WebFetch' },
-    { toolName: 'WebSearch', title: 'WebSearch' },
-    { toolName: 'Task', title: 'Task' },
-    { toolName: 'Patch', title: 'Patch' },
-    { toolName: 'Diff', title: 'Diff' },
-    { toolName: 'Reasoning', title: 'Reasoning' },
-    { toolName: 'ExitPlanMode', title: 'ExitPlanMode' },
-    { toolName: 'AskUserQuestion', title: 'AskUserQuestion' },
-    { toolName: 'change_title', title: 'change_title' },
-];
 
 export default React.memo(function SessionSettingsScreen() {
     const { theme } = useUnistyles();
@@ -118,33 +30,12 @@ export default React.memo(function SessionSettingsScreen() {
     const [messageSendMode, setMessageSendMode] = useSettingMutable('sessionMessageSendMode');
     const [busySteerSendPolicy, setBusySteerSendPolicy] = useSettingMutable('sessionBusySteerSendPolicy');
 
-    const [toolViewDetailLevelDefault, setToolViewDetailLevelDefault] = useSettingMutable('toolViewDetailLevelDefault');
-    const [toolViewDetailLevelDefaultLocalControl, setToolViewDetailLevelDefaultLocalControl] = useSettingMutable('toolViewDetailLevelDefaultLocalControl');
-    const [toolViewDetailLevelByToolName, setToolViewDetailLevelByToolName] = useSettingMutable('toolViewDetailLevelByToolName');
-    const [toolViewShowDebugByDefault, setToolViewShowDebugByDefault] = useSettingMutable('toolViewShowDebugByDefault');
     const [terminalConnectLegacySecretExportEnabled, setTerminalConnectLegacySecretExportEnabled] = useSettingMutable('terminalConnectLegacySecretExportEnabled');
 
-    const enabledAgentIds = useEnabledAgentIds();
-
-    const [defaultPermissionByAgent, setDefaultPermissionByAgent] = useSettingMutable('sessionDefaultPermissionModeByAgent');
-    const [permissionModeApplyTiming, setPermissionModeApplyTiming] = useSettingMutable('sessionPermissionModeApplyTiming');
     const [sessionReplayEnabled, setSessionReplayEnabled] = useSettingMutable('sessionReplayEnabled');
     const [sessionReplayStrategy, setSessionReplayStrategy] = useSettingMutable('sessionReplayStrategy');
     const [sessionReplayRecentMessagesCount, setSessionReplayRecentMessagesCount] = useSettingMutable('sessionReplayRecentMessagesCount');
-    const getDefaultPermission = React.useCallback((agent: AgentId): PermissionMode => {
-        const raw = (defaultPermissionByAgent as any)?.[agent] as PermissionMode | undefined;
-        return (raw ?? 'default') as PermissionMode;
-    }, [defaultPermissionByAgent]);
-    const setDefaultPermission = React.useCallback((agent: AgentId, mode: PermissionMode) => {
-        setDefaultPermissionByAgent({
-            ...(defaultPermissionByAgent ?? {}),
-            [agent]: mode,
-        } as any);
-    }, [defaultPermissionByAgent, setDefaultPermissionByAgent]);
 
-    const [openProvider, setOpenProvider] = React.useState<null | AgentId>(null);
-    const [openToolDetailMenu, setOpenToolDetailMenu] = React.useState<null | string>(null);
-    const tToolDetail = t as (key: ToolDetailLevelTranslationKey) => string;
     const [openReplayMenu, setOpenReplayMenu] = React.useState<boolean>(false);
 
     const options: Array<{ key: MessageSendMode; title: string; subtitle: string }> = [
@@ -230,229 +121,21 @@ export default React.memo(function SessionSettingsScreen() {
                 title={t('settingsSession.toolRendering.title')}
                 footer={t('settingsSession.toolRendering.footer')}
             >
-                <DropdownMenu
-                    open={openToolDetailMenu === 'toolViewDetailLevelDefault'}
-                    onOpenChange={(next) => setOpenToolDetailMenu(next ? 'toolViewDetailLevelDefault' : null)}
-                    variant="selectable"
-                    search={false}
-                    selectedId={toolViewDetailLevelDefault as any}
-                    showCategoryTitles={false}
-                    matchTriggerWidth={true}
-                    connectToTrigger={true}
-                    rowKind="item"
-                    popoverBoundaryRef={popoverBoundaryRef}
-                    trigger={({ open, toggle }) => (
-                        <Item
-                            title={t('settingsSession.toolRendering.defaultToolDetailLevelTitle')}
-                            subtitle={
-                                (() => {
-                                    const key = TOOL_DETAIL_LEVEL_OPTIONS.find((opt) => opt.key === toolViewDetailLevelDefault)?.titleKey;
-                                    return key ? tToolDetail(key) : String(toolViewDetailLevelDefault);
-                                })()
-                            }
-                            icon={<Ionicons name="construct-outline" size={29} color="#007AFF" />}
-                            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-                            onPress={toggle}
-                            showChevron={false}
-                            selected={false}
-                        />
-                    )}
-                    items={TOOL_DETAIL_LEVEL_OPTIONS.map((opt) => ({
-                        id: opt.key,
-                        title: tToolDetail(opt.titleKey),
-                        subtitle: tToolDetail(opt.subtitleKey),
-                        icon: (
-                            <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                <Ionicons name="list-outline" size={22} color={theme.colors.textSecondary} />
-                            </View>
-                        ),
-                    }))}
-                    onSelect={(id) => {
-                        setToolViewDetailLevelDefault(id as any);
-                        setOpenToolDetailMenu(null);
-                    }}
-                />
-
-                <DropdownMenu
-                    open={openToolDetailMenu === 'toolViewDetailLevelDefaultLocalControl'}
-                    onOpenChange={(next) => setOpenToolDetailMenu(next ? 'toolViewDetailLevelDefaultLocalControl' : null)}
-                    variant="selectable"
-                    search={false}
-                    selectedId={toolViewDetailLevelDefaultLocalControl as any}
-                    showCategoryTitles={false}
-                    matchTriggerWidth={true}
-                    connectToTrigger={true}
-                    rowKind="item"
-                    popoverBoundaryRef={popoverBoundaryRef}
-                    trigger={({ open, toggle }) => (
-                        <Item
-                            title={t('settingsSession.toolRendering.localControlDefaultTitle')}
-                            subtitle={
-                                (() => {
-                                    const key = TOOL_DETAIL_LEVEL_OPTIONS.find((opt) => opt.key === toolViewDetailLevelDefaultLocalControl)?.titleKey;
-                                    return key ? tToolDetail(key) : String(toolViewDetailLevelDefaultLocalControl);
-                                })()
-                            }
-                            icon={<Ionicons name="shield-outline" size={29} color="#FF9500" />}
-                            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-                            onPress={toggle}
-                            showChevron={false}
-                            selected={false}
-                        />
-                    )}
-                    items={TOOL_DETAIL_LEVEL_OPTIONS.map((opt) => ({
-                        id: opt.key,
-                        title: tToolDetail(opt.titleKey),
-                        subtitle: tToolDetail(opt.subtitleKey),
-                        icon: (
-                            <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                <Ionicons name="list-outline" size={22} color={theme.colors.textSecondary} />
-                            </View>
-                        ),
-                    }))}
-                    onSelect={(id) => {
-                        setToolViewDetailLevelDefaultLocalControl(id as any);
-                        setOpenToolDetailMenu(null);
-                    }}
-                />
-
                 <Item
-                    title={t('settingsSession.toolRendering.showDebugByDefaultTitle')}
-                    subtitle={t('settingsSession.toolRendering.showDebugByDefaultSubtitle')}
-                    icon={<Ionicons name="code-slash-outline" size={29} color="#5856D6" />}
-                    rightElement={<Switch value={toolViewShowDebugByDefault} onValueChange={setToolViewShowDebugByDefault} />}
-                    showChevron={false}
-                    onPress={() => setToolViewShowDebugByDefault(!toolViewShowDebugByDefault)}
+                    title={t('settingsSession.toolRendering.title')}
+                    subtitle={t('settingsSession.toolDetailOverrides.title')}
+                    icon={<Ionicons name="construct-outline" size={29} color="#007AFF" />}
+                    onPress={() => router.push('/(app)/settings/session/tool-rendering')}
                 />
             </ItemGroup>
 
-            <ItemGroup
-                title={t('settingsSession.toolDetailOverrides.title')}
-                footer={t('settingsSession.toolDetailOverrides.footer')}
-            >
-                {TOOL_OVERRIDE_KEYS.map((toolKey, index) => {
-                    const override = (toolViewDetailLevelByToolName as any)?.[toolKey.toolName] as ToolViewDetailLevel | undefined;
-                    const selected = override ?? 'default';
-                    const showDivider = index < TOOL_OVERRIDE_KEYS.length - 1;
-
-                    return (
-                        <DropdownMenu
-                            key={toolKey.toolName}
-                            open={openToolDetailMenu === `toolOverride:${toolKey.toolName}`}
-                            onOpenChange={(next) => setOpenToolDetailMenu(next ? `toolOverride:${toolKey.toolName}` : null)}
-                            variant="selectable"
-                            search={false}
-                            selectedId={selected as any}
-                            showCategoryTitles={false}
-                            matchTriggerWidth={true}
-                            connectToTrigger={true}
-                            rowKind="item"
-                            popoverBoundaryRef={popoverBoundaryRef}
-                            trigger={({ open, toggle }) => (
-                                <Item
-                                    title={toolKey.title}
-                                    subtitle={
-                                        (() => {
-                                            const key = TOOL_DETAIL_LEVEL_WITH_DEFAULT_OPTIONS.find((opt) => opt.key === selected)?.titleKey;
-                                            return key ? tToolDetail(key) : String(selected);
-                                        })()
-                                    }
-                                    icon={<Ionicons name="construct-outline" size={29} color={theme.colors.textSecondary} />}
-                                    rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-                                    onPress={toggle}
-                                    showChevron={false}
-                                    showDivider={showDivider}
-                                    selected={false}
-                                />
-                            )}
-                            items={TOOL_DETAIL_LEVEL_WITH_DEFAULT_OPTIONS.map((opt) => ({
-                                id: opt.key,
-                                title: tToolDetail(opt.titleKey),
-                                subtitle: tToolDetail(opt.subtitleKey),
-                                icon: (
-                                    <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                        <Ionicons name="list-outline" size={22} color={theme.colors.textSecondary} />
-                                    </View>
-                                ),
-                            }))}
-                            onSelect={(id) => {
-                                const next = id as ToolViewDetailLevel | 'default';
-                                const current = (toolViewDetailLevelByToolName ?? {}) as Record<string, ToolViewDetailLevel>;
-                                const nextRecord: Record<string, ToolViewDetailLevel> = { ...current };
-                                if (next === 'default') {
-                                    delete nextRecord[toolKey.toolName];
-                                } else {
-                                    nextRecord[toolKey.toolName] = next;
-                                }
-                                setToolViewDetailLevelByToolName(nextRecord as any);
-                                setOpenToolDetailMenu(null);
-                            }}
-                        />
-                    );
-                })}
-            </ItemGroup>
-
-            <ItemGroup title={t('settingsSession.defaultPermissions.title')} footer={t('settingsSession.defaultPermissions.footer')}>
+            <ItemGroup title={t('settingsSession.permissions.title')} footer={t('settingsSession.permissions.footer')}>
                 <Item
-                    title={t('settingsSession.defaultPermissions.applyPermissionChangesTitle')}
-                    subtitle={t(getPermissionApplyTimingSubtitleKey(permissionModeApplyTiming))}
+                    title={t('settingsSession.permissions.title')}
+                    subtitle={t('settingsSession.permissions.entrySubtitle')}
                     icon={<Ionicons name="shield-checkmark-outline" size={29} color="#34C759" />}
-                    rightElement={(
-                        <Switch
-                            value={permissionModeApplyTiming === 'immediate'}
-                            onValueChange={(value) => setPermissionModeApplyTiming(value ? 'immediate' : 'next_prompt')}
-                        />
-                    )}
-                    showChevron={false}
-                    showDivider={true}
-                    onPress={() => setPermissionModeApplyTiming(permissionModeApplyTiming === 'immediate' ? 'next_prompt' : 'immediate')}
+                    onPress={() => router.push('/(app)/settings/session/permissions')}
                 />
-                {enabledAgentIds.map((agentId, index) => {
-                    const core = getAgentCore(agentId);
-                    const mode = getDefaultPermission(agentId);
-                    const showDivider = index < enabledAgentIds.length - 1;
-                    return (
-                        <DropdownMenu
-                            key={agentId}
-                            open={openProvider === agentId}
-                            onOpenChange={(next) => setOpenProvider(next ? agentId : null)}
-                            variant="selectable"
-                            search={false}
-                            selectedId={mode as any}
-                            showCategoryTitles={false}
-                            matchTriggerWidth={true}
-                            connectToTrigger={true}
-                            rowKind="item"
-                            popoverBoundaryRef={popoverBoundaryRef}
-                            trigger={({ open, toggle }) => (
-                                <Item
-                                    title={t(core.displayNameKey)}
-                                    subtitle={getPermissionModeLabelForAgentType(agentId as any, mode)}
-                                    icon={<Ionicons name={core.ui.agentPickerIconName as any} size={29} color={theme.colors.textSecondary} />}
-                                    rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-                                    onPress={toggle}
-                                    showChevron={false}
-                                    showDivider={showDivider}
-                                    selected={false}
-                                />
-                            )}
-                            items={getPermissionModeOptionsForAgentType(agentId as any).map((opt) => ({
-                                id: opt.value,
-                                title: opt.label,
-                                subtitle: opt.description,
-                                icon: (
-                                    <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                        <Ionicons name={opt.icon as any} size={22} color={theme.colors.textSecondary} />
-                                    </View>
-                                ),
-                            }))}
-                            onSelect={(id) => {
-                                setDefaultPermission(agentId, id as any);
-                                setOpenProvider(null);
-                            }}
-                        />
-                    );
-                })}
             </ItemGroup>
 
             <ItemGroup
@@ -607,7 +290,7 @@ export default React.memo(function SessionSettingsScreen() {
                 )}
             </ItemGroup>
 
-            <ItemGroup title={t('settingsSession.terminalConnect.title')}>
+            <ItemGroup title={t('settingsSession.terminalConnect.title')} style={styles.sectionSpacerTop}>
                 <Item
                     title={t('settingsSession.terminalConnect.legacySecretExportTitle')}
                     subtitle={
@@ -631,6 +314,9 @@ export default React.memo(function SessionSettingsScreen() {
 });
 
 const styles = StyleSheet.create((theme) => ({
+    sectionSpacerTop: {
+        marginTop: Platform.select({ ios: 8, default: 16 }),
+    },
     inputContainer: {
         paddingHorizontal: 16,
         paddingVertical: 12,

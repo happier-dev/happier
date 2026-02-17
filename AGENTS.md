@@ -244,6 +244,63 @@ NO hardcoded values. ALL configuration.
 - Audit trail for configuration
 - Easier testing (override config)
 
+## Feature gating (Canonical system, 2026-02-17)
+
+This repo has a single canonical feature gating system. New code must use it instead of ad-hoc env checks, direct payload poking, or feature-specific inference logic.
+
+### Canonical sources of truth
+- Feature catalog (ids, descriptions, dependencies, representation): `packages/protocol/src/features/catalog.ts`
+- Feature decision primitives: `packages/protocol/src/features/featureDecisionEngine.ts`, `packages/protocol/src/features/decision.ts`
+- Server enabled-bit path derivation + safe reads: `packages/protocol/src/features/serverEnabledBit.ts`
+- `/v1/features` schema split (gates vs details): `packages/protocol/src/features/payload/featuresResponseSchema.ts`
+
+### Payload contract (important)
+- `features` is the only place that contains feature gates. Gates are booleans under `features.<featureId path>.enabled`.
+- `capabilities` contains configuration/details/diagnostics and MUST NOT be used by clients as feature gates.
+- Always treat missing or malformed server enabled bits as disabled. Checks must be `readServerEnabledBit(payload, featureId) === true` (never `!== false`).
+
+### Dependencies
+- Dependencies are declared only in the protocol catalog (`packages/protocol/src/features/catalog.ts`).
+- Enforce dependencies by using `applyFeatureDependencies(...)` from `packages/protocol/src/features/featureDecisionEngine.ts`.
+- Do not duplicate dependency logic in call sites.
+
+### Build policy (global feature denies)
+- Build-policy evaluation lives in protocol (`packages/protocol/src/features/buildPolicy.ts`, `packages/protocol/src/features/embeddedFeaturePolicy.ts`).
+- Build-policy inputs come from env:
+  - `HAPPIER_BUILD_FEATURES_ALLOW`
+  - `HAPPIER_BUILD_FEATURES_DENY`
+  - `HAPPIER_FEATURE_POLICY_ENV` / `HAPPIER_EMBEDDED_POLICY_ENV`
+- Server must apply build-policy denies centrally when assembling `/v1/features` (see `apps/server/sources/app/features/catalog/resolveServerFeaturePayload.ts`).
+- Route handlers must NOT re-evaluate build policy ad hoc. If a route needs to distinguish “disabled by build policy” vs “disabled by config”, carry that as a diagnostic capability computed centrally (capabilities are allowed to explain, not to gate).
+
+### Server implementation rules
+- `/v1/features` assembly is centralized in `apps/server/sources/app/features/catalog/resolveServerFeaturePayload.ts`.
+- Route gating must use the shared helper in `apps/server/sources/app/features/catalog/serverFeatureGate.ts`:
+  - `createServerFeatureGatePreHandler(featureId)` or
+  - `createServerFeatureGatedRouteApp(app, featureId)`
+- Do not add per-route env-only bypasses for server-represented features.
+
+### CLI implementation rules
+- Resolve feature decisions via `apps/cli/src/features/featureDecisionService.ts` (and helpers it uses).
+- CLI local policy belongs in `apps/cli/src/features/featureLocalPolicy.ts` (no scattered env parsing).
+- For server-represented features, treat “no server snapshot” as fail-closed/unknown (the decision engine already encodes this); do not silently assume enabled.
+
+### UI implementation rules
+- Resolve feature decisions via `apps/ui/sources/sync/domains/features/featureDecisionRuntime.ts`.
+- When you must read server bits directly (rare), use `readServerEnabledBit(snapshot.features, featureId) === true`.
+- Do not treat missing/undefined as enabled. Prefer decisions (`FeatureDecision.state`) over raw booleans.
+
+### Voice (Happier Voice) special note
+- `voice.happierVoice` is a first-class SERVER feature gate and must be explicitly provided by the server.
+- Fail closed: if the server snapshot is missing/unavailable, or if `features.voice.happierVoice.enabled` is not `true`, Happier Voice must be treated as disabled.
+- Do not infer `voice.happierVoice` from `features.voice`, from any `capabilities.voice` fields, or from local env.
+
+### Test gating by feature id (no registry)
+- Feature-scoped tests must include `.feat.<featureId>.` in the filename, for example:
+  - `something.feat.connectedServices.quotas.slow.e2e.test.ts`
+- Vitest automatically excludes denied feature tests using `scripts/testing/featureTestGating.ts` (dependency closure included).
+- Use `HAPPIER_TEST_FEATURES_DENY` (in addition to `HAPPIER_BUILD_FEATURES_DENY`) when you need to disable a feature’s tests in CI without changing the embedded policy.
+
 ## UI App Structure Rules (Happier UI)
 
 Applies to `apps/ui/sources`.

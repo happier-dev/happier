@@ -3,6 +3,7 @@ import { log } from "@/utils/logging/log";
 import { db } from "@/storage/db";
 import { parseIntEnv } from "@/config/env";
 import { resolveElevenLabsApiBaseUrl } from "@/voice/elevenLabsEnv";
+import { resolveServerFeaturesForGating } from "@/app/features/catalog/serverFeatureGate";
 import { type Fastify } from "../../types";
 
 function extractConversationAgentId(payload: any): string | null {
@@ -64,6 +65,11 @@ export function registerVoiceSessionCompleteRoute(app: Fastify): void {
     }, async (request, reply) => {
         const userId = request.userId;
         const { leaseId, providerConversationId } = request.body as { leaseId: string; providerConversationId: string };
+
+        const serverFeatures = resolveServerFeaturesForGating(process.env);
+        if (serverFeatures.features.voice.happierVoice.enabled !== true) {
+            return reply.code(404).send({ ok: false, reason: "not_found" as const });
+        }
 
         const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY?.trim() ?? "";
         const elevenLabsApiBaseUrl = resolveElevenLabsApiBaseUrl(process.env);

@@ -47,8 +47,8 @@ describe("featuresRoutes", () => {
 
             const payload = await getFeaturesPayload();
             expect(payload.features.social.friends.enabled).toBe(true);
-            expect(payload.features.social.friends.allowUsername).toBe(true);
-            expect(payload.features.social.friends.requiredIdentityProviderId).toBeNull();
+            expect(payload.capabilities.social.friends.allowUsername).toBe(true);
+            expect(payload.capabilities.social.friends.requiredIdentityProviderId).toBeNull();
         });
 
         it("returns friends=false when identity provider is required but OAuth provider is not configured", async () => {
@@ -61,8 +61,8 @@ describe("featuresRoutes", () => {
 
             const payload = await getFeaturesPayload();
             expect(payload.features.social.friends.enabled).toBe(false);
-            expect(payload.features.social.friends.allowUsername).toBe(false);
-            expect(payload.features.social.friends.requiredIdentityProviderId).toBe("github");
+            expect(payload.capabilities.social.friends.allowUsername).toBe(false);
+            expect(payload.capabilities.social.friends.requiredIdentityProviderId).toBe("github");
         });
     });
 
@@ -74,9 +74,11 @@ describe("featuresRoutes", () => {
             delete process.env.ELEVENLABS_AGENT_ID_PROD;
 
             const payload = await getFeaturesPayload();
-            expect(payload.features.voice.enabled).toBe(false);
-            expect(payload.features.voice.configured).toBe(false);
-            expect(payload.features.voice.provider).toBe(null);
+            // Voice settings should remain available (local / BYO voice), even when Happier Voice is misconfigured.
+            expect(payload.features.voice.enabled).toBe(true);
+            expect(payload.features.voice.happierVoice.enabled).toBe(false);
+            expect(payload.capabilities.voice.configured).toBe(false);
+            expect(payload.capabilities.voice.provider).toBe(null);
         });
 
         it("returns voice=true when voice is enabled and ElevenLabs is configured", async () => {
@@ -88,8 +90,9 @@ describe("featuresRoutes", () => {
 
             const payload = await getFeaturesPayload();
             expect(payload.features.voice.enabled).toBe(true);
-            expect(payload.features.voice.configured).toBe(true);
-            expect(payload.features.voice.provider).toBe("elevenlabs");
+            expect(payload.features.voice.happierVoice.enabled).toBe(true);
+            expect(payload.capabilities.voice.configured).toBe(true);
+            expect(payload.capabilities.voice.provider).toBe("elevenlabs");
         });
 
         it("returns voice=false when subscription is required and RevenueCat is not configured", async () => {
@@ -101,9 +104,10 @@ describe("featuresRoutes", () => {
             delete process.env.REVENUECAT_SECRET_KEY;
 
             const payload = await getFeaturesPayload();
-            expect(payload.features.voice.enabled).toBe(false);
-            expect(payload.features.voice.configured).toBe(false);
-            expect(payload.features.voice.provider).toBe(null);
+            expect(payload.features.voice.enabled).toBe(true);
+            expect(payload.features.voice.happierVoice.enabled).toBe(false);
+            expect(payload.capabilities.voice.configured).toBe(false);
+            expect(payload.capabilities.voice.provider).toBe(null);
         });
 
         it("returns voice=true when subscription is not required even without RevenueCat", async () => {
@@ -116,8 +120,9 @@ describe("featuresRoutes", () => {
 
             const payload = await getFeaturesPayload();
             expect(payload.features.voice.enabled).toBe(true);
-            expect(payload.features.voice.configured).toBe(true);
-            expect(payload.features.voice.provider).toBe("elevenlabs");
+            expect(payload.features.voice.happierVoice.enabled).toBe(true);
+            expect(payload.capabilities.voice.configured).toBe(true);
+            expect(payload.capabilities.voice.provider).toBe("elevenlabs");
         });
     });
 
@@ -129,8 +134,8 @@ describe("featuresRoutes", () => {
             delete process.env.GITHUB_REDIRECT_URI;
 
             const payload = await getFeaturesPayload();
-            expect(payload.features.oauth.providers.github.enabled).toBe(true);
-            expect(payload.features.oauth.providers.github.configured).toBe(false);
+            expect(payload.capabilities.oauth.providers.github.enabled).toBe(true);
+            expect(payload.capabilities.oauth.providers.github.configured).toBe(false);
         });
 
         it("marks github as configured=true when GitHub env is configured", async () => {
@@ -139,8 +144,8 @@ describe("featuresRoutes", () => {
             process.env.GITHUB_REDIRECT_URL = "https://example.com/v1/oauth/github/callback";
 
             const payload = await getFeaturesPayload();
-            expect(payload.features.oauth.providers.github.enabled).toBe(true);
-            expect(payload.features.oauth.providers.github.configured).toBe(true);
+            expect(payload.capabilities.oauth.providers.github.enabled).toBe(true);
+            expect(payload.capabilities.oauth.providers.github.configured).toBe(true);
         });
 
         it("includes configured OIDC providers from AUTH_PROVIDERS_CONFIG_JSON", async () => {
@@ -157,7 +162,7 @@ describe("featuresRoutes", () => {
             ]);
 
             const payload = await getFeaturesPayload();
-            expect(payload.features.oauth.providers.okta).toEqual(
+            expect(payload.capabilities.oauth.providers.okta).toEqual(
                 expect.objectContaining({
                     enabled: true,
                     configured: true,
@@ -177,7 +182,7 @@ describe("featuresRoutes", () => {
 
             const payload = await getFeaturesPayload();
             expect(payload.features.auth.recovery.providerReset.enabled).toBe(true);
-            expect(payload.features.auth.recovery.providerReset.providers).toContain("github");
+            expect(payload.capabilities.auth.recovery.providerReset.providers).toContain("github");
         });
 
         it("exposes provider reset as disabled when HAPPIER_FEATURE_AUTH_RECOVERY__PROVIDER_RESET_ENABLED=0", async () => {
@@ -190,7 +195,7 @@ describe("featuresRoutes", () => {
 
             const payload = await getFeaturesPayload();
             expect(payload.features.auth.recovery.providerReset.enabled).toBe(false);
-            expect(payload.features.auth.recovery.providerReset.providers).toEqual([]);
+            expect(payload.capabilities.auth.recovery.providerReset.providers).toEqual([]);
         });
 
         it("defaults recovery key reminder UI flag to enabled", async () => {
@@ -211,7 +216,7 @@ describe("featuresRoutes", () => {
             process.env.AUTH_PROVIDERS_CONFIG_JSON = "{ definitely: not-json }";
 
             const payload = await getFeaturesPayload();
-            expect(payload.features.auth.misconfig).toEqual(
+            expect(payload.capabilities.auth.misconfig).toEqual(
                 expect.arrayContaining([
                     expect.objectContaining({
                         code: "auth_providers_config_invalid",
@@ -226,8 +231,8 @@ describe("featuresRoutes", () => {
             process.env.AUTH_REQUIRED_LOGIN_PROVIDERS = "okta";
 
             const payload = await getFeaturesPayload();
-            expect(payload.features.auth.login.requiredProviders).toEqual(["okta"]);
-            expect(payload.features.auth.misconfig).toEqual(
+            expect(payload.capabilities.auth.login.requiredProviders).toEqual(["okta"]);
+            expect(payload.capabilities.auth.misconfig).toEqual(
                 expect.arrayContaining([
                     expect.objectContaining({
                         code: "auth_provider_unregistered_okta",
@@ -248,9 +253,9 @@ describe("featuresRoutes", () => {
 
             const payload = await getFeaturesPayload();
             expect(payload.features.bugReports.enabled).toBe(true);
-            expect(payload.features.bugReports.providerUrl).toBe("https://reports.happier.dev");
-            expect(payload.features.bugReports.defaultIncludeDiagnostics).toBe(true);
-            expect(payload.features.bugReports.contextWindowMs).toBe(30 * 60 * 1000);
+            expect(payload.capabilities.bugReports.providerUrl).toBe("https://reports.happier.dev");
+            expect(payload.capabilities.bugReports.defaultIncludeDiagnostics).toBe(true);
+            expect(payload.capabilities.bugReports.contextWindowMs).toBe(30 * 60 * 1000);
         });
 
         it("allows disabling bug report capability via env", async () => {
@@ -261,17 +266,17 @@ describe("featuresRoutes", () => {
 
             const payload = await getFeaturesPayload();
             expect(payload.features.bugReports.enabled).toBe(false);
-            expect(payload.features.bugReports.providerUrl).toBe("https://reports.enterprise.local");
-            expect(payload.features.bugReports.defaultIncludeDiagnostics).toBe(false);
-            expect(payload.features.bugReports.contextWindowMs).toBe(60000);
+            expect(payload.capabilities.bugReports.providerUrl).toBe("https://reports.enterprise.local");
+            expect(payload.capabilities.bugReports.defaultIncludeDiagnostics).toBe(false);
+            expect(payload.capabilities.bugReports.contextWindowMs).toBe(60000);
         });
 
-        it("does not fail open when provider url env is invalid", async () => {
+        it("fails closed when provider url env is invalid", async () => {
             process.env.HAPPIER_FEATURE_BUG_REPORTS__PROVIDER_URL = "invalid-provider-url";
 
             const payload = await getFeaturesPayload();
-            expect(payload.features.bugReports.enabled).toBe(true);
-            expect(payload.features.bugReports.providerUrl).toBeNull();
+            expect(payload.features.bugReports.enabled).toBe(false);
+            expect(payload.capabilities.bugReports.providerUrl).toBeNull();
         });
     });
 
@@ -282,16 +287,16 @@ describe("featuresRoutes", () => {
 
             const payload = await getFeaturesPayload();
             expect(payload.features.automations.enabled).toBe(true);
-            expect(payload.features.automations.existingSessionTarget).toBe(false);
+            expect(payload.features.automations.existingSessionTarget.enabled).toBe(false);
         });
 
-        it("allows disabling automations and enabling existing-session target via env", async () => {
+        it("disables existing-session target when automations are disabled (dependency enforcement)", async () => {
             process.env.HAPPIER_FEATURE_AUTOMATIONS__ENABLED = "0";
             process.env.HAPPIER_FEATURE_AUTOMATIONS__EXISTING_SESSION_TARGET = "1";
 
             const payload = await getFeaturesPayload();
             expect(payload.features.automations.enabled).toBe(false);
-            expect(payload.features.automations.existingSessionTarget).toBe(true);
+            expect(payload.features.automations.existingSessionTarget.enabled).toBe(false);
         });
     });
 
@@ -307,9 +312,9 @@ describe("featuresRoutes", () => {
             expect(payload.features.connectedServices.enabled).toBe(false);
         });
 
-        it("defaults connectedServices.quotas.enabled to true", async () => {
+        it("defaults connectedServices.quotas.enabled to false", async () => {
             const payload = await getFeaturesPayload();
-            expect(payload.features.connectedServices.quotas.enabled).toBe(true);
+            expect(payload.features.connectedServices.quotas.enabled).toBe(false);
         });
 
         it("returns connectedServices.quotas.enabled=false when HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED is off", async () => {

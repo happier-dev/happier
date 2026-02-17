@@ -1,10 +1,10 @@
 import { z } from 'zod';
-import { FEATURE_IDS } from './featureIds.js';
+import { FEATURE_ID_ENUM } from './featureIds.js';
 
 export const FeatureStateSchema = z.enum(['enabled', 'disabled', 'unsupported', 'unknown']);
 export type FeatureState = z.infer<typeof FeatureStateSchema>;
 
-export const FeatureAxisSchema = z.enum(['client', 'build_policy', 'local_policy', 'server', 'daemon', 'scope']);
+export const FeatureAxisSchema = z.enum(['client', 'build_policy', 'local_policy', 'server', 'daemon', 'scope', 'dependency']);
 export type FeatureAxis = z.infer<typeof FeatureAxisSchema>;
 
 export const FeatureBlockerCodeSchema = z.enum([
@@ -18,6 +18,8 @@ export const FeatureBlockerCodeSchema = z.enum([
   'probe_failed',
   'mixed_scope_support',
   'misconfigured',
+  'dependency_disabled',
+  'dependency_unknown',
 ]);
 export type FeatureBlockerCode = z.infer<typeof FeatureBlockerCodeSchema>;
 
@@ -30,7 +32,7 @@ export type FeatureDecisionScope = z.infer<typeof FeatureDecisionScopeSchema>;
 
 export const FeatureDecisionSchema = z
   .object({
-    featureId: z.enum(FEATURE_IDS),
+    featureId: z.enum(FEATURE_ID_ENUM),
     state: FeatureStateSchema,
     blockedBy: FeatureAxisSchema.nullable(),
     blockerCode: FeatureBlockerCodeSchema,

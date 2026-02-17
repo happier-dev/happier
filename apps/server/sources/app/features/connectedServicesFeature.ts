@@ -1,23 +1,19 @@
-import type { FeaturesResponse } from "./types";
+import type { FeaturesPayloadDelta } from "./types";
 import { readConnectedServicesFeatureEnv } from "./catalog/readFeatureEnv";
-import { isServerFeatureEnabledByBuildPolicy } from "./catalog/serverFeatureBuildPolicy";
 
 export function resolveConnectedServicesFeature(
     env: NodeJS.ProcessEnv,
-): Pick<FeaturesResponse["features"], "connectedServices"> {
+): FeaturesPayloadDelta {
     const featureEnv = readConnectedServicesFeatureEnv(env);
-    const buildEnabled = isServerFeatureEnabledByBuildPolicy("connected.services", env);
-    const enabled = buildEnabled && featureEnv.enabled;
-    const quotasEnabled =
-        enabled &&
-        isServerFeatureEnabledByBuildPolicy("connected.services.quotas", env) &&
-        featureEnv.quotasEnabled;
+    const enabled = featureEnv.enabled;
+    const quotasEnabled = featureEnv.quotasEnabled;
 
     return {
-        connectedServices: {
-            enabled,
-            webOauthProxyEnabled: enabled,
-            quotas: { enabled: quotasEnabled },
+        features: {
+            connectedServices: {
+                enabled,
+                quotas: { enabled: quotasEnabled },
+            },
         },
     };
 }

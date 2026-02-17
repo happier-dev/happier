@@ -23,6 +23,28 @@ describe('resolveCodexStartingMode', () => {
     ).toBe('local');
   });
 
+  it('respects an explicit local startingMode override even without a TTY', () => {
+    expect(
+      resolveCodexStartingMode({
+        explicitStartingMode: 'local',
+        startedBy: 'cli',
+        hasTtyForLocal: false,
+        localControlEnabled: true,
+      }),
+    ).toBe('local');
+  });
+
+  it('forces remote when started by daemon even with an explicit local override', () => {
+    expect(
+      resolveCodexStartingMode({
+        explicitStartingMode: 'local',
+        startedBy: 'daemon',
+        hasTtyForLocal: true,
+        localControlEnabled: true,
+      }),
+    ).toBe('remote');
+  });
+
   it('defaults to remote when started by daemon', () => {
     expect(
       resolveCodexStartingMode({

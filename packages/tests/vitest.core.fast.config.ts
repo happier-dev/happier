@@ -1,5 +1,7 @@
 import { defineConfig } from 'vitest/config';
 
+import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating';
+
 export default defineConfig({
   test: {
     environment: 'node',
@@ -11,7 +13,7 @@ export default defineConfig({
       'src/testkit/daemon/daemon.statePath.spec.ts',
       'src/testkit/providers/satisfaction/messageSatisfaction.spec.ts',
     ],
-    exclude: ['suites/core-e2e/**/*.slow.e2e.test.ts'],
+    exclude: ['suites/core-e2e/**/*.slow.e2e.test.ts', ...resolveVitestFeatureTestExcludeGlobs()],
     testTimeout: 180_000,
     hookTimeout: 180_000,
     globals: false,

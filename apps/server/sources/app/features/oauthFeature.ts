@@ -1,10 +1,12 @@
-import type { FeaturesResponse } from "./types";
+import type { FeaturesPayloadDelta } from "./types";
 import { resolveOAuthProviderStatuses } from "@/app/oauth/providers/registry";
 
-export function resolveOAuthFeature(env: NodeJS.ProcessEnv): Pick<FeaturesResponse["features"], "oauth"> {
+export function resolveOAuthFeature(env: NodeJS.ProcessEnv): FeaturesPayloadDelta {
     return {
-        oauth: {
-            providers: resolveOAuthProviderStatuses(env),
+        capabilities: {
+            oauth: {
+                providers: resolveOAuthProviderStatuses(env),
+            },
         },
     };
 }

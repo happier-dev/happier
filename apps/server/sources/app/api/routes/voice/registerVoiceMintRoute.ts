@@ -4,6 +4,7 @@ import { db } from "@/storage/db";
 import { parseIntEnv } from "@/config/env";
 import { resolveElevenLabsAgentId, resolveElevenLabsApiBaseUrl } from "@/voice/elevenLabsEnv";
 import { readVoiceFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
+import { resolveServerFeaturesForGating } from "@/app/features/catalog/serverFeatureGate";
 import { type Fastify } from "../../types";
 
 type VoiceDenyReason =
@@ -86,8 +87,16 @@ export function registerVoiceMintRoute(app: Fastify, path: "/v1/voice/token" | "
 
         const env = process.env;
 
-        const voiceFeatureEnv = readVoiceFeatureEnv(env);
-        if (!voiceFeatureEnv.enabled) {
+        const serverFeatures = resolveServerFeaturesForGating(env);
+        const voiceCaps = serverFeatures.capabilities.voice;
+        const happierVoiceEnabled = serverFeatures.features.voice.happierVoice.enabled === true;
+        if (!happierVoiceEnabled) {
+            if (voiceCaps.disabledByBuildPolicy === true) {
+                return reply.code(403).send({ allowed: false, reason: "voice_disabled" satisfies VoiceDenyReason });
+            }
+            if (voiceCaps.requested === true && voiceCaps.configured !== true) {
+                return reply.code(503).send({ allowed: false, reason: "misconfigured" satisfies VoiceDenyReason });
+            }
             return reply.code(403).send({ allowed: false, reason: "voice_disabled" satisfies VoiceDenyReason });
         }
 
@@ -100,6 +109,7 @@ export function registerVoiceMintRoute(app: Fastify, path: "/v1/voice/token" | "
             return reply.code(503).send({ allowed: false, reason: "misconfigured" satisfies VoiceDenyReason });
         }
 
+        const voiceFeatureEnv = readVoiceFeatureEnv(env);
         const requireSubscription = voiceFeatureEnv.requireSubscription;
         const freeSessionsPerMonth = Math.max(0, parseIntEnv(env.VOICE_FREE_SESSIONS_PER_MONTH, 0));
         const freeMinutesPerMonth = Math.max(0, parseIntEnv(env.VOICE_FREE_MINUTES_PER_MONTH, 0));

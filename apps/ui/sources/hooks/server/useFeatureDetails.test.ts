@@ -26,7 +26,7 @@ describe('useFeatureDetails', () => {
             useFeatureDetails({
                 featureId: 'automations',
                 fallback: false,
-                select: (features) => features.features.automations.existingSessionTarget === true,
+                select: (features) => features.features.automations.existingSessionTarget.enabled === true,
             }),
         );
 
@@ -93,7 +93,7 @@ describe('useFeatureDetails', () => {
             (useFeatureDetails as any)({
                 featureId: 'automations',
                 fallback: false,
-                select: (features: any) => features.features.automations.existingSessionTarget === true,
+                select: (features: any) => features.features.automations.existingSessionTarget.enabled === true,
                 scope: { scopeKind: 'spawn', serverId: serverB.id },
             }),
         );

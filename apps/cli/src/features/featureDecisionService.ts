@@ -1,11 +1,13 @@
 import {
+  applyFeatureDependencies,
   createFeatureDecision,
+  evaluateFeatureDecisionBase,
+  isFeatureServerRepresented,
+  readServerEnabledBit,
   type FeatureDecision,
   type FeatureId,
 } from '@happier-dev/protocol';
 
-import { evaluateCliFeatureDecision } from './featureDecisionEngine';
-import { getCliFeatureDefinition } from './featureRegistry';
 import {
   createCliFeatureDecisionInputs,
   loadCliFeatureDecisionInputsForServer,
@@ -20,60 +22,111 @@ export type { CliServerFeaturesSnapshot } from './serverFeaturesClient';
 function resolveCliFeatureDecisionFromInputs(
   inputs: CliFeatureDecisionInputs,
 ): FeatureDecision {
-  const definition = getCliFeatureDefinition(inputs.featureId);
+  const memo = new Map<FeatureId, FeatureDecision>();
 
-  if (definition.serverRequired && !inputs.serverSnapshot) {
-    return createFeatureDecision({
-      featureId: inputs.featureId,
-      state: 'unknown',
-      blockedBy: 'server',
-      blockerCode: 'probe_failed',
-      diagnostics: ['server_probe:missing'],
-      evaluatedAt: Date.now(),
-      scope: { scopeKind: 'runtime' },
+  const resolve = (featureId: FeatureId): FeatureDecision => {
+    const cached = memo.get(featureId);
+    if (cached) return cached;
+
+    const serverRepresented = isFeatureServerRepresented(featureId);
+
+    const featureInputs = createCliFeatureDecisionInputs({
+      featureId,
+      env: inputs.env,
+      serverSnapshot: inputs.serverSnapshot,
     });
-  }
 
-  if (definition.serverRequired && inputs.serverSnapshot?.status === 'unsupported') {
-    return createFeatureDecision({
-      featureId: inputs.featureId,
-      state: 'unsupported',
-      blockedBy: 'server',
-      blockerCode: inputs.serverSnapshot.reason === 'endpoint_missing' ? 'endpoint_missing' : 'misconfigured',
-      diagnostics: [`server_unsupported:${inputs.serverSnapshot.reason}`],
-      evaluatedAt: Date.now(),
+    // Global policy gates apply before any server probing.
+    const globalDecision = evaluateFeatureDecisionBase({
+      featureId,
       scope: { scopeKind: 'runtime' },
+      supportsClient: true,
+      buildPolicy: featureInputs.buildPolicy,
+      localPolicyEnabled: featureInputs.localPolicyEnabled,
+      serverSupported: true,
+      serverEnabled: true,
     });
-  }
 
-  if (definition.serverRequired && inputs.serverSnapshot?.status === 'error') {
-    return createFeatureDecision({
-      featureId: inputs.featureId,
-      state: 'unknown',
-      blockedBy: 'server',
-      blockerCode: 'probe_failed',
-      diagnostics: [`server_error:${inputs.serverSnapshot.reason}`],
-      evaluatedAt: Date.now(),
+    if (globalDecision.blockedBy && globalDecision.blockedBy !== 'server') {
+      memo.set(featureId, globalDecision);
+      return globalDecision;
+    }
+
+    if (!serverRepresented) {
+      const out = applyFeatureDependencies({
+        featureId,
+        baseDecision: globalDecision,
+        resolveDependencyDecision: resolve,
+      });
+
+      memo.set(featureId, out);
+      return out;
+    }
+
+    if (!inputs.serverSnapshot) {
+      const out = createFeatureDecision({
+        featureId,
+        state: 'unknown',
+        blockedBy: 'server',
+        blockerCode: 'probe_failed',
+        diagnostics: ['server_probe:missing'],
+        evaluatedAt: Date.now(),
+        scope: { scopeKind: 'runtime' },
+      });
+      memo.set(featureId, out);
+      return out;
+    }
+
+    if (inputs.serverSnapshot.status === 'unsupported') {
+      const out = createFeatureDecision({
+        featureId,
+        state: 'unsupported',
+        blockedBy: 'server',
+        blockerCode: inputs.serverSnapshot.reason === 'endpoint_missing' ? 'endpoint_missing' : 'misconfigured',
+        diagnostics: [`server_unsupported:${inputs.serverSnapshot.reason}`],
+        evaluatedAt: Date.now(),
+        scope: { scopeKind: 'runtime' },
+      });
+      memo.set(featureId, out);
+      return out;
+    }
+
+    if (inputs.serverSnapshot.status === 'error') {
+      const out = createFeatureDecision({
+        featureId,
+        state: 'unknown',
+        blockedBy: 'server',
+        blockerCode: 'probe_failed',
+        diagnostics: [`server_error:${inputs.serverSnapshot.reason}`],
+        evaluatedAt: Date.now(),
+        scope: { scopeKind: 'runtime' },
+      });
+      memo.set(featureId, out);
+      return out;
+    }
+
+    const serverEnabled = readServerEnabledBit(inputs.serverSnapshot.features, featureId) === true;
+    const baseDecision = evaluateFeatureDecisionBase({
+      featureId,
       scope: { scopeKind: 'runtime' },
+      supportsClient: true,
+      buildPolicy: featureInputs.buildPolicy,
+      localPolicyEnabled: featureInputs.localPolicyEnabled,
+      serverSupported: true,
+      serverEnabled,
     });
-  }
 
-  const serverSupported =
-    !definition.serverRequired || inputs.serverSnapshot?.status === 'ready';
-  const serverEnabled = !definition.serverRequired
-    ? true
-    : inputs.serverSnapshot?.status === 'ready'
-      ? definition.serverEnabled(inputs.serverSnapshot.features)
-      : false;
+    const out = applyFeatureDependencies({
+      featureId,
+      baseDecision,
+      resolveDependencyDecision: resolve,
+    });
 
-  return evaluateCliFeatureDecision({
-    featureId: inputs.featureId,
-    supportsClient: true,
-    buildPolicy: inputs.buildPolicy,
-    localPolicyEnabled: inputs.localPolicyEnabled,
-    serverSupported,
-    serverEnabled,
-  });
+    memo.set(featureId, out);
+    return out;
+  };
+
+  return resolve(inputs.featureId);
 }
 
 export function resolveCliFeatureDecision(params: {
@@ -94,16 +147,13 @@ export async function resolveCliFeatureDecisionForServer(params: {
   env: NodeJS.ProcessEnv;
   serverUrl: string;
   timeoutMs?: number;
-}): Promise<Readonly<{ decision: FeatureDecision; serverSnapshot: CliServerFeaturesSnapshot }>> {
+}): Promise<Readonly<{ decision: FeatureDecision; serverSnapshot?: CliServerFeaturesSnapshot }>> {
   const inputs = await loadCliFeatureDecisionInputsForServer({
     featureId: params.featureId,
     env: params.env,
     serverUrl: params.serverUrl,
     timeoutMs: params.timeoutMs,
   });
-  if (!inputs.serverSnapshot) {
-    throw new Error('Server snapshot is required when resolving feature decision for a server');
-  }
 
   const decision = resolveCliFeatureDecisionFromInputs(inputs);
 

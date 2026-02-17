@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
 import { evaluateFeatureBuildPolicy } from './buildPolicy.js';
-import { mergeFeatureBuildPolicies, resolveEmbeddedFeatureBuildPolicy } from './embeddedFeaturePolicy.js';
+import {
+  mergeFeatureBuildPolicies,
+  resolveEmbeddedFeatureBuildPolicy,
+  resolveEmbeddedFeaturePolicyEnv,
+} from './embeddedFeaturePolicy.js';
 
 describe('embedded feature build policy', () => {
+  it('does not treat development as preview', () => {
+    expect(resolveEmbeddedFeaturePolicyEnv('development')).toBeNull();
+    expect(resolveEmbeddedFeaturePolicyEnv('dev')).toBeNull();
+  });
+
   it('defaults to neutral policy when no embedded policy env is configured', () => {
     const policy = resolveEmbeddedFeatureBuildPolicy(undefined);
     expect(policy.allow).toEqual([]);
@@ -13,7 +22,7 @@ describe('embedded feature build policy', () => {
   it('loads the production embedded policy and marks known features allowed', () => {
     const policy = resolveEmbeddedFeatureBuildPolicy('production');
     expect(policy.allow.length).toBeGreaterThan(0);
-    expect(evaluateFeatureBuildPolicy(policy, 'automations')).toBe('allow');
+    expect(evaluateFeatureBuildPolicy(policy, 'updates.ota')).toBe('allow');
   });
 
   it('merges env policy by union and preserves deny precedence', () => {

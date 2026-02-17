@@ -21,12 +21,13 @@ export type UiFeatureToggleDefinition = Readonly<{
 }>;
 
 export function listUiFeatureToggleDefinitions(): ReadonlyArray<UiFeatureToggleDefinition> {
-    return Object.values(UI_FEATURE_REGISTRY)
-        .map((d) => {
+    return Object.entries(UI_FEATURE_REGISTRY)
+        .map(([featureIdRaw, d]) => {
+            const featureId = featureIdRaw as FeatureId;
             const toggle = d.settingsToggle;
             if (!toggle?.showInSettings) return null;
             return {
-                featureId: d.id,
+                featureId,
                 isExperimental: toggle.isExperimental,
                 defaultEnabled: toggle.defaultEnabled,
                 titleKey: toggle.titleKey,
@@ -55,12 +56,12 @@ export function resolveUiFeatureToggleEnabled(settings: FeatureToggleSettings, f
 
 export function buildUiFeatureToggleDefaults(params: { experimentalOnly: boolean }): Record<string, boolean> {
     const defaults: Record<string, boolean> = {};
-    for (const def of Object.values(UI_FEATURE_REGISTRY)) {
+    for (const [featureIdRaw, def] of Object.entries(UI_FEATURE_REGISTRY)) {
+        const featureId = featureIdRaw as FeatureId;
         const toggle = def.settingsToggle;
         if (!toggle?.showInSettings) continue;
         if (params.experimentalOnly && !toggle.isExperimental) continue;
-        defaults[def.id] = toggle.defaultEnabled === true;
+        defaults[featureId] = toggle.defaultEnabled === true;
     }
     return defaults;
 }
-

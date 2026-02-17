@@ -1,8 +1,7 @@
-import type { FeaturesResponse } from "./types";
+import type { FeaturesPayloadDelta, FeaturesResponse } from "./types";
 import { resolveAuthPolicyFromEnv } from "@/app/auth/authPolicy";
 import { resolveAuthProviderRegistryResult } from "@/app/auth/providers/registry";
 import { readAuthFeatureEnv } from "./catalog/readFeatureEnv";
-import { isServerFeatureEnabledByBuildPolicy } from "./catalog/serverFeatureBuildPolicy";
 
 function uniqueStrings(values: readonly string[]): string[] {
     const seen = new Set<string>();
@@ -17,7 +16,7 @@ function uniqueStrings(values: readonly string[]): string[] {
     return out;
 }
 
-export function resolveAuthFeature(env: NodeJS.ProcessEnv): Pick<FeaturesResponse["features"], "auth"> {
+export function resolveAuthFeature(env: NodeJS.ProcessEnv): FeaturesPayloadDelta {
     const featureEnv = readAuthFeatureEnv(env);
     const policy = resolveAuthPolicyFromEnv(env);
     const authProviderRegistryResult = resolveAuthProviderRegistryResult(env);
@@ -31,7 +30,7 @@ export function resolveAuthFeature(env: NodeJS.ProcessEnv): Pick<FeaturesRespons
         ...signupProviders.map((id) => ({ id, enabled: true })),
     ];
 
-    const misconfig: FeaturesResponse["features"]["auth"]["misconfig"] = [];
+    const misconfig: FeaturesResponse["capabilities"]["auth"]["misconfig"] = [];
     for (const err of authProviderRegistryResult.errors) {
         misconfig.push({
             code: "auth_providers_config_invalid",
@@ -62,22 +61,20 @@ export function resolveAuthFeature(env: NodeJS.ProcessEnv): Pick<FeaturesRespons
         }
     }
 
-    const providers: FeaturesResponse["features"]["auth"]["providers"] = {};
+    const providers: FeaturesResponse["capabilities"]["auth"]["providers"] = {};
     for (const provider of authProviderRegistry) {
         providers[provider.id] = provider.resolveFeatures({ env, policy });
     }
 
     const autoRedirectEnabled = featureEnv.uiAutoRedirectEnabled;
-    const recoveryKeyReminderBuildEnabled = isServerFeatureEnabledByBuildPolicy("auth.ui.recoveryKeyReminder", env);
-    const recoveryKeyReminderEnabled = recoveryKeyReminderBuildEnabled && featureEnv.uiRecoveryKeyReminderEnabled;
+    const recoveryKeyReminderEnabled = featureEnv.uiRecoveryKeyReminderEnabled;
     const explicitAutoRedirectProviderId = featureEnv.uiAutoRedirectProviderId;
     const enabledExternalSignupProviders = signupMethods
         .filter((m) => m.enabled && m.id !== "anonymous")
         .map((m) => String(m.id).trim().toLowerCase())
         .filter(Boolean);
 
-    const providerResetBuildEnabled = isServerFeatureEnabledByBuildPolicy("auth.recovery.providerReset", env);
-    const providerResetFlag = providerResetBuildEnabled && featureEnv.recoveryProviderResetEnabled;
+    const providerResetFlag = featureEnv.recoveryProviderResetEnabled;
     const providerResetProviders = providerResetFlag
         ? enabledExternalSignupProviders.filter((id) => {
               const resolver = authProviderRegistry.find((p) => p.id === id);
@@ -103,26 +100,38 @@ export function resolveAuthFeature(env: NodeJS.ProcessEnv): Pick<FeaturesRespons
     }
 
     return {
-        auth: {
-            signup: { methods: signupMethods },
-            login: { requiredProviders: requiredLoginProviders },
-            recovery: {
-                providerReset: {
-                    enabled: providerResetEnabled,
-                    providers: providerResetEnabled ? providerResetProviders : [],
+        features: {
+            auth: {
+                recovery: {
+                    providerReset: {
+                        enabled: providerResetEnabled,
+                    },
+                },
+                ui: {
+                    recoveryKeyReminder: {
+                        enabled: recoveryKeyReminderEnabled,
+                    },
                 },
             },
-            ui: {
-                autoRedirect: {
-                    enabled: autoRedirectEnabled,
-                    providerId: autoRedirectProviderId,
+        },
+        capabilities: {
+            auth: {
+                signup: { methods: signupMethods },
+                login: { requiredProviders: requiredLoginProviders },
+                recovery: {
+                    providerReset: {
+                        providers: providerResetEnabled ? providerResetProviders : [],
+                    },
                 },
-                recoveryKeyReminder: {
-                    enabled: recoveryKeyReminderEnabled,
+                ui: {
+                    autoRedirect: {
+                        enabled: autoRedirectEnabled,
+                        providerId: autoRedirectProviderId,
+                    },
                 },
+                providers,
+                misconfig,
             },
-            providers,
-            misconfig,
         },
     };
 }

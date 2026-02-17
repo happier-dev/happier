@@ -1,6 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
 
 import { flushHookEffects } from '@/hooks/server/serverFeatureHookHarness.testHelpers';
 
@@ -27,37 +28,17 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 }));
 
 function createFeaturesPayload(params: { voiceEnabled: boolean }) {
-    return {
+    return FeaturesResponseSchema.parse({
         features: {
-            sharing: {
-                session: { enabled: true },
-                public: { enabled: true },
-                contentKeys: { enabled: true },
-                pendingQueueV2: { enabled: true },
-            },
+            voice: { enabled: params.voiceEnabled },
+        },
+        capabilities: {
             voice: {
-                enabled: params.voiceEnabled,
                 configured: params.voiceEnabled,
                 provider: params.voiceEnabled ? 'elevenlabs' : null,
             },
-            social: {
-                friends: {
-                    enabled: false,
-                    allowUsername: false,
-                    requiredIdentityProviderId: 'github',
-                },
-            },
-            oauth: { providers: {} },
-            auth: {
-                signup: { methods: [] },
-                login: { requiredProviders: [] },
-                recovery: { providerReset: { enabled: false, providers: [] } },
-                ui: { autoRedirect: { enabled: false, providerId: null }, recoveryKeyReminder: { enabled: true } },
-                providers: {},
-                misconfig: [],
-            },
         },
-    };
+    });
 }
 
 function emitActiveServerChanged(next: { serverId: string; serverUrl: string; generation: number }) {
@@ -78,6 +59,7 @@ describe('featureDecisionRuntime', () => {
 
         try {
             const { getStorage } = await import('@/sync/domains/state/storage');
+            getStorage().getState().applySettingsLocal({ experiments: true });
             const settings = getStorage().getState().settings;
             const { resolveRuntimeFeatureDecisionFromSnapshot } = await import('./featureDecisionRuntime');
 

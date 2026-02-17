@@ -9,10 +9,10 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
     // Existing-session targeting is a subordinate capability of automations; keep it tied to the parent toggle.
     'automations.existingSessionTarget': (settings) => resolveUiFeatureToggleEnabled(settings, 'automations'),
     'execution.runs': (settings) => resolveUiFeatureToggleEnabled(settings, 'execution.runs'),
-    voice: () => true,
-    'connected.services': () =>
+    voice: (settings) => resolveUiFeatureToggleEnabled(settings, 'voice'),
+    connectedServices: () =>
         parseBooleanEnv(process.env.EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED, true),
-    'connected.services.quotas': () =>
+    'connectedServices.quotas': () =>
         parseBooleanEnv(process.env.EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED, false),
     'updates.ota': () => parseBooleanEnv(process.env.EXPO_PUBLIC_HAPPIER_FEATURE_UPDATES_OTA__ENABLED, true),
     'social.friends': (settings) => resolveUiFeatureToggleEnabled(settings, 'social.friends'),

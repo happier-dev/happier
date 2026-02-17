@@ -2,6 +2,10 @@
   "buildPolicy": {
     "allow": [
       "updates.ota",
+      "sharing.session",
+      "sharing.public",
+      "sharing.contentKeys",
+      "sharing.pendingQueueV2",
       "auth.recovery.providerReset",
       "auth.ui.recoveryKeyReminder",
       "app.analytics",
@@ -20,9 +24,10 @@
       "automations.existingSessionTarget",
       "execution.runs",
       "voice",
+      "voice.agent",
       "social.friends",
-      "connected.services",
-      "connected.services.quotas",
+      "connectedServices",
+      "connectedServices.quotas",
       "app.ui.changelog",
       "scm.writeOperations",
       "files.reviewComments",

@@ -15,6 +15,9 @@ describe('useFeatureEnabled', () => {
         vi.resetModules();
         stubServerFeaturesFetch({ voiceEnabled: true });
 
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        getStorage().getState().applySettingsLocal({ experiments: true });
+
         const { useFeatureEnabled } = await import('./useFeatureEnabled');
         const seen = await renderHookAndCollectValues(() => useFeatureEnabled('voice'));
 

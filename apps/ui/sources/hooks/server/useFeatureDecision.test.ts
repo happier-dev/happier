@@ -68,6 +68,9 @@ describe('useFeatureDecision', () => {
         vi.resetModules();
         stubServerFeaturesFetch({ voiceEnabled: true });
 
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        getStorage().getState().applySettingsLocal({ experiments: true });
+
         const { useFeatureDecision } = await import('./useFeatureDecision');
         const seen = await renderHookAndCollectValues(() => useFeatureDecision('voice'));
 
@@ -86,6 +89,9 @@ describe('useFeatureDecision', () => {
             })) as any,
         );
 
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        getStorage().getState().applySettingsLocal({ experiments: true });
+
         const { useFeatureDecision } = await import('./useFeatureDecision');
         const seen = await renderHookAndCollectValues(() => useFeatureDecision('voice'));
 
@@ -96,6 +102,9 @@ describe('useFeatureDecision', () => {
     it('returns unknown when probing features fails', async () => {
         vi.resetModules();
         stubServerFeaturesFetchFailure();
+
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        getStorage().getState().applySettingsLocal({ experiments: true });
 
         const { useFeatureDecision } = await import('./useFeatureDecision');
         const seen = await renderHookAndCollectValues(() => useFeatureDecision('voice'));

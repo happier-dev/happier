@@ -12,7 +12,7 @@ export function resolveEmbeddedFeaturePolicyEnv(value: unknown): EmbeddedFeature
   const normalized = value.trim().toLowerCase();
   if (!normalized) return null;
   if (normalized === 'production' || normalized === 'prod' || normalized === 'stable') return 'production';
-  if (normalized === 'preview' || normalized === 'dev' || normalized === 'development') return 'preview';
+  if (normalized === 'preview') return 'preview';
   return null;
 }
 

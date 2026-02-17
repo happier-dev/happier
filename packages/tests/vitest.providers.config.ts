@@ -1,5 +1,7 @@
 import { defineConfig } from 'vitest/config';
 
+import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating';
+
 export default defineConfig({
   test: {
     environment: 'node',
@@ -10,6 +12,7 @@ export default defineConfig({
     // Provider E2E contract tests start real local servers, so prefer process-based isolation.
     pool: 'forks',
     globals: false,
+    exclude: [...resolveVitestFeatureTestExcludeGlobs()],
     env: {
       HAPPIER_FEATURE_POLICY_ENV: '',
     },

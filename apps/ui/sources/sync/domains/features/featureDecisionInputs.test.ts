@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FeaturesResponse } from '@happier-dev/protocol';
+import { FeaturesResponseSchema, type FeaturesResponse } from '@happier-dev/protocol';
 
 import { storage } from '@/sync/domains/state/storage';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -20,80 +20,14 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 const initialStorageState = storage.getState();
 
 function createFeaturesResponse(friendsEnabled: boolean): FeaturesResponse {
-    return {
+    return FeaturesResponseSchema.parse({
         features: {
-            bugReports: {
-                enabled: true,
-                providerUrl: 'https://reports.happier.dev',
-                defaultIncludeDiagnostics: true,
-                maxArtifactBytes: 10 * 1024 * 1024,
-                acceptedArtifactKinds: ['ui-mobile', 'daemon', 'server', 'cli'],
-                uploadTimeoutMs: 20_000,
-                contextWindowMs: 30 * 60 * 1_000,
-            },
-            automations: {
-                enabled: true,
-                existingSessionTarget: false,
-            },
-            connectedServices: {
-                enabled: true,
-                webOauthProxyEnabled: true,
-                quotas: { enabled: true },
-            },
-            updates: {
-                ota: { enabled: true },
-            },
-            sharing: {
-                session: { enabled: true },
-                public: { enabled: true },
-                contentKeys: { enabled: true },
-                pendingQueueV2: { enabled: false },
-            },
-            voice: {
-                enabled: false,
-                configured: false,
-                provider: null,
-            },
             social: {
-                friends: {
-                    enabled: friendsEnabled,
-                    allowUsername: false,
-                    requiredIdentityProviderId: 'github',
-                },
-            },
-            oauth: {
-                providers: {
-                    github: {
-                        enabled: true,
-                        configured: true,
-                    },
-                },
-            },
-            auth: {
-                signup: { methods: [{ id: 'anonymous', enabled: true }] },
-                login: { requiredProviders: [] },
-                recovery: { providerReset: { enabled: false, providers: [] } },
-                ui: {
-                    autoRedirect: { enabled: false, providerId: null },
-                    recoveryKeyReminder: { enabled: true },
-                },
-                providers: {
-                    github: {
-                        enabled: true,
-                        configured: true,
-                        restrictions: { usersAllowlist: false, orgsAllowlist: false, orgMatch: 'any' },
-                        offboarding: {
-                            enabled: false,
-                            intervalSeconds: 600,
-                            mode: 'per-request-cache',
-                            source: 'oauth_user_token',
-                        },
-                    },
-                },
-                misconfig: [],
+                friends: { enabled: friendsEnabled },
             },
         },
-    };
+        capabilities: {},
+    });
 }
 
 describe('featureDecisionInputs', () => {

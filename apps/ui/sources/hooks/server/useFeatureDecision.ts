@@ -11,7 +11,7 @@ import {
 } from '@/sync/domains/features/featureDecisionRuntime';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { resolveLocalFeaturePolicyEnabled } from '@/sync/domains/features/featureLocalPolicy';
-import { getUiFeatureDefinition } from '@/sync/domains/features/featureRegistry';
+import { featureRequiresServerSnapshot } from '@happier-dev/protocol';
 import { useEffectiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
 import type { FeatureScopeParams } from './featureScope';
 
@@ -21,10 +21,9 @@ export function useFeatureDecision(featureId: FeatureId, scope?: FeatureDecision
     const settings = useSettings();
     const scopeKind = scope?.scopeKind ?? 'main_selection';
 
-    const definition = getUiFeatureDefinition(featureId);
     const buildPolicy = getFeatureBuildPolicyDecision(featureId);
     const localPolicyEnabled = resolveLocalFeaturePolicyEnabled(featureId, settings);
-    const probesEnabled = definition.serverRequired && buildPolicy !== 'deny' && localPolicyEnabled;
+    const probesEnabled = featureRequiresServerSnapshot(featureId) && buildPolicy !== 'deny' && localPolicyEnabled;
     const runtimeSnapshot = useServerFeaturesRuntimeSnapshot({ enabled: probesEnabled });
 
     if (scopeKind === 'runtime') {

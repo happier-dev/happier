@@ -1,23 +1,30 @@
 import type { FeaturesResponse as RootLayoutFeatures } from '@happier-dev/protocol';
 
+type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' | 'capabilities'> & Readonly<{
+    features?: Omit<Partial<RootLayoutFeatures['features']>, 'automations' | 'connectedServices' | 'updates' | 'sharing' | 'social' | 'auth'> & Readonly<{
+        automations?: Partial<RootLayoutFeatures['features']['automations']>;
+        connectedServices?: Partial<RootLayoutFeatures['features']['connectedServices']>;
+        updates?: Partial<RootLayoutFeatures['features']['updates']>;
+        sharing?: Partial<RootLayoutFeatures['features']['sharing']>;
+        social?: Partial<RootLayoutFeatures['features']['social']>;
+        auth?: Partial<RootLayoutFeatures['features']['auth']>;
+    }>;
+    capabilities?: Omit<Partial<RootLayoutFeatures['capabilities']>, 'oauth' | 'social' | 'auth'> & Readonly<{
+        oauth?: Partial<RootLayoutFeatures['capabilities']['oauth']>;
+        social?: Partial<RootLayoutFeatures['capabilities']['social']>;
+        auth?: Partial<RootLayoutFeatures['capabilities']['auth']>;
+    }>;
+}>;
+
 const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
     features: {
-        bugReports: {
-            enabled: true,
-            providerUrl: 'https://reports.happier.dev',
-            defaultIncludeDiagnostics: true,
-            maxArtifactBytes: 10 * 1024 * 1024,
-            acceptedArtifactKinds: ['ui-mobile', 'daemon', 'server', 'cli'],
-            uploadTimeoutMs: 20_000,
-            contextWindowMs: 30 * 60 * 1_000,
-        },
+        bugReports: { enabled: true },
         automations: {
             enabled: true,
-            existingSessionTarget: false,
+            existingSessionTarget: { enabled: false },
         },
         connectedServices: {
             enabled: true,
-            webOauthProxyEnabled: true,
             quotas: { enabled: true },
         },
         updates: {
@@ -29,10 +36,33 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             contentKeys: { enabled: true },
             pendingQueueV2: { enabled: false },
         },
-        voice: { enabled: false, configured: false, provider: null },
+        voice: { enabled: false, happierVoice: { enabled: false } },
         social: {
             friends: {
                 enabled: true,
+            },
+        },
+        auth: {
+            recovery: {
+                providerReset: { enabled: false },
+            },
+            ui: {
+                recoveryKeyReminder: { enabled: true },
+            },
+        },
+    },
+    capabilities: {
+        bugReports: {
+            providerUrl: 'https://reports.happier.dev',
+            defaultIncludeDiagnostics: true,
+            maxArtifactBytes: 10 * 1024 * 1024,
+            acceptedArtifactKinds: ['ui-mobile', 'daemon', 'server', 'cli'],
+            uploadTimeoutMs: 20_000,
+            contextWindowMs: 30 * 60 * 1_000,
+        },
+        voice: { configured: false, provider: null, requested: false, disabledByBuildPolicy: false },
+        social: {
+            friends: {
                 allowUsername: false,
                 requiredIdentityProviderId: 'github',
             },
@@ -42,11 +72,10 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             signup: { methods: [{ id: 'anonymous', enabled: true }] },
             login: { requiredProviders: [] },
             recovery: {
-                providerReset: { enabled: false, providers: [] },
+                providerReset: { providers: [] },
             },
             ui: {
                 autoRedirect: { enabled: false, providerId: null },
-                recoveryKeyReminder: { enabled: true },
             },
             providers: {
                 github: {
@@ -61,14 +90,26 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
     },
 };
 
-export function createRootLayoutFeaturesResponse(overrides?: Partial<RootLayoutFeatures['features']>): RootLayoutFeatures {
-    const nextFeatures: Partial<RootLayoutFeatures['features']> = overrides ?? {};
+export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesOverrides): RootLayoutFeatures {
+    const next = overrides ?? {};
+    const nextFeatures: NonNullable<RootLayoutFeaturesOverrides['features']> = next.features ?? {};
+    const nextCapabilities: NonNullable<RootLayoutFeaturesOverrides['capabilities']> = next.capabilities ?? {};
+
     const nextAuth: Partial<RootLayoutFeatures['features']['auth']> = nextFeatures.auth ?? {};
     const nextSocial: Partial<RootLayoutFeatures['features']['social']> = nextFeatures.social ?? {};
     const nextSharing: Partial<RootLayoutFeatures['features']['sharing']> = nextFeatures.sharing ?? {};
-    const nextOauth: Partial<RootLayoutFeatures['features']['oauth']> = nextFeatures.oauth ?? {};
-    const nextConnectedServices: Partial<RootLayoutFeatures['features']['connectedServices']> = nextFeatures.connectedServices ?? {};
+    const nextConnectedServices: Partial<RootLayoutFeatures['features']['connectedServices']> =
+        nextFeatures.connectedServices ?? {};
     const nextUpdates: Partial<RootLayoutFeatures['features']['updates']> = nextFeatures.updates ?? {};
+    const nextAutomations: Partial<RootLayoutFeatures['features']['automations']> = nextFeatures.automations ?? {};
+
+    const nextCapabilitiesAuth: Partial<RootLayoutFeatures['capabilities']['auth']> = nextCapabilities.auth ?? {};
+    const nextCapabilitiesSocial: Partial<RootLayoutFeatures['capabilities']['social']> = nextCapabilities.social ?? {};
+    const nextCapabilitiesOauth: Partial<RootLayoutFeatures['capabilities']['oauth']> = nextCapabilities.oauth ?? {};
+    const nextCapabilitiesAuthRecovery: Partial<RootLayoutFeatures['capabilities']['auth']['recovery']> =
+        nextCapabilitiesAuth.recovery ?? {};
+    const nextCapabilitiesAuthUi: Partial<RootLayoutFeatures['capabilities']['auth']['ui']> =
+        nextCapabilitiesAuth.ui ?? {};
     return {
         features: {
             ...BASE_ROOT_LAYOUT_FEATURES.features,
@@ -83,7 +124,11 @@ export function createRootLayoutFeaturesResponse(overrides?: Partial<RootLayoutF
             },
             automations: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.automations,
-                ...(nextFeatures.automations ?? {}),
+                ...nextAutomations,
+                existingSessionTarget: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.automations.existingSessionTarget,
+                    ...(nextAutomations.existingSessionTarget ?? {}),
+                },
             },
             connectedServices: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.connectedServices,
@@ -109,25 +154,9 @@ export function createRootLayoutFeaturesResponse(overrides?: Partial<RootLayoutF
                     ...(nextSocial.friends ?? {}),
                 },
             },
-            oauth: {
-                ...BASE_ROOT_LAYOUT_FEATURES.features.oauth,
-                ...nextOauth,
-                providers: {
-                    ...BASE_ROOT_LAYOUT_FEATURES.features.oauth.providers,
-                    ...(nextOauth.providers ?? {}),
-                },
-            },
             auth: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.auth,
                 ...nextAuth,
-                signup: {
-                    ...BASE_ROOT_LAYOUT_FEATURES.features.auth.signup,
-                    ...(nextAuth.signup ?? {}),
-                },
-                login: {
-                    ...BASE_ROOT_LAYOUT_FEATURES.features.auth.login,
-                    ...(nextAuth.login ?? {}),
-                },
                 recovery: {
                     ...BASE_ROOT_LAYOUT_FEATURES.features.auth.recovery,
                     ...(nextAuth.recovery ?? {}),
@@ -136,11 +165,63 @@ export function createRootLayoutFeaturesResponse(overrides?: Partial<RootLayoutF
                     ...BASE_ROOT_LAYOUT_FEATURES.features.auth.ui,
                     ...(nextAuth.ui ?? {}),
                 },
-                providers: {
-                    ...BASE_ROOT_LAYOUT_FEATURES.features.auth.providers,
-                    ...(nextAuth.providers ?? {}),
+            },
+        },
+        capabilities: {
+            ...BASE_ROOT_LAYOUT_FEATURES.capabilities,
+            ...nextCapabilities,
+            voice: {
+                ...BASE_ROOT_LAYOUT_FEATURES.capabilities.voice,
+                ...(nextCapabilities.voice ?? {}),
+            },
+            social: {
+                ...BASE_ROOT_LAYOUT_FEATURES.capabilities.social,
+                ...nextCapabilitiesSocial,
+                friends: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.capabilities.social.friends,
+                    ...(nextCapabilitiesSocial.friends ?? {}),
                 },
-                misconfig: nextAuth.misconfig ?? BASE_ROOT_LAYOUT_FEATURES.features.auth.misconfig,
+            },
+            oauth: {
+                ...BASE_ROOT_LAYOUT_FEATURES.capabilities.oauth,
+                ...nextCapabilitiesOauth,
+                providers: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.capabilities.oauth.providers,
+                    ...(nextCapabilitiesOauth.providers ?? {}),
+                },
+            },
+            auth: {
+                ...BASE_ROOT_LAYOUT_FEATURES.capabilities.auth,
+                ...nextCapabilitiesAuth,
+                signup: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.capabilities.auth.signup,
+                    ...(nextCapabilitiesAuth.signup ?? {}),
+                },
+                login: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.capabilities.auth.login,
+                    ...(nextCapabilitiesAuth.login ?? {}),
+                },
+                recovery: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.capabilities.auth.recovery,
+                    ...nextCapabilitiesAuthRecovery,
+                    providerReset: {
+                        ...BASE_ROOT_LAYOUT_FEATURES.capabilities.auth.recovery.providerReset,
+                        ...(nextCapabilitiesAuthRecovery.providerReset ?? {}),
+                    },
+                },
+                ui: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.capabilities.auth.ui,
+                    ...nextCapabilitiesAuthUi,
+                    autoRedirect: {
+                        ...BASE_ROOT_LAYOUT_FEATURES.capabilities.auth.ui.autoRedirect,
+                        ...(nextCapabilitiesAuthUi.autoRedirect ?? {}),
+                    },
+                },
+                providers: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.capabilities.auth.providers,
+                    ...(nextCapabilitiesAuth.providers ?? {}),
+                },
+                misconfig: nextCapabilitiesAuth.misconfig ?? BASE_ROOT_LAYOUT_FEATURES.capabilities.auth.misconfig,
             },
         },
     };

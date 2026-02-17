@@ -2,6 +2,7 @@ import { defineConfig } from 'vitest/config';
 import { resolve } from 'node:path';
 
 import baseConfig from './vitest.config';
+import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating';
 
 const base = baseConfig as any;
 
@@ -26,7 +27,7 @@ export default defineConfig({
             'sources/**/*.integration.spec.{ts,tsx}',
             'sources/**/*.e2e.test.{ts,tsx}',
         ],
-        exclude: [],
+        exclude: [...resolveVitestFeatureTestExcludeGlobs()],
         testTimeout: 120_000,
         hookTimeout: 120_000,
     },

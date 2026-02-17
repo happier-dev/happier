@@ -1,6 +1,8 @@
 import { defineConfig } from 'vitest/config'
 import { resolve } from 'node:path'
 
+import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating'
+
 export default defineConfig({
     define: {
         __DEV__: false,
@@ -32,6 +34,7 @@ export default defineConfig({
             'sources/**/*.real.integration.test.{ts,tsx}',
             'sources/**/*.integration.spec.{ts,tsx}',
             'sources/**/*.e2e.test.{ts,tsx}',
+            ...resolveVitestFeatureTestExcludeGlobs(),
         ],
         coverage: {
             provider: 'v8',

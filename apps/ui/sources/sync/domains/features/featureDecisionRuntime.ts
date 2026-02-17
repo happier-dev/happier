@@ -1,6 +1,12 @@
 import * as React from 'react';
 import {
+    applyFeatureDependencies,
     createFeatureDecision,
+    evaluateFeatureDecisionBase,
+    featureRequiresServerSnapshot,
+    getFeatureDependencies,
+    isFeatureServerRepresented,
+    readServerEnabledBit,
     type FeatureDecision,
     type FeatureDecisionScope,
     type FeatureId,
@@ -13,10 +19,10 @@ import {
     type ServerFeaturesSnapshot,
 } from '@/sync/api/capabilities/serverFeaturesClient';
 import { subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
-import { evaluateFeatureDecision } from './featureDecisionEngine';
 import { getFeatureBuildPolicyDecision } from './featureBuildPolicy';
 import { resolveLocalFeaturePolicyEnabled } from './featureLocalPolicy';
-import { getUiFeatureDefinition } from './featureRegistry';
+
+const evaluateFeatureDecision = evaluateFeatureDecisionBase;
 
 export type ServerFeaturesRuntimeSnapshot =
     | Readonly<{ status: 'loading' }>
@@ -242,75 +248,124 @@ export function resolveRuntimeFeatureDecisionFromSnapshot(params: {
     snapshot: ServerFeaturesRuntimeSnapshot;
     scope?: FeatureDecisionScope;
 }): FeatureDecision | null {
-    const definition = getUiFeatureDefinition(params.featureId);
     const scope: FeatureDecisionScope = params.scope ?? { scopeKind: 'runtime' };
 
-    const buildPolicy = getFeatureBuildPolicyDecision(params.featureId);
-    const localPolicyEnabled = resolveLocalFeaturePolicyEnabled(params.featureId, params.settings);
+    const memo = new Map<FeatureId, FeatureDecision | null>();
 
-    // Global policy gates apply before any server probing.
-    const global = evaluateFeatureDecision({
-        featureId: params.featureId,
-        scope,
-        supportsClient: true,
-        buildPolicy,
-        localPolicyEnabled,
-        serverSupported: true,
-        serverEnabled: true,
-    });
-    if (global.blockedBy && global.blockedBy !== 'server') {
-        return global;
-    }
+    const resolveBaseDecision = (featureId: FeatureId): FeatureDecision | null => {
+        const buildPolicy = getFeatureBuildPolicyDecision(featureId);
+        const localPolicyEnabled = resolveLocalFeaturePolicyEnabled(featureId, params.settings);
 
-    if (!definition.serverRequired) {
-        return global;
-    }
-
-    if (params.snapshot.status === 'loading') {
-        return null;
-    }
-
-    if (params.snapshot.status === 'error') {
-        return createFeatureDecision({
-            featureId: params.featureId,
-            state: 'unknown',
-            blockedBy: 'server',
-            blockerCode: 'probe_failed',
-            diagnostics: [`server_error:${params.snapshot.reason}`],
-            evaluatedAt: Date.now(),
+        // Global policy gates apply before any server probing.
+        const global = evaluateFeatureDecision({
+            featureId,
             scope,
+            supportsClient: true,
+            buildPolicy,
+            localPolicyEnabled,
+            serverSupported: true,
+            serverEnabled: true,
         });
-    }
+        if (global.blockedBy && global.blockedBy !== 'server') {
+            return global;
+        }
 
-    if (params.snapshot.status === 'unsupported') {
-        return createFeatureDecision({
-            featureId: params.featureId,
-            state: 'unsupported',
-            blockedBy: 'server',
-            blockerCode: params.snapshot.reason === 'endpoint_missing' ? 'endpoint_missing' : 'misconfigured',
-            diagnostics: [`server_unsupported:${params.snapshot.reason}`],
-            evaluatedAt: Date.now(),
+        if (!isFeatureServerRepresented(featureId)) {
+            return global;
+        }
+
+        if (params.snapshot.status === 'loading') {
+            return null;
+        }
+
+        if (params.snapshot.status === 'error') {
+            return createFeatureDecision({
+                featureId,
+                state: 'unknown',
+                blockedBy: 'server',
+                blockerCode: 'probe_failed',
+                diagnostics: [`server_error:${params.snapshot.reason}`],
+                evaluatedAt: Date.now(),
+                scope,
+            });
+        }
+
+        if (params.snapshot.status === 'unsupported') {
+            return createFeatureDecision({
+                featureId,
+                state: 'unsupported',
+                blockedBy: 'server',
+                blockerCode: params.snapshot.reason === 'endpoint_missing' ? 'endpoint_missing' : 'misconfigured',
+                diagnostics: [`server_unsupported:${params.snapshot.reason}`],
+                evaluatedAt: Date.now(),
+                scope,
+            });
+        }
+
+        const serverEnabled = readServerEnabledBit(params.snapshot.features, featureId) === true;
+        return evaluateFeatureDecision({
+            featureId,
             scope,
+            supportsClient: true,
+            buildPolicy,
+            localPolicyEnabled,
+            serverSupported: true,
+            serverEnabled,
         });
+    };
+
+    const resolveDecision = (featureId: FeatureId): FeatureDecision | null => {
+        const cached = memo.get(featureId);
+        if (cached !== undefined) return cached;
+
+        const base = resolveBaseDecision(featureId);
+        if (!base) {
+            memo.set(featureId, null);
+            return null;
+        }
+
+        if (base.state !== 'enabled') {
+            memo.set(featureId, base);
+            return base;
+        }
+
+        const dependencies = getFeatureDependencies(featureId);
+        for (const depId of dependencies) {
+            const depDecision = resolveDecision(depId);
+            if (!depDecision) {
+                memo.set(featureId, null);
+                return null;
+            }
+        }
+
+        const withDependencies = applyFeatureDependencies({
+            featureId,
+            baseDecision: base,
+            resolveDependencyDecision: (depId) => {
+                const resolved = resolveDecision(depId);
+                if (resolved) return resolved;
+                return createFeatureDecision({
+                    featureId: depId,
+                    state: 'unknown',
+                    blockedBy: 'server',
+                    blockerCode: 'probe_failed',
+                    diagnostics: ['dependency_unresolved'],
+                    evaluatedAt: base.evaluatedAt,
+                    scope,
+                });
+            },
+        });
+
+        memo.set(featureId, withDependencies);
+        return withDependencies;
+    };
+
+    // Shortcut: if neither this feature nor its dependency closure needs server probes, do not defer on loading snapshots.
+    if (params.snapshot.status === 'loading' && featureRequiresServerSnapshot(params.featureId) !== true) {
+        return resolveDecision(params.featureId);
     }
 
-    const serverSupported = !definition.serverRequired || params.snapshot.status === 'ready';
-    const serverEnabled =
-        !definition.serverRequired
-            ? true
-            : params.snapshot.status === 'ready'
-                ? definition.serverEnabled(params.snapshot.features)
-                : false;
-
-    return evaluateFeatureDecision({
-        featureId: params.featureId,
-        scope,
-        supportsClient: true,
-        buildPolicy,
-        localPolicyEnabled,
-        serverSupported,
-        serverEnabled,
-    });
+    return resolveDecision(params.featureId);
 }
 
 export function resolveMainSelectionFeatureDecision(params: {
@@ -318,7 +373,6 @@ export function resolveMainSelectionFeatureDecision(params: {
     settings: Settings;
     snapshot: ServerFeaturesMainSelectionSnapshot;
 }): FeatureDecision | null {
-    const definition = getUiFeatureDefinition(params.featureId);
     const scope: FeatureDecisionScope = { scopeKind: 'main_selection' };
 
     const buildPolicy = getFeatureBuildPolicyDecision(params.featureId);
@@ -338,8 +392,42 @@ export function resolveMainSelectionFeatureDecision(params: {
         return global;
     }
 
-    if (!definition.serverRequired) {
-        return global;
+    const requiresServerSnapshot = featureRequiresServerSnapshot(params.featureId);
+
+    if (!requiresServerSnapshot) {
+        const memo = new Map<FeatureId, FeatureDecision>();
+
+        const resolveDecision = (featureId: FeatureId): FeatureDecision => {
+            const cached = memo.get(featureId);
+            if (cached) return cached;
+
+            const buildPolicy = getFeatureBuildPolicyDecision(featureId);
+            const localPolicyEnabled = resolveLocalFeaturePolicyEnabled(featureId, params.settings);
+            const base = evaluateFeatureDecision({
+                featureId,
+                scope,
+                supportsClient: true,
+                buildPolicy,
+                localPolicyEnabled,
+                serverSupported: true,
+                serverEnabled: true,
+            });
+
+            if (base.state !== 'enabled') {
+                memo.set(featureId, base);
+                return base;
+            }
+
+            const withDependencies = applyFeatureDependencies({
+                featureId,
+                baseDecision: base,
+                resolveDependencyDecision: resolveDecision,
+            });
+            memo.set(featureId, withDependencies);
+            return withDependencies;
+        };
+
+        return resolveDecision(params.featureId);
     }
 
     if (params.snapshot.status === 'loading') {
@@ -348,6 +436,64 @@ export function resolveMainSelectionFeatureDecision(params: {
 
     const serverIds = params.snapshot.serverIds;
     const snapshots = params.snapshot.snapshotsByServerId;
+
+    const resolveDecisionForServerFeatures = (serverFeatures: (typeof params.snapshot.snapshotsByServerId)[string] & { status: 'ready' }): FeatureDecision => {
+        const memo = new Map<FeatureId, FeatureDecision>();
+
+        const resolveBaseDecision = (featureId: FeatureId): FeatureDecision => {
+            const buildPolicy = getFeatureBuildPolicyDecision(featureId);
+            const localPolicyEnabled = resolveLocalFeaturePolicyEnabled(featureId, params.settings);
+
+            const global = evaluateFeatureDecision({
+                featureId,
+                scope,
+                supportsClient: true,
+                buildPolicy,
+                localPolicyEnabled,
+                serverSupported: true,
+                serverEnabled: true,
+            });
+            if (global.blockedBy && global.blockedBy !== 'server') {
+                return global;
+            }
+
+            if (!isFeatureServerRepresented(featureId)) {
+                return global;
+            }
+
+            const serverEnabled = readServerEnabledBit(serverFeatures.features, featureId) === true;
+            return evaluateFeatureDecision({
+                featureId,
+                scope,
+                supportsClient: true,
+                buildPolicy,
+                localPolicyEnabled,
+                serverSupported: true,
+                serverEnabled,
+            });
+        };
+
+        const resolveDecision = (featureId: FeatureId): FeatureDecision => {
+            const cached = memo.get(featureId);
+            if (cached) return cached;
+
+            const base = resolveBaseDecision(featureId);
+            if (base.state !== 'enabled') {
+                memo.set(featureId, base);
+                return base;
+            }
+
+            const withDependencies = applyFeatureDependencies({
+                featureId,
+                baseDecision: base,
+                resolveDependencyDecision: resolveDecision,
+            });
+            memo.set(featureId, withDependencies);
+            return withDependencies;
+        };
+
+        return resolveDecision(params.featureId);
+    };
 
     const enabledServers: string[] = [];
     const disabledServers: string[] = [];
@@ -377,9 +523,15 @@ export function resolveMainSelectionFeatureDecision(params: {
             continue;
         }
 
-        const enabled = definition.serverEnabled(snapshot.features);
-        if (enabled) enabledServers.push(serverId);
-        else disabledServers.push(serverId);
+        const decision = resolveDecisionForServerFeatures(snapshot);
+        if (decision.state === 'enabled') {
+            enabledServers.push(serverId);
+        } else if (decision.state === 'disabled') {
+            disabledServers.push(serverId);
+        } else {
+            erroredServers.push(serverId);
+            errorReasons.push('unknown');
+        }
     }
 
     if (erroredServers.length > 0) {

@@ -11,7 +11,7 @@ const TemplateSchema = z.object({
   directory: z.string().trim().min(1),
   agent: z.string().trim().min(1).optional(),
   profileId: z.string().optional(),
-  environmentVariables: z.record(z.string()).optional(),
+  environmentVariables: z.record(z.string(), z.string()).optional(),
   resume: z.string().optional(),
   permissionMode: z.string().optional(),
   permissionModeUpdatedAt: z.number().int().optional(),

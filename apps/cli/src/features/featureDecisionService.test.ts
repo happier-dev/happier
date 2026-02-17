@@ -1,120 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import type { FeaturesResponse } from '@happier-dev/protocol';
+import { FeaturesResponseSchema, type FeaturesResponse } from '@happier-dev/protocol';
 
 import {
   resolveCliFeatureDecision,
   type CliServerFeaturesSnapshot,
 } from './featureDecisionService';
 
-function buildFeaturesResponse(overrides?: Partial<FeaturesResponse['features']>): FeaturesResponse {
-  const base: FeaturesResponse = {
+function buildFeaturesResponse(): FeaturesResponse {
+  return FeaturesResponseSchema.parse({
     features: {
-      bugReports: {
-        enabled: true,
-        providerUrl: 'https://reports.happier.dev',
-        defaultIncludeDiagnostics: true,
-        maxArtifactBytes: 10 * 1024 * 1024,
-        acceptedArtifactKinds: ['cli', 'daemon', 'server'],
-        uploadTimeoutMs: 20_000,
-        contextWindowMs: 30 * 60 * 1000,
-      },
+      bugReports: { enabled: true },
       automations: {
         enabled: true,
-        existingSessionTarget: true,
+        existingSessionTarget: { enabled: true },
       },
       connectedServices: {
         enabled: true,
-        webOauthProxyEnabled: true,
         quotas: { enabled: false },
       },
-      updates: {
-        ota: { enabled: true },
-      },
-      sharing: {
-        session: { enabled: true },
-        public: { enabled: true },
-        contentKeys: { enabled: true },
-        pendingQueueV2: { enabled: false },
-      },
-      voice: {
-        enabled: false,
-        configured: false,
-        provider: null,
-      },
-      social: {
-        friends: {
-          enabled: true,
-          allowUsername: false,
-          requiredIdentityProviderId: null,
-        },
-      },
-      oauth: {
-        providers: {
-          github: {
-            enabled: true,
-            configured: true,
-          },
-        },
-      },
-      auth: {
-        signup: {
-          methods: [{ id: 'anonymous', enabled: true }],
-        },
-        login: {
-          requiredProviders: [],
-        },
-        recovery: {
-          providerReset: {
-            enabled: false,
-            providers: [],
-          },
-        },
-        ui: {
-          autoRedirect: {
-            enabled: false,
-            providerId: null,
-          },
-          recoveryKeyReminder: {
-            enabled: true,
-          },
-        },
-        providers: {
-          github: {
-            enabled: true,
-            configured: true,
-            restrictions: {
-              usersAllowlist: false,
-              orgsAllowlist: false,
-              orgMatch: 'any',
-            },
-            offboarding: {
-              enabled: false,
-              intervalSeconds: 600,
-              mode: 'per-request-cache',
-              source: 'oauth_user_token',
-            },
-          },
-        },
-        misconfig: [],
-      },
     },
-  };
-
-  if (!overrides) return base;
-  return {
-    features: {
-      ...base.features,
-      ...overrides,
-      bugReports: {
-        ...base.features.bugReports,
-        ...(overrides.bugReports ?? {}),
-      },
-      automations: {
-        ...base.features.automations,
-        ...(overrides.automations ?? {}),
-      },
-    },
-  };
+    capabilities: {},
+  });
 }
 
 describe('resolveCliFeatureDecision', () => {
@@ -173,20 +79,14 @@ describe('resolveCliFeatureDecision', () => {
     expect(decision.blockedBy).toBe('build_policy');
   });
 
-  it('disables connected.services.quotas when the server reports quotas disabled', () => {
+  it('disables connectedServices.quotas when the server reports quotas disabled', () => {
     const snapshot: CliServerFeaturesSnapshot = {
       status: 'ready',
-      features: buildFeaturesResponse({
-        connectedServices: {
-          enabled: true,
-          webOauthProxyEnabled: true,
-          quotas: { enabled: false },
-        },
-      } as any),
+      features: buildFeaturesResponse(),
     };
 
     const decision = resolveCliFeatureDecision({
-      featureId: 'connected.services.quotas',
+      featureId: 'connectedServices.quotas',
       env: {
         HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED: '1',
         HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: '1',
@@ -196,5 +96,19 @@ describe('resolveCliFeatureDecision', () => {
 
     expect(decision.state).toBe('disabled');
     expect(decision.blockedBy).toBe('server');
+  });
+
+  it('disables voice.agent when execution.runs dependency is locally disabled', () => {
+    const decision = resolveCliFeatureDecision({
+      featureId: 'voice.agent',
+      env: {
+        HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED: '0',
+        HAPPIER_FEATURE_VOICE__ENABLED: '1',
+      } as NodeJS.ProcessEnv,
+    });
+
+    expect(decision.state).toBe('disabled');
+    expect(decision.blockedBy).toBe('dependency');
+    expect(decision.blockerCode).toBe('dependency_disabled');
   });
 });

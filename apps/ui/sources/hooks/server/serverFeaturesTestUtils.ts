@@ -7,10 +7,11 @@ type FixtureOverrides = {
     friendsAllowUsername?: boolean;
     friendsRequiredIdentityProviderId?: string | null;
     voiceEnabled?: boolean;
+    happierVoiceEnabled?: boolean;
+    voiceConfigured?: boolean;
     automationsEnabled?: boolean;
     automationsExistingSessionTarget?: boolean;
     connectedServicesEnabled?: boolean;
-    connectedServicesWebOauthProxyEnabled?: boolean;
     connectedServicesQuotasEnabled?: boolean;
     updatesOtaEnabled?: boolean;
     oauthProviders?: Record<string, { enabled: boolean; configured: boolean }>;
@@ -25,6 +26,10 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
             configured: true,
         },
     };
+
+    const voiceEnabled = overrides.voiceEnabled ?? false;
+    const happierVoiceEnabled = overrides.happierVoiceEnabled ?? voiceEnabled;
+    const voiceConfigured = overrides.voiceConfigured ?? happierVoiceEnabled;
 
     const authProvidersWithDetails = Object.fromEntries(
         Object.entries(authProviders).map(([id, state]) => [
@@ -45,22 +50,13 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
 
     return {
         features: {
-            bugReports: {
-                enabled: true,
-                providerUrl: 'https://reports.happier.dev',
-                defaultIncludeDiagnostics: true,
-                maxArtifactBytes: 10 * 1024 * 1024,
-                acceptedArtifactKinds: ['ui-mobile', 'daemon', 'server', 'cli'],
-                uploadTimeoutMs: 20_000,
-                contextWindowMs: 30 * 60 * 1_000,
-            },
+            bugReports: { enabled: true },
             automations: {
                 enabled: overrides.automationsEnabled ?? true,
-                existingSessionTarget: overrides.automationsExistingSessionTarget ?? false,
+                existingSessionTarget: { enabled: overrides.automationsExistingSessionTarget ?? false },
             },
             connectedServices: {
                 enabled: overrides.connectedServicesEnabled ?? true,
-                webOauthProxyEnabled: overrides.connectedServicesWebOauthProxyEnabled ?? true,
                 quotas: {
                     enabled: overrides.connectedServicesQuotasEnabled ?? false,
                 },
@@ -77,13 +73,40 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 pendingQueueV2: { enabled: false },
             },
             voice: {
-                enabled: overrides.voiceEnabled ?? false,
-                configured: false,
-                provider: null,
+                enabled: voiceEnabled,
+                happierVoice: { enabled: happierVoiceEnabled },
             },
             social: {
                 friends: {
                     enabled: overrides.friendsEnabled ?? true,
+                },
+            },
+            auth: {
+                recovery: {
+                    providerReset: { enabled: false },
+                },
+                ui: {
+                    recoveryKeyReminder: { enabled: true },
+                },
+            },
+        },
+        capabilities: {
+            bugReports: {
+                providerUrl: 'https://reports.happier.dev',
+                defaultIncludeDiagnostics: true,
+                maxArtifactBytes: 10 * 1024 * 1024,
+                acceptedArtifactKinds: ['ui-mobile', 'daemon', 'server', 'cli'],
+                uploadTimeoutMs: 20_000,
+                contextWindowMs: 30 * 60 * 1_000,
+            },
+            voice: {
+                configured: voiceConfigured,
+                provider: voiceConfigured ? 'elevenlabs' : null,
+                requested: voiceEnabled,
+                disabledByBuildPolicy: false,
+            },
+            social: {
+                friends: {
                     allowUsername: overrides.friendsAllowUsername ?? false,
                     requiredIdentityProviderId: overrides.friendsRequiredIdentityProviderId ?? null,
                 },
@@ -95,11 +118,10 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 signup: { methods: [{ id: 'anonymous', enabled: true }] },
                 login: { requiredProviders: [] },
                 recovery: {
-                    providerReset: { enabled: false, providers: [] },
+                    providerReset: { providers: [] },
                 },
                 ui: {
                     autoRedirect: { enabled: false, providerId: null },
-                    recoveryKeyReminder: { enabled: true },
                 },
                 providers: authProvidersWithDetails,
                 misconfig: [],

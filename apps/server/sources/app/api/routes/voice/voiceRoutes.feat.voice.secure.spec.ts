@@ -91,6 +91,24 @@ describe("voiceRoutes (secure)", () => {
         expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false, reason: "voice_disabled" }));
     });
 
+    it("returns 403 when build policy denies voice even if voice is requested but misconfigured", async () => {
+        process.env.HAPPIER_FEATURE_POLICY_ENV = "preview";
+        process.env.HAPPIER_EMBEDDED_POLICY_ENV = "preview";
+        delete process.env.ELEVENLABS_API_KEY;
+        delete process.env.ELEVENLABS_AGENT_ID_PROD;
+
+        const { voiceRoutes } = await import("./voiceRoutes");
+        const app = new FakeApp();
+        voiceRoutes(app as any);
+
+        const handler = app.routes.get("POST /v1/voice/token");
+        const reply = replyStub();
+        await handler({ userId: "u1", body: { sessionId: "s1" } }, reply);
+
+        expect(reply.code).toHaveBeenCalledWith(403);
+        expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false, reason: "voice_disabled" }));
+    });
+
     it("returns 503 when ElevenLabs is not configured", async () => {
         delete process.env.ELEVENLABS_API_KEY;
 

@@ -7,7 +7,7 @@ import { useFeatureDecision } from './useFeatureDecision';
  * - `false` when the server explicitly reports voice is unavailable/misconfigured
  */
 export function useHappierVoiceSupport(): boolean | null {
-    const decision = useFeatureDecision('voice');
+    const decision = useFeatureDecision('voice.happierVoice');
     if (!decision) return null;
     return decision.state === 'enabled';
 }

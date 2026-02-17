@@ -548,23 +548,37 @@ export { splitUnifiedDiffByFile } from './diff/splitUnifiedDiffByFile.js';
 // Happier server feature discovery + social contracts
 export {
   BUG_REPORT_DEFAULT_ACCEPTED_ARTIFACT_KINDS,
-  BugReportsFeatureSchema,
-  DEFAULT_BUG_REPORTS_FEATURE,
+  BugReportsCapabilitiesSchema,
+  DEFAULT_BUG_REPORTS_CAPABILITIES,
+  FeatureGateSchema,
+  FeatureGatesSchema,
   FeaturesResponseSchema,
   OAuthProviderStatusSchema,
-  coerceBugReportsFeatureFromFeaturesPayload,
-  type BugReportsFeature,
+  coerceBugReportsCapabilitiesFromFeaturesPayload,
+  type BugReportsCapabilities,
+  type Capabilities,
+  type FeatureGate,
+  type FeatureGates,
   type FeaturesResponse,
   type OAuthProviderStatus,
 } from './features.js';
 export {
   FEATURE_CATALOG,
   FEATURE_IDS,
+  featureRequiresServerSnapshot,
+  getFeatureDefinition,
+  getFeatureDependencies,
+  getFeatureRepresentation,
+  isFeatureServerRepresented,
   isFeatureId,
-  type FeatureCatalogEntry,
   type FeatureFailMode,
   type FeatureId,
 } from './features/catalog.js';
+export {
+  readServerEnabledBit,
+  resolveServerEnabledBitPath,
+  tryWriteServerEnabledBitInPlace,
+} from './features/serverEnabledBit.js';
 export {
   FeatureAxisSchema,
   FeatureBlockerCodeSchema,
@@ -584,6 +598,11 @@ export {
   type FeatureBuildPolicy,
   type FeatureBuildPolicyEvaluation,
 } from './features/buildPolicy.js';
+export {
+  applyFeatureDependencies,
+  evaluateFeatureDecisionBase,
+  type FeatureDecisionBaseInput,
+} from './features/featureDecisionEngine.js';
 export {
   mergeFeatureBuildPolicies,
   resolveEmbeddedFeatureBuildPolicy,
@@ -614,6 +633,18 @@ export {
   type AccountProfileResponse,
   type LinkedProvider,
 } from './account/profile.js';
+
+export {
+  ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
+  AccountSettingsSchema,
+  NotificationsSettingsV1Schema,
+  DEFAULT_ACTIONS_SETTINGS_V1,
+  DEFAULT_NOTIFICATIONS_SETTINGS_V1,
+  accountSettingsParse,
+  getNotificationsSettingsV1FromAccountSettings,
+  type AccountSettings,
+  type NotificationsSettingsV1,
+} from './account/settings/index.js';
 
 export { ProfileBadgeSchema, type ProfileBadge } from './common/profileBadge.js';
 

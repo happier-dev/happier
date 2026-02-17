@@ -135,7 +135,8 @@ vi.mock('@/sync/domains/pending/pendingNotificationNav', () => ({
 vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
     getReadyServerFeatures: async () =>
         createRootLayoutFeaturesResponse({
-            voice: { enabled: false, configured: false, provider: null },
+            features: { voice: { enabled: false, happierVoice: { enabled: false } } },
+            capabilities: { voice: { configured: false, provider: null, requested: false, disabledByBuildPolicy: false } },
         }),
 }));
 

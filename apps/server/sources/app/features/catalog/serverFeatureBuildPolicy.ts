@@ -1,9 +1,7 @@
 import {
-    evaluateFeatureBuildPolicy,
     resolveEmbeddedFeaturePolicyEnv,
     resolveFeatureBuildPolicyFromEnvOrEmbedded,
     type FeatureBuildPolicy,
-    type FeatureId,
 } from "@happier-dev/protocol";
 
 type Cached = Readonly<{
@@ -36,9 +34,4 @@ export function resolveServerFeatureBuildPolicy(env: NodeJS.ProcessEnv): Feature
 
     cached = { key, policy };
     return policy;
-}
-
-export function isServerFeatureEnabledByBuildPolicy(featureId: FeatureId, env: NodeJS.ProcessEnv): boolean {
-    const policy = resolveServerFeatureBuildPolicy(env);
-    return evaluateFeatureBuildPolicy(policy, featureId) !== "deny";
 }

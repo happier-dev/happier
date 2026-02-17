@@ -11,7 +11,7 @@ import {
 } from './featureDecisionRuntime';
 import { getFeatureBuildPolicyDecision } from './featureBuildPolicy';
 import { resolveLocalFeaturePolicyEnabled } from './featureLocalPolicy';
-import { getUiFeatureDefinition } from './featureRegistry';
+import { featureRequiresServerSnapshot } from '@happier-dev/protocol';
 
 export type RuntimeFeatureDecisionInputs = Readonly<{
     featureId: FeatureId;
@@ -31,10 +31,9 @@ export async function loadRuntimeFeatureDecisionInputs(
     params: ResolveRuntimeFeatureDecisionParams,
 ): Promise<RuntimeFeatureDecisionInputs> {
     const settings = params.settings ?? storage.getState().settings;
-    const definition = getUiFeatureDefinition(params.featureId);
     const buildPolicy = getFeatureBuildPolicyDecision(params.featureId);
     const localPolicyEnabled = resolveLocalFeaturePolicyEnabled(params.featureId, settings);
-    const probesEnabled = definition.serverRequired && buildPolicy !== 'deny' && localPolicyEnabled;
+    const probesEnabled = featureRequiresServerSnapshot(params.featureId) && buildPolicy !== 'deny' && localPolicyEnabled;
 
     const snapshot: ServerFeaturesRuntimeSnapshot = probesEnabled
         ? await getServerFeaturesSnapshot({

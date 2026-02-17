@@ -20,7 +20,7 @@ describe('features/serverFeatureRegistry', () => {
             resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [
                 () =>
                     ({
-                        voice: { enabled: 'nope' },
+                        features: { voice: { enabled: 'nope' } },
                     }) as any,
             ]),
         ).toThrow(/features/i);

@@ -121,4 +121,3 @@ describe('Session settings (Actions entry)', () => {
         expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/actions');
     });
 });
-
