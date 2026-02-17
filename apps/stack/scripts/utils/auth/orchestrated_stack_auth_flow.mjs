@@ -19,15 +19,76 @@ function appendCauseText(baseMessage, cause) {
   return `${msg}\n\n[auth] Cause: ${c}`;
 }
 
+async function readTextWithTimeout(path, { timeoutMs = 1200 } = {}) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(path, { signal: controller.signal });
+    clearTimeout(timer);
+    return { ok: res.ok, status: res.status };
+  } catch (error) {
+    return { ok: false, status: 0, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function formatPidStatus(label, pidRaw) {
+  const pid = Number(pidRaw);
+  if (!Number.isFinite(pid) || pid <= 1) return `[auth] ${label}: unavailable`;
+  return `[auth] ${label}: ${pid} (${isPidAlive(pid) ? 'alive' : 'stale/dead'})`;
+}
+
+function formatLogPath(label, logPath) {
+  const p = String(logPath ?? '').trim();
+  return p ? `[auth] ${label}: ${p}` : `[auth] ${label}: unavailable`;
+}
+
+async function appendRuntimeHealthDiagnostics(message, stackName) {
+  const name = String(stackName ?? '').trim() || 'main';
+  const statePath = getStackRuntimeStatePath(name);
+
+  const state = await readStackRuntimeStateFile(statePath).catch(() => null);
+  if (!state || typeof state !== 'object') {
+    return `${message}\n\n[auth] Stack runtime state unavailable: ${statePath}`;
+  }
+
+  const serverPort = Number(state?.ports?.server);
+  let serverHealth = 'not configured';
+  if (Number.isFinite(serverPort) && serverPort > 0) {
+    const probe = await readTextWithTimeout(`http://127.0.0.1:${serverPort}/health`, { timeoutMs: 1200 });
+    if (probe.ok) {
+      serverHealth = `HTTP ${probe.status}`;
+    } else if (probe.error) {
+      serverHealth = probe.error;
+    } else {
+      serverHealth = `HTTP ${probe.status}`;
+    }
+  }
+
+  const runtimeSummary = [
+    `[auth] Stack runtime path: ${statePath}`,
+    formatPidStatus('ownerPid', state?.ownerPid),
+    formatPidStatus('serverPid', state?.processes?.serverPid),
+    formatPidStatus('expoPid', state?.processes?.expoPid),
+    formatPidStatus('expoTailscaleForwarderPid', state?.processes?.expoTailscaleForwarderPid),
+    `[auth] server port: ${Number.isFinite(serverPort) && serverPort > 0 ? serverPort : 'unconfigured'}`,
+    `[auth] server health: ${serverHealth}`,
+    formatLogPath('runner log', state?.logs?.runner),
+    formatLogPath('cli log', state?.logs?.cli),
+  ].join('\n');
+
+  return `${String(message ?? '').trim()}\n\n${runtimeSummary}`;
+}
+
 async function appendRunnerLogTailDiagnostics({ message, stackName, lines = 140 }) {
   const base = String(message ?? '').trim();
   const logPath = await resolveRunnerLogPathFromRuntime({ stackName, waitMs: 1000, pollMs: 100 }).catch(() => '');
-  if (!logPath) return base;
+  const withState = await appendRuntimeHealthDiagnostics(base, stackName).catch(() => base);
+  if (!logPath) return withState;
   const tail = await readLastLines(logPath, lines).catch(() => null);
   if (!tail || !String(tail).trim()) {
-    return `${base}\n\n[auth] Stack runner log: ${logPath}`;
+    return `${withState}\n\n[auth] Stack runner log: ${logPath}`;
   }
-  return `${base}\n\n[auth] Stack runner log: ${logPath}\n\n[auth] Last runner log lines:\n${String(tail).trimEnd()}`;
+  return `${withState}\n\n[auth] Stack runner log: ${logPath}\n\n[auth] Last runner log lines:\n${String(tail).trimEnd()}`;
 }
 
 async function tryStartStackUiInBackgroundForAuth({ rootDir, stackName, env = process.env } = {}) {

@@ -119,6 +119,8 @@ test('guided auth login fails closed when Expo web UI is not ready (does not fal
       /guid(ed)? login web UI is still not ready|startup failed/i,
       `stderr:\n${res.stderr}`
     );
+    assert.match(res.stderr, /Stack runtime path:/i, `stderr:\n${res.stderr}`);
+    assert.match(res.stderr, /server health:/i, `stderr:\n${res.stderr}`);
     assert.doesNotMatch(res.stdout, new RegExp(`URL: http://localhost:${fixture.port}\\b`), `stdout:\n${res.stdout}`);
   } finally {
     if (fixture) await fixture.cleanup();
