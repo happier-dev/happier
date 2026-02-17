@@ -24,3 +24,18 @@ Hard rules:
 - For background work, run shell commands via `edison exec -- <command> ...` so they match the allowed `Bash(edison:*)` rule.
 - If you must run direct `Bash(...)` commands that would require interactive approval, run them **in the foreground** (not background).
 <!-- EDISON:END -->
+
+## Pull Request Management
+
+**Always update existing PRs instead of creating new ones.**
+
+When working on a branch that already has an associated PR:
+- Update the existing PR's description/title using `gh pr edit <number>`
+- Never create a new PR for the same branch unless explicitly requested by the user
+- Check if a PR exists: `gh pr view --json number,title,state 2>/dev/null` or `gh pr list --head <branch-name>`
+- Only create a new PR if no PR exists for the current branch
+
+**PRs must target the base repository, not forks.**
+- Always specify the full repository path when creating PRs: `gh pr create <base-repo-owner>/<base-repo-name>`
+- Do not create PRs against forked repositories unless explicitly requested
+- Example: For Happier, use `gh pr create happier-dev/happier` (not the fork `caseyjkey/happier`)
