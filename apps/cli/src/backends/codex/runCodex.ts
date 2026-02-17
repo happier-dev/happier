@@ -78,6 +78,8 @@ import { resolveCodexStartingMode } from './utils/resolveCodexStartingMode';
 import { abortAcpRuntimeTurnIfNeeded } from '@/agent/acp/runtime/createAcpRuntime';
 import { runMetadataOverridesWatcherLoop } from './utils/metadataOverridesWatcher';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
 
 /**
  * Main entry point for the codex command with ink UI
@@ -135,11 +137,18 @@ export async function runCodex(opts: {
     //
 
     const explicitPermissionMode = opts.permissionMode;
-    let initialPermissionMode = normalizePermissionModeToIntent(opts.permissionMode ?? 'default') ?? 'default';
+    const hasResumeArg = typeof opts.resume === 'string' && opts.resume.trim().length > 0;
+    const accountSettings = hasResumeArg ? null : (getActiveAccountSettingsSnapshot()?.settings ?? null);
+    const permissionModeSeed = resolvePermissionModeSeedForAgentStart({
+        agentId: 'codex',
+        explicitPermissionMode: opts.permissionMode,
+        accountSettings,
+    });
+    let initialPermissionMode = permissionModeSeed.mode;
     let initialPermissionModeUpdatedAt =
         typeof opts.permissionModeUpdatedAt === 'number'
             ? opts.permissionModeUpdatedAt
-            : typeof opts.permissionMode === 'string'
+            : permissionModeSeed.source === 'explicit' || permissionModeSeed.source === 'account_default'
                 ? Date.now()
                 : 0;
     let initialModelId: string | null = (() => {

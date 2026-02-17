@@ -44,6 +44,8 @@ import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { computeRunnerTerminationOutcome, type RunnerTerminationEvent } from '@/agent/runtime/runnerTerminationOutcome';
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
 import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
 
 /** JavaScript runtime to use for spawning Claude Code */
 export type JsRuntime = 'node' | 'bun'
@@ -170,7 +172,14 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     // This is important because there may be no app-sent user messages yet (no meta.permissionMode to infer from).
     const explicitPermissionMode = options.permissionMode;
     const explicitPermissionModeUpdatedAt = options.permissionModeUpdatedAt;
-    const initialPermissionMode = options.permissionMode ?? inferPermissionIntentFromClaudeArgs(options.claudeArgs) ?? 'default';
+    const accountSettings = getActiveAccountSettingsSnapshot()?.settings ?? null;
+    const permissionModeSeed = resolvePermissionModeSeedForAgentStart({
+        agentId: 'claude',
+        explicitPermissionMode,
+        inferredPermissionMode: inferPermissionIntentFromClaudeArgs(options.claudeArgs),
+        accountSettings,
+    });
+    const initialPermissionMode = permissionModeSeed.mode;
     options.permissionMode = initialPermissionMode;
 
     const explicitModelId = typeof options.modelId === 'string' ? options.modelId.trim() : (typeof options.model === 'string' ? options.model.trim() : '');
