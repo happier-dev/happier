@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { createInTxWithAccountLookup, createSocialAccount } from "./socialTestHarness";
 
-vi.mock("./friendsPolicy", () => ({
-    resolveFriendsPolicyFromEnv: () => ({
+vi.mock("./resolveFriendsPolicyFromServerFeatures", () => ({
+    resolveFriendsPolicyFromServerFeatures: () => ({
         enabled: true,
         allowUsername: false,
-        requiredIdentityProviderId: undefined,
+        requiredIdentityProviderId: null,
     }),
 }));
 

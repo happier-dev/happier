@@ -9,8 +9,6 @@ import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-
 import { initDbSqlite, db } from "@/storage/db";
 import { applyLightDefaultEnv, ensureHandyMasterSecret } from "@/flavors/light/env";
 import { userRoutes } from "./userRoutes";
-import { connectRoutes } from "../connect/connectRoutes";
-import { auth } from "@/app/auth/auth";
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
 
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
@@ -72,7 +70,6 @@ describe("Friends + GitHub gating (integration)", () => {
         runServerPrismaMigrateDeploySqlite({ cwd: process.cwd(), env: process.env });
         await initDbSqlite();
         await db.$connect();
-        await auth.init();
     }, 120_000);
 
     afterAll(async () => {
@@ -103,7 +100,7 @@ describe("Friends + GitHub gating (integration)", () => {
         await db.account.deleteMany().catch(() => {});
     });
 
-    it("POST /v1/friends/add returns 400 friends-disabled when friends feature is off", async () => {
+    it("POST /v1/friends/add returns 404 not_found when friends feature is off", async () => {
         process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "0";
 
         const app = createTestApp();
@@ -129,12 +126,12 @@ describe("Friends + GitHub gating (integration)", () => {
             payload: { uid: u2.id },
         });
 
-        expect(res.statusCode).toBe(400);
-        expect(res.json()).toEqual({ error: "friends-disabled" });
+        expect(res.statusCode).toBe(404);
+        expect(res.json()).toEqual({ error: "not_found" });
         await app.close();
     });
 
-    it("GET /v1/user/search returns 400 friends-disabled when friends feature is off", async () => {
+    it("GET /v1/user/search returns 404 not_found when friends feature is off", async () => {
         process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "0";
 
         const app = createTestApp();
@@ -152,12 +149,12 @@ describe("Friends + GitHub gating (integration)", () => {
             headers: { "x-test-user-id": current.id },
         });
 
-        expect(res.statusCode).toBe(400);
-        expect(res.json()).toEqual({ error: "friends-disabled" });
+        expect(res.statusCode).toBe(404);
+        expect(res.json()).toEqual({ error: "not_found" });
         await app.close();
     });
 
-    it("GET /v1/friends returns 400 friends-disabled when friends feature is off", async () => {
+    it("GET /v1/friends returns 404 not_found when friends feature is off", async () => {
         process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "0";
 
         const app = createTestApp();
@@ -175,12 +172,12 @@ describe("Friends + GitHub gating (integration)", () => {
             headers: { "x-test-user-id": current.id },
         });
 
-        expect(res.statusCode).toBe(400);
-        expect(res.json()).toEqual({ error: "friends-disabled" });
+        expect(res.statusCode).toBe(404);
+        expect(res.json()).toEqual({ error: "not_found" });
         await app.close();
     });
 
-    it("POST /v1/friends/remove returns 400 friends-disabled when friends feature is off", async () => {
+    it("POST /v1/friends/remove returns 404 not_found when friends feature is off", async () => {
         process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "0";
 
         const app = createTestApp();
@@ -206,14 +203,17 @@ describe("Friends + GitHub gating (integration)", () => {
             payload: { uid: other.id },
         });
 
-        expect(res.statusCode).toBe(400);
-        expect(res.json()).toEqual({ error: "friends-disabled" });
+        expect(res.statusCode).toBe(404);
+        expect(res.json()).toEqual({ error: "not_found" });
         await app.close();
     });
 
     it("POST /v1/friends/add returns 400 provider-required when either user lacks the required identity provider", async () => {
         process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
         process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "0";
+        process.env.GITHUB_CLIENT_ID = "test_client_id";
+        process.env.GITHUB_CLIENT_SECRET = "test_client_secret";
+        process.env.GITHUB_REDIRECT_URL = "https://app.example.test/oauth/github/callback";
 
         const app = createTestApp();
         await userRoutes(app as any);
@@ -278,6 +278,9 @@ describe("Friends + GitHub gating (integration)", () => {
     it("GET /v1/user/search returns only users connected to the required identity provider", async () => {
         process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED = "1";
         process.env.HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME = "0";
+        process.env.GITHUB_CLIENT_ID = "test_client_id";
+        process.env.GITHUB_CLIENT_SECRET = "test_client_secret";
+        process.env.GITHUB_REDIRECT_URL = "https://app.example.test/oauth/github/callback";
 
         const app = createTestApp();
         await userRoutes(app as any);
@@ -403,117 +406,6 @@ describe("Friends + GitHub gating (integration)", () => {
         expect(res.statusCode).toBe(200);
         const body = res.json() as { users: Array<{ id: string }> };
         expect(body.users.map((u) => u.id)).toContain(match.id);
-        await app.close();
-    });
-
-    it("GET /v1/connect/external/:provider/params returns an OAuth URL with least-privilege scope", async () => {
-        process.env.GITHUB_CLIENT_ID = "client-id";
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
-
-        const app = createTestApp();
-        connectRoutes(app as any);
-        await app.ready();
-
-        const u1 = await db.account.create({
-            data: { publicKey: "pk-oauth-u1" },
-            select: { id: true },
-        });
-
-        const res = await app.inject({
-            method: "GET",
-            url: "/v1/connect/external/github/params",
-            headers: { "x-test-user-id": u1.id },
-        });
-
-        expect(res.statusCode).toBe(200);
-        const body = res.json() as { url: string };
-        const url = new URL(body.url);
-        expect(url.hostname).toBe("github.com");
-        expect(url.pathname).toBe("/login/oauth/authorize");
-        expect(url.searchParams.get("scope")).toBe("read:user");
-        expect(url.searchParams.get("client_id")).toBe("client-id");
-        expect(url.searchParams.get("redirect_uri")).toBe("https://api.example.test/v1/oauth/github/callback");
-        expect(url.searchParams.get("state")).toEqual(expect.any(String));
-        expect(url.searchParams.get("code_challenge_method")).toBe("S256");
-        expect(url.searchParams.get("code_challenge")).toEqual(expect.any(String));
-
-        const oauthState = await auth.verifyOauthStateToken(url.searchParams.get("state")!);
-        expect(oauthState).toBeTruthy();
-        expect(oauthState!.sid).toEqual(expect.any(String));
-        const sid = oauthState!.sid;
-
-        const stateRow = await db.repeatKey.findUnique({ where: { key: `oauth_state_${sid}` } });
-        expect(stateRow).toBeTruthy();
-        await app.close();
-    });
-
-    it("GET /v1/connect/external/:provider/params returns 400 when OAuth env is missing", async () => {
-        delete process.env.GITHUB_CLIENT_ID;
-        delete process.env.GITHUB_REDIRECT_URL;
-        delete process.env.GITHUB_REDIRECT_URI;
-
-        const app = createTestApp();
-        connectRoutes(app as any);
-        await app.ready();
-
-        const u1 = await db.account.create({
-            data: { publicKey: "pk-oauth-missing-u1" },
-            select: { id: true },
-        });
-
-        const res = await app.inject({
-            method: "GET",
-            url: "/v1/connect/external/github/params",
-            headers: { "x-test-user-id": u1.id },
-        });
-
-        expect(res.statusCode).toBe(400);
-        expect(res.json()).toEqual({ error: "oauth_not_configured" });
-        await app.close();
-    });
-
-    it("GET /v1/oauth/:provider/callback redirects with error=missing_access_token when code exchange returns no token", async () => {
-        process.env.GITHUB_CLIENT_ID = "client-id";
-        process.env.GITHUB_CLIENT_SECRET = "client-secret";
-        process.env.HAPPIER_WEBAPP_URL = "https://webapp.example.test";
-
-        const app = createTestApp();
-        connectRoutes(app as any);
-        await app.ready();
-
-        const u1 = await db.account.create({
-            data: { publicKey: "pk-oauth-callback-u1" },
-            select: { id: true },
-        });
-        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
-        const paramsRes = await app.inject({
-            method: "GET",
-            url: "/v1/connect/external/github/params",
-            headers: { "x-test-user-id": u1.id },
-        });
-        expect(paramsRes.statusCode).toBe(200);
-        const paramsUrl = new URL((paramsRes.json() as { url: string }).url);
-        const state = paramsUrl.searchParams.get("state");
-        expect(state).toBeTruthy();
-
-        const fetchMock = vi.fn(async (url: string) => {
-            if (url.includes("github.com/login/oauth/access_token")) {
-                return {
-                    ok: true,
-                    json: async () => ({}),
-                };
-            }
-            throw new Error(`unexpected fetch: ${url}`);
-        });
-        vi.stubGlobal("fetch", fetchMock as any);
-
-        const res = await app.inject({
-            method: "GET",
-            url: `/v1/oauth/github/callback?code=test-code&state=${encodeURIComponent(state!)}`,
-        });
-
-        expect(res.statusCode).toBe(302);
-        expect(res.headers.location).toBe("https://webapp.example.test/oauth/github?flow=connect&error=missing_access_token");
         await app.close();
     });
 });

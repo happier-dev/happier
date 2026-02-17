@@ -2,7 +2,7 @@ import { z } from "zod";
 import { db } from "@/storage/db";
 import { Context } from "@/context";
 import { UsernameTakenError, usernameUpdate } from "@/app/social/usernameUpdate";
-import { resolveFriendsPolicyFromEnv } from "@/app/social/friendsPolicy";
+import { resolveFriendsPolicyFromServerFeatures } from "@/app/social/resolveFriendsPolicyFromServerFeatures";
 import { validateUsername } from "@/app/social/usernamePolicy";
 import { type Fastify } from "../../types";
 
@@ -20,7 +20,7 @@ export function registerAccountUsernameRoute(app: Fastify): void {
             },
         },
     }, async (request, reply) => {
-        const friendsPolicy = resolveFriendsPolicyFromEnv(process.env);
+        const friendsPolicy = resolveFriendsPolicyFromServerFeatures(process.env);
         if (!friendsPolicy.enabled) {
             return reply.code(400).send({ error: 'friends-disabled' });
         }

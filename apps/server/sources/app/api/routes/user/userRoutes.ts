@@ -12,10 +12,13 @@ import {
     FriendsIdentityProviderRequiredError,
     FriendsUsernameRequiredError,
 } from "@/app/social/friendAdd";
-import { resolveFriendsPolicyFromEnv } from "@/app/social/friendsPolicy";
+import { resolveFriendsPolicyFromServerFeatures } from "@/app/social/resolveFriendsPolicyFromServerFeatures";
+import { createServerFeatureGatedRouteApp } from "@/app/features/catalog/serverFeatureGate";
 import { UserProfileSchema } from "@happier-dev/protocol";
+import { NotFoundSchema } from "../../schemas/notFoundSchema";
 
 export async function userRoutes(app: Fastify) {
+    const friendsApp = createServerFeatureGatedRouteApp(app, "social.friends", process.env);
 
     // Get user profile
     app.get('/v1/user/:id', {
@@ -75,7 +78,7 @@ export async function userRoutes(app: Fastify) {
     });
 
     // Search for users
-    app.get('/v1/user/search', {
+    friendsApp.get('/v1/user/search', {
         schema: {
             querystring: z.object({
                 query: z.string()
@@ -84,23 +87,13 @@ export async function userRoutes(app: Fastify) {
                 200: z.object({
                     users: z.array(UserProfileSchema)
                 }),
-                400: z.object({
-                    error: z.literal('friends-disabled')
-                }),
+                404: NotFoundSchema,
             }
         },
         preHandler: app.authenticate
     }, async (request, reply) => {
-        const friendsPolicy = resolveFriendsPolicyFromEnv(process.env);
-        if (!friendsPolicy.enabled) {
-            return reply.code(400).send({ error: 'friends-disabled' });
-        }
-        const requiredIdentityProviderId = friendsPolicy.allowUsername
-            ? null
-            : friendsPolicy.requiredIdentityProviderId;
-        if (!friendsPolicy.allowUsername && !requiredIdentityProviderId) {
-            return reply.code(400).send({ error: 'friends-disabled' });
-        }
+        const friendsPolicy = resolveFriendsPolicyFromServerFeatures(process.env);
+        const requiredIdentityProviderId = friendsPolicy.requiredIdentityProviderId;
 
         const { query } = request.query;
 
@@ -160,7 +153,7 @@ export async function userRoutes(app: Fastify) {
     });
 
     // Add friend
-    app.post('/v1/friends/add', {
+    friendsApp.post('/v1/friends/add', {
         schema: {
             body: z.object({
                 uid: z.string()
@@ -170,12 +163,10 @@ export async function userRoutes(app: Fastify) {
                     user: UserProfileSchema.nullable()
                 }),
                 400: z.union([
-                    z.object({ error: z.enum(["username-required", "friends-disabled"]) }),
+                    z.object({ error: z.literal("username-required") }),
                     z.object({ error: z.literal("provider-required"), provider: z.string() }),
                 ]),
-                404: z.object({
-                    error: z.literal('User not found')
-                })
+                404: z.union([NotFoundSchema, z.object({ error: z.literal("User not found") })]),
             }
         },
         preHandler: app.authenticate
@@ -191,13 +182,13 @@ export async function userRoutes(app: Fastify) {
                 return reply.code(400).send({ error: 'username-required' });
             }
             if (e instanceof FriendsDisabledError) {
-                return reply.code(400).send({ error: 'friends-disabled' });
+                return reply.code(404).send({ error: "not_found" });
             }
             throw e;
         }
     });
 
-    app.post('/v1/friends/remove', {
+    friendsApp.post('/v1/friends/remove', {
         schema: {
             body: z.object({
                 uid: z.string()
@@ -206,41 +197,26 @@ export async function userRoutes(app: Fastify) {
                 200: z.object({
                     user: UserProfileSchema.nullable()
                 }),
-                400: z.object({
-                    error: z.literal('friends-disabled')
-                }),
-                404: z.object({
-                    error: z.literal('User not found')
-                })
+                404: z.union([NotFoundSchema, z.object({ error: z.literal("User not found") })]),
             }
         },
         preHandler: app.authenticate
     }, async (request, reply) => {
-        const friendsPolicy = resolveFriendsPolicyFromEnv(process.env);
-        if (!friendsPolicy.enabled) {
-            return reply.code(400).send({ error: 'friends-disabled' });
-        }
         const user = await friendRemove(Context.create(request.userId), request.body.uid);
         return reply.send({ user });
     });
 
-    app.get('/v1/friends', {
+    friendsApp.get('/v1/friends', {
         schema: {
             response: {
                 200: z.object({
                     friends: z.array(UserProfileSchema)
                 }),
-                400: z.object({
-                    error: z.literal('friends-disabled')
-                }),
+                404: NotFoundSchema,
             }
         },
         preHandler: app.authenticate
     }, async (request, reply) => {
-        const friendsPolicy = resolveFriendsPolicyFromEnv(process.env);
-        if (!friendsPolicy.enabled) {
-            return reply.code(400).send({ error: 'friends-disabled' });
-        }
         const friends = await friendList(Context.create(request.userId));
         return reply.send({ friends });
     });

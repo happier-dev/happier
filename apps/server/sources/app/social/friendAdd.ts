@@ -6,7 +6,7 @@ import { relationshipGet } from "./relationshipGet";
 import { sendFriendRequestNotification, sendFriendshipEstablishedNotification } from "./friendNotification";
 import { RelationshipStatus } from "@/storage/prisma";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
-import { resolveFriendsPolicyFromEnv } from "./friendsPolicy";
+import { resolveFriendsPolicyFromServerFeatures } from "./resolveFriendsPolicyFromServerFeatures";
 
 export class FriendsIdentityProviderRequiredError extends Error {
     readonly provider: string;
@@ -44,7 +44,7 @@ export async function friendAdd(ctx: Context, uid: string): Promise<UserProfile 
         return null;
     }
 
-    const friendsPolicy = resolveFriendsPolicyFromEnv(process.env);
+    const friendsPolicy = resolveFriendsPolicyFromServerFeatures(process.env);
     if (!friendsPolicy.enabled) {
         throw new FriendsDisabledError();
     }
