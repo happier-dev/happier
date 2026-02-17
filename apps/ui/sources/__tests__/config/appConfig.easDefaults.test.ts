@@ -162,4 +162,12 @@ describe('app.config.js', () => {
         expect(pluginNames).not.toContain('expo-location');
         expect(pluginNames).not.toContain('expo-calendar');
     });
+
+    it('includes iOS privacy purpose strings required by App Store static analysis', () => {
+        const exp = withCleanEnv(() => getPublicConfig());
+
+        expect(exp.ios?.infoPlist?.NSPhotoLibraryUsageDescription).toBeTruthy();
+        expect(exp.ios?.infoPlist?.NSPhotoLibraryAddUsageDescription).toBeTruthy();
+        expect(exp.ios?.infoPlist?.NSLocationWhenInUseUsageDescription).toBeTruthy();
+    });
 });

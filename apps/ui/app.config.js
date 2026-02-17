@@ -127,6 +127,9 @@ export default {
                 // Required because we use on-device speech recognition (and some SDKs may reference it).
                 // Apple requires a purpose string even if the code path is not exercised.
                 NSSpeechRecognitionUsageDescription: "Allow $(PRODUCT_NAME) to convert your speech to text to enable voice conversations and transcription.",
+                NSPhotoLibraryUsageDescription: "Allow $(PRODUCT_NAME) to access your photo library so you can pick and share photos with AI.",
+                NSPhotoLibraryAddUsageDescription: "Allow $(PRODUCT_NAME) to save photos to your library when you choose to export or share.",
+                NSLocationWhenInUseUsageDescription: "Allow $(PRODUCT_NAME) to access your location to improve AI responses and suggestions.",
                 NSLocalNetworkUsageDescription: "Allow $(PRODUCT_NAME) to find and connect to local devices on your network.",
                 NSBonjourServices: ["_http._tcp", "_https._tcp"],
                 NSAppTransportSecurity: {
