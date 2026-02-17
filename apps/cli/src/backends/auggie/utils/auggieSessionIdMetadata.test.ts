@@ -43,4 +43,24 @@ describe('maybeUpdateAuggieSessionIdMetadata', () => {
       { ...BASE_METADATA, name: 'keep-me', auggieSessionId: 'a2' },
     ]);
   });
+
+  it('does not mark the session id as published when the metadata update fails', async () => {
+    const lastPublished = { value: null as string | null };
+    let called = 0;
+
+    maybeUpdateAuggieSessionIdMetadata({
+      getAuggieSessionId: () => 'a1',
+      updateHappySessionMetadata: async () => {
+        called++;
+        throw new Error('update failed');
+      },
+      lastPublished,
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(called).toBe(1);
+    expect(lastPublished.value).toBeNull();
+  });
 });

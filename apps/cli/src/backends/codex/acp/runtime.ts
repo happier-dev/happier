@@ -7,7 +7,7 @@ import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/ui/logger';
 
 import { createCodexAcpBackend, type CodexAcpBackendOptions, type CodexAcpBackendResult } from '@/backends/codex/acp/backend';
-import { maybeUpdateCodexSessionIdMetadata } from '@/backends/codex/utils/codexSessionIdMetadata';
+import { publishCodexSessionIdMetadata } from '@/backends/codex/utils/codexSessionIdMetadata';
 import type { PermissionMode } from '@/api/types';
 import { buildCodexAcpEnvOverrides } from '@/backends/codex/acp/env';
 
@@ -56,9 +56,9 @@ export function createCodexAcpRuntime(params: {
       return created.backend as unknown as AgentBackend;
     },
     onSessionIdChange: (nextSessionId) => {
-      maybeUpdateCodexSessionIdMetadata({
+      publishCodexSessionIdMetadata({
+        session: params.session,
         getCodexThreadId: () => nextSessionId,
-        updateHappySessionMetadata: (updater) => params.session.updateMetadata(updater),
         lastPublished: lastCodexAcpThreadIdPublished,
       });
     },

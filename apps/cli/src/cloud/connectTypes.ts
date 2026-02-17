@@ -10,6 +10,12 @@ export type CloudConnectResult = Readonly<{
   oauth: unknown;
 }>;
 
+export type CloudConnectAuthenticateOptions = Readonly<{
+  paste?: boolean;
+  noOpen?: boolean;
+  timeoutSeconds?: number;
+}>;
+
 export type CloudConnectTarget = Readonly<{
   id: ConnectTargetId;
   displayName: string;
@@ -22,6 +28,6 @@ export type CloudConnectTarget = Readonly<{
    * - experimental: token may be stored but not yet used everywhere
    */
   status: CloudConnectTargetStatus;
-  authenticate: () => Promise<unknown>;
+  authenticate: (opts?: CloudConnectAuthenticateOptions) => Promise<unknown>;
   postConnect?: (oauth: unknown) => void;
 }>;

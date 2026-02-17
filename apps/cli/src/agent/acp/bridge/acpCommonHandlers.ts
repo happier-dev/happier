@@ -58,7 +58,20 @@ export function forwardAcpPermissionRequest(params: {
 }): void {
   if (params.msg.type !== 'permission-request') return;
   const payload = (params.msg as any).payload || {};
+  const normalizedPayload = normalizePermissionRequestOptionsForAcp(payload);
 
+  const message: AgentPayload = {
+    type: 'permission-request',
+    permissionId: (params.msg as any).id,
+    toolName: payload.toolName || (params.msg as any).reason || 'unknown',
+    description: (params.msg as any).reason || payload.toolName || '',
+    options: normalizedPayload,
+  };
+
+  params.session.sendAgentMessage(params.agent, message);
+}
+
+export function normalizePermissionRequestOptionsForAcp(payload: unknown): unknown {
   const hasMeaningfulInput = (input: unknown): boolean => {
     if (Array.isArray(input)) return input.length > 0;
     if (!input || typeof input !== 'object') return false;
@@ -83,41 +96,12 @@ export function forwardAcpPermissionRequest(params: {
     return { ...record, input: backfilledInput };
   };
 
-  const normalizedPayload = (() => {
-    const topLevel = backfillInputFromToolCall(payload);
-    if (!topLevel || typeof topLevel !== 'object' || Array.isArray(topLevel)) return topLevel;
-    const record = topLevel as Record<string, unknown>;
-    const maybeOptions = record.options;
-    const nextOptions = backfillInputFromToolCall(maybeOptions);
-    if (nextOptions === maybeOptions) return topLevel;
-    return { ...record, options: nextOptions };
-  })();
+  const topLevel = backfillInputFromToolCall(payload);
+  if (!topLevel || typeof topLevel !== 'object' || Array.isArray(topLevel)) return topLevel;
 
-  const message: AgentPayload = {
-    type: 'permission-request',
-    permissionId: (params.msg as any).id,
-    toolName: payload.toolName || (params.msg as any).reason || 'unknown',
-    description: (params.msg as any).reason || payload.toolName || '',
-    options: normalizedPayload,
-  };
-
-  params.session.sendAgentMessage(params.agent, message);
-}
-
-export function forwardAcpTerminalOutput(params: {
-  msg: AgentMessage;
-  messageBuffer: MessageBufferForStatus;
-  session: SessionWithSendOnly;
-  agent: AgentKey;
-  getCallId: (msg: AgentMessage) => string;
-}): void {
-  if (params.msg.type !== 'terminal-output') return;
-  const data = (params.msg as any).data as string;
-  params.messageBuffer.addMessage(data, 'result');
-  const message: AgentPayload = {
-    type: 'terminal-output',
-    data,
-    callId: params.getCallId(params.msg),
-  };
-  params.session.sendAgentMessage(params.agent, message);
+  const record = topLevel as Record<string, unknown>;
+  const maybeOptions = record.options;
+  const nextOptions = backfillInputFromToolCall(maybeOptions);
+  if (nextOptions === maybeOptions) return topLevel;
+  return { ...record, options: nextOptions };
 }

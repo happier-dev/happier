@@ -76,6 +76,12 @@ describe('daemon control server: /spawn-session', () => {
             FOO: 'bar',
             TMUX_SESSION_NAME: 'legacy-ignored',
           },
+          connectedServices: {
+            v: 1,
+            bindingsByServiceId: {
+              anthropic: { source: 'connected', profileId: 'work' },
+            },
+          },
         }),
       });
 
@@ -98,6 +104,12 @@ describe('daemon control server: /spawn-session', () => {
         environmentVariables: {
           FOO: 'bar',
           TMUX_SESSION_NAME: 'legacy-ignored',
+        },
+        connectedServices: {
+          v: 1,
+          bindingsByServiceId: {
+            anthropic: { source: 'connected', profileId: 'work' },
+          },
         },
       });
     } finally {

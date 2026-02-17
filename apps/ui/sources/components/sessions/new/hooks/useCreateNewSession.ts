@@ -76,9 +76,9 @@ export function useCreateNewSession(params: Readonly<{
     targetServerId?: string | null;
     allowedTargetServerIds?: ReadonlyArray<string>;
 }>): Readonly<{
-    handleCreateSession: () => void;
+    handleCreateSession: (opts?: Readonly<{ initialMessage?: 'send' | 'skip'; afterCreated?: (sessionId: string) => void | Promise<void> }>) => void;
 }> {
-    const handleCreateSession = React.useCallback(async () => {
+    const handleCreateSession = React.useCallback(async (opts?: Readonly<{ initialMessage?: 'send' | 'skip'; afterCreated?: (sessionId: string) => void | Promise<void> }>) => {
             if (!params.selectedMachineId) {
                 Modal.alert(t('common.error'), t('newSession.noMachineSelected'));
                 return;
@@ -215,6 +215,8 @@ export function useCreateNewSession(params: Readonly<{
                 newSessionOptions: params.agentNewSessionOptions,
             });
 
+            const connectedServices = (params.agentNewSessionOptions as any)?.connectedServices;
+
             const terminal = resolveTerminalSpawnOptions({
                 settings: storage.getState().settings,
                 machineId: params.selectedMachineId,
@@ -331,6 +333,7 @@ export function useCreateNewSession(params: Readonly<{
                         ...(spawnModelId ? { modelId: spawnModelId, modelUpdatedAt: spawnModelUpdatedAt } : {}),
                         ...(terminal ? { terminal } : {}),
                         ...(windowsRemoteSessionConsole ? { windowsRemoteSessionConsole } : {}),
+                        ...(connectedServices ? { connectedServices } : {}),
                         ...buildSpawnSessionExtrasFromUiState({
                             agentId: params.agentType,
                             settings: params.settings,
@@ -373,6 +376,7 @@ export function useCreateNewSession(params: Readonly<{
 	                permissionMode: spawnPermissionMode,
 	                permissionModeUpdatedAt: spawnPermissionModeUpdatedAt,
                     ...(spawnModelId ? { modelId: spawnModelId, modelUpdatedAt: spawnModelUpdatedAt } : {}),
+                    ...(connectedServices ? { connectedServices } : {}),
 	                ...buildSpawnSessionExtrasFromUiState({
 	                    agentId: params.agentType,
 	                    settings: params.settings,
@@ -395,8 +399,17 @@ export function useCreateNewSession(params: Readonly<{
                 }
 
                 // Send initial message if provided
-                if (params.sessionPrompt.trim()) {
+                const shouldSendInitialMessage = (opts?.initialMessage ?? 'send') !== 'skip';
+                if (shouldSendInitialMessage && params.sessionPrompt.trim()) {
                     await sync.sendMessage(result.sessionId, params.sessionPrompt);
+                }
+
+                if (opts?.afterCreated) {
+                    try {
+                        await opts.afterCreated(result.sessionId);
+                    } catch {
+                        // Non-blocking: session is created and will be opened regardless.
+                    }
                 }
 
                 params.router.replace(`/session/${result.sessionId}`, {

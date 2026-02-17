@@ -103,6 +103,7 @@ function normalizeDelegateBoundedCompletion(params: Readonly<{
 
 export const DelegateProfile: ExecutionRunIntentProfile = {
   intent: 'delegate',
+  transcriptMaterialization: 'full',
   buildPrompt: (params) => `${params.instructions}\n\n${buildDelegateGuidanceBlock()}`,
   onBoundedComplete: ({ start, rawText, finishedAtMs }) =>
     normalizeDelegateBoundedCompletion({

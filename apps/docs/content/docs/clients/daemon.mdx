@@ -40,16 +40,10 @@ happier daemon logs
 
 ## Always-on: install as a user service
 
-macOS / Linux:
+Install for your current default server profile:
 
 ```bash
 happier daemon install
-```
-
-To remove it:
-
-```bash
-happier daemon uninstall
 ```
 
 Advanced lifecycle control (and dry-run planning):
@@ -60,7 +54,19 @@ happier daemon service install --dry-run
 happier daemon service restart
 ```
 
-Note: daemon user services are not currently supported on Windows.
+Platform notes:
+
+- **macOS**: LaunchAgent
+- **Linux**: `systemd --user`
+- **Windows**: Scheduled Task (user-level)
+
+To remove it:
+
+```bash
+happier daemon uninstall
+```
+
+On Windows, `happier daemon service paths` prints the Scheduled Task name and wrapper path.
 
 ## Headless authentication (no TTY)
 

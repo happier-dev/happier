@@ -3,7 +3,6 @@
  */
 
 import { apiSocket } from '../api/session/apiSocket';
-import { sync } from '../sync';
 import { createRpcCallError, isRpcMethodNotAvailableError, readRpcErrorCode } from '../runtime/rpcErrors';
 import { buildResumeHappySessionRpcParams, type ResumeHappySessionRpcParams } from '../domains/session/resume/resumeSessionPayload';
 import { storage } from '../domains/state/storage';
@@ -654,6 +653,7 @@ interface SessionRenameResponse {
  */
 export async function sessionRename(sessionId: string, title: string): Promise<SessionRenameResponse> {
     try {
+        const { sync } = await import('../sync');
         const sessionEncryption = sync.encryption.getSessionEncryption(sessionId);
         if (!sessionEncryption) {
             return {

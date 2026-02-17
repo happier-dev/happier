@@ -45,6 +45,14 @@ on:
         required: false
         default: true
         type: boolean
+      prune_assets:
+        required: false
+        default: false
+        type: boolean
+      release_message:
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
@@ -79,6 +87,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Create GitHub App token (release bot)
         id: app_token
@@ -95,6 +104,8 @@ jobs:
         run: |
           set -euo pipefail
           git remote set-url origin "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # Ensure we aren't still using GITHUB_TOKEN credentials from checkout.
+          git config --local --unset-all http.https://github.com/.extraheader 2>/dev/null || true
 
       - name: Download release assets artifact
         if: ${{ inputs.assets_artifact != '' }}
@@ -112,6 +123,7 @@ jobs:
         run: |
           set -euo pipefail
 
+          old_sha="$(git rev-parse -q --verify "refs/tags/${TAG}^{commit}" 2>/dev/null || true)"
           pushed="false"
           git tag -f "${TAG}" "${SHA}"
 
@@ -126,6 +138,7 @@ jobs:
             echo "::warning::Rolling tag push failed (tag protections or permissions). Skipping asset upload for ${TAG}."
           fi
 
+          echo "old_sha=${old_sha}" >> "${GITHUB_OUTPUT}"
           echo "pushed=${pushed}" >> "${GITHUB_OUTPUT}"
 
       - name: Ensure release exists
@@ -137,6 +150,7 @@ jobs:
           PRERELEASE: ${{ inputs.prerelease }}
           GENERATE_NOTES: ${{ inputs.generate_notes }}
           NOTES: ${{ inputs.notes }}
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
         run: |
           set -euo pipefail
 
@@ -155,13 +169,118 @@ jobs:
             exit 0
           fi
 
-          if [ -z "${NOTES:-}" ]; then
-            echo "notes is required when generate_notes=false" >&2
+          if [ -z "${NOTES:-}" ] && [ -z "${RELEASE_MESSAGE:-}" ]; then
+            echo "notes or release_message is required when generate_notes=false" >&2
             exit 1
           fi
 
+          release_prefix="${RELEASE_MESSAGE:-}"
+          if [ -n "${release_prefix}" ] && [ -n "${NOTES:-}" ]; then
+            release_prefix="${release_prefix}"$'\n\n'"${NOTES}"
+          elif [ -z "${release_prefix}" ]; then
+            release_prefix="${NOTES}"
+          fi
+
           # shellcheck disable=SC2086
-          gh release create "${TAG}" ${prerelease_flag} --title "${TITLE}" --target "${SHA}" --notes "${NOTES}"
+          gh release create "${TAG}" ${prerelease_flag} --title "${TITLE}" --target "${SHA}" --notes "${release_prefix}"
+
+      - name: Update rolling release notes (commit summary)
+        if: ${{ inputs.rolling_tag && steps.move_rolling_tag.outputs.pushed == 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+          TAG: ${{ inputs.tag }}
+          TITLE: ${{ inputs.title }}
+          SHA: ${{ inputs.target_sha }}
+          OLD_SHA: ${{ steps.move_rolling_tag.outputs.old_sha }}
+          NOTES: ${{ inputs.notes }}
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
+          MAX_COMMITS: "200"
+        run: |
+          set -euo pipefail
+
+          max="${MAX_COMMITS}"
+          compare_url=""
+          commit_count=""
+          commits=""
+
+          if [ -n "${OLD_SHA:-}" ] && [ "${OLD_SHA}" != "${SHA}" ]; then
+            compare_url="https://github.com/${GITHUB_REPOSITORY}/compare/${OLD_SHA}...${SHA}"
+            commit_count="$(git rev-list --count "${OLD_SHA}..${SHA}")"
+            commits="$(git log --max-count="${max}" --pretty=format:'- %h %s' "${OLD_SHA}..${SHA}")"
+          fi
+
+          notes_prefix="${NOTES:-}"
+          if [ -z "${notes_prefix}" ]; then
+            notes_prefix="Rolling release."
+          fi
+
+          body=""
+          if [ -n "${RELEASE_MESSAGE:-}" ]; then
+            body="${body}$(cat <<EOF
+          ${RELEASE_MESSAGE}
+
+          EOF
+          )"
+          fi
+
+          body="${body}$(cat <<EOF
+          ${notes_prefix}
+
+          EOF
+          )"
+
+          if [ -n "${commit_count:-}" ]; then
+            body="${body}$(cat <<EOF
+
+          ### Commits (${commit_count})
+
+          ${commits}
+
+          Full diff: ${compare_url}
+          EOF
+          )"
+
+            if [ "${commit_count}" -gt "${max}" ]; then
+              body="${body}"$'\n'"(Showing first ${max} commits; see Full diff for the complete list.)"
+            fi
+          fi
+
+          gh release edit "${TAG}" --title "${TITLE}" --notes "${body}"
+
+      - name: Prune rolling release assets
+        if: ${{ inputs.prune_assets && (!inputs.rolling_tag || steps.move_rolling_tag.outputs.pushed == 'true') }}
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          echo "Pruning existing assets for release '${TAG}'..."
+          release_api="repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}"
+
+          gh_err_file="$(mktemp)"
+          if ! asset_ids="$(gh api "${release_api}" --jq '.assets[].id' 2>"${gh_err_file}")"; then
+            if grep -q "HTTP 404" "${gh_err_file}"; then
+              echo "Release '${TAG}' not found yet; skipping pruning."
+              exit 0
+            fi
+            echo "::error::Failed to fetch release assets for '${TAG}'."
+            cat "${gh_err_file}"
+            exit 1
+          fi
+
+          if [ -z "${asset_ids}" ]; then
+            echo "No existing assets to prune."
+            exit 0
+          fi
+
+          while IFS= read -r asset_id; do
+            if [ -z "${asset_id}" ]; then
+              continue
+            fi
+            echo "Deleting release asset id ${asset_id}..."
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" >/dev/null
+          done <<< "${asset_ids}"
 
       - name: Upload assets
         if: ${{ (!inputs.rolling_tag || steps.move_rolling_tag.outputs.pushed == 'true') && (inputs.assets != '' || inputs.assets_dir != '') }}

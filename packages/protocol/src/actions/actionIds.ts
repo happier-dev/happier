@@ -4,6 +4,14 @@ export const ACTION_IDS = [
   // Session lifecycle / navigation
   'session.open',
   'session.spawn_new',
+  'session.spawn_picker',
+  // Local inventory + discovery (voice)
+  'workspaces.list_recent',
+  'paths.list_recent',
+  'machines.list',
+  'servers.list',
+  'agents.backends.list',
+  'agents.models.list',
   // Session messaging
   'session.message.send',
   // Intent start actions (first-class)
@@ -27,6 +35,11 @@ export const ACTION_IDS = [
   'session.permission.respond',
   // Voice global controls
   'ui.voice_global.reset',
+
+  // Daemon-local memory search (opt-in)
+  'memory.search',
+  'memory.get_window',
+  'memory.ensure_up_to_date',
 ] as const;
 
 export const ActionIdSchema = z.enum(ACTION_IDS);

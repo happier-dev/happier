@@ -97,6 +97,23 @@ function parsePort(raw, fallback = DEFAULTS.serverPort) {
   return port > 0 && port <= 65535 ? port : fallback;
 }
 
+function parseDailyAtTime(raw) {
+  const text = String(raw ?? '').trim();
+  if (!text) return null;
+  const m = /^(\d{1,2}):(\d{1,2})$/.exec(text);
+  if (!m) return null;
+  const hourRaw = Number(m[1]);
+  const minuteRaw = Number(m[2]);
+  const hour = Number.isFinite(hourRaw) ? Math.floor(hourRaw) : NaN;
+  const minute = Number.isFinite(minuteRaw) ? Math.floor(minuteRaw) : NaN;
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  if (hour < 0 || hour > 23) return null;
+  if (minute < 0 || minute > 59) return null;
+  const hh = String(hour).padStart(2, '0');
+  const mm = String(minute).padStart(2, '0');
+  return { hour, minute, normalized: `${hh}:${mm}` };
+}
+
 export function resolveSelfHostHealthTimeoutMs(env = process.env) {
   const raw = String(env?.HAPPIER_SELF_HOST_HEALTH_TIMEOUT_MS ?? '').trim();
   if (!raw) return DEFAULTS.healthCheckTimeoutMs;
@@ -120,6 +137,12 @@ export function resolveSelfHostAutoUpdateIntervalMinutes(env = process.env) {
     : DEFAULTS.autoUpdateIntervalMinutes;
 }
 
+export function resolveSelfHostAutoUpdateAt(env = process.env) {
+  const raw = String(env?.HAPPIER_SELF_HOST_AUTO_UPDATE_AT ?? '').trim();
+  const parsed = parseDailyAtTime(raw);
+  return parsed?.normalized || '';
+}
+
 export function normalizeSelfHostAutoUpdateState(state, { fallbackIntervalMinutes = DEFAULTS.autoUpdateIntervalMinutes } = {}) {
   const fallbackRaw = Number(fallbackIntervalMinutes);
   const fallback =
@@ -132,12 +155,13 @@ export function normalizeSelfHostAutoUpdateState(state, { fallbackIntervalMinute
     const enabled = Boolean(raw.enabled);
     const parsed = Number(raw.intervalMinutes);
     const intervalMinutes = Number.isFinite(parsed) && Math.floor(parsed) >= 15 ? Math.floor(parsed) : fallback;
-    return { enabled, intervalMinutes };
+    const at = typeof raw.at === 'string' ? (parseDailyAtTime(raw.at)?.normalized || '') : '';
+    return { enabled, intervalMinutes, at };
   }
   if (raw === true || raw === false) {
-    return { enabled: raw, intervalMinutes: fallback };
+    return { enabled: raw, intervalMinutes: fallback, at: '' };
   }
-  return { enabled: false, intervalMinutes: fallback };
+  return { enabled: false, intervalMinutes: fallback, at: '' };
 }
 
 export function decideSelfHostAutoUpdateReconcile(state, { fallbackIntervalMinutes = DEFAULTS.autoUpdateIntervalMinutes } = {}) {
@@ -146,6 +170,7 @@ export function decideSelfHostAutoUpdateReconcile(state, { fallbackIntervalMinut
     action: normalized.enabled ? 'install' : 'uninstall',
     enabled: normalized.enabled,
     intervalMinutes: normalized.intervalMinutes,
+    at: normalized.at,
   };
 }
 
@@ -417,6 +442,7 @@ function resolveConfig({ channel, mode = 'user', platform = process.platform } =
   const githubRepo = String(process.env.HAPPIER_GITHUB_REPO ?? DEFAULTS.githubRepo).trim();
   const autoUpdate = resolveSelfHostAutoUpdateDefault(process.env);
   const autoUpdateIntervalMinutes = resolveSelfHostAutoUpdateIntervalMinutes(process.env);
+  const autoUpdateAt = resolveSelfHostAutoUpdateAt(process.env);
   const serverBinaryName = platform === 'win32' ? 'happier-server.exe' : 'happier-server';
   const uiWebRootDir = join(installRoot, 'ui-web');
 
@@ -446,6 +472,7 @@ function resolveConfig({ channel, mode = 'user', platform = process.platform } =
     githubRepo,
     autoUpdate,
     autoUpdateIntervalMinutes,
+    autoUpdateAt,
     uiWebProduct: DEFAULTS.uiWebProduct,
     uiWebOs: DEFAULTS.uiWebOs,
     uiWebArch: DEFAULTS.uiWebArch,
@@ -555,6 +582,99 @@ function listEnvKeysInOrder(raw) {
   return keys;
 }
 
+function parseEnvKeyValue(raw) {
+  const text = String(raw ?? '');
+  const idx = text.indexOf('=');
+  if (idx <= 0) {
+    throw new Error(`[self-host] invalid env assignment (expected KEY=VALUE): ${text}`);
+  }
+  const key = text.slice(0, idx).trim();
+  const value = text.slice(idx + 1);
+  return { key, value };
+}
+
+function assertValidEnvKey(key) {
+  const k = String(key ?? '').trim();
+  if (!/^[A-Z][A-Z0-9_]*$/.test(k)) {
+    throw new Error(`[self-host] invalid env key: ${k || '(empty)'}`);
+  }
+  return k;
+}
+
+function assertValidEnvValue(value) {
+  const v = String(value ?? '');
+  if (v.includes('\n') || v.includes('\r')) {
+    throw new Error('[self-host] invalid env value (must not contain newlines)');
+  }
+  return v;
+}
+
+export function parseEnvOverridesFromArgv(argv) {
+  const args = Array.isArray(argv) ? argv.map(String) : [];
+  const overrides = [];
+  const rest = [];
+
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i] ?? '';
+    if (a === '--env') {
+      const next = args[i + 1] ?? '';
+      if (!next || next.startsWith('--')) {
+        throw new Error('[self-host] missing value for --env (expected KEY=VALUE)');
+      }
+      const parsed = parseEnvKeyValue(next);
+      overrides.push({
+        key: assertValidEnvKey(parsed.key),
+        value: assertValidEnvValue(parsed.value),
+      });
+      i += 1;
+      continue;
+    }
+    if (a.startsWith('--env=')) {
+      const raw = a.slice('--env='.length);
+      if (!raw) {
+        throw new Error('[self-host] missing value for --env (expected KEY=VALUE)');
+      }
+      const parsed = parseEnvKeyValue(raw);
+      overrides.push({
+        key: assertValidEnvKey(parsed.key),
+        value: assertValidEnvValue(parsed.value),
+      });
+      continue;
+    }
+    rest.push(a);
+  }
+
+  return { overrides, rest };
+}
+
+export function applyEnvOverridesToEnvText(envText, overrides) {
+  const base = String(envText ?? '');
+  const list = Array.isArray(overrides) ? overrides : [];
+  if (!base.trim() || list.length === 0) return base.endsWith('\n') ? base : `${base}\n`;
+
+  const env = parseEnvText(base);
+  const keys = listEnvKeysInOrder(base);
+  const seen = new Set(keys);
+
+  for (const entry of list) {
+    const key = assertValidEnvKey(entry?.key);
+    const value = assertValidEnvValue(entry?.value);
+    env[key] = value;
+    if (!seen.has(key)) {
+      seen.add(key);
+      keys.push(key);
+    }
+  }
+
+  const lines = [];
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(env, key)) continue;
+    lines.push(`${key}=${env[key]}`);
+  }
+  lines.push('');
+  return `${lines.join('\n')}\n`;
+}
+
 export function mergeEnvTextWithDefaults(existingText, defaultsText) {
   const existingRaw = String(existingText ?? '');
   const defaultsRaw = String(defaultsText ?? '');
@@ -640,11 +760,17 @@ export function renderSelfHostStatusText(report, { colors = true } = {}) {
 
   const autoConfiguredEnabled = Boolean(report?.autoUpdate?.configured?.enabled);
   const autoConfiguredInterval = report?.autoUpdate?.configured?.intervalMinutes ?? null;
+  const autoConfiguredAtRaw = typeof report?.autoUpdate?.configured?.at === 'string' ? report.autoUpdate.configured.at : '';
+  const autoConfiguredAt = parseDailyAtTime(autoConfiguredAtRaw)?.normalized || '';
   const updaterEnabled = report?.autoUpdate?.job?.enabled ?? null;
   const updaterActive = report?.autoUpdate?.job?.active ?? null;
 
   const configuredLine = autoConfiguredEnabled
-    ? `configured enabled${autoConfiguredInterval ? ` (every ${autoConfiguredInterval}m)` : ''}`
+    ? (
+        autoConfiguredAt
+          ? `configured enabled (daily at ${autoConfiguredAt})`
+          : `configured enabled${autoConfiguredInterval ? ` (every ${autoConfiguredInterval}m)` : ''}`
+      )
     : 'configured disabled';
 
   const jobLine =
@@ -764,19 +890,30 @@ export function renderUpdaterSystemdUnit({
   });
 }
 
-export function renderUpdaterSystemdTimerUnit({ updaterLabel, intervalMinutes = 1440 } = {}) {
+export function renderUpdaterSystemdTimerUnit({ updaterLabel, intervalMinutes = 1440, at } = {}) {
   const label = String(updaterLabel ?? '').trim() || 'happier-self-host-updater';
+  const parsedAt = parseDailyAtTime(at);
   const minutesRaw = Number(intervalMinutes);
   const minutes = Number.isFinite(minutesRaw) ? Math.max(15, Math.floor(minutesRaw)) : 1440;
+  const timerLines = parsedAt
+    ? [
+        '[Timer]',
+        `OnCalendar=*-*-* ${parsedAt.normalized}:00`,
+        `Unit=${label}.service`,
+        'Persistent=true',
+      ]
+    : [
+        '[Timer]',
+        'OnBootSec=5m',
+        `OnUnitActiveSec=${minutes}m`,
+        `Unit=${label}.service`,
+        'Persistent=true',
+      ];
   return [
     '[Unit]',
     `Description=${label} (auto-update timer)`,
     '',
-    '[Timer]',
-    'OnBootSec=5m',
-    `OnUnitActiveSec=${minutes}m`,
-    `Unit=${label}.service`,
-    'Persistent=true',
+    ...timerLines,
     '',
     '[Install]',
     'WantedBy=timers.target',
@@ -790,6 +927,7 @@ export function renderUpdaterLaunchdPlistXml({
   channel,
   mode,
   intervalMinutes,
+  at,
   workingDirectory,
   stdoutPath,
   stderrPath,
@@ -802,6 +940,7 @@ export function renderUpdaterLaunchdPlistXml({
   const wd = String(workingDirectory ?? '').trim();
   const out = String(stdoutPath ?? '').trim();
   const err = String(stderrPath ?? '').trim();
+  const parsedAt = parseDailyAtTime(at);
   const intervalRaw = Number(intervalMinutes);
   const startIntervalSec = Number.isFinite(intervalRaw) && intervalRaw > 0 ? Math.max(15, Math.floor(intervalRaw)) * 60 : 0;
 
@@ -822,7 +961,9 @@ export function renderUpdaterLaunchdPlistXml({
     stderrPath: err,
     workingDirectory: wd,
     keepAliveOnFailure: false,
-    startIntervalSec: startIntervalSec || undefined,
+    ...(parsedAt
+      ? { startCalendarInterval: { hour: parsedAt.hour, minute: parsedAt.minute } }
+      : { startIntervalSec: startIntervalSec || undefined }),
   });
 }
 
@@ -860,6 +1001,34 @@ export function renderUpdaterScheduledTaskWrapperPs1({
   });
 }
 
+export function buildUpdaterScheduledTaskCreateArgs({ backend, taskName, definitionPath, intervalMinutes = 1440, at } = {}) {
+  const b = String(backend ?? '').trim();
+  const name = String(taskName ?? '').trim();
+  const definition = String(definitionPath ?? '').trim();
+  if (!name) throw new Error('[self-host] missing taskName for updater scheduled task');
+  if (!definition) throw new Error('[self-host] missing definitionPath for updater scheduled task');
+
+  const parsedAt = parseDailyAtTime(at);
+  const minutesRaw = Number(intervalMinutes);
+  const minutes = Number.isFinite(minutesRaw) ? Math.max(15, Math.floor(minutesRaw)) : 1440;
+  const ps = `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${definition}"`;
+
+  return [
+    '/Create',
+    '/F',
+    '/SC',
+    parsedAt ? 'DAILY' : 'MINUTE',
+    ...(parsedAt ? [] : ['/MO', String(minutes)]),
+    '/ST',
+    parsedAt ? parsedAt.normalized : '00:00',
+    '/TN',
+    name,
+    '/TR',
+    ps,
+    ...(b === 'schtasks-system' ? ['/RU', 'SYSTEM', '/RL', 'HIGHEST'] : []),
+  ];
+}
+
 function resolveAutoUpdateEnabled(argv, fallback) {
   const args = Array.isArray(argv) ? argv.map(String) : [];
   if (args.includes('--no-auto-update')) return false;
@@ -885,6 +1054,25 @@ function resolveAutoUpdateIntervalMinutes(argv, fallback) {
   return Math.min(minutes, 60 * 24 * 7);
 }
 
+function resolveAutoUpdateAt(argv, fallback) {
+  const args = Array.isArray(argv) ? argv.map(String) : [];
+  const findEq = args.find((a) => a.startsWith('--auto-update-at='));
+  const value = findEq
+    ? findEq.slice('--auto-update-at='.length)
+    : (() => {
+        const idx = args.indexOf('--auto-update-at');
+        if (idx >= 0 && args[idx + 1] && !String(args[idx + 1]).startsWith('-')) return String(args[idx + 1]);
+        return '';
+      })();
+  const raw = String(value ?? '').trim();
+  if (!raw) return String(fallback ?? '').trim();
+  const parsed = parseDailyAtTime(raw);
+  if (!parsed) {
+    throw new Error(`[self-host] invalid --auto-update-at value: ${raw} (expected HH:MM)`);
+  }
+  return parsed.normalized;
+}
+
 function resolveUpdaterLabel(config) {
   const override = String(process.env.HAPPIER_SELF_HOST_UPDATER_LABEL ?? '').trim();
   if (override) return override;
@@ -900,7 +1088,7 @@ function resolveHstackPathForUpdater(config) {
   return join(String(config?.binDir ?? '').trim() || '', exe);
 }
 
-async function installAutoUpdateJob({ config, enabled, intervalMinutes }) {
+async function installAutoUpdateJob({ config, enabled, intervalMinutes, at }) {
   if (!enabled) return { installed: false, reason: 'disabled' };
   const updaterLabel = resolveUpdaterLabel(config);
   const hstackPath = resolveHstackPathForUpdater(config);
@@ -908,6 +1096,7 @@ async function installAutoUpdateJob({ config, enabled, intervalMinutes }) {
   const stderrPath = join(config.logDir, 'updater.err.log');
   const backend = resolveServiceBackend({ platform: config.platform, mode: config.mode });
   const interval = resolveAutoUpdateIntervalMinutes([], intervalMinutes ?? config.autoUpdateIntervalMinutes);
+  const effectiveAt = resolveAutoUpdateAt([], at ?? config.autoUpdateAt ?? '');
 
   const baseSpec = {
     label: updaterLabel,
@@ -934,7 +1123,7 @@ async function installAutoUpdateJob({ config, enabled, intervalMinutes }) {
       stderrPath,
       wantedBy,
     });
-    const timerContents = renderUpdaterSystemdTimerUnit({ updaterLabel, intervalMinutes: interval });
+    const timerContents = renderUpdaterSystemdTimerUnit({ updaterLabel, intervalMinutes: interval, at: effectiveAt });
     const prefix = backend === 'systemd-user' ? ['--user'] : [];
     const plan = {
       writes: [
@@ -948,7 +1137,7 @@ async function installAutoUpdateJob({ config, enabled, intervalMinutes }) {
       ],
     };
     await applyServicePlan(plan);
-    return { installed: true, backend, label: updaterLabel, definitionPath, timerPath, intervalMinutes: interval };
+    return { installed: true, backend, label: updaterLabel, definitionPath, timerPath, intervalMinutes: interval, at: effectiveAt };
   }
 
   if (backend === 'launchd-system' || backend === 'launchd-user') {
@@ -958,6 +1147,7 @@ async function installAutoUpdateJob({ config, enabled, intervalMinutes }) {
       channel: config.channel,
       mode: config.mode,
       intervalMinutes: interval,
+      at: effectiveAt,
       workingDirectory: config.installRoot,
       stdoutPath,
       stderrPath,
@@ -971,7 +1161,7 @@ async function installAutoUpdateJob({ config, enabled, intervalMinutes }) {
       persistent: true,
     });
     await applyServicePlan(plan);
-    return { installed: true, backend, label: updaterLabel, definitionPath, intervalMinutes: interval };
+    return { installed: true, backend, label: updaterLabel, definitionPath, intervalMinutes: interval, at: effectiveAt };
   }
 
   const definitionContents = renderUpdaterScheduledTaskWrapperPs1({
@@ -984,22 +1174,13 @@ async function installAutoUpdateJob({ config, enabled, intervalMinutes }) {
     stderrPath,
   });
   const name = `Happier\\${updaterLabel}`;
-  const ps = `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${definitionPath}"`;
-  const args = [
-    '/Create',
-    '/F',
-    '/SC',
-    'MINUTE',
-    '/MO',
-    String(interval),
-    '/ST',
-    '00:00',
-    '/TN',
-    name,
-    '/TR',
-    ps,
-    ...(backend === 'schtasks-system' ? ['/RU', 'SYSTEM', '/RL', 'HIGHEST'] : []),
-  ];
+  const args = buildUpdaterScheduledTaskCreateArgs({
+    backend,
+    taskName: name,
+    definitionPath,
+    intervalMinutes: interval,
+    at: effectiveAt,
+  });
   const plan = {
     writes: [{ path: definitionPath, contents: definitionContents, mode: 0o644 }],
     commands: [
@@ -1008,7 +1189,7 @@ async function installAutoUpdateJob({ config, enabled, intervalMinutes }) {
     ],
   };
   await applyServicePlan(plan);
-  return { installed: true, backend, label: updaterLabel, definitionPath, taskName: name, intervalMinutes: interval };
+  return { installed: true, backend, label: updaterLabel, definitionPath, taskName: name, intervalMinutes: interval, at: effectiveAt };
 }
 
 async function uninstallAutoUpdateJob({ config }) {
@@ -1146,6 +1327,79 @@ async function syncSelfHostGeneratedClients({ artifactRootDir, targetDir }) {
   return { copied: true, reason: 'ok' };
 }
 
+export async function installSelfHostBinaryFromBundle({
+  bundle,
+  binaryName,
+  config,
+  pubkeyFile = resolveMinisignPublicKeyText(process.env),
+  userAgent = 'happier-self-host-installer',
+} = {}) {
+  const resolvedBundle = bundle;
+  const name = String(binaryName ?? '').trim();
+  if (!resolvedBundle?.archive?.url || !resolvedBundle?.archive?.name) {
+    throw new Error('[self-host] invalid release bundle (missing archive)');
+  }
+  if (!resolvedBundle?.checksums?.url || !resolvedBundle?.checksumsSig?.url) {
+    throw new Error('[self-host] invalid release bundle (missing checksums assets)');
+  }
+  if (!name) {
+    throw new Error('[self-host] missing binary name');
+  }
+  const platform = String(config?.platform ?? process.platform).trim() || process.platform;
+  const os = normalizeOs(platform);
+
+  const tempDir = await mkdtemp(join(tmpdir(), 'happier-self-host-release-'));
+  try {
+    const downloaded = await downloadVerifiedReleaseAssetBundle({
+      bundle: resolvedBundle,
+      destDir: tempDir,
+      pubkeyFile,
+      userAgent,
+    });
+
+    const extractDir = join(tempDir, 'extract');
+    await mkdir(extractDir, { recursive: true });
+    const plan = planArchiveExtraction({
+      archiveName: downloaded.archiveName,
+      archivePath: downloaded.archivePath,
+      destDir: extractDir,
+      os,
+    });
+    if (!commandExists(plan.requiredCommand)) {
+      throw new Error(`[self-host] ${plan.requiredCommand} is required to extract release artifacts`);
+    }
+    runCommand(plan.command.cmd, plan.command.args, { stdio: 'ignore' });
+    const extractedBinary = await findExecutableByName(extractDir, name);
+    if (!extractedBinary) {
+      throw new Error('[self-host] failed to locate extracted server binary');
+    }
+
+    const version = downloaded.version || String(resolvedBundle?.version ?? '').trim() || `${Date.now()}`;
+    await installBinaryAtomically({
+      sourceBinaryPath: extractedBinary,
+      targetBinaryPath: config.serverBinaryPath,
+      previousBinaryPath: config.serverPreviousBinaryPath,
+      versionedTargetPath: join(config.versionsDir, `${name}-${version}`),
+    });
+    const roots = await readdir(extractDir).catch(() => []);
+    const artifactRootDir = roots.length > 0 ? join(extractDir, roots[0]) : extractDir;
+    await syncSelfHostSqliteMigrations({
+      artifactRootDir,
+      targetDir: join(config.dataDir, 'migrations', 'sqlite'),
+    }).catch(() => {});
+    const generated = await syncSelfHostGeneratedClients({
+      artifactRootDir,
+      targetDir: join(dirname(config.serverBinaryPath), 'generated'),
+    });
+    if (!generated.copied) {
+      throw new Error('[self-host] server runtime is missing packaged generated clients');
+    }
+    return { version, source: resolvedBundle.archive.url };
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
 async function installFromRelease({ product, binaryName, config, explicitBinaryPath = '' }) {
   if (explicitBinaryPath) {
     const srcPath = explicitBinaryPath;
@@ -1187,58 +1441,14 @@ async function installFromRelease({ product, binaryName, config, explicitBinaryP
     os,
     arch: normalizeArch(),
   });
-
-  const tempDir = await mkdtemp(join(tmpdir(), 'happier-self-host-release-'));
-  try {
-    const pubkeyFile = resolveMinisignPublicKeyText(process.env);
-    const downloaded = await downloadVerifiedReleaseAssetBundle({
-      bundle: resolved,
-      destDir: tempDir,
-      pubkeyFile,
-      userAgent: 'happier-self-host-installer',
-    });
-
-    const extractDir = join(tempDir, 'extract');
-    await mkdir(extractDir, { recursive: true });
-    const plan = planArchiveExtraction({
-      archiveName: downloaded.archiveName,
-      archivePath: downloaded.archivePath,
-      destDir: extractDir,
-      os,
-    });
-    if (!commandExists(plan.requiredCommand)) {
-      throw new Error(`[self-host] ${plan.requiredCommand} is required to extract release artifacts`);
-    }
-    runCommand(plan.command.cmd, plan.command.args, { stdio: 'ignore' });
-    const extractedBinary = await findExecutableByName(extractDir, binaryName);
-    if (!extractedBinary) {
-      throw new Error('[self-host] failed to locate extracted server binary');
-    }
-
-    const version = resolved.version || String(release?.tag_name ?? '').replace(/^server-v/, '') || `${Date.now()}`;
-    await installBinaryAtomically({
-      sourceBinaryPath: extractedBinary,
-      targetBinaryPath: config.serverBinaryPath,
-      previousBinaryPath: config.serverPreviousBinaryPath,
-      versionedTargetPath: join(config.versionsDir, `${binaryName}-${version}`),
-    });
-    const roots = await readdir(extractDir).catch(() => []);
-    const artifactRootDir = roots.length > 0 ? join(extractDir, roots[0]) : extractDir;
-    await syncSelfHostSqliteMigrations({
-      artifactRootDir,
-      targetDir: join(config.dataDir, 'migrations', 'sqlite'),
-    }).catch(() => {});
-    const generated = await syncSelfHostGeneratedClients({
-      artifactRootDir,
-      targetDir: join(dirname(config.serverBinaryPath), 'generated'),
-    });
-    if (!generated.copied) {
-      throw new Error('[self-host] server runtime is missing packaged generated clients');
-    }
-    return { version, source: asset.archiveUrl };
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
-  }
+  const result = await installSelfHostBinaryFromBundle({
+    bundle: resolved,
+    binaryName,
+    config,
+    pubkeyFile: resolveMinisignPublicKeyText(process.env),
+    userAgent: 'happier-self-host-installer',
+  });
+  return { version: result.version || resolved.version || String(release?.tag_name ?? '').replace(/^server-v/, ''), source: result.source };
 }
 
 async function assertUiWebBundleIsValid(rootDir) {
@@ -1385,15 +1595,19 @@ async function cmdInstall({ channel, mode, argv, json }) {
   if (mode === 'system' && process.platform !== 'win32') {
     assertRoot();
   }
+  const parsedEnvOverrides = parseEnvOverridesFromArgv(argv);
+  const envOverrides = parsedEnvOverrides.overrides;
+  const argvSansEnv = parsedEnvOverrides.rest;
   const config = resolveConfig({ channel, mode, platform: process.platform });
-  const autoUpdateEnabled = resolveAutoUpdateEnabled(argv, config.autoUpdate);
-  const autoUpdateIntervalMinutes = resolveAutoUpdateIntervalMinutes(argv, config.autoUpdateIntervalMinutes);
-  const withoutCli = argv.includes('--without-cli') || parseBoolean(process.env.HAPPIER_WITH_CLI, true) === false;
+  const autoUpdateEnabled = resolveAutoUpdateEnabled(argvSansEnv, config.autoUpdate);
+  const autoUpdateIntervalMinutes = resolveAutoUpdateIntervalMinutes(argvSansEnv, config.autoUpdateIntervalMinutes);
+  const autoUpdateAt = resolveAutoUpdateAt(argvSansEnv, config.autoUpdateAt);
+  const withoutCli = argvSansEnv.includes('--without-cli') || parseBoolean(process.env.HAPPIER_WITH_CLI, true) === false;
   const withUi =
-    !(argv.includes('--without-ui')
+    !(argvSansEnv.includes('--without-ui')
       || parseBoolean(process.env.HAPPIER_WITH_UI, true) === false
       || parseBoolean(process.env.HAPPIER_SELF_HOST_WITH_UI, true) === false);
-  const nonInteractive = argv.includes('--non-interactive') || parseBoolean(process.env.HAPPIER_NONINTERACTIVE, false);
+  const nonInteractive = argvSansEnv.includes('--non-interactive') || parseBoolean(process.env.HAPPIER_NONINTERACTIVE, false);
   const serverBinaryOverride = String(process.env.HAPPIER_SELF_HOST_SERVER_BINARY ?? '').trim();
 
   if (normalizeOs(config.platform) !== 'windows' && !commandExists('tar')) {
@@ -1449,8 +1663,9 @@ async function cmdInstall({ channel, mode, argv, json }) {
     arch: process.arch,
     platform: config.platform,
   });
-  await writeFile(config.configEnvPath, envText, 'utf-8');
-  const installEnv = parseEnvText(envText);
+  const envTextWithOverrides = envOverrides.length ? applyEnvOverridesToEnvText(envText, envOverrides) : envText;
+  await writeFile(config.configEnvPath, envTextWithOverrides, 'utf-8');
+  const installEnv = parseEnvText(envTextWithOverrides);
   if (!parseBoolean(installEnv.HAPPIER_SQLITE_AUTO_MIGRATE ?? installEnv.HAPPY_SQLITE_AUTO_MIGRATE, true)) {
     await applySelfHostSqliteMigrationsAtInstallTime({ env: installEnv }).catch((e) => {
       throw new Error(`[self-host] failed to apply sqlite migrations at install time: ${String(e?.message ?? e)}`);
@@ -1465,7 +1680,7 @@ async function cmdInstall({ channel, mode, argv, json }) {
     await chmod(serverShimPath, 0o755).catch(() => {});
   });
 
-  const serviceSpec = buildSelfHostServerServiceSpec({ config, envText });
+  const serviceSpec = buildSelfHostServerServiceSpec({ config, envText: envTextWithOverrides });
   await installManagedService({
     platform: config.platform,
     mode: config.mode,
@@ -1479,7 +1694,12 @@ async function cmdInstall({ channel, mode, argv, json }) {
     throw new Error('[self-host] service failed health checks after install');
   }
 
-  const autoUpdateResult = await installAutoUpdateJob({ config, enabled: autoUpdateEnabled, intervalMinutes: autoUpdateIntervalMinutes }).catch((e) => ({
+  const autoUpdateResult = await installAutoUpdateJob({
+    config: { ...config, autoUpdateAt },
+    enabled: autoUpdateEnabled,
+    intervalMinutes: autoUpdateIntervalMinutes,
+    at: autoUpdateAt,
+  }).catch((e) => ({
     installed: false,
     reason: String(e?.message ?? e),
   }));
@@ -1498,7 +1718,7 @@ async function cmdInstall({ channel, mode, argv, json }) {
     uiWeb: uiInstalled
       ? { installed: true, version: uiResult.version, source: uiResult.source, tag: uiResult.tag }
       : { installed: false, reason: String(uiResult?.reason ?? (withUi ? 'missing' : 'disabled')) },
-    autoUpdate: { enabled: autoUpdateEnabled, intervalMinutes: autoUpdateIntervalMinutes },
+    autoUpdate: { enabled: autoUpdateEnabled, intervalMinutes: autoUpdateIntervalMinutes, at: autoUpdateAt },
   });
 
   printResult({
@@ -1513,6 +1733,7 @@ async function cmdInstall({ channel, mode, argv, json }) {
       autoUpdate: {
         enabled: autoUpdateEnabled,
         intervalMinutes: autoUpdateIntervalMinutes,
+        at: autoUpdateAt || null,
         ...autoUpdateResult,
       },
       cli: cliResult,
@@ -1523,7 +1744,7 @@ async function cmdInstall({ channel, mode, argv, json }) {
       `- service: ${cyan(config.serviceName)}`,
       `- version: ${cyan(installResult.version || 'unknown')}`,
       `- server: ${cyan(`http://127.0.0.1:${config.serverPort}`)}`,
-      `- auto-update: ${autoUpdateEnabled ? (autoUpdateResult.installed ? green(`installed (every ${autoUpdateIntervalMinutes}m)`) : yellow('failed')) : dim('disabled')}`,
+      `- auto-update: ${autoUpdateEnabled ? (autoUpdateResult.installed ? green(`installed (${autoUpdateAt ? `daily at ${autoUpdateAt}` : `every ${autoUpdateIntervalMinutes}m`})`) : yellow('failed')) : dim('disabled')}`,
       `- cli: ${cliResult.installed ? green('installed') : dim(cliResult.reason)}`,
       `- ui: ${uiInstalled ? green('installed') : dim(String(uiResult?.reason ?? 'disabled'))}`,
     ].join('\n'),
@@ -1634,6 +1855,7 @@ async function cmdStatus({ channel, mode, json }) {
         configured: {
           enabled: Boolean(autoUpdateState?.enabled),
           intervalMinutes: autoUpdateState?.intervalMinutes ?? null,
+          at: autoUpdateState?.at ? String(autoUpdateState.at) : null,
         },
       },
       healthy,
@@ -1653,6 +1875,7 @@ async function cmdStatus({ channel, mode, json }) {
         configured: {
           enabled: Boolean(autoUpdateState?.enabled),
           intervalMinutes: autoUpdateState?.intervalMinutes ?? null,
+          at: autoUpdateState?.at ? String(autoUpdateState.at) : null,
         },
       },
       updatedAt: state?.updatedAt ?? null,
@@ -1731,9 +1954,10 @@ async function cmdUpdate({ channel, mode, json }) {
 
   if (autoUpdateReconcile.action === 'install') {
     await installAutoUpdateJob({
-      config: configWithPort,
+      config: { ...configWithPort, autoUpdateAt: autoUpdateReconcile.at },
       enabled: true,
       intervalMinutes: autoUpdateReconcile.intervalMinutes,
+      at: autoUpdateReconcile.at,
     }).catch(() => {});
   } else {
     await uninstallAutoUpdateJob({ config: configWithPort }).catch(() => {});
@@ -1744,7 +1968,7 @@ async function cmdUpdate({ channel, mode, json }) {
     mode,
     version: installResult.version,
     source: installResult.source,
-    autoUpdate: { enabled: autoUpdateReconcile.enabled, intervalMinutes: autoUpdateReconcile.intervalMinutes },
+    autoUpdate: { enabled: autoUpdateReconcile.enabled, intervalMinutes: autoUpdateReconcile.intervalMinutes, at: autoUpdateReconcile.at },
     uiWeb: uiInstalled
       ? { installed: true, version: uiResult.version, source: uiResult.source, tag: uiResult.tag }
       : { installed: false, reason: String(uiResult?.reason ?? (withUi ? 'missing' : 'disabled')) },
@@ -1903,17 +2127,200 @@ async function cmdDoctor({ channel, mode, json }) {
   }
 }
 
+function pickFirstPositional(argv) {
+  const args = Array.isArray(argv) ? argv.map(String) : [];
+  return args.find((a) => a && !a.startsWith('-')) ?? '';
+}
+
+function safeParseJson(text) {
+  try {
+    return JSON.parse(String(text ?? ''));
+  } catch {
+    return null;
+  }
+}
+
+function redactEnvForDisplay(env) {
+  const input = env ?? {};
+  const out = {};
+  const allowed = new Set([
+    'PORT',
+    'HAPPIER_SERVER_HOST',
+    'HAPPIER_DB_PROVIDER',
+    'HAPPIER_FILES_BACKEND',
+    'HAPPIER_SERVER_UI_DIR',
+  ]);
+  for (const [k, v] of Object.entries(input)) {
+    if (!allowed.has(k)) continue;
+    out[k] = String(v ?? '');
+  }
+  return out;
+}
+
+async function cmdConfig({ channel, mode, argv, json }) {
+  const args = Array.isArray(argv) ? argv.map(String) : [];
+  const sub = pickFirstPositional(args) || 'view';
+  const subIndex = args.indexOf(sub);
+  const rest = subIndex >= 0 ? args.slice(subIndex + 1) : [];
+
+  const config = resolveConfig({ channel, mode, platform: process.platform });
+  const existingState = existsSync(config.statePath)
+    ? safeParseJson(await readFile(config.statePath, 'utf-8').catch(() => '')) ?? {}
+    : {};
+  const normalizedAutoUpdate = normalizeSelfHostAutoUpdateState(existingState, {
+    fallbackIntervalMinutes: config.autoUpdateIntervalMinutes,
+  });
+  const envText = existsSync(config.configEnvPath)
+    ? await readFile(config.configEnvPath, 'utf-8').catch(() => '')
+    : '';
+  const envObj = envText ? parseEnvText(envText) : {};
+
+  if (sub === 'view') {
+    printResult({
+      json,
+      data: {
+        ok: true,
+        channel,
+        mode,
+        paths: {
+          installRoot: config.installRoot,
+          binDir: config.binDir,
+          configDir: config.configDir,
+          configEnvPath: config.configEnvPath,
+          statePath: config.statePath,
+          logDir: config.logDir,
+        },
+        autoUpdate: {
+          enabled: Boolean(normalizedAutoUpdate.enabled),
+          intervalMinutes: normalizedAutoUpdate.intervalMinutes,
+          at: normalizedAutoUpdate.at || null,
+        },
+        env: redactEnvForDisplay(envObj),
+        state: existingState,
+      },
+      text: json
+        ? null
+        : [
+            banner('self-host config', { subtitle: 'Self-host configuration (paths + auto-update).' }),
+            '',
+            sectionTitle('paths:'),
+            `- installRoot: ${cyan(config.installRoot)}`,
+            `- configEnvPath: ${cyan(config.configEnvPath)}`,
+            `- statePath: ${cyan(config.statePath)}`,
+            '',
+            sectionTitle('auto-update:'),
+            `- enabled: ${normalizedAutoUpdate.enabled ? green('yes') : dim('no')}`,
+            `- schedule: ${normalizedAutoUpdate.enabled ? cyan(normalizedAutoUpdate.at ? `daily at ${normalizedAutoUpdate.at}` : `every ${normalizedAutoUpdate.intervalMinutes}m`) : dim('disabled')}`,
+          ].join('\n'),
+    });
+    return;
+  }
+
+  if (sub === 'set') {
+    const wantsApply = !rest.includes('--no-apply');
+    const enabled =
+      rest.includes('--auto-update') ? true : rest.includes('--no-auto-update') ? false : Boolean(normalizedAutoUpdate.enabled);
+
+    const wantsInterval = rest.some((a) => a === '--auto-update-interval' || a.startsWith('--auto-update-interval='));
+    const nextIntervalMinutes = wantsInterval
+      ? resolveAutoUpdateIntervalMinutes(rest, normalizedAutoUpdate.intervalMinutes)
+      : normalizedAutoUpdate.intervalMinutes;
+
+    const wantsAt = rest.some((a) => a === '--auto-update-at' || a.startsWith('--auto-update-at='));
+    const clearAt = rest.includes('--clear-auto-update-at');
+    const nextAt = clearAt
+      ? ''
+      : wantsAt
+        ? resolveAutoUpdateAt(rest, normalizedAutoUpdate.at || config.autoUpdateAt || '')
+        : normalizedAutoUpdate.at || '';
+
+    const parsedEnvOverrides = parseEnvOverridesFromArgv(rest);
+    const envOverrides = parsedEnvOverrides.overrides;
+
+    await mkdir(config.installRoot, { recursive: true });
+
+    if (envOverrides.length) {
+      const baseEnvText = envText || renderServerEnvFile({
+        port: config.serverPort,
+        host: config.serverHost,
+        dataDir: config.dataDir,
+        filesDir: config.filesDir,
+        dbDir: config.dbDir,
+        uiDir: existingState?.uiWeb?.installed === true ? config.uiWebCurrentDir : '',
+        serverBinDir: dirname(config.serverBinaryPath),
+        arch: process.arch,
+        platform: config.platform,
+      });
+      const nextEnvText = applyEnvOverridesToEnvText(baseEnvText, envOverrides);
+      await mkdir(config.configDir, { recursive: true });
+      await writeFile(config.configEnvPath, nextEnvText, 'utf-8');
+    }
+
+    await writeSelfHostState(config, {
+      channel,
+      mode,
+      autoUpdate: { enabled, intervalMinutes: nextIntervalMinutes, at: nextAt },
+    });
+
+    let applyResult = null;
+    if (wantsApply) {
+      if (config.mode === 'system' && config.platform !== 'win32') {
+        assertRoot();
+      }
+      if (enabled) {
+        applyResult = await installAutoUpdateJob({
+          config: { ...config, autoUpdateAt: nextAt },
+          enabled: true,
+          intervalMinutes: nextIntervalMinutes,
+          at: nextAt,
+        }).catch((e) => ({ installed: false, reason: String(e?.message ?? e) }));
+      } else {
+        applyResult = await uninstallAutoUpdateJob({ config }).catch((e) => ({ uninstalled: false, reason: String(e?.message ?? e) }));
+      }
+    }
+
+    const nextEnvText = existsSync(config.configEnvPath)
+      ? await readFile(config.configEnvPath, 'utf-8').catch(() => '')
+      : '';
+    const nextEnvObj = nextEnvText ? parseEnvText(nextEnvText) : {};
+
+    printResult({
+      json,
+      data: {
+        ok: true,
+        channel,
+        mode,
+        autoUpdate: { enabled, intervalMinutes: nextIntervalMinutes, at: nextAt || null },
+        env: redactEnvForDisplay(nextEnvObj),
+        applied: wantsApply,
+        applyResult,
+      },
+      text: json
+        ? null
+        : [
+            `${green('✓')} self-host config updated`,
+            `- auto-update: ${enabled ? (nextAt ? `daily at ${nextAt}` : `every ${nextIntervalMinutes}m`) : 'disabled'}`,
+            `- apply: ${wantsApply ? green('yes') : dim('no')}`,
+          ].join('\n'),
+    });
+    return;
+  }
+
+  throw new Error(`[self-host] unknown config command: ${sub}`);
+}
+
 export function usageText() {
   return [
     banner('self-host', { subtitle: 'Happier Self-Host guided installation flow.' }),
     '',
     sectionTitle('usage:'),
-    `  ${cyan('hstack self-host')} install [--mode=user|system] [--without-cli] [--without-ui] [--channel=stable|preview] [--auto-update|--no-auto-update] [--auto-update-interval=<minutes>] [--non-interactive] [--json]`,
+    `  ${cyan('hstack self-host')} install [--mode=user|system] [--without-cli] [--without-ui] [--channel=stable|preview] [--auto-update|--no-auto-update] [--auto-update-interval=<minutes>] [--auto-update-at=<HH:MM>] [--env KEY=VALUE]... [--non-interactive] [--json]`,
     `  ${cyan('hstack self-host')} status [--mode=user|system] [--channel=stable|preview] [--json]`,
     `  ${cyan('hstack self-host')} update [--mode=user|system] [--channel=stable|preview] [--json]`,
     `  ${cyan('hstack self-host')} rollback [--mode=user|system] [--to=<version>] [--channel=stable|preview] [--json]`,
     `  ${cyan('hstack self-host')} uninstall [--mode=user|system] [--purge-data] [--yes] [--json]`,
     `  ${cyan('hstack self-host')} doctor [--json]`,
+    `  ${cyan('hstack self-host')} config view|set [--mode=user|system] [--channel=stable|preview] [--json]`,
     '',
     sectionTitle('notes:'),
     '- works without a repository checkout (binary-safe flow).',
@@ -1938,7 +2345,7 @@ export async function runSelfHostCli(argv = process.argv.slice(2)) {
       json,
       data: {
         ok: true,
-        commands: ['install', 'status', 'update', 'rollback', 'uninstall', 'doctor'],
+        commands: ['install', 'status', 'update', 'rollback', 'uninstall', 'doctor', 'config'],
       },
       text: usageText(),
     });
@@ -1967,6 +2374,10 @@ export async function runSelfHostCli(argv = process.argv.slice(2)) {
   }
   if (parsed.subcommand === 'doctor' || parsed.subcommand === 'migrate-from-npm') {
     await cmdDoctor({ channel, mode, json });
+    return;
+  }
+  if (parsed.subcommand === 'config') {
+    await cmdConfig({ channel, mode, argv: parsed.rest, json });
     return;
   }
 

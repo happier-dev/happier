@@ -1,6 +1,6 @@
 import type { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
-import type { ExecutionRunState } from '@/agent/executionRuns/runtime/ExecutionRunManager';
-import type { ExecutionRunController } from '@/agent/executionRuns/runtime/executionRunControllers';
+import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
+import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import type { FinishExecutionRun } from '@/agent/executionRuns/runtime/executionRunFinishRun';
 
 export async function stopExecutionRun(args: Readonly<{
@@ -54,6 +54,11 @@ export async function stopExecutionRun(args: Readonly<{
     } catch {
       // ignore
     }
+  }
+  try {
+    await ctrl.terminalMarkerWritePromise;
+  } catch {
+    // ignore
   }
   ctrl.resolveTerminal();
   args.controllers.delete(args.runId);

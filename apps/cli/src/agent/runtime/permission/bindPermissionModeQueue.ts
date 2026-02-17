@@ -5,6 +5,7 @@ import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 
 import { resolvePermissionModeUpdatedAtFromMessage } from './permissionModeCanonical';
 import { resolvePermissionModeForQueueingUserMessage } from './permissionModeFromUserMessage';
+import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 
 export type InFlightSteerController = Readonly<{
   /**
@@ -26,7 +27,7 @@ export type InFlightSteerController = Readonly<{
 export function registerPermissionModeMessageQueueBinding(opts: {
   session: {
     onUserMessage: (handler: (message: UserMessage) => void) => void;
-    updateMetadata: (updater: (current: Metadata) => Metadata) => void;
+    updateMetadata: (updater: (current: Metadata) => Metadata) => Promise<void> | void;
   };
   queue: SpecialCommandQueue<{ permissionMode: PermissionMode }>;
   getCurrentPermissionMode: () => PermissionMode | undefined;
@@ -37,12 +38,13 @@ export function registerPermissionModeMessageQueueBinding(opts: {
 
   opts.session.onUserMessage((message) => {
     const previousPermissionMode = opts.getCurrentPermissionMode();
-    const resolvedMode = resolvePermissionModeForQueueingUserMessage({
-      currentPermissionMode: previousPermissionMode,
-      messagePermissionModeRaw: message.meta?.permissionMode,
-      updateMetadata: (updater) => opts.session.updateMetadata(updater),
-      nowMs: () => resolvePermissionModeUpdatedAtFromMessage(message),
-    });
+      const resolvedMode = resolvePermissionModeForQueueingUserMessage({
+        currentPermissionMode: previousPermissionMode,
+        messagePermissionModeRaw: message.meta?.permissionMode,
+        updateMetadata: (updater) =>
+          updateMetadataBestEffort(opts.session, updater, '[permissionMode]', 'permission_mode_from_user_message'),
+        nowMs: () => resolvePermissionModeUpdatedAtFromMessage(message),
+      });
 
     opts.setCurrentPermissionMode(resolvedMode.currentPermissionMode);
 

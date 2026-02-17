@@ -18,7 +18,7 @@ function parseKeyValueLines(text) {
   return out;
 }
 
-test('hstack mobile --run-ios passes -p/--port to Expo (avoids default 8081)', async () => {
+test('hstack mobile --run-ios passes --port to Expo so the native build and dev server use the same Metro port', async () => {
   const rootDir = getStackRootFromMeta(import.meta.url);
   const mobileScript = join(rootDir, 'scripts', 'mobile.mjs');
 
@@ -72,7 +72,8 @@ process.exit(0);
     const env = {
       ...process.env,
       // Ensure xcrun runs fast/deterministically in tests.
-      PATH: binDir,
+      // Include system paths so env.mjs won't prepend /usr/bin ahead of our stub.
+      PATH: `${binDir}:/usr/bin:/bin`,
       HAPPIER_STACK_REPO_DIR: repoDir,
       HAPPIER_STACK_HOME_DIR: join(tmp, 'home'),
       HAPPIER_STACK_STORAGE_DIR: storageDir,
@@ -90,12 +91,13 @@ process.exit(0);
 
     assert.ok(port, `expected RCT_METRO_PORT to be set\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
     assert.equal(kv.EXPO_PACKAGER_PORT, port, `expected EXPO_PACKAGER_PORT to match\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-    assert.ok(args.includes('-p') || args.includes('--port'), `expected expo args to include -p/--port\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-    const pIdx = args.indexOf('-p') !== -1 ? args.indexOf('-p') : args.indexOf('--port');
-    assert.equal(args[pIdx + 1], port, `expected expo -p to match RCT_METRO_PORT\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+    assert.ok(!args.includes('-p'), `expected expo args to not include -p\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+    assert.ok(!args.includes('--no-bundler'), `expected expo args to not include --no-bundler\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+    assert.ok(args.includes('--port'), `expected expo args to include --port\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+    const portIdx = args.indexOf('--port');
+    assert.ok(portIdx >= 0 && args[portIdx + 1] === port, `expected --port to match RCT_METRO_PORT\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
     assert.notEqual(port, '8081', `expected non-default port to reduce collisions\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
 });
-

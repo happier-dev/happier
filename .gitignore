@@ -50,6 +50,7 @@ apps/stack/resume-invocations.log
 
 # typescript
 *.tsbuildinfo
+packages/protocol/src/features/embeddedFeaturePolicies.generated.ts
 
 .claude/settings.local.json
 .plan

@@ -1,6 +1,7 @@
 import { AgentContentView } from '@/components/sessions/transcript/AgentContentView';
 import { AgentInput } from '@/components/sessions/agentInput';
 import type { AgentInputExtraActionChip, AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/AgentInput';
+import { buildSessionAgentInputActionChips } from '@/components/sessions/agentInput/actionChips/buildSessionAgentInputActionChips';
 import { getSuggestions } from '@/components/autocomplete/suggestions';
 import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView';
 import { SessionHeaderActionMenu } from '@/components/sessions/actions/SessionHeaderActionMenu';
@@ -29,7 +30,7 @@ import { t } from '@/text';
 import { tracking, trackMessageSent } from '@/track';
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { useDeviceType, useHeaderHeight, useIsLandscape, useIsTablet } from '@/utils/platform/responsive';
-import { formatPathRelativeToHome, getSessionAvatarId, getSessionName, shouldShowAbortButtonForSessionState, useSessionStatus } from '@/utils/sessions/sessionUtils';
+import { formatPathRelativeToHome, getSessionAvatarId, getSessionName, listPendingPermissionRequests, shouldShowAbortButtonForSessionState, useSessionStatus } from '@/utils/sessions/sessionUtils';
 import { isVersionSupported, MINIMUM_CLI_VERSION } from '@/utils/system/versionUtils';
 import { getMachineCapabilitiesSnapshot, prefetchMachineCapabilities, useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
 import { describeAcpLoadSessionSupport } from '@/agents/runtime/acpRuntimeResume';
@@ -75,7 +76,7 @@ function formatResumeSupportDetailCode(code: 'cliNotDetected' | 'capabilityProbe
     }
 }
 
-export const SessionView = React.memo((props: { id: string }) => {
+export const SessionView = React.memo((props: { id: string; jumpToSeq?: number | null }) => {
     const sessionId = props.id;
     const router = useRouter();
     const session = useSession(sessionId);
@@ -261,7 +262,7 @@ export const SessionView = React.memo((props: { id: string }) => {
                     </View>
                 ) : (
                     // Normal session view
-                    <SessionViewLoaded key={sessionId} sessionId={sessionId} session={session} />
+                    <SessionViewLoaded key={sessionId} sessionId={sessionId} session={session} jumpToSeq={props.jumpToSeq ?? null} />
                 )}
             </View>
         </>
@@ -269,7 +270,7 @@ export const SessionView = React.memo((props: { id: string }) => {
 });
 
 
-function SessionViewLoaded({ sessionId, session }: { sessionId: string, session: Session }) {
+function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: string; session: Session; jumpToSeq: number | null }) {
     const { theme } = useUnistyles();
     const router = useRouter();
     const safeArea = useSafeAreaInsets();
@@ -296,6 +297,7 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
     const activeServerId = getActiveServerSnapshot().serverId;
     const capabilityServerId = activeServerId;
     const alwaysShowContextSize = useSetting('alwaysShowContextSize');
+    const actionsSettingsV1 = useSetting('actionsSettingsV1');
     const voice = useSetting('voice') as any;
     const voiceProviderId = voice?.providerId ?? 'off';
     const voiceSnap = useVoiceSessionSnapshot();
@@ -746,19 +748,20 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
         controlledByUser: Boolean(session.agentState?.controlledByUser),
     }), [messages.length, pendingMessages.length, session.agentState?.controlledByUser]);
 
-    let content = (
-        <>
-            <Deferred>
-                {shouldRenderChatTimeline && (
-                    <ChatList
-                        session={session}
-                        bottomNotice={bottomNotice}
-                        onRequestSwitchToRemote={handleRequestSwitchToRemote}
-                    />
-                )}
-            </Deferred>
-        </>
-    );
+	    let content = (
+	        <>
+	            <Deferred>
+	                {shouldRenderChatTimeline && (
+	                    <ChatList
+	                        session={session}
+	                        bottomNotice={bottomNotice}
+	                        onRequestSwitchToRemote={handleRequestSwitchToRemote}
+	                        jumpToSeq={jumpToSeq}
+	                    />
+	                )}
+	            </Deferred>
+	        </>
+	    );
     const placeholder = !shouldRenderChatTimeline ? (
         <>
             {isLoaded ? (
@@ -775,11 +778,10 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
     const shouldShowInput = inactiveUi.shouldShowInput;
     const reviewCommentDraftCount = reviewCommentDrafts.length;
     const extraActionChips: ReadonlyArray<AgentInputExtraActionChip> | undefined = React.useMemo(() => {
-        if (!reviewCommentsEnabled) return undefined;
-        if (reviewCommentDraftCount === 0) return undefined;
+        const chips: AgentInputExtraActionChip[] = [];
 
-        return [
-            {
+        if (reviewCommentsEnabled && reviewCommentDraftCount > 0) {
+            chips.push({
                 key: 'review-comments',
                 render: (ctx: AgentInputExtraActionChipRenderContext) => (
                     <Pressable
@@ -814,9 +816,18 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                         </View>
                     </Pressable>
                 ),
-            },
-        ];
-    }, [reviewCommentDraftCount, reviewCommentDrafts, reviewCommentsEnabled, sessionId]);
+            });
+        }
+
+        const defaultBackendId = (() => {
+            const raw = (session as any)?.metadata?.agent;
+            if (typeof raw === 'string' && raw.trim().length > 0) return raw;
+            return typeof agentId === 'string' && agentId.trim().length > 0 ? agentId : null;
+        })();
+        chips.push(...buildSessionAgentInputActionChips({ sessionId, defaultBackendId, instructionsText: message }));
+
+        return chips.length > 0 ? chips : undefined;
+    }, [actionsSettingsV1, agentId, message, reviewCommentDraftCount, reviewCommentDrafts, reviewCommentsEnabled, session, sessionId]);
 
     const input = shouldShowInput ? (
         <View>
@@ -827,6 +838,9 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                 onChangeText={setMessage}
                 sessionId={sessionId}
                 hasSendableAttachments={hasReviewCommentDrafts}
+                permissionRequests={listPendingPermissionRequests(session)}
+                canApprovePermissions={hasWriteAccess}
+                permissionDisabledReason={hasWriteAccess ? undefined : 'readOnly'}
                 permissionMode={permissionMode}
                 onPermissionModeChange={updatePermissionMode}
                 onAcpSessionModeChange={supportsAcpAgentModeOverrides(agentId) ? updateAcpSessionModeOverride : undefined}

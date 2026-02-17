@@ -32,6 +32,7 @@ vi.mock('@/components/ui/media/CodeView', () => ({
 }));
 
 const renderedSpecificTaskViewSpy = vi.fn();
+const renderedSpecificSubAgentRunViewSpy = vi.fn();
 
 vi.mock('@/components/tools/renderers/core/_registry', () => ({
     getToolViewComponent: (toolName: string) => {
@@ -41,6 +42,12 @@ vi.mock('@/components/tools/renderers/core/_registry', () => ({
                 return React.createElement('TaskSpecificView', null);
             };
         }
+        if (toolName === 'SubAgentRun') {
+            return (props: any) => {
+                renderedSpecificSubAgentRunViewSpy(props);
+                return React.createElement('SubAgentRunSpecificView', null);
+            };
+        }
         return null;
     },
 }));
@@ -48,6 +55,7 @@ vi.mock('@/components/tools/renderers/core/_registry', () => ({
 vi.mock('@/components/tools/catalog', () => ({
     knownTools: {
         Task: { title: 'Task' },
+        SubAgentRun: { title: 'SubAgentRun' },
     },
 }));
 
@@ -71,6 +79,7 @@ vi.mock('@/components/sessions/transcript/MessageView', () => ({
 describe('ToolFullView (Task transcript reuse)', () => {
     it('renders Task sidechain messages through MessageView instead of Task renderer in full view', async () => {
         renderedSpecificTaskViewSpy.mockReset();
+        renderedSpecificSubAgentRunViewSpy.mockReset();
         renderedMessageViewSpy.mockReset();
         const { ToolFullView } = await import('./ToolFullView');
 
@@ -110,5 +119,50 @@ describe('ToolFullView (Task transcript reuse)', () => {
             }),
         );
         expect(renderedSpecificTaskViewSpy).not.toHaveBeenCalled();
+        expect(renderedSpecificSubAgentRunViewSpy).not.toHaveBeenCalled();
+    });
+
+    it('renders SubAgentRun sidechain messages through MessageView instead of SubAgentRun renderer in full view', async () => {
+        renderedSpecificTaskViewSpy.mockReset();
+        renderedSpecificSubAgentRunViewSpy.mockReset();
+        renderedMessageViewSpy.mockReset();
+        const { ToolFullView } = await import('./ToolFullView');
+
+        const tool = makeToolCall({
+            name: 'SubAgentRun',
+            input: { intent: 'review', backendId: 'claude' },
+            result: null,
+        });
+        const child: Message = {
+            kind: 'agent-text',
+            id: 'child-msg-2',
+            localId: null,
+            createdAt: 1001,
+            text: 'Streaming...',
+            isThinking: false,
+        };
+
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(ToolFullView, {
+                    tool,
+                    metadata: null,
+                    messages: [child],
+                    sessionId: 's1',
+                    interaction: { canSendMessages: true, canApprovePermissions: true },
+                }),
+            );
+        });
+
+        expect(tree.root.findAllByType('MessageView' as any)).toHaveLength(1);
+        expect(renderedMessageViewSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: child,
+                sessionId: 's1',
+                interaction: expect.objectContaining({ disableToolNavigation: true }),
+            }),
+        );
+        expect(renderedSpecificSubAgentRunViewSpy).not.toHaveBeenCalled();
     });
 });

@@ -159,6 +159,7 @@ export const zhHans: TranslationStructure = {
   settings: {
     title: "设置",
     connectedAccounts: "已连接账户",
+    connectedAccountsDisabled: "Connected services are disabled.",
     connectAccount: "连接账户",
     github: "GitHub",
     machines: "设备",
@@ -170,6 +171,8 @@ export const zhHans: TranslationStructure = {
     appearanceSubtitle: "自定义应用外观",
     voiceAssistant: "语音助手",
     voiceAssistantSubtitle: "配置语音交互偏好",
+    memorySearch: "本地记忆搜索",
+    memorySearchSubtitle: "在设备本地搜索过往对话",
     featuresTitle: "功能",
     featuresSubtitle: "启用或禁用应用功能",
     developer: "开发者",
@@ -983,7 +986,7 @@ export const zhHans: TranslationStructure = {
 
   components: {
     emptyMainScreen: {
-      // Used by EmptyMainScreen component
+      // Used by SessionGettingStartedGuidance component
       readyToCode: "准备开始编程？",
       installCli: "安装 Happier CLI",
       runIt: "运行它",
@@ -1664,6 +1667,8 @@ export const zhHans: TranslationStructure = {
       recentMessagesCountInvalid: "请输入 0 到 50 之间的数字。",
       shareToolNames: "分享工具名称",
       shareToolNamesSubtitle: "在语音上下文中包含工具名称/描述",
+      shareDeviceInventory: "Share device inventory",
+      shareDeviceInventorySubtitle: "Allow voice to list recent workspaces, machines, and servers",
       shareToolArgs: "分享工具参数",
       shareToolArgsSubtitle: "包含工具参数（可能包含路径或秘密）",
       sharePermissionRequests: "分享权限请求",

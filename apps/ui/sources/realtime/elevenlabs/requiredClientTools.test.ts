@@ -6,7 +6,16 @@ describe('resolveElevenLabsRequiredClientTools', () => {
 
         const state: any = {
             settings: {
-                actionsSettingsV1: { v: 1, disabledActionIds: ['session.message.send'] },
+                actionsSettingsV1: {
+                    v: 1,
+                    actions: {
+                        'session.message.send': {
+                            enabled: true,
+                            disabledSurfaces: ['voice_tool'],
+                            disabledPlacements: [],
+                        },
+                    },
+                },
             },
         };
 
@@ -14,4 +23,3 @@ describe('resolveElevenLabsRequiredClientTools', () => {
         expect(tools.some((t) => t.name === 'sendSessionMessage')).toBe(false);
     });
 });
-

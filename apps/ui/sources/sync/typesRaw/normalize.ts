@@ -60,6 +60,11 @@ export type NormalizedMessage = ({
     content: AgentEvent
 }) & {
     id: string,
+    /**
+     * Materialized transcript sequence (server ordering cursor).
+     * Optional for backwards compatibility with older call sites.
+     */
+    seq?: number,
     localId: string | null,
     createdAt: number,
     isSidechain: boolean,
@@ -70,7 +75,13 @@ export type NormalizedMessage = ({
     usage?: UsageData,
 };
 
-export function normalizeRawMessage(id: string, localId: string | null, createdAt: number, raw: RawRecord): NormalizedMessage | null {
+export function normalizeRawMessage(
+    id: string,
+    localId: string | null,
+    createdAt: number,
+    raw: RawRecord,
+    opts?: Readonly<{ seq?: number }>,
+): NormalizedMessage | null {
     // Zod transform handles normalization during validation
     let parsed = rawRecordSchema.safeParse(raw);
     if (!parsed.success) {
@@ -107,6 +118,8 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
         return null;
     }
     raw = parsed.data;
+
+    const seq = typeof opts?.seq === 'number' && Number.isFinite(opts.seq) ? Math.trunc(opts.seq) : undefined;
 
     const toolResultContentToText = (content: unknown): string => {
         if (content === null || content === undefined) return '';
@@ -157,6 +170,7 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
     if (raw.role === 'user') {
         return {
             id,
+            ...(seq !== undefined ? { seq } : {}),
             localId,
             createdAt,
             role: 'user',
@@ -280,6 +294,7 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                     }
                     return {
                         id,
+                        ...(seq !== undefined ? { seq } : {}),
                         localId,
                         createdAt,
                         role: 'user',

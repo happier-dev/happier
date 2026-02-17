@@ -24,6 +24,7 @@ function withCleanEnv<T>(fn: () => T): T {
         'EXPO_UPDATES_CHANNEL',
         'EXPO_APP_OWNER',
         'EXPO_APP_SLUG',
+        'EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV',
         'EXPO_PUBLIC_IOS_BACKGROUND_AUDIO',
         'EXPO_IOS_BACKGROUND_AUDIO',
     ] as const;
@@ -65,6 +66,16 @@ describe('app.config.js', () => {
         });
 
         expect(exp.extra?.app?.variant).toBe('preview');
+    });
+
+    it('defaults EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV based on the app variant', () => {
+        const envValue = withCleanEnv(() => {
+            process.env.APP_ENV = 'production';
+            getPublicConfig();
+            return process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV;
+        });
+
+        expect(envValue).toBe('production');
     });
 
     it('uses EXPO_PUBLIC_EAS_PROJECT_ID with highest precedence for updates linkage', () => {
@@ -142,5 +153,13 @@ describe('app.config.js', () => {
 
         const plugin = (exp.plugins ?? []).find((entry: any) => Array.isArray(entry) && entry[0] === 'react-native-audio-api');
         expect(plugin).toEqual(['react-native-audio-api', expect.objectContaining({ iosBackgroundMode: false })]);
+    });
+
+    it('does not include unused optional native plugins in the default config', () => {
+        const exp = withCleanEnv(() => getPublicConfig());
+        const pluginNames = (exp.plugins ?? []).map((entry: any) => (Array.isArray(entry) ? entry[0] : entry));
+
+        expect(pluginNames).not.toContain('expo-location');
+        expect(pluginNames).not.toContain('expo-calendar');
     });
 });

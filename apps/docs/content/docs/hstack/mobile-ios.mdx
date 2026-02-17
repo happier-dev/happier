@@ -53,6 +53,8 @@ hstack mobile-dev-client --install --clean
 Then run any stack with mobile enabled:
 
 ```bash
+hstack tui stack dev <stack> --mobile
+# or (without TUI):
 hstack stack dev <stack> --mobile
 # or:
 hstack dev --mobile
@@ -265,21 +267,31 @@ You must configure EAS Environment Variables on Expo (project settings) and ensu
 
 The EAS project env var workflow:
 
-1) Ensure your `eas.json` build profiles set `"environment": "production"` / `"preview"` / `"development"`.
-2) Create env vars in EAS for that environment (plain text or sensitive so config resolution can read them).
+1) Ensure `apps/ui/eas.json` build profiles set `"environment": "production"` / `"preview"` / `"development"`.
+2) Sync the relevant **EXPO config** env vars into EAS for that environment (plain text or sensitive so `app.config.js` can evaluate them).
 
-With hstack helpers (stack-scoped):
+Recommended (stack-scoped sync helper):
 
 ```bash
-# Inspect:
-hstack stack eas happier env:list --environment production
+hstack stack eas happier env:sync --environment production
+# preview/development:
+hstack stack eas happier env:sync --environment preview
+hstack stack eas happier env:sync --environment development
 
-# Create (use env:update if it already exists):
-hstack stack eas happier env:create --name EXPO_APP_NAME --value "Happier" --environment production --visibility plainText
-hstack stack eas happier env:create --name EXPO_APP_BUNDLE_ID --value "dev.happier.app" --environment production --visibility plainText
-hstack stack eas happier env:create --name EXPO_APP_SCHEME --value "happier" --environment production --visibility plainText
-hstack stack eas happier env:create --name EXPO_APP_OWNER --value "happier-dev" --environment production --visibility plainText
-hstack stack eas happier env:create --name EXPO_APP_SLUG --value "happier" --environment production --visibility plainText
+# Safety knobs:
+hstack stack eas happier env:sync --environment production --dry-run
+hstack stack eas happier env:sync --environment production --hide-values
+```
+
+Notes:
+
+- `env:sync` uses the current stack env values (for example `EXPO_APP_*`, `EXPO_EAS_PROJECT_ID`, `EXPO_UPDATES_URL`, `EXPO_UPDATES_CHANNEL`, `EXPO_APP_LINK_HOST`).
+- `env:sync` does **not** sync `EXPO_PUBLIC_*` (those are bundle-inlined; use `apps/ui/eas.json` or EAS env vars UI as appropriate).
+
+Manual EAS inspection (still useful for debugging a single variable):
+
+```bash
+hstack stack eas happier env:list --environment production
 ```
 
 Tip:

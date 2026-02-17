@@ -30,6 +30,14 @@ function createFeaturesResponse(friendsEnabled: boolean): FeaturesResponse {
                 contextWindowMs: 30 * 60 * 1_000,
             },
             automations: { enabled: true, existingSessionTarget: false },
+            connectedServices: {
+                enabled: true,
+                webOauthProxyEnabled: true,
+                quotas: { enabled: true },
+            },
+            updates: {
+                ota: { enabled: true },
+            },
             sharing: {
                 session: { enabled: true },
                 public: { enabled: true },

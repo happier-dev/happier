@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { SessionsList } from '@/components/sessions/shell/SessionsList';
-import { EmptyMainScreen } from '@/components/ui/empty/EmptyMainScreen';
+import { SessionGettingStartedGuidance } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
 import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -57,7 +57,7 @@ export const SessionsListWrapper = React.memo(() => {
             <View style={styles.container}>
                 <View style={styles.emptyStateContainer}>
                     <View style={styles.emptyStateContentContainer}>
-                        <EmptyMainScreen />
+                        <SessionGettingStartedGuidance variant="phone" />
                     </View>
                 </View>
             </View>

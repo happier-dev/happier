@@ -3,6 +3,77 @@ import { createReducer, reducer } from './reducer';
 import type { NormalizedMessage } from '../typesRaw';
 
 describe('sidechains (provider-agnostic)', () => {
+  it('merges streaming sidechain text chunks when happierSidechainStreamKey is shared', () => {
+    const state = createReducer();
+
+    const runTool: NormalizedMessage = {
+      id: 'msg_run',
+      localId: null,
+      createdAt: 1000,
+      role: 'agent',
+      isSidechain: false,
+      content: [
+        {
+          type: 'tool-call',
+          id: 'subagent_run_1',
+          name: 'SubAgentRun',
+          input: { intent: 'review' },
+          description: null,
+          uuid: 'uuid_run',
+          parentUUID: null,
+        },
+      ],
+    };
+
+    const streamKey = 'sc_stream_key_1';
+
+    const sidechainChunk1: NormalizedMessage = {
+      id: 'msg_sc_chunk_1',
+      localId: null,
+      createdAt: 1200,
+      role: 'agent',
+      isSidechain: true,
+      meta: { happierSidechainStreamKey: streamKey },
+      content: [
+        {
+          type: 'text',
+          text: 'Working',
+          uuid: 'uuid_sc_chunk_1',
+          parentUUID: null,
+        },
+      ],
+    } as any;
+    (sidechainChunk1 as any).sidechainId = 'subagent_run_1';
+
+    const sidechainChunk2: NormalizedMessage = {
+      id: 'msg_sc_chunk_2',
+      localId: null,
+      createdAt: 1300,
+      role: 'agent',
+      isSidechain: true,
+      meta: { happierSidechainStreamKey: streamKey },
+      content: [
+        {
+          type: 'text',
+          text: '...done',
+          uuid: 'uuid_sc_chunk_2',
+          parentUUID: null,
+        },
+      ],
+    } as any;
+    (sidechainChunk2 as any).sidechainId = 'subagent_run_1';
+
+    const result = reducer(state, [runTool, sidechainChunk1, sidechainChunk2]);
+
+    const toolMessage = result.messages.find((m) => m.kind === 'tool-call' && m.tool?.name === 'SubAgentRun') as any;
+    expect(toolMessage).toBeTruthy();
+    expect(toolMessage.children).toHaveLength(1);
+
+    const merged = toolMessage.children[0];
+    expect(merged.kind).toBe('agent-text');
+    expect(merged.text).toBe('Working...done');
+  });
+
   it('attaches sidechain thread to Task tool-call via tool-call id sidechainId', () => {
     const state = createReducer();
 

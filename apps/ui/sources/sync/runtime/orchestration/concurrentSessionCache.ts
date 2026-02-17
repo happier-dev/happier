@@ -13,6 +13,7 @@ import { setServerSessionListCache } from '@/sync/store/sessionListCache';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
 
 type ConcurrentTarget = Readonly<{
     id: string;
@@ -71,7 +72,7 @@ function createServerRequest(serverUrl: string): (path: string, init: RequestIni
     const normalized = normalizeServerUrl(serverUrl);
     return async (path: string, init: RequestInit) => {
         const requestPath = String(path ?? '').startsWith('/') ? String(path) : `/${String(path ?? '')}`;
-        return await fetch(`${normalized}${requestPath}`, init);
+        return await runtimeFetch(`${normalized}${requestPath}`, init);
     };
 }
 

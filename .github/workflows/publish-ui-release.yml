@@ -63,6 +63,7 @@ jobs:
       target_sha: ${{ inputs.target_sha }}
       prerelease: ${{ inputs.prerelease }}
       rolling_tag: ${{ inputs.rolling_tag }}
+      prune_assets: ${{ inputs.rolling_tag }}
       generate_notes: ${{ inputs.generate_notes }}
       notes: ${{ inputs.notes }}
       assets: ${{ inputs.assets }}

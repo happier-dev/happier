@@ -73,7 +73,7 @@ jobs:
           # Deploy branches are promoted by the release GitHub App. We only allow
           # push-triggered deploys from that bot actor (and the repo owner as an escape hatch).
           case "$actor" in
-            happier-release-bot[[]bot[]]|leeroybrun) ;;
+            happier-release-bot[[]bot[]]|happier-releases-bot[[]bot[]]|leeroybrun) ;;
             *)
               echo "Refusing push-triggered deploy from unauthorized actor: '${actor}'." >&2
               exit 1

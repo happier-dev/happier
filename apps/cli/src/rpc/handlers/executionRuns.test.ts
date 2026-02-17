@@ -419,6 +419,44 @@ describe('executionRuns session RPC handlers', () => {
     expect((read2.events as any[]).find((e) => e.t === 'done')?.assistantText).toBe('Hello.');
   });
 
+  it('fails closed for long-lived resumable runs via execution.run.send(resume=true) when backend lacks loadSessionWithReplayCapture', async () => {
+    const createBackend = createResumableBackendFactory('reply');
+
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend: () => createBackend(),
+          sendAcp: () => {},
+        });
+      },
+    });
+
+    const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'delegate',
+      backendId: 'claude',
+      instructions: 'Start.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'long_lived',
+      ioMode: 'request_response',
+    });
+
+    const stopped = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_STOP, { runId: started.runId });
+    expect(stopped.ok).toBe(true);
+
+    const resumed = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_SEND, {
+      runId: started.runId,
+      message: 'after',
+      resume: true,
+    });
+    expect(resumed.ok).toBe(false);
+    expect(resumed.errorCode).toBe('execution_run_not_allowed');
+  });
+
   it('rejects voice_agent runs when voice feature is locally disabled', async () => {
     const prev = process.env.HAPPIER_FEATURE_VOICE__ENABLED;
     process.env.HAPPIER_FEATURE_VOICE__ENABLED = '0';
@@ -486,6 +524,39 @@ describe('executionRuns session RPC handlers', () => {
     expect(String(started?.error ?? '')).toContain('codex');
   });
 
+  it('returns ok:false VOICE_AGENT_UNSUPPORTED when starting a voice_agent run and backend initialization fails (claude)', async () => {
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend: ({ backendId }) => {
+            if (backendId === 'claude') {
+              throw new Error('claude missing');
+            }
+            return createStaticBackend('ok');
+          },
+          sendAcp: () => {},
+        });
+      },
+    });
+
+    const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'voice_agent',
+      backendId: 'claude',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'long_lived',
+      ioMode: 'streaming',
+    });
+
+    expect(started?.ok).toBe(false);
+    expect(started?.errorCode).toBe('VOICE_AGENT_UNSUPPORTED');
+    expect(String(started?.error ?? '')).toContain('claude');
+  });
+
   it('returns voice_agent.commit results via execution.run.action', async () => {
     const client = createEncryptedRpcTestClient({
       scopePrefix: 'sess_1',
@@ -495,6 +566,50 @@ describe('executionRuns session RPC handlers', () => {
           cwd: process.cwd(),
           parentProvider: 'claude',
           createBackend: ({ modelId }) => createStaticBackend(modelId === 'commit' ? 'COMMIT_TEXT' : 'Hello.'),
+          sendAcp: () => {},
+        });
+      },
+    });
+
+    const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'voice_agent',
+      backendId: 'claude',
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'long_lived',
+      ioMode: 'streaming',
+      chatModelId: 'chat',
+      commitModelId: 'commit',
+      idleTtlSeconds: 60,
+      initialContext: 'ctx',
+      verbosity: 'short',
+    });
+
+    const acted = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_ACTION, {
+      runId: started.runId,
+      actionId: 'voice_agent.commit',
+      input: { maxChars: 1000 },
+    });
+
+    expect(acted.ok).toBe(true);
+    expect(acted.result?.commitText).toBe('COMMIT_TEXT');
+
+    const got = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_GET, {
+      runId: started.runId,
+      includeStructured: false,
+    });
+    expect(got?.run?.resumeHandle?.kind).toBe('voice_agent_sessions.v1');
+  });
+
+  it('returns voice_agent.welcome results via execution.run.action', async () => {
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend: () => createStaticBackend('Hello! What are we working on today?'),
           sendAcp: () => {},
         });
       },
@@ -516,12 +631,11 @@ describe('executionRuns session RPC handlers', () => {
 
     const acted = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_ACTION, {
       runId: started.runId,
-      actionId: 'voice_agent.commit',
-      input: { maxChars: 1000 },
+      actionId: 'voice_agent.welcome',
     });
 
     expect(acted.ok).toBe(true);
-    expect(acted.result?.commitText).toBe('COMMIT_TEXT');
+    expect(String(acted.result?.assistantText ?? '')).toContain('Hello');
   });
 
   it('does not materialize tool-call transcript messages for voice_agent runs', async () => {
@@ -649,10 +763,10 @@ describe('executionRuns session RPC handlers', () => {
     });
 
     const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
-      intent: 'voice_agent',
+      intent: 'delegate',
       backendId: 'claude',
       instructions: 'hello',
-      permissionMode: 'read_only',
+      permissionMode: 'default',
       retentionPolicy: 'ephemeral',
       runClass: 'long_lived',
       ioMode: 'request_response',
@@ -694,7 +808,7 @@ describe('executionRuns session RPC handlers', () => {
     expect(started.errorCode).toBe('permission_denied');
   });
 
-  it('returns execution_run_not_allowed when starting a run with streaming ioMode (not implemented)', async () => {
+  it('allows starting a bounded review run with streaming ioMode (sidechain transcript streaming)', async () => {
     const client = createEncryptedRpcTestClient({
       scopePrefix: 'sess_1',
       registerHandlers: (rpc) => {
@@ -718,8 +832,9 @@ describe('executionRuns session RPC handlers', () => {
       ioMode: 'streaming',
     });
 
-    expect(started.ok).toBe(false);
-    expect(started.errorCode).toBe('execution_run_not_allowed');
+    expect(started.runId).toMatch(/^run_/);
+    expect(started.callId).toMatch(/^subagent_run_/);
+    expect(started.sidechainId).toBe(started.callId);
   });
 
   it('returns execution_run_budget_exceeded when max concurrent runs is reached', async () => {
@@ -918,10 +1033,10 @@ describe('executionRuns session RPC handlers', () => {
     });
 
     const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
-      intent: 'voice_agent',
+      intent: 'delegate',
       backendId: 'claude',
       instructions: 'hello',
-      permissionMode: 'read_only',
+      permissionMode: 'default',
       retentionPolicy: 'ephemeral',
       runClass: 'long_lived',
       ioMode: 'request_response',

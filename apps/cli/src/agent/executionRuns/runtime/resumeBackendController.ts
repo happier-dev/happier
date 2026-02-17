@@ -1,8 +1,8 @@
 import type { AgentBackend, AgentMessageHandler } from '@/agent/core/AgentBackend';
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 
-import type { ExecutionRunState } from '@/agent/executionRuns/runtime/ExecutionRunManager';
-import type { ExecutionRunBackendController, ExecutionRunController } from '@/agent/executionRuns/runtime/executionRunControllers';
+import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
+import type { ExecutionRunBackendController, ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 
 export async function resumeBackendControllerForResumableRun(args: Readonly<{
   runId: string;
@@ -10,8 +10,9 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
   runs: Map<string, ExecutionRunState>;
   controllers: Map<string, ExecutionRunController>;
   budgetRegistry: ExecutionBudgetRegistry | null;
-  createBackend: (opts: { backendId: string; permissionMode: string }) => AgentBackend;
+  createBackend: (opts: { runId?: string; backendId: string; permissionMode: string }) => AgentBackend;
   onModelOutput?: () => void;
+  requireReplayCapture?: boolean;
 }>): Promise<
   | { ok: true }
   | { ok: false; errorCode: string; error: string }
@@ -33,11 +34,19 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
     return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Missing resume handle' };
   }
 
-  const backend = args.createBackend({ backendId: args.run.backendId, permissionMode: args.run.permissionMode });
-  if (!backend.loadSession) {
+  const backend = args.createBackend({ runId: args.runId, backendId: args.run.backendId, permissionMode: args.run.permissionMode });
+  const wantsReplayCapture = args.requireReplayCapture === true;
+  const canResume = wantsReplayCapture
+    ? Boolean(backend.loadSessionWithReplayCapture)
+    : Boolean(backend.loadSessionWithReplayCapture || backend.loadSession);
+  if (!canResume) {
     await backend.dispose().catch(() => {});
     args.budgetRegistry?.releaseExecutionRun(args.runId);
-    return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Backend does not support resume' };
+    return {
+      ok: false,
+      errorCode: 'execution_run_not_allowed',
+      error: wantsReplayCapture ? 'Backend does not support resumable long-lived runs' : 'Backend does not support resume',
+    };
   }
 
   let resolveTerminal!: () => void;
@@ -50,6 +59,8 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
     backend,
     childSessionId: null,
     buffer: '',
+    sidechainStreamBuffer: '',
+    sidechainStreamKey: '',
     cancelled: false,
     turnCount: 0,
     lastMarkerWriteAtMs: 0,
@@ -69,7 +80,9 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
   backend.onMessage(onMessage);
 
   try {
-    const loaded = await backend.loadSession(vendorSessionId);
+    const loaded = backend.loadSessionWithReplayCapture
+      ? await backend.loadSessionWithReplayCapture(vendorSessionId)
+      : await backend.loadSession!(vendorSessionId);
     resumeCtrl.childSessionId = loaded.sessionId;
     args.controllers.set(args.runId, resumeCtrl);
     args.runs.set(args.runId, {
@@ -86,4 +99,3 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
     return { ok: false, errorCode: 'execution_run_failed', error: e instanceof Error ? e.message : 'Resume failed' };
   }
 }
-

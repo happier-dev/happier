@@ -1228,8 +1228,8 @@ export class ApiSessionClient extends EventEmitter {
      * Update session metadata
      * @param handler - Handler function that returns the updated metadata
      */
-    updateMetadata(handler: (metadata: Metadata) => Metadata) {
-        this.metadataLock.inLock(async () => {
+    updateMetadata(handler: (metadata: Metadata) => Metadata): Promise<void> {
+        return this.metadataLock.inLock(async () => {
             await updateSessionMetadataWithAck({
                 socket: this.socket as any,
                 sessionId: this.sessionId,
@@ -1253,9 +1253,9 @@ export class ApiSessionClient extends EventEmitter {
      * Update session agent state
      * @param handler - Handler function that returns the updated agent state
      */
-    updateAgentState(handler: (metadata: AgentState) => AgentState) {
+    updateAgentState(handler: (metadata: AgentState) => AgentState): Promise<void> {
         logger.debugLargeJson('Updating agent state', this.agentState);
-        this.agentStateLock.inLock(async () => {
+        return this.agentStateLock.inLock(async () => {
             await updateSessionAgentStateWithAck({
                 socket: this.socket as any,
                 sessionId: this.sessionId,

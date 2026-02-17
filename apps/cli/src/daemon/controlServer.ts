@@ -172,6 +172,7 @@ export function createDaemonControlApp({
           }).optional(),
         }).optional(),
         environmentVariables: z.record(z.string()).optional(),
+        connectedServices: z.unknown().optional(),
       }),
       response: {
         200: z.object({
@@ -195,12 +196,12 @@ export function createDaemonControlApp({
     },
     preHandler: requireAuth,
   }, async (request, reply) => {
-    const { directory, sessionId, agent, terminal, environmentVariables } = request.body;
+    const { directory, sessionId, agent, terminal, environmentVariables, connectedServices } = request.body;
 
     logger.debug(`[CONTROL SERVER] Spawn session request: dir=${directory}, sessionId=${sessionId || 'new'}`);
     let result: SpawnSessionResult;
     try {
-      result = await spawnSession({ directory, sessionId, agent, terminal, environmentVariables });
+      result = await spawnSession({ directory, sessionId, agent, terminal, environmentVariables, connectedServices });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(500);

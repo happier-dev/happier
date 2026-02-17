@@ -49,8 +49,8 @@ export type ExecutionRunProfileActionResult = Readonly<{
 
 export type ExecutionRunIntentProfile = Readonly<{
   intent: ExecutionRunIntent;
+  transcriptMaterialization: 'full' | 'none';
   buildPrompt: (params: ExecutionRunProfileStartParams) => string;
   onBoundedComplete: (params: ExecutionRunProfileBoundedCompleteParams) => ExecutionRunProfileBoundedCompleteResult;
   applyAction?: (params: ExecutionRunProfileActionParams) => ExecutionRunProfileActionResult;
 }>;
-

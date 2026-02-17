@@ -61,16 +61,32 @@ import { useNewSessionWizardProps } from '@/components/sessions/new/hooks/useNew
 import { getAutomationChipLabel } from '@/components/sessions/new/modules/automationChipModel';
 import { resolveNewSessionCapabilityServerId } from '@/components/sessions/new/modules/resolveNewSessionCapabilityServerId';
 import { resolveEffectiveAutomationDraft, shouldShowAutomationActionChips } from '@/components/sessions/new/modules/automationFeatureGate';
+import { listAgentInputActionChipActionIds } from '@/components/sessions/agentInput/actionChips/listAgentInputActionChipActionIds';
 import { useAutomationPickerAutoOpen } from '@/components/sessions/new/modules/useAutomationPickerAutoOpen';
 import { buildMachinePickerRouteParams, buildProfilePickerRouteParams, buildServerPickerRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/AgentInput';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useProfile } from '@/sync/store/hooks';
+import { AGENTS_CORE, type ConnectedServiceId } from '@happier-dev/agents';
+import {
+    ConnectedServicesAuthModal,
+    CONNECTED_SERVICES_BINDINGS_KEY,
+    type ConnectedServicesServiceBinding,
+} from '@/components/sessions/new/components/ConnectedServicesAuthModal';
+import {
+    buildConnectedServiceProfileOptionsByServiceId,
+    buildConnectedServicesBindingsPayload,
+    parseConnectedServicesBindingsByServiceIdFromAgentOptionState,
+    resolveAgentSupportedConnectedServiceIds,
+} from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import { useNewSessionServerTargetState } from '@/components/sessions/new/hooks/serverTarget/useNewSessionServerTargetState';
 import { useNewSessionAgentTypeState } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentTypeState';
 import { useNewSessionMachinePathState } from '@/components/sessions/new/hooks/screenModel/useNewSessionMachinePathState';
 import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
+import { getActionSpec } from '@happier-dev/protocol';
+import { buildActionDraftInput } from '@/sync/domains/actions/buildActionDraftInput';
 
 // Configuration constants
 const RECENT_PATHS_DEFAULT_VISIBLE = 5;
@@ -238,6 +254,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const [secrets, setSecrets] = useSettingMutable('secrets');
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
     const sessionDefaultPermissionModeByAgent = useSetting('sessionDefaultPermissionModeByAgent');
+    const actionsSettingsV1 = useSetting('actionsSettingsV1');
     const settings = useSettings();
     const [activeServerSnapshot, setActiveServerSnapshot] = React.useState(() => getActiveServerSnapshot());
     React.useEffect(() => {
@@ -1441,10 +1458,50 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         });
     }, [router, targetServerId]);
 
+    const accountProfile = useProfile();
     const agentOptionState = agentNewSessionOptionStateByAgentId[agentType] ?? null;
+    const connectedServicesFeatureEnabled = useFeatureEnabled('connected.services');
+    const agentCore = React.useMemo(() => AGENTS_CORE[agentType], [agentType]);
+
+    const supportedConnectedServiceIds = React.useMemo<ReadonlyArray<ConnectedServiceId>>(() => {
+        return resolveAgentSupportedConnectedServiceIds({ connectedServicesFeatureEnabled, agentCore });
+    }, [agentCore, connectedServicesFeatureEnabled]);
+
+    const connectedServiceProfileOptionsByServiceId = React.useMemo(() => {
+        return buildConnectedServiceProfileOptionsByServiceId({
+            accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
+            agentCore,
+            supportedConnectedServiceIds,
+            labelsByKey: settings.connectedServicesProfileLabelByKey,
+        });
+    }, [accountProfile, agentCore, settings.connectedServicesProfileLabelByKey, supportedConnectedServiceIds]);
+
+    const connectedServicesBindingsByServiceId = React.useMemo(() => {
+        return parseConnectedServicesBindingsByServiceIdFromAgentOptionState({ agentOptionState });
+    }, [agentOptionState]);
+
+    const connectedServicesBindings = React.useMemo(() => {
+        return buildConnectedServicesBindingsPayload({
+            supportedConnectedServiceIds,
+            connectedServiceProfileOptionsByServiceId,
+            connectedServicesBindingsByServiceId,
+            defaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
+        });
+    }, [
+        connectedServiceProfileOptionsByServiceId,
+        connectedServicesBindingsByServiceId,
+        settings.connectedServicesDefaultProfileByServiceId,
+        supportedConnectedServiceIds,
+    ]);
+
     const agentNewSessionOptions = React.useMemo(() => {
-        return buildNewSessionOptionsFromUiState({ agentId: agentType, agentOptionState });
-    }, [agentOptionState, agentType]);
+        const base = buildNewSessionOptionsFromUiState({ agentId: agentType, agentOptionState }) ?? {};
+        const merged: Record<string, unknown> = { ...base };
+        if (connectedServicesBindings) {
+            merged.connectedServices = connectedServicesBindings;
+        }
+        return Object.keys(merged).length > 0 ? merged : null;
+    }, [agentOptionState, agentType, connectedServicesBindings]);
 
     const { handleCreateSession } = useCreateNewSession({
         router,
@@ -1510,6 +1567,57 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             return { ...prev, [agentType]: nextForAgent };
         });
     }, [agentType]);
+
+    const openConnectedServicesAuthModal = React.useCallback(() => {
+        if (supportedConnectedServiceIds.length === 0) return;
+
+        Modal.show({
+            component: ConnectedServicesAuthModal,
+            props: {
+                supportedServiceIds: supportedConnectedServiceIds,
+                profileOptionsByServiceId: connectedServiceProfileOptionsByServiceId,
+                bindingsByServiceId: connectedServicesBindingsByServiceId,
+                setBindingForService: (serviceId: string, binding: ConnectedServicesServiceBinding) => {
+                    setAgentOptionStateForCurrentAgent(CONNECTED_SERVICES_BINDINGS_KEY, {
+                        ...connectedServicesBindingsByServiceId,
+                        [serviceId]: binding,
+                    });
+                },
+                defaultProfileIdByServiceId: settings.connectedServicesDefaultProfileByServiceId,
+                onOpenSettings: () => router.push('/(app)/settings/connected-services'),
+            },
+        });
+    }, [
+        connectedServiceProfileOptionsByServiceId,
+        connectedServicesBindingsByServiceId,
+        settings.connectedServicesDefaultProfileByServiceId,
+        router,
+        setAgentOptionStateForCurrentAgent,
+        supportedConnectedServiceIds,
+    ]);
+
+    const connectedServicesAuthChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
+        if (supportedConnectedServiceIds.length === 0) return null;
+        const connectedCount = supportedConnectedServiceIds.filter((serviceId) => connectedServicesBindingsByServiceId[serviceId]?.source === 'connected').length;
+        const label = connectedCount > 0 ? `Auth: ${connectedCount}` : 'Auth';
+        return {
+            key: 'new-session-connected-services-auth',
+            render: ({ chipStyle, iconColor, showLabel, textStyle }) => (
+                <Pressable
+                    onPress={openConnectedServicesAuthModal}
+                    hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
+                    style={(p) => chipStyle(p.pressed)}
+                >
+                    <Ionicons name="key-outline" size={16} color={iconColor} />
+                    {showLabel ? (
+                        <Text numberOfLines={1} style={textStyle}>
+                            {label}
+                        </Text>
+                    ) : null}
+                </Pressable>
+            ),
+        };
+    }, [connectedServicesBindingsByServiceId, openConnectedServicesAuthModal, supportedConnectedServiceIds]);
 
     const serverPickerActionChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
         if (!showServerPickerChip) return null;
@@ -1603,16 +1711,63 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             setAgentOptionState: setAgentOptionStateForCurrentAgent,
         }) ?? [];
         const chips: AgentInputExtraActionChip[] = [];
+        if (connectedServicesAuthChip) {
+            chips.push(connectedServicesAuthChip);
+        }
         if (shouldShowAutomationActionChips({ automationsEnabled: automationFeatureEnabled })) {
             chips.push(automationActionChip);
         }
         if (serverPickerActionChip) chips.push(serverPickerActionChip);
+
+        const stateSnapshot = storage.getState() as any;
+        const shortcutActionIds = listAgentInputActionChipActionIds(stateSnapshot);
+        for (const actionId of shortcutActionIds) {
+            const spec = getActionSpec(actionId as any);
+            chips.push({
+                key: `new-session-action:${actionId}`,
+                render: ({ chipStyle, iconColor, showLabel, textStyle }) => (
+                    <Pressable
+                        onPress={() => {
+                            const instructions = String(sessionPrompt ?? '');
+                            handleCreateSession({
+                                initialMessage: 'skip',
+                                afterCreated: async (sessionId) => {
+                                    const input = buildActionDraftInput({
+                                        actionId: actionId as any,
+                                        sessionId,
+                                        defaultBackendId: agentType,
+                                        instructions,
+                                    });
+                                    storage.getState().createSessionActionDraft(sessionId, {
+                                        actionId,
+                                        input,
+                                    });
+                                },
+                            });
+                        }}
+                        hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
+                        style={(p) => chipStyle(p.pressed)}
+                    >
+                        <Ionicons name="flash-outline" size={16} color={iconColor} />
+                        {showLabel ? (
+                            <Text numberOfLines={1} style={textStyle}>
+                                {spec.title}
+                            </Text>
+                        ) : null}
+                    </Pressable>
+                ),
+            });
+        }
         return [...chips, ...baseChips];
     }, [
         agentOptionState,
         agentType,
+        actionsSettingsV1,
         automationFeatureEnabled,
         automationActionChip,
+        connectedServicesAuthChip,
+        handleCreateSession,
+        sessionPrompt,
         serverPickerActionChip,
         setAgentOptionStateForCurrentAgent,
     ]);

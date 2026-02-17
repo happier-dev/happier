@@ -2,6 +2,7 @@ import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { View, TextInput, Platform } from 'react-native';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
+import { useRouter } from 'expo-router';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -17,9 +18,8 @@ import { getPermissionModeLabelForAgentType, getPermissionModeOptionsForAgentTyp
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { getPermissionApplyTimingSubtitleKey } from './sessionI18n';
-import { ExecutionRunsGuidanceSettingsGroup } from '@/components/settings/session/ExecutionRunsGuidanceSettingsGroup';
-import { ActionsSettingsGroup } from '@/components/settings/actions/ActionsSettingsGroup';
 
 type ToolViewDetailLevel = 'title' | 'summary' | 'full';
 type ToolDetailLevelTranslationKey =
@@ -106,7 +106,9 @@ const TOOL_OVERRIDE_KEYS: Array<{ toolName: string; title: string }> = [
 
 export default React.memo(function SessionSettingsScreen() {
     const { theme } = useUnistyles();
+    const router = useRouter();
     const popoverBoundaryRef = React.useRef<any>(null);
+    const executionRunsEnabled = useFeatureEnabled('execution.runs');
 
     const [useTmux, setUseTmux] = useSettingMutable('sessionUseTmux');
     const [tmuxSessionName, setTmuxSessionName] = useSettingMutable('sessionTmuxSessionName');
@@ -129,10 +131,6 @@ export default React.memo(function SessionSettingsScreen() {
     const [sessionReplayEnabled, setSessionReplayEnabled] = useSettingMutable('sessionReplayEnabled');
     const [sessionReplayStrategy, setSessionReplayStrategy] = useSettingMutable('sessionReplayStrategy');
     const [sessionReplayRecentMessagesCount, setSessionReplayRecentMessagesCount] = useSettingMutable('sessionReplayRecentMessagesCount');
-    const [executionRunsGuidanceEnabled, setExecutionRunsGuidanceEnabled] = useSettingMutable('executionRunsGuidanceEnabled');
-    const [executionRunsGuidanceMaxChars, setExecutionRunsGuidanceMaxChars] = useSettingMutable('executionRunsGuidanceMaxChars');
-    const [executionRunsGuidanceEntries, setExecutionRunsGuidanceEntries] = useSettingMutable('executionRunsGuidanceEntries');
-    const [actionsSettingsV1, setActionsSettingsV1] = useSettingMutable('actionsSettingsV1');
     const getDefaultPermission = React.useCallback((agent: AgentId): PermissionMode => {
         const raw = (defaultPermissionByAgent as any)?.[agent] as PermissionMode | undefined;
         return (raw ?? 'default') as PermissionMode;
@@ -532,19 +530,28 @@ export default React.memo(function SessionSettingsScreen() {
                 ) : null}
             </ItemGroup>
 
-            <ExecutionRunsGuidanceSettingsGroup
-                enabled={Boolean(executionRunsGuidanceEnabled)}
-                setEnabled={(next) => setExecutionRunsGuidanceEnabled(next as any)}
-                maxChars={Number(executionRunsGuidanceMaxChars ?? 4_000)}
-                setMaxChars={(next) => setExecutionRunsGuidanceMaxChars(next as any)}
-                entries={(Array.isArray(executionRunsGuidanceEntries) ? (executionRunsGuidanceEntries as any[]) : []) as any}
-                setEntries={(next) => setExecutionRunsGuidanceEntries(next as any)}
-            />
+            {executionRunsEnabled ? (
+                <ItemGroup
+                    title="Sub-agent"
+                    footer="Configure delegation guidance rules (backend/model/intent hints) used by the main agent."
+                >
+                    <Item
+                        title="Guidance rules"
+                        subtitle="Open Sub-agent settings"
+                        icon={<Ionicons name="git-network-outline" size={29} color="#FF9500" />}
+                        onPress={() => router.push('/(app)/settings/sub-agent')}
+                    />
+                </ItemGroup>
+            ) : null}
 
-            <ActionsSettingsGroup
-                settings={(actionsSettingsV1 as any) ?? { v: 1, disabledActionIds: [] }}
-                setSettings={(next) => setActionsSettingsV1(next as any)}
-            />
+            <ItemGroup title="Actions" footer="Enable actions per surface and placement (UI, voice, MCP) and control where they appear.">
+                <Item
+                    title="Actions"
+                    subtitle="Open actions settings"
+                    icon={<Ionicons name="flash-outline" size={29} color="#FF9500" />}
+                    onPress={() => router.push('/(app)/settings/actions')}
+                />
+            </ItemGroup>
 
             <ItemGroup title={t('profiles.tmux.title')}>
                 <Item

@@ -4,7 +4,11 @@ import { sha512 } from '@noble/hashes/sha512';
 
 import { decodeBase64, encodeBase64 } from './base64.js';
 
-export type AccountScopedBlobKind = 'account_settings' | 'automation_template_payload';
+export type AccountScopedBlobKind =
+  | 'account_settings'
+  | 'automation_template_payload'
+  | 'connected_service_credential'
+  | 'connected_service_quota_snapshot';
 
 export type AccountScopedCryptoMaterial =
   | Readonly<{ type: 'legacy'; secret: Uint8Array }>
@@ -21,6 +25,8 @@ const ACCOUNT_SCOPED_MAGIC_V1 = 0xa1;
 const ACCOUNT_SCOPED_KIND_BYTE: Record<AccountScopedBlobKind, number> = {
   account_settings: 1,
   automation_template_payload: 2,
+  connected_service_credential: 3,
+  connected_service_quota_snapshot: 4,
 };
 
 function encodeUtf8(value: string): Uint8Array {

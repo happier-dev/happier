@@ -13,6 +13,7 @@ import type { AutomationTemplateEncryption } from './automationTemplateExecution
 import { logAutomationInfo, logAutomationWarn } from './automationTelemetry';
 import type { AutomationClaimRunResponse } from './automationTypes';
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
+import { startSingleFlightIntervalLoop, type SingleFlightIntervalLoopHandle } from '@/daemon/lifecycle/singleFlightIntervalLoop';
 
 export type AutomationWorkerHandle = Readonly<{
   stop: () => void;
@@ -92,18 +93,17 @@ export function startAutomationWorker(params: {
   const budgetTokenId = `automation_worker:${params.machineId}`;
 
   let stopped = false;
-  let tickInFlight = false;
   let consecutiveFailures = 0;
   let retryAfter = 0;
 
-  let claimTimer: ReturnType<typeof setInterval> | null = null;
-  let assignmentsTimer: ReturnType<typeof setInterval> | null = null;
+  let claimLoop: SingleFlightIntervalLoopHandle | null = null;
+  let assignmentsLoop: SingleFlightIntervalLoopHandle | null = null;
 
   const stopWorker = (reason: 'manual' | 'unsupported-endpoint') => {
     if (stopped) return;
     stopped = true;
-    if (claimTimer) clearInterval(claimTimer);
-    if (assignmentsTimer) clearInterval(assignmentsTimer);
+    claimLoop?.stop();
+    assignmentsLoop?.stop();
     logAutomationInfo('Automation worker stopped', {
       machineId: params.machineId,
       reason,
@@ -134,15 +134,12 @@ export function startAutomationWorker(params: {
 
   const runTick = async () => {
     if (stopped) return;
-    if (tickInFlight) return;
     if (Date.now() < retryAfter) return;
 
-    tickInFlight = true;
     const budgetRegistry = params.budgetRegistry;
     // Automation runs should respect the shared daemon ephemeral-task budget so we don't
     // starve other daemon work (and vice-versa).
     if (budgetRegistry && !budgetRegistry.tryAcquireEphemeralTask(budgetTokenId, 'ephemeral_task')) {
-      tickInFlight = false;
       return;
     }
     try {
@@ -199,19 +196,20 @@ export function startAutomationWorker(params: {
       if (budgetRegistry) {
         budgetRegistry.releaseEphemeralTask(budgetTokenId);
       }
-      tickInFlight = false;
     }
   };
 
-  claimTimer = setInterval(() => {
-    void runTick();
-  }, scheduler.claimPollMs);
-  assignmentsTimer = setInterval(() => {
-    void refreshAssignments();
-  }, scheduler.assignmentsRefreshMs);
+  claimLoop = startSingleFlightIntervalLoop({
+    intervalMs: scheduler.claimPollMs,
+    task: runTick,
+  });
+  assignmentsLoop = startSingleFlightIntervalLoop({
+    intervalMs: scheduler.assignmentsRefreshMs,
+    task: refreshAssignments,
+  });
 
-  void refreshAssignments();
-  void runTick();
+  assignmentsLoop.trigger();
+  claimLoop.trigger();
 
   logAutomationInfo('Automation worker started', {
     machineId: params.machineId,

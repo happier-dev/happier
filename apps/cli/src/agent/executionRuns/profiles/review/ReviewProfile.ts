@@ -9,6 +9,7 @@ import { normalizeReviewOutput } from '@/agent/reviews/normalize/normalizeReview
 
 export const ReviewProfile: ExecutionRunIntentProfile = {
   intent: 'review',
+  transcriptMaterialization: 'full',
   buildPrompt: (params) => buildStandardReviewPrompt({ instructions: params.instructions }),
   onBoundedComplete: ({ start, rawText, finishedAtMs }) =>
     normalizeReviewOutput({

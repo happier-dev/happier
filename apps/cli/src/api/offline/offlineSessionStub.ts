@@ -63,8 +63,8 @@ class OfflineSessionStub extends EventEmitter implements ApiSessionClientStubCon
     keepAlive(_thinking: boolean, _mode: 'local' | 'remote'): void {}
     sendSessionDeath(): void {}
     sendUsageData(_usage: Usage): void {}
-    updateMetadata(_handler: (metadata: Metadata) => Metadata): void {}
-    updateAgentState(_handler: (metadata: AgentState) => AgentState): void {}
+    async updateMetadata(_handler: (metadata: Metadata) => Metadata): Promise<void> {}
+    async updateAgentState(_handler: (metadata: AgentState) => AgentState): Promise<void> {}
     onUserMessage(_callback: (data: UserMessage) => void): void {}
     async flush(): Promise<void> {}
     async close(): Promise<void> {}

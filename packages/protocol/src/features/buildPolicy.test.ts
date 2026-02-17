@@ -21,6 +21,16 @@ describe('feature build policy', () => {
 
     expect(evaluateFeatureBuildPolicy(parsed, 'automations')).toBe('allow');
     expect(evaluateFeatureBuildPolicy(parsed, 'voice')).toBe('deny');
-    expect(evaluateFeatureBuildPolicy(parsed, 'bugReports')).toBe('neutral');
+    expect(evaluateFeatureBuildPolicy(parsed, 'bugReports')).toBe('deny');
+  });
+
+  it('treats missing allow entries as neutral when allowlist is empty', () => {
+    const parsed = parseFeatureBuildPolicy({
+      allowRaw: '',
+      denyRaw: 'voice',
+    });
+
+    expect(evaluateFeatureBuildPolicy(parsed, 'automations')).toBe('neutral');
+    expect(evaluateFeatureBuildPolicy(parsed, 'voice')).toBe('deny');
   });
 });

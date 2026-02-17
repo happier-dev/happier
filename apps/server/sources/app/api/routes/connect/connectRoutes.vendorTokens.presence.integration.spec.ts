@@ -139,4 +139,75 @@ describe("connectRoutes (vendor tokens) presence-only reads (integration)", () =
             tokens: [{ vendor: "openai", hasToken: true }],
         });
     });
+
+    it("rejects v1 vendor token registration when a v2 connected service credential already exists", async () => {
+        const user = await db.account.create({ data: { publicKey: "pk-vendor-tokens-u2" }, select: { id: true } });
+
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const registerV2 = await app.inject({
+            method: "POST",
+            url: "/v2/connect/anthropic/profiles/default/credential",
+            headers: { "content-type": "application/json", "x-test-user-id": user.id },
+            payload: {
+                sealed: { format: "account_scoped_v1", ciphertext: "c2VhbGVk" },
+                metadata: { kind: "oauth", providerEmail: "user@example.com", expiresAt: Date.now() + 3600_000 },
+            },
+        });
+        expect(registerV2.statusCode).toBe(200);
+
+        const legacyRegister = await app.inject({
+            method: "POST",
+            url: "/v1/connect/anthropic/register",
+            headers: { "content-type": "application/json", "x-test-user-id": user.id },
+            payload: { token: "legacy-token" },
+        });
+        expect(legacyRegister.statusCode).toBe(409);
+        expect(legacyRegister.json()).toEqual({ error: "connect_credential_conflict" });
+
+        const row = await db.serviceAccountToken.findUnique({
+            where: { accountId_vendor_profileId: { accountId: user.id, vendor: "anthropic", profileId: "default" } },
+            select: { token: true, metadata: true },
+        });
+        expect(row).not.toBeNull();
+        expect(Buffer.from(row!.token).toString("utf8")).toBe("c2VhbGVk");
+        expect((row!.metadata as any)?.v).toBe(2);
+    });
+
+    it("rejects v1 vendor token deletion when a v2 connected service credential already exists", async () => {
+        const user = await db.account.create({ data: { publicKey: "pk-vendor-tokens-u3" }, select: { id: true } });
+
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const registerV2 = await app.inject({
+            method: "POST",
+            url: "/v2/connect/anthropic/profiles/default/credential",
+            headers: { "content-type": "application/json", "x-test-user-id": user.id },
+            payload: {
+                sealed: { format: "account_scoped_v1", ciphertext: "c2VhbGVk" },
+                metadata: { kind: "oauth", providerEmail: "user@example.com", expiresAt: Date.now() + 3600_000 },
+            },
+        });
+        expect(registerV2.statusCode).toBe(200);
+
+        const legacyDelete = await app.inject({
+            method: "DELETE",
+            url: "/v1/connect/anthropic",
+            headers: { "x-test-user-id": user.id },
+        });
+        expect(legacyDelete.statusCode).toBe(409);
+        expect(legacyDelete.json()).toEqual({ error: "connect_credential_conflict" });
+
+        const row = await db.serviceAccountToken.findUnique({
+            where: { accountId_vendor_profileId: { accountId: user.id, vendor: "anthropic", profileId: "default" } },
+            select: { token: true, metadata: true },
+        });
+        expect(row).not.toBeNull();
+        expect(Buffer.from(row!.token).toString("utf8")).toBe("c2VhbGVk");
+        expect((row!.metadata as any)?.v).toBe(2);
+    });
 });

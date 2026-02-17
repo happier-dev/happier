@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import { logger } from '@/ui/logger';
+import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import type { AcpReplayHistorySessionClient } from '@/agent/acp/sessionClient';
 
 type TranscriptTextItem = { role: 'user' | 'agent'; text: string };
@@ -242,21 +243,24 @@ async function importMessageDeltas(
   }
 
   // Best-effort metadata watermark; failure is non-fatal.
-  try {
-    const last = replayMessages[replayMessages.length - 1];
-    params.session.updateMetadata((m: any) => ({
-      ...m,
-      acpHistoryImportV1: {
-        v: 1,
-        provider: params.provider,
-        remoteSessionId: params.remoteSessionId,
-        importedAt: Date.now(),
-        lastImportedFingerprint: sha256(fingerprintItem(last)).slice(0, 16),
-      },
-    }));
-  } catch (error) {
-    logger.debug('[ACP History] Failed to update import watermark (non-fatal)', { error });
-  }
+  updateMetadataBestEffort(
+    params.session,
+    (m) => {
+      const last = replayMessages[replayMessages.length - 1];
+      return {
+        ...m,
+        acpHistoryImportV1: {
+          v: 1,
+          provider: params.provider,
+          remoteSessionId: params.remoteSessionId,
+          importedAt: Date.now(),
+          lastImportedFingerprint: sha256(fingerprintItem(last)).slice(0, 16),
+        },
+      };
+    },
+    '[ACP History]',
+    'import_watermark',
+  );
 }
 
 async function importFullReplay(

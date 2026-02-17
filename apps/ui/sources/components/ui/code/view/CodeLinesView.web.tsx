@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
 import type { BundledLanguage, BundledTheme, HighlighterGeneric, TokensResult } from 'shiki';
+import { createHighlighter } from 'shiki';
 
 import { CodeLinesViewCore, type CodeLinesViewProps } from './CodeLinesViewCore';
 import { resolveEffectiveSyntaxHighlighting } from './resolveEffectiveSyntaxHighlighting';
@@ -13,7 +14,8 @@ type ShikiToken = Readonly<{ content: string; color?: string }>;
 type ShikiCodeToTokensResult = Readonly<{ tokens: readonly (readonly ShikiToken[])[]; fg?: string }>;
 type ShikiHighlighter = HighlighterGeneric<BundledLanguage, BundledTheme>;
 
-const shikiHighlighterCache = new Map<string, Promise<ShikiHighlighter>>();
+const shikiHighlighterCache = new Map<string, ShikiHighlighter>();
+const shikiHighlighterInflight = new Map<string, Promise<ShikiHighlighter>>();
 
 function resolveShikiLanguageId(language: string): BundledLanguage {
     const lower = language.trim().toLowerCase();
@@ -30,32 +32,29 @@ function resolveShikiLanguageId(language: string): BundledLanguage {
 
 async function getShikiHighlighter(params: { theme: string; language: string }): Promise<ShikiHighlighter> {
     const key = `${params.theme}:${params.language}`;
-    const existing = shikiHighlighterCache.get(key);
-    if (existing) {
-        try {
-            return await existing;
-        } catch {
-            // If initialization failed (transient bundler/module issues, partial cache poisoning),
-            // evict and allow a future attempt to retry.
-            shikiHighlighterCache.delete(key);
-        }
+    const cached = shikiHighlighterCache.get(key);
+    if (cached) return cached;
+
+    const existingInflight = shikiHighlighterInflight.get(key);
+    if (existingInflight) {
+        return await existingInflight;
     }
 
     const promise: Promise<ShikiHighlighter> = (async () => {
-        const shiki = await import('shiki');
         const lang = resolveShikiLanguageId(params.language);
-
-        return shiki.createHighlighter({
+        const highlighter = await createHighlighter({
             themes: [params.theme],
             langs: [lang],
         });
-    })().catch((err) => {
-        shikiHighlighterCache.delete(key);
-        throw err;
+        shikiHighlighterCache.set(key, highlighter as any);
+        return highlighter as any;
+    })().finally(() => {
+        // Always clear inflight to allow retries after failures.
+        shikiHighlighterInflight.delete(key);
     });
 
-    shikiHighlighterCache.set(key, promise);
-    return promise;
+    shikiHighlighterInflight.set(key, promise);
+    return await promise;
 }
 
 export function CodeLinesView(props: CodeLinesViewProps) {

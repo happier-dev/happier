@@ -1,4 +1,5 @@
 import { getElevenLabsApiBaseUrl, getElevenLabsApiTimeoutMs } from './elevenlabs/elevenLabsApi';
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
 
 export async function fetchElevenLabsConversationTokenByo(params: {
     agentId: string;
@@ -14,7 +15,7 @@ export async function fetchElevenLabsConversationTokenByo(params: {
     let res: Response;
     try {
         const baseUrl = getElevenLabsApiBaseUrl();
-        res = await fetch(
+        res = await runtimeFetch(
             `${baseUrl}/convai/conversation/token?agent_id=${encodeURIComponent(agentId)}`,
             {
                 method: 'GET',

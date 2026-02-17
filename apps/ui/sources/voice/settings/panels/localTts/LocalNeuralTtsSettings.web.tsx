@@ -11,6 +11,7 @@ import { t } from '@/text';
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import { getKokoroAssetSetOptions } from '@/voice/kokoro/assets/kokoroAssetSets';
 import { clearKokoroBrowserCaches, getKokoroBrowserCacheSummary } from '@/voice/kokoro/assets/kokoroBrowserCache';
+import { loadKokoroWebRuntime } from '@/voice/kokoro/runtime/loadKokoroWebRuntime.web';
 import { prepareKokoroTts } from '@/voice/kokoro/runtime/synthesizeKokoroWav';
 import { isKokoroRuntimeSupported } from '@/voice/kokoro/runtime/kokoroSupport';
 import { speakKokoroText } from '@/voice/output/KokoroTtsController';
@@ -23,8 +24,8 @@ type KokoroVoiceSummary = {
 };
 
 async function loadKokoroVoiceCatalog(): Promise<KokoroVoiceSummary[]> {
-  const mod: any = await import('kokoro-js');
-  const KokoroTTS = mod?.KokoroTTS;
+  const mod = await loadKokoroWebRuntime();
+  const KokoroTTS: any = mod.KokoroTTS;
   const getter = KokoroTTS ? Object.getOwnPropertyDescriptor(KokoroTTS.prototype, 'voices')?.get : null;
   const voicesObj = (getter ? getter.call({}) : null) as Record<string, any> | null;
   if (!voicesObj) return [];
@@ -133,8 +134,10 @@ export function LocalNeuralTtsSettings(props: {
 
       setModelStatus('ready');
       setCacheSummary(await getKokoroBrowserCacheSummary());
-    } catch {
+    } catch (error) {
+      if (prepareAbortRef.current?.signal?.aborted) return;
       setModelStatus('error');
+      void Modal.alert(t('common.error'), error instanceof Error ? error.message : String(error));
     } finally {
       prepareAbortRef.current = null;
     }

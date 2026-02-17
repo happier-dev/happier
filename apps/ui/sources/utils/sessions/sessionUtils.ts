@@ -16,6 +16,61 @@ export interface SessionStatus {
 
 export const OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS = 15_000;
 
+export type PendingPermissionRequest = Readonly<{
+    id: string;
+    tool: string;
+    arguments: unknown;
+    createdAt: number | null;
+}>;
+
+export function listPendingPermissionRequests(session: Session): PendingPermissionRequest[] {
+    const requests = session.agentState?.requests;
+    if (!requests || Object.keys(requests).length === 0) return [];
+
+    const completed = session.agentState?.completedRequests ?? null;
+    if (!completed) {
+        return Object.entries(requests).map(([id, req]) => ({
+            id,
+            tool: req.tool,
+            arguments: req.arguments,
+            createdAt: typeof req.createdAt === 'number' ? req.createdAt : null,
+        }));
+    }
+
+    // Some agents can leave stale entries in `requests` after completion/cancel/abort.
+    // Treat a request as pending only when it is not covered by an equal/newer completed record.
+    const pending: PendingPermissionRequest[] = [];
+    for (const [permId, req] of Object.entries(requests)) {
+        const done = completed[permId];
+        if (!done) {
+            pending.push({
+                id: permId,
+                tool: req.tool,
+                arguments: req.arguments,
+                createdAt: typeof req.createdAt === 'number' ? req.createdAt : null,
+            });
+            continue;
+        }
+
+        const pendingCreatedAt = req?.createdAt ?? 0;
+        const completedAt = done?.completedAt ?? done?.createdAt ?? 0;
+        if (pendingCreatedAt > completedAt) {
+            pending.push({
+                id: permId,
+                tool: req.tool,
+                arguments: req.arguments,
+                createdAt: typeof req.createdAt === 'number' ? req.createdAt : null,
+            });
+        }
+    }
+
+    return pending;
+}
+
+function hasPendingPermissionRequests(session: Session): boolean {
+    return listPendingPermissionRequests(session).length > 0;
+}
+
 export function shouldShowAbortButtonForSessionState(state: SessionState): boolean {
     // Abort should only be available when there's an in-flight operation or a permission gate.
     // Idle online sessions are represented as `waiting` today.
@@ -28,7 +83,7 @@ export function shouldShowAbortButtonForSessionState(state: SessionState): boole
  */
 export function getSessionStatus(session: Session, nowMs: number = Date.now(), vibingIndex?: number): SessionStatus {
     const isOnline = session.presence === "online";
-    const hasPermissions = (session.agentState?.requests && Object.keys(session.agentState.requests).length > 0 ? true : false);
+    const hasPermissions = hasPendingPermissionRequests(session);
 
     const optimisticThinkingAt = session.optimisticThinkingAt ?? null;
     const isOptimisticThinking = typeof optimisticThinkingAt === 'number' && nowMs - optimisticThinkingAt < OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS;
@@ -92,7 +147,7 @@ export function getSessionStatus(session: Session, nowMs: number = Date.now(), v
  */
 export function useSessionStatus(session: Session): SessionStatus {
     const isOnline = session.presence === "online";
-    const hasPermissions = (session.agentState?.requests && Object.keys(session.agentState.requests).length > 0 ? true : false);
+    const hasPermissions = hasPendingPermissionRequests(session);
 
     const now = Date.now();
     const optimisticThinkingAt = session.optimisticThinkingAt ?? null;

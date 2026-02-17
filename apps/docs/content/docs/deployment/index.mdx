@@ -12,12 +12,15 @@ This section describes how to deploy **your own Happier Server** (the sync backe
 
 ## Supported ways to run it
 
+- **Managed self-host runtime** (installer + service + rollback + optional auto-update).
+  - See: [Self-host runtime (installer vs runner)](./self-host-runtime)
 - **Docker** (recommended starting point): build from this repo’s `Dockerfile` and run with Docker / Docker Compose.
   - See: [Docker](./docker)
 - **Configuration reference**: see [Environment variables](./env) for the complete server runtime env surface.
 - **Canonical env template**: `apps/server/.env.example`
 - **HStack** (stack CLI): a guided workflow that can run the server for you (documentation maintained separately).
   - Remote daemon bootstrap over SSH: `/docs/hstack/remote-daemon`
+  - Remote self-host server install over SSH: `/docs/hstack/remote-server`
 
 ## Server flavors (high level)
 

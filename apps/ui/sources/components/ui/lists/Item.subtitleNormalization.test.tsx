@@ -73,7 +73,7 @@ vi.mock('@/components/ui/lists/itemGroupRowCorners', () => ({
 }));
 
 describe('Item', () => {
-    it('wraps primitive children when subtitle is a ReactNode', async () => {
+  it('wraps primitive children when subtitle is a ReactNode', async () => {
         const { Item } = await import('./Item');
 
         let tree: renderer.ReactTestRenderer;
@@ -119,5 +119,24 @@ describe('Item', () => {
             badDotCount: 0,
             badParents: [],
         });
+    });
+
+    it('uses a not-allowed cursor on web when disabled', async () => {
+        const { Item } = await import('./Item');
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                <Item title="Title" onPress={() => {}} disabled showChevron={false} />,
+            );
+        });
+
+        const pressable = (tree! as any).root.findByType('Pressable' as any);
+        const styleFn = pressable.props.style;
+        expect(typeof styleFn).toBe('function');
+
+        const resolved = styleFn({ pressed: false });
+        const styles = Array.isArray(resolved) ? resolved : [resolved];
+        expect(styles.some((s: any) => s && typeof s === 'object' && s.cursor === 'not-allowed')).toBe(true);
     });
 });

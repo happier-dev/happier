@@ -54,7 +54,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], interac
     const isWaitingForPermission =
         toolForRendering.permission?.status === 'pending' && toolForRendering.state !== 'completed';
     const canRenderTaskTranscript =
-        normalizedToolName === 'Task' &&
+        (normalizedToolName === 'Task' || normalizedToolName === 'SubAgentRun') &&
         messages.length > 0 &&
         typeof sessionId === 'string' &&
         sessionId.length > 0;

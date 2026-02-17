@@ -12,6 +12,12 @@ import { PendingUserTextMessageView } from '@/components/sessions/pending/Pendin
 import { SessionActionDraftCard } from '@/components/sessions/actions/SessionActionDraftCard';
 import { sync } from '@/sync/sync';
 import { getPermissionsInUiWhileLocal } from '@/sync/domains/state/agentStateCapabilities';
+import { jumpToTranscriptSeq } from '@/utils/sessions/jumpToTranscriptSeq';
+
+type ScrollableChatListRef = Readonly<{
+    scrollToIndex: (params: { index: number; animated?: boolean; viewPosition?: number }) => void;
+    scrollToOffset: (params: { offset: number; animated?: boolean }) => void;
+}>;
 
 export type ChatListBottomNotice = {
     title: string;
@@ -22,6 +28,7 @@ export const ChatList = React.memo((props: {
     session: Session;
     bottomNotice?: ChatListBottomNotice | null;
     onRequestSwitchToRemote?: () => void;
+    jumpToSeq?: number | null;
 }) => {
     const { messages, isLoaded } = useSessionMessages(props.session.id);
     const { messages: pendingMessages } = useSessionPendingMessages(props.session.id);
@@ -53,6 +60,7 @@ export const ChatList = React.memo((props: {
             bottomNotice={props.bottomNotice}
             onRequestSwitchToRemote={props.onRequestSwitchToRemote}
             interaction={interaction}
+            jumpToSeq={props.jumpToSeq ?? null}
         />
     )
 });
@@ -105,10 +113,18 @@ const ChatListInternal = React.memo((props: {
         canApprovePermissions: boolean;
         permissionDisabledReason?: 'readOnly' | 'notGranted';
     };
+    jumpToSeq?: number | null;
 }) => {
     const [isLoadingOlder, setIsLoadingOlder] = React.useState(false);
     const [hasMoreOlder, setHasMoreOlder] = React.useState<boolean | null>(null);
     const loadOlderInFlight = React.useRef(false);
+    const listRef = React.useRef<ScrollableChatListRef | null>(null);
+    const itemsRef = React.useRef<ChatListItem[]>(props.items);
+    const lastJumpSeqRef = React.useRef<number | null>(null);
+
+    React.useEffect(() => {
+        itemsRef.current = props.items;
+    }, [props.items]);
 
     const keyExtractor = useCallback((item: ChatListItem) => item.id, []);
     const renderItem = useCallback(({ item }: { item: ChatListItem }) => {
@@ -156,8 +172,72 @@ const ChatListInternal = React.memo((props: {
         }
     }, [props.isLoaded, props.committedMessagesCount, props.sessionId, hasMoreOlder]);
 
+    const resolveJumpIndex = React.useCallback((): number | null => {
+        const target = props.jumpToSeq;
+        if (typeof target !== 'number' || !Number.isFinite(target) || target < 0) return null;
+
+        let exact: number | null = null;
+        let nextAfter: { idx: number; seq: number } | null = null;
+        let prevBefore: { idx: number; seq: number } | null = null;
+        const items = itemsRef.current;
+        for (let i = 0; i < items.length; i++) {
+            const it = items[i]!;
+            if (it.kind !== 'message') continue;
+            const seq = it.message.seq;
+            if (typeof seq !== 'number' || !Number.isFinite(seq)) continue;
+            const normalizedSeq = Math.trunc(seq);
+            if (normalizedSeq === target) {
+                exact = i;
+                break;
+            }
+            if (normalizedSeq > target) {
+                if (!nextAfter || normalizedSeq < nextAfter.seq) nextAfter = { idx: i, seq: normalizedSeq };
+            } else if (normalizedSeq < target) {
+                if (!prevBefore || normalizedSeq > prevBefore.seq) prevBefore = { idx: i, seq: normalizedSeq };
+            }
+        }
+        if (exact != null) return exact;
+        if (nextAfter) return nextAfter.idx;
+        if (prevBefore) return prevBefore.idx;
+        return null;
+    }, [props.jumpToSeq]);
+
+    React.useEffect(() => {
+        const target = props.jumpToSeq;
+        if (typeof target !== 'number' || !Number.isFinite(target) || target < 0) return;
+        if (!props.isLoaded) return;
+        if (lastJumpSeqRef.current === target) return;
+        if (!props.sessionId) return;
+
+        lastJumpSeqRef.current = target;
+        void (async () => {
+            await jumpToTranscriptSeq({
+                targetSeq: target,
+                getIndex: resolveJumpIndex,
+                loadOlder: async () => {
+                    const result = await sync.loadOlderMessages(props.sessionId);
+                    if (result.status === 'no_more') return { status: 'no_more' as const };
+                    return { status: 'loaded' as const, hasMore: result.hasMore };
+                },
+                afterLoadOlder: async () => {
+                    // Yield to allow store updates + list re-render before re-checking `getIndex`.
+                    await Promise.resolve();
+                    await Promise.resolve();
+                },
+                scrollToIndex: (index) => {
+                    listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+                },
+                maxLoads: 25,
+            });
+        })();
+    }, [props.isLoaded, props.jumpToSeq, props.sessionId, resolveJumpIndex]);
+
     return (
         <FlatList
+            ref={(node) => {
+                // react-test-renderer does not provide a stable ref object; we store it manually.
+                listRef.current = node as unknown as ScrollableChatListRef | null;
+            }}
             data={props.items}
             inverted={true}
             keyExtractor={keyExtractor}
@@ -171,6 +251,11 @@ const ChatListInternal = React.memo((props: {
             onEndReachedThreshold={0.2}
             onEndReached={() => {
                 void loadOlder();
+            }}
+            onScrollToIndexFailed={(info) => {
+                // Best-effort fallback for dynamic-height rows.
+                const offset = Math.max(0, Math.trunc(info.averageItemLength * info.index));
+                listRef.current?.scrollToOffset({ offset, animated: true });
             }}
             ListHeaderComponent={
                 <ListFooter

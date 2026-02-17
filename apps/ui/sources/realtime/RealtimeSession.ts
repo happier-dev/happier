@@ -18,6 +18,30 @@ let currentLeaseId: string | null = null;
 let currentProviderConversationId: string | null = null;
 let currentBilledMode: 'happier' | 'byo' | null = null;
 
+function buildElevenLabsWelcomeContext(welcomeCfg: any): string {
+    if (!welcomeCfg || welcomeCfg.enabled !== true) return '';
+    const mode = welcomeCfg.mode === 'on_first_turn' ? 'on_first_turn' : 'immediate';
+    if (mode === 'on_first_turn') {
+        return [
+            'On your first reply, start with a short friendly greeting (one sentence).',
+            'Then continue with your response.',
+        ].join('\n');
+    }
+    return [
+        'Start this session with a short friendly greeting and ask what we are working on today.',
+        'Then wait for the user to speak again.',
+    ].join('\n');
+}
+
+function appendOptionalWelcomeToContext(baseContext: string | null | undefined, welcomeCfg: any): string | undefined {
+    const base = typeof baseContext === 'string' ? baseContext.trim() : '';
+    const welcome = buildElevenLabsWelcomeContext(welcomeCfg).trim();
+    if (!base && !welcome) return undefined;
+    if (!welcome) return base;
+    if (!base) return welcome;
+    return `${base}\n\n${welcome}`;
+}
+
 export async function startRealtimeSession(sessionId: string, initialContext?: string, retryAfterPaywall = false) {
     const session = voiceSession;
     if (!session) {
@@ -62,6 +86,7 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
 
             const realtimeCfg = settings?.voice?.adapters?.realtime_elevenlabs ?? null;
             const billingMode = realtimeCfg?.billingMode === 'byo' ? 'byo' : 'happier';
+            const effectiveInitialContext = appendOptionalWelcomeToContext(initialContext, realtimeCfg?.welcome);
 
             if (billingMode === 'byo') {
                 const agentId = String(realtimeCfg?.byo?.agentId ?? '').trim();
@@ -77,7 +102,7 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
                 await enableVoiceBackgroundCallAudioMode();
                 const conversationId = await session.startSession({
                     sessionId,
-                    initialContext,
+                    initialContext: effectiveInitialContext,
                     token,
                 });
                 if (typeof conversationId !== 'string' || conversationId.trim().length === 0) {
@@ -115,7 +140,7 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
                     await enableVoiceBackgroundCallAudioMode();
                     const conversationId = await session.startSession({
                         sessionId,
-                        initialContext,
+                        initialContext: effectiveInitialContext,
                         token: response.token,
                     });
                     if (typeof conversationId !== 'string' || conversationId.trim().length === 0) {

@@ -96,8 +96,8 @@ vi.mock('@/hooks/ui/useTabState', () => ({
     }),
 }));
 
-vi.mock('@/components/ui/empty/EmptySessionsTablet', () => ({
-    EmptySessionsTablet: 'EmptySessionsTablet',
+vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
+    SessionGettingStartedGuidance: 'SessionGettingStartedGuidance',
 }));
 
 vi.mock('@/components/sessions/shell/SessionsList', () => ({

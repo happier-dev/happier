@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createReducer } from '../reducer';
 import { runAgentStatePermissionsPhase } from './agentStatePermissions';
+import type { ReducerMessage } from '../reducer';
 
 function createToolMessage(params: {
   id: string;
@@ -8,11 +9,12 @@ function createToolMessage(params: {
   toolName: string;
   input: unknown;
   createdAt?: number;
-}) {
+}): ReducerMessage {
   const createdAt = params.createdAt ?? 1;
   return {
     id: params.id,
     realID: null,
+    seq: null,
     role: 'agent' as const,
     createdAt,
     text: null,
@@ -53,7 +55,7 @@ describe('runAgentStatePermissionsPhase (execpolicy amendment freshness)', () =>
           command: 'pwd',
           proposed_execpolicy_amendment: ['allow', 'read'],
         },
-      }) as any,
+      }),
     );
 
     const agentState = {

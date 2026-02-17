@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 
 import { sync } from '@/sync/sync';
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { MissingSttBaseUrlError, transcribeRecordedAudioWithHttpStt } from '@/voice/input/HttpSttController';
 import { transcribeWithGoogleGeminiStt } from '@/voice/input/googleGeminiStt';
 import { resolveVoiceNetworkTimeoutMs } from '@/voice/runtime/fetchWithTimeout';
@@ -74,17 +75,17 @@ export async function transcribeRecordedAudioWithProvider(params: {
           : null;
 
     const timeoutMs = resolveVoiceNetworkTimeoutMs(adapter?.networkTimeoutMs, 15_000);
-    const uri = params.uri;
-
-    if (Platform.OS === 'web' && uri.startsWith('blob:')) {
-      const blob = await (await fetch(uri)).blob();
-      const text = await transcribeWithGoogleGeminiStt({
-        apiKey,
-        model,
-        audio: { kind: 'web', blob, mimeType: blob.type || 'audio/webm' },
-        language,
-        timeoutMs,
-      });
+	    const uri = params.uri;
+	
+	    if (Platform.OS === 'web' && uri.startsWith('blob:')) {
+	      const blob = await (await runtimeFetch(uri)).blob();
+	      const text = await transcribeWithGoogleGeminiStt({
+	        apiKey,
+	        model,
+	        audio: { kind: 'web', blob, mimeType: blob.type || 'audio/webm' },
+	        language,
+	        timeoutMs,
+	      });
       return text ? text.trim() || null : null;
     }
 

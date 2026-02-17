@@ -61,4 +61,8 @@ describe('protocol package root exports', () => {
         expect(typeof (protocol as any).DaemonExecutionRunMarkerSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).DaemonExecutionRunListResponseSchema?.safeParse).toBe('function');
     });
+
+    it('exports connected service profile id schema', () => {
+        expect(protocol.ConnectedServiceProfileIdSchema.parse('work')).toBe('work');
+    });
 });

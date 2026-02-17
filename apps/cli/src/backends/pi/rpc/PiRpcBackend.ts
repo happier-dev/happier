@@ -1,6 +1,8 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { stat } from 'node:fs/promises';
 import readline from 'node:readline';
+import { join } from 'node:path';
 
 import spawn from 'cross-spawn';
 
@@ -78,6 +80,7 @@ export class PiRpcBackend implements AgentBackend {
   private readonly openPromptRequestIds = new Set<string>();
   private pendingTurn: PendingTurn | null = null;
   private sessionId: string | null = null;
+  private lastAuthJsonMtimeMs: number | null = null;
   private currentModelProvider: string | null = null;
   private readonly modelProviderById = new Map<string, string>();
   private sessionModelState: { currentModelId: string; availableModels: Array<{ id: string; name: string; description?: string }> } | null =
@@ -106,19 +109,30 @@ export class PiRpcBackend implements AgentBackend {
     await this.ensureProcess();
     this.emitMessage({ type: 'status', status: 'starting' });
 
+    const stateBefore = await this.getState();
+    const existingSessionId = asNonEmptyString(stateBefore.sessionId);
+    if (existingSessionId) {
+      this.sessionId = existingSessionId;
+      await this.captureAuthJsonSnapshot();
+      await this.publishRuntimeState(stateBefore);
+      this.emitMessage({ type: 'status', status: 'idle' });
+      return { sessionId: existingSessionId };
+    }
+
     const created = await this.sendCommand({ type: 'new_session' }, 60_000);
     if ((asRecord(created.data)?.cancelled ?? false) === true) {
       throw new Error('Pi cancelled new_session');
     }
 
-    const state = await this.getState();
-    const nextSessionId = asNonEmptyString(state.sessionId);
+    const stateAfter = await this.getState();
+    const nextSessionId = asNonEmptyString(stateAfter.sessionId);
     if (!nextSessionId) {
       throw new Error('Pi did not return a session id');
     }
 
     this.sessionId = nextSessionId;
-    await this.publishRuntimeState(state);
+    await this.captureAuthJsonSnapshot();
+    await this.publishRuntimeState(stateAfter);
     this.emitMessage({ type: 'status', status: 'idle' });
     return { sessionId: nextSessionId };
   }
@@ -133,6 +147,8 @@ export class PiRpcBackend implements AgentBackend {
 
   async sendPrompt(sessionId: SessionId, prompt: string): Promise<void> {
     this.assertSession(sessionId);
+    const maybeRestart = this.maybeRestartForUpdatedAuthJson();
+    if (maybeRestart) await maybeRestart;
     const message = prompt.trim();
     if (!message) return;
 
@@ -167,6 +183,8 @@ export class PiRpcBackend implements AgentBackend {
 
   async sendSteerPrompt(sessionId: SessionId, prompt: string): Promise<void> {
     this.assertSession(sessionId);
+    const maybeRestart = this.maybeRestartForUpdatedAuthJson();
+    if (maybeRestart) await maybeRestart;
     const message = prompt.trim();
     if (!message) return;
     await this.sendCommand({ type: 'steer', message });
@@ -174,6 +192,8 @@ export class PiRpcBackend implements AgentBackend {
 
   async setSessionModel(sessionId: SessionId, modelId: string): Promise<void> {
     this.assertSession(sessionId);
+    const maybeRestart = this.maybeRestartForUpdatedAuthJson();
+    if (maybeRestart) await maybeRestart;
     const normalized = modelId.trim();
     if (!normalized) return;
 
@@ -266,7 +286,11 @@ export class PiRpcBackend implements AgentBackend {
       throw new Error('Pi RPC process is not running');
     }
 
-    const child = spawn(this.options.command, this.options.args, {
+    this.spawnRpcProcess({ args: this.options.args });
+  }
+
+  private spawnRpcProcess(params: Readonly<{ args: string[] }>): void {
+    const child = spawn(this.options.command, params.args, {
       cwd: this.options.cwd,
       env: {
         ...process.env,
@@ -307,6 +331,116 @@ export class PiRpcBackend implements AgentBackend {
       this.rejectAllPending(new Error('Pi process exited'));
       this.rejectPendingTurn(new Error('Pi process exited'));
       this.process = null;
+    });
+  }
+
+  private resolveAuthJsonPath(): string | null {
+    const agentDir = asNonEmptyString(this.options.env.PI_CODING_AGENT_DIR);
+    if (!agentDir) return null;
+    return join(agentDir, 'auth.json');
+  }
+
+  private async captureAuthJsonSnapshot(): Promise<void> {
+    const authPath = this.resolveAuthJsonPath();
+    if (!authPath) return;
+    try {
+      const s = await stat(authPath);
+      this.lastAuthJsonMtimeMs = typeof s.mtimeMs === 'number' && Number.isFinite(s.mtimeMs) ? s.mtimeMs : null;
+    } catch {
+      this.lastAuthJsonMtimeMs = null;
+    }
+  }
+
+  private maybeRestartForUpdatedAuthJson(): Promise<void> | void {
+    if (this.disposed) return;
+    if (!this.sessionId) return;
+    if (!this.process) return;
+
+    const authPath = this.resolveAuthJsonPath();
+    if (!authPath) return;
+
+    return (async () => {
+      let nextMtimeMs: number | null = null;
+      try {
+        const s = await stat(authPath);
+        nextMtimeMs = typeof s.mtimeMs === 'number' && Number.isFinite(s.mtimeMs) ? s.mtimeMs : null;
+      } catch {
+        return;
+      }
+
+      if (this.lastAuthJsonMtimeMs === null) {
+        this.lastAuthJsonMtimeMs = nextMtimeMs;
+        return;
+      }
+      if (nextMtimeMs === null || nextMtimeMs === this.lastAuthJsonMtimeMs) return;
+
+      this.lastAuthJsonMtimeMs = nextMtimeMs;
+      await this.restartAndContinue();
+      await this.captureAuthJsonSnapshot();
+    })();
+  }
+
+  private async restartAndContinue(): Promise<void> {
+    const expectedSessionId = this.sessionId;
+    if (!expectedSessionId) return;
+    if (this.pendingTurn) {
+      throw new Error('Cannot restart Pi while a turn is in-flight');
+    }
+
+    await this.stopRpcProcessForRestart();
+    this.spawnRpcProcess({ args: [...this.options.args, '--continue'] });
+
+    const state = await this.getState();
+    const nextSessionId = asNonEmptyString(state.sessionId);
+    if (!nextSessionId) {
+      throw new Error('Pi did not return a session id after --continue');
+    }
+    if (nextSessionId !== expectedSessionId) {
+      throw new Error(`Pi session mismatch after --continue (expected ${expectedSessionId}, got ${nextSessionId})`);
+    }
+    await this.publishRuntimeState(state);
+    this.emitMessage({ type: 'status', status: 'idle' });
+  }
+
+  private async stopRpcProcessForRestart(): Promise<void> {
+    this.rejectAllPending(new Error('Pi restarting'));
+    this.rejectPendingTurn(new Error('Pi restarting'));
+
+    if (this.stdoutLineReader) {
+      this.stdoutLineReader.close();
+      this.stdoutLineReader = null;
+    }
+    if (this.stderrLineReader) {
+      this.stderrLineReader.close();
+      this.stderrLineReader = null;
+    }
+
+    const child = this.process;
+    this.process = null;
+    if (!child) return;
+
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          // ignore
+        }
+        resolve();
+      }, 2_000);
+      timeout.unref?.();
+
+      child.once('exit', () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        clearTimeout(timeout);
+        resolve();
+      }
     });
   }
 

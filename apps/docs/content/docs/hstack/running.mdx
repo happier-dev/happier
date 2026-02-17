@@ -8,7 +8,25 @@ description: How hstack starts server/daemon/UI, browser auto-open, watch mode, 
 - `hstack start` / `hstack stack start <name>`: production-like (prefer built UI; fewer watchers)
 - `hstack dev` / `hstack stack dev <name>`: development (watch mode, faster iteration)
 
-If you’re unsure, use `hstack stack dev <stack>`.
+If you’re unsure, use `hstack tui stack dev <stack>` (or `hstack stack dev <stack>` in non-interactive environments).
+
+---
+
+## TUI mode (recommended for interactive development)
+
+For local interactive work, prefer wrapping your run command in the hstack TUI:
+
+```bash
+hstack tui stack dev dev
+# mobile dev-client + QR:
+hstack tui stack dev dev --mobile
+```
+
+In non-interactive terminals / CI (or if the TUI is unavailable), run the underlying command directly:
+
+```bash
+hstack stack dev dev
+```
 
 ---
 
@@ -98,4 +116,3 @@ Controls:
 
 - `HAPPIER_STACK_CLI_BUILD_MODE=auto|always|never`
 - `HAPPIER_STACK_CLI_BUILD=0` (hard-disable)
-

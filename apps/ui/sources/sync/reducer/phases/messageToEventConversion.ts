@@ -115,6 +115,7 @@ export function runMessageToEventConversion({
     state.messages.set(mid, {
       id: mid,
       realID: message.id,
+      seq: typeof message.seq === 'number' ? message.seq : null,
       role: 'agent',
       createdAt: message.createdAt,
       event: event,

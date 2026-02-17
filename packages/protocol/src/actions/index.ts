@@ -36,3 +36,7 @@ export {
 } from './actionExecutor.js';
 
 export { resolveEffectiveActionInputFields, type EffectiveActionInputField } from './actionInputHintsRuntime.js';
+export { buildActionDraftSeedInput } from './actionDraftSeed.js';
+
+export { zodSchemaToJsonSchemaObject, type JsonSchemaObject } from './actionInputJsonSchema.js';
+export { actionSpecToElevenLabsClientToolParameters } from './actionInputElevenLabsToolSchema.js';

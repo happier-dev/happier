@@ -3,6 +3,8 @@ import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
+import { parseBooleanEnv } from '@/config/env';
+
 type SqliteMigration = Readonly<{
   name: string;
   sql: string;
@@ -57,14 +59,6 @@ type SqliteExecutor = Readonly<{
   queryAppliedMigrations: () => Set<string>;
   insertAppliedMigration: (params: { name: string; checksum: string }) => void;
 }>;
-
-function parseBooleanEnv(raw: unknown, fallback = false): boolean {
-  const v = String(raw ?? '').trim().toLowerCase();
-  if (!v) return fallback;
-  if (v === '1' || v === 'true' || v === 'yes' || v === 'y' || v === 'on') return true;
-  if (v === '0' || v === 'false' || v === 'no' || v === 'n' || v === 'off') return false;
-  return fallback;
-}
 
 export function shouldAutoMigrateSqliteOnStart(env: NodeJS.ProcessEnv): boolean {
   return parseBooleanEnv(env.HAPPIER_SQLITE_AUTO_MIGRATE ?? env.HAPPY_SQLITE_AUTO_MIGRATE, false);

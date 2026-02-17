@@ -4,6 +4,8 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import type { ToolViewProps } from '@/components/tools/renderers/core/_registry';
 import { StructuredResultView } from '@/components/tools/renderers/system/StructuredResultView';
+import type { Message } from '@/sync/domains/messages/messageTypes';
+import { TaskLikeSummarySection } from './TaskLikeSummarySection';
 
 type FindingsDigest = Readonly<{
     total: number;
@@ -44,9 +46,28 @@ function getFindingsDigest(toolResult: unknown): FindingsDigest | null {
     return { total: digest.total, items };
 }
 
-export const SubAgentRunView = React.memo<ToolViewProps>(({ tool }) => {
+function coerceTextMessages(messages: readonly Message[]): readonly string[] {
+    const out: string[] = [];
+    for (const m of messages) {
+        if (!m) continue;
+        if (m.kind !== 'agent-text' && m.kind !== 'user-text') continue;
+        const text = typeof (m as any).text === 'string' ? String((m as any).text) : '';
+        if (text.trim()) out.push(text);
+    }
+    return out;
+}
+
+export const SubAgentRunView = React.memo<ToolViewProps>(({ tool, messages, detailLevel }) => {
     if (tool.state === 'running') {
-        return <StructuredResultView tool={tool} metadata={null} messages={[]} />;
+        return (
+            <TaskLikeSummarySection
+                tool={tool as any}
+                metadata={null}
+                messages={messages ?? []}
+                detailLevel={detailLevel}
+                opts={{ hideResultInlineWhenBackgroundRun: false }}
+            />
+        );
     }
 
     if (tool.state !== 'completed') return null;

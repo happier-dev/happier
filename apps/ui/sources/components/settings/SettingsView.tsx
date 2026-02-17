@@ -29,6 +29,8 @@ import { resolveSupportUsAction } from '@/components/settings/supportUsBehavior'
 import { recordBugReportUserAction } from '@/utils/system/bugReportActionTrail';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import type { FeatureId } from '@happier-dev/protocol';
+import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { getActiveServerSnapshot, listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { useActiveSelectionMachineGroups } from '@/components/settings/server/hooks/useActiveSelectionMachineGroups';
 import { ActiveSelectionMachinesSection } from '@/components/settings/server/sections/ActiveSelectionMachinesSection';
@@ -43,6 +45,8 @@ export const SettingsView = React.memo(function SettingsView() {
     const isPro = __DEV__ || voiceEntitlement;
     const usageReportingEnabled = useFeatureEnabled('usage.reporting');
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
+    const connectedServicesEnabled = useFeatureEnabled('connected.services');
+    const showChangelog = getFeatureBuildPolicyDecision('app.ui.changelog' as const satisfies FeatureId) !== 'deny';
     const useProfiles = useSetting('useProfiles');
     const terminalUseTmux = useSetting('sessionUseTmux');
     const automationsSupport = useAutomationsSupport();
@@ -140,6 +144,14 @@ export const SettingsView = React.memo(function SettingsView() {
 
     const handleReportIssue = async () => {
         recordBugReportUserAction('settings.report_issue_open');
+        const overrideUrl = String(process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL ?? '').trim();
+        if (overrideUrl.length > 0) {
+            const supported = await Linking.canOpenURL(overrideUrl);
+            if (supported) {
+                await Linking.openURL(overrideUrl);
+                return;
+            }
+        }
         router.push('/(app)/settings/report-issue');
     };
 
@@ -361,6 +373,12 @@ export const SettingsView = React.memo(function SettingsView() {
                     onPress={() => router.push('/(app)/settings/voice')}
                 />
                 <Item
+                    title={t('settings.memorySearch')}
+                    subtitle={t('settings.memorySearchSubtitle')}
+                    icon={<Ionicons name="search-outline" size={29} color="#34C759" />}
+                    onPress={() => router.push('/(app)/settings/memory')}
+                />
+                <Item
                     title={t('settings.featuresTitle')}
                     subtitle={t('settings.featuresSubtitle')}
                     icon={<Ionicons name="flask-outline" size={29} color="#FF9500" />}
@@ -406,6 +424,14 @@ export const SettingsView = React.memo(function SettingsView() {
                     icon={<Ionicons name="sparkles-outline" size={29} color="#FF9500" />}
                     onPress={() => router.push('/(app)/settings/providers')}
                 />
+                {connectedServicesEnabled ? (
+                    <Item
+                        title={'Connected services'}
+                        subtitle={'Claude/Codex subscriptions and OAuth profiles'}
+                        icon={<Ionicons name="key-outline" size={29} color="#007AFF" />}
+                        onPress={() => router.push('/(app)/settings/connected-services')}
+                    />
+                ) : null}
                 {useProfiles && (
                     <Item
                         title={t('settings.profiles')}
@@ -445,15 +471,17 @@ export const SettingsView = React.memo(function SettingsView() {
 
             {/* About */}
             <ItemGroup title={t('settings.about')} footer={t('settings.aboutFooter')}>
-                <Item
-                    title={t('settings.whatsNew')}
-                    subtitle={t('settings.whatsNewSubtitle')}
-                    icon={<Ionicons name="sparkles-outline" size={29} color="#FF9500" />}
-                    onPress={() => {
-                        trackWhatsNewClicked();
-                        router.push('/(app)/changelog');
-                    }}
-                />
+                {showChangelog ? (
+                    <Item
+                        title={t('settings.whatsNew')}
+                        subtitle={t('settings.whatsNewSubtitle')}
+                        icon={<Ionicons name="sparkles-outline" size={29} color="#FF9500" />}
+                        onPress={() => {
+                            trackWhatsNewClicked();
+                            router.push('/(app)/changelog');
+                        }}
+                    />
+                ) : null}
                 <Item
                     title={t('settings.github')}
                     icon={<Ionicons name="logo-github" size={29} color={theme.colors.text} />}

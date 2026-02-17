@@ -86,6 +86,11 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
                 ...storage.getState(),
                 settings: {
                     ...storage.getState().settings,
+                    experiments: true,
+                    featureToggles: {
+                        ...(storage.getState().settings as any)?.featureToggles,
+                        'execution.runs': true,
+                    },
                     executionRunsGuidanceEnabled: true,
                     executionRunsGuidanceMaxChars: 10_000,
                     executionRunsGuidanceEntries: [
@@ -135,6 +140,70 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
         expect(typeof decrypted?.meta?.appendSystemPrompt).toBe('string');
         expect(String(decrypted?.meta?.appendSystemPrompt)).toContain(systemPrompt);
         expect(String(decrypted?.meta?.appendSystemPrompt)).toContain('Always use execution runs for code reviews.');
+    });
+
+    it('does not inject execution-run guidance when execution runs feature is disabled', async () => {
+        const sessionId = 's_test_guidance_disabled';
+        const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 9 });
+
+        storage.setState(
+            {
+                ...storage.getState(),
+                settings: {
+                    ...storage.getState().settings,
+                    experiments: false,
+                    featureToggles: {
+                        ...(storage.getState().settings as any)?.featureToggles,
+                        'execution.runs': false,
+                    },
+                    executionRunsGuidanceEnabled: true,
+                    executionRunsGuidanceMaxChars: 10_000,
+                    executionRunsGuidanceEntries: [
+                        { id: 'g1', title: 'Rule 1', description: 'Always use execution runs for code reviews.', enabled: true },
+                    ],
+                },
+                sessions: {
+                    ...storage.getState().sessions,
+                    [sessionId]: {
+                        ...buildSession({ sessionId }),
+                        metadata: { path: '/tmp', host: 'h', flavor: 'claude' },
+                        permissionMode: 'default',
+                        modelMode: 'default',
+                    } as Session,
+                },
+            },
+            true,
+        );
+
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'p_guidance_disabled_1',
+            localId: 'p_guidance_disabled_1',
+            createdAt: 1,
+            updatedAt: 1,
+            text: 'old',
+            displayText: 'Old display',
+            rawRecord: null,
+        });
+
+        let capturedCiphertext: string | null = null;
+        const request = async (_path: string, init?: RequestInit) => {
+            const parsed = JSON.parse(String(init?.body ?? 'null'));
+            capturedCiphertext = typeof parsed?.ciphertext === 'string' ? parsed.ciphertext : null;
+            return new Response('{}', { status: 200 });
+        };
+
+        await updatePendingMessageV2({
+            sessionId,
+            pendingId: 'p_guidance_disabled_1',
+            text: 'new text',
+            encryption,
+            request,
+        });
+
+        const sessionEncryption = getSessionEncryptionOrThrow({ encryption, sessionId });
+        const decrypted = await sessionEncryption.decryptRaw(capturedCiphertext!);
+        expect(decrypted?.meta?.appendSystemPrompt).toBe(systemPrompt);
+        expect(String(decrypted?.meta?.appendSystemPrompt)).not.toContain('Always use execution runs for code reviews.');
     });
 
     it('throws when pending message does not exist', async () => {

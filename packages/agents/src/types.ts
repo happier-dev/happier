@@ -46,6 +46,9 @@ export type VendorResumeIdField =
 export type CloudVendorKey = 'openai' | 'anthropic' | 'gemini';
 export type CloudConnectTargetStatus = 'wired' | 'experimental';
 
+export type ConnectedServiceId = 'openai-codex' | 'anthropic' | 'gemini';
+export type ConnectedServiceKind = 'oauth' | 'token';
+
 export type AgentCore = Readonly<{
     id: AgentId;
     /**
@@ -71,6 +74,21 @@ export type AgentCore = Readonly<{
      * When present, the CLI/app may offer a `happier connect <agentId>` flow.
      */
     cloudConnect?: Readonly<{ vendorKey: CloudVendorKey; status: CloudConnectTargetStatus }> | null;
+    /**
+     * Optional Happier Connected Services compatibility for this agent.
+     *
+     * This is used by UI + daemon to offer "connect once, reuse everywhere" auth routing.
+     */
+    connectedServices?: Readonly<{
+      supportedServiceIds: ReadonlyArray<ConnectedServiceId>;
+      /**
+       * Optional credential-kind compatibility per connected service id.
+       *
+       * When provided, consumers should only offer connected-service profiles whose `kind`
+       * is in the allowed list for the target agent/backend.
+       */
+      supportedKindsByServiceId?: Readonly<Partial<Record<ConnectedServiceId, ReadonlyArray<ConnectedServiceKind>>>>;
+    }> | null;
     resume: Readonly<{
         /**
          * Whether vendor-resume is supported in principle.

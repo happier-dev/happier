@@ -4,7 +4,12 @@ import type { AgentBackend, SessionId } from '@/agent/core/AgentBackend';
 import { extractVoiceActionsFromAssistantText, type ExecutionRunResumeHandle, type VoiceAssistantAction } from '@happier-dev/protocol';
 
 import { appendVoiceAgentHistoryTurn } from './voiceAgentHistory';
-import { buildVoiceAgentCommitPrompt, buildVoiceAgentSeededUserTurnPrompt, buildVoiceAgentUserTurnPrompt } from './voiceAgentPrompts';
+import {
+  buildVoiceAgentBootstrapPrompt,
+  buildVoiceAgentCommitPrompt,
+  buildVoiceAgentSeededUserTurnPrompt,
+  buildVoiceAgentUserTurnPrompt,
+} from './voiceAgentPrompts';
 import { ingestVoiceAgentStreamingDelta } from './voiceAgentStreamingDeltas';
 import type {
   BackendFactory,
@@ -35,6 +40,8 @@ export { VoiceAgentError } from './voiceAgentTypes';
 export class VoiceAgentManager {
   private static readonly MAX_HISTORY_TURNS = 48;
   private static readonly MAX_TURN_TEXT_CHARS = 4_000;
+  private static readonly MIN_IDLE_TTL_SECONDS = 60;
+  private static readonly MAX_IDLE_TTL_SECONDS = 6 * 60 * 60; // 6h
   private readonly createBackend: BackendFactory;
   private readonly getNowMs: () => number;
   private readonly voiceAgents = new Map<string, VoiceAgentInstance>();
@@ -71,8 +78,11 @@ export class VoiceAgentManager {
     }
 
     const voiceAgentId = randomUUID();
-    const rawTtlSeconds = Number.isFinite(params.idleTtlSeconds) ? Math.floor(params.idleTtlSeconds) : 60;
-    const idleTtlMs = Math.max(60, Math.min(3600, rawTtlSeconds)) * 1000;
+    const rawTtlSeconds = Number.isFinite(params.idleTtlSeconds)
+      ? Math.floor(params.idleTtlSeconds)
+      : VoiceAgentManager.MIN_IDLE_TTL_SECONDS;
+    const idleTtlMs =
+      Math.max(VoiceAgentManager.MIN_IDLE_TTL_SECONDS, Math.min(VoiceAgentManager.MAX_IDLE_TTL_SECONDS, rawTtlSeconds)) * 1000;
     const verbosity: Verbosity = params.verbosity === 'balanced' ? 'balanced' : 'short';
 
     let chatBackendForCleanup: AgentBackend | undefined;
@@ -140,6 +150,7 @@ export class VoiceAgentManager {
         agentId: params.agentId,
         chatBackend,
         chatSessionId,
+        commitIsolation: params.commitIsolation === true,
         commitBackend: null,
         commitSessionId: null,
         commitResumeSessionId: resume.commitSessionId,
@@ -167,6 +178,26 @@ export class VoiceAgentManager {
       instanceRef = instance;
 
       this.voiceAgents.set(voiceAgentId, instance);
+
+      const bootstrapMode = params.bootstrapMode ?? 'none';
+      if (!resume.chatSessionId && bootstrapMode === 'ready_handshake') {
+        instance.clearChatBuffer();
+        const prompt = buildVoiceAgentBootstrapPrompt({
+          verbosity: instance.verbosity,
+          initialContext: instance.initialContext,
+          mode: 'ready_handshake',
+        });
+        await instance.chatBackend.sendPrompt(instance.chatSessionId, prompt);
+        if (instance.chatBackend.waitForResponseComplete) {
+          await instance.chatBackend.waitForResponseComplete();
+        }
+        const response = instance.chatBuffer.trim();
+        if (response.toUpperCase() !== 'READY') {
+          throw new VoiceAgentError('VOICE_AGENT_START_FAILED', 'Bootstrap failed');
+        }
+        instance.clearChatBuffer();
+        instance.bootstrapped = true;
+      }
 
       return {
         voiceAgentId,
@@ -233,6 +264,41 @@ export class VoiceAgentManager {
 		      });
 		      return extracted.actions.length > 0 ? { assistantText, actions: extracted.actions } : { assistantText };
 		    })();
+
+    voiceAgent.inFlight = run;
+    try {
+      return await run;
+    } finally {
+      if (voiceAgent.inFlight === run) voiceAgent.inFlight = null;
+    }
+  }
+
+  async welcome(params: Readonly<{ voiceAgentId: string; welcomeText?: string }>): Promise<Readonly<{ assistantText: string }>> {
+    const voiceAgent = this.voiceAgents.get(params.voiceAgentId);
+    if (!voiceAgent) throw new VoiceAgentError('VOICE_AGENT_NOT_FOUND', 'Voice agent not found');
+    if (voiceAgent.inFlight || voiceAgent.activeTurnStream) throw new VoiceAgentError('VOICE_AGENT_BUSY', 'Voice agent busy');
+
+    // Idempotent: when the session is already bootstrapped, a welcome would likely pollute vendor memory.
+    if (voiceAgent.bootstrapped) return { assistantText: '' };
+
+    voiceAgent.lastUsedAt = this.getNowMs();
+    const run = (async () => {
+      voiceAgent.clearChatBuffer();
+      const prompt = buildVoiceAgentBootstrapPrompt({
+        verbosity: voiceAgent.verbosity,
+        initialContext: voiceAgent.initialContext,
+        mode: 'welcome',
+        welcomeText: params.welcomeText,
+      });
+      await voiceAgent.chatBackend.sendPrompt(voiceAgent.chatSessionId, prompt);
+      if (voiceAgent.chatBackend.waitForResponseComplete) {
+        await voiceAgent.chatBackend.waitForResponseComplete();
+      }
+      const assistantText = voiceAgent.chatBuffer.trim();
+      voiceAgent.clearChatBuffer();
+      voiceAgent.bootstrapped = true;
+      return { assistantText };
+    })();
 
     voiceAgent.inFlight = run;
     try {
@@ -391,6 +457,25 @@ export class VoiceAgentManager {
 
     voiceAgent.lastUsedAt = this.getNowMs();
 		    const run = (async () => {
+          const canReuseChatBackend = voiceAgent.commitIsolation !== true && voiceAgent.commitModelId === voiceAgent.chatModelId;
+          if (canReuseChatBackend) {
+            voiceAgent.clearChatBuffer();
+            const effectiveMaxChars =
+              typeof params.maxChars === 'number' && Number.isFinite(params.maxChars) && params.maxChars > 0 ? Math.floor(params.maxChars) : 4000;
+            const prompt = buildVoiceAgentCommitPrompt({
+              initialContext: voiceAgent.initialContext,
+              history: voiceAgent.history,
+              maxChars: effectiveMaxChars,
+            });
+            await voiceAgent.chatBackend.sendPrompt(voiceAgent.chatSessionId, prompt);
+            if (voiceAgent.chatBackend.waitForResponseComplete) {
+              await voiceAgent.chatBackend.waitForResponseComplete();
+            }
+            const commitText = voiceAgent.chatBuffer.trim();
+            voiceAgent.clearChatBuffer();
+            return { commitText };
+          }
+
           if (!voiceAgent.commitBackend || !voiceAgent.commitSessionId) {
             let commitBackend: AgentBackend | null = null;
             try {

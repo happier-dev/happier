@@ -28,6 +28,7 @@ import { useServerAutoAddFromRoute } from '@/components/settings/server/hooks/us
 import { useServerSettingsServerProfileActions } from '@/components/settings/server/hooks/useServerSettingsServerProfileActions';
 import { useServerSettingsGroupActions } from '@/components/settings/server/hooks/useServerSettingsGroupActions';
 import { useServerSettingsConcurrentActions } from '@/components/settings/server/hooks/useServerSettingsConcurrentActions';
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
 
 type SearchParams = Readonly<{ url?: string | string[]; auto?: string | string[] }>;
 
@@ -124,7 +125,7 @@ export function useServerSettingsScreenController(): ServerSettingsController {
                 return false;
             }
 
-            const versionRes = await fetch(`${normalized}/v1/version`, {
+            const versionRes = await runtimeFetch(`${normalized}/v1/version`, {
                 method: 'GET',
                 headers: { 'Accept': 'application/json' },
             });

@@ -63,8 +63,6 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS = '25';
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_POLL_MS = '5';
 
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(0));
     vi.resetModules();
 
     let tick: (() => Promise<void>) | undefined;
@@ -130,8 +128,15 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS = '25';
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_POLL_MS = '5';
 
-    vi.useFakeTimers();
     vi.resetModules();
+
+    let tick: (() => Promise<void>) | undefined;
+    const setIntervalSpy = vi
+      .spyOn(global, 'setInterval')
+      .mockImplementation(((handler: (...args: any[]) => any) => {
+        tick = handler as unknown as () => Promise<void>;
+        return 1 as any;
+      }) as any);
 
     vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ version: '2.0.0' }) as any);
     vi.mocked(spawnHappyCLI).mockReturnValue({ unref: vi.fn() } as any);
@@ -164,7 +169,9 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
       requestShutdown: vi.fn(),
     });
 
-    await vi.advanceTimersByTimeAsync(60);
+    expect(setIntervalSpy).toHaveBeenCalled();
+    expect(tick).toBeTypeOf('function');
+    await tick!();
 
     expect(spawnHappyCLI).toHaveBeenCalledWith(
       ['daemon', 'start-sync'],
@@ -183,8 +190,15 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS = '40';
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_POLL_MS = '5';
 
-    vi.useFakeTimers();
     vi.resetModules();
+
+    let tick: (() => Promise<void>) | undefined;
+    const setIntervalSpy = vi
+      .spyOn(global, 'setInterval')
+      .mockImplementation(((handler: (...args: any[]) => any) => {
+        tick = handler as unknown as () => Promise<void>;
+        return 1 as any;
+      }) as any);
 
     vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ version: '2.0.0' }) as any);
     vi.mocked(spawnHappyCLI).mockReturnValue({ unref: vi.fn() } as any);
@@ -222,7 +236,9 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
       requestShutdown: vi.fn(),
     });
 
-    await vi.advanceTimersByTimeAsync(80);
+    expect(setIntervalSpy).toHaveBeenCalled();
+    expect(tick).toBeTypeOf('function');
+    await tick!();
 
     expect(spawnHappyCLI).toHaveBeenCalledWith(
       ['daemon', 'start-sync'],

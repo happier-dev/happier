@@ -43,6 +43,7 @@ import { ClaudeLocalPermissionBridge, DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE } f
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { computeRunnerTerminationOutcome, type RunnerTerminationEvent } from '@/agent/runtime/runnerTerminationOutcome';
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
+import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 
 /** JavaScript runtime to use for spawning Claude Code */
 export type JsRuntime = 'node' | 'bun'
@@ -354,17 +355,16 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     // Extract SDK metadata in background and update session when ready
     extractSDKMetadataAsync(async (sdkMetadata) => {
         logger.debug('[start] SDK metadata extracted, updating session:', sdkMetadata);
-        try {
-            // Update session metadata with tools and slash commands
-            session.updateMetadata((currentMetadata) => ({
+        updateMetadataBestEffort(
+            session,
+            (currentMetadata) => ({
                 ...currentMetadata,
                 tools: sdkMetadata.tools,
-                slashCommands: sdkMetadata.slashCommands
-            }));
-            logger.debug('[start] Session metadata updated with SDK capabilities');
-        } catch (error) {
-            logger.debug('[start] Failed to update session metadata:', error);
-        }
+                slashCommands: sdkMetadata.slashCommands,
+            }),
+            '[claude]',
+            'sdk_metadata',
+        );
     });
 
     // Extract user-provided MCP servers from --mcp-config so we can:
@@ -457,17 +457,22 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     logger.infoDeveloper(`Session: ${baseSession.id}`);
     logger.infoDeveloper(`Logs: ${logPath}`);
 
-    // Set initial agent state
-    session.updateAgentState((currentState) => ({
-        ...currentState,
-        controlledByUser: options.startingMode !== 'remote',
-        capabilities: {
-            ...(currentState.capabilities && typeof currentState.capabilities === 'object' ? currentState.capabilities : {}),
-            askUserQuestionAnswersInPermission: true,
-            localPermissionBridgeInLocalMode: localPermissionBridgeEnabled,
-            permissionsInUiWhileLocal: localPermissionBridgeEnabled,
-        },
-    }));
+    // Set initial agent state (best-effort; failure is non-fatal).
+    updateAgentStateBestEffort(
+        session,
+        (currentState) => ({
+            ...currentState,
+            controlledByUser: options.startingMode !== 'remote',
+            capabilities: {
+                ...(currentState.capabilities && typeof currentState.capabilities === 'object' ? currentState.capabilities : {}),
+                askUserQuestionAnswersInPermission: true,
+                localPermissionBridgeInLocalMode: localPermissionBridgeEnabled,
+                permissionsInUiWhileLocal: localPermissionBridgeEnabled,
+            },
+        }),
+        '[claude]',
+        'initial_agent_state',
+    );
 
     // Start caffeinate to prevent sleep on macOS
     const caffeinateStarted = startCaffeinate();
@@ -592,15 +597,20 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             hookServerOptions.permissionRequestTimeoutMs = localPermissionBridgeWaitIndefinitely ? null : localPermissionBridgeTimeoutMs;
             logger.debug(`[loop] Local permission bridge updated from user message: enabled=${localPermissionBridgeEnabled ? 'yes' : 'no'} timeoutMs=${localPermissionBridgeTimeoutMs === null ? 'infinite' : String(localPermissionBridgeTimeoutMs)}`);
             rebuildLocalPermissionBridge();
-            session.updateAgentState((currentState) => ({
-                ...currentState,
-                capabilities: {
-                    ...(currentState.capabilities && typeof currentState.capabilities === 'object' ? currentState.capabilities : {}),
-                    askUserQuestionAnswersInPermission: true,
-                    localPermissionBridgeInLocalMode: localPermissionBridgeEnabled,
-                    permissionsInUiWhileLocal: localPermissionBridgeEnabled,
-                },
-            }));
+            updateAgentStateBestEffort(
+                session,
+                (currentState) => ({
+                    ...currentState,
+                    capabilities: {
+                        ...(currentState.capabilities && typeof currentState.capabilities === 'object' ? currentState.capabilities : {}),
+                        askUserQuestionAnswersInPermission: true,
+                        localPermissionBridgeInLocalMode: localPermissionBridgeEnabled,
+                        permissionsInUiWhileLocal: localPermissionBridgeEnabled,
+                    },
+                }),
+                '[claude]',
+                'local_permission_bridge_mode_change',
+            );
         }
 
         // Check for special commands before processing
@@ -674,13 +684,18 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         try {
             if (session) {
                 if (outcome.archive) {
-                    session.updateMetadata((currentMetadata) => ({
-                        ...currentMetadata,
-                        lifecycleState: 'archived',
-                        lifecycleStateSince: Date.now(),
-                        archivedBy: 'cli',
-                        archiveReason: outcome.archiveReason ?? 'User terminated',
-                    }));
+                    updateMetadataBestEffort(
+                        session,
+                        (currentMetadata) => ({
+                            ...currentMetadata,
+                            lifecycleState: 'archived',
+                            lifecycleStateSince: Date.now(),
+                            archivedBy: 'cli',
+                            archiveReason: outcome.archiveReason ?? 'User terminated',
+                        }),
+                        '[claude]',
+                        'archive_on_exit',
+                    );
                 }
 
                 // Cleanup session resources (intervals, callbacks)
@@ -732,10 +747,15 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         allowedTools: happyServer.toolNames.map(toolName => `mcp__happy__${toolName}`),
         onModeChange: (newMode) => {
             session.sendSessionEvent({ type: 'switch', mode: newMode });
-            session.updateAgentState((currentState) => ({
-                ...currentState,
-                controlledByUser: newMode === 'local'
-            }));
+            updateAgentStateBestEffort(
+                session,
+                (currentState) => ({
+                    ...currentState,
+                    controlledByUser: newMode === 'local',
+                }),
+                '[claude]',
+                'mode_change',
+            );
             if (newMode === 'local') {
                 localPermissionBridge?.activate();
             }

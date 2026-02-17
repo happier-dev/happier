@@ -1,3 +1,5 @@
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
+
 function normalizeId(raw: unknown): string {
     return String(raw ?? '').trim();
 }
@@ -65,7 +67,7 @@ async function fetchMachineDataKey(params: Readonly<{
         : null;
 
     try {
-        const response = await fetch(`${params.serverUrl}/v1/machines`, {
+        const response = await runtimeFetch(`${params.serverUrl}/v1/machines`, {
             method: 'GET',
             headers: {
                 Authorization: `Bearer ${params.token}`,

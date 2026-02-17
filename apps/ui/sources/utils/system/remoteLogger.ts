@@ -7,6 +7,7 @@
  */
 
 import { config } from '@/config';
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
 
 
 let logBuffer: any[] = []
@@ -37,13 +38,13 @@ export function monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyIn
 
   const sendLog = async (level: string, args: any[]) => {
     try {
-      await fetch(url + '/logs-combined-from-cli-and-mobile-for-simple-ai-debugging', {
+      await runtimeFetch(url + '/logs-combined-from-cli-and-mobile-for-simple-ai-debugging', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           timestamp: new Date().toISOString(),
           level,
-          message: args.map(a => 
+          message: args.map(a =>
             typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)
           ).join('\n'),
           messageRawObject: args,

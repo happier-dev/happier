@@ -18,8 +18,12 @@ if (mergedTestEnv.HAPPIER_SERVER_URL && !mergedTestEnv.HAPPIER_WEBAPP_URL) {
 
 export default defineConfig({
     test: {
+        // Multiple CLI unit tests mutate `process.env.HAPPIER_HOME_DIR` / config at runtime.
+        // Running them in isolated forked processes prevents cross-file env races.
+        pool: 'forks',
         globals: false,
         environment: 'node',
+        setupFiles: ['./src/vitestSetup.ts'],
         include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
         exclude: [
             ...configDefaults.exclude,

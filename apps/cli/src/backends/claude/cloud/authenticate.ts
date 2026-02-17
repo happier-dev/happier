@@ -8,11 +8,14 @@
 import { randomBytes } from 'crypto';
 import { openBrowser } from '@/ui/openBrowser';
 import { generatePkceCodes } from '@/cloud/pkce';
-import { startLoopbackOauthPkceFlow } from '@/cloud/loopbackOauthPkce';
+import type { CloudConnectAuthenticateOptions } from '@/cloud/connectTypes';
+import { startOauthPkceWithPasteFallback } from '@/cloud/oauthPkceWithPasteFallback';
+import { promptInput } from '@/terminal/prompts/promptInput';
 
 export interface ClaudeAuthTokens {
     raw: any;
     token: string;
+    refresh_token: string;
     expires: number;
 }
 
@@ -80,6 +83,7 @@ async function exchangeCodeForTokens(
     return {
         raw: tokenData,
         token: tokenData.access_token,
+        refresh_token: tokenData.refresh_token,
         expires: Date.now() + tokenData.expires_in * 1000,
     };
 }
@@ -96,15 +100,22 @@ async function exchangeCodeForTokens(
  * 
  * @returns Promise resolving to AnthropicAuthTokens with all token information
  */
-export async function authenticateClaude(): Promise<ClaudeAuthTokens> {
+export async function authenticateClaude(opts?: CloudConnectAuthenticateOptions): Promise<ClaudeAuthTokens> {
     console.log('🚀 Starting Anthropic Claude authentication...');
 
     try {
-        const tokens = await startLoopbackOauthPkceFlow({
+        const mode = opts?.paste ? 'paste' : 'loopback';
+        const timeoutMs = typeof opts?.timeoutSeconds === 'number' && Number.isFinite(opts.timeoutSeconds)
+            ? Math.max(1, Math.trunc(opts.timeoutSeconds)) * 1000
+            : undefined;
+
+        const tokens = await startOauthPkceWithPasteFallback({
+            mode,
             defaultPort: DEFAULT_PORT,
             callbackPath: '/callback',
             generateState,
             generatePkce: generatePkceCodes,
+            timeoutMs,
             onPortResolved: ({ defaultPort, port, usedFallback }) => {
                 if (usedFallback) {
                     console.log(`Port ${defaultPort} is in use, finding an available port...`);
@@ -124,7 +135,14 @@ export async function authenticateClaude(): Promise<ClaudeAuthTokens> {
                 });
                 return `${CLAUDE_AI_AUTHORIZE_URL}?${params}`;
             },
+            onAuthorizationUrl: ({ authorizationUrl }) => {
+                console.log('\nOpen this URL in a browser to authenticate:\n');
+                console.log(authorizationUrl);
+                console.log('\nAfter login, paste the final redirected URL here.\n');
+            },
+            promptForPastedRedirectUrl: () => promptInput('Paste redirect URL: '),
             openAuthorizationUrl: async ({ authorizationUrl }) => {
+                if (opts?.noOpen) return;
                 console.log('📋 Opening browser for authentication...');
                 console.log('If browser doesn\'t open, visit this URL:');
                 console.log();

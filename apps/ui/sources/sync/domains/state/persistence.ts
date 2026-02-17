@@ -1,6 +1,7 @@
 import { MMKV } from 'react-native-mmkv';
 import { z } from 'zod';
 import { Settings, settingsDefaults, settingsParse, SettingsSchema } from '../settings/settings';
+import { voiceSettingsParse } from '../settings/voiceSettings';
 import { LocalSettings, localSettingsDefaults, localSettingsParse } from '../settings/localSettings';
 import { Purchases, purchasesDefaults, purchasesParse } from '../purchases/purchases';
 import { Profile, profileDefaults, profileParse } from '../profiles/profile';
@@ -168,6 +169,15 @@ function parsePendingSettings(raw: unknown): Partial<Settings> {
 
     (Object.keys(SettingsSchema.shape) as Array<Extract<keyof typeof SettingsSchema.shape, string>>).forEach((key) => {
         if (!Object.prototype.hasOwnProperty.call(input, key)) return;
+
+        // Voice is parsed with a tolerant parser in settingsParse to avoid dropping the entire object
+        // due to a single invalid nested field. Pending settings must follow the same rule so we do
+        // not lose unsynced voice deltas (e.g. BYO API keys) on restart.
+        if (key === 'voice') {
+            (out as any).voice = voiceSettingsParse(input[key]);
+            return;
+        }
+
         const schema = SettingsSchema.shape[key];
         const parsed = schema.safeParse(input[key]);
         if (parsed.success) {

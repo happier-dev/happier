@@ -21,6 +21,11 @@ on:
         required: true
         default: false
         type: boolean
+      release_message:
+        description: "Release message — Optional note to include at the top of the GitHub rolling release notes"
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       channel:
@@ -34,6 +39,10 @@ on:
         required: false
         default: false
         type: boolean
+      release_message:
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -60,6 +69,10 @@ jobs:
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
     environment: release-shared
+    env:
+      APP_ENV: ${{ inputs.channel == 'stable' && 'production' || 'preview' }}
+      EXPO_UPDATES_CHANNEL: ${{ inputs.channel == 'stable' && 'production' || 'preview' }}
+      HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.channel == 'stable' && 'production' || 'preview' }}
     outputs:
       target_sha: ${{ steps.meta.outputs.target_sha }}
       ui_version: ${{ steps.meta.outputs.ui_version }}
@@ -158,13 +171,13 @@ jobs:
           channel="${{ inputs.channel }}"
           if [ "$channel" = "preview" ]; then
             echo "tag=ui-web-preview" >> "$GITHUB_OUTPUT"
-            echo "title=UI Web Bundle Preview" >> "$GITHUB_OUTPUT"
+            echo "title=Happier UI Web Bundle Preview" >> "$GITHUB_OUTPUT"
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
             echo "rolling_tag=true" >> "$GITHUB_OUTPUT"
             echo "notes=Rolling preview UI web bundle release." >> "$GITHUB_OUTPUT"
           else
             echo "tag=ui-web-stable" >> "$GITHUB_OUTPUT"
-            echo "title=UI Web Bundle Stable" >> "$GITHUB_OUTPUT"
+            echo "title=Happier UI Web Bundle Stable" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
             echo "rolling_tag=true" >> "$GITHUB_OUTPUT"
             echo "notes=Stable UI web bundle release." >> "$GITHUB_OUTPUT"
@@ -206,7 +219,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ui-web-assets
-          path: dist/release-assets/ui-web/**
+          path: dist/release-assets/ui-web
           retention-days: 7
 
   publish:
@@ -224,7 +237,8 @@ jobs:
       generate_notes: false
       notes: ${{ needs.build.outputs.notes }}
       assets_artifact: ui-web-assets
-      assets_artifact_path: dist/release-assets
+      assets_artifact_path: dist/release-assets/ui-web
       assets_dir: dist/release-assets/ui-web
       clobber: true
-
+      prune_assets: ${{ needs.build.outputs.rolling_tag == 'true' }}
+      release_message: ${{ inputs.release_message }}

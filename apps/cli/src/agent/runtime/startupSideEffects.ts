@@ -5,6 +5,7 @@ import { notifyDaemonSessionStarted } from '@/daemon/controlClient';
 import { writeTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import { buildTerminalFallbackMessage } from '@/terminal/attachment/terminalFallbackMessage';
 import { logger } from '@/ui/logger';
+import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
 
 type DaemonReportDeps = {
     notifyDaemonSessionStartedFn?: typeof notifyDaemonSessionStarted;
@@ -42,11 +43,12 @@ export function primeAgentStateForUi(session: ApiSessionClient, logPrefix: strin
     // Bump agentStateVersion early so the UI can reliably treat the agent as "ready" to receive messages.
     // The server does not currently persist agentState during initial session creation; it starts at version 0
     // and only changes via 'update-state'. The UI uses agentStateVersion > 0 as its readiness signal.
-    try {
-        session.updateAgentState((currentState) => ({ ...currentState }));
-    } catch (e) {
-        logger.debug(`${logPrefix} Failed to prime agent state (non-fatal)`, e);
-    }
+    updateAgentStateBestEffort(
+        session,
+        (currentState) => ({ ...currentState }),
+        logPrefix,
+        'prime agent state for ui',
+    );
 }
 
 export async function persistTerminalAttachmentInfoIfNeeded(opts: {

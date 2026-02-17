@@ -60,6 +60,102 @@ describe('executionRunRegistry', () => {
     expect(parsed.runId).toBe('run_1');
   });
 
+  it('uses a unique temp file per marker write to avoid cross-write corruption', async () => {
+    const writeFileSpy = vi.fn();
+    vi.doMock('node:fs/promises', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:fs/promises')>();
+      return {
+        ...actual,
+        writeFile: async (...args: Parameters<typeof actual.writeFile>) => {
+          writeFileSpy(...args);
+          return actual.writeFile(...args);
+        },
+      };
+    });
+    vi.resetModules();
+
+    const { writeExecutionRunMarker } = await import('./executionRunRegistry');
+
+    await writeExecutionRunMarker({
+      pid: 123,
+      happySessionId: 'sess-1',
+      runId: 'run_unique_tmp',
+      callId: 'call_1',
+      sidechainId: 'call_1',
+      intent: 'review',
+      backendId: 'claude',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'ephemeral',
+      status: 'running',
+      startedAtMs: 1,
+      updatedAtMs: 1,
+    });
+
+    await writeExecutionRunMarker({
+      pid: 123,
+      happySessionId: 'sess-1',
+      runId: 'run_unique_tmp',
+      callId: 'call_1',
+      sidechainId: 'call_1',
+      intent: 'review',
+      backendId: 'claude',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'ephemeral',
+      status: 'succeeded',
+      startedAtMs: 1,
+      updatedAtMs: 2,
+      finishedAtMs: 2,
+    });
+
+    const tmpPaths = writeFileSpy.mock.calls.map((call) => call[0]).filter((p) => typeof p === 'string') as string[];
+    expect(tmpPaths.length).toBeGreaterThanOrEqual(2);
+    expect(tmpPaths[tmpPaths.length - 1]).not.toEqual(tmpPaths[tmpPaths.length - 2]);
+  });
+
+  it('does not allow a late running marker to overwrite a terminal marker', async () => {
+    const { configuration } = await import('@/configuration');
+    const { writeExecutionRunMarker } = await import('./executionRunRegistry');
+
+    await writeExecutionRunMarker({
+      pid: 123,
+      happySessionId: 'sess-1',
+      runId: 'run_terminal_wins',
+      callId: 'call_1',
+      sidechainId: 'call_1',
+      intent: 'review',
+      backendId: 'claude',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'ephemeral',
+      status: 'succeeded',
+      startedAtMs: 1,
+      updatedAtMs: 2,
+      finishedAtMs: 2,
+    });
+
+    await writeExecutionRunMarker({
+      pid: 123,
+      happySessionId: 'sess-1',
+      runId: 'run_terminal_wins',
+      callId: 'call_1',
+      sidechainId: 'call_1',
+      intent: 'review',
+      backendId: 'claude',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'ephemeral',
+      status: 'running',
+      startedAtMs: 1,
+      updatedAtMs: 3,
+    });
+
+    const filePath = join(configuration.happyHomeDir, 'tmp', 'daemon-execution-runs', 'run-run_terminal_wins.json');
+    const parsed = JSON.parse(readFileSync(filePath, 'utf-8'));
+    expect(parsed.status).toBe('succeeded');
+  });
+
   it('removeExecutionRunMarker should not throw if the marker does not exist', async () => {
     const { removeExecutionRunMarker } = await import('./executionRunRegistry');
     await expect(removeExecutionRunMarker('run_missing')).resolves.toBeUndefined();

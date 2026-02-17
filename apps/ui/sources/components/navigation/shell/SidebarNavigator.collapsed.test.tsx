@@ -23,10 +23,17 @@ const localSettingsStore = (() => {
   };
 })();
 
+let platformOS: 'web' | 'ios' = 'web';
+
 vi.mock('react-native', () => ({
   View: (props: any) => React.createElement('View', props, props.children),
   Pressable: (props: any) => React.createElement('Pressable', props, props.children),
   useWindowDimensions: () => ({ width: 1000, height: 800 }),
+  Platform: {
+    get OS() {
+      return platformOS;
+    },
+  },
 }));
 
 vi.mock('expo-router/drawer', () => ({
@@ -87,7 +94,17 @@ vi.mock('./SidebarView', () => ({
 }));
 
 vi.mock('./CollapsedSidebarView', () => ({
-  CollapsedSidebarView: () => React.createElement('CollapsedSidebarView', {}, null),
+  CollapsedSidebarView: () =>
+    React.createElement(
+      'CollapsedSidebarView',
+      {},
+      React.createElement('Pressable', { testID: 'sidebar-expand-button' }, React.createElement('SidebarCollapseIcon', {}, null))
+    ),
+}));
+
+vi.mock('./SidebarIcons', () => ({
+  SidebarExpandIcon: (props: any) => React.createElement('SidebarExpandIcon', props, null),
+  SidebarCollapseIcon: (props: any) => React.createElement('SidebarCollapseIcon', props, null),
 }));
 
 function getDrawer(tree: renderer.ReactTestRenderer) {
@@ -99,6 +116,7 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
     act(() => {
       localSettingsStore.setSidebarCollapsed(false);
     });
+    platformOS = 'web';
   });
 
   it('uses a collapsed drawer width when sidebarCollapsed is true', async () => {
@@ -137,5 +155,45 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
 
     const drawer = getDrawer(tree);
     expect(drawer.props.screenOptions.drawerStyle.width).toBe(72);
+  });
+
+  it('renders the collapse icon button on desktop', async () => {
+    const { SidebarNavigator } = await import('./SidebarNavigator');
+    let tree!: renderer.ReactTestRenderer;
+
+    await act(async () => {
+      tree = renderer.create(<SidebarNavigator />);
+    });
+
+    const collapseButton = tree.root.findByProps({ testID: 'sidebar-collapse-button' });
+    expect(collapseButton.findByType('SidebarExpandIcon' as any)).toBeDefined();
+  });
+
+  it('does not render collapse button on mobile', async () => {
+    platformOS = 'ios';
+    const { SidebarNavigator } = await import('./SidebarNavigator');
+    let tree!: renderer.ReactTestRenderer;
+
+    await act(async () => {
+      tree = renderer.create(<SidebarNavigator />);
+    });
+
+    const collapseButtons = tree.root.findAllByProps({ testID: 'sidebar-collapse-button' });
+    expect(collapseButtons).toHaveLength(0);
+  });
+
+  it('renders the expand icon button in collapsed sidebar on desktop', async () => {
+    act(() => {
+      localSettingsStore.setSidebarCollapsed(true);
+    });
+    const { SidebarNavigator } = await import('./SidebarNavigator');
+    let tree!: renderer.ReactTestRenderer;
+
+    await act(async () => {
+      tree = renderer.create(<SidebarNavigator />);
+    });
+
+    const expandButton = tree.root.findByProps({ testID: 'sidebar-expand-button' });
+    expect(expandButton.findByType('SidebarCollapseIcon' as any)).toBeDefined();
   });
 });

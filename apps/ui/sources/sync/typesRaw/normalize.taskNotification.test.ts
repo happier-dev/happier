@@ -27,7 +27,7 @@ describe('typesRaw.normalizeRawMessage (task-notification)', () => {
       meta: { source: 'cli' },
     };
 
-    const normalized = normalizeRawMessage('msg_task_note_1', null, 1000, raw);
+    const normalized = normalizeRawMessage('msg_task_note_1', null, 1000, raw, { seq: 5 });
     expect(normalized).toBeNull();
   });
 
@@ -47,9 +47,9 @@ describe('typesRaw.normalizeRawMessage (task-notification)', () => {
       meta: { source: 'cli' },
     };
 
-    const normalized = normalizeRawMessage('msg_user_1', null, 1001, raw);
+    const normalized = normalizeRawMessage('msg_user_1', null, 1001, raw, { seq: 7 });
     expect(normalized).not.toBeNull();
+    expect((normalized as any).seq).toBe(7);
     expect((normalized as any)?.role).toBe('user');
   });
 });
-

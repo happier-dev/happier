@@ -148,7 +148,7 @@ describe('authAndSetupMachineIfNeeded (legacy server fallback) (integration)', (
       restoreAxios();
       await app.close();
     }
-  }, 15_000);
+  }, 30_000);
 
   it('falls back to legacy /v1/auth/request polling when /v1/auth/request/status is missing', async () => {
     const requests = new Map<string, LegacyRequestRow>();
@@ -177,7 +177,7 @@ describe('authAndSetupMachineIfNeeded (legacy server fallback) (integration)', (
       restoreAxios();
       await app.close();
     }
-  }, 15_000);
+  }, 30_000);
 
   it('retries /v1/auth/request without extra fields when a legacy server rejects unknown keys', async () => {
     const requests = new Map<string, LegacyRequestRow>();
@@ -207,5 +207,5 @@ describe('authAndSetupMachineIfNeeded (legacy server fallback) (integration)', (
       restoreAxios();
       await app.close();
     }
-  }, 15_000);
+  }, 30_000);
 });

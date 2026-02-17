@@ -27,6 +27,12 @@ hstack stack wt exp1 -- use active
 Run the stack in dev mode:
 
 ```bash
+hstack tui stack dev exp1
+```
+
+If you can’t use the TUI (non-interactive terminals / CI), run:
+
+```bash
 hstack stack dev exp1
 ```
 
@@ -45,7 +51,9 @@ If you’re working directly on the `dev` branch (common for maintainers):
 ```bash
 hstack stack new dev
 hstack stack wt dev -- use dev
-hstack stack dev dev
+hstack tui stack dev dev
+# (optional) mobile dev-client + QR:
+hstack tui stack dev dev --mobile
 ```
 
 ---
@@ -61,7 +69,7 @@ hstack stack new full1 --server=happier-server
 Then run dev:
 
 ```bash
-hstack stack dev full1
+hstack tui stack dev full1
 ```
 
 Notes:
@@ -118,4 +126,3 @@ hstack stack typecheck exp1 all
 hstack stack lint exp1 all
 hstack stack test exp1 all
 ```
-

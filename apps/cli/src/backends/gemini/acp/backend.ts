@@ -38,9 +38,6 @@ export interface GeminiBackendOptions extends AgentFactoryOptions {
   /** API key for Gemini (defaults to GEMINI_API_KEY or GOOGLE_API_KEY env var) */
   apiKey?: string;
   
-  /** Vendor token from Happier cloud (via 'happier connect gemini') - highest priority */
-  cloudToken?: string;
-  
   /** Current user email (from OAuth id_token) - used to match per-account project ID */
   currentUserEmail?: string;
   
@@ -83,10 +80,9 @@ export interface GeminiBackendResult {
 export function createGeminiBackend(options: GeminiBackendOptions): GeminiBackendResult {
 
   // Resolve API key from multiple sources (in priority order):
-  // 1. Happier cloud OAuth token (via 'happier connect gemini') - highest priority
-  // 2. Local Gemini CLI config files (~/.gemini/)
-  // 3. GEMINI_API_KEY environment variable
-  // 4. GOOGLE_API_KEY environment variable - lowest priority
+  // 1. Local Gemini CLI config files (~/.gemini/) (API keys only)
+  // 2. GEMINI_API_KEY environment variable
+  // 3. GOOGLE_API_KEY environment variable - lowest priority
   
   // Try reading from local Gemini CLI config (token and model)
   const localConfig = readGeminiLocalConfig();
@@ -95,7 +91,6 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
   // We only treat explicit API key sources as GEMINI_API_KEY inputs. OAuth-based auth is handled
   // via ACP authenticate() using oauth-personal.
   const explicitApiKey =
-    options.cloudToken ||
     options.apiKey ||
     process.env[GEMINI_API_KEY_ENV] ||
     process.env[GOOGLE_API_KEY_ENV] ||

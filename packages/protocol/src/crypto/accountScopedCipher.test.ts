@@ -73,6 +73,46 @@ describe('accountScopedCipher', () => {
     expect(opened?.value).toEqual(payload);
   });
 
+  it('seals and opens v1 ciphertext for connected service credentials', () => {
+    const kind: AccountScopedBlobKind = 'connected_service_credential';
+    const machineKey = new Uint8Array(32).fill(4);
+    const material: AccountScopedCryptoMaterial = { type: 'dataKey', machineKey };
+    const payload = { serviceId: 'openai-codex', profileId: 'work', token: 'ciphertext-payload' };
+
+    const ciphertext = sealAccountScopedBlobCiphertext({
+      kind,
+      material,
+      payload,
+      randomBytes: deterministicRandomBytesFactory(),
+    });
+
+    const opened = openAccountScopedBlobCiphertext({ kind, material, ciphertext });
+    expect(opened?.format).toBe('account_scoped_v1');
+    expect(opened?.value).toEqual(payload);
+  });
+
+  it('seals and opens v1 ciphertext for connected service quota snapshots', () => {
+    const kind: AccountScopedBlobKind = 'connected_service_quota_snapshot';
+    const machineKey = new Uint8Array(32).fill(5);
+    const material: AccountScopedCryptoMaterial = { type: 'dataKey', machineKey };
+    const payload = { v: 1, serviceId: 'openai-codex', profileId: 'work', fetchedAt: Date.now(), meters: [] };
+
+    const ciphertext = sealAccountScopedBlobCiphertext({
+      kind,
+      material,
+      payload,
+      randomBytes: deterministicRandomBytesFactory(),
+    });
+
+    const opened = openAccountScopedBlobCiphertext({
+      kind,
+      material,
+      ciphertext,
+    });
+    expect(opened?.format).toBe('account_scoped_v1');
+    expect(opened?.value).toEqual(payload);
+  });
+
   it('allows legacy and dataKey devices to read the same v1 ciphertext', () => {
     const kind: AccountScopedBlobKind = 'account_settings';
     const recoverySecret = new Uint8Array(32).fill(7);

@@ -8,9 +8,9 @@ import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import {
   handleAcpModelOutputDelta,
   handleAcpStatusRunning,
-  forwardAcpPermissionRequest,
-  forwardAcpTerminalOutput,
 } from '@/agent/acp/bridge/acpCommonHandlers';
+import { forwardAcpMessageDelta } from '@/agent/acp/bridge/acpSessionForwarding';
+import { createAcpAgentMessageForwarder } from '@/agent/acp/bridge/createAcpAgentMessageForwarder';
 import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
 import { normalizeAvailableCommands, publishSlashCommandsToMetadata } from '@/agent/acp/commands/publishSlashCommands';
 import { importAcpReplayHistoryV1 } from '@/agent/acp/history/importAcpReplayHistory';
@@ -18,8 +18,7 @@ import { importAcpReplaySidechainV1 } from '@/agent/acp/history/importAcpReplayS
 import { createCatalogAcpBackend } from '@/agent/acp/createCatalogAcpBackend';
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
 import { getAgentModelConfig, type AgentId } from '@happier-dev/agents';
-
-import { buildTokenCountSessionMessageForForwarding } from './tokenCountForwarding';
+import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 
 export type AcpRuntime = Readonly<{
   getSessionId: () => string | null;
@@ -188,6 +187,8 @@ export function createAcpRuntime(params: {
   let isResponseInProgress = false;
   let taskStartedSent = false;
   let turnAborted = false;
+  let turnStreamKey: string | null = null;
+  let didStreamModelOutputToSession = false;
   let loadingSession = false;
   let turnInFlight = false;
   const inFlightSteerEnabled = params.inFlightSteer?.enabled === true;
@@ -357,6 +358,8 @@ export function createAcpRuntime(params: {
     isResponseInProgress = false;
     taskStartedSent = false;
     turnAborted = false;
+    turnStreamKey = null;
+    didStreamModelOutputToSession = false;
   };
 
   const publishSessionId = () => {
@@ -364,6 +367,12 @@ export function createAcpRuntime(params: {
   };
 
   const attachMessageHandler = (b: AcpRuntimeBackend) => {
+    const forwarder = createAcpAgentMessageForwarder({
+      sendAcp: (provider, body) => params.session.sendAgentMessage(provider, body),
+      provider: params.provider,
+      makeId: () => randomUUID(),
+    });
+
     b.onMessage((msg: AgentMessage) => {
       if (loadingSession) {
         if (msg.type === 'status' && msg.status === 'error') {
@@ -375,7 +384,17 @@ export function createAcpRuntime(params: {
 
       switch (msg.type) {
         case 'model-output': {
-          const deltaRaw = msg.textDelta ?? '';
+          const fullText = typeof (msg as any).fullText === 'string' ? String((msg as any).fullText) : '';
+          let deltaRaw = typeof (msg as any).textDelta === 'string' ? String((msg as any).textDelta) : '';
+          if (!deltaRaw && fullText) {
+            if (fullText.startsWith(accumulatedResponse)) {
+              deltaRaw = fullText.slice(accumulatedResponse.length);
+            } else {
+              // Defensive: if a provider restarts and sends a divergent fullText, restart accumulation.
+              accumulatedResponse = '';
+              deltaRaw = fullText;
+            }
+          }
           if (acpTraceMarkersEnabled && sessionId && deltaRaw.includes('ACP_STUB_')) {
             // Trace only deterministic stub markers (never arbitrary assistant text) so provider harness
             // can coordinate mid-turn steer without requiring tool-calls or vendor credentials.
@@ -395,6 +414,20 @@ export function createAcpRuntime(params: {
             setIsResponseInProgress: (value) => { isResponseInProgress = value; },
             appendToAccumulatedResponse: (delta) => { accumulatedResponse += delta; },
           });
+
+          if (deltaRaw) {
+            if (!turnStreamKey) {
+              turnStreamKey = `acp:turn:${randomUUID()}`;
+            }
+            forwardAcpMessageDelta({
+              sendAcp: params.session.sendAgentMessage.bind(params.session),
+              provider: params.provider,
+              delta: deltaRaw,
+              streamMetaKey: 'happierStreamKey',
+              streamKey: turnStreamKey,
+            });
+            didStreamModelOutputToSession = true;
+          }
           break;
         }
 
@@ -435,13 +468,7 @@ export function createAcpRuntime(params: {
         case 'tool-call': {
           params.messageBuffer.addMessage(`Executing: ${msg.toolName}`, 'tool');
           recordToolCall(msg.callId, msg.toolName);
-          params.session.sendAgentMessage(params.provider, {
-            type: 'tool-call',
-            callId: msg.callId,
-            name: msg.toolName,
-            input: msg.args,
-            id: randomUUID(),
-          });
+          forwarder.forward(msg);
           break;
         }
 
@@ -461,12 +488,7 @@ export function createAcpRuntime(params: {
               : JSON.stringify(msg.result ?? '').slice(0, 200);
             params.messageBuffer.addMessage(`Result: ${outputText}`, 'result');
           }
-          params.session.sendAgentMessage(params.provider, {
-            type: 'tool-result',
-            callId: msg.callId,
-            output: msg.result,
-            id: randomUUID(),
-          });
+          forwarder.forward(msg);
 
           if (typeof originToolName === 'string' && originToolName.length > 0) {
             try {
@@ -567,38 +589,26 @@ export function createAcpRuntime(params: {
 
         case 'fs-edit': {
           params.messageBuffer.addMessage(`File edit: ${msg.description}`, 'tool');
-          params.session.sendAgentMessage(params.provider, {
-            type: 'file-edit',
-            description: msg.description,
-            diff: msg.diff,
-            filePath: msg.path || 'unknown',
-            id: randomUUID(),
-          });
+          forwarder.forward(msg);
           break;
         }
 
         case 'terminal-output': {
-          forwardAcpTerminalOutput({
-            msg,
-            messageBuffer: params.messageBuffer,
-            session: params.session,
-            agent: params.provider,
-            getCallId: () => randomUUID(),
-          });
+          const data = typeof (msg as any).data === 'string' ? String((msg as any).data) : '';
+          if (data) {
+            params.messageBuffer.addMessage(data, 'result');
+          }
+          forwarder.forward(msg);
           break;
         }
 
         case 'token-count': {
-          // Forward per-turn token usage when available (ACP PromptResponse.usage or agent-provided usage_update).
-          // This is converted into a `token_count` session message so the server can emit `usage` ephemerals.
-          const tokenCount = buildTokenCountSessionMessageForForwarding(msg as Record<string, unknown>);
-          if (!tokenCount) break;
-          params.session.sendAgentMessage(params.provider, { ...tokenCount, id: randomUUID() });
+          forwarder.forward(msg);
           break;
         }
 
         case 'permission-request': {
-          forwardAcpPermissionRequest({ msg, session: params.session, agent: params.provider });
+          forwarder.forward(msg);
           break;
         }
 
@@ -625,16 +635,21 @@ export function createAcpRuntime(params: {
                   }))
               : [];
             if (currentModeId && availableModes.length > 0) {
-              params.session.updateMetadata((metadata) => ({
-                ...metadata,
-                acpSessionModesV1: {
-                  v: 1,
-                  provider: params.provider,
-                  updatedAt: Date.now(),
-                  currentModeId,
-                  availableModes,
-                },
-              }));
+              updateMetadataBestEffort(
+                params.session,
+                (metadata) => ({
+                  ...metadata,
+                  acpSessionModesV1: {
+                    v: 1,
+                    provider: params.provider,
+                    updatedAt: Date.now(),
+                    currentModeId,
+                    availableModes,
+                  },
+                }),
+                `[${params.provider}]`,
+                'session_modes_state',
+              );
             }
           }
           if (name === 'session_models_state') {
@@ -652,16 +667,21 @@ export function createAcpRuntime(params: {
                   }))
               : [];
             if (currentModelId && availableModels.length > 0) {
-              params.session.updateMetadata((metadata) => ({
-                ...metadata,
-                acpSessionModelsV1: {
-                  v: 1,
-                  provider: params.provider,
-                  updatedAt: Date.now(),
-                  currentModelId,
-                  availableModels,
-                },
-              }));
+              updateMetadataBestEffort(
+                params.session,
+                (metadata) => ({
+                  ...metadata,
+                  acpSessionModelsV1: {
+                    v: 1,
+                    provider: params.provider,
+                    updatedAt: Date.now(),
+                    currentModelId,
+                    availableModels,
+                  },
+                }),
+                `[${params.provider}]`,
+                'session_models_state',
+              );
             }
           }
           if (name === 'config_options_state' || name === 'config_options_update') {
@@ -719,50 +739,60 @@ export function createAcpRuntime(params: {
               return { currentModelId, availableModels };
             })();
 
-            params.session.updateMetadata((metadata) => {
-              const now = Date.now();
-              const next: any = {
-                ...metadata,
-                acpConfigOptionsV1: {
-                  v: 1,
-                  provider: params.provider,
-                  updatedAt: now,
-                  configOptions,
-                },
-              };
-
-              if (derivedModels) {
-                next.acpSessionModelsV1 = {
-                  v: 1,
-                  provider: params.provider,
-                  updatedAt: now,
-                  currentModelId: derivedModels.currentModelId,
-                  availableModels: derivedModels.availableModels,
+            updateMetadataBestEffort(
+              params.session,
+              (metadata) => {
+                const now = Date.now();
+                const next: any = {
+                  ...metadata,
+                  acpConfigOptionsV1: {
+                    v: 1,
+                    provider: params.provider,
+                    updatedAt: now,
+                    configOptions,
+                  },
                 };
-              }
 
-              return next as any;
-            });
+                if (derivedModels) {
+                  next.acpSessionModelsV1 = {
+                    v: 1,
+                    provider: params.provider,
+                    updatedAt: now,
+                    currentModelId: derivedModels.currentModelId,
+                    availableModels: derivedModels.availableModels,
+                  };
+                }
+
+                return next as any;
+              },
+              `[${params.provider}]`,
+              'config_options_state',
+            );
           }
           if (name === 'current_mode_update') {
             const payloadRecord = asRecord(msg.payload);
             const currentModeIdRaw = payloadRecord?.currentModeId;
             const currentModeId = typeof currentModeIdRaw === 'string' ? currentModeIdRaw : '';
             if (currentModeId) {
-              params.session.updateMetadata((metadata) => {
-                const prev = metadata.acpSessionModesV1;
-                const availableModes = Array.isArray(prev?.availableModes) ? prev.availableModes : [];
-                return {
-                  ...metadata,
-                  acpSessionModesV1: {
-                    v: 1,
-                    provider: params.provider,
-                    updatedAt: Date.now(),
-                    currentModeId,
-                    availableModes,
-                  },
-                };
-              });
+              updateMetadataBestEffort(
+                params.session,
+                (metadata) => {
+                  const prev = metadata.acpSessionModesV1;
+                  const availableModes = Array.isArray(prev?.availableModes) ? prev.availableModes : [];
+                  return {
+                    ...metadata,
+                    acpSessionModesV1: {
+                      v: 1,
+                      provider: params.provider,
+                      updatedAt: Date.now(),
+                      currentModeId,
+                      availableModes,
+                    },
+                  };
+                },
+                `[${params.provider}]`,
+                'current_mode_update',
+              );
             }
           }
           if (name === 'current_model_update') {
@@ -770,20 +800,25 @@ export function createAcpRuntime(params: {
             const currentModelIdRaw = payloadRecord?.currentModelId;
             const currentModelId = typeof currentModelIdRaw === 'string' ? currentModelIdRaw : '';
             if (currentModelId) {
-              params.session.updateMetadata((metadata) => {
-                const prev = (metadata as any).acpSessionModelsV1 as any;
-                const availableModels = Array.isArray(prev?.availableModels) ? prev.availableModels : [];
-                return {
-                  ...metadata,
-                  acpSessionModelsV1: {
-                    v: 1,
-                    provider: params.provider,
-                    updatedAt: Date.now(),
-                    currentModelId,
-                    availableModels,
-                  },
-                };
-              });
+              updateMetadataBestEffort(
+                params.session,
+                (metadata) => {
+                  const prev = (metadata as any).acpSessionModelsV1 as any;
+                  const availableModels = Array.isArray(prev?.availableModels) ? prev.availableModels : [];
+                  return {
+                    ...metadata,
+                    acpSessionModelsV1: {
+                      v: 1,
+                      provider: params.provider,
+                      updatedAt: Date.now(),
+                      currentModelId,
+                      availableModels,
+                    },
+                  };
+                },
+                `[${params.provider}]`,
+                'current_model_update',
+              );
             }
           }
           if (name === 'thinking') {
@@ -1074,7 +1109,7 @@ export function createAcpRuntime(params: {
         }
       }
 
-      if (accumulatedResponse.trim()) {
+      if (!didStreamModelOutputToSession && accumulatedResponse.trim()) {
         params.session.sendAgentMessage(params.provider, { type: 'message', message: accumulatedResponse });
       }
 

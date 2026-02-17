@@ -6,7 +6,8 @@ import { join, resolve } from 'node:path';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
   ExecutionRunActionResponseSchema,
-  ExecutionRunStartResponseSchema,
+  ExecutionRunEnsureResponseSchema,
+  ExecutionRunEnsureOrStartResponseSchema,
   ExecutionRunStopResponseSchema,
   ExecutionRunTurnStreamCancelResponseSchema,
   ExecutionRunTurnStreamReadResponseSchema,
@@ -137,33 +138,38 @@ describe('core e2e: voice agent daemon sessionRPC (execution runs)', () => {
     const start = await callSessionRpc({
       ui,
       sessionId,
-      method: SESSION_RPC_METHODS.EXECUTION_RUN_START,
+      method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START,
       req: {
-        intent: 'voice_agent',
-        backendId: 'claude',
-        permissionMode: 'read_only',
-        retentionPolicy: 'ephemeral',
-        runClass: 'long_lived',
-        ioMode: 'streaming',
-        chatModelId: 'voice-chat-model',
-        commitModelId: 'voice-commit-model',
-        idleTtlSeconds: 300,
-        initialContext: 'voice agent e2e initial context',
-        verbosity: 'short',
+        runId: null,
+        resume: true,
+        start: {
+          intent: 'voice_agent',
+          backendId: 'claude',
+          permissionMode: 'read_only',
+          retentionPolicy: 'resumable',
+          runClass: 'long_lived',
+          ioMode: 'streaming',
+          chatModelId: 'voice-chat-model',
+          commitModelId: 'voice-commit-model',
+          idleTtlSeconds: 300,
+          initialContext: 'voice agent e2e initial context',
+          verbosity: 'short',
+        },
       },
       secret,
-      schema: ExecutionRunStartResponseSchema,
+      schema: ExecutionRunEnsureOrStartResponseSchema,
       timeoutMs: 45_000,
     });
 
     expect(typeof start.runId).toBe('string');
+    expect(start.created).toBe(true);
 
-    const sendTurn = async (userText: string): Promise<string> => {
+    const sendTurn = async (userText: string, opts?: Readonly<{ resume?: boolean }>): Promise<string> => {
       const streamStart = await callSessionRpc({
         ui,
         sessionId,
         method: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START,
-        req: { runId: start.runId, message: userText },
+        req: { runId: start.runId, message: userText, ...(opts?.resume === true ? { resume: true } : {}) },
         secret,
         schema: ExecutionRunTurnStreamStartResponseSchema,
         timeoutMs: 45_000,
@@ -242,9 +248,33 @@ describe('core e2e: voice agent daemon sessionRPC (execution runs)', () => {
     });
     expect(stop.ok).toBe(true);
 
-	    // Ensure daemon voice agent does not write to the transcript by itself.
+    // Ensure daemon voice agent does not write to the transcript by itself.
     const afterRpcMessages = await fetchAllMessages(serverBaseUrl, auth.token, sessionId);
     expect(afterRpcMessages.length).toBe(baselineMessages.length);
+
+    expect(await sendTurn('turn-after-resume', { resume: true })).toContain('FAKE_CLAUDE_OK_');
+
+    const stop2 = await callSessionRpc({
+      ui,
+      sessionId,
+      method: SESSION_RPC_METHODS.EXECUTION_RUN_STOP,
+      req: { runId: start.runId },
+      secret,
+      schema: ExecutionRunStopResponseSchema,
+      timeoutMs: 45_000,
+    });
+    expect(stop2.ok).toBe(true);
+
+    const ensured = await callSessionRpc({
+      ui,
+      sessionId,
+      method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE,
+      req: { runId: start.runId, resume: true },
+      secret,
+      schema: ExecutionRunEnsureResponseSchema,
+      timeoutMs: 45_000,
+    });
+    expect(ensured.ok).toBe(true);
 
     // Assert chat+commit model selection was respected (separate Claude invocations).
     await waitForFakeClaudeInvocation(fakeLogPath, (i) => i.mode === 'sdk' && i.argv.includes('--model') && i.argv.includes('voice-chat-model'), { timeoutMs: 60_000 });

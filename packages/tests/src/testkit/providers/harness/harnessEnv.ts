@@ -21,3 +21,20 @@ export function applyHomeIsolationEnv(params: {
     HAPPIER_SESSION_AUTOSTART_DAEMON: '0',
   };
 }
+
+export function applyCliDevTsxTsconfigEnv(params: {
+  repoRootDir: string;
+  env: NodeJS.ProcessEnv;
+}): NodeJS.ProcessEnv {
+  // Provider harness runs start the CLI via `yarn workspace @happier-dev/cli dev ...` from the repo root.
+  // When the dev entrypoint uses TSX, the loader must know which tsconfig defines `@/*` path aliases.
+  // Without an explicit TSX_TSCONFIG_PATH, TSX can pick up the wrong config and fail to resolve imports
+  // like `@/backends/...` (manifesting as ERR_MODULE_NOT_FOUND at runtime).
+  if (typeof params.env.TSX_TSCONFIG_PATH === 'string' && params.env.TSX_TSCONFIG_PATH.trim().length > 0) {
+    return params.env;
+  }
+  return {
+    ...params.env,
+    TSX_TSCONFIG_PATH: join(params.repoRootDir, 'apps', 'cli', 'tsconfig.json'),
+  };
+}

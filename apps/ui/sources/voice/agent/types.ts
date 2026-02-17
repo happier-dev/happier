@@ -12,14 +12,28 @@ export type VoiceAgentStartParams = Readonly<{
   verbosity?: VoiceAgentVerbosity;
   chatModelId: string;
   commitModelId: string;
+  /**
+   * Daemon-only: forces commits to use a separate vendor session even when commitModelId matches chatModelId.
+   */
+  commitIsolation?: boolean;
   permissionPolicy: VoiceAgentPermissionPolicy;
   idleTtlSeconds: number;
   initialContext: string;
+  /**
+   * Daemon-only: optional bootstrap behavior for newly created sessions.
+   * When enabled, the daemon will warm the vendor session before the first user turn.
+   */
+  bootstrapMode?: 'ready_handshake' | 'none';
   transcript?: Readonly<{ persistenceMode?: VoiceAgentTranscriptPersistenceMode; epoch?: number }>;
   /**
    * Daemon-only: if provided, the client will attempt to ensure/reattach to this execution run id.
    */
   existingRunId?: string | null;
+  /**
+   * Daemon-only: when ensuring a runId, controls whether the daemon may vendor-resume the run
+   * when it is present but not currently running.
+   */
+  resumeWhenInactive?: boolean;
   /**
    * Daemon-only: resume handle used when starting a new execution run via provider resume.
    */
@@ -49,7 +63,12 @@ export interface VoiceAgentClient {
   sendTurn(
     params: Readonly<{ sessionId: string; voiceAgentId: string; userText: string }>,
   ): Promise<{ assistantText: string; actions?: VoiceAssistantAction[] }>;
-  startTurnStream(params: Readonly<{ sessionId: string; voiceAgentId: string; userText: string }>): Promise<{ streamId: string }>;
+  welcome(
+    params: Readonly<{ sessionId: string; voiceAgentId: string; welcomeText?: string }>,
+  ): Promise<{ assistantText: string }>;
+  startTurnStream(
+    params: Readonly<{ sessionId: string; voiceAgentId: string; userText: string; resume?: boolean }>,
+  ): Promise<{ streamId: string }>;
   readTurnStream(
     params: Readonly<{ sessionId: string; voiceAgentId: string; streamId: string; cursor: number; maxEvents?: number }>,
   ): Promise<{ streamId: string; events: VoiceAgentTurnStreamEvent[]; nextCursor: number; done: boolean }>;

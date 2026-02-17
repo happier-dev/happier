@@ -144,6 +144,7 @@ export const ru: TranslationStructure = {
   settings: {
     title: "Настройки",
     connectedAccounts: "Подключенные аккаунты",
+    connectedAccountsDisabled: "Connected services are disabled.",
     connectAccount: "Подключить аккаунт",
     github: "GitHub",
     machines: "Машины",
@@ -155,6 +156,8 @@ export const ru: TranslationStructure = {
     appearanceSubtitle: "Настройка внешнего вида приложения",
     voiceAssistant: "Голосовой ассистент",
     voiceAssistantSubtitle: "Настройка предпочтений голосового взаимодействия",
+    memorySearch: "Локальный поиск по памяти",
+    memorySearchSubtitle: "Поиск по прошлым разговорам (локально на устройстве)",
     featuresTitle: "Возможности",
     featuresSubtitle: "Включить или отключить функции приложения",
     developer: "Разработчик",
@@ -884,7 +887,7 @@ export const ru: TranslationStructure = {
 
   components: {
     emptyMainScreen: {
-      // Used by EmptyMainScreen component
+      // Used by SessionGettingStartedGuidance component
       readyToCode: "Готовы к программированию?",
       installCli: "Установите Happier CLI",
       runIt: "Запустите его",
@@ -1772,6 +1775,8 @@ export const ru: TranslationStructure = {
       recentMessagesCountInvalid: "Введите число от 0 до 50.",
       shareToolNames: "Передавать имена инструментов",
       shareToolNamesSubtitle: "Добавлять имена/описания инструментов в голосовой контекст",
+      shareDeviceInventory: "Share device inventory",
+      shareDeviceInventorySubtitle: "Allow voice to list recent workspaces, machines, and servers",
       shareToolArgs: "Передавать аргументы инструментов",
       shareToolArgsSubtitle: "Добавлять аргументы инструментов (может содержать пути или секреты)",
       sharePermissionRequests: "Передавать запросы разрешений",

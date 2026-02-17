@@ -101,4 +101,26 @@ describe('buildSpawnHappySessionRpcParams', () => {
         expect('modelId' in params).toBe(false);
         expect('modelUpdatedAt' in params).toBe(false);
     });
+
+    it('includes connectedServices bindings when provided', () => {
+        const params = buildSpawnHappySessionRpcParams({
+            machineId: 'm1',
+            directory: '/tmp',
+            connectedServices: {
+                v: 1,
+                bindingsByServiceId: {
+                    anthropic: { source: 'connected', profileId: 'work' },
+                },
+            },
+        } satisfies SpawnSessionOptions);
+
+        expect(params).toMatchObject({
+            connectedServices: {
+                v: 1,
+                bindingsByServiceId: {
+                    anthropic: { source: 'connected', profileId: 'work' },
+                },
+            },
+        });
+    });
 });

@@ -13,6 +13,7 @@ import { encrypt, encodeBase64 } from '@/api/encryption';
 import { collectBugReportMachineDiagnosticsSnapshot } from '@/diagnostics/bugReportMachineDiagnostics';
 import { removeExecutionRunMarker, writeExecutionRunMarker } from '@/daemon/executionRunRegistry';
 import { registerMachineRpcHandlers } from './rpcHandlers';
+import { registerMachineMemoryRpcHandlers } from './rpcHandlers.memory';
 import type { Credentials } from '@/persistence';
 
 const { readCredentialsMock, psListMock } = vi.hoisted(() => ({
@@ -734,5 +735,93 @@ describe('registerMachineRpcHandlers', () => {
         process.env.HAPPIER_STACK_RUNTIME_STATE_PATH = previousRuntimePath;
       }
     }
+  });
+
+  it('registers daemon memory handlers when memory worker is provided', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession: async () => ({ type: 'success', sessionId: 's1' } as const),
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    registerMachineMemoryRpcHandlers({
+      rpcHandlerManager,
+      memoryWorker: {
+        stop: () => {},
+        reloadSettings: async () => {},
+        ensureUpToDate: async () => {},
+	        getSettings: () => ({
+	          v: 1,
+          enabled: false,
+          indexMode: 'hints',
+          defaultScope: { type: 'global' as const },
+          backfillPolicy: 'new_only' as const,
+          deleteOnDisable: false,
+          hints: {
+            summarizerBackendId: 'claude',
+            summarizerModelId: 'default',
+            summarizerPermissionMode: 'no_tools',
+            windowSizeMessages: 40,
+            maxShardChars: 12_000,
+            maxSummaryChars: 500,
+            paddingMessagesOnVerify: 8,
+            updateMode: 'onIdle',
+            idleDelayMs: 30_000,
+            maxRunsPerHour: 12,
+            failureBackoffBaseMs: 60_000,
+            failureBackoffMaxMs: 900_000,
+            maxShardsPerSession: 250,
+            maxKeywords: 12,
+            maxEntities: 12,
+            maxDecisions: 12,
+          },
+	          deep: {
+	            recentDays: 30,
+	            maxChunkChars: 12_000,
+	            maxChunkMessages: 50,
+	            minChunkMessages: 5,
+	            includeAssistantAcpMessage: true,
+	            includeToolOutput: false,
+	            candidateLimit: 200,
+	            previewChars: 800,
+	            failureBackoffBaseMs: 60_000,
+	            failureBackoffMaxMs: 3_600_000,
+	          },
+          embeddings: {
+            enabled: false,
+            provider: 'local_transformers',
+            modelId: '',
+            wFts: 1,
+            wEmb: 1,
+          },
+          budgets: {
+            maxDiskMbLight: 64,
+            maxDiskMbDeep: 512,
+          },
+          worker: {
+            tickIntervalMs: 10_000,
+            inventoryRefreshIntervalMs: 60_000,
+            maxSessionsPerTick: 2,
+            sessionListPageLimit: 50,
+          },
+	        }),
+	        getTier1DbPath: () => null,
+	        getDeepDbPath: () => null,
+	      },
+	    });
+
+    expect(registered.has((RPC_METHODS as any).DAEMON_MEMORY_SEARCH)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_MEMORY_GET_WINDOW)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_MEMORY_STATUS)).toBe(true);
   });
 });

@@ -9,7 +9,6 @@ export async function createGeminiBackendInstance(params: {
   cwd: string;
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: ProviderEnforcedPermissionHandler;
-  cloudToken?: string;
   currentUserEmail?: string;
   permissionMode: PermissionMode;
   model: string | null | undefined;
@@ -19,7 +18,6 @@ export async function createGeminiBackendInstance(params: {
     cwd: params.cwd,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
-    cloudToken: params.cloudToken,
     currentUserEmail: params.currentUserEmail,
     permissionMode: params.permissionMode,
     // If undefined, backend resolves from local config/env/default.

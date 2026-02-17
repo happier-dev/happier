@@ -1,0 +1,94 @@
+---
+title: Self-host runtime (installer vs runner)
+description: Understand the supported ways to run a self-hosted Happier Server, and what each option installs/manages.
+---
+
+Happier currently supports two **different** self-host “shapes”:
+
+1) a **managed install** (service + config + rollback) driven by `hstack self-host …`
+2) a **runner** that simply downloads/verifies artifacts and starts the server process (`@happier-dev/relay-server`)
+
+They are complementary, but they are not the same thing.
+
+## Option A: Managed self-host install (recommended when you want a service)
+
+Use the self-host installer (or `hstack self-host install`) when you want:
+
+- the server installed as a **managed service** (user/system mode)
+- an on-disk **env file** (`server.env`) you can edit/override
+- a local **state file** (`self-host-state.json`)
+- platform-native **auto-update scheduling** (opt-in)
+- `hstack self-host rollback` for recovery
+
+### What it installs
+
+When you run:
+
+```bash
+curl -fsSL https://happier.dev/self-host | bash
+```
+
+the installer:
+
+- downloads and installs the **`hstack` binary** on the machine
+- then runs the guided flow: `hstack self-host install …`
+
+After install, you manage it with:
+
+```bash
+hstack self-host status
+hstack self-host update
+hstack self-host rollback --to <version>
+```
+
+### Auto-update scheduling (daily window)
+
+Auto-update is opt-in:
+
+```bash
+hstack self-host install --auto-update --auto-update-at=03:15
+```
+
+Update the schedule later:
+
+```bash
+hstack self-host config set --auto-update --auto-update-at=03:15
+```
+
+Inspect effective config:
+
+```bash
+hstack self-host config view
+```
+
+## Option B: Runner (`@happier-dev/relay-server`) (recommended for Docker / “just run it”)
+
+The relay server package is a **server runner**:
+
+- it fetches the server runtime by rolling tag (`server-stable` / `server-preview`)
+- verifies and extracts it into a cache
+- optionally fetches the UI web bundle (`ui-web-stable` / `ui-web-preview`)
+- sets `HAPPIER_SERVER_UI_DIR` (if UI is enabled)
+- then starts the extracted `happier-server` binary
+
+This is ideal when:
+
+- you run the server in **Docker** (or any process supervisor you already have)
+- you want updates to happen on **restart** (no managed install / no scheduler)
+- you do not want `hstack` installing services/timers/tasks on the host
+
+Example (local runner):
+
+```bash
+npx --yes --package @happier-dev/relay-server happier-server --help
+```
+
+Important: because this is a runner, `hstack self-host config` / `hstack self-host rollback` do **not** apply to it.
+
+## Choosing between them
+
+- If you want a **service** and `hstack`-managed lifecycle → use **Option A**.
+- If you already have a process manager (Docker/Compose/systemd/nomad/k8s) and just want a **runner** → use **Option B**.
+
+If you’re unsure, start with Docker (runner) and switch to a managed install later.
+

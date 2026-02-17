@@ -55,6 +55,7 @@ import {
   getInitialGeminiModel
 } from '@/backends/gemini/utils/config';
 import { maybeUpdateGeminiSessionIdMetadata } from '@/backends/gemini/utils/geminiSessionIdMetadata';
+import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import {
   parseOptionsFromText,
   hasIncompleteOptions,
@@ -117,34 +118,30 @@ export async function runGemini(opts: {
   logger.debug(`Using machineId: ${machineId}`);
 
   //
-	  // Fetch Gemini cloud token (from 'happier connect gemini')
+  // Best-effort: decode connected-services id_token email (used to select per-account Google Cloud Project config).
+  // Do NOT treat connected-service OAuth access_token as an API key; Gemini CLI uses oauth-personal via ~/.gemini/oauth_creds.json.
   //
-  let cloudToken: string | undefined = undefined;
   let currentUserEmail: string | undefined = undefined;
   try {
-    const vendorToken = await api.getVendorToken('gemini');
-    if (vendorToken?.oauth?.access_token) {
-      cloudToken = vendorToken.oauth.access_token;
-	      logger.debug('[Gemini] Using OAuth token from Happier cloud');
-      
-      // Extract email from id_token for per-account project matching
-      if (vendorToken.oauth.id_token) {
-        try {
-          const parts = vendorToken.oauth.id_token.split('.');
-          if (parts.length === 3) {
-            const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-            if (payload.email) {
-              currentUserEmail = payload.email;
-              logger.debug(`[Gemini] Current user email: ${currentUserEmail}`);
-            }
-          }
-        } catch {
-          logger.debug('[Gemini] Failed to decode id_token for email');
-        }
+    const { resolveConnectedServiceCredentials } = await import('@/cloud/connectedServices/resolveConnectedServiceCredentials');
+    const { decodeJwtPayload } = await import('@/cloud/decodeJwtPayload');
+
+    const records = await resolveConnectedServiceCredentials({
+      credentials: opts.credentials,
+      api,
+      bindings: [{ serviceId: 'gemini', profileId: 'default' }],
+    });
+    const record = records.get('gemini');
+    if (record?.kind === 'oauth' && record.oauth.idToken) {
+      const payload = decodeJwtPayload(record.oauth.idToken);
+      const email = payload && typeof payload.email === 'string' ? payload.email : null;
+      if (email) {
+        currentUserEmail = email;
+        logger.debug(`[Gemini] Current user email: ${currentUserEmail}`);
       }
     }
   } catch (error) {
-    logger.debug('[Gemini] Failed to fetch cloud token:', error);
+    logger.debug('[Gemini] Failed to fetch connected-services metadata (non-fatal):', error);
   }
 
   //
@@ -260,7 +257,8 @@ export async function runGemini(opts: {
         const res = maybeUpdatePermissionModeMetadata({
           currentPermissionMode,
           nextPermissionMode,
-          updateMetadata: (updater) => session.updateMetadata(updater),
+          updateMetadata: (updater) =>
+            updateMetadataBestEffort(session, updater, '[Gemini]', 'permission_mode_from_user_message'),
           nowMs: () => resolvePermissionModeUpdatedAtFromMessage(message),
         });
         currentPermissionMode = res.currentPermissionMode;
@@ -670,7 +668,6 @@ export async function runGemini(opts: {
           cwd: process.cwd(),
           mcpServers,
           permissionHandler,
-          cloudToken,
           currentUserEmail,
           permissionMode: message.mode.permissionMode,
           model: modelToUse,
@@ -716,7 +713,6 @@ export async function runGemini(opts: {
               cwd: process.cwd(),
               mcpServers,
               permissionHandler,
-              cloudToken,
               currentUserEmail,
               permissionMode: message.mode.permissionMode,
               model: modelToUse,

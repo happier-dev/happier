@@ -43,19 +43,25 @@ describe('maybeUpdateKiloSessionIdMetadata', () => {
 
     maybeUpdateKiloSessionIdMetadata({
       getKiloSessionId: () => 'kilo-1',
-      updateHappySessionMetadata: (updater) => updates.push(updater(createTestMetadata({ name: 'keep-name' }))),
+      updateHappySessionMetadata: (updater) => {
+        updates.push(updater(createTestMetadata({ name: 'keep-name' })));
+      },
       lastPublished,
     });
 
     maybeUpdateKiloSessionIdMetadata({
       getKiloSessionId: () => 'kilo-1',
-      updateHappySessionMetadata: (updater) => updates.push(updater(createTestMetadata({ name: 'keep-name' }))),
+      updateHappySessionMetadata: (updater) => {
+        updates.push(updater(createTestMetadata({ name: 'keep-name' })));
+      },
       lastPublished,
     });
 
     maybeUpdateKiloSessionIdMetadata({
       getKiloSessionId: () => 'kilo-2',
-      updateHappySessionMetadata: (updater) => updates.push(updater(createTestMetadata({ name: 'keep-name' }))),
+      updateHappySessionMetadata: (updater) => {
+        updates.push(updater(createTestMetadata({ name: 'keep-name' })));
+      },
       lastPublished,
     });
 
@@ -80,5 +86,25 @@ describe('maybeUpdateKiloSessionIdMetadata', () => {
     expect(updates).toEqual([
       createTestMetadata({ kiloSessionId: 'kilo-next', name: 'keep-name' }),
     ]);
+  });
+
+  it('does not mark the session id as published when the metadata update fails', async () => {
+    const lastPublished = { value: null as string | null };
+    let calls = 0;
+
+    maybeUpdateKiloSessionIdMetadata({
+      getKiloSessionId: () => 'kilo-1',
+      updateHappySessionMetadata: async () => {
+        calls += 1;
+        throw new Error('update failed');
+      },
+      lastPublished,
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(calls).toBe(1);
+    expect(lastPublished.value).toBeNull();
   });
 });

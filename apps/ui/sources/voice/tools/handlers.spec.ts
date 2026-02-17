@@ -113,6 +113,10 @@ const state: any = {
       ui: { updates: { snippetsMaxMessages: 3, includeUserMessagesInSnippets: false, otherSessionsSnippetsMode: 'on_demand_only' } },
       privacy: { shareRecentMessages: true, shareToolNames: true },
     },
+    recentMachinePaths: [
+      { machineId: 'm1', path: '/tmp/s1' },
+      { machineId: 'm1', path: '/tmp/s2' },
+    ],
   },
 };
 
@@ -321,6 +325,125 @@ describe('voice tool handlers', () => {
     const res = await tools.spawnSession({ tag: 't1' });
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({ machineId: expect.any(String) }));
     expect(JSON.parse(res)).toMatchObject({ type: 'success', sessionId: 's_new' });
+  });
+
+  it('lists recent workspaces without exposing raw paths', async () => {
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
+
+    const res = await tools.listRecentWorkspaces({ limit: 10 });
+    const parsed = JSON.parse(res);
+    expect(parsed).toMatchObject({ ok: true });
+    expect(Array.isArray(parsed.items)).toBe(true);
+    expect(parsed.items.length).toBeGreaterThan(0);
+    expect(typeof parsed.items[0]?.workspaceId).toBe('string');
+    expect(typeof parsed.items[0]?.label).toBe('string');
+    expect(String(parsed.items[0]?.label ?? '')).not.toContain('/tmp');
+  });
+
+  it('can spawn a session using a workspaceId handle (without leaking path)', async () => {
+    spawnSession.mockResolvedValue({ type: 'success', sessionId: 's_new' });
+
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
+
+    const listedRaw = await tools.listRecentWorkspaces({ limit: 10 });
+    const listed = JSON.parse(listedRaw);
+    const items = Array.isArray(listed.items) ? listed.items : [];
+    expect(items.length).toBeGreaterThan(1);
+    const workspaceId = String(items[1]?.workspaceId ?? '').trim();
+    expect(workspaceId.length).toBeGreaterThan(0);
+
+    await tools.spawnSession({ workspaceId });
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'm1', directory: '/tmp/s2' }));
+  });
+
+  it('allows selecting agentId + modelId when spawning a session via voice', async () => {
+    spawnSession.mockResolvedValue({ type: 'success', sessionId: 's_new' });
+
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
+
+    const listedRaw = await tools.listRecentWorkspaces({ limit: 10 });
+    const listed = JSON.parse(listedRaw);
+    const items = Array.isArray(listed.items) ? listed.items : [];
+    const workspaceId = String(items[0]?.workspaceId ?? '').trim();
+    expect(workspaceId.length).toBeGreaterThan(0);
+
+    await tools.spawnSession({ workspaceId, agentId: 'codex', modelId: 'gpt-5' });
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({ agent: 'codex', modelId: 'gpt-5', modelUpdatedAt: expect.any(Number) }));
+  });
+
+  it('can list machines and servers for voice discovery', async () => {
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
+
+    const machinesRaw = await tools.listMachines({ limit: 10 });
+    const machines = JSON.parse(machinesRaw);
+    expect(machines).toMatchObject({ ok: true });
+    expect(Array.isArray(machines.items)).toBe(true);
+    expect(machines.items.map((m: any) => m.machineId)).toContain('m1');
+
+    const serversRaw = await tools.listServers({ limit: 10 });
+    const servers = JSON.parse(serversRaw);
+    expect(servers).toMatchObject({ ok: true });
+    expect(Array.isArray(servers.items)).toBe(true);
+    expect(servers.items.map((s: any) => s.serverId)).toContain('server-a');
+  });
+
+  it('fails closed for inventory tools when shareDeviceInventory is disabled', async () => {
+    state.settings.voice.privacy = { ...state.settings.voice.privacy, shareDeviceInventory: false };
+
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
+
+    const machinesRaw = await tools.listMachines({ limit: 10 });
+    expect(JSON.parse(machinesRaw)).toMatchObject({ ok: false, errorCode: 'privacy_disabled' });
+
+    const workspacesRaw = await tools.listRecentWorkspaces({ limit: 10 });
+    expect(JSON.parse(workspacesRaw)).toMatchObject({ ok: false, errorCode: 'privacy_disabled' });
+  });
+
+  it('can list agent backends and models for spawning via voice', async () => {
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
+
+    const backendsRaw = await tools.listAgentBackends({});
+    const backends = JSON.parse(backendsRaw);
+    expect(backends).toMatchObject({ ok: true });
+    expect(Array.isArray(backends.items)).toBe(true);
+    expect(backends.items.length).toBeGreaterThan(0);
+
+    const modelsRaw = await tools.listAgentModels({ agentId: 'claude' });
+    const models = JSON.parse(modelsRaw);
+    expect(models).toMatchObject({ ok: true });
+    expect(Array.isArray(models.items)).toBe(true);
+    expect(models.items.map((m: any) => m.modelId)).toContain('default');
+  });
+
+  it('returns full raw paths from listRecentPaths when shareDeviceInventory and shareFilePaths are enabled', async () => {
+    state.settings.voice.privacy = {
+      ...state.settings.voice.privacy,
+      shareDeviceInventory: true,
+      shareFilePaths: true,
+    };
+
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
+
+    const pathsRaw = await tools.listRecentPaths({ limit: 10 });
+    const parsed = JSON.parse(pathsRaw);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok !== true) {
+      expect(parsed.errorCode).toBe('privacy_disabled');
+    }
+    expect(Array.isArray(parsed.items)).toBe(true);
+    expect(parsed.items.length).toBeGreaterThan(0);
+    expect(parsed.items[0]).toMatchObject({
+      machineId: expect.any(String),
+      path: expect.any(String),
+    });
+    expect(String(parsed.items[0]?.path ?? '')).toContain('/tmp/');
   });
 
   it('opens a session by switching server when the session is known on another server cache', async () => {

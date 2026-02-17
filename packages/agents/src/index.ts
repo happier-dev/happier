@@ -6,6 +6,8 @@ export {
     PERMISSION_MODES,
     type AgentCore,
     type AgentId,
+    type ConnectedServiceId,
+    type ConnectedServiceKind,
     type CloudConnectTargetStatus,
     type CloudVendorKey,
     type PermissionIntent,

@@ -113,10 +113,10 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
   const backendOptions = useExecutionBackendOptions();
 
   const resolveFieldOptions = React.useCallback(
-    (field: any): ReadonlyArray<Readonly<{ value: string; label: string }>> => {
+    (field: any): ReadonlyArray<Readonly<{ value: string; label: string; disabled?: boolean }>> => {
       const sourceId = typeof field?.optionsSourceId === 'string' ? field.optionsSourceId : '';
       if (sourceId === 'review.engines.available') {
-        return engineOptions.map((o) => ({ value: o.id, label: o.label }));
+        return engineOptions.map((o) => ({ value: o.id, label: o.label, ...(o.disabled ? { disabled: true } : {}) }));
       }
       if (sourceId === 'execution.backends.enabled') {
         return backendOptions.map((o) => ({ value: o.id, label: o.label }));
@@ -177,7 +177,7 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
           sessionId: props.sessionId,
           ...(props.draft.input ?? {}),
         },
-        { defaultSessionId: props.sessionId },
+        { defaultSessionId: props.sessionId, surface: 'ui_button', placement: 'session_action_menu' } as any,
       );
       if (!res.ok) {
         setStatus('failed', res.error ?? 'Failed to start');
@@ -208,57 +208,58 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
 
   return (
     <View style={{ flexDirection: 'row', justifyContent: 'center' }}>
-      <View style={{ width: '100%', maxWidth: layout.maxWidth, paddingHorizontal: 16 }}>
-        <View
-          style={{
-            marginVertical: 8,
-            padding: 12,
-            borderRadius: 12,
-            borderWidth: 1,
-            borderColor: theme.colors.divider,
-            backgroundColor: theme.colors.surface,
-          }}
-        >
-          <Text style={{ color: theme.colors.text, fontWeight: '600', marginBottom: 8 }}>{title}</Text>
+      <View style={{ width: '100%', alignSelf: 'center', flexDirection: 'column', flexGrow: 1, flexBasis: 0, maxWidth: layout.maxWidth }}>
+        <View style={{ marginHorizontal: 16 }}>
+          <View
+            style={{
+              marginVertical: 8,
+              padding: 12,
+              borderRadius: 12,
+              borderWidth: 1,
+              borderColor: theme.colors.divider,
+              backgroundColor: theme.colors.surface,
+            }}
+          >
+            <Text style={{ color: theme.colors.text, fontWeight: '600', marginBottom: 8 }}>{title}</Text>
 
-          {fields.length > 0 ? (
-            fields.map((field: any) => {
-              const path = typeof field?.path === 'string' ? field.path : '';
-              const widget = typeof field?.widget === 'string' ? field.widget : '';
-              if (!path || !widget) return null;
+            {fields.length > 0 ? (
+              fields.map((field: any) => {
+                const path = typeof field?.path === 'string' ? field.path : '';
+                const widget = typeof field?.widget === 'string' ? field.widget : '';
+                if (!path || !widget) return null;
 
-              const label = typeof field?.title === 'string' ? field.title : path;
-              const value = getValueAtPath(input, path);
-              const editable = props.draft.status === 'editing';
-              const disabled = (field as any)?.disabled === true;
+                const label = typeof field?.title === 'string' ? field.title : path;
+                const value = getValueAtPath(input, path);
+                const editable = props.draft.status === 'editing';
+                const disabled = (field as any)?.disabled === true;
 
-              if (widget === 'multiselect') {
-                const selected = Array.isArray(value) ? (value as unknown[]).map(String) : [];
-                const options = resolveFieldOptions(field);
-                return (
-                  <View key={path} style={{ marginTop: 10 }}>
-                    <Text style={{ color: theme.colors.textSecondary, marginBottom: 6 }}>{label}</Text>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-                      {options.map((opt) => {
-                        const isSelected = selected.includes(opt.value);
-                        return (
-                          <Chip
-                            key={opt.value}
-                            label={opt.label}
-                            selected={isSelected}
-                            disabled={!editable || disabled}
-                            onPress={() => {
-                              if (!editable || disabled) return;
-                              const next = isSelected ? selected.filter((id) => id !== opt.value) : [...selected, opt.value];
-                              setInputPatch(setValueAtTopLevelPatch(input, path, next));
-                            }}
-                          />
-                        );
-                      })}
+                if (widget === 'multiselect') {
+                  const selected = Array.isArray(value) ? (value as unknown[]).map(String) : [];
+                  const options = resolveFieldOptions(field);
+                  return (
+                    <View key={path} style={{ marginTop: 10 }}>
+                      <Text style={{ color: theme.colors.textSecondary, marginBottom: 6 }}>{label}</Text>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+                        {options.map((opt) => {
+                          const isSelected = selected.includes(opt.value);
+                          return (
+                            <Chip
+                              key={opt.value}
+                              label={opt.label}
+                              selected={isSelected}
+                              disabled={!editable || disabled || opt.disabled === true}
+                              onPress={() => {
+                                if (!editable || disabled || opt.disabled === true) return;
+                                const next = isSelected ? selected.filter((id) => id !== opt.value) : [...selected, opt.value];
+                                setInputPatch(setValueAtTopLevelPatch(input, path, next));
+                              }}
+                            />
+                          );
+                        })}
+                      </View>
                     </View>
-                  </View>
-                );
-              }
+                  );
+                }
 
               if (widget === 'select') {
                 const selected = typeof value === 'string' ? value : '';
@@ -272,9 +273,9 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
                           key={opt.value}
                           label={opt.label}
                           selected={selected === opt.value}
-                          disabled={!editable || disabled}
+                          disabled={!editable || disabled || opt.disabled === true}
                           onPress={() => {
-                            if (!editable || disabled) return;
+                            if (!editable || disabled || opt.disabled === true) return;
                             setInputPatch(setValueAtTopLevelPatch(input, path, opt.value));
                           }}
                         />
@@ -408,6 +409,7 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
             >
               <Text style={{ color: theme.colors.button.primary.tint, fontWeight: '600' }}>Start</Text>
             </Pressable>
+          </View>
           </View>
         </View>
       </View>

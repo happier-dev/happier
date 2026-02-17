@@ -1,13 +1,11 @@
-import type { ActionId } from '@happier-dev/protocol';
+import type { ActionExecuteResult, ActionExecutorContext, ActionId } from '@happier-dev/protocol';
 
 import type { SessionComposerSendResolution } from './resolveSessionComposerSend';
 import { storage } from '@/sync/domains/state/storage';
+import { buildActionDraftInput } from '@/sync/domains/actions/buildActionDraftInput';
 
 export type SessionComposerActionExecutor = Readonly<{
-  execute: (actionId: ActionId, parameters: unknown, ctx?: Readonly<{ defaultSessionId?: string | null }>) => Promise<
-    | Readonly<{ ok: true; result: unknown }>
-    | Readonly<{ ok: false; errorCode: string; error: string }>
-  >;
+  execute: (actionId: ActionId, input: unknown, ctx?: ActionExecutorContext) => Promise<ActionExecuteResult>;
 }>;
 
 export async function executeSessionComposerResolution(args: Readonly<{
@@ -24,7 +22,11 @@ export async function executeSessionComposerResolution(args: Readonly<{
   navigateToRuns: () => void;
   modalAlert: (title: string, message: string) => void;
 }>): Promise<boolean> {
-  const ctx = { defaultSessionId: args.sessionId };
+  const ctx: ActionExecutorContext = {
+    defaultSessionId: args.sessionId,
+    surface: 'ui_slash_command',
+    placement: 'slash_command',
+  };
 
   if (args.resolved.kind !== 'action') return false;
 
@@ -51,14 +53,13 @@ export async function executeSessionComposerResolution(args: Readonly<{
       // Insert a local-only draft card instead of sending a transcript message.
       storage.getState().createSessionActionDraft(args.sessionId, {
         actionId: 'review.start',
-        input: {
+        input: buildActionDraftInput({
+          actionId: 'review.start' as any,
           sessionId: args.sessionId,
-          engineIds: [args.agentId],
+          defaultBackendId: args.agentId,
           instructions: '',
-          permissionMode: args.permissionMode ?? 'read_only',
-          changeType: 'committed',
-          base: { kind: 'none' },
-        },
+          extra: { permissionMode: args.permissionMode ?? 'read_only' },
+        }),
       });
       return true;
     }
@@ -103,12 +104,13 @@ export async function executeSessionComposerResolution(args: Readonly<{
       args.clearDraft();
       storage.getState().createSessionActionDraft(args.sessionId, {
         actionId,
-        input: {
+        input: buildActionDraftInput({
+          actionId: actionId as any,
           sessionId: args.sessionId,
-          backendIds: [args.agentId],
+          defaultBackendId: args.agentId,
           instructions: '',
-          permissionMode: args.permissionMode ?? (actionId === 'delegate.start' ? 'default' : 'read_only'),
-        },
+          extra: { permissionMode: args.permissionMode ?? (actionId === 'delegate.start' ? 'default' : 'read_only') },
+        }),
       });
       return true;
     }

@@ -38,6 +38,18 @@ Direct hstack flow (same guided installer):
 hstack self-host install
 ```
 
+Enable auto-updates (opt-in) at install time:
+
+```bash
+hstack self-host install --auto-update --auto-update-at=03:15
+```
+
+You can also update the schedule after install:
+
+```bash
+hstack self-host config set --auto-update --auto-update-at=03:15
+```
+
 Legacy alias (still supported):
 
 ```bash

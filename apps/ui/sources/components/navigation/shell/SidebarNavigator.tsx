@@ -4,8 +4,9 @@ import { Drawer } from 'expo-router/drawer';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { SidebarView } from './SidebarView';
 import { CollapsedSidebarView } from './CollapsedSidebarView';
-import { Pressable, View, useWindowDimensions } from 'react-native';
+import { Pressable, View, useWindowDimensions, Platform } from 'react-native';
 import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
+import { SidebarExpandIcon } from './SidebarIcons';
 
 export const SidebarNavigator = React.memo(() => {
     const auth = useAuth();
@@ -64,20 +65,26 @@ export const SidebarNavigator = React.memo(() => {
             return (
                 <View style={{ flex: 1 }}>
                     <SidebarView />
-                    <Pressable
-                        testID="sidebar-collapse-button"
-                        onPress={() => setSidebarCollapsed(true)}
-                        style={{
-                            position: 'absolute',
-                            top: 12,
-                            right: 12,
-                            width: 28,
-                            height: 28,
-                            borderRadius: 8,
-                            opacity: 0.7,
-                        }}
-                        accessibilityRole="button"
-                    />
+                    {Platform.OS === 'web' ? (
+                        <Pressable
+                            testID="sidebar-collapse-button"
+                            onPress={() => setSidebarCollapsed(true)}
+                            style={{
+                                position: 'absolute',
+                                top: 12,
+                                right: -24,
+                                width: 28,
+                                height: 28,
+                                borderRadius: 8,
+                                opacity: 0.7,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                            }}
+                            accessibilityRole="button"
+                        >
+                            <SidebarExpandIcon />
+                        </Pressable>
+                    ) : null}
                 </View>
             );
         },

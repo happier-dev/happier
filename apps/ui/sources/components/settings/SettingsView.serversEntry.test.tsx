@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerPushSpy = vi.fn();
+const linkingCanOpenURLSpy = vi.fn(async () => false);
+const linkingOpenURLSpy = vi.fn(async () => {});
 
 vi.mock('react-native', () => ({
     View: 'View',
@@ -13,7 +15,7 @@ vi.mock('react-native', () => ({
         OS: 'web',
         select: (options: any) => (options && 'default' in options ? options.default : undefined),
     },
-    Linking: { canOpenURL: async () => false, openURL: async () => {} },
+    Linking: { canOpenURL: linkingCanOpenURLSpy, openURL: linkingOpenURLSpy },
     Text: 'Text',
     ActivityIndicator: 'ActivityIndicator',
 }));
@@ -194,6 +196,8 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
 
 afterEach(() => {
     routerPushSpy.mockClear();
+    linkingCanOpenURLSpy.mockClear();
+    linkingOpenURLSpy.mockClear();
 });
 
 describe('SettingsView', () => {
@@ -214,5 +218,85 @@ describe('SettingsView', () => {
         });
 
         expect(routerPushSpy).toHaveBeenCalledWith('/server');
+    });
+
+    it('routes to the in-app bug report composer by default when Report issue is pressed', async () => {
+        const { SettingsView } = await import('./SettingsView');
+
+        let tree!: ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(SettingsView));
+        });
+
+        const items = tree.root.findAllByType('Item' as any);
+        const reportIssueItem = items.find((item: any) => item?.props?.title === 'settings.reportIssue');
+        expect(reportIssueItem).toBeTruthy();
+
+        await act(async () => {
+            await reportIssueItem!.props.onPress();
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/report-issue');
+        expect(linkingOpenURLSpy).not.toHaveBeenCalled();
+    });
+
+    it('opens EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL when set and supported instead of routing to the composer', async () => {
+        const previousUrl = process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL;
+        process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL = 'https://example.test/report-issue';
+        linkingCanOpenURLSpy.mockResolvedValue(true);
+
+        try {
+            const { SettingsView } = await import('./SettingsView');
+
+            let tree!: ReactTestRenderer;
+            await act(async () => {
+                tree = renderer.create(React.createElement(SettingsView));
+            });
+
+            const items = tree.root.findAllByType('Item' as any);
+            const reportIssueItem = items.find((item: any) => item?.props?.title === 'settings.reportIssue');
+            expect(reportIssueItem).toBeTruthy();
+
+            await act(async () => {
+                await reportIssueItem!.props.onPress();
+            });
+
+            expect(linkingCanOpenURLSpy).toHaveBeenCalledWith('https://example.test/report-issue');
+            expect(linkingOpenURLSpy).toHaveBeenCalledWith('https://example.test/report-issue');
+            expect(routerPushSpy).not.toHaveBeenCalledWith('/(app)/settings/report-issue');
+        } finally {
+            if (previousUrl === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL;
+            else process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL = previousUrl;
+        }
+    });
+
+    it('falls back to routing when EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL is set but cannot be opened', async () => {
+        const previousUrl = process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL;
+        process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL = 'https://example.test/report-issue';
+        linkingCanOpenURLSpy.mockResolvedValue(false);
+
+        try {
+            const { SettingsView } = await import('./SettingsView');
+
+            let tree!: ReactTestRenderer;
+            await act(async () => {
+                tree = renderer.create(React.createElement(SettingsView));
+            });
+
+            const items = tree.root.findAllByType('Item' as any);
+            const reportIssueItem = items.find((item: any) => item?.props?.title === 'settings.reportIssue');
+            expect(reportIssueItem).toBeTruthy();
+
+            await act(async () => {
+                await reportIssueItem!.props.onPress();
+            });
+
+            expect(linkingCanOpenURLSpy).toHaveBeenCalledWith('https://example.test/report-issue');
+            expect(linkingOpenURLSpy).not.toHaveBeenCalled();
+            expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/report-issue');
+        } finally {
+            if (previousUrl === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL;
+            else process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL = previousUrl;
+        }
     });
 });

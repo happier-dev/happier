@@ -54,6 +54,7 @@ model Account {
     Machine                Machine[]
     UploadedFile           UploadedFile[]
     ServiceAccountToken    ServiceAccountToken[]
+    ServiceAccountQuotaSnapshot ServiceAccountQuotaSnapshot[]
     RelationshipsFrom      UserRelationship[]         @relation("RelationshipsFrom")
     RelationshipsTo        UserRelationship[]         @relation("RelationshipsTo")
     Artifact               Artifact[]
@@ -505,13 +506,35 @@ model ServiceAccountToken {
     accountId  String
     account    Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
     vendor     String
+    profileId  String    @default("default")
     token      Bytes // Encrypted token
     metadata   Json? // Optional vendor metadata
+    expiresAt  DateTime?
+    refreshLeaseOwnerMachineId String?
+    refreshLeaseExpiresAt      DateTime?
     lastUsedAt DateTime?
     createdAt  DateTime  @default(now())
     updatedAt  DateTime  @updatedAt
 
-    @@unique([accountId, vendor])
+    @@unique([accountId, vendor, profileId])
+    @@index([accountId])
+}
+
+model ServiceAccountQuotaSnapshot {
+    id         String    @id @default(cuid())
+    accountId  String
+    account    Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    vendor     String
+    profileId  String    @default("default")
+    snapshot   Bytes
+    status     String?
+    fetchedAt  DateTime?
+    staleAfterMs Int?
+    metadata   Json?
+    createdAt  DateTime  @default(now())
+    updatedAt  DateTime  @updatedAt
+
+    @@unique([accountId, vendor, profileId])
     @@index([accountId])
 }
 

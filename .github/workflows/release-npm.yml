@@ -43,6 +43,11 @@ on:
         required: true
         default: false
         type: boolean
+      release_message:
+        description: "Release message — Optional note to include at the top of GitHub rolling release notes"
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       channel:
@@ -79,6 +84,11 @@ on:
         required: false
         default: false
         type: boolean
+      release_message:
+        description: "Release message — Optional note to include at the top of GitHub rolling release notes"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
@@ -108,6 +118,8 @@ jobs:
       id-token: write
     runs-on: ubuntu-22.04
     environment: release-shared
+    env:
+      HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.channel == 'production' && 'production' || 'preview' }}
     outputs:
       sha: ${{ steps.meta.outputs.sha }}
       source_ref: ${{ steps.meta.outputs.source_ref }}
@@ -635,7 +647,7 @@ jobs:
     secrets: inherit
     with:
       tag: cli-v${{ needs.release.outputs.cli_version }}
-      title: CLI v${{ needs.release.outputs.cli_version }}
+      title: Happier CLI v${{ needs.release.outputs.cli_version }}
       target_sha: ${{ needs.release.outputs.sha }}
       prerelease: false
       rolling_tag: false
@@ -644,6 +656,7 @@ jobs:
       assets_artifact: npm-pack-cli
       assets_artifact_path: dist/release-assets/cli
       assets_dir: dist/release-assets/cli
+      release_message: ${{ inputs.release_message }}
 
   mirror-cli-stable-rolling:
     if: ${{ needs.release.outputs.channel == 'production' && needs.release.outputs.cli_version != 'SKIP' }}
@@ -652,16 +665,18 @@ jobs:
     secrets: inherit
     with:
       tag: cli-stable
-      title: CLI Stable
+      title: Happier CLI Stable
       target_sha: ${{ needs.release.outputs.sha }}
       prerelease: false
       rolling_tag: true
       generate_notes: false
       notes: "Rolling stable build (npm dist-tag: latest)."
       clobber: true
+      prune_assets: true
       assets_artifact: npm-pack-cli
       assets_artifact_path: dist/release-assets/cli
       assets_dir: dist/release-assets/cli
+      release_message: ${{ inputs.release_message }}
 
   mirror-cli-preview:
     if: ${{ needs.release.outputs.channel == 'preview' && needs.release.outputs.cli_version != 'SKIP' }}
@@ -670,16 +685,18 @@ jobs:
     secrets: inherit
     with:
       tag: cli-preview
-      title: CLI Preview
+      title: Happier CLI Preview
       target_sha: ${{ needs.release.outputs.sha }}
       prerelease: true
       rolling_tag: true
       generate_notes: false
       notes: "Rolling preview build (npm dist-tag: next)."
       clobber: true
+      prune_assets: true
       assets_artifact: npm-pack-cli
       assets_artifact_path: dist/release-assets/cli
       assets_dir: dist/release-assets/cli
+      release_message: ${{ inputs.release_message }}
 
   mirror-stack-stable:
     if: ${{ needs.release.outputs.channel == 'production' && needs.release.outputs.stack_version != 'SKIP' }}
@@ -688,7 +705,7 @@ jobs:
     secrets: inherit
     with:
       tag: stack-v${{ needs.release.outputs.stack_version }}
-      title: Stack v${{ needs.release.outputs.stack_version }}
+      title: Happier Stack v${{ needs.release.outputs.stack_version }}
       target_sha: ${{ needs.release.outputs.sha }}
       prerelease: false
       rolling_tag: false
@@ -697,6 +714,7 @@ jobs:
       assets_artifact: npm-pack-stack
       assets_artifact_path: dist/release-assets/stack
       assets_dir: dist/release-assets/stack
+      release_message: ${{ inputs.release_message }}
 
   mirror-stack-stable-rolling:
     if: ${{ needs.release.outputs.channel == 'production' && needs.release.outputs.stack_version != 'SKIP' }}
@@ -705,16 +723,18 @@ jobs:
     secrets: inherit
     with:
       tag: stack-stable
-      title: Stack Stable
+      title: Happier Stack Stable
       target_sha: ${{ needs.release.outputs.sha }}
       prerelease: false
       rolling_tag: true
       generate_notes: false
       notes: "Rolling stable build (npm dist-tag: latest)."
       clobber: true
+      prune_assets: true
       assets_artifact: npm-pack-stack
       assets_artifact_path: dist/release-assets/stack
       assets_dir: dist/release-assets/stack
+      release_message: ${{ inputs.release_message }}
 
   mirror-stack-preview:
     if: ${{ needs.release.outputs.channel == 'preview' && needs.release.outputs.stack_version != 'SKIP' }}
@@ -723,13 +743,15 @@ jobs:
     secrets: inherit
     with:
       tag: stack-preview
-      title: Stack Preview
+      title: Happier Stack Preview
       target_sha: ${{ needs.release.outputs.sha }}
       prerelease: true
       rolling_tag: true
       generate_notes: false
       notes: "Rolling preview build (npm dist-tag: next)."
       clobber: true
+      prune_assets: true
       assets_artifact: npm-pack-stack
       assets_artifact_path: dist/release-assets/stack
       assets_dir: dist/release-assets/stack
+      release_message: ${{ inputs.release_message }}

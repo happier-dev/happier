@@ -21,7 +21,7 @@ export type AcpReplayHistorySessionClient = AcpReplaySidechainSessionClient & Re
     text: string,
     opts: { localId: string; meta?: Record<string, unknown> },
   ) => Promise<void>;
-  updateMetadata: (handler: (metadata: Metadata) => Metadata) => void;
+  updateMetadata: (handler: (metadata: Metadata) => Metadata) => Promise<void> | void;
   fetchRecentTranscriptTextItemsForAcpImport: (
     opts?: { take?: number },
   ) => Promise<Array<{ role: 'user' | 'agent'; text: string }>>;

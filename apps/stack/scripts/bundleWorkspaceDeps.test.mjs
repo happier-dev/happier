@@ -2,9 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { bundleWorkspaceDeps } from './bundleWorkspaceDeps.mjs';
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 function writeJson(path, value) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
@@ -14,10 +17,26 @@ function createBundleFixture(prefix = 'happy-stack-bundle-workspace-deps-') {
   const repoRoot = mkdtempSync(join(tmpdir(), prefix));
   const stackDir = resolve(repoRoot, 'apps', 'stack');
   const cliCommonDir = resolve(repoRoot, 'packages', 'cli-common');
+  const releaseRuntimeDir = resolve(repoRoot, 'packages', 'release-runtime');
   writeJson(resolve(repoRoot, 'package.json'), { name: 'repo', private: true });
   writeFileSync(resolve(repoRoot, 'yarn.lock'), '# lock\n', 'utf8');
   mkdirSync(resolve(cliCommonDir, 'dist'), { recursive: true });
+  mkdirSync(resolve(releaseRuntimeDir, 'dist'), { recursive: true });
   mkdirSync(stackDir, { recursive: true });
+
+  // bundleWorkspaceDeps also bundles @happier-dev/release-runtime. Keep a minimal, build-like
+  // workspace package present so these tests focus on bundling behavior instead of fixture setup.
+  writeJson(resolve(releaseRuntimeDir, 'package.json'), {
+    name: '@happier-dev/release-runtime',
+    version: '0.0.0',
+    type: 'module',
+    main: './dist/index.js',
+    types: './dist/index.d.ts',
+    exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
+    scripts: { postinstall: 'echo should-not-run' },
+  });
+  writeFileSync(resolve(releaseRuntimeDir, 'dist', 'index.js'), 'export const release = 1;\n', 'utf8');
+
   return { repoRoot, stackDir, cliCommonDir };
 }
 
@@ -74,4 +93,26 @@ test('bundleWorkspaceDeps throws when cli-common package.json is malformed', () 
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }
+});
+
+test('declares external runtime dependencies required by bundled workspace packages', () => {
+  const stackPackageJson = JSON.parse(readFileSync(resolve(repoRoot, 'apps', 'stack', 'package.json'), 'utf8'));
+  const bundledWorkspacePackagePaths = [
+    resolve(repoRoot, 'packages', 'cli-common', 'package.json'),
+    resolve(repoRoot, 'packages', 'release-runtime', 'package.json'),
+  ];
+
+  const stackDependencyNames = new Set(Object.keys(stackPackageJson.dependencies ?? {}));
+  const requiredExternalDependencies = new Set();
+  for (const packageJsonPath of bundledWorkspacePackagePaths) {
+    const bundledPackageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+    for (const dependencyName of Object.keys(bundledPackageJson.dependencies ?? {})) {
+      if (!dependencyName.startsWith('@happier-dev/')) {
+        requiredExternalDependencies.add(dependencyName);
+      }
+    }
+  }
+
+  const missingDependencies = [...requiredExternalDependencies].filter((name) => !stackDependencyNames.has(name));
+  assert.deepEqual(missingDependencies, []);
 });

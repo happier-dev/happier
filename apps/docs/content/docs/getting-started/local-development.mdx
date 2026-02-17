@@ -3,9 +3,48 @@ title: Local development
 description: Run server + UI locally while iterating.
 ---
 
-## Server
+## Preferred: `hstack` (recommended)
 
-From the repo root:
+If you’re developing Happier in this monorepo, the supported workflow is to run everything via `hstack`
+so ports, auth, DB, caches, and runtime state are isolated per stack.
+
+Start with:
+
+- `/docs/hstack/setup`
+- `/docs/hstack/development`
+- `/docs/hstack/quickstarts`
+
+### One-time setup
+
+```bash
+hstack setup --profile=dev
+```
+
+### Run a dev stack (pinned to the canonical `dev/` checkout)
+
+```bash
+hstack stack new dev
+hstack stack wt dev -- use dev
+```
+
+Interactive development (preferred):
+
+```bash
+hstack tui stack dev dev
+# mobile dev-client + QR:
+hstack tui stack dev dev --mobile
+```
+
+If you can’t use the TUI (non-interactive terminals / CI), run:
+
+```bash
+hstack stack dev dev
+```
+
+## Legacy/manual (not stack-scoped)
+
+If you’re not using `hstack`, these commands can be useful, but they are **not stack-scoped**
+(they share ports/auth/caches with your machine and can be harder to run in parallel).
 
 ```bash
 yarn install
@@ -36,4 +75,3 @@ yarn --cwd apps/ui web
 ```bash
 yarn --cwd apps/website dev
 ```
-

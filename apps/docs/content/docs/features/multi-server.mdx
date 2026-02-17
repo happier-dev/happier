@@ -70,11 +70,12 @@ happier --server personal daemon service install
 happier --server company daemon service install
 ```
 
-Check global status:
+Check status:
 
 ```bash
-happier daemon service list
 happier daemon status --all
+happier --server personal daemon service status
+happier --server company daemon service status
 ```
 
 ## Recommended flow

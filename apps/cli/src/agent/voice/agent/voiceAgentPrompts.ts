@@ -1,6 +1,6 @@
 import { buildLocalVoiceAgentSystemPrompt } from '@happier-dev/agents';
 
-import { readDisabledActionIdsFromEnv } from '@/settings/actionsSettings';
+import { listDisabledActionIdsForSurfaceFromEnv } from '@/settings/actionsSettings';
 
 type VoiceAgentTurn = { role: 'user' | 'assistant'; text: string };
 
@@ -14,7 +14,7 @@ export function buildVoiceAgentBootstrapPrompt(params: Readonly<{
   lines.push(
     buildLocalVoiceAgentSystemPrompt({
       verbosity: params.verbosity,
-      disabledActionIds: readDisabledActionIdsFromEnv(),
+      disabledActionIds: listDisabledActionIdsForSurfaceFromEnv('voice_tool'),
     }),
   );
   lines.push('');
@@ -59,7 +59,7 @@ export function buildVoiceAgentSeededUserTurnPrompt(params: Readonly<{
   lines.push(
     buildLocalVoiceAgentSystemPrompt({
       verbosity: params.verbosity,
-      disabledActionIds: readDisabledActionIdsFromEnv(),
+      disabledActionIds: listDisabledActionIdsForSurfaceFromEnv('voice_tool'),
     }),
   );
   lines.push('');

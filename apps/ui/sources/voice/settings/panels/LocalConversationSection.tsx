@@ -13,6 +13,8 @@ import type { SecretString } from '@/sync/encryption/secretSettings';
 import { t } from '@/text';
 import { LocalVoiceSttGroup } from '@/voice/settings/panels/localStt/LocalVoiceSttGroup';
 import { LocalVoiceTtsGroup } from '@/voice/settings/panels/localTts/LocalVoiceTtsGroup';
+import { resetGlobalVoiceAgentPersistence } from '@/voice/agent/resetGlobalVoiceAgentPersistence';
+import { canAgentResume } from '@/agents/runtime/resumeCapabilities';
 
 function normalizeSecretStringPromptInput(value: string | null): SecretString | null {
   if (value === null) return null;
@@ -32,15 +34,27 @@ export function LocalConversationSection(props: {
     | 'mediatorBackend'
     | 'mediatorAgentSource'
     | 'mediatorPermissionPolicy'
+    | 'mediatorTranscriptPersistence'
+    | 'mediatorResumabilityMode'
+    | 'mediatorReplayStrategy'
+    | 'mediatorWelcomeMode'
     | 'mediatorChatModelSource'
     | 'mediatorCommitModelSource'
     | 'mediatorVerbosity'
   >(null);
 
-  const enabled = props.voice.providerId === 'local_conversation';
-  if (!enabled) return null;
-
   const cfg = props.voice.adapters.local_conversation;
+  const enabled = props.voice.providerId === 'local_conversation';
+
+  const providerResumeSupportedByAgent = React.useMemo(() => {
+    if (!enabled) return true;
+    if (cfg.agent.agentSource !== 'agent') return true;
+    const agentId = String(cfg.agent.agentId ?? '').trim();
+    if (!agentId) return false;
+    return canAgentResume(agentId);
+  }, [cfg.agent.agentId, cfg.agent.agentSource, enabled]);
+
+  if (!enabled) return null;
 
   const setCfg = (patch: Partial<typeof cfg>) => {
     props.setVoice({
@@ -186,6 +200,255 @@ export function LocalConversationSection(props: {
       {cfg.conversationMode === 'agent' ? (
         <>
           <ItemGroup title="Voice agent">
+            <DropdownMenu
+              open={openMenu === 'mediatorTranscriptPersistence'}
+              onOpenChange={(next) => setOpenMenu(next ? 'mediatorTranscriptPersistence' : null)}
+              variant="selectable"
+              search={false}
+              selectedId={cfg.agent.transcript?.persistenceMode ?? 'ephemeral'}
+              showCategoryTitles={false}
+              matchTriggerWidth={true}
+              connectToTrigger={true}
+              rowKind="item"
+              popoverBoundaryRef={props.popoverBoundaryRef}
+              trigger={({ open, toggle }) => (
+                <Item
+                  title="Persistence"
+                  subtitle="Keep voice agent context across app reloads."
+                  detail={(cfg.agent.transcript?.persistenceMode ?? 'ephemeral') === 'persistent' ? 'Persistent' : 'Ephemeral'}
+                  rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
+                  onPress={toggle}
+                  showChevron={false}
+                  selected={false}
+                />
+              )}
+              items={[
+                {
+                  id: 'ephemeral',
+                  title: 'Ephemeral',
+                  subtitle: 'Start fresh each time.',
+                  icon: <Ionicons name="flash-outline" size={22} color={theme.colors.textSecondary} />,
+                },
+                {
+                  id: 'persistent',
+                  title: 'Persistent',
+                  subtitle: 'Resume using replay or provider resume (when supported).',
+                  icon: <Ionicons name="infinite-outline" size={22} color={theme.colors.textSecondary} />,
+                },
+              ]}
+              onSelect={(id) => {
+                setAgent({ transcript: { ...(cfg.agent.transcript ?? {}), persistenceMode: id as any } });
+                setOpenMenu(null);
+              }}
+            />
+
+            {(cfg.agent.transcript?.persistenceMode ?? 'ephemeral') === 'persistent' ? (
+              <>
+                <DropdownMenu
+                  open={openMenu === 'mediatorResumabilityMode'}
+                  onOpenChange={(next) => setOpenMenu(next ? 'mediatorResumabilityMode' : null)}
+                  variant="selectable"
+                  search={false}
+                  selectedId={cfg.agent.resumabilityMode ?? 'replay'}
+                  showCategoryTitles={false}
+                  matchTriggerWidth={true}
+                  connectToTrigger={true}
+                  rowKind="item"
+                  popoverBoundaryRef={props.popoverBoundaryRef}
+                  trigger={({ open, toggle }) => (
+                    <Item
+                      title="Resumability mode"
+                      subtitle="How to restore context when the run is inactive."
+                      detail={(cfg.agent.resumabilityMode ?? 'replay') === 'provider_resume' ? 'Provider resume' : 'Replay'}
+                      rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
+                      onPress={toggle}
+                      showChevron={false}
+                      selected={false}
+                    />
+                  )}
+                  items={[
+                    {
+                      id: 'replay',
+                      title: 'Replay',
+                      subtitle: 'Seed a fresh run with a replay prompt from the transcript.',
+                      icon: <Ionicons name="time-outline" size={22} color={theme.colors.textSecondary} />,
+                    },
+                    {
+                      id: 'provider_resume',
+                      title: 'Provider resume',
+                      subtitle: cfg.agent.backend !== 'daemon'
+                        ? 'Requires the daemon backend.'
+                        : cfg.agent.agentSource === 'agent' && !providerResumeSupportedByAgent
+                          ? 'Selected agent does not support provider resume.'
+                          : 'Resume the provider session when supported; fall back to replay if enabled.',
+                      disabled: cfg.agent.backend !== 'daemon' || (cfg.agent.agentSource === 'agent' && !providerResumeSupportedByAgent),
+                      icon: <Ionicons name="refresh-outline" size={22} color={theme.colors.textSecondary} />,
+                    },
+                  ]}
+                  onSelect={(id) => {
+                    setAgent({ resumabilityMode: id as any });
+                    setOpenMenu(null);
+                  }}
+                />
+
+                {(cfg.agent.resumabilityMode ?? 'replay') === 'provider_resume' ? (
+                  <Item
+                    title="Fallback to replay"
+                    subtitle="If provider resume is unavailable, seed a fresh run using transcript replay."
+                    rightElement={
+                      <Switch
+                        value={cfg.agent.providerResume?.fallbackToReplay !== false}
+                        onValueChange={(v) => setAgent({ providerResume: { ...(cfg.agent.providerResume ?? {}), fallbackToReplay: v } })}
+                      />
+                    }
+                  />
+                ) : null}
+
+                <DropdownMenu
+                  open={openMenu === 'mediatorReplayStrategy'}
+                  onOpenChange={(next) => setOpenMenu(next ? 'mediatorReplayStrategy' : null)}
+                  variant="selectable"
+                  search={false}
+                  selectedId={cfg.agent.replay?.strategy ?? 'recent_messages'}
+                  showCategoryTitles={false}
+                  matchTriggerWidth={true}
+                  connectToTrigger={true}
+                  rowKind="item"
+                  popoverBoundaryRef={props.popoverBoundaryRef}
+                  trigger={({ open, toggle }) => (
+                    <Item
+                      title="Replay strategy"
+                      subtitle="How to build the replay seed prompt."
+                      detail={(cfg.agent.replay?.strategy ?? 'recent_messages') === 'summary_plus_recent' ? 'Summary + recent' : 'Recent messages'}
+                      rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
+                      onPress={toggle}
+                      showChevron={false}
+                      selected={false}
+                    />
+                  )}
+                  items={[
+                    {
+                      id: 'recent_messages',
+                      title: 'Recent messages',
+                      subtitle: 'Replay the last N transcript messages.',
+                      icon: <Ionicons name="chatbubbles-outline" size={22} color={theme.colors.textSecondary} />,
+                    },
+                    {
+                      id: 'summary_plus_recent',
+                      title: 'Summary + recent',
+                      subtitle: 'Include a summary plus the last N transcript messages (when supported).',
+                      icon: <Ionicons name="document-text-outline" size={22} color={theme.colors.textSecondary} />,
+                    },
+                  ]}
+                  onSelect={(id) => {
+                    setAgent({ replay: { ...(cfg.agent.replay ?? {}), strategy: id as any } });
+                    setOpenMenu(null);
+                  }}
+                />
+
+                <Item
+                  title="Replay recent messages"
+                  detail={String(cfg.agent.replay?.recentMessagesCount ?? 16)}
+                  onPress={() => {
+                    void (async () => {
+                      const raw = await Modal.prompt('Replay recent messages', 'How many transcript messages to include in the replay seed (1–100).', {
+                        inputType: 'numeric',
+                        placeholder: String(cfg.agent.replay?.recentMessagesCount ?? 16),
+                      });
+                      if (raw === null) return;
+                      const next = Number(String(raw).trim());
+                      if (!Number.isFinite(next)) return;
+                      setAgent({ replay: { ...(cfg.agent.replay ?? {}), recentMessagesCount: Math.max(1, Math.min(100, Math.floor(next))) } });
+                    })();
+                  }}
+                />
+              </>
+            ) : null}
+
+            <Item
+              title="Prewarm on connect"
+              subtitle="Start the agent run as soon as voice starts (reduces first-turn latency)."
+              rightElement={
+                <Switch
+                  value={cfg.agent.prewarmOnConnect === true}
+                  onValueChange={(v) => setAgent({ prewarmOnConnect: v })}
+                />
+              }
+            />
+
+            <DropdownMenu
+              open={openMenu === 'mediatorWelcomeMode'}
+              onOpenChange={(next) => setOpenMenu(next ? 'mediatorWelcomeMode' : null)}
+              variant="selectable"
+              search={false}
+              selectedId={cfg.agent.welcome?.mode ?? 'immediate'}
+              showCategoryTitles={false}
+              matchTriggerWidth={true}
+              connectToTrigger={true}
+              rowKind="item"
+              popoverBoundaryRef={props.popoverBoundaryRef}
+              trigger={({ open, toggle }) => (
+                <Item
+                  title="Welcome message"
+                  subtitle="Optional greeting spoken by the agent."
+                  detail={cfg.agent.welcome?.enabled ? ((cfg.agent.welcome?.mode ?? 'immediate') === 'on_first_turn' ? 'On first turn' : 'Immediate') : 'Off'}
+                  rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
+                  onPress={toggle}
+                  showChevron={false}
+                  selected={false}
+                />
+              )}
+              items={[
+                {
+                  id: 'off',
+                  title: 'Off',
+                  subtitle: 'No greeting.',
+                  icon: <Ionicons name="close-outline" size={22} color={theme.colors.textSecondary} />,
+                },
+                {
+                  id: 'immediate',
+                  title: 'Immediate',
+                  subtitle: 'Greet as soon as the session connects.',
+                  icon: <Ionicons name="happy-outline" size={22} color={theme.colors.textSecondary} />,
+                },
+                {
+                  id: 'on_first_turn',
+                  title: 'On first turn',
+                  subtitle: 'Greet after the first user message.',
+                  icon: <Ionicons name="chatbox-outline" size={22} color={theme.colors.textSecondary} />,
+                },
+              ]}
+              onSelect={(id) => {
+                if (id === 'off') {
+                  setAgent({ welcome: { ...(cfg.agent.welcome ?? {}), enabled: false } });
+                } else {
+                  setAgent({ welcome: { ...(cfg.agent.welcome ?? {}), enabled: true, mode: id as any } });
+                }
+                setOpenMenu(null);
+              }}
+            />
+
+            {(cfg.agent.transcript?.persistenceMode ?? 'ephemeral') === 'persistent' ? (
+              <Item
+                title="Reset voice agent"
+                subtitle="Clear saved voice agent state and start fresh."
+                destructive
+                onPress={() => {
+                  void (async () => {
+                    const confirmed = await Modal.confirm(
+                      'Reset voice agent',
+                      'This clears the saved voice agent run and transcript epoch so the next session starts fresh.',
+                      { confirmText: 'Reset' },
+                    );
+                    if (!confirmed) return;
+                    await resetGlobalVoiceAgentPersistence();
+                    const epochRaw = Number(cfg.agent.transcript?.epoch ?? 0);
+                    const epoch = Number.isFinite(epochRaw) && epochRaw >= 0 ? Math.floor(epochRaw) : 0;
+                    setAgent({ transcript: { ...(cfg.agent.transcript ?? {}), epoch: epoch + 1 } });
+                  })();
+                }}
+              />
+            ) : null}
         <DropdownMenu
           open={openMenu === 'mediatorBackend'}
           onOpenChange={(next) => setOpenMenu(next ? 'mediatorBackend' : null)}
@@ -455,6 +718,23 @@ export function LocalConversationSection(props: {
             }}
           />
         ) : null}
+        {cfg.agent.backend === 'daemon' ? (
+          <Item
+            title="Commit isolation"
+            subtitle="Use a separate vendor session for commit generation (advanced)."
+            rightElement={
+              <Switch
+                value={cfg.agent.commitIsolation === true}
+                onValueChange={(v) => setAgent({ commitIsolation: v })}
+              />
+            }
+            onPress={() => {
+              setAgent({ commitIsolation: cfg.agent.commitIsolation !== true });
+            }}
+            showChevron={false}
+            selected={false}
+          />
+        ) : null}
         <Item
           title={t('settingsVoice.local.mediatorIdleTtl')}
           detail={String(cfg.agent.idleTtlSeconds)}
@@ -467,7 +747,7 @@ export function LocalConversationSection(props: {
               if (raw === null) return;
               const next = Number(String(raw).trim());
               if (!Number.isFinite(next)) return;
-              setAgent({ idleTtlSeconds: Math.max(60, Math.min(3600, Math.floor(next))) });
+              setAgent({ idleTtlSeconds: Math.max(60, Math.min(21600, Math.floor(next))) });
             })();
           }}
         />

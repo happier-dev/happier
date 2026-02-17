@@ -41,7 +41,7 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
       method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START,
       payload: {
         runId: typeof params.existingRunId === 'string' ? params.existingRunId : null,
-        resume: true,
+        resume: params.resumeWhenInactive !== false,
         start: {
           intent: 'voice_agent',
           backendId,
@@ -53,9 +53,11 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
           // passthrough configuration consumed by the voice_agent intent runtime
           chatModelId: params.chatModelId,
           commitModelId: params.commitModelId,
+          ...(params.commitIsolation === true ? { commitIsolation: true } : {}),
           idleTtlSeconds: params.idleTtlSeconds,
           initialContext: params.initialContext,
           verbosity: params.verbosity,
+          bootstrapMode: params.bootstrapMode,
           ...(params.transcript ? { transcript: params.transcript } : {}),
         },
       },
@@ -107,11 +109,32 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
     }
   }
 
-  async startTurnStream(params: Readonly<{ sessionId: string; voiceAgentId: string; userText: string }>): Promise<{ streamId: string }> {
+  async welcome(params: Readonly<{ sessionId: string; voiceAgentId: string; welcomeText?: string }>): Promise<{ assistantText: string }> {
+    const res: any = await sessionRpcWithServerScope({
+      sessionId: params.sessionId,
+      method: SESSION_RPC_METHODS.EXECUTION_RUN_ACTION,
+      payload: {
+        runId: params.voiceAgentId,
+        actionId: 'voice_agent.welcome',
+        ...(typeof params.welcomeText === 'string' && params.welcomeText.trim().length > 0
+          ? { input: { welcomeText: params.welcomeText } }
+          : {}),
+      },
+    });
+    throwIfRpcError(res);
+    const parsed = ensureOk(res, ExecutionRunActionResponseSchema) as any;
+    const assistantText = parsed?.result?.assistantText;
+    if (typeof assistantText !== 'string') {
+      throw new Error('invalid_rpc_response');
+    }
+    return { assistantText };
+  }
+
+  async startTurnStream(params: Readonly<{ sessionId: string; voiceAgentId: string; userText: string; resume?: boolean }>): Promise<{ streamId: string }> {
     const res: any = await sessionRpcWithServerScope({
       sessionId: params.sessionId,
       method: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START,
-      payload: { runId: params.voiceAgentId, message: params.userText },
+      payload: { runId: params.voiceAgentId, message: params.userText, ...(params.resume === true ? { resume: true } : {}) },
     });
     throwIfRpcError(res);
     return ensureOk(res, ExecutionRunTurnStreamStartResponseSchema);

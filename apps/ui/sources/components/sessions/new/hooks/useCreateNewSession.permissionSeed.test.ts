@@ -12,6 +12,7 @@ type SpawnPayloadCapture = {
     serverId?: string;
     permissionMode?: string;
     permissionModeUpdatedAt?: number;
+    connectedServices?: unknown;
 } | null;
 
 type AutomationCreateCapture = {
@@ -220,6 +221,77 @@ describe('useCreateNewSession permission seeding', () => {
         expect(typeof captured.value?.permissionModeUpdatedAt).toBe('number');
         expect(Number.isFinite(captured.value?.permissionModeUpdatedAt)).toBe(true);
         expect((captured.value?.permissionModeUpdatedAt ?? 0)).toBeGreaterThan(0);
+    });
+
+    it('passes connectedServices bindings into machineSpawnNewSession when provided', async () => {
+        const { useCreateNewSession, captured } = await setupUseCreateNewSessionHarness();
+
+        let handleCreateSession: null | (() => Promise<void>) = null;
+        const settings = { experiments: false } as unknown as Settings;
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                router: { push: vi.fn(), replace: vi.fn() },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                sessionType: 'simple',
+                settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'codex',
+                permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                sessionPrompt: '',
+                resumeSessionId: '',
+                agentNewSessionOptions: {
+                    connectedServices: {
+                        v: 1,
+                        bindingsByServiceId: {
+                            anthropic: { source: 'connected', profileId: 'work' },
+                        },
+                    },
+                },
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: null,
+                allowedTargetServerIds: ['server-a'],
+            });
+
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        act(() => {
+            renderer.create(React.createElement(Test));
+        });
+
+        await act(async () => {
+            await handleCreateSession?.();
+        });
+
+        expect(captured.value).not.toBeNull();
+        expect(captured.value?.connectedServices).toEqual({
+            v: 1,
+            bindingsByServiceId: {
+                anthropic: { source: 'connected', profileId: 'work' },
+            },
+        });
     });
 
     it('routes spawn to the target server without switching global active server', async () => {
@@ -500,5 +572,74 @@ describe('useCreateNewSession permission seeding', () => {
 
         expect(syncSendMessageSpy).toHaveBeenCalledTimes(1);
         expect(syncSendMessageSpy).toHaveBeenCalledWith('sess_new', 'PROMPT');
+    });
+
+    it('can skip sending the initial message when requested', async () => {
+        const {
+            useCreateNewSession,
+            syncSendMessageSpy,
+            machineSpawnNewSessionSpy,
+        } = await setupUseCreateNewSessionHarness();
+
+        machineSpawnNewSessionSpy.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_new' });
+
+        let handleCreateSession: null | ((opts?: any) => Promise<void>) = null;
+        const routerReplace = vi.fn();
+        const settings = {
+            experiments: false,
+            sessionReplayEnabled: false,
+        } as unknown as Settings;
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                router: { push: vi.fn(), replace: routerReplace },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                sessionType: 'simple',
+                settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'codex',
+                permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                sessionPrompt: 'PROMPT',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: null,
+                allowedTargetServerIds: ['server-a'],
+            });
+
+            handleCreateSession = hook.handleCreateSession as any;
+            return React.createElement('View');
+        }
+
+        act(() => {
+            renderer.create(React.createElement(Test));
+        });
+
+        await act(async () => {
+            await handleCreateSession?.({ initialMessage: 'skip' });
+        });
+
+        expect(syncSendMessageSpy).toHaveBeenCalledTimes(0);
+        expect(routerReplace).toHaveBeenCalledWith('/session/sess_new', expect.anything());
     });
 });

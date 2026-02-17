@@ -2,6 +2,7 @@ import type { FeaturesResponse } from "./types";
 import { resolveAuthPolicyFromEnv } from "@/app/auth/authPolicy";
 import { resolveAuthProviderRegistryResult } from "@/app/auth/providers/registry";
 import { readAuthFeatureEnv } from "./catalog/readFeatureEnv";
+import { isServerFeatureEnabledByBuildPolicy } from "./catalog/serverFeatureBuildPolicy";
 
 function uniqueStrings(values: readonly string[]): string[] {
     const seen = new Set<string>();
@@ -67,14 +68,16 @@ export function resolveAuthFeature(env: NodeJS.ProcessEnv): Pick<FeaturesRespons
     }
 
     const autoRedirectEnabled = featureEnv.uiAutoRedirectEnabled;
-    const recoveryKeyReminderEnabled = featureEnv.uiRecoveryKeyReminderEnabled;
+    const recoveryKeyReminderBuildEnabled = isServerFeatureEnabledByBuildPolicy("auth.ui.recoveryKeyReminder", env);
+    const recoveryKeyReminderEnabled = recoveryKeyReminderBuildEnabled && featureEnv.uiRecoveryKeyReminderEnabled;
     const explicitAutoRedirectProviderId = featureEnv.uiAutoRedirectProviderId;
     const enabledExternalSignupProviders = signupMethods
         .filter((m) => m.enabled && m.id !== "anonymous")
         .map((m) => String(m.id).trim().toLowerCase())
         .filter(Boolean);
 
-    const providerResetFlag = featureEnv.recoveryProviderResetEnabled;
+    const providerResetBuildEnabled = isServerFeatureEnabledByBuildPolicy("auth.recovery.providerReset", env);
+    const providerResetFlag = providerResetBuildEnabled && featureEnv.recoveryProviderResetEnabled;
     const providerResetProviders = providerResetFlag
         ? enabledExternalSignupProviders.filter((id) => {
               const resolver = authProviderRegistry.find((p) => p.id === id);

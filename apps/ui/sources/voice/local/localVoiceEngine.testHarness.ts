@@ -3,6 +3,7 @@ import { afterEach, beforeEach, vi } from 'vitest';
 export const sendMessage = vi.fn();
 export const daemonVoiceAgentStart = vi.fn();
 export const daemonVoiceAgentSendTurn = vi.fn();
+export const daemonVoiceAgentWelcome = vi.fn();
 export const daemonVoiceAgentStartTurnStream = vi.fn();
 export const daemonVoiceAgentReadTurnStream = vi.fn();
 export const daemonVoiceAgentCancelTurnStream = vi.fn();
@@ -18,6 +19,8 @@ export const createdAudioPlayers: any[] = [];
 export const deleteAsync = vi.fn(async () => {});
 export const expoSpeechSpeak = vi.fn();
 export const expoSpeechStop = vi.fn();
+export const patchSessionMetadataWithRetry = vi.fn(async (_sessionId: string, _patch: (metadata: any) => any) => {});
+export const onSessionVisible = vi.fn((_sessionId: string) => {});
 export const speechRecStart = vi.fn();
 export const speechRecStop = vi.fn();
 export const speechRecAbort = vi.fn();
@@ -213,6 +216,23 @@ export async function flushMicrotasks(turns: number = 1) {
 vi.mock('@/sync/sync', () => ({
     sync: {
         sendMessage,
+        patchSessionMetadataWithRetry: async (sessionId: string, patch: (metadata: any) => any) => {
+            (patchSessionMetadataWithRetry as any)(sessionId, patch);
+            const { storage } = await import('@/sync/domains/state/storage');
+            const state: any = storage.getState();
+            const session: any = state.sessions?.[sessionId] ?? null;
+            const nextMeta = patch(session?.metadata ?? {});
+            if (typeof (storage as any).__setState === 'function') {
+                (storage as any).__setState({
+                    ...state,
+                    sessions: {
+                        ...state.sessions,
+                        [sessionId]: session ? { ...session, metadata: nextMeta } : { id: sessionId, metadata: nextMeta },
+                    },
+                });
+            }
+        },
+        onSessionVisible,
         encryption: {
             getSessionEncryption: vi.fn(() => ({})),
         },
@@ -253,6 +273,9 @@ vi.mock('@/voice/agent/daemonVoiceAgentClient', () => ({
         async sendTurn(args: any) {
             return (daemonVoiceAgentSendTurn as any)(args);
         }
+        async welcome(args: any) {
+            return (daemonVoiceAgentWelcome as any)(args);
+        }
         async startTurnStream(args: any) {
             return (daemonVoiceAgentStartTurnStream as any)(args);
         }
@@ -285,6 +308,8 @@ vi.mock('@/voice/modelPacks/manifests', () => ({
 }));
 
 vi.mock('react-native', () => ({
+    View: 'View',
+    Text: 'Text',
     Platform: {
         get OS() {
             return platformOs;

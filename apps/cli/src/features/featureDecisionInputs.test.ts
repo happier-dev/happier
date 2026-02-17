@@ -22,6 +22,14 @@ function createFeaturesResponse(): FeaturesResponse {
         enabled: true,
         existingSessionTarget: false,
       },
+      connectedServices: {
+        enabled: true,
+        webOauthProxyEnabled: true,
+        quotas: { enabled: false },
+      },
+      updates: {
+        ota: { enabled: true },
+      },
       sharing: {
         session: { enabled: true },
         public: { enabled: true },

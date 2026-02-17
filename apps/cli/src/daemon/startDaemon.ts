@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import os from 'os';
 import { randomBytes } from 'node:crypto';
+import { join } from 'node:path';
 
 import { ApiClient } from '@/api/api';
 import { ensureMachineRegistered } from '@/api/machine/ensureMachineRegistered';
@@ -62,6 +63,16 @@ import { waitForSessionWebhook } from './spawn/waitForSessionWebhook';
 import { resolveSpawnChildEnvironment } from './spawn/resolveSpawnChildEnvironment';
 import { createSpawnConcurrencyGate } from './spawn/createSpawnConcurrencyGate';
 import { startAutomationWorker, type AutomationWorkerHandle } from './automation/automationWorker';
+import { startMemoryWorker, type MemoryWorkerHandle } from './memory/memoryWorker';
+import { resolveConnectedServiceAuthForSpawn } from './connectedServices/resolveConnectedServiceAuthForSpawn';
+import { shouldResolveConnectedServiceAuthForSpawn } from './connectedServices/shouldResolveConnectedServiceAuthForSpawn';
+import { ConnectedServiceRefreshCoordinator } from './connectedServices/refresh/ConnectedServiceRefreshCoordinator';
+import { createConnectedServicesAuthUpdatedRestartHandler } from './connectedServices/refresh/createConnectedServicesAuthUpdatedRestartHandler';
+import { ConnectedServiceQuotasCoordinator } from './connectedServices/quotas/ConnectedServiceQuotasCoordinator';
+import { createConnectedServiceQuotaFetchers } from './connectedServices/quotas/createConnectedServiceQuotaFetchers';
+import { resolveConnectedServiceQuotasDaemonOptions } from './connectedServices/quotas/resolveConnectedServiceQuotasDaemonOptions';
+import { resolveConnectedServicesQuotasEnabled } from './connectedServices/quotas/resolveConnectedServicesQuotasEnabled';
+import { startConnectedServiceQuotasLoop, type ConnectedServiceQuotasLoopHandle } from './connectedServices/quotas/startConnectedServiceQuotasLoop';
 import {
   HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY,
   normalizeDaemonInitialPrompt,
@@ -152,8 +163,14 @@ export async function startDaemon(): Promise<void> {
 	    const pidToTrackedSession = new Map<number, TrackedSession>();
 	    const spawnResourceCleanupByPid = new Map<number, () => void>();
 	    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
-	    let apiMachineForSessions: ApiMachineClient | null = null;
+      const connectedServicesMaterializationBaseDir = join(configuration.happyHomeDir, 'daemon', 'connected-services', 'materialized');
+      let connectedServiceRefreshCoordinator: ConnectedServiceRefreshCoordinator | null = null;
+      let connectedServiceRefreshInterval: NodeJS.Timeout | null = null;
+      let connectedServiceQuotasCoordinator: ConnectedServiceQuotasCoordinator | null = null;
+      let connectedServiceQuotasLoopHandle: ConnectedServiceQuotasLoopHandle | null = null;
+		    let apiMachineForSessions: ApiMachineClient | null = null;
       let automationWorker: AutomationWorkerHandle | null = null;
+      let memoryWorker: MemoryWorkerHandle | null = null;
 
 	    // Session spawning awaiter system
 	    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
@@ -330,6 +347,39 @@ export async function startDaemon(): Promise<void> {
           }
         };
 
+        let connectedServiceAuth: {
+          env: Record<string, string>;
+          cleanupOnFailure: (() => void) | null;
+          cleanupOnExit: (() => void) | null;
+        } | null = null;
+        const materializationKey =
+          normalizedExistingSessionId ||
+          (typeof sessionId === 'string' ? sessionId.trim() : '') ||
+          `spawn-${Date.now()}-${randomBytes(8).toString('hex')}`;
+
+        if (shouldResolveConnectedServiceAuthForSpawn(options)) {
+          try {
+            connectedServiceAuth = await resolveConnectedServiceAuthForSpawn({
+              agentId: catalogAgentId,
+              connectedServicesBindingsRaw: options.connectedServices,
+              materializationKey,
+              baseDir: connectedServicesMaterializationBaseDir,
+              credentials,
+              api,
+            });
+          } catch (error) {
+            logger.debug('[DAEMON RUN] Connected services resolution failed', error);
+            return {
+              type: 'error',
+              errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+              errorMessage:
+                error instanceof Error
+                  ? `Connected services resolution failed: ${error.message}`
+                  : 'Connected services resolution failed.',
+            };
+          }
+        }
+
         const spawnEnvironment = await resolveSpawnChildEnvironment({
           options,
           profileEnvironmentVariables: environmentVariablesValidation.env,
@@ -338,6 +388,7 @@ export async function startDaemon(): Promise<void> {
           logDebug: (message) => logger.debug(message),
           logInfo: (message) => logger.info(message),
           logWarn: (message) => logger.warn(message),
+          connectedServiceAuth,
         });
         spawnResourceCleanupOnFailure = spawnEnvironment.cleanupOnFailure;
         spawnResourceCleanupOnExit = spawnEnvironment.cleanupOnExit;
@@ -501,6 +552,18 @@ export async function startDaemon(): Promise<void> {
 
 	            // Add to tracking map so webhook can find it later
 	            pidToTrackedSession.set(tmuxPid, trackedSession);
+              if (connectedServiceAuth && options.connectedServices) {
+                connectedServiceRefreshCoordinator?.registerSpawnTarget({
+                  pid: tmuxPid,
+                  agentId: catalogAgentId,
+                  connectedServicesBindingsRaw: options.connectedServices,
+                  materializationKey,
+                });
+                connectedServiceQuotasCoordinator?.registerSpawnTarget({
+                  pid: tmuxPid,
+                  connectedServicesBindingsRaw: options.connectedServices,
+                });
+              }
 	            if (spawnResourceCleanupOnExit) {
 	              spawnResourceCleanupByPid.set(tmuxPid, spawnResourceCleanupOnExit);
 	              spawnResourceCleanupArmed = true;
@@ -628,6 +691,18 @@ export async function startDaemon(): Promise<void> {
 		              message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined,
 		            };
 		            pidToTrackedSession.set(pid, trackedSession);
+                if (connectedServiceAuth && options.connectedServices) {
+                  connectedServiceRefreshCoordinator?.registerSpawnTarget({
+                    pid,
+                    agentId: catalogAgentId,
+                    connectedServicesBindingsRaw: options.connectedServices,
+                    materializationKey,
+                  });
+                  connectedServiceQuotasCoordinator?.registerSpawnTarget({
+                    pid,
+                    connectedServicesBindingsRaw: options.connectedServices,
+                  });
+                }
 
 		            if (spawnResourceCleanupOnExit) {
 		              spawnResourceCleanupByPid.set(pid, spawnResourceCleanupOnExit);
@@ -729,6 +804,18 @@ export async function startDaemon(): Promise<void> {
 		          };
 
           pidToTrackedSession.set(happyProcess.pid, trackedSession);
+          if (connectedServiceAuth && options.connectedServices) {
+            connectedServiceRefreshCoordinator?.registerSpawnTarget({
+              pid: happyProcess.pid,
+              agentId: catalogAgentId,
+              connectedServicesBindingsRaw: options.connectedServices,
+              materializationKey,
+            });
+            connectedServiceQuotasCoordinator?.registerSpawnTarget({
+              pid: happyProcess.pid,
+              connectedServicesBindingsRaw: options.connectedServices,
+            });
+          }
           if (spawnResourceCleanupOnExit) {
             spawnResourceCleanupByPid.set(happyProcess.pid, spawnResourceCleanupOnExit);
             spawnResourceCleanupArmed = true;
@@ -865,7 +952,7 @@ export async function startDaemon(): Promise<void> {
 	          return false;
 	        };
         const sessionRespawnMaxRestarts = sessionRespawnMaxAttempts === 0 ? null : sessionRespawnMaxAttempts;
-        const sessionRunnerRespawnManager = createSessionRunnerRespawnManager({
+	        const sessionRunnerRespawnManager = createSessionRunnerRespawnManager({
           enabled: sessionRespawnEnabled,
           maxRestarts: sessionRespawnMaxRestarts,
           baseDelayMs: sessionRespawnBaseDelayMs,
@@ -878,14 +965,26 @@ export async function startDaemon(): Promise<void> {
           logWarn: (message) => logger.warn(message),
         });
 
+        const connectedServicesRestartRequestedPids = new Set<number>();
+
 		    // Handle child process exit
-		    const onChildExited = createOnChildExited({
+		    const onChildExitedBase = createOnChildExited({
 		      pidToTrackedSession,
 		      spawnResourceCleanupByPid,
 		      sessionAttachCleanupByPid,
 		      getApiMachineForSessions: () => apiMachineForSessions,
           onUnexpectedExit: sessionRunnerRespawnManager.handleUnexpectedExit,
+          isExitUnexpectedOverride: (tracked, _exit) => {
+            if (!connectedServicesRestartRequestedPids.has(tracked.pid)) return null;
+            connectedServicesRestartRequestedPids.delete(tracked.pid);
+            return true;
+          },
 		    });
+        const onChildExited = (pid: number, exit: { reason: string; code: number | null; signal: string | null }) => {
+          connectedServiceRefreshCoordinator?.unregisterPid(pid);
+          connectedServiceQuotasCoordinator?.unregisterPid(pid);
+          onChildExitedBase(pid, exit);
+        };
 
         const stopSession = async (sessionId: string): Promise<boolean> => {
           sessionRunnerRespawnManager.markStopRequested(sessionId, { reason: 'daemon_stop_session', requestedAtMs: Date.now() });
@@ -927,9 +1026,99 @@ export async function startDaemon(): Promise<void> {
 
 	    // Create API client
 	    const api = await ApiClient.create(credentials);
-	    let apiMachine: ApiMachineClient | null = null;
+      const connectedServicesRefreshEnabled = resolveBoolEnv(process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED, true);
+      if (connectedServicesRefreshEnabled) {
+        const refreshTickMs = resolvePositiveIntEnv(
+          process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_TICK_MS,
+          30_000,
+          { min: 5_000, max: 5 * 60_000 },
+        );
+        const refreshWindowMs = resolvePositiveIntEnv(
+          process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_WINDOW_MS,
+          10 * 60_000,
+          { min: 10_000, max: 60 * 60_000 },
+        );
+        const refreshLeaseMs = resolvePositiveIntEnv(
+          process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_LEASE_MS,
+          2 * 60_000,
+          { min: 10_000, max: 30 * 60_000 },
+        );
+
+        const restartPiOnAuthUpdate = resolveBoolEnv(
+          process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_RESTART_PI_ENABLED,
+          true,
+        );
+        const onAuthUpdated =
+          restartPiOnAuthUpdate
+            ? createConnectedServicesAuthUpdatedRestartHandler({
+              restartRequestedPids: connectedServicesRestartRequestedPids,
+              pidToTrackedSession,
+              restartAgentIds: new Set(['pi']),
+            })
+            : undefined;
+
+        connectedServiceRefreshCoordinator = new ConnectedServiceRefreshCoordinator({
+          api,
+          credentials,
+          machineIdProvider: () => machineId,
+          baseDir: connectedServicesMaterializationBaseDir,
+          refreshWindowMs,
+          refreshLeaseMs,
+          now: () => Date.now(),
+          ...(onAuthUpdated ? { onAuthUpdated } : {}),
+        });
+
+        connectedServiceRefreshInterval = setInterval(() => {
+          void connectedServiceRefreshCoordinator?.tickOnce().catch((error) => {
+            logger.debug('[DAEMON RUN] Connected services refresh tick failed (non-fatal)', error);
+          });
+        }, refreshTickMs) as unknown as NodeJS.Timeout;
+        (connectedServiceRefreshInterval as unknown as { unref?: () => void })?.unref?.();
+      }
+
+      const connectedServicesQuotasEnabled = resolveConnectedServicesQuotasEnabled(process.env);
+      if (connectedServicesQuotasEnabled) {
+	        const quotasTickMs = resolvePositiveIntEnv(
+	          process.env.HAPPIER_CONNECTED_SERVICES_QUOTAS_TICK_MS,
+	          60_000,
+	          { min: 5_000, max: 30 * 60_000 },
+	        );
+	        const {
+	          fetchTimeoutMs,
+	          discoveryEnabled,
+	          discoveryIntervalMs,
+	          failureBackoffMinMs,
+	          failureBackoffMaxMs,
+	          failureBackoffJitterPct,
+	        } = resolveConnectedServiceQuotasDaemonOptions(process.env);
+
+	        connectedServiceQuotasCoordinator = new ConnectedServiceQuotasCoordinator({
+	          api,
+	          credentials,
+	          quotaFetchers: createConnectedServiceQuotaFetchers(process.env),
+	          fetchTimeoutMs,
+	          discoveryEnabled,
+	          discoveryIntervalMs,
+	          failureBackoffMinMs,
+	          failureBackoffMaxMs,
+	          failureBackoffJitterPct,
+	          now: () => Date.now(),
+	          randomBytes: (length) => randomBytes(length),
+	        });
+
+        connectedServiceQuotasLoopHandle = startConnectedServiceQuotasLoop({
+          enabled: true,
+          tickMs: quotasTickMs,
+          coordinator: connectedServiceQuotasCoordinator,
+          onTickError: (error) => {
+            logger.debug('[DAEMON RUN] Connected services quotas tick failed (non-fatal)', error);
+          },
+        });
+      }
+
+		    let apiMachine: ApiMachineClient | null = null;
       let shutdownInitiated = false;
-	    const preferredHost = await getPreferredHostName();
+		    const preferredHost = await getPreferredHostName();
 	    const machineRegistrationTimeoutMs = resolvePositiveIntEnv(
         process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_TIMEOUT_MS,
         10_000,
@@ -962,18 +1151,31 @@ export async function startDaemon(): Promise<void> {
 	        apiMachineForSessions = connectedApiMachine;
 
 	        // Set RPC handlers
+	          automationWorker = startAutomationWorker({
+	            token: credentials.token,
+	            machineId,
+	            encryption: credentials.encryption,
+	            spawnSession,
+	          });
+
+	          memoryWorker = (() => {
+	            try {
+	              return startMemoryWorker({
+	                credentials,
+	                machineId,
+	              });
+	            } catch (error) {
+	              logger.warn('[DAEMON RUN] Failed to start memory worker (best-effort)', error);
+	              return null;
+	            }
+	          })();
+
 	        connectedApiMachine.setRPCHandlers({
 	          spawnSession,
 	          stopSession,
-	          requestShutdown: () => requestShutdown('happier-app')
+	          requestShutdown: () => requestShutdown('happier-app'),
+            ...(memoryWorker ? { memory: memoryWorker } : {}),
 	        });
-
-          automationWorker = startAutomationWorker({
-            token: credentials.token,
-            machineId,
-            encryption: credentials.encryption,
-            spawnSession,
-          });
 
 	        let didRefreshMachineMetadata = false;
 	        connectedApiMachine.connect({
@@ -1062,6 +1264,14 @@ export async function startDaemon(): Promise<void> {
 	        clearInterval(restartOnStaleVersionAndHeartbeat);
         logger.debug('[DAEMON RUN] Health check interval cleared');
       }
+      if (connectedServiceRefreshInterval) {
+        clearInterval(connectedServiceRefreshInterval);
+        connectedServiceRefreshInterval = null;
+      }
+      if (connectedServiceQuotasLoopHandle) {
+        connectedServiceQuotasLoopHandle.stop();
+        connectedServiceQuotasLoopHandle = null;
+      }
 
 	      if (apiMachine) {
           const daemonStateUpdateTimeoutMs = resolvePositiveIntEnv(
@@ -1085,6 +1295,9 @@ export async function startDaemon(): Promise<void> {
       }
       if (automationWorker) {
         automationWorker.stop();
+      }
+      if (memoryWorker) {
+        memoryWorker.stop();
       }
       await stopControlServer();
 	      await cleanupDaemonState();

@@ -87,10 +87,17 @@ Auto-update is **disabled by default**. You can enable it at install time:
 hstack self-host install --channel=preview --auto-update --auto-update-interval=60
 ```
 
+Or run updates daily at a specific time (local time on the host):
+
+```bash
+hstack self-host install --channel=preview --auto-update --auto-update-at=03:15
+```
+
 Or via env:
 
 - `HAPPIER_SELF_HOST_AUTO_UPDATE=1`
 - `HAPPIER_SELF_HOST_AUTO_UPDATE_INTERVAL_MINUTES=60`
+- `HAPPIER_SELF_HOST_AUTO_UPDATE_AT=03:15` (daily schedule; overrides interval scheduling)
 
 Implementation is platform-native and runs `hstack self-host update` on an interval:
 
@@ -102,6 +109,26 @@ Implementation is platform-native and runs `hstack self-host update` on an inter
 
 - **configured** auto-update intent (enabled + interval)
 - **job state** (whether the timer/task is installed/enabled/active)
+
+### Updating the schedule after install
+
+Use `hstack self-host config` to inspect and update the local self-host installation:
+
+```bash
+hstack self-host config view
+```
+
+Set the daily window and apply the platform-native scheduler changes:
+
+```bash
+hstack self-host config set --auto-update --auto-update-at=03:15
+```
+
+To only update the stored config (and not touch systemd/launchd/schtasks), pass:
+
+```bash
+hstack self-host config set --auto-update-at=03:15 --no-apply
+```
 
 ## Relay server runner (self-hostable entrypoint)
 

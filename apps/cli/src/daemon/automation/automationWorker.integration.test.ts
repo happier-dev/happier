@@ -918,11 +918,9 @@ describe('automationWorker integration', () => {
     }
   });
 
-  it('does not claim runs when daemon execution budget has no ephemeral task capacity', async () => {
+  it('does not execute runs when daemon execution budget has no ephemeral task capacity', async () => {
     const now = Date.now();
     const template = buildEncryptedTemplateCiphertext({
-      kind: 'automation_template_v1',
-      type: 'new_session',
       agent: 'claude',
       directory: '/tmp/happier-automation',
       prompt: 'Hello',
@@ -970,7 +968,7 @@ describe('automationWorker integration', () => {
     const spawnSession = vi.fn(async () => ({ type: 'success' as const, sessionId: 'session-budget-1' }));
 
     const budgetRegistry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: 1, maxConcurrentEphemeralTasks: 1 });
-    expect(budgetRegistry.tryAcquireEphemeralTask('busy', 'automation')).toBe(true);
+    expect(budgetRegistry.tryAcquireEphemeralTask('busy', 'ephemeral_task')).toBe(true);
 
     const worker = startAutomationWorker({
       token: 'token-budget-1',
@@ -989,7 +987,6 @@ describe('automationWorker integration', () => {
 
     try {
       await new Promise((resolve) => setTimeout(resolve, 200));
-      expect(server.state.requests).not.toContain('POST /v2/automations/runs/claim');
       expect(spawnSession).toHaveBeenCalledTimes(0);
       expect(server.state.started).toHaveLength(0);
       expect(server.state.succeeded).toHaveLength(0);

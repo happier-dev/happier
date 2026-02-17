@@ -294,4 +294,28 @@ describe("featuresRoutes", () => {
             expect(payload.features.automations.existingSessionTarget).toBe(true);
         });
     });
+
+    describe("connected services", () => {
+        it("defaults connectedServices.enabled to true", async () => {
+            const payload = await getFeaturesPayload();
+            expect(payload.features.connectedServices.enabled).toBe(true);
+        });
+
+        it("returns connectedServices.enabled=false when HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED is off", async () => {
+            process.env.HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED = "0";
+            const payload = await getFeaturesPayload();
+            expect(payload.features.connectedServices.enabled).toBe(false);
+        });
+
+        it("defaults connectedServices.quotas.enabled to true", async () => {
+            const payload = await getFeaturesPayload();
+            expect(payload.features.connectedServices.quotas.enabled).toBe(true);
+        });
+
+        it("returns connectedServices.quotas.enabled=false when HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED is off", async () => {
+            process.env.HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED = "0";
+            const payload = await getFeaturesPayload();
+            expect(payload.features.connectedServices.quotas.enabled).toBe(false);
+        });
+    });
 });

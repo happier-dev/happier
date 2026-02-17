@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
-import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
+import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
 import { VoiceAgentError, type VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
-import type { ExecutionRunActionParams, ExecutionRunActionResult, ExecutionRunState } from '@/agent/executionRuns/runtime/ExecutionRunManager';
-import type { ExecutionRunController } from '@/agent/executionRuns/runtime/executionRunControllers';
+import type { ExecutionRunActionParams, ExecutionRunActionResult, ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
+import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 
 export async function applyExecutionRunAction(args: Readonly<{
   runId: string;
@@ -12,8 +12,8 @@ export async function applyExecutionRunAction(args: Readonly<{
   runs: Map<string, ExecutionRunState>;
   controllers: ReadonlyMap<string, ExecutionRunController>;
   voiceAgentManager: VoiceAgentManager;
-  sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
-  parentProvider: string;
+  sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
+  parentProvider: ACPProvider;
 }>): Promise<ExecutionRunActionResult> {
   const run = args.runs.get(args.runId);
   if (!run) return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
@@ -32,6 +32,13 @@ export async function applyExecutionRunAction(args: Readonly<{
           return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : undefined;
         })();
         const committed = await args.voiceAgentManager.commit({ voiceAgentId: ctrl.voiceAgentId, ...(maxChars ? { maxChars } : {}) });
+        const updatedResumeHandle = run.retentionPolicy === 'resumable' ? args.voiceAgentManager.getResumeHandle(ctrl.voiceAgentId) : null;
+        if (updatedResumeHandle && run.retentionPolicy === 'resumable') {
+          const latest = args.runs.get(args.runId) ?? null;
+          if (latest && latest.status === 'running') {
+            args.runs.set(args.runId, { ...latest, resumeHandle: updatedResumeHandle });
+          }
+        }
         return { ok: true, result: { commitText: committed.commitText } };
       } catch (e) {
         if (e instanceof VoiceAgentError) {
@@ -40,6 +47,28 @@ export async function applyExecutionRunAction(args: Readonly<{
           return { ok: false, errorCode: 'execution_run_failed', error: e.message };
         }
         return { ok: false, errorCode: 'execution_run_failed', error: e instanceof Error ? e.message : 'Commit failed' };
+      }
+    }
+    if (actionId === 'voice_agent.welcome') {
+      const ctrl = args.controllers.get(args.runId);
+      if (!ctrl || ctrl.kind !== 'voice_agent') {
+        return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Not running' };
+      }
+      try {
+        const welcomeText = (() => {
+          const v: any = args.params.input ?? null;
+          const raw = typeof v?.welcomeText === 'string' ? v.welcomeText.trim() : '';
+          return raw ? raw : undefined;
+        })();
+        const welcomed = await args.voiceAgentManager.welcome({ voiceAgentId: ctrl.voiceAgentId, ...(welcomeText ? { welcomeText } : {}) });
+        return { ok: true, result: { assistantText: welcomed.assistantText } };
+      } catch (e) {
+        if (e instanceof VoiceAgentError) {
+          if (e.code === 'VOICE_AGENT_BUSY') return { ok: false, errorCode: 'execution_run_busy', error: e.message };
+          if (e.code === 'VOICE_AGENT_NOT_FOUND') return { ok: false, errorCode: 'execution_run_not_found', error: e.message };
+          return { ok: false, errorCode: 'execution_run_failed', error: e.message };
+        }
+        return { ok: false, errorCode: 'execution_run_failed', error: e instanceof Error ? e.message : 'Welcome failed' };
       }
     }
   }
@@ -88,4 +117,3 @@ export async function applyExecutionRunAction(args: Readonly<{
 
   return { ok: true, updatedToolResult: acted.updatedToolResultOutput ?? { ok: true } };
 }
-

@@ -55,6 +55,10 @@ const updatesConfig = {
     }
 };
 
+if (!process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV) {
+    process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV = updatesChannel === 'production' ? 'production' : 'preview';
+}
+
 const linkHost = (process.env.EXPO_APP_LINK_HOST || DEFAULTS.linkHost).trim();
 const iosAssociatedDomainsRaw = (process.env.EXPO_IOS_ASSOCIATED_DOMAINS || '').trim();
 const iosAssociatedDomains = iosAssociatedDomainsRaw
@@ -199,20 +203,6 @@ export default {
                 "expo-audio",
                 {
                     microphonePermission: "Allow $(PRODUCT_NAME) to access your microphone for voice conversations."
-                }
-            ],
-            [
-                "expo-location",
-                {
-                    locationAlwaysAndWhenInUsePermission: "Allow $(PRODUCT_NAME) to improve AI quality by using your location.",
-                    locationAlwaysPermission: "Allow $(PRODUCT_NAME) to improve AI quality by using your location.",
-                    locationWhenInUsePermission: "Allow $(PRODUCT_NAME) to improve AI quality by using your location."
-                }
-            ],
-            [
-                "expo-calendar",
-                {
-                    "calendarPermission": "Allow $(PRODUCT_NAME) to access your calendar to improve AI quality."
                 }
             ],
             [

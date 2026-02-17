@@ -39,6 +39,9 @@ type SherpaSttHandle = {
   transcript: string;
   subscriptions: { remove(): void }[];
   abortController: AbortController;
+  pushing: boolean;
+  queuedFrames: Array<{ pcm16leBase64: string; sampleRate: number; channels: number }>;
+  pushLoop: Promise<void> | null;
 };
 
 export type SherpaStreamingSttController = Readonly<{
@@ -63,6 +66,7 @@ export function createSherpaStreamingSttController(deps: {
 }): SherpaStreamingSttController {
   let handle: SherpaSttHandle | null = null;
   let handsFreeSessionId: string | null = null;
+  const MAX_QUEUED_FRAMES = 8;
 
   const uriToFilePath = (uri: string): string => {
     return uri.startsWith('file://') ? uri.slice('file://'.length) : uri;
@@ -179,34 +183,92 @@ export function createSherpaStreamingSttController(deps: {
 
     await sherpa.createStreamingRecognizer({ jobId, assetsDir, sampleRate, channels, language });
 
+    const processFrame = async (frame: { pcm16leBase64: string; sampleRate: number; channels: number }) => {
+      const active = handle;
+      if (!active || active.sessionId !== sessionId || active.jobId !== jobId) return;
+      if (active.abortController.signal.aborted) return;
+
+      const res = await sherpa.pushAudioFrame({
+        jobId,
+        pcm16leBase64: frame.pcm16leBase64,
+        sampleRate: frame.sampleRate,
+        channels: frame.channels,
+      });
+
+      const after = handle;
+      if (!after || after.sessionId !== sessionId || after.jobId !== jobId) return;
+      const text = typeof res?.text === 'string' ? res.text : '';
+      if (text.trim().length > 0) after.transcript = text.trim();
+    };
+
+    const startPushLoop = (first: { pcm16leBase64: string; sampleRate: number; channels: number }) => {
+      const active = handle;
+      if (!active || active.sessionId !== sessionId || active.jobId !== jobId) return;
+      if (active.pushing) return;
+      active.pushing = true;
+
+      active.pushLoop = (async () => {
+        let currentFrame: { pcm16leBase64: string; sampleRate: number; channels: number } | null = first;
+        while (currentFrame) {
+          try {
+            await processFrame(currentFrame);
+          } catch {
+            // ignore
+          }
+
+          const after = handle;
+          if (!after || after.sessionId !== sessionId || after.jobId !== jobId) return;
+          if (after.abortController.signal.aborted) return;
+          currentFrame = after.queuedFrames.shift() ?? null;
+        }
+      })().finally(() => {
+        const after = handle;
+        if (!after || after.sessionId !== sessionId || after.jobId !== jobId) return;
+        after.pushing = false;
+        after.pushLoop = null;
+      });
+    };
+
     const subscriptions: SherpaSttHandle['subscriptions'] = [];
     subscriptions.push(
       audioStream.addListener('audioFrame', (event) => {
         if (!handle || handle.sessionId !== sessionId || handle.streamId !== event.streamId) return;
-        void sherpa
-          .pushAudioFrame({
-            jobId,
-            pcm16leBase64: String(event.pcm16leBase64 ?? ''),
-            sampleRate: event.sampleRate ?? sampleRate,
-            channels: event.channels ?? channels,
-          })
-          .then((res) => {
-            if (!handle || handle.sessionId !== sessionId) return;
-            const text = typeof res?.text === 'string' ? res.text : '';
-            if (text.trim().length > 0) handle.transcript = text.trim();
-          })
-          .catch(() => {});
+        const frame = {
+          pcm16leBase64: String(event.pcm16leBase64 ?? ''),
+          sampleRate: event.sampleRate ?? sampleRate,
+          channels: event.channels ?? channels,
+        };
+
+        // Serialize frames into a bounded queue to prevent unbounded concurrent native work.
+        if (handle.pushing) {
+          handle.queuedFrames.push(frame);
+          while (handle.queuedFrames.length > MAX_QUEUED_FRAMES) {
+            handle.queuedFrames.shift();
+          }
+          return;
+        }
+
+        startPushLoop(frame);
       }),
     );
 
-    handle = { sessionId, jobId, streamId, transcript: '', subscriptions, abortController };
+    handle = {
+      sessionId,
+      jobId,
+      streamId,
+      transcript: '',
+      subscriptions,
+      abortController,
+      pushing: false,
+      queuedFrames: [],
+      pushLoop: null,
+    };
     deps.setState({ status: 'recording', sessionId, error: null });
   };
 
   const stop = async (sessionId: string): Promise<string> => {
     if (!handle || handle.sessionId !== sessionId) return '';
     const current = handle;
-    handle = null;
 
     try {
       current.subscriptions.forEach((s) => s.remove());
@@ -226,6 +288,7 @@ export function createSherpaStreamingSttController(deps: {
     const sherpa = getOptionalSherpaNativeModule();
     if (sherpa) {
       try {
+        await current.pushLoop?.catch(() => {});
         const final = await sherpa.finishStreaming({ jobId: current.jobId });
         const text = typeof final?.text === 'string' ? final.text.trim() : '';
         if (text) current.transcript = text;
@@ -234,6 +297,9 @@ export function createSherpaStreamingSttController(deps: {
       }
     }
 
+    if (handle && handle.sessionId === sessionId) {
+      handle = null;
+    }
     return current.transcript.trim();
   };
 

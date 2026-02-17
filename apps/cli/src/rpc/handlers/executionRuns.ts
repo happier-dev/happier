@@ -1,5 +1,5 @@
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
-import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
+import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { AgentBackend } from '@/agent/core/AgentBackend';
 
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -32,9 +32,9 @@ export function registerExecutionRunHandlers(
   ctx: Readonly<{
     sessionId: string;
     cwd: string;
-    parentProvider: string;
-    createBackend: (opts: { backendId: string; permissionMode: string; modelId?: string; start?: any }) => AgentBackend;
-    sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
+    parentProvider: ACPProvider;
+    createBackend: (opts: { runId?: string; backendId: string; permissionMode: string; modelId?: string; start?: any }) => AgentBackend;
+    sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
     transcriptWriter?: Readonly<{
       appendUserText: (text: string, meta: Record<string, unknown>) => void | Promise<void>;
       appendAssistantText: (text: string, meta: Record<string, unknown>) => void | Promise<void>;
@@ -92,9 +92,10 @@ export function registerExecutionRunHandlers(
     if (!policy.allowIoModes.has(parsed.data.ioMode)) {
       return { ok: false, error: 'Unsupported ioMode', errorCode: 'execution_run_not_allowed' };
     }
-    if (parsed.data.ioMode === 'streaming') {
-      // V1: only voice_agent supports streaming IO (used by global voice assistant).
-      if (parsed.data.intent !== 'voice_agent') {
+    if (parsed.data.intent === 'voice_agent') {
+      // Voice agent uses a dedicated streaming turn protocol; enforce it so we don't accidentally
+      // treat voice_agent like a generic bounded execution run.
+      if (parsed.data.ioMode !== 'streaming') {
         return { ok: false, error: 'Unsupported ioMode', errorCode: 'execution_run_not_allowed' };
       }
       if (parsed.data.runClass !== 'long_lived') {

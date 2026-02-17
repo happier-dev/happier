@@ -72,7 +72,7 @@ Stacks are how you test changes without mutating your “main” environment.
 
 Each stack runs exactly one server flavor:
 
-- `happier-server-light` (recommended) — simplest local install (PG_Light via embedded PGlite)
+- `happier-server-light` (recommended) — simplest local install (SQLite by default; optional embedded Postgres via PGlite)
 - `happier-server` (full) — Docker-managed Postgres/Redis/Minio
 
 See: `/docs/hstack/server-flavors`.
@@ -114,6 +114,12 @@ hstack stack wt exp1 -- use active
 Run dev mode:
 
 ```bash
+hstack tui stack dev exp1
+```
+
+If you can’t use the TUI (non-interactive terminals / CI), run:
+
+```bash
 hstack stack dev exp1
 ```
 
@@ -132,7 +138,9 @@ Create a dev stack and pin it to `dev/`:
 ```bash
 hstack stack new dev
 hstack stack wt dev -- use dev
-hstack stack dev dev
+hstack tui stack dev dev
+# (optional) mobile dev-client + QR:
+hstack tui stack dev dev --mobile
 ```
 
 ### 3) Testing an upstream PR locally (recommended)
@@ -188,7 +196,7 @@ hstack contrib extract my-feature --push
 - `hstack start` / `hstack stack start <name>`: “production-like” behavior (built UI, fewer watch processes)
 - `hstack dev` / `hstack stack dev <name>`: development (watchers, dev servers, faster iteration)
 
-If you’re unsure, use `hstack stack dev <stack>`.
+If you’re unsure, use `hstack tui stack dev <stack>` (or `hstack stack dev <stack>` in non-interactive environments).
 
 ---
 

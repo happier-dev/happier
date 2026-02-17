@@ -9,6 +9,7 @@ import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
+import { buildActionDraftInput } from '@/sync/domains/actions/buildActionDraftInput';
 
 function resolveDefaultBackendId(session: Session, enabledAgentIds: readonly string[]): string | null {
   const sessionAgent = (session as any)?.metadata?.agent;
@@ -25,7 +26,7 @@ export function SessionHeaderActionMenu(props: Readonly<{ sessionId: string; ses
   const actions = React.useMemo(() => {
     return listActionSpecs()
       .filter((spec) => spec.surfaces.ui_button === true)
-      .filter((spec) => isActionEnabledInState(storage.getState() as any, spec.id))
+      .filter((spec) => isActionEnabledInState(storage.getState() as any, spec.id, { surface: 'ui_button', placement: 'session_action_menu' } as any))
       .filter((spec) => Array.isArray(spec.placements) && spec.placements.includes('session_action_menu' as any))
       .map((spec) => ({
         id: spec.id,
@@ -45,35 +46,13 @@ export function SessionHeaderActionMenu(props: Readonly<{ sessionId: string; ses
         setOpen(false);
         const defaultBackendId = resolveDefaultBackendId(props.session, enabledAgentIds);
         if (!defaultBackendId) return;
-
-        if (actionId === 'review.start') {
-          storage.getState().createSessionActionDraft(props.sessionId, {
-            actionId,
-            input: {
-              engineIds: [defaultBackendId],
-              instructions: '',
-              changeType: 'committed',
-              base: { kind: 'none' },
-            },
-          });
-          return;
-        }
-
-        if (actionId === 'plan.start' || actionId === 'delegate.start') {
-          storage.getState().createSessionActionDraft(props.sessionId, {
-            actionId,
-            input: {
-              backendIds: [defaultBackendId],
-              instructions: '',
-            },
-          });
-          return;
-        }
-
-        storage.getState().createSessionActionDraft(props.sessionId, {
-          actionId,
-          input: { backendIds: [defaultBackendId], instructions: '' },
+        const input = buildActionDraftInput({
+          actionId: actionId as any,
+          sessionId: props.sessionId,
+          defaultBackendId,
+          instructions: '',
         });
+        storage.getState().createSessionActionDraft(props.sessionId, { actionId, input });
       }}
       trigger={({ toggle }) => (
         <Pressable

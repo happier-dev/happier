@@ -163,6 +163,11 @@ on:
           - release preview from dev
           - release dev to main
           - reset main from dev
+      release_message:
+        description: "Release message — Optional note to include in Expo OTA metadata and GitHub rolling release notes"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
@@ -203,9 +208,6 @@ jobs:
       run_providers: false
       providers_preset: ${{ inputs.providers_preset }}
       providers_tier: ${{ inputs.providers_tier }}
-      providers_strict_keys: false
-      providers_flake_retry: true
-      providers_update_baselines: false
       run_stress: ${{ inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',stress,') }}
       run_release_contracts: true
       run_installers_smoke: false
@@ -214,8 +216,6 @@ jobs:
       run_self_host_launchd: false
       run_self_host_schtasks: false
       run_self_host_daemon: false
-      stress_repeat: "5"
-      stress_seed: ""
 
   providers:
     name: Providers Checks (providers-contracts.yml)
@@ -858,6 +858,7 @@ jobs:
       desktop_build: ${{ inputs.desktop_mode != 'none' }}
       desktop_publish_release: ${{ inputs.desktop_mode == 'build_and_publish' }}
       run_tests: false
+      expo_update_message: ${{ inputs.release_message }}
 
   deploy_server:
     if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',server,') && (needs.deploy_plan.outputs.deploy_server_needed == 'true' || needs.plan.outputs.bump_server != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
@@ -887,6 +888,7 @@ jobs:
       channel: preview
       source_ref: dev
       allow_stable: false
+      release_message: ${{ inputs.release_message }}
 
   publish_ui_web:
     if: always() && needs.plan.result == 'success' && inputs.dry_run != true && inputs.environment == 'preview' && contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped')
@@ -899,6 +901,21 @@ jobs:
       channel: preview
       source_ref: dev
       allow_stable: false
+      release_message: ${{ inputs.release_message }}
+
+  publish_docker:
+    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && inputs.environment == 'preview' && (inputs.force_deploy == true || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_server == 'true' || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_stack == 'true' || needs.plan.outputs.changed_shared == 'true') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped')
+    needs: [plan, bump_versions_dev]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/publish-docker.yml
+    secrets: inherit
+    with:
+      channel: preview
+      source_ref: dev
+      push_latest: true
+      build_relay: ${{ inputs.force_deploy == true || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_server == 'true' || needs.plan.outputs.changed_shared == 'true' }}
+      build_devcontainer: ${{ inputs.force_deploy == true || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_stack == 'true' || needs.plan.outputs.changed_shared == 'true' }}
 
   deploy_website:
     if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || needs.plan.outputs.bump_website != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
@@ -947,23 +964,51 @@ jobs:
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
       npm_tag: ${{ inputs.environment == 'production' && 'latest' || 'next' }}
       run_tests: false
+      release_message: ${{ inputs.release_message }}
 
   release_verify:
     if: always() && needs.publish_npm.result == 'success' && inputs.environment == 'preview' && inputs.release_verify_profile != 'none'
     needs: [publish_npm]
-    continue-on-error: true
+    runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: read
-    uses: ./.github/workflows/release-verify.yml
-    with:
-      channel: preview
-      run_installers_smoke: true
-      run_binary_smoke: true
-      run_self_host_systemd: ${{ inputs.release_verify_profile == 'full' }}
-      run_self_host_launchd: ${{ inputs.release_verify_profile == 'full' }}
-      run_self_host_schtasks: ${{ inputs.release_verify_profile == 'full' }}
-      run_self_host_daemon: ${{ inputs.release_verify_profile == 'full' }}
+      actions: write
+    steps:
+      - name: Trigger release verify workflow (best-effort)
+        env:
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+          TOKEN: ${{ github.token }}
+          RUN_SELF_HOST: ${{ inputs.release_verify_profile == 'full' }}
+        run: |
+          set -euo pipefail
+
+          payload="$(
+            cat <<JSON
+          {
+            "ref": "${REF}",
+            "inputs": {
+              "channel": "preview",
+              "run_installers_smoke": "true",
+              "run_binary_smoke": "true",
+              "run_self_host_systemd": "${RUN_SELF_HOST}",
+              "run_self_host_launchd": "${RUN_SELF_HOST}",
+              "run_self_host_schtasks": "${RUN_SELF_HOST}",
+              "run_self_host_daemon": "${RUN_SELF_HOST}"
+            }
+          }
+          JSON
+          )"
+
+          echo "Dispatching release-verify.yml for preview (profile: ${{ inputs.release_verify_profile }})"
+          if ! curl -fsSL \
+            -X POST \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${REPO}/actions/workflows/release-verify.yml/dispatches" \
+            -d "${payload}"; then
+            echo "::warning::Failed to dispatch release-verify.yml (continuing)"
+          fi
 
   sync_dev:
     if: inputs.dry_run != true && inputs.environment == 'production' && (vars.RELEASE_SYNC_DEV_FROM_MAIN == '' || vars.RELEASE_SYNC_DEV_FROM_MAIN == 'true')

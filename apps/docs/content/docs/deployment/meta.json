@@ -2,6 +2,7 @@
   "title": "Deployment",
   "pages": [
     "index",
+    "self-host-runtime",
     "docker",
     "proxmox",
     "env"

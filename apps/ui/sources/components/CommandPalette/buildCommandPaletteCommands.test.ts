@@ -5,9 +5,10 @@ import type { Command } from './types';
 import { buildCommandPaletteCommands } from './buildCommandPaletteCommands';
 
 const createSessionActionDraftSpy = vi.fn();
+let mockedState: any = null;
 vi.mock('@/sync/domains/state/storage', () => ({
   storage: {
-    getState: () => ({ createSessionActionDraft: createSessionActionDraftSpy }),
+    getState: () => mockedState,
   },
 }));
 
@@ -19,6 +20,7 @@ describe('buildCommandPaletteCommands', () => {
   it('includes ActionSpec-derived commands when enabled (execution runs + voice)', async () => {
     const pushes: string[] = [];
     const executorCalls: Array<{ actionId: string }> = [];
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
 
     const cmds = buildCommandPaletteCommands({
       sessionsById: {},
@@ -65,6 +67,7 @@ describe('buildCommandPaletteCommands', () => {
   it('shows an alert when a session-scoped ActionSpec command is used without an active session', async () => {
     const alerts: Array<{ title: string; message: string }> = [];
     const pushes: string[] = [];
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
 
     const cmds = buildCommandPaletteCommands({
       sessionsById: {},
@@ -93,6 +96,7 @@ describe('buildCommandPaletteCommands', () => {
 
   it('does not inject coderabbit-specific config into review.start drafts', async () => {
     createSessionActionDraftSpy.mockClear();
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
 
     const cmds = buildCommandPaletteCommands({
       sessionsById: {
@@ -121,5 +125,59 @@ describe('buildCommandPaletteCommands', () => {
     expect(created?.actionId).toBe('review.start');
     expect(created?.input?.engineIds).toEqual(['coderabbit']);
     expect(created?.input?.engines).toBeUndefined();
+  });
+
+  it('omits command_palette actions when disabled for that placement', async () => {
+    mockedState = {
+      createSessionActionDraft: createSessionActionDraftSpy,
+      settings: {
+        actionsSettingsV1: {
+          v: 1,
+          actions: {
+            'review.start': { disabledPlacements: ['command_palette'] },
+          },
+        },
+      },
+    };
+
+    const cmds = buildCommandPaletteCommands({
+      sessionsById: {},
+      isDev: false,
+      activeSessionId: 'session-1',
+      features: { executionRunsEnabled: true, voiceEnabled: false },
+      nav: {
+        push: () => {},
+        navigateToSession: () => {},
+      },
+      auth: { logout: async () => {} },
+      actions: { execute: async () => ({ ok: true, result: {} }) },
+      alert: async () => {},
+    });
+
+    expect(commandTitles(cmds)).not.toEqual(expect.arrayContaining(['Start review run']));
+  });
+
+  it('includes a memory search navigation command', async () => {
+    const pushes: string[] = [];
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
+
+    const cmds = buildCommandPaletteCommands({
+      sessionsById: {},
+      isDev: false,
+      activeSessionId: null,
+      features: { executionRunsEnabled: false, voiceEnabled: false },
+      nav: {
+        push: (path) => pushes.push(path),
+        navigateToSession: () => {},
+      },
+      auth: { logout: async () => {} },
+      actions: { execute: async () => ({ ok: true, result: {} }) },
+      alert: async () => {},
+    });
+
+    const cmd = cmds.find((c) => c.id === 'memory-search');
+    expect(cmd).toBeTruthy();
+    await cmd!.action();
+    expect(pushes).toEqual(['/search']);
   });
 });

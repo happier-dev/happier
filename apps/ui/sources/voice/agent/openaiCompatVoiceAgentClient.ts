@@ -100,7 +100,12 @@ export class OpenAiCompatVoiceAgentClient implements VoiceAgentClient {
     return extracted.actions.length > 0 ? { assistantText, actions: extracted.actions } : { assistantText };
   }
 
-  async startTurnStream(params: Readonly<{ sessionId: string; voiceAgentId: string; userText: string }>): Promise<{ streamId: string }> {
+  async welcome(_params: Readonly<{ sessionId: string; voiceAgentId: string; welcomeText?: string }>): Promise<{ assistantText: string }> {
+    // OpenAI-compatible mode does not have a daemon-side bootstrap action.
+    return { assistantText: '' };
+  }
+
+  async startTurnStream(params: Readonly<{ sessionId: string; voiceAgentId: string; userText: string; resume?: boolean }>): Promise<{ streamId: string }> {
     const streamId =
       typeof (globalThis as any)?.crypto?.randomUUID === 'function'
         ? (globalThis as any).crypto.randomUUID()

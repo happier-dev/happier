@@ -85,6 +85,156 @@ function extractTextDeltaFromStreamEvent(message: unknown): string | null {
     return typeof delta.text === 'string' ? delta.text : null;
 }
 
+type StreamEventToolUseStart = { id: string; name: string; input: unknown };
+
+function extractToolUseStartFromStreamEvent(message: unknown): StreamEventToolUseStart | null {
+    if (!message || typeof message !== 'object') return null;
+    const m = message as any;
+    if (m.type !== 'stream_event') return null;
+
+    const event = m.event;
+    if (!event || typeof event !== 'object') return null;
+    if (event.type !== 'content_block_start') return null;
+
+    const block = (event as any).content_block;
+    if (!block || typeof block !== 'object') return null;
+    if (block.type !== 'tool_use') return null;
+
+    const id = typeof (block as any).id === 'string' ? (block as any).id : null;
+    const name = typeof (block as any).name === 'string' ? (block as any).name : null;
+    if (!id || !name) return null;
+
+    return { id, name, input: (block as any).input };
+}
+
+function extractToolUseInputJsonDeltaFromStreamEvent(message: unknown): string | null {
+    if (!message || typeof message !== 'object') return null;
+    const m = message as any;
+    if (m.type !== 'stream_event') return null;
+
+    const event = m.event;
+    if (!event || typeof event !== 'object') return null;
+    if (event.type !== 'content_block_delta') return null;
+
+    const delta = (event as any).delta;
+    if (!delta || typeof delta !== 'object') return null;
+    if (delta.type !== 'input_json_delta') return null;
+
+    const partialJson = (delta as any).partial_json;
+    return typeof partialJson === 'string' ? partialJson : null;
+}
+
+type StreamEventToolResultStart = { toolUseId: string };
+
+function extractToolResultStartFromStreamEvent(message: unknown): StreamEventToolResultStart | null {
+    if (!message || typeof message !== 'object') return null;
+    const m = message as any;
+    if (m.type !== 'stream_event') return null;
+
+    const event = m.event;
+    if (!event || typeof event !== 'object') return null;
+    if (event.type !== 'content_block_start') return null;
+
+    const block = (event as any).content_block;
+    if (!block || typeof block !== 'object') return null;
+    if (block.type !== 'tool_result') return null;
+
+    const toolUseId =
+        typeof (block as any).tool_use_id === 'string'
+            ? (block as any).tool_use_id
+            : typeof (block as any).toolUseId === 'string'
+                ? (block as any).toolUseId
+                : null;
+    if (!toolUseId) return null;
+    return { toolUseId };
+}
+
+function isContentBlockStopStreamEvent(message: unknown): boolean {
+    if (!message || typeof message !== 'object') return false;
+    const m = message as any;
+    if (m.type !== 'stream_event') return false;
+    const event = m.event;
+    if (!event || typeof event !== 'object') return false;
+    return event.type === 'content_block_stop';
+}
+
+function messageContainsToolUseId(message: unknown, toolUseId: string): boolean {
+    if (!message || typeof message !== 'object') return false;
+    const m = message as any;
+    if (m.type !== 'assistant') return false;
+    const content = m.message?.content;
+    if (!Array.isArray(content)) return false;
+    return content.some((c: any) => c?.type === 'tool_use' && c?.id === toolUseId);
+}
+
+function messageContainsToolResultForToolUseId(message: unknown, toolUseId: string): boolean {
+    if (!message || typeof message !== 'object') return false;
+    const m = message as any;
+    if (m.type !== 'user' && m.type !== 'assistant') return false;
+    const content = m.message?.content;
+    if (!Array.isArray(content)) return false;
+    return content.some((c: any) => c?.type === 'tool_result' && c?.tool_use_id === toolUseId);
+}
+
+function recordSeenToolBlocks(message: SDKMessage, seen: { toolUseIds: Set<string>; toolResultIds: Set<string> }): void {
+    const m = message as any;
+    const content = m?.message?.content;
+    if (!Array.isArray(content)) return;
+    for (const block of content) {
+        if (!block || typeof block !== 'object') continue;
+        if (block.type === 'tool_use' && typeof block.id === 'string') {
+            seen.toolUseIds.add(block.id);
+        } else if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
+            seen.toolResultIds.add(block.tool_use_id);
+        }
+    }
+}
+
+function stripSeenToolBlocksFromMessage(message: SDKMessage, seen: { toolUseIds: Set<string>; toolResultIds: Set<string> }): SDKMessage | null {
+    const m = message as any;
+    const content = m?.message?.content;
+    if (!Array.isArray(content)) return message;
+
+    let didChange = false;
+    const filtered: any[] = [];
+    for (const block of content) {
+        if (!block || typeof block !== 'object') {
+            filtered.push(block);
+            continue;
+        }
+
+        if (block.type === 'tool_use' && typeof block.id === 'string') {
+            if (seen.toolUseIds.has(block.id)) {
+                didChange = true;
+                continue;
+            }
+            filtered.push(block);
+            continue;
+        }
+
+        if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
+            if (seen.toolResultIds.has(block.tool_use_id)) {
+                didChange = true;
+                continue;
+            }
+            filtered.push(block);
+            continue;
+        }
+
+        filtered.push(block);
+    }
+
+    if (!didChange) return message;
+    if (filtered.length === 0) return null;
+    return {
+        ...m,
+        message: {
+            ...(m?.message ?? {}),
+            content: filtered,
+        },
+    } as SDKMessage;
+}
+
 export async function claudeRemoteAgentSdk(opts: {
     // Fixed parameters
     sessionId: string | null;
@@ -420,6 +570,13 @@ export async function claudeRemoteAgentSdk(opts: {
         });
 
         updateThinking(true);
+        let streamingToolUse:
+            | { sessionId: string; id: string; name: string; inputJson: string; initialInput: unknown }
+            | null = null;
+        let streamingToolResult: { sessionId: string; toolUseId: string; content: string } | null = null;
+        let pendingToolUseMessage: { toolUseId: string; message: SDKMessage } | null = null;
+        let pendingToolResultMessage: { toolUseId: string; message: SDKMessage } | null = null;
+        const seen = { toolUseIds: new Set<string>(), toolResultIds: new Set<string>() };
         let lastCheckpointId: string | null = null;
         const checkpointIds: string[] = [];
         const checkpointIdSet = new Set<string>();
@@ -470,23 +627,167 @@ export async function claudeRemoteAgentSdk(opts: {
 
         for await (const message of response as any) {
             if (message && typeof message === 'object' && (message as any).type === 'stream_event') {
-                const textDelta = extractTextDeltaFromStreamEvent(message);
-                if (textDelta && mode.claudeRemoteIncludePartialMessages === true) {
-                    opts.onMessage({
-                        type: 'assistant',
-                        happierPartial: true,
-                        session_id: (message as any).session_id,
-                        parent_tool_use_id: null,
-                        message: {
-                            role: 'assistant',
-                            content: [{ type: 'text', text: textDelta }],
-                        },
-                    } as any);
+                const toolUseStart = extractToolUseStartFromStreamEvent(message);
+                if (toolUseStart) {
+                    streamingToolUse = {
+                        sessionId: typeof (message as any).session_id === 'string' ? (message as any).session_id : '',
+                        id: toolUseStart.id,
+                        name: toolUseStart.name,
+                        inputJson: '',
+                        initialInput: toolUseStart.input,
+                    };
+                    continue;
                 }
+
+                const toolResultStart = extractToolResultStartFromStreamEvent(message);
+                if (toolResultStart) {
+                    streamingToolResult = {
+                        sessionId: typeof (message as any).session_id === 'string' ? (message as any).session_id : '',
+                        toolUseId: toolResultStart.toolUseId,
+                        content: '',
+                    };
+                    continue;
+                }
+
+                const toolUseInputDelta = extractToolUseInputJsonDeltaFromStreamEvent(message);
+                if (toolUseInputDelta && streamingToolUse) {
+                    streamingToolUse.inputJson += toolUseInputDelta;
+                    continue;
+                }
+
+                const textDelta = extractTextDeltaFromStreamEvent(message);
+                if (textDelta) {
+                    if (streamingToolResult) {
+                        streamingToolResult.content += textDelta;
+                        continue;
+                    }
+                    if (mode.claudeRemoteIncludePartialMessages === true) {
+                        opts.onMessage({
+                            type: 'assistant',
+                            happierPartial: true,
+                            session_id: (message as any).session_id,
+                            parent_tool_use_id: null,
+                            message: {
+                                role: 'assistant',
+                                content: [{ type: 'text', text: textDelta }],
+                            },
+                        } as any);
+                    }
+                    continue;
+                }
+
+                if (isContentBlockStopStreamEvent(message)) {
+                    if (streamingToolUse) {
+                        if (seen.toolUseIds.has(streamingToolUse.id)) {
+                            streamingToolUse = null;
+                            continue;
+                        }
+                        const inputFromJson = (() => {
+                            const raw = streamingToolUse.inputJson.trim();
+                            if (!raw) return null;
+                            try {
+                                return JSON.parse(raw) as unknown;
+                            } catch {
+                                return null;
+                            }
+                        })();
+
+                        pendingToolUseMessage = {
+                            toolUseId: streamingToolUse.id,
+                            message: {
+                            type: 'assistant',
+                            session_id: streamingToolUse.sessionId,
+                            parent_tool_use_id: null,
+                            message: {
+                                role: 'assistant',
+                                content: [
+                                    {
+                                        type: 'tool_use',
+                                        id: streamingToolUse.id,
+                                        name: streamingToolUse.name,
+                                        input: inputFromJson ?? streamingToolUse.initialInput ?? {},
+                                    },
+                                ],
+                            },
+                        } as any,
+                        };
+
+                        streamingToolUse = null;
+                        continue;
+                    }
+
+                    if (streamingToolResult) {
+                        if (seen.toolResultIds.has(streamingToolResult.toolUseId)) {
+                            streamingToolResult = null;
+                            continue;
+                        }
+                        pendingToolResultMessage = {
+                            toolUseId: streamingToolResult.toolUseId,
+                            message: {
+                                type: 'user',
+                            session_id: streamingToolResult.sessionId,
+                            parent_tool_use_id: null,
+                            message: {
+                                role: 'user',
+                                content: [
+                                    {
+                                        type: 'tool_result',
+                                        tool_use_id: streamingToolResult.toolUseId,
+                                        content: streamingToolResult.content,
+                                        is_error: false,
+                                    },
+                                ],
+                            },
+                        } as any,
+                        };
+                        streamingToolResult = null;
+                        continue;
+                    }
+                }
+
                 continue;
             }
 
-            opts.onMessage(message as SDKMessage);
+            // If we reconstructed tool blocks from stream events, prefer the assembled SDK message when it arrives
+            // (avoid double-emitting the same tool_use/tool_result).
+            //
+            // Important: Claude Code can emit system/status/progress messages between stream_event stop and the
+            // assembled assistant/user message. Do not flush pending tool blocks on those intermediary messages.
+            const messageType = (message as any)?.type;
+            if (pendingToolUseMessage && (messageType === 'assistant' || messageType === 'user' || messageType === 'result')) {
+                if (messageContainsToolUseId(message, pendingToolUseMessage.toolUseId)) {
+                    pendingToolUseMessage = null;
+                } else if (messageType === 'user' && !messageContainsToolResultForToolUseId(message, pendingToolUseMessage.toolUseId)) {
+                    // Not a boundary that implies the tool ran (tool_result) and not the assembled tool_use;
+                    // keep buffering so we can still dedupe when the assistant tool_use arrives.
+                } else {
+                    const deduped = stripSeenToolBlocksFromMessage(pendingToolUseMessage.message, seen);
+                    if (deduped) {
+                        opts.onMessage(deduped);
+                        recordSeenToolBlocks(deduped, seen);
+                    }
+                    pendingToolUseMessage = null;
+                }
+            }
+
+            if (pendingToolResultMessage && (messageType === 'assistant' || messageType === 'user' || messageType === 'result')) {
+                if (messageContainsToolResultForToolUseId(message, pendingToolResultMessage.toolUseId)) {
+                    pendingToolResultMessage = null;
+                } else {
+                    const deduped = stripSeenToolBlocksFromMessage(pendingToolResultMessage.message, seen);
+                    if (deduped) {
+                        opts.onMessage(deduped);
+                        recordSeenToolBlocks(deduped, seen);
+                    }
+                    pendingToolResultMessage = null;
+                }
+            }
+
+            const sdkMessage = message as SDKMessage;
+            const deduped = stripSeenToolBlocksFromMessage(sdkMessage, seen);
+            if (!deduped) continue;
+            opts.onMessage(deduped);
+            recordSeenToolBlocks(deduped, seen);
 
             if (message && message.type === 'system' && message.subtype === 'init') {
                 const init = message as SDKSystemMessage;

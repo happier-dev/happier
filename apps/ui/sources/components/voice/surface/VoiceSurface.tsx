@@ -374,14 +374,13 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     marginLeft: 10,
   },
   statusText: {
-    ...Typography.default('semiBold'),
-    fontSize: 13,
+    fontSize: 14,
     lineHeight: 16,
     flexShrink: 1,
   },
   targetText: {
     ...Typography.default(),
-    fontSize: 11,
+    fontSize: 12,
     lineHeight: 14,
     marginTop: 2,
   },

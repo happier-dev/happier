@@ -1,7 +1,8 @@
-import { createInterface } from 'node:readline';
-
 import { configuration } from '@/configuration';
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
+import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
+
+export { isInteractiveTerminal, promptInput };
 
 export function argvValue(args: ReadonlyArray<string>, name: string): string {
   const n = String(name ?? '').trim();
@@ -31,10 +32,6 @@ export function normalizeUrlOrThrow(raw: string, label: string): string {
   return url.toString().replace(/\/+$/, '');
 }
 
-export function isInteractiveTerminal(): boolean {
-  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
-}
-
 export function defaultNameFromUrl(serverUrl: string): string {
   try {
     const parsed = new URL(serverUrl);
@@ -58,20 +55,6 @@ export function parseYesNoWithDefault(raw: string, defaultValue: boolean): boole
   if (value === 'y' || value === 'yes') return true;
   if (value === 'n' || value === 'no') return false;
   return defaultValue;
-}
-
-export async function promptInput(prompt: string): Promise<string> {
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  try {
-    return await new Promise<string>((resolve) => {
-      rl.question(prompt, resolve);
-    });
-  } finally {
-    rl.close();
-  }
 }
 
 export async function runCliAction(args: string[]): Promise<void> {

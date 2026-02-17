@@ -454,6 +454,7 @@ export const ja: TranslationStructure = {
   settings: {
     title: "設定",
     connectedAccounts: "接続済みアカウント",
+    connectedAccountsDisabled: "Connected services are disabled.",
     connectAccount: "アカウントを接続",
     github: "GitHub",
     machines: "マシン",
@@ -465,6 +466,8 @@ export const ja: TranslationStructure = {
     appearanceSubtitle: "アプリの見た目をカスタマイズ",
     voiceAssistant: "音声アシスタント",
     voiceAssistantSubtitle: "音声操作の設定",
+    memorySearch: "ローカルメモリ検索",
+    memorySearchSubtitle: "過去の会話を検索（端末内）",
     featuresTitle: "機能",
     featuresSubtitle: "アプリ機能の有効/無効を切り替え",
     developer: "開発者",
@@ -1324,7 +1327,7 @@ export const ja: TranslationStructure = {
 
   components: {
     emptyMainScreen: {
-      // Used by EmptyMainScreen component
+      // Used by SessionGettingStartedGuidance component
       readyToCode: "コーディングを始めますか？",
       installCli: "Happier CLIをインストール",
       runIt: "実行する",
@@ -2030,6 +2033,8 @@ export const ja: TranslationStructure = {
       recentMessagesCountInvalid: "0〜50 の数値を入力してください。",
       shareToolNames: "ツール名を共有",
       shareToolNamesSubtitle: "音声コンテキストにツール名/説明を含めます",
+      shareDeviceInventory: "Share device inventory",
+      shareDeviceInventorySubtitle: "Allow voice to list recent workspaces, machines, and servers",
       shareToolArgs: "ツール引数を共有",
       shareToolArgsSubtitle: "ツール引数を含めます（パスや機密情報を含む場合があります）",
       sharePermissionRequests: "権限リクエストを共有",

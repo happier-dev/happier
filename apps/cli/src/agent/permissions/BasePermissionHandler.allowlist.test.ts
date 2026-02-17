@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { BasePermissionHandler, type PermissionResult } from './BasePermissionHandler';
 
 class FakeRpcHandlerManager {
@@ -126,5 +126,27 @@ describe('BasePermissionHandler allowlist', () => {
     handler.updateSession(session2 as any);
 
     expect(handler.isAllowed('bash', input)).toBe(false);
+  });
+
+  it('does not emit unhandledRejection when updateAgentState rejects', async () => {
+    const session = new FakeSession();
+    session.updateAgentState = async () => {
+      throw new Error('updateAgentState failed');
+    };
+    const handler = new TestPermissionHandler(session as any);
+
+    const onUnhandled = vi.fn();
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const promise = handler.request('perm-1', 'bash', { command: ['bash', '-lc', 'echo hello'] });
+      const rpc = session.rpcHandlerManager.handlers.get('permission');
+      await rpc!({ id: 'perm-1', approved: true, decision: 'approved' });
+      await promise;
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(onUnhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 });

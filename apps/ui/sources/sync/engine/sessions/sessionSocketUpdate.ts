@@ -74,7 +74,7 @@ export async function handleNewMessageSocketUpdate(params: {
     if ((body as any).message) {
         const decrypted = await encryption.decryptMessage((body as any).message);
         if (decrypted) {
-            lastMessage = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content);
+            lastMessage = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content, { seq: decrypted.seq ?? undefined });
 
             const { isTaskComplete, isTaskStarted, lifecycleEvent } = inferTaskLifecycleFromMessageContent(decrypted.content, decrypted.createdAt);
             if (lifecycleEvent) {

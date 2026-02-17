@@ -58,6 +58,23 @@ export const UI_FEATURE_REGISTRY: Readonly<Record<FeatureId, UiFeatureDefinition
         serverRequired: true,
         serverEnabled: (features) => features.features.voice.enabled === true,
     },
+    'connected.services': {
+        id: 'connected.services',
+        serverRequired: true,
+        serverEnabled: (features) => features.features.connectedServices.enabled === true,
+    },
+    'connected.services.quotas': {
+        id: 'connected.services.quotas',
+        serverRequired: true,
+        serverEnabled: (features) =>
+            features.features.connectedServices.enabled === true &&
+            features.features.connectedServices.quotas?.enabled === true,
+    },
+    'updates.ota': {
+        id: 'updates.ota',
+        serverRequired: true,
+        serverEnabled: (features) => features.features.updates.ota.enabled === true,
+    },
     'social.friends': {
         id: 'social.friends',
         serverRequired: true,
@@ -81,6 +98,26 @@ export const UI_FEATURE_REGISTRY: Readonly<Record<FeatureId, UiFeatureDefinition
         id: 'auth.ui.recoveryKeyReminder',
         serverRequired: true,
         serverEnabled: (features) => features.features.auth.ui.recoveryKeyReminder.enabled === true,
+    },
+    'app.analytics': {
+        id: 'app.analytics',
+        serverRequired: false,
+        serverEnabled: ALWAYS_ENABLED,
+    },
+    'app.ui.storeReviewPrompts': {
+        id: 'app.ui.storeReviewPrompts',
+        serverRequired: false,
+        serverEnabled: ALWAYS_ENABLED,
+    },
+    'app.ui.sessionGettingStartedGuidance': {
+        id: 'app.ui.sessionGettingStartedGuidance',
+        serverRequired: false,
+        serverEnabled: ALWAYS_ENABLED,
+    },
+    'app.ui.changelog': {
+        id: 'app.ui.changelog',
+        serverRequired: false,
+        serverEnabled: ALWAYS_ENABLED,
     },
     bugReports: {
         id: 'bugReports',

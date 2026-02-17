@@ -73,29 +73,6 @@ describe('createGeminiBackend auth method', () => {
     });
   });
 
-  it('uses gemini-api-key when cloudToken is provided', () => {
-    withTempHome(() => {
-      const prevGeminiKey = process.env.GEMINI_API_KEY;
-      const prevGoogleKey = process.env.GOOGLE_API_KEY;
-      delete process.env.GEMINI_API_KEY;
-      delete process.env.GOOGLE_API_KEY;
-      try {
-        const result = createGeminiBackend({
-          cwd: '/tmp',
-          env: {},
-          model: null,
-          cloudToken: 'cloud-token',
-        });
-
-        const backend = result.backend as unknown as AcpBackendLike;
-        expect(backend.options.authMethodId).toBe('gemini-api-key');
-        expect(backend.options.env?.GEMINI_API_KEY).toBe('cloud-token');
-      } finally {
-        if (prevGeminiKey === undefined) delete process.env.GEMINI_API_KEY;
-        else process.env.GEMINI_API_KEY = prevGeminiKey;
-        if (prevGoogleKey === undefined) delete process.env.GOOGLE_API_KEY;
-        else process.env.GOOGLE_API_KEY = prevGoogleKey;
-      }
-    });
-  });
+  // Connected-services Gemini OAuth is materialized via ~/.gemini/oauth_creds.json and uses oauth-personal,
+  // not GEMINI_API_KEY injection. That behavior is validated in connected-services materialization tests.
 });

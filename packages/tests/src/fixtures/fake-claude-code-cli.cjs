@@ -102,6 +102,67 @@ async function runSdkStreamUntilEof() {
     const now = Date.now();
     turn += 1;
 
+    if (scenario === 'memory-hints-json') {
+      const parts = Array.isArray(msg?.message?.content) ? msg.message.content : [];
+      const promptText = parts
+        .map((p) => {
+          if (typeof p === 'string') return p;
+          if (p && typeof p === 'object' && p.type === 'text' && typeof p.text === 'string') return p.text;
+          return '';
+        })
+        .join('\n');
+      const match = String(promptText).match(/OPENCLAW_MEMORY_SENTINEL_[A-Za-z0-9_-]+/);
+      const sentinel = match ? match[0] : `FAKE_MEMORY_SENTINEL_${turn}`;
+
+      const assistant = {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                shard: {
+                  v: 1,
+                  seqFrom: 0,
+                  seqTo: 0,
+                  createdAtFromMs: 0,
+                  createdAtToMs: 0,
+                  summary: `Summary shard for ${sentinel}`,
+                  keywords: ['openclaw', sentinel],
+                  entities: [],
+                  decisions: [],
+                },
+                synopsis: {
+                  v: 1,
+                  seqTo: 0,
+                  updatedAtMs: now,
+                  synopsis: `Session synopsis including ${sentinel}`,
+                },
+              }),
+            },
+          ],
+        },
+      };
+
+      const result = {
+        type: 'result',
+        subtype: 'success',
+        result: `FAKE_CLAUDE_DONE_${turn}`,
+        num_turns: turn,
+        usage: { input_tokens: 1, output_tokens: 1 },
+        total_cost_usd: 0,
+        duration_ms: Math.max(1, Date.now() - now),
+        duration_api_ms: 1,
+        is_error: false,
+        session_id: sessionId,
+      };
+
+      process.stdout.write(`${JSON.stringify(assistant)}\n`);
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      continue;
+    }
+
     if (scenario === 'taskoutput-sidechain') {
       const agentId = `agent_${turn}`;
       const taskToolUseId = `tool_task_${turn}`;

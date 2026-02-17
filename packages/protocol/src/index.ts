@@ -11,6 +11,46 @@ export {
 } from './crypto/accountScopedCipher.js';
 
 export {
+  ConnectedServiceCredentialFormatSchema,
+  ConnectedServiceCredentialKindSchema,
+  ConnectedServiceCredentialRecordV1Schema,
+  ConnectedServiceIdSchema,
+  ConnectedServiceProfileIdSchema,
+  ConnectedServiceQuotaMeterV1Schema,
+  ConnectedServiceQuotaSnapshotV1Schema,
+  ConnectedServiceQuotaUnitV1Schema,
+  SealedConnectedServiceCredentialV1Schema,
+  SealedConnectedServiceQuotaSnapshotV1Schema,
+  type ConnectedServiceCredentialFormat,
+  type ConnectedServiceCredentialKind,
+  type ConnectedServiceCredentialRecordV1,
+  type ConnectedServiceId,
+  type ConnectedServiceProfileId,
+  type ConnectedServiceQuotaMeterV1,
+  type ConnectedServiceQuotaSnapshotV1,
+  type ConnectedServiceQuotaUnitV1,
+  type SealedConnectedServiceCredentialV1,
+  type SealedConnectedServiceQuotaSnapshotV1,
+} from './connect/connectedServiceSchemas.js';
+
+export {
+  openConnectedServiceCredentialCiphertext,
+  openConnectedServiceQuotaSnapshotCiphertext,
+  sealConnectedServiceCredentialCiphertext,
+  sealConnectedServiceQuotaSnapshotCiphertext,
+} from './connect/connectedServiceCipher.js';
+
+export {
+  CONNECTED_SERVICE_ERROR_CODES,
+  ConnectedServiceErrorCodeSchema,
+  type ConnectedServiceErrorCode,
+} from './connect/connectedServiceErrors.js';
+
+export { buildConnectedServiceCredentialRecord } from './connect/buildConnectedServiceCredentialRecord.js';
+
+export { parseBooleanEnv, parseOptionalBooleanEnv } from './env/parseBooleanEnv.js';
+
+export {
   BOX_BUNDLE_MIN_BYTES,
   BOX_BUNDLE_NONCE_BYTES,
   BOX_BUNDLE_PUBLIC_KEY_BYTES,
@@ -439,6 +479,57 @@ export {
   type VoiceAgentTurnV1,
 } from './structuredMessages/voiceAgentTurnV1.js';
 
+export {
+  SessionSynopsisV1Schema,
+  type SessionSynopsisV1,
+} from './structuredMessages/sessionSynopsisV1.js';
+
+export {
+  SessionSummaryShardV1Schema,
+  type SessionSummaryShardV1,
+} from './structuredMessages/sessionSummaryShardV1.js';
+
+export {
+  MemoryCitationV1Schema,
+  MemorySearchErrorCodeSchema,
+  MemorySearchHitV1Schema,
+  MemorySearchModeSchema,
+  MemorySearchQueryV1Schema,
+  MemorySearchResultV1Schema,
+  MemorySearchScopeSchema,
+  type MemoryCitationV1,
+  type MemorySearchErrorCode,
+  type MemorySearchHitV1,
+  type MemorySearchMode,
+  type MemorySearchQueryV1,
+  type MemorySearchResultV1,
+  type MemorySearchScope,
+} from './memory/memorySearch.js';
+
+export {
+  MemorySnippetV1Schema,
+  MemoryWindowV1Schema,
+  type MemorySnippetV1,
+  type MemoryWindowV1,
+} from './memory/memoryWindow.js';
+
+export {
+  DEFAULT_MEMORY_SETTINGS,
+  MemoryBudgetsSettingsV1Schema,
+  MemoryDeepSettingsV1Schema,
+  MemoryEmbeddingsSettingsV1Schema,
+  MemoryHintsSettingsV1Schema,
+  MemorySettingsV1Schema,
+  MemoryWorkerSettingsV1Schema,
+  normalizeMemorySettings,
+  type MemoryBudgetsSettingsV1,
+  type MemoryDeepSettingsV1,
+  type MemoryEmbeddingsSettingsV1,
+  type MemoryHintsSettingsV1,
+  type MemorySettingsV1,
+  type MemoryWorkerSettingsV1,
+} from './memory/memorySettings.js';
+
 export * from './actions/index.js';
 
 // Tool normalization (V2)
@@ -493,6 +584,13 @@ export {
   type FeatureBuildPolicy,
   type FeatureBuildPolicyEvaluation,
 } from './features/buildPolicy.js';
+export {
+  mergeFeatureBuildPolicies,
+  resolveEmbeddedFeatureBuildPolicy,
+  resolveEmbeddedFeaturePolicyEnv,
+  resolveFeatureBuildPolicyFromEnvOrEmbedded,
+  type EmbeddedFeaturePolicyEnv,
+} from './features/embeddedFeaturePolicy.js';
 export {
   RelationshipStatusSchema,
   type RelationshipStatus,

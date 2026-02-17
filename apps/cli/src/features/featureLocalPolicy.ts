@@ -1,12 +1,4 @@
-import type { FeatureId } from '@happier-dev/protocol';
-
-function parseBooleanEnv(raw: string | null | undefined, fallback: boolean): boolean {
-  const normalized = String(raw ?? '').trim().toLowerCase();
-  if (!normalized) return fallback;
-  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') return false;
-  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') return true;
-  return fallback;
-}
+import { parseBooleanEnv, type FeatureId } from '@happier-dev/protocol';
 
 type FeatureLocalPolicyResolver = (env: NodeJS.ProcessEnv) => boolean;
 
@@ -17,6 +9,8 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
   bugReports: (env) => parseBooleanEnv(env.HAPPIER_FEATURE_BUG_REPORTS__ENABLED, true),
   'execution.runs': (env) => parseBooleanEnv(env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED, true),
   voice: (env) => parseBooleanEnv(env.HAPPIER_FEATURE_VOICE__ENABLED, true),
+  'connected.services': (env) => parseBooleanEnv(env.HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED, true),
+  'connected.services.quotas': (env) => parseBooleanEnv(env.HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED, true),
 };
 
 export function resolveCliLocalFeaturePolicyEnabled(featureId: FeatureId, env: NodeJS.ProcessEnv): boolean {

@@ -1,5 +1,6 @@
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
+import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DaemonExecutionRunMarkerSchema, type DaemonExecutionRunMarker } from '@happier-dev/protocol';
@@ -16,15 +17,53 @@ function resolveExecutionRunMarkerPath(runId: string): string {
   return join(resolveExecutionRunMarkerDir(), `run-${runId}.json`);
 }
 
-async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
-  const tmpPath = `${filePath}.tmp`;
+function isTerminalMarker(marker: ExecutionRunMarker): boolean {
+  if (marker.status !== 'running') return true;
+  return typeof (marker as any).finishedAtMs === 'number';
+}
+
+function isRunningMarker(marker: ExecutionRunMarker): boolean {
+  return marker.status === 'running' && typeof (marker as any).finishedAtMs !== 'number';
+}
+
+async function shouldSkipOverwriteForTerminalMarker(filePath: string, next: ExecutionRunMarker): Promise<boolean> {
+  try {
+    const raw = await readFile(filePath, 'utf8');
+    const parsed = ExecutionRunMarkerSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) return false;
+    if (parsed.data.happyHomeDir !== next.happyHomeDir) return false;
+    if (isTerminalMarker(parsed.data) && isRunningMarker(next)) return true;
+  } catch {
+    // ignore read/parse issues
+  }
+  return false;
+}
+
+async function writeJsonAtomic(filePath: string, value: ExecutionRunMarker): Promise<void> {
+  const tmpPath = `${filePath}.tmp-${randomUUID()}`;
   try {
     await writeFile(tmpPath, JSON.stringify(value, null, 2), 'utf-8');
     try {
+      if (await shouldSkipOverwriteForTerminalMarker(filePath, value)) {
+        try {
+          await unlink(tmpPath);
+        } catch {
+          // ignore
+        }
+        return;
+      }
       await rename(tmpPath, filePath);
     } catch (e) {
       const err = e as NodeJS.ErrnoException;
       if (err?.code === 'EEXIST' || err?.code === 'EPERM') {
+        if (await shouldSkipOverwriteForTerminalMarker(filePath, value)) {
+          try {
+            await unlink(tmpPath);
+          } catch {
+            // ignore
+          }
+          return;
+        }
         try {
           await unlink(filePath);
         } catch {

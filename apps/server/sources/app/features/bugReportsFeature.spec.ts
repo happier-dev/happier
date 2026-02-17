@@ -73,4 +73,13 @@ describe("features/bugReportsFeature", () => {
 
         expect(result.bugReports.contextWindowMs).toBe(30 * 60 * 1000);
     });
+
+    it("hard-disables bug reports when build policy denies the feature", () => {
+        const result = resolveBugReportsFeature({
+            HAPPIER_BUILD_FEATURES_DENY: "bugReports",
+            HAPPIER_FEATURE_BUG_REPORTS__ENABLED: "1",
+        } as any);
+
+        expect(result.bugReports.enabled).toBe(false);
+    });
 });

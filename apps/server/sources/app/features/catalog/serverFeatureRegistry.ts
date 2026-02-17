@@ -7,6 +7,8 @@ import { resolveVoiceFeature } from '@/app/features/voiceFeature';
 import { resolveFriendsFeature } from '@/app/features/friendsFeature';
 import { resolveOAuthFeature } from '@/app/features/oauthFeature';
 import { resolveAuthFeature } from '@/app/features/authFeature';
+import { resolveConnectedServicesFeature } from '@/app/features/connectedServicesFeature';
+import { resolveUpdatesFeature } from '@/app/features/updatesFeature';
 
 export type ServerFeatureResolver = (env: NodeJS.ProcessEnv) => Partial<FeaturesResponse['features']>;
 
@@ -15,6 +17,8 @@ export const serverFeatureRegistry: readonly ServerFeatureResolver[] = Object.fr
     (env) => resolveAutomationsFeature(env),
     (_env) => resolveSharingFeature(),
     (env) => resolveVoiceFeature(env),
+    (env) => resolveConnectedServicesFeature(env),
+    (env) => resolveUpdatesFeature(env),
     (env) => resolveFriendsFeature(env),
     (env) => resolveOAuthFeature(env),
     (env) => resolveAuthFeature(env),

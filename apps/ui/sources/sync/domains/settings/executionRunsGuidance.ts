@@ -138,6 +138,14 @@ export function buildExecutionRunsGuidanceBlock(params: Readonly<{
         lines.push(`- (+${remaining} more rules in settings)`);
     }
 
+    const tryPush = (line: string): boolean => {
+        const nextLen = usedChars + 1 + line.length;
+        if (nextLen > maxChars) return false;
+        lines.push(line);
+        usedChars = nextLen;
+        return true;
+    };
+
     const exampleToolCalls = (() => {
         const seen = new Set<string>();
         const out: string[] = [];
@@ -158,14 +166,6 @@ export function buildExecutionRunsGuidanceBlock(params: Readonly<{
     })();
 
     if (exampleToolCalls.length > 0) {
-        const tryPush = (line: string): boolean => {
-            const nextLen = usedChars + 1 + line.length;
-            if (nextLen > maxChars) return false;
-            lines.push(line);
-            usedChars = nextLen;
-            return true;
-        };
-
         const first = `- ${exampleToolCalls[0]}`;
         // Add the section only if we can fit at least the header + intro + one bullet.
         const headerLines = ['', '## Example tool calls (MCP)', 'Examples only; adapt as needed.', first];
@@ -193,6 +193,31 @@ export function buildExecutionRunsGuidanceBlock(params: Readonly<{
                 // Best-effort: only add the overflow note if it fits.
                 tryPush(`- (+${remainingExamples} more examples in settings)`);
             }
+        }
+    }
+
+    // Best-effort: include explicit delegation mechanics so the agent knows how to act on the rules.
+    // Skip if it doesn't fit the character budget.
+    const delegationLines = [
+        '',
+        '## Delegating via MCP',
+        'When you decide to delegate work to an execution run, use the MCP tools available to you:',
+        '- Start a run with `execution_run_start` (include the task prompt; optionally pass intent/backend/model from the rules above).',
+        '- Poll or fetch results with `execution_run_get` (or list runs with `execution_run_list`).',
+        '- Stop a run with `execution_run_stop` if it is no longer needed.',
+    ];
+    {
+        const snapshot = { usedChars, linesLen: lines.length };
+        let ok = true;
+        for (const line of delegationLines) {
+            if (!tryPush(line)) {
+                ok = false;
+                break;
+            }
+        }
+        if (!ok) {
+            lines.splice(snapshot.linesLen, lines.length - snapshot.linesLen);
+            usedChars = snapshot.usedChars;
         }
     }
 

@@ -19,6 +19,7 @@ export const profileDefaults: Profile = {
     avatar: null,
     linkedProviders: [],
     connectedServices: [],
+    connectedServicesV2: [],
 };
 Object.freeze(profileDefaults);
 

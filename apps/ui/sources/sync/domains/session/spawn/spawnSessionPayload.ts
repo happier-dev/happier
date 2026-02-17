@@ -47,6 +47,13 @@ export interface SpawnSessionOptions {
      * on the machine so the user can later interact locally.
      */
     windowsRemoteSessionConsole?: 'hidden' | 'visible';
+    /**
+     * Optional: per-session bindings to Happier Connected Services profiles.
+     *
+     * This payload must NOT include secrets. The daemon uses it to fetch sealed credentials from the cloud
+     * and decrypt/materialize them locally for the provider runtime.
+     */
+    connectedServices?: unknown;
 }
 
 export type SpawnHappySessionRpcParams = {
@@ -66,10 +73,11 @@ export type SpawnHappySessionRpcParams = {
     experimentalCodexAcp?: boolean
     terminal?: TerminalSpawnOptions
     windowsRemoteSessionConsole?: 'hidden' | 'visible'
+    connectedServices?: unknown
 };
 
 export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): SpawnHappySessionRpcParams {
-    const { directory, approvedNewDirectoryCreation = false, token, agent, environmentVariables, profileId, resume, permissionMode, permissionModeUpdatedAt, modelId, modelUpdatedAt, experimentalCodexResume, experimentalCodexAcp, terminal, windowsRemoteSessionConsole } = options;
+    const { directory, approvedNewDirectoryCreation = false, token, agent, environmentVariables, profileId, resume, permissionMode, permissionModeUpdatedAt, modelId, modelUpdatedAt, experimentalCodexResume, experimentalCodexAcp, terminal, windowsRemoteSessionConsole, connectedServices } = options;
 
     const normalizedModelId = typeof modelId === 'string' ? modelId.trim() : '';
     const includeModelOverride =
@@ -92,6 +100,7 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
         ...(includeModelOverride ? { modelId: normalizedModelId, modelUpdatedAt } : {}),
         experimentalCodexResume,
         experimentalCodexAcp,
+        connectedServices,
     };
 
     if (terminal) {

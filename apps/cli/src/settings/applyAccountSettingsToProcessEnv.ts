@@ -10,14 +10,15 @@ export function applyAccountSettingsToProcessEnv(params: Readonly<{
   }
 
   // Allow explicit env var overrides (for debugging / CI).
-  if (typeof process.env.HAPPIER_ACTIONS_DISABLED_ACTION_IDS !== 'string') {
+  if (typeof process.env.HAPPIER_ACTIONS_SETTINGS_V1 !== 'string') {
     const rawActions = (params.settings as any)?.actionsSettingsV1;
-    const disabled = Array.isArray(rawActions?.disabledActionIds) ? rawActions.disabledActionIds : null;
-    if (disabled && disabled.length > 0) {
-      const ids = disabled
-        .map((v: any) => (typeof v === 'string' ? v.trim() : ''))
-        .filter((v: string) => v.length > 0);
-      process.env.HAPPIER_ACTIONS_DISABLED_ACTION_IDS = JSON.stringify(ids);
+    const parsed = rawActions && typeof rawActions === 'object' ? rawActions : null;
+    if (parsed) {
+      try {
+        process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify(parsed);
+      } catch {
+        // ignore
+      }
     }
   }
 }
