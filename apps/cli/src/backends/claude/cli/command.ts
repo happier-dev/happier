@@ -261,6 +261,10 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
     // Apply Claude variant config directory if specified
     if (claudeConfigDir) {
       options.claudeEnvVars = options.claudeEnvVars || {};
+      const existing = options.claudeEnvVars['CLAUDE_CONFIG_DIR'];
+      if (existing) {
+        console.warn(chalk.yellow(`[Happier] Warning: Variant config dir "${claudeConfigDir}" is overriding --claude-env CLAUDE_CONFIG_DIR="${existing}"`));
+      }
       options.claudeEnvVars['CLAUDE_CONFIG_DIR'] = claudeConfigDir;
     }
     await runClaude(credentials, options);

@@ -9,6 +9,6 @@ When working on a branch that already has an associated PR:
 - Only create a new PR if no PR exists for the current branch
 
 **PRs must target the base repository, not forks.**
-- Always specify the full repository path when creating PRs: `gh pr create <base-repo-owner>/<base-repo-name>`
+- Always specify the full repository path when creating PRs: `gh pr create --repo <base-repo-owner>/<base-repo-name>`
 - Do not create PRs against forked repositories unless explicitly requested
-- Example: For Happier, use `gh pr create happier-dev/happier` (not the fork `caseyjkey/happier`)
+- Example: For Happier, use `gh pr create --repo happier-dev/happier` (not the fork `caseyjkey/happier`)
