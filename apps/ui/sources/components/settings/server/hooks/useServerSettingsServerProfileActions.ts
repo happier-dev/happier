@@ -66,32 +66,19 @@ export function useServerSettingsServerProfileActions(params: Readonly<{
         );
         if (!confirmed) return;
 
-        let hadCreds = false;
+        // Removing a server should clear its local credentials; otherwise re-adding the same URL can
+        // resurrect an old token unexpectedly (confusing and potentially unsafe).
+        // Do this before removing the profile so TokenStorage can still resolve the serverId scope.
         try {
-            hadCreds = Boolean(await TokenStorage.getCredentialsForServerUrl(profile.serverUrl));
+            await TokenStorage.removeCredentialsForServerUrl(profile.serverUrl);
         } catch {
-            hadCreds = false;
+            // Best-effort only.
         }
         try {
             removeServerProfile(profile.id);
         } catch (err) {
             Modal.alert(t('common.error'), String((err as any)?.message ?? err));
             return;
-        }
-
-        if (hadCreds) {
-            const alsoSignOut = await Modal.confirm(
-                t('server.signOutThisServer'),
-                t('server.signOutThisServerPrompt'),
-                { confirmText: t('common.signOut'), cancelText: t('common.keep'), destructive: true }
-            );
-            if (alsoSignOut) {
-                try {
-                    await TokenStorage.removeCredentialsForServerUrl(profile.serverUrl);
-                } catch {
-                    // ignore
-                }
-            }
         }
 
         params.setRevision((r) => r + 1);
