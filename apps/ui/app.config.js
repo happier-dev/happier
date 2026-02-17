@@ -1,5 +1,36 @@
 const variant = process.env.APP_ENV || 'development';
 
+function resolveOptionalAppLocalConfigModule() {
+    const explicitPath = (process.env.EXPO_APP_LOCAL_CONFIG_PATH || '').trim();
+    const candidates = explicitPath ? [explicitPath] : ['./app.local.js'];
+
+    for (const candidatePath of candidates) {
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const mod = require(candidatePath);
+            return mod && typeof mod === 'object' && 'default' in mod ? mod.default : mod;
+        } catch (error) {
+            if (explicitPath) {
+                throw error;
+            }
+        }
+    }
+
+    return null;
+}
+
+const appLocalConfigModule = resolveOptionalAppLocalConfigModule();
+if (appLocalConfigModule && typeof appLocalConfigModule === 'object') {
+    const envOverrides = appLocalConfigModule.env;
+    if (envOverrides && typeof envOverrides === 'object') {
+        for (const [key, value] of Object.entries(envOverrides)) {
+            if (typeof key === 'string') {
+                process.env[key] = value == null ? '' : String(value);
+            }
+        }
+    }
+}
+
 const DEFAULTS = {
     owner: "happier-dev",
     slug: "happier",
@@ -79,6 +110,19 @@ const parseOptionalBoolean = (raw) => {
     return null;
 };
 
+const mergeDeep = (base, override) => {
+    if (override == null) return base;
+    if (Array.isArray(base) || Array.isArray(override)) return override;
+    if (typeof base !== 'object' || typeof override !== 'object') return override;
+
+    const next = { ...base };
+    for (const [key, value] of Object.entries(override)) {
+        if (value === undefined) continue;
+        next[key] = Object.prototype.hasOwnProperty.call(base, key) ? mergeDeep(base[key], value) : value;
+    }
+    return next;
+};
+
 // iOS background audio is required for "call-like" realtime ElevenLabs sessions to keep working when the app is
 // backgrounded/locked. We enable this by default for all variants so dev-client testing matches production behavior.
 const iosBackgroundAudioOverride = parseOptionalBoolean(
@@ -101,8 +145,7 @@ if (!process.env.EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS) {
     });
 }
 
-export default {
-    expo: {
+const baseExpoConfig = {
         name,
         slug,
         version: "0.1.0",
@@ -260,5 +303,20 @@ export default {
             }
         },
         owner
-    }
+};
+
+let localExpoOverrides = null;
+if (typeof appLocalConfigModule === 'function') {
+    localExpoOverrides = appLocalConfigModule({ variant: appVariant, baseConfig: { expo: baseExpoConfig } });
+} else if (appLocalConfigModule && typeof appLocalConfigModule === 'object') {
+    localExpoOverrides = appLocalConfigModule;
+}
+if (localExpoOverrides && typeof localExpoOverrides === 'object' && 'expo' in localExpoOverrides) {
+    localExpoOverrides = localExpoOverrides.expo;
+}
+
+export default {
+    expo: localExpoOverrides && typeof localExpoOverrides === 'object'
+        ? mergeDeep(baseExpoConfig, localExpoOverrides)
+        : baseExpoConfig,
 };

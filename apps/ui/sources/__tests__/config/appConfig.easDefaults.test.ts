@@ -24,6 +24,7 @@ function withCleanEnv<T>(fn: () => T): T {
         'EXPO_UPDATES_CHANNEL',
         'EXPO_APP_OWNER',
         'EXPO_APP_SLUG',
+        'EXPO_APP_LOCAL_CONFIG_PATH',
         'EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV',
         'EXPO_PUBLIC_IOS_BACKGROUND_AUDIO',
         'EXPO_IOS_BACKGROUND_AUDIO',
@@ -169,5 +170,24 @@ describe('app.config.js', () => {
         expect(exp.ios?.infoPlist?.NSPhotoLibraryUsageDescription).toBeTruthy();
         expect(exp.ios?.infoPlist?.NSPhotoLibraryAddUsageDescription).toBeTruthy();
         expect(exp.ios?.infoPlist?.NSLocationWhenInUseUsageDescription).toBeTruthy();
+    });
+
+    it('applies app.local overrides when a local config file is provided', () => {
+        const exp = withCleanEnv(() => {
+            process.env.EXPO_APP_LOCAL_CONFIG_PATH = join(
+                getUiDir(),
+                'sources',
+                '__tests__',
+                'config',
+                'fixtures',
+                'app.local.fixture.cjs',
+            );
+            return getPublicConfig();
+        });
+
+        expect(exp.name).toBe('Happier (local override)');
+        expect(exp.ios?.infoPlist?.NSPhotoLibraryUsageDescription).toBe(
+            'Local override: access photos for sharing.',
+        );
     });
 });
