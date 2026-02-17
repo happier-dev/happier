@@ -196,7 +196,7 @@ jobs:
             --platform "${EAS_PLATFORM}" \
             --profile "${EAS_BUILD_PROFILE}" \
             --local \
-            --output "../${EAS_BUILD_OUT}" \
+            --output "../../${EAS_BUILD_OUT}" \
             --non-interactive
 
       - name: Verify build artifact
@@ -238,7 +238,7 @@ jobs:
           cd apps/ui
           npx --yes "eas-cli@${EAS_CLI_VERSION}" submit \
             --platform "${EAS_PLATFORM}" \
-            --path "../${EAS_BUILD_OUT}" \
+            --path "../../${EAS_BUILD_OUT}" \
             --profile production \
             --non-interactive
 
@@ -337,7 +337,7 @@ jobs:
             --platform "${EAS_PLATFORM}" \
             --profile "${EAS_BUILD_PROFILE}" \
             --local \
-            --output "../${EAS_BUILD_OUT}" \
+            --output "../../${EAS_BUILD_OUT}" \
             --non-interactive
 
       - name: Verify build artifact
@@ -379,6 +379,6 @@ jobs:
           cd apps/ui
           npx --yes "eas-cli@${EAS_CLI_VERSION}" submit \
             --platform "${EAS_PLATFORM}" \
-            --path "../${EAS_BUILD_OUT}" \
+            --path "../../${EAS_BUILD_OUT}" \
             --profile production \
             --non-interactive
