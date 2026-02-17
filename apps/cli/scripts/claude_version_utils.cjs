@@ -65,11 +65,8 @@ function findClaudeInPath() {
             stdio: ['pipe', 'pipe', 'pipe']
         })).trim();
 
-        const claudePath = result.split('\n')[0].trim(); // Take first match
+        const claudePath = pickClaudePathFromWhichOrWhereOutput(result, process.platform, fs.existsSync);
         if (!claudePath) return null;
-
-        // Check existence BEFORE resolving (from tiann/PR#83)
-        if (!fs.existsSync(claudePath)) return null;
 
         // Resolve with fallback to original path (from tiann/PR#83)
         const resolvedPath = resolvePathSafe(claudePath) || claudePath;
@@ -94,6 +91,76 @@ function findClaudeInPath() {
         // Command failed (claude not in PATH)
     }
     return null;
+}
+
+function scoreWindowsClaudePathCandidate(candidate) {
+    const lower = (candidate || '').toString().toLowerCase();
+    let score = 0;
+
+    // Avoid Windows "App execution alias" stubs when there's any other option.
+    // Those often live under ...\\Microsoft\\WindowsApps\\ and can be surprising/unreliable.
+    if (lower.includes('windowsapps')) score -= 1000;
+
+    // Prefer native binaries over wrappers/shims.
+    if (lower.endsWith('.exe')) score += 100;
+    else if (lower.endsWith('.cmd')) score += 60;
+    else if (lower.endsWith('.bat')) score += 50;
+
+    // Prefer known native-installer locations over node/npm shims.
+    if (lower.includes('\\appdata\\local\\claude\\') || lower.includes('/appdata/local/claude/')) score += 60;
+    if (lower.includes('\\.claude\\') || lower.includes('/.claude/')) score += 50;
+    if (lower.includes('program files') && lower.includes('claude')) score += 50;
+
+    // De-prioritize npm shims when a native option is present.
+    if (lower.includes('appdata') && lower.includes('roaming') && lower.includes('npm')) score -= 10;
+
+    return score;
+}
+
+/**
+ * Given output from `which claude` (Unix) or `where claude` (Windows),
+ * pick the best path to try.
+ *
+ * This is intentionally deterministic + testable without mocking execSync.
+ *
+ * @param {string} output
+ * @param {string} platform
+ * @param {(p: string) => boolean} existsSync
+ * @returns {string|null}
+ */
+function pickClaudePathFromWhichOrWhereOutput(output, platform = process.platform, existsSync = fs.existsSync) {
+    if (!output) return null;
+
+    const candidates = output
+        .split(/\r?\n/g)
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+    if (candidates.length === 0) return null;
+
+    const existing = [];
+    for (const candidate of candidates) {
+        try {
+            if (existsSync(candidate)) existing.push(candidate);
+        } catch {
+            // ignore invalid paths / fs errors during probing
+        }
+    }
+
+    if (existing.length === 0) return null;
+    if (platform !== 'win32' || existing.length === 1) return existing[0];
+
+    let best = existing[0];
+    let bestScore = scoreWindowsClaudePathCandidate(best);
+    for (const candidate of existing.slice(1)) {
+        const score = scoreWindowsClaudePathCandidate(candidate);
+        if (score > bestScore) {
+            best = candidate;
+            bestScore = score;
+        }
+    }
+
+    return best;
 }
 
 /**
@@ -557,6 +624,7 @@ function runClaudeCli(cliPath) {
 module.exports = {
     findGlobalClaudeCliPath,
     findClaudeInPath,
+    pickClaudePathFromWhichOrWhereOutput,
     detectSourceFromPath,
     findNpmGlobalCliPath,
     findBunGlobalCliPath,
