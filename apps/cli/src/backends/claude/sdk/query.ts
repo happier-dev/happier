@@ -263,7 +263,10 @@ export function query(config: {
             customSystemPrompt,
             cwd,
             disallowedTools = [],
-            executable = 'node',
+            // Prefer the currently-running Node binary when available to avoid PATH-dependent
+            // failures on Windows (and GUI-launched shells). When running under Bun we keep
+            // the historical default ("node") because process.execPath would be Bun.
+            executable = typeof process.versions.bun === 'string' ? 'node' : process.execPath,
             executableArgs = [],
             maxTurns,
             mcpServers,
@@ -327,13 +330,15 @@ export function query(config: {
     // - If it's a full path to binary → spawn(path, args)
     const isJsFile = pathToClaudeCodeExecutable.endsWith('.js') || pathToClaudeCodeExecutable.endsWith('.cjs')
     const isCommandOnly = pathToClaudeCodeExecutable === 'claude'
+    const resolvedExecutable =
+      executable === 'node' && typeof process.versions.bun !== 'string' ? process.execPath : executable
     
     // Validate executable path (skip for command-only mode)
     if (!isCommandOnly && !existsSync(pathToClaudeCodeExecutable)) {
         throw new ReferenceError(`Claude Code executable not found at ${pathToClaudeCodeExecutable}. Is options.pathToClaudeCodeExecutable set?`)
     }
 
-    const spawnCommand = isJsFile ? executable : pathToClaudeCodeExecutable
+    const spawnCommand = isJsFile ? resolvedExecutable : pathToClaudeCodeExecutable
     const spawnArgs = isJsFile 
         ? [...executableArgs, pathToClaudeCodeExecutable, ...args]
         : args
