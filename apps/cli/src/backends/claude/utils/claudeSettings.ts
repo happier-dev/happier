@@ -18,8 +18,10 @@ export interface ClaudeSettings {
 /**
  * Get the path to Claude's settings.json file
  */
-function getClaudeSettingsPath(): string {
-  const claudeConfigDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
+function getClaudeSettingsPath(claudeConfigDirOverride?: string | null): string {
+  const override = typeof claudeConfigDirOverride === 'string' ? claudeConfigDirOverride.trim() : '';
+  const claudeConfigDir =
+    override.length > 0 ? override : (process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'));
   return join(claudeConfigDir, 'settings.json');
 }
 
@@ -28,9 +30,9 @@ function getClaudeSettingsPath(): string {
  * 
  * @returns Claude settings object or null if file doesn't exist or can't be read
  */
-export function readClaudeSettings(): ClaudeSettings | null {
+export function readClaudeSettings(claudeConfigDirOverride?: string | null): ClaudeSettings | null {
   try {
-    const settingsPath = getClaudeSettingsPath();
+    const settingsPath = getClaudeSettingsPath(claudeConfigDirOverride);
     
     if (!existsSync(settingsPath)) {
       logger.debug(`[ClaudeSettings] No Claude settings file found at ${settingsPath}`);

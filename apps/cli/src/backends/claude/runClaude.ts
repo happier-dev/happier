@@ -458,6 +458,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     const hookSettingsPath = generateHookSettingsFile(hookServer.port, {
         enableLocalPermissionBridge: true,
         permissionHookSecret,
+        claudeConfigDir: options.claudeEnvVars?.CLAUDE_CONFIG_DIR,
     });
     logger.debug(`[START] Generated hook settings file: ${hookSettingsPath}`);
 

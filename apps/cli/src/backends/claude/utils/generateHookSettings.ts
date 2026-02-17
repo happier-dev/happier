@@ -10,10 +10,16 @@ import { writeFileSync, mkdirSync, unlinkSync, existsSync } from 'node:fs';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { projectPath } from '@/projectPath';
+import { readClaudeSettings, type ClaudeSettings } from './claudeSettings';
 
 export interface GenerateHookSettingsOptions {
     enableLocalPermissionBridge?: boolean;
     permissionHookSecret?: string;
+    /**
+     * Override Claude config directory when the subprocess uses a non-default CLAUDE_CONFIG_DIR.
+     * This ensures our generated --settings overlay merges with the correct user settings.
+     */
+    claudeConfigDir?: string;
 }
 
 /**
@@ -69,8 +75,42 @@ export function generateHookSettingsFile(port: number, options: GenerateHookSett
         ];
     }
 
-    const settings = {
-        hooks
+    const baseSettings: ClaudeSettings = readClaudeSettings(options.claudeConfigDir) ?? {};
+    const baseHooks =
+        baseSettings && typeof baseSettings === 'object' && baseSettings.hooks && typeof baseSettings.hooks === 'object'
+            ? (baseSettings.hooks as Record<string, unknown>)
+            : {};
+
+    const mergedHooks: Record<string, unknown> = { ...baseHooks };
+    for (const [hookName, requiredValue] of Object.entries(hooks)) {
+        const requiredEntries = Array.isArray(requiredValue) ? requiredValue : [requiredValue];
+        const existingEntries = Array.isArray(mergedHooks[hookName]) ? [...(mergedHooks[hookName] as unknown[])] : [];
+
+        for (const requiredEntry of requiredEntries) {
+            const requiredCommand = (() => {
+                try {
+                    const cmd = (requiredEntry as any)?.hooks?.[0]?.command;
+                    return typeof cmd === 'string' ? cmd : null;
+                } catch {
+                    return null;
+                }
+            })();
+
+            const alreadyPresent = requiredCommand
+                ? existingEntries.some((entry: any) => Array.isArray(entry?.hooks) && entry.hooks.some((h: any) => h?.command === requiredCommand))
+                : false;
+
+            if (!alreadyPresent) {
+                existingEntries.push(requiredEntry);
+            }
+        }
+
+        mergedHooks[hookName] = existingEntries;
+    }
+
+    const settings: ClaudeSettings = {
+        ...baseSettings,
+        hooks: mergedHooks,
     };
 
     writeFileSync(filepath, JSON.stringify(settings, null, 2));
