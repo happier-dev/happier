@@ -14,6 +14,9 @@ export function buildPiToolsForPermissionMode(permissionMode?: PermissionMode): 
   if (mode === 'read-only' || mode === 'plan') {
     return ['read', 'grep', 'find', 'ls'];
   }
+  if (mode === 'safe-yolo') {
+    return ['read', 'edit', 'write', 'grep', 'find', 'ls'];
+  }
   return ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'];
 }
 

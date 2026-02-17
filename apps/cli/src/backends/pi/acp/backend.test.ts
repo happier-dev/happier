@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createPiBackend } from './backend';
+import { buildPiToolsForPermissionMode, createPiBackend } from './backend';
 
 describe('pi backend argv', () => {
   it('adds --thinking when HAPPIER_PI_THINKING_LEVEL is set', () => {
@@ -29,3 +29,13 @@ describe('pi backend argv', () => {
   });
 });
 
+describe('buildPiToolsForPermissionMode', () => {
+  it.each([
+    { mode: 'read-only', expected: ['read', 'grep', 'find', 'ls'] },
+    { mode: 'safe-yolo', expected: ['read', 'edit', 'write', 'grep', 'find', 'ls'] },
+    { mode: 'yolo', expected: ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'] },
+    { mode: 'default', expected: ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'] },
+  ] as const)('maps $mode to tools list', ({ mode, expected }) => {
+    expect(buildPiToolsForPermissionMode(mode)).toEqual(expected);
+  });
+});

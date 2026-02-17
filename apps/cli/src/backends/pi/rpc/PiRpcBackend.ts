@@ -137,6 +137,58 @@ export class PiRpcBackend implements AgentBackend {
     return { sessionId: nextSessionId };
   }
 
+  async loadSession(sessionId: SessionId): Promise<StartSessionResult> {
+    if (this.disposed) {
+      throw new Error('Pi backend is disposed');
+    }
+
+    const expectedSessionId = String(sessionId ?? '').trim();
+    if (!expectedSessionId) {
+      throw new Error('Pi loadSession requires a session id');
+    }
+
+    // If we're already attached to a session, validate that it matches.
+    if (this.sessionId) {
+      if (this.sessionId !== expectedSessionId) {
+        throw new Error(`Pi session mismatch (expected ${this.sessionId}, got ${expectedSessionId})`);
+      }
+      return { sessionId: this.sessionId };
+    }
+
+    if (this.pendingTurn) {
+      throw new Error('Cannot load Pi session while a turn is in-flight');
+    }
+
+    // `--continue` is the Pi CLI's resume primitive. We do not assume the process is already running:
+    // - createAcpRuntime.reset() disposes backends, so resume happens in a fresh process.
+    // - resume should work even across process boundaries, as long as PI_CODING_AGENT_DIR persists.
+    this.emitMessage({ type: 'status', status: 'starting' });
+    try {
+      await this.stopRpcProcessForRestart();
+      this.spawnRpcProcess({ args: [...this.options.args, '--continue'] });
+
+      const state = await this.getState();
+      const resumedSessionId = asNonEmptyString(state.sessionId);
+      if (!resumedSessionId) {
+        throw new Error('Pi did not return a session id after --continue');
+      }
+      if (resumedSessionId !== expectedSessionId) {
+        throw new Error(`Pi session mismatch after --continue (expected ${expectedSessionId}, got ${resumedSessionId})`);
+      }
+
+      this.sessionId = resumedSessionId;
+      await this.captureAuthJsonSnapshot();
+      await this.publishRuntimeState(state);
+      this.emitMessage({ type: 'status', status: 'idle' });
+      return { sessionId: resumedSessionId };
+    } catch (error) {
+      // Ensure we don't leave a half-initialized process around after a failed load attempt.
+      await this.stopRpcProcessForRestart();
+      this.sessionId = null;
+      throw error;
+    }
+  }
+
   /**
    * Exposed for best-effort model probing (see `capabilities/probes/agentModelsProbe.ts`).
    * This mirrors the ACP `getSessionModelState` shape.

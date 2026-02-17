@@ -11,6 +11,10 @@ function asNonEmptyString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function asString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
 export function mapPiRpcEventToAgentMessages(event: unknown): AgentMessage[] {
   const record = asRecord(event);
   if (!record) return [];
@@ -31,8 +35,8 @@ export function mapPiRpcEventToAgentMessages(event: unknown): AgentMessage[] {
     const assistantType = asNonEmptyString(assistantMessageEvent.type);
     if (!assistantType) return [];
     if (assistantType === 'text_delta') {
-      const delta = asNonEmptyString(assistantMessageEvent.delta);
-      if (!delta) return [];
+      const delta = asString(assistantMessageEvent.delta);
+      if (delta === null || delta.length === 0) return [];
       return [{ type: 'model-output', textDelta: delta }];
     }
     return [];

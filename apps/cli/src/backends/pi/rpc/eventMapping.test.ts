@@ -11,6 +11,14 @@ describe('mapPiRpcEventToAgentMessages', () => {
     expect(output).toEqual([{ type: 'model-output', textDelta: 'hello' }]);
   });
 
+  it('preserves leading whitespace in streamed text deltas', () => {
+    const output = mapPiRpcEventToAgentMessages({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: ' world' },
+    });
+    expect(output).toEqual([{ type: 'model-output', textDelta: ' world' }]);
+  });
+
   it('maps tool execution lifecycle events', () => {
     const start = mapPiRpcEventToAgentMessages({
       type: 'tool_execution_start',

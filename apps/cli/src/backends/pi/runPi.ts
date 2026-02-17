@@ -4,6 +4,7 @@ import type { Credentials } from '@/persistence';
 import { initialMachineMetadata } from '@/daemon/startDaemon';
 import { runStandardAcpProvider, type StandardAcpProviderRunOptions } from '@/agent/runtime/runStandardAcpProvider';
 import { createPiAcpRuntime } from '@/backends/pi/acp/runtime';
+import { buildPiToolsForPermissionMode } from '@/backends/pi/acp/backend';
 import { PiTerminalDisplay } from '@/backends/pi/ui/PiTerminalDisplay';
 
 export async function runPi(opts: StandardAcpProviderRunOptions & {
@@ -19,6 +20,7 @@ export async function runPi(opts: StandardAcpProviderRunOptions & {
     agentMessageType: 'pi',
     machineMetadata: initialMachineMetadata,
     terminalDisplay: PiTerminalDisplay,
+    resolvePermissionModeQueueKey: (permissionMode) => buildPiToolsForPermissionMode(permissionMode).join(','),
     createRuntime: ({ directory, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode }) =>
       createPiAcpRuntime({
         directory,
