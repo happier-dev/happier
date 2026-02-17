@@ -77,9 +77,23 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  release_actor_guard:
+    name: Release actor guard
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Authorize release actor
+        uses: ./.github/actions/release-actor-guard
+        with:
+          team_slug: release-admins
+
   build_android:
     name: Build (android)
     if: ${{ inputs.platform == 'all' || inputs.platform == 'android' }}
+    needs: [release_actor_guard]
     runs-on: ubuntu-latest
     environment: release-shared
     env:
@@ -231,6 +245,7 @@ jobs:
   build_ios:
     name: Build (ios)
     if: ${{ inputs.platform == 'all' || inputs.platform == 'ios' }}
+    needs: [release_actor_guard]
     runs-on: macos-latest
     environment: release-shared
     env:
