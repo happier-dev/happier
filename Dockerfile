@@ -23,14 +23,16 @@ COPY packages/protocol/package.json packages/protocol/
 COPY packages/audio-stream-native/package.json packages/audio-stream-native/
 COPY packages/sherpa-native/package.json packages/sherpa-native/
 
-RUN yarn config set registry https://registry.npmjs.org/ \
+RUN --mount=type=cache,target=/tmp/.yarn-cache,sharing=locked \
+    yarn config set registry https://registry.npmjs.org/ \
     && is_transient_yarn_error() { \
       grep -Eq 'Request failed "(5[0-9]{2}|429)' "$1" && return 0; \
-      grep -Eq 'EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up' "$1" && return 0; \
+      grep -Eq 'EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ESOCKETTIMEDOUT|socket hang up' "$1" && return 0; \
+      grep -Eq 'trouble with your network connection' "$1" && return 0; \
       return 1; \
     }; \
     for attempt in 1 2 3; do \
-      if yarn install --frozen-lockfile --ignore-engines > /tmp/yarn-install.log 2>&1; then \
+      if yarn install --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive > /tmp/yarn-install.log 2>&1; then \
         cat /tmp/yarn-install.log; \
         break; \
       fi; \
@@ -71,14 +73,16 @@ COPY packages/protocol/package.json packages/protocol/
 COPY packages/audio-stream-native/package.json packages/audio-stream-native/
 COPY packages/sherpa-native/package.json packages/sherpa-native/
 
-RUN yarn config set registry https://registry.npmjs.org/ \
+RUN --mount=type=cache,target=/tmp/.yarn-cache,sharing=locked \
+    yarn config set registry https://registry.npmjs.org/ \
     && is_transient_yarn_error() { \
       grep -Eq 'Request failed "(5[0-9]{2}|429)' "$1" && return 0; \
-      grep -Eq 'EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up' "$1" && return 0; \
+      grep -Eq 'EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ESOCKETTIMEDOUT|socket hang up' "$1" && return 0; \
+      grep -Eq 'trouble with your network connection' "$1" && return 0; \
       return 1; \
     }; \
     for attempt in 1 2 3; do \
-      if yarn install --frozen-lockfile --ignore-engines > /tmp/yarn-install.log 2>&1; then \
+      if yarn install --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive > /tmp/yarn-install.log 2>&1; then \
         cat /tmp/yarn-install.log; \
         break; \
       fi; \
@@ -117,14 +121,16 @@ COPY packages/protocol/package.json packages/protocol/
 COPY packages/audio-stream-native/package.json packages/audio-stream-native/
 COPY packages/sherpa-native/package.json packages/sherpa-native/
 
-RUN yarn config set registry https://registry.npmjs.org/ \
+RUN --mount=type=cache,target=/tmp/.yarn-cache,sharing=locked \
+    yarn config set registry https://registry.npmjs.org/ \
     && is_transient_yarn_error() { \
       grep -Eq 'Request failed "(5[0-9]{2}|429)' "$1" && return 0; \
-      grep -Eq 'EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up' "$1" && return 0; \
+      grep -Eq 'EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ESOCKETTIMEDOUT|socket hang up' "$1" && return 0; \
+      grep -Eq 'trouble with your network connection' "$1" && return 0; \
       return 1; \
     }; \
     for attempt in 1 2 3; do \
-      if yarn install --frozen-lockfile --ignore-engines > /tmp/yarn-install.log 2>&1; then \
+      if yarn install --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive > /tmp/yarn-install.log 2>&1; then \
         cat /tmp/yarn-install.log; \
         break; \
       fi; \

@@ -25,7 +25,33 @@ COPY packages/cli-common/package.json packages/cli-common/
 COPY packages/protocol/package.json packages/protocol/
 COPY packages/release-runtime/package.json packages/release-runtime/
 
-RUN yarn install --frozen-lockfile --ignore-engines
+RUN --mount=type=cache,target=/tmp/.yarn-cache,sharing=locked \
+    yarn config set registry https://registry.npmjs.org/ \
+    && is_transient_yarn_error() { \
+      grep -Eq 'Request failed "(5[0-9]{2}|429)' "$1" && return 0; \
+      grep -Eq 'EAI_AGAIN|ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ESOCKETTIMEDOUT|socket hang up' "$1" && return 0; \
+      grep -Eq 'trouble with your network connection' "$1" && return 0; \
+      return 1; \
+    }; \
+    for attempt in 1 2 3; do \
+      if yarn install --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive > /tmp/yarn-install.log 2>&1; then \
+        cat /tmp/yarn-install.log; \
+        break; \
+      fi; \
+      if is_transient_yarn_error /tmp/yarn-install.log; then \
+        cat /tmp/yarn-install.log; \
+        if [ "$attempt" -lt 3 ]; then \
+          echo "yarn install failed due to transient network/registry issue (attempt ${attempt}/3), retrying..."; \
+          sleep 5; \
+          continue; \
+        fi; \
+        echo "yarn install failed with repeated transient network/registry failures after ${attempt} attempts." >&2; \
+        exit 1; \
+      fi; \
+      cat /tmp/yarn-install.log >&2; \
+      echo "yarn install failed with a non-transient error (attempt ${attempt}); not retrying." >&2; \
+      exit 1; \
+    done
 
 COPY packages/agents ./packages/agents
 COPY packages/cli-common ./packages/cli-common

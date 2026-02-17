@@ -165,10 +165,25 @@ jobs:
           npm_config_production: "false"
         run: yarn install --frozen-lockfile --ignore-engines
 
+      - name: Build internal packages (protocol, agents)
+        run: yarn -s build:packages
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.tauri_target }}
+
+      - name: Cache Rust build (Cargo)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/ui/src-tauri/target
+          key: tauri-cargo-${{ runner.os }}-${{ matrix.platform_key }}-${{ hashFiles('apps/ui/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            tauri-cargo-${{ runner.os }}-${{ matrix.platform_key }}-
+            tauri-cargo-${{ runner.os }}-
 
       - name: Import Apple codesigning certificate (macOS)
         if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != ''
