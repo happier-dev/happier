@@ -120,6 +120,31 @@ happier gemini project get          # Show current Google Cloud Project ID
 - `--permission-mode-updated-at <unix-ms>` - Optional timestamp (ms) for ordering permission changes across devices
 - `--claude-env KEY=VALUE` - Set environment variable for Claude Code
 - `--claude-arg ARG` - Pass additional argument to Claude CLI
+- `happier claude <variant>` - Use a custom Claude configuration variant (see below)
+
+#### Claude Variants
+
+You can define alternate Claude configurations in `~/.happier/settings.json`:
+
+```json
+{
+  "claudeVariants": {
+    "zhipu": {
+      "configDir": "/home/user/.claude-zhipu",
+      "description": "Claude with Z.ai GLM-5 backend"
+    }
+  }
+}
+```
+
+Then use the variant:
+
+```bash
+happier claude zhipu
+happier claude zhipu "explain this code"
+```
+
+This switches Claude to use the config from the specified directory (via `CLAUDE_CONFIG_DIR`).
 
 ### Session Options (agent commands)
 
