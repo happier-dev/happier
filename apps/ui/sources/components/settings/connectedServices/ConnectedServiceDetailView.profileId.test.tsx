@@ -27,7 +27,7 @@ vi.mock('@/modal', () => ({
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-  useFeatureEnabled: (featureId: string) => (featureId === 'connected.services.quotas' ? false : true),
+  useFeatureEnabled: (featureId: string) => (featureId === 'connectedServices.quotas' ? false : true),
 }));
 
 vi.mock('@/sync/store/hooks', () => ({

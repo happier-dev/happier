@@ -37,7 +37,7 @@ vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', () => ({
 
 describe('ConnectedServiceOauthView gating', () => {
   it('does not expose native OAuth flow when connected services are disabled', async () => {
-    useFeatureEnabledSpy.mockImplementation((featureId: string) => featureId !== 'connected.services');
+    useFeatureEnabledSpy.mockImplementation((featureId: string) => featureId !== 'connectedServices');
     const { ConnectedServiceOauthView } = await import('./ConnectedServiceOauthView');
 
     let tree!: renderer.ReactTestRenderer;

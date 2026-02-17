@@ -70,7 +70,7 @@ describe('ConnectedServiceDetailView quotas', () => {
   };
 
   it('shows quota card when feature is enabled', async () => {
-    setFeatureFlags({ 'connected.services': true, 'connected.services.quotas': true });
+    setFeatureFlags({ connectedServices: true, 'connectedServices.quotas': true });
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
 
     let tree!: renderer.ReactTestRenderer;
@@ -82,7 +82,7 @@ describe('ConnectedServiceDetailView quotas', () => {
   });
 
   it('hides quota card when feature is disabled', async () => {
-    setFeatureFlags({ 'connected.services': true, 'connected.services.quotas': false });
+    setFeatureFlags({ connectedServices: true, 'connectedServices.quotas': false });
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
 
     let tree!: renderer.ReactTestRenderer;
@@ -94,7 +94,7 @@ describe('ConnectedServiceDetailView quotas', () => {
   });
 
   it('does not expose connected services detail when the feature is disabled', async () => {
-    setFeatureFlags({ 'connected.services': false, 'connected.services.quotas': true });
+    setFeatureFlags({ connectedServices: false, 'connectedServices.quotas': true });
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
 
     let tree!: renderer.ReactTestRenderer;
@@ -107,7 +107,7 @@ describe('ConnectedServiceDetailView quotas', () => {
   });
 
   it('persists pinned meter ids via settings when toggled', async () => {
-    setFeatureFlags({ 'connected.services': true, 'connected.services.quotas': true });
+    setFeatureFlags({ connectedServices: true, 'connectedServices.quotas': true });
 
     const secretBytes = new Uint8Array(32).fill(3);
     const snapshot = ConnectedServiceQuotaSnapshotV1Schema.parse({

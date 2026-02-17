@@ -26,7 +26,7 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
   const router = useRouter();
   const params = useLocalSearchParams();
   const auth = useAuth();
-  const connectedServicesEnabled = useFeatureEnabled('connected.services');
+  const connectedServicesEnabled = useFeatureEnabled('connectedServices');
 
   const rawServiceId = asStringParam(params.serviceId).trim();
   const parsedServiceId = ConnectedServiceIdSchema.safeParse(rawServiceId);

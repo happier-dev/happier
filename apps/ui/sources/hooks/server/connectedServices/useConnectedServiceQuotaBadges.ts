@@ -39,7 +39,7 @@ export function useConnectedServiceQuotaBadges(
   const auth = useAuth();
   const credentials = auth.credentials;
   const settings = useSettings();
-  const quotasEnabled = useFeatureEnabled('connected.services.quotas');
+  const quotasEnabled = useFeatureEnabled('connectedServices.quotas');
 
   const [pollSeq, setPollSeq] = React.useState(0);
   React.useEffect(() => {

@@ -39,8 +39,8 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
   const router = useRouter();
   const params = useLocalSearchParams();
   const auth = useAuth();
-  const connectedServicesEnabled = useFeatureEnabled('connected.services');
-  const quotasEnabled = useFeatureEnabled('connected.services.quotas');
+  const connectedServicesEnabled = useFeatureEnabled('connectedServices');
+  const quotasEnabled = useFeatureEnabled('connectedServices.quotas');
   const profile = useProfile();
   const settings = useSettings();
 

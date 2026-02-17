@@ -13,6 +13,6 @@ export function useOAuthProviderConfigured(providerId: string): boolean | null {
     if (!id || snapshot.status === 'loading') return null;
     if (snapshot.status !== 'ready') return false;
 
-    const value = snapshot.features.features.oauth.providers[id]?.configured;
+    const value = snapshot.features.capabilities.oauth.providers[id]?.configured;
     return typeof value === 'boolean' ? value : false;
 }

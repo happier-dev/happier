@@ -22,7 +22,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
   const profile = useProfile();
   const settings = useSettings();
   const router = useRouter();
-  const connectedServicesEnabled = useFeatureEnabled('connected.services');
+  const connectedServicesEnabled = useFeatureEnabled('connectedServices');
 
   const services = profile.connectedServicesV2;
   const serviceIdsFromProfile = services.map((svc) => svc.serviceId);
