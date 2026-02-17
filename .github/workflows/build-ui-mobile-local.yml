@@ -192,11 +192,13 @@ jobs:
         run: |
           set -euo pipefail
           cd apps/ui
+          abs_out="${GITHUB_WORKSPACE}/${EAS_BUILD_OUT}"
+          mkdir -p "$(dirname "${abs_out}")"
           npx --yes "eas-cli@${EAS_CLI_VERSION}" build \
             --platform "${EAS_PLATFORM}" \
             --profile "${EAS_BUILD_PROFILE}" \
             --local \
-            --output "../../${EAS_BUILD_OUT}" \
+            --output "${abs_out}" \
             --non-interactive
 
       - name: Verify build artifact
@@ -236,9 +238,10 @@ jobs:
             exit 1
           fi
           cd apps/ui
+          abs_out="${GITHUB_WORKSPACE}/${EAS_BUILD_OUT}"
           npx --yes "eas-cli@${EAS_CLI_VERSION}" submit \
             --platform "${EAS_PLATFORM}" \
-            --path "../../${EAS_BUILD_OUT}" \
+            --path "${abs_out}" \
             --profile production \
             --non-interactive
 
@@ -333,11 +336,13 @@ jobs:
         run: |
           set -euo pipefail
           cd apps/ui
+          abs_out="${GITHUB_WORKSPACE}/${EAS_BUILD_OUT}"
+          mkdir -p "$(dirname "${abs_out}")"
           npx --yes "eas-cli@${EAS_CLI_VERSION}" build \
             --platform "${EAS_PLATFORM}" \
             --profile "${EAS_BUILD_PROFILE}" \
             --local \
-            --output "../../${EAS_BUILD_OUT}" \
+            --output "${abs_out}" \
             --non-interactive
 
       - name: Verify build artifact
@@ -377,8 +382,9 @@ jobs:
             exit 1
           fi
           cd apps/ui
+          abs_out="${GITHUB_WORKSPACE}/${EAS_BUILD_OUT}"
           npx --yes "eas-cli@${EAS_CLI_VERSION}" submit \
             --platform "${EAS_PLATFORM}" \
-            --path "../../${EAS_BUILD_OUT}" \
+            --path "${abs_out}" \
             --profile production \
             --non-interactive
