@@ -23,6 +23,41 @@ function PopoverChild() {
 }
 
 describe('PopoverPortalTargetProvider (native)', () => {
+    it('does not churn context value across parent re-renders (prevents maximum update depth loops)', async () => {
+        const { PopoverPortalTargetProvider } = await import('./PopoverPortalTargetProvider');
+        const { usePopoverPortalTarget } = await import('./PopoverPortalTarget');
+
+        function Child(props: { bump: () => void }) {
+            const target = usePopoverPortalTarget();
+            React.useLayoutEffect(() => {
+                if (!target) return;
+                props.bump();
+            }, [props.bump, target]);
+            return React.createElement('Child');
+        }
+
+        function Harness() {
+            const [tick, setTick] = React.useState(0);
+            const bump = React.useCallback(() => setTick((t) => t + 1), []);
+            return React.createElement(
+                PopoverPortalTargetProvider,
+                null,
+                React.createElement(Child, { bump }),
+                React.createElement('Tick', { value: tick }),
+            );
+        }
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        await act(async () => {
+            tree = renderer.create(React.createElement(Harness));
+        });
+
+        // If the provider churns its context value each parent render, the Child effect will
+        // re-trigger indefinitely (bump -> parent rerender -> new context value -> bump ...).
+        // The stable expected behavior is a single bump (tick=1).
+        expect(tree?.root.findByType('Tick' as any).props.value).toBe(1);
+    });
+
     it('renders popovers into a screen-local OverlayPortalHost (avoids coordinate-space mismatch in contained modals)', async () => {
         const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
         const { Popover } = await import('./Popover');

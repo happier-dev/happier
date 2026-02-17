@@ -21,9 +21,10 @@ export function PopoverPortalTargetProvider(props: { children: React.ReactNode }
 
     const rootRef = React.useRef<any>(null);
     const [layout, setLayout] = React.useState(() => ({ width: 0, height: 0 }));
+    const portalTarget = React.useMemo(() => ({ rootRef, layout }), [layout]);
 
     return (
-        <PopoverPortalTargetContextProvider value={{ rootRef, layout }}>
+        <PopoverPortalTargetContextProvider value={portalTarget}>
             <OverlayPortalProvider>
                 <View
                     ref={rootRef}
