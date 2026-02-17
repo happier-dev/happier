@@ -1,0 +1,12 @@
+export {
+  ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
+  AccountSettingsSchema,
+  NotificationsSettingsV1Schema,
+  DEFAULT_ACTIONS_SETTINGS_V1,
+  DEFAULT_NOTIFICATIONS_SETTINGS_V1,
+  accountSettingsParse,
+  getNotificationsSettingsV1FromAccountSettings,
+  type AccountSettings,
+  type NotificationsSettingsV1,
+} from './accountSettings.js';
+
