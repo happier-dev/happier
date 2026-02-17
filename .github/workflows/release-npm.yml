@@ -417,23 +417,13 @@ jobs:
             --public-key="scripts/release/installers/happier-release.pub" \
             --skip-smoke
 
-      - name: npm publish
+      - name: Prepare CLI package tarball (prepublishOnly + prepack)
         if: inputs.publish_cli
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "Using NPM_TOKEN authentication."
-          else
-            echo "NPM_TOKEN not set; relying on npm trusted publishing (OIDC)."
-          fi
           cd apps/cli
           yarn prepublishOnly
-          npm publish --provenance --access public --tag "${{ steps.meta.outputs.npm_tag }}" || {
-            echo "npm publish failed. Configure npm trusted publishing for this workflow or provide NPM_TOKEN." >&2
-            exit 1
-          }
+          node scripts/bundleWorkspaceDeps.mjs
 
       - name: npm pack (cli)
         if: inputs.publish_cli
@@ -442,7 +432,7 @@ jobs:
           mkdir -p dist/release-assets/cli
           cd apps/cli
           # npm lifecycle scripts can exceed Linux argv/env limits for large workspaces.
-          # pack after publish using the already-prepacked working tree to avoid re-running prepack.
+          # Pack from the already-prepacked working tree to avoid re-running lifecycle scripts.
           pack_json_path="$(mktemp)"
           # Suppress npm "notice" output so JSON parsing is reliable.
           npm pack --ignore-scripts --json --loglevel=error > "${pack_json_path}"
@@ -473,40 +463,12 @@ jobs:
           path: dist/release-assets/cli
           if-no-files-found: error
 
-      - name: npm publish (stack)
+      - name: Prepare stack package tarball (prepack)
         if: inputs.publish_stack
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "Using NPM_TOKEN authentication."
-          else
-            echo "NPM_TOKEN not set; relying on npm trusted publishing (OIDC)."
-          fi
           cd apps/stack
-          npm publish --provenance --access public --tag "${{ steps.meta.outputs.npm_tag }}" || {
-            echo "npm publish failed. Configure npm trusted publishing for this workflow or provide NPM_TOKEN." >&2
-            exit 1
-          }
-
-      - name: npm publish (server runner)
-        if: inputs.publish_server
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
-        run: |
-          set -euo pipefail
-          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "Using NPM_TOKEN authentication."
-          else
-            echo "NPM_TOKEN not set; relying on npm trusted publishing (OIDC)."
-          fi
-          cd "${SERVER_RUNNER_DIR}"
-          npm publish --provenance --access public --tag "${{ steps.meta.outputs.npm_tag }}" || {
-            echo "npm publish failed. Configure npm trusted publishing for this workflow or provide NPM_TOKEN." >&2
-            exit 1
-          }
+          node scripts/bundleWorkspaceDeps.mjs
 
       - name: npm pack (stack)
         if: inputs.publish_stack
@@ -515,7 +477,7 @@ jobs:
           mkdir -p dist/release-assets/stack
           cd apps/stack
           # npm lifecycle scripts can exceed Linux argv/env limits for large workspaces.
-          # pack after publish using the already-prepacked working tree to avoid re-running prepack.
+          # Pack from the already-prepacked working tree to avoid re-running lifecycle scripts.
           pack_json_path="$(mktemp)"
           # Suppress npm "notice" output so JSON parsing is reliable.
           npm pack --ignore-scripts --json --loglevel=error > "${pack_json_path}"
@@ -537,6 +499,46 @@ jobs:
             exit 1
           fi
           mv "$tgz" "../../dist/release-assets/stack/stack-${{ steps.meta.outputs.stack_version }}.tgz"
+
+      - name: Prepare server runner package tarball (prepack)
+        if: inputs.publish_server
+        env:
+          SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
+        run: |
+          set -euo pipefail
+          cd "${SERVER_RUNNER_DIR}"
+          node scripts/bundleWorkspaceDeps.mjs
+
+      - name: npm pack (server runner)
+        if: inputs.publish_server
+        env:
+          SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release-assets/server
+          cd "${SERVER_RUNNER_DIR}"
+          # Pack from the already-prepacked working tree to avoid re-running lifecycle scripts.
+          pack_json_path="$(mktemp)"
+          # Suppress npm "notice" output so JSON parsing is reliable.
+          npm pack --ignore-scripts --json --loglevel=error > "${pack_json_path}"
+          tgz="$(node -e '
+            const fs = require("node:fs");
+            const path = process.argv[1];
+            const raw = fs.readFileSync(path, "utf8").trim();
+            const parsed = raw ? JSON.parse(raw) : [];
+            const entry = Array.isArray(parsed) ? parsed[0] : parsed;
+            const filename = typeof entry?.filename === "string" ? entry.filename.trim() : "";
+            if (!filename) process.exit(1);
+            process.stdout.write(filename);
+          ' "${pack_json_path}")" || {
+            echo "npm pack --json did not return a valid filename" >&2
+            exit 1
+          }
+          if [ -z "${tgz:-}" ] || [ ! -f "$tgz" ] || [ "${tgz##*.}" != "tgz" ]; then
+            echo "npm pack did not produce an expected .tgz file: '$tgz'" >&2
+            exit 1
+          fi
+          mv "$tgz" "../../dist/release-assets/server/server-${{ steps.meta.outputs.server_version }}.tgz"
 
       - name: Build hstack binaries
         if: inputs.publish_stack
@@ -596,6 +598,14 @@ jobs:
           path: dist/release-assets/stack
           if-no-files-found: error
 
+      - name: Upload npm pack artifact (server runner)
+        if: inputs.publish_server
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-pack-server
+          path: dist/release-assets/server
+          if-no-files-found: error
+
       - name: Step summary
         if: always()
         env:
@@ -639,6 +649,174 @@ jobs:
               if [ "${INPUT_PUBLISH_STACK}" = "true" ]; then echo "- \`stack-v${stack_version}\`"; fi
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-cli:
+    name: npm publish (cli)
+    if: ${{ inputs.publish_cli == true && needs.release.result == 'success' }}
+    needs: [release_actor_guard, release]
+    runs-on: ubuntu-22.04
+    environment: release-shared
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download npm pack artifact (cli)
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-pack-cli
+          path: .
+
+      - name: Setup Node (npm publish)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          registry-url: https://registry.npmjs.org
+
+      - name: Upgrade npm for trusted publishing (OIDC)
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.5.1
+          npm --version
+
+      - name: npm publish (cli tarball)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "Using NPM_TOKEN authentication."
+          else
+            echo "NPM_TOKEN not set; relying on npm trusted publishing (OIDC)."
+          fi
+
+          npm_tag="latest"
+          if [ "${{ inputs.channel }}" = "preview" ]; then
+            npm_tag="next"
+          fi
+
+          tgz="$(ls -1 dist/release-assets/cli/*.tgz | head -n 1 || true)"
+          if [ -z "${tgz:-}" ] || [ ! -f "${tgz}" ]; then
+            echo "Missing CLI tarball under dist/release-assets/cli" >&2
+            exit 1
+          fi
+
+          npm publish "${tgz}" --provenance --access public --tag "${npm_tag}" || {
+            echo "npm publish failed. Configure npm trusted publishing for this workflow or provide NPM_TOKEN." >&2
+            exit 1
+          }
+
+  publish-stack:
+    name: npm publish (stack)
+    if: ${{ inputs.publish_stack == true && needs.release.result == 'success' }}
+    needs: [release_actor_guard, release]
+    runs-on: ubuntu-22.04
+    environment: release-shared
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download npm pack artifact (stack)
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-pack-stack
+          path: .
+
+      - name: Setup Node (npm publish)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          registry-url: https://registry.npmjs.org
+
+      - name: Upgrade npm for trusted publishing (OIDC)
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.5.1
+          npm --version
+
+      - name: npm publish (stack tarball)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "Using NPM_TOKEN authentication."
+          else
+            echo "NPM_TOKEN not set; relying on npm trusted publishing (OIDC)."
+          fi
+
+          npm_tag="latest"
+          if [ "${{ inputs.channel }}" = "preview" ]; then
+            npm_tag="next"
+          fi
+
+          tgz="$(ls -1 dist/release-assets/stack/*.tgz | head -n 1 || true)"
+          if [ -z "${tgz:-}" ] || [ ! -f "${tgz}" ]; then
+            echo "Missing Stack tarball under dist/release-assets/stack" >&2
+            exit 1
+          fi
+
+          npm publish "${tgz}" --provenance --access public --tag "${npm_tag}" || {
+            echo "npm publish failed. Configure npm trusted publishing for this workflow or provide NPM_TOKEN." >&2
+            exit 1
+          }
+
+  publish-server-runner:
+    name: npm publish (server runner)
+    if: ${{ inputs.publish_server == true && needs.release.result == 'success' }}
+    needs: [release_actor_guard, release]
+    runs-on: ubuntu-22.04
+    environment: release-shared
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download npm pack artifact (server runner)
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-pack-server
+          path: .
+
+      - name: Setup Node (npm publish)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          registry-url: https://registry.npmjs.org
+
+      - name: Upgrade npm for trusted publishing (OIDC)
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.5.1
+          npm --version
+
+      - name: npm publish (server runner tarball)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "Using NPM_TOKEN authentication."
+          else
+            echo "NPM_TOKEN not set; relying on npm trusted publishing (OIDC)."
+          fi
+
+          npm_tag="latest"
+          if [ "${{ inputs.channel }}" = "preview" ]; then
+            npm_tag="next"
+          fi
+
+          tgz="$(ls -1 dist/release-assets/server/*.tgz | head -n 1 || true)"
+          if [ -z "${tgz:-}" ] || [ ! -f "${tgz}" ]; then
+            echo "Missing server runner tarball under dist/release-assets/server" >&2
+            exit 1
+          fi
+
+          npm publish "${tgz}" --provenance --access public --tag "${npm_tag}" || {
+            echo "npm publish failed. Configure npm trusted publishing for this workflow or provide NPM_TOKEN." >&2
+            exit 1
+          }
 
   mirror-cli-stable:
     if: ${{ needs.release.outputs.channel == 'production' && needs.release.outputs.cli_version != 'SKIP' }}
