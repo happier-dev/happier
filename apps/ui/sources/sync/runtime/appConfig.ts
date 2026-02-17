@@ -11,6 +11,7 @@ export interface AppConfig {
     revenueCatStripeKey?: string;
     serverUrl?: string;
     enableDevPushTokenRegistration?: boolean;
+    socketForceWebsocketOnly?: boolean;
 }
 
 function parseBooleanEnv(value: string | undefined): boolean | undefined {
@@ -98,6 +99,12 @@ export function loadAppConfig(): AppConfig {
     if (enableDevPushFromEnv !== undefined && config.enableDevPushTokenRegistration !== enableDevPushFromEnv) {
         if (__DEV__) console.log('[loadAppConfig] Override enableDevPushTokenRegistration from EXPO_PUBLIC_ENABLE_DEV_PUSH_TOKEN_REGISTRATION');
         config.enableDevPushTokenRegistration = enableDevPushFromEnv;
+    }
+
+    const forceWebsocketFromEnv = parseBooleanEnv(process.env.EXPO_PUBLIC_HAPPIER_SOCKET_FORCE_WEBSOCKET);
+    if (forceWebsocketFromEnv !== undefined && config.socketForceWebsocketOnly !== forceWebsocketFromEnv) {
+        if (__DEV__) console.log('[loadAppConfig] Override socketForceWebsocketOnly from EXPO_PUBLIC_HAPPIER_SOCKET_FORCE_WEBSOCKET');
+        config.socketForceWebsocketOnly = forceWebsocketFromEnv;
     }
 
     return config as AppConfig;

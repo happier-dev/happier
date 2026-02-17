@@ -7,6 +7,7 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { StaleServerGenerationError } from '@/sync/http/client';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { resolveSocketIoTransports } from '@/sync/runtime/socketIoTransports';
 
 //
 // Types
@@ -62,13 +63,14 @@ class ApiSocket {
 
         this.updateStatus('connecting');
 
+        const transports = resolveSocketIoTransports();
         this.socket = io(this.config.endpoint, {
             path: '/v1/updates',
             auth: {
                 token: this.config.token,
                 clientType: 'user-scoped' as const
             },
-            transports: ['websocket'],
+            ...(transports ? { transports } : null),
             reconnection: true,
             reconnectionDelay: 1000,
             reconnectionDelayMax: 5000,
