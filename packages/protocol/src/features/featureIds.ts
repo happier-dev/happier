@@ -19,6 +19,7 @@ export const FEATURE_IDS = [
   'files.diffSyntaxHighlighting',
   'files.editor',
   'files.syntaxHighlighting.advanced',
+  'memory.search',
   'session.typeSelector',
   'zen.navigation',
   'usage.reporting',

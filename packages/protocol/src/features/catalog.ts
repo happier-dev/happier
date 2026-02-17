@@ -22,6 +22,7 @@ const descriptions: Record<(typeof FEATURE_IDS)[number], string> = {
   'files.diffSyntaxHighlighting': 'Syntax highlighting for file and diff code rendering.',
   'files.editor': 'Embedded file editor in the session file browser.',
   'files.syntaxHighlighting.advanced': 'Advanced syntax highlighting engine selection (web/desktop).',
+  'memory.search': 'Local memory search UI entry and configuration surfaces.',
   'session.typeSelector': 'Session type selector in session creation UX.',
   'zen.navigation': 'Zen navigation entry and related UX.',
   'usage.reporting': 'Usage reporting surfaces and telemetry views.',

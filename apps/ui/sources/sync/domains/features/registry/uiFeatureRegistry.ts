@@ -176,6 +176,11 @@ export const UI_FEATURE_REGISTRY: Readonly<Record<FeatureId, UiFeatureDefinition
             icon: { ioniconName: 'sparkles-outline', color: '#AF52DE' },
         },
     },
+    'memory.search': {
+        id: 'memory.search',
+        serverRequired: false,
+        serverEnabled: ALWAYS_ENABLED,
+    },
     'files.editor': {
         id: 'files.editor',
         serverRequired: false,

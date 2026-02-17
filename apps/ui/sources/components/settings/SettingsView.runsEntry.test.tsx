@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+let mockFeatureEnabled: (featureId: string) => boolean = (featureId: string) => featureId === 'execution.runs';
+
 const routerPushSpy = vi.fn();
 
 vi.mock('react-native', () => ({
@@ -180,7 +182,7 @@ vi.mock('@/hooks/server/useAutomationsSupport', () => ({
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string) => featureId === 'execution.runs',
+    useFeatureEnabled: (featureId: string) => mockFeatureEnabled(featureId),
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
@@ -258,5 +260,44 @@ describe('SettingsView (runs entry)', () => {
             if (previousDeny === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
             else process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = previousDeny;
         }
+    });
+
+    it('hides feature-gated entries when disabled by feature policy', async () => {
+        mockFeatureEnabled = (featureId) => featureId === 'execution.runs';
+        const { SettingsView } = await import('./SettingsView');
+
+        let tree!: ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(SettingsView));
+        });
+
+        const items = tree.root.findAllByType('Item' as any);
+        const voiceItem = items.find((item: any) => item?.props?.title === 'settings.voiceAssistant');
+        const sourceControlItem = items.find((item: any) => item?.props?.title === 'Source control');
+        const memorySearchItem = items.find((item: any) => item?.props?.title === 'settings.memorySearch');
+
+        expect(voiceItem).toBeFalsy();
+        expect(sourceControlItem).toBeFalsy();
+        expect(memorySearchItem).toBeFalsy();
+    });
+
+    it('shows feature-gated entries when voice, source control, and memory search are enabled', async () => {
+        mockFeatureEnabled = (featureId) =>
+            ['execution.runs', 'voice', 'scm.writeOperations', 'memory.search'].includes(featureId);
+        const { SettingsView } = await import('./SettingsView');
+
+        let tree!: ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(SettingsView));
+        });
+
+        const items = tree.root.findAllByType('Item' as any);
+        const voiceItem = items.find((item: any) => item?.props?.title === 'settings.voiceAssistant');
+        const sourceControlItem = items.find((item: any) => item?.props?.title === 'Source control');
+        const memorySearchItem = items.find((item: any) => item?.props?.title === 'settings.memorySearch');
+
+        expect(voiceItem).toBeTruthy();
+        expect(sourceControlItem).toBeTruthy();
+        expect(memorySearchItem).toBeTruthy();
     });
 });

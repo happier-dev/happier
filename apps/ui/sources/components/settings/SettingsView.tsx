@@ -46,6 +46,9 @@ export const SettingsView = React.memo(function SettingsView() {
     const usageReportingEnabled = useFeatureEnabled('usage.reporting');
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const connectedServicesEnabled = useFeatureEnabled('connected.services');
+    const memorySearchEnabled = useFeatureEnabled('memory.search');
+    const voiceEnabled = useFeatureEnabled('voice');
+    const sourceControlEnabled = useFeatureEnabled('scm.writeOperations');
     const showChangelog = getFeatureBuildPolicyDecision('app.ui.changelog' as const satisfies FeatureId) !== 'deny';
     const useProfiles = useSetting('useProfiles');
     const terminalUseTmux = useSetting('sessionUseTmux');
@@ -366,18 +369,22 @@ export const SettingsView = React.memo(function SettingsView() {
                     icon={<Ionicons name="color-palette-outline" size={29} color="#5856D6" />}
                     onPress={() => router.push('/(app)/settings/appearance')}
                 />
-                <Item
-                    title={t('settings.voiceAssistant')}
-                    subtitle={t('settings.voiceAssistantSubtitle')}
-                    icon={<Ionicons name="mic-outline" size={29} color="#34C759" />}
-                    onPress={() => router.push('/(app)/settings/voice')}
-                />
-                <Item
-                    title={t('settings.memorySearch')}
-                    subtitle={t('settings.memorySearchSubtitle')}
-                    icon={<Ionicons name="search-outline" size={29} color="#34C759" />}
-                    onPress={() => router.push('/(app)/settings/memory')}
-                />
+                {voiceEnabled ? (
+                    <Item
+                        title={t('settings.voiceAssistant')}
+                        subtitle={t('settings.voiceAssistantSubtitle')}
+                        icon={<Ionicons name="mic-outline" size={29} color="#34C759" />}
+                        onPress={() => router.push('/(app)/settings/voice')}
+                    />
+                ) : null}
+                {memorySearchEnabled ? (
+                    <Item
+                        title={t('settings.memorySearch')}
+                        subtitle={t('settings.memorySearchSubtitle')}
+                        icon={<Ionicons name="search-outline" size={29} color="#34C759" />}
+                        onPress={() => router.push('/(app)/settings/memory')}
+                    />
+                ) : null}
                 <Item
                     title={t('settings.featuresTitle')}
                     subtitle={t('settings.featuresSubtitle')}
@@ -396,12 +403,14 @@ export const SettingsView = React.memo(function SettingsView() {
                     icon={<Ionicons name="server-outline" size={29} color="#0A84FF" />}
                     onPress={() => router.push('/server')}
                 />
-                <Item
-                    title="Source control"
-                    subtitle="Commit strategy and backend behavior"
-                    icon={<Ionicons name="git-branch-outline" size={29} color="#34C759" />}
-                    onPress={() => router.push('/(app)/settings/source-control')}
-                />
+                {sourceControlEnabled ? (
+                    <Item
+                        title="Source control"
+                        subtitle="Commit strategy and backend behavior"
+                        icon={<Ionicons name="git-branch-outline" size={29} color="#34C759" />}
+                        onPress={() => router.push('/(app)/settings/source-control')}
+                    />
+                ) : null}
                 {showAutomations ? (
                     <Item
                         title="Automations"
