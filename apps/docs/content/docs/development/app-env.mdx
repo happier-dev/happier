@@ -28,7 +28,7 @@ Example:
 EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY=voice,social.friends
 ```
 
-This is a comma-separated list of **feature ids** (for example `voice`, `social.friends`, `bugReports`, `connected.services`).
+This is a comma-separated list of **feature ids** (for example `voice`, `social.friends`, `bugReports`, `connectedServices`, `connectedServices.quotas`).
 
 ### Connected services build gates
 
@@ -48,6 +48,14 @@ EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED=0
 # Enable Connected Services quota UI surfaces
 EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED=1
 ```
+
+## Socket transport override (rare)
+
+By default, the app uses Socket.IO / Engine.IO defaults (HTTP long-polling, then upgrade to WebSocket when possible). This is the most compatible option for corporate proxies and restrictive networks.
+
+If you need to force WebSocket-only (for example: you run a multi-server deployment without sticky sessions and you prefer failing fast over long-polling), set:
+
+- `EXPO_PUBLIC_HAPPIER_SOCKET_FORCE_WEBSOCKET=1`
 
 ## Security note (important)
 

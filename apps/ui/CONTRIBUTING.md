@@ -181,7 +181,7 @@ This controls:
 
 ## Local Expo config overrides (`app.local.js`)
 
-For local development (or fork-specific tweaks without editing `app.config.js`), you can create an optional file:
+For local development, you can create an optional file:
 
 - `apps/ui/app.local.js` (gitignored)
 

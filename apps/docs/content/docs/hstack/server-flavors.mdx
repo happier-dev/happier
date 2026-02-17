@@ -102,6 +102,15 @@ For a “one URL” UX (especially with Tailscale), hstack starts a lightweight 
 
 This means `hstack start --server=happier-server` can still work end-to-end without requiring AWS S3 or a separate nginx setup.
 
+### Realtime networking note (polling fallback)
+
+By default, Happier clients use Socket.IO / Engine.IO defaults (HTTP long-polling, then upgrade to WebSocket when possible). This is the most compatible option for restrictive networks and corporate proxies.
+
+If you need to force WebSocket-only (rare), set:
+
+- UI (Expo): `EXPO_PUBLIC_HAPPIER_SOCKET_FORCE_WEBSOCKET=1`
+- CLI/daemon: `HAPPIER_SOCKET_FORCE_WEBSOCKET=1`
+
 ## Migrating between flavors (light ⇢ full)
 
 hstack includes an **experimental** migration helper that can copy core chat data from a
