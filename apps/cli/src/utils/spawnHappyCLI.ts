@@ -198,5 +198,15 @@ export function spawnHappyCLI(args: string[], options: SpawnOptions = {}): Child
   const spawnOptions: SpawnOptions = env
     ? { ...options, env: { ...(options.env ?? process.env), ...env } }
     : options;
-  return spawn(runtime, argv, spawnOptions);
+
+  // Prefer the currently-running runtime binary when possible. This avoids PATH
+  // issues on Windows (and GUI-launched shells) where `node` may not resolve.
+  const runtimeExecutable =
+    runtime === 'node' && !isBun()
+      ? process.execPath
+      : runtime === 'bun' && isBun()
+        ? process.execPath
+        : runtime;
+
+  return spawn(runtimeExecutable, argv, spawnOptions);
 }
