@@ -227,31 +227,6 @@ jobs:
           path: dist/ui-mobile/**
           retention-days: 7
 
-      - name: EAS submit (local binary)
-        if: inputs.action == 'build_and_submit'
-        env:
-          EAS_BUILD_OUT: ${{ steps.meta.outputs.out }}
-        run: |
-          set -euo pipefail
-          if [ -z "${EXPO_TOKEN:-}" ]; then
-            echo "EXPO_TOKEN is required for EAS submit." >&2
-            exit 1
-          fi
-          cd apps/ui
-          abs_out="${GITHUB_WORKSPACE}/${EAS_BUILD_OUT}"
-          if ! npx --yes "eas-cli@${EAS_CLI_VERSION}" submit \
-            --platform "${EAS_PLATFORM}" \
-            --path "${abs_out}" \
-            --profile production \
-            --non-interactive; then
-            if [ "${{ inputs.environment }}" = "preview" ]; then
-              echo "::warning::EAS submit failed for preview; continuing so the successful local build artifact is preserved."
-              exit 0
-            fi
-            echo "EAS submit failed for production." >&2
-            exit 1
-          fi
-
   build_ios:
     name: Build (ios)
     if: ${{ inputs.platform == 'all' || inputs.platform == 'ios' }}
@@ -374,8 +349,166 @@ jobs:
           path: dist/ui-mobile/**
           retention-days: 7
 
+  submit_android:
+    name: Submit (android)
+    if: ${{ inputs.action == 'build_and_submit' && (inputs.platform == 'all' || inputs.platform == 'android') }}
+    needs: [release_actor_guard, build_android]
+    runs-on: ubuntu-latest
+    environment: release-shared
+    env:
+      EAS_CLI_VERSION: 18.0.1
+      APP_ENV: ${{ inputs.environment }}
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EAS_PLATFORM: android
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref != '' && inputs.source_ref || github.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Resolve expected build output path
+        id: meta
+        run: |
+          set -euo pipefail
+          env_name="${{ inputs.environment }}"
+          platform="${EAS_PLATFORM}"
+          profile="${{ inputs.profile }}"
+          if [ "${profile}" = "auto" ]; then
+            profile="${env_name}"
+          fi
+
+          app_version="$(node -p 'require("./apps/ui/package.json").version' | tr -d '\n')"
+          if [ -z "${app_version:-}" ]; then
+            echo "Unable to resolve apps/ui version." >&2
+            exit 1
+          fi
+
+          ext="aab"
+          if printf '%s' "${profile}" | grep -q -- '-apk$'; then
+            ext="apk"
+          fi
+
+          out=""
+          if [ "${env_name}" = "production" ]; then
+            out="dist/ui-mobile/happier-production-${platform}-v${app_version}.${ext}"
+          else
+            out="dist/ui-mobile/happier-preview-${platform}.${ext}"
+          fi
+
+          echo "out=${out}" >> "$GITHUB_OUTPUT"
+
+      - name: Download mobile build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ui-mobile-${{ inputs.environment }}-android
+          path: .
+
+      - name: Verify build artifact
+        env:
+          EAS_BUILD_OUT: ${{ steps.meta.outputs.out }}
+        run: |
+          set -euo pipefail
+          if [ ! -f "${EAS_BUILD_OUT}" ]; then
+            echo "Missing build output at: ${EAS_BUILD_OUT}" >&2
+            exit 1
+          fi
+
       - name: EAS submit (local binary)
-        if: inputs.action == 'build_and_submit'
+        env:
+          EAS_BUILD_OUT: ${{ steps.meta.outputs.out }}
+        run: |
+          set -euo pipefail
+          if [ -z "${EXPO_TOKEN:-}" ]; then
+            echo "EXPO_TOKEN is required for EAS submit." >&2
+            exit 1
+          fi
+          cd apps/ui
+          abs_out="${GITHUB_WORKSPACE}/${EAS_BUILD_OUT}"
+          if ! npx --yes "eas-cli@${EAS_CLI_VERSION}" submit \
+            --platform "${EAS_PLATFORM}" \
+            --path "${abs_out}" \
+            --profile production \
+            --non-interactive; then
+            if [ "${{ inputs.environment }}" = "preview" ]; then
+              echo "::warning::EAS submit failed for preview; continuing so the successful local build artifact is preserved."
+              exit 0
+            fi
+            echo "EAS submit failed for production." >&2
+            exit 1
+          fi
+
+  submit_ios:
+    name: Submit (ios)
+    if: ${{ inputs.action == 'build_and_submit' && (inputs.platform == 'all' || inputs.platform == 'ios') }}
+    needs: [release_actor_guard, build_ios]
+    runs-on: macos-latest
+    environment: release-shared
+    env:
+      EAS_CLI_VERSION: 18.0.1
+      APP_ENV: ${{ inputs.environment }}
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EAS_PLATFORM: ios
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref != '' && inputs.source_ref || github.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Resolve expected build output path
+        id: meta
+        run: |
+          set -euo pipefail
+          env_name="${{ inputs.environment }}"
+          platform="${EAS_PLATFORM}"
+
+          app_version="$(node -p 'require("./apps/ui/package.json").version' | tr -d '\n')"
+          if [ -z "${app_version:-}" ]; then
+            echo "Unable to resolve apps/ui version." >&2
+            exit 1
+          fi
+
+          out=""
+          if [ "${env_name}" = "production" ]; then
+            out="dist/ui-mobile/happier-production-${platform}-v${app_version}.ipa"
+          else
+            out="dist/ui-mobile/happier-preview-${platform}.ipa"
+          fi
+
+          echo "out=${out}" >> "$GITHUB_OUTPUT"
+
+      - name: Download mobile build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ui-mobile-${{ inputs.environment }}-ios
+          path: .
+
+      - name: Verify build artifact
+        env:
+          EAS_BUILD_OUT: ${{ steps.meta.outputs.out }}
+        run: |
+          set -euo pipefail
+          if [ ! -f "${EAS_BUILD_OUT}" ]; then
+            echo "Missing build output at: ${EAS_BUILD_OUT}" >&2
+            exit 1
+          fi
+
+      - name: EAS submit (local binary)
         env:
           EAS_BUILD_OUT: ${{ steps.meta.outputs.out }}
         run: |
