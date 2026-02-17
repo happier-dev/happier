@@ -844,6 +844,7 @@ jobs:
     uses: ./.github/workflows/build-ui-mobile-local.yml
     secrets: inherit
     with:
+      source_ref: ${{ needs.promote.outputs.release_sha }}
       environment: ${{ inputs.environment }}
       platform: ${{ inputs.expo_platform }}
       profile: ${{ needs.promote.outputs.expo_profile }}

@@ -3,6 +3,11 @@ name: BUILD — UI Mobile (local runner)
 on:
   workflow_dispatch:
     inputs:
+      source_ref:
+        description: "Git ref (branch, tag, or SHA) to build"
+        required: true
+        default: ""
+        type: string
       environment:
         description: "App variant (maps to APP_ENV)"
         required: true
@@ -41,6 +46,10 @@ on:
           - build_and_submit
   workflow_call:
     inputs:
+      source_ref:
+        required: false
+        default: ""
+        type: string
       environment:
         required: true
         type: string
@@ -73,8 +82,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [android, ios]
-    if: ${{ inputs.platform == 'all' || inputs.platform == matrix.platform }}
+        platform: ${{ fromJSON(inputs.platform == 'all' && '[\"android\",\"ios\"]' || format('[\"{0}\"]', inputs.platform)) }}
     runs-on: ${{ matrix.platform == 'ios' && 'macos-latest' || 'ubuntu-latest' }}
     env:
       EAS_CLI_VERSION: 18.0.1
@@ -84,6 +92,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.source_ref != '' && inputs.source_ref || github.sha }}
           fetch-depth: 0
 
       - name: Setup Node
