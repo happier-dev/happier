@@ -42,6 +42,7 @@ export async function fetchAndApplySessions(params: {
         dataEncryptionKey: string | null;
         active: boolean;
         activeAt: number;
+        archivedAt?: number | null;
         createdAt: number;
         updatedAt: number;
         share?: {

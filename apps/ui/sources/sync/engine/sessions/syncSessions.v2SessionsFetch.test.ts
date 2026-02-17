@@ -21,6 +21,7 @@ type SessionRow = {
     updatedAt: number;
     active: boolean;
     activeAt: number;
+    archivedAt?: number | null;
     metadata: string;
     metadataVersion: number;
     agentState: string | null;
@@ -41,6 +42,7 @@ function buildSessionRow(overrides: Partial<SessionRow> & Pick<SessionRow, 'id'>
         updatedAt: 1,
         active: true,
         activeAt: 1,
+        archivedAt: null,
         metadata: `metadata-${overrides.id}`,
         metadataVersion: 1,
         agentState: null,
