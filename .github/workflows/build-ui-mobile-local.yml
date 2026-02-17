@@ -237,17 +237,20 @@ jobs:
             echo "EXPO_TOKEN is required for EAS submit." >&2
             exit 1
           fi
-          if [ "${{ inputs.environment }}" != "production" ]; then
-            echo "Refusing to submit non-production builds (environment='${{ inputs.environment }}')." >&2
-            exit 1
-          fi
           cd apps/ui
           abs_out="${GITHUB_WORKSPACE}/${EAS_BUILD_OUT}"
-          npx --yes "eas-cli@${EAS_CLI_VERSION}" submit \
+          if ! npx --yes "eas-cli@${EAS_CLI_VERSION}" submit \
             --platform "${EAS_PLATFORM}" \
             --path "${abs_out}" \
             --profile production \
-            --non-interactive
+            --non-interactive; then
+            if [ "${{ inputs.environment }}" = "preview" ]; then
+              echo "::warning::EAS submit failed for preview; continuing so the successful local build artifact is preserved."
+              exit 0
+            fi
+            echo "EAS submit failed for production." >&2
+            exit 1
+          fi
 
   build_ios:
     name: Build (ios)
@@ -381,14 +384,17 @@ jobs:
             echo "EXPO_TOKEN is required for EAS submit." >&2
             exit 1
           fi
-          if [ "${{ inputs.environment }}" != "production" ]; then
-            echo "Refusing to submit non-production builds (environment='${{ inputs.environment }}')." >&2
-            exit 1
-          fi
           cd apps/ui
           abs_out="${GITHUB_WORKSPACE}/${EAS_BUILD_OUT}"
-          npx --yes "eas-cli@${EAS_CLI_VERSION}" submit \
+          if ! npx --yes "eas-cli@${EAS_CLI_VERSION}" submit \
             --platform "${EAS_PLATFORM}" \
             --path "${abs_out}" \
             --profile production \
-            --non-interactive
+            --non-interactive; then
+            if [ "${{ inputs.environment }}" = "preview" ]; then
+              echo "::warning::EAS submit failed for preview; continuing so the successful local build artifact is preserved."
+              exit 0
+            fi
+            echo "EAS submit failed for production." >&2
+            exit 1
+          fi
