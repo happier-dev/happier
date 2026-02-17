@@ -22,7 +22,16 @@ COPY packages/protocol/package.json packages/protocol/
 COPY packages/audio-stream-native/package.json packages/audio-stream-native/
 COPY packages/sherpa-native/package.json packages/sherpa-native/
 
-RUN yarn install --frozen-lockfile --ignore-engines
+RUN yarn config set registry https://registry.npmjs.org/ \
+    && for attempt in 1 2 3; do \
+      yarn install --frozen-lockfile --ignore-engines && break; \
+      if [ "$attempt" -lt 3 ]; then \
+        echo "yarn install failed (attempt ${attempt}/3), retrying..."; \
+        sleep 5; \
+      else \
+        exit 1; \
+      fi; \
+    done
 
 # Shared deps (debian) for server builds (needs toolchain for native deps)
 FROM node:${NODE_VERSION} AS deps-debian
@@ -44,7 +53,16 @@ COPY packages/protocol/package.json packages/protocol/
 COPY packages/audio-stream-native/package.json packages/audio-stream-native/
 COPY packages/sherpa-native/package.json packages/sherpa-native/
 
-RUN yarn install --frozen-lockfile --ignore-engines
+RUN yarn config set registry https://registry.npmjs.org/ \
+    && for attempt in 1 2 3; do \
+      yarn install --frozen-lockfile --ignore-engines && break; \
+      if [ "$attempt" -lt 3 ]; then \
+        echo "yarn install failed (attempt ${attempt}/3), retrying..."; \
+        sleep 5; \
+      else \
+        exit 1; \
+      fi; \
+    done
 
 #
 # Targets
