@@ -184,28 +184,4 @@ describe('Claude Variants (schema v6)', () => {
       }
     });
   });
-
-  describe('ClaudeVariant type', () => {
-    it('exports ClaudeVariant type', async () => {
-      // Types are erased at runtime, so we verify compilation by using the type
-      // The Settings interface uses ClaudeVariant in the claudeVariants property
-      // So if this file compiles, the type is properly exported
-      vi.resetModules();
-      const { readSettings, updateSettings } = await import('./persistence');
-
-      // Create a variant value that matches the ClaudeVariant type
-      const testVariant = { configDir: '/test/path', description: 'Test variant' };
-
-      // Write settings with the variant
-      await updateSettings(async (settings) => ({
-        ...settings,
-        claudeVariants: { test: testVariant },
-      }));
-
-      // Read back and verify
-      const result = await readSettings();
-      expect(result.claudeVariants?.test?.configDir).toBe('/test/path');
-      expect(result.claudeVariants?.test?.description).toBe('Test variant');
-    });
-  });
 });

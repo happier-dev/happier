@@ -41,7 +41,7 @@ export const SUPPORTED_SCHEMA_VERSION = 6;
  * Custom Claude configuration variant.
  * Allows users to define alternate Claude CLI configurations.
  */
-export type ClaudeVariant = {
+export interface ClaudeVariant {
   /**
    * Absolute path to the Claude config directory.
    * The directory should contain a settings.json file compatible with Claude CLI.
