@@ -28,6 +28,11 @@ export interface InitializeBackendRunSessionOptions {
     acpSessionModeOverride?: AcpSessionModeOverride
     modelOverride?: ModelOverride
   }
+  /**
+   * Optional: forward offline reconnection status updates (e.g. "Reconnected!") to the caller's UX.
+   * When omitted, the offline reconnection utility uses console output.
+   */
+  offlineNotify?: (message: string) => void
   allowOfflineStub?: boolean
   onSessionSwap?: (newSession: ApiSessionClient) => void
   onAttachMetadataSnapshotError?: (error: unknown) => void
@@ -141,21 +146,39 @@ export async function initializeBackendRunSession(
     throw new Error('Failed to create session')
   }
 
+  const reportedSessionId = response ? response.id : null
+  let ranStartupSideEffects = false
+  const runStartupSideEffectsOnce = async (sessionToUse: ApiSessionClient, sessionId: string): Promise<void> => {
+    if (ranStartupSideEffects) return
+    ranStartupSideEffects = true
+    await runStartupSideEffects(sessionToUse, sessionId)
+  }
+
   const { session, reconnectionHandle } = setupOfflineReconnectionFn({
     api: opts.api as ApiClient,
     sessionTag: opts.sessionTag,
     metadata: opts.metadata,
     state: opts.state,
     response: response as Session | null,
+    onNotify: opts.offlineNotify,
     onSessionSwap: (newSession) => {
       opts.onSessionSwap?.(newSession)
+
+      // If startup began offline (no session id yet), rerun UI priming and startup side effects once the
+      // real session arrives. Do not do this for normal online starts (reportedSessionId is set).
+      if (reportedSessionId) return
+      if (ranStartupSideEffects) return
+      const nextId = String((newSession as any)?.sessionId ?? '').trim()
+      if (!nextId || nextId.startsWith('offline-')) return
+
+      primeAgentStateForUiFn(newSession, opts.uiLogPrefix)
+      void runStartupSideEffectsOnce(newSession, nextId).catch(() => {})
     },
   })
 
-  const reportedSessionId = response ? response.id : null
   primeAgentStateForUiFn(session, opts.uiLogPrefix)
   if (reportedSessionId) {
-    await runStartupSideEffects(session, reportedSessionId)
+    await runStartupSideEffectsOnce(session, reportedSessionId)
   }
 
   return {

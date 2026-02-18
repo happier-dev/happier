@@ -3,12 +3,13 @@ import chalk from 'chalk';
 import type { AgentId } from '@happier-dev/agents';
 
 import type { Credentials } from '@/persistence';
-import { authAndSetupMachineIfNeeded } from '@/ui/auth';
+import { readCredentials, readSettings } from '@/persistence';
+import { authAndSetupMachineIfNeeded, ensureMachineIdInSettings } from '@/ui/auth';
 import type { CommandContext } from '@/cli/commandRegistry';
-import { fetchAccountSettingsSnapshot } from '@/settings/accountSettingsClient';
-import { assertBackendEnabledByAccountSettings } from '@/settings/backendEnabled';
-import { applyAccountSettingsToProcessEnv } from '@/settings/applyAccountSettingsToProcessEnv';
-import { applyProviderSpawnExtrasToProcessEnv } from '@/settings/providerSettings';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { ensureDaemonRunningForSessionCommand, shouldAutoStartDaemonAfterAuth } from '@/daemon/ensureDaemon';
+import { configuration } from '@/configuration';
+import { logger } from '@/ui/logger';
 import {
   applyDeprecatedSessionStartAliasesForAgent,
   parseSessionStartArgs,
@@ -31,6 +32,8 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
   resolveExtraOptions?: (args: string[]) => Extra;
 }): Promise<void> {
   try {
+    const refreshSettings = params.context.args.includes('--refresh-settings');
+
     const parsed = parseSessionStartArgs(params.context.args);
     const resolved = params.agentIdForDeprecatedAliases
       ? applyDeprecatedSessionStartAliasesForAgent({ agentId: params.agentIdForDeprecatedAliases, ...parsed })
@@ -44,19 +47,32 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
     const resume = readOptionalFlagValue(params.context.args, '--resume');
     const extraOptions = params.resolveExtraOptions ? params.resolveExtraOptions(params.context.args) : ({} as Extra);
 
-    const run = await params.loadRun();
-    const { credentials } = await authAndSetupMachineIfNeeded();
+    const runPromise = params.loadRun();
+
+    let credentials = await readCredentials();
+    if (!credentials) {
+      const auth = await authAndSetupMachineIfNeeded();
+      credentials = auth.credentials;
+    } else {
+      const settings = await readSettings();
+      if (!settings.machineId) {
+        await ensureMachineIdInSettings();
+      }
+      if (shouldAutoStartDaemonAfterAuth({ env: process.env, isDaemonProcess: configuration.isDaemonProcess })) {
+        void ensureDaemonRunningForSessionCommand().catch((error) => {
+          logger.debug('[session] Failed to auto-start daemon (non-fatal)', error);
+        });
+      }
+    }
+
+    const run = await runPromise;
 
     if (params.agentIdForAccountSettings) {
-      const snapshot = await fetchAccountSettingsSnapshot({ credentials });
-      assertBackendEnabledByAccountSettings({
+      await bootstrapAccountSettingsContext({
         agentId: params.agentIdForAccountSettings,
-        settings: snapshot.settings,
-      });
-      applyAccountSettingsToProcessEnv({ settings: snapshot.settings });
-      applyProviderSpawnExtrasToProcessEnv({
-        agentId: params.agentIdForAccountSettings,
-        settings: snapshot.settings,
+        credentials,
+        mode: resolved.startedBy === 'daemon' ? 'blocking' : 'fast',
+        refresh: refreshSettings ? 'force' : 'auto',
       });
     }
 

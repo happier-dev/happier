@@ -477,6 +477,35 @@ export function decryptWithEphemeralKey(encryptedBundle: Uint8Array, recipientSe
     return decrypted;
 }
 
+export async function ensureMachineIdInSettings(opts?: { forceNew?: boolean }): Promise<{ machineId: string }> {
+    const forceNew = opts?.forceNew ?? false;
+    const settings = await updateSettings(async s => {
+        const activeServerId = sanitizeServerIdForFilesystem(
+            configuration.activeServerId ?? s.activeServerId ?? 'cloud',
+            'cloud',
+        );
+        const currentMap = { ...(s.machineIdByServerId ?? {}) };
+        const current = currentMap[activeServerId];
+
+        if (forceNew || !current) {
+            const machineId = randomUUID();
+            currentMap[activeServerId] = machineId;
+            return {
+                ...s,
+                machineIdByServerId: currentMap,
+                // derived (not persisted in v5+)
+                machineId,
+            };
+        }
+        return s;
+    });
+
+    if (!settings.machineId) {
+        throw new Error('Failed to ensure machine id in settings');
+    }
+    return { machineId: settings.machineId };
+}
+
 
 /**
  * Ensure authentication and machine setup
@@ -504,30 +533,11 @@ export async function authAndSetupMachineIfNeeded(): Promise<{
         logger.debug('[AUTH] Using existing credentials');
     }
 
-    // Make sure we have a machine ID
-    // Server machine entity will be created either by the daemon or by the CLI
-    const settings = await updateSettings(async s => {
-        const activeServerId = sanitizeServerIdForFilesystem(
-            configuration.activeServerId ?? s.activeServerId ?? 'cloud',
-            'cloud',
-        );
-        const currentMap = { ...(s.machineIdByServerId ?? {}) };
-        const current = currentMap[activeServerId];
+    // Make sure we have a machine ID.
+    // Server machine entity will be created either by the daemon or by the CLI.
+    const { machineId } = await ensureMachineIdInSettings({ forceNew: newAuth });
 
-        if (newAuth || !current) {
-            const machineId = randomUUID();
-            currentMap[activeServerId] = machineId;
-            return {
-                ...s,
-                machineIdByServerId: currentMap,
-                // derived (not persisted in v5+)
-                machineId,
-            };
-        }
-        return s;
-    });
-
-    logger.debug(`[AUTH] Machine ID: ${settings.machineId}`);
+    logger.debug(`[AUTH] Machine ID: ${machineId}`);
 
     if (shouldAutoStartDaemonAfterAuth({ env: process.env, isDaemonProcess: configuration.isDaemonProcess })) {
         try {
@@ -538,5 +548,5 @@ export async function authAndSetupMachineIfNeeded(): Promise<{
         }
     }
 
-    return { credentials, machineId: settings.machineId! };
+    return { credentials, machineId };
 }

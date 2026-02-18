@@ -21,12 +21,13 @@ import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRu
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
 import { runPermissionModePromptLoop } from '@/agent/runtime/runPermissionModePromptLoop';
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
-import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
 import type { InFlightSteerController } from '@/agent/runtime/permission/bindPermissionModeQueue';
 import type { Credentials } from '@/persistence';
 import { registerKillSessionHandler } from '@/rpc/handlers/killSession';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/ui/logger';
+import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
 
 type RuntimeForLoop = {
   beginTurn: () => void;
@@ -74,6 +75,12 @@ export type StandardAcpProviderConfig = {
   machineMetadata: MachineMetadata;
   terminalDisplay: React.ComponentType<TerminalDisplayProps>;
   formatPromptErrorMessage: (error: unknown) => string;
+  /**
+   * Optional: provide a stable key used to batch messages and detect "effective" permission-mode changes.
+   *
+   * When omitted, permissionMode itself is used as the key.
+   */
+  resolvePermissionModeQueueKey?: (permissionMode: PermissionMode) => string;
   createRuntime: (params: {
     directory: string;
     metadata: Metadata;
@@ -136,7 +143,13 @@ export async function runStandardAcpProvider(
     machineMetadata: config.machineMetadata,
   });
 
-  const initialPermissionMode = normalizePermissionModeToIntent(opts.permissionMode ?? 'default') ?? 'default';
+  const accountSettings = getActiveAccountSettingsSnapshot()?.settings ?? null;
+  const permissionModeSeed = resolvePermissionModeSeedForAgentStart({
+    agentId: config.flavor,
+    explicitPermissionMode: opts.permissionMode,
+    accountSettings,
+  });
+  const initialPermissionMode = permissionModeSeed.mode;
   const { state, metadata } = createSessionMetadataFn({
     flavor: config.flavor,
     machineId,
@@ -203,6 +216,7 @@ export async function runStandardAcpProvider(
     session,
     initialPermissionMode,
     inFlightSteer: inFlightSteerController,
+    resolvePermissionModeQueueKey: config.resolvePermissionModeQueueKey,
   });
   const { messageQueue } = permissionModeState;
 

@@ -296,4 +296,25 @@ describe('runStandardAcpProvider', () => {
     expect(harness.metrics.archiveCalls).toBe(1);
     expect(harness.metrics.cleanupCalls).toBe(1);
   });
+
+  it('passes a permission-mode queue key resolver when provided', async () => {
+    const harness = createHarness();
+    const resolvePermissionModeQueueKey = (mode: string) => `key:${mode}`;
+    (harness.config as any).resolvePermissionModeQueueKey = resolvePermissionModeQueueKey;
+
+    let observed: unknown = null;
+    harness.deps.createPermissionModeQueueStateFn = (params: any) => {
+      observed = params.resolvePermissionModeQueueKey ?? null;
+      return {
+        messageQueue: { reset: () => undefined, size: () => 0 },
+        getCurrentPermissionMode: () => 'default',
+        setCurrentPermissionMode: () => undefined,
+        getCurrentPermissionModeUpdatedAt: () => 0,
+        setCurrentPermissionModeUpdatedAt: () => undefined,
+      };
+    };
+
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+    expect(observed).toBe(resolvePermissionModeQueueKey);
+  });
 });

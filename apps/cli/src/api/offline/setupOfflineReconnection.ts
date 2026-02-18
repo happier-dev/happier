@@ -29,6 +29,11 @@ export interface SetupOfflineReconnectionOptions {
     /** Initial API response (null if server unreachable) */
     response: Session | null;
     /**
+     * Optional: receive reconnection status messages (reconnected/auth failed).
+     * Defaults to `console.log` when omitted.
+     */
+    onNotify?: (message: string) => void;
+    /**
      * Callback invoked when session is swapped after reconnection.
      * Use this to update the session reference in the calling code.
      */
@@ -85,6 +90,8 @@ export function setupOfflineReconnection(opts: SetupOfflineReconnectionOptions):
         // Create a no-op session stub for offline mode using shared utility
         session = createOfflineSessionStub(sessionTag);
 
+        const onNotify = opts.onNotify ?? console.log;
+
         // Start background reconnection
         reconnectionHandle = startOfflineReconnection<ApiSessionClient>({
             serverUrl: configuration.serverUrl,
@@ -96,10 +103,7 @@ export function setupOfflineReconnection(opts: SetupOfflineReconnectionOptions):
                 onSessionSwap(realSession);
                 return realSession;
             },
-            onNotify: (msg) => {
-                // Log to console - this matches Claude's behavior
-                console.log(msg);
-            }
+            onNotify,
         });
 
         return { session, reconnectionHandle, isOffline: true };

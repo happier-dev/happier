@@ -305,4 +305,127 @@ describe('initializeBackendRunSession', () => {
 
     expect(events).toEqual(['persist', 'fallback', 'report'])
   })
+
+  it('runs startup side effects after offline reconnection swaps in a real session', async () => {
+    const metadata = { terminal: { mode: 'tmux' }, startedBy: 'terminal' } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const offlineSession = createSessionStub({ sessionId: 'offline-tag' })
+    const realSession = createSessionStub({ sessionId: 'real-session' })
+
+    const api = {
+      getOrCreateSession: async () => null,
+      sessionSyncClient: () => offlineSession,
+    }
+
+    const daemonReports: string[] = []
+    const persisted: string[] = []
+    let fallbackCount = 0
+    const primed: string[] = []
+    let capturedSwap: ((next: ApiSessionClient) => void) | undefined
+    let userOnSwapCount = 0
+
+    const result = await initializeBackendRunSession(
+      {
+        api,
+        sessionTag: 'tag-offline',
+        metadata,
+        state,
+        uiLogPrefix: '[Codex]',
+        startupMetadataOverrides: {
+          permissionModeOverride: { mode: 'default', updatedAt: 100 },
+        },
+        allowOfflineStub: true,
+        onSessionSwap: () => {
+          userOnSwapCount += 1
+        },
+      },
+      {
+        setupOfflineReconnectionFn: (opts) => {
+          capturedSwap = opts.onSessionSwap
+          return {
+            session: offlineSession,
+            reconnectionHandle: { cancel: () => {}, getSession: () => null, isReconnected: () => false },
+            isOffline: true,
+          }
+        },
+        primeAgentStateForUiFn: (session) => {
+          primed.push(session.sessionId)
+        },
+        reportSessionToDaemonIfRunningFn: async (opts) => {
+          daemonReports.push(opts.sessionId)
+        },
+        persistTerminalAttachmentInfoIfNeededFn: async (opts) => {
+          persisted.push(opts.sessionId)
+        },
+        sendTerminalFallbackMessageIfNeededFn: () => {
+          fallbackCount += 1
+        },
+      },
+    )
+
+    expect(result.attachedToExistingSession).toBe(false)
+    expect(result.reportedSessionId).toBeNull()
+    expect(result.session).toBe(offlineSession)
+    expect(primed).toEqual(['offline-tag'])
+    expect(daemonReports).toEqual([])
+    expect(persisted).toEqual([])
+    expect(fallbackCount).toBe(0)
+
+    if (typeof capturedSwap !== 'function') {
+      throw new Error('Expected setupOfflineReconnection to provide an onSessionSwap callback')
+    }
+    capturedSwap(realSession)
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+    expect(userOnSwapCount).toBe(1)
+    expect(primed).toEqual(['offline-tag', 'real-session'])
+    expect(daemonReports).toEqual(['real-session'])
+    expect(persisted).toEqual(['real-session'])
+    expect(fallbackCount).toBe(1)
+  })
+
+  it('passes offline notify messages through setupOfflineReconnection when provided', async () => {
+    const metadata = { startedBy: 'terminal' } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const offlineSession = createSessionStub({ sessionId: 'offline-tag' })
+
+    const api = {
+      getOrCreateSession: async () => null,
+      sessionSyncClient: () => offlineSession,
+    }
+
+    const notifications: string[] = []
+
+    await initializeBackendRunSession(
+      {
+        api,
+        sessionTag: 'tag-offline-notify',
+        metadata,
+        state,
+        uiLogPrefix: '[Codex]',
+        startupMetadataOverrides: {
+          permissionModeOverride: { mode: 'default', updatedAt: 100 },
+        },
+        allowOfflineStub: true,
+        offlineNotify: (message: string) => notifications.push(message),
+      },
+      {
+        setupOfflineReconnectionFn: (opts) => {
+          opts.onNotify?.('hello')
+          return {
+            session: offlineSession,
+            reconnectionHandle: { cancel: () => {}, getSession: () => null, isReconnected: () => false },
+            isOffline: true,
+          }
+        },
+        primeAgentStateForUiFn: () => {},
+        reportSessionToDaemonIfRunningFn: async () => {},
+        persistTerminalAttachmentInfoIfNeededFn: async () => {},
+        sendTerminalFallbackMessageIfNeededFn: () => {},
+      },
+    )
+
+    expect(notifications).toEqual(['hello'])
+  })
 })

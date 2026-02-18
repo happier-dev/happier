@@ -9,6 +9,13 @@ export function createPermissionModeQueueState(opts: {
   session: ApiSessionClient;
   initialPermissionMode: PermissionMode;
   inFlightSteer?: InFlightSteerController | null;
+  /**
+   * Optional: provide a stable key used to batch messages and detect "effective" mode changes.
+   *
+   * This is useful when multiple permission modes map to the same backend configuration for a provider,
+   * so toggling between them should not force a runtime restart.
+   */
+  resolvePermissionModeQueueKey?: (permissionMode: PermissionMode) => string;
 }): {
   messageQueue: MessageQueue2<{ permissionMode: PermissionMode }>;
   getCurrentPermissionMode: () => PermissionMode | undefined;
@@ -16,8 +23,9 @@ export function createPermissionModeQueueState(opts: {
   getCurrentPermissionModeUpdatedAt: () => number;
   setCurrentPermissionModeUpdatedAt: (updatedAt: number) => void;
 } {
+  const resolveQueueKey = opts.resolvePermissionModeQueueKey;
   const messageQueue = new MessageQueue2<{ permissionMode: PermissionMode }>((mode) => hashObject({
-    permissionMode: mode.permissionMode,
+    permissionMode: resolveQueueKey ? resolveQueueKey(mode.permissionMode) : mode.permissionMode,
   }));
 
   let currentPermissionMode: PermissionMode | undefined = opts.initialPermissionMode;
