@@ -88,6 +88,26 @@ describe('AcpBackend ACP FS capability experiment', () => {
     }
   });
 
+  it('does not treat missing files under a symlinked cwd as path traversal (reports ENOENT instead)', async () => {
+    setEnv('HAPPIER_ACP_FS', '1');
+
+    const root = mkdtempSync(join(tmpdir(), 'happier-acp-fs-root-'));
+    const workspaceReal = join(root, 'workspace-real');
+    const workspaceLink = join(root, 'workspace-link');
+
+    try {
+      mkdirSync(workspaceReal, { recursive: true });
+      symlinkSync(workspaceReal, workspaceLink);
+
+      const clientFs = createAcpClientFsMethods({ cwd: workspaceLink });
+      const missing = join(workspaceLink, 'missing.txt');
+
+      await expect(clientFs.readTextFile!({ sessionId: 's', path: missing })).rejects.toThrow(/ENOENT/i);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('readTextFile rejects paths that escape cwd', async () => {
     setEnv('HAPPIER_ACP_FS', '1');
 

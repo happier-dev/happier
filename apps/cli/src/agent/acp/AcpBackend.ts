@@ -287,6 +287,13 @@ export function createAcpClientFsMethods(params: {
     return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel));
   };
 
+  const isWithinAnyRoot = (roots: string[], target: string): boolean => {
+    for (const root of roots) {
+      if (isWithinRoot(root, target)) return true;
+    }
+    return false;
+  };
+
   const assertWithinCwd = async (targetPath: string, opts: { kind: 'read' | 'write' }): Promise<void> => {
     const targetResolved = resolve(targetPath);
     if (!isWithinRoot(rootResolved, targetResolved)) {
@@ -294,6 +301,9 @@ export function createAcpClientFsMethods(params: {
     }
 
     const rootReal = await rootRealPromise;
+    // `realpath()` can normalize the same directory into different spellings on some platforms
+    // (for example: Windows mapped drive letters vs UNC paths). Treat both spellings as valid roots.
+    const roots = rootReal === rootResolved ? [rootResolved] : [rootResolved, rootReal];
     const resolveExistingAncestorRealPath = async (startPath: string): Promise<string> => {
       let candidate = startPath;
       while (true) {
@@ -317,7 +327,7 @@ export function createAcpClientFsMethods(params: {
         if (errno === 'ENOENT') return targetResolved;
         throw new Error(`Permission denied for ${opts.kind}TextFile (cannot resolve path)`);
       });
-      if (!isWithinRoot(rootReal, targetReal)) {
+      if (!isWithinAnyRoot(roots, targetReal)) {
         throw new Error(`Permission denied for ${opts.kind}TextFile (path traversal)`);
       }
       return;
@@ -328,12 +338,12 @@ export function createAcpClientFsMethods(params: {
       if (errno === 'ENOENT') return null;
       throw new Error(`Permission denied for ${opts.kind}TextFile (cannot resolve path)`);
     });
-    if (targetReal && !isWithinRoot(rootReal, targetReal)) {
+    if (targetReal && !isWithinAnyRoot(roots, targetReal)) {
       throw new Error(`Permission denied for ${opts.kind}TextFile (path traversal)`);
     }
 
     const existingAncestorReal = await resolveExistingAncestorRealPath(dirname(targetResolved));
-    if (!isWithinRoot(rootReal, existingAncestorReal)) {
+    if (!isWithinAnyRoot(roots, existingAncestorReal)) {
       throw new Error(`Permission denied for ${opts.kind}TextFile (path traversal)`);
     }
   };
