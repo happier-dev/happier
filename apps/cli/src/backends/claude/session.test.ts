@@ -1,11 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
+import type { Metadata } from '@/api/types';
 import { Session } from './session';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import type { EnhancedMode } from './loop';
 
-type MetadataMap = Record<string, unknown>;
 type SessionFoundHookData = NonNullable<Parameters<Session['onSessionFound']>[1]>;
+
+function createMetadataStub(overrides?: Partial<Metadata>): Metadata {
+  return {
+    path: '/tmp',
+    host: 'host',
+    homeDir: '/home',
+    happyHomeDir: '/home/.happier',
+    happyLibDir: '/home/.happier/lib',
+    happyToolsDir: '/home/.happier/tools',
+    ...overrides,
+  };
+}
 
 function createSessionClientStub(overrides?: Partial<SessionClientPort>): SessionClientPort {
   return {
@@ -90,10 +102,10 @@ describe('Session', () => {
   });
 
   it('adopts permissionMode from metadata without republishing it', () => {
-    const metadataUpdates: MetadataMap[] = [];
+    const metadataUpdates: Metadata[] = [];
     const client = createSessionClientStub({
       updateMetadata: (updater) => {
-        metadataUpdates.push(updater({}));
+        metadataUpdates.push(updater(createMetadataStub()));
       },
     });
 
@@ -101,7 +113,7 @@ describe('Session', () => {
 
     try {
       session.setLastPermissionMode('plan', 111);
-      expect(metadataUpdates).toEqual([{ permissionMode: 'plan', permissionModeUpdatedAt: 111 }]);
+      expect(metadataUpdates).toEqual([expect.objectContaining({ permissionMode: 'plan', permissionModeUpdatedAt: 111 })]);
       metadataUpdates.length = 0;
 
       expect(session.adoptLastPermissionModeFromMetadata('acceptEdits', 222)).toBe(true);
@@ -118,10 +130,10 @@ describe('Session', () => {
   });
 
   it('does not bump permissionModeUpdatedAt when permission mode does not change', () => {
-    const metadataUpdates: MetadataMap[] = [];
+    const metadataUpdates: Metadata[] = [];
     const client = createSessionClientStub({
       updateMetadata: (updater) => {
-        metadataUpdates.push(updater({}));
+        metadataUpdates.push(updater(createMetadataStub()));
       },
     });
 
@@ -133,14 +145,14 @@ describe('Session', () => {
       session.setLastPermissionMode('plan', 333);
       session.setLastPermissionMode('plan', 444);
 
-      expect(metadataUpdates).toEqual([{ permissionMode: 'plan', permissionModeUpdatedAt: 333 }]);
+      expect(metadataUpdates).toEqual([expect.objectContaining({ permissionMode: 'plan', permissionModeUpdatedAt: 333 })]);
     } finally {
       session.cleanup();
     }
   });
 
   it('notifies sessionFound callbacks with transcriptPath when provided', () => {
-    let metadata: MetadataMap = {};
+    let metadata: Metadata = createMetadataStub();
 
     const client = createSessionClientStub({
       updateMetadata: (updater) => {
@@ -165,7 +177,7 @@ describe('Session', () => {
   });
 
   it('does not carry over transcriptPath when sessionId changes and hook lacks transcriptPath', () => {
-    let metadata: MetadataMap = {};
+    let metadata: Metadata = createMetadataStub();
 
     const client = createSessionClientStub({
       updateMetadata: (updater) => {

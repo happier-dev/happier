@@ -5,6 +5,7 @@ import type {
 } from './deferredSessionBuffer';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
 import type { RpcHandler, RpcHandlerManagerLike } from '@/api/rpc/types';
+import type { AgentState, Metadata } from '@/api/types';
 
 export type DeferredApiSessionTarget = Readonly<{
   sessionId: string;
@@ -14,10 +15,10 @@ export type DeferredApiSessionTarget = Readonly<{
   sendAgentMessage: (provider: unknown, body: unknown, opts?: unknown) => void;
   sendCodexMessage: (body: unknown) => void;
   sendUserTextMessage: (text: string, opts?: { localId?: string; meta?: Record<string, unknown> }) => void;
-  updateMetadata: (updater: (metadata: any) => any) => void | Promise<void>;
-  updateAgentState: (updater: (state: any) => any) => void | Promise<void>;
+  updateMetadata: (updater: (metadata: Metadata) => Metadata) => void | Promise<void>;
+  updateAgentState: (updater: (state: AgentState) => AgentState) => void | Promise<void>;
   keepAlive: (thinking: boolean, mode: 'local' | 'remote') => void;
-  getMetadataSnapshot: () => unknown;
+  getMetadataSnapshot: () => Metadata | null;
   waitForMetadataUpdate: (abortSignal?: AbortSignal) => Promise<boolean>;
   popPendingMessage: () => Promise<boolean>;
   peekPendingMessageQueueV2Count: () => Promise<number>;
@@ -139,7 +140,7 @@ export class DeferredApiSessionClient {
     this.pushBufferedCall((t) => t.sendUserTextMessage(_text, _opts), { hint: 'sendUserTextMessage' });
   }
 
-  updateMetadata(_updater: (metadata: any) => any): void | Promise<void> {
+  updateMetadata(_updater: (metadata: Metadata) => Metadata): void | Promise<void> {
     const target = this.target;
     if (target && !this.flushInFlight) {
       return target.updateMetadata(_updater);
@@ -162,7 +163,7 @@ export class DeferredApiSessionClient {
     return deferred.promise;
   }
 
-  updateAgentState(_updater: (state: any) => any): void | Promise<void> {
+  updateAgentState(_updater: (state: AgentState) => AgentState): void | Promise<void> {
     const target = this.target;
     if (target && !this.flushInFlight) {
       return target.updateAgentState(_updater);
@@ -191,7 +192,7 @@ export class DeferredApiSessionClient {
     target.keepAlive(_thinking, _mode);
   }
 
-  getMetadataSnapshot(): unknown {
+  getMetadataSnapshot(): Metadata | null {
     const target = this.target;
     if (!target) return null;
     return target.getMetadataSnapshot();

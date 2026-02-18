@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { DeferredApiSessionClient } from './DeferredApiSessionClient';
+import type { Metadata } from '@/api/types';
 
 function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolveFn: ((value: T) => void) | null = null;
@@ -10,6 +11,18 @@ function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void
   return {
     promise,
     resolve: (value: T) => resolveFn?.(value),
+  };
+}
+
+function createMetadataStub(overrides?: Partial<Metadata>): Metadata {
+  return {
+    path: '/tmp',
+    host: 'host',
+    homeDir: '/home',
+    happyHomeDir: '/home/.happier',
+    happyLibDir: '/home/.happier/lib',
+    happyToolsDir: '/home/.happier/tools',
+    ...overrides,
   };
 }
 
@@ -47,7 +60,7 @@ describe('DeferredApiSessionClient', () => {
       updateMetadata: vi.fn(),
       updateAgentState: vi.fn(),
       keepAlive: vi.fn(),
-      getMetadataSnapshot: vi.fn(() => ({ ok: true })),
+      getMetadataSnapshot: vi.fn(() => createMetadataStub()),
       waitForMetadataUpdate: vi.fn(async () => true),
       popPendingMessage: vi.fn(async () => true),
       peekPendingMessageQueueV2Count: vi.fn(async () => 3),
@@ -99,7 +112,7 @@ describe('DeferredApiSessionClient', () => {
       updateMetadata: vi.fn(),
       updateAgentState: vi.fn(),
       keepAlive: vi.fn(),
-      getMetadataSnapshot: vi.fn(() => ({ ok: true })),
+      getMetadataSnapshot: vi.fn(() => createMetadataStub()),
       waitForMetadataUpdate: vi.fn(async () => true),
       popPendingMessage: vi.fn(async () => true),
       peekPendingMessageQueueV2Count: vi.fn(async () => 0),
@@ -140,7 +153,7 @@ describe('DeferredApiSessionClient', () => {
       }),
       updateAgentState: vi.fn(),
       keepAlive: vi.fn(),
-      getMetadataSnapshot: vi.fn(() => ({ ok: true })),
+      getMetadataSnapshot: vi.fn(() => createMetadataStub()),
       waitForMetadataUpdate: vi.fn(async () => true),
       popPendingMessage: vi.fn(async () => true),
       peekPendingMessageQueueV2Count: vi.fn(async () => 0),
