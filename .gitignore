@@ -39,6 +39,8 @@ yarn-error.*
 # local build/log artifacts
 apps/cli/.dist.hstack-backup/
 apps/stack/resume-invocations.log
+apps/stack/*.tgz
+packages/relay-server/*.tgz
 
 # macOS
 .DS_Store
