@@ -4,22 +4,35 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 describe('apps/cli package publish contract', () => {
-  it('bundles critical crypto/runtime deps for global installs', () => {
+  it('bundles internal workspaces and relies on protocol to declare its runtime deps', () => {
     const here = dirname(fileURLToPath(import.meta.url));
-    const packageJsonPath = resolve(here, '..', '..', 'package.json');
-    const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as {
+    const cliPackageJsonPath = resolve(here, '..', '..', 'package.json');
+    const cliPackageJson = JSON.parse(readFileSync(cliPackageJsonPath, 'utf8')) as {
       bundledDependencies?: unknown;
       dependencies?: Record<string, string> | undefined;
     };
 
-    const bundled = Array.isArray(packageJson.bundledDependencies)
-      ? packageJson.bundledDependencies.map((v) => String(v))
+    const bundled = Array.isArray(cliPackageJson.bundledDependencies)
+      ? cliPackageJson.bundledDependencies.map((v) => String(v))
       : [];
 
-    for (const name of ['base64-js', '@noble/hashes', 'tweetnacl']) {
-      expect(packageJson.dependencies?.[name]).toBeTruthy();
-      expect(bundled).toContain(name);
-    }
+    expect(bundled).toContain('@happier-dev/agents');
+    expect(bundled).toContain('@happier-dev/cli-common');
+    expect(bundled).toContain('@happier-dev/protocol');
+
+    // External runtime deps used by protocol should be declared on protocol itself
+    // (and vendored into the bundled protocol package during `prepack`).
+    const protocolPackageJsonPath = resolve(here, '..', '..', '..', '..', 'packages', 'protocol', 'package.json');
+    const protocolPackageJson = JSON.parse(readFileSync(protocolPackageJsonPath, 'utf8')) as {
+      dependencies?: Record<string, string> | undefined;
+    };
+    expect(protocolPackageJson.dependencies?.['base64-js']).toBeTruthy();
+    expect(protocolPackageJson.dependencies?.['@noble/hashes']).toBeTruthy();
+    expect(protocolPackageJson.dependencies?.['tweetnacl']).toBeTruthy();
+
+    // Only deps used directly by the CLI should be declared on the CLI package itself.
+    expect(cliPackageJson.dependencies?.['tweetnacl']).toBeTruthy();
+    expect(cliPackageJson.dependencies?.['base64-js']).toBeFalsy();
+    expect(cliPackageJson.dependencies?.['@noble/hashes']).toBeFalsy();
   });
 });
-

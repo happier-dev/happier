@@ -1,4 +1,4 @@
-import { sha512 } from '@noble/hashes/sha512';
+import { createHash } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -40,7 +40,7 @@ describe('resolveExistingSessionEncryptionKeyBase64', () => {
 
   it('returns base64 encoded DEK for dataKey credentials when server provides an encrypted envelope', async () => {
     const seed = new Uint8Array(32).fill(11);
-    const compatSecretKey = sha512(seed).slice(0, 32);
+    const compatSecretKey = createHash('sha512').update(seed).digest().subarray(0, 32);
     const recipientPublicKey = tweetnacl.box.keyPair.fromSecretKey(compatSecretKey).publicKey;
     const dataKey = new Uint8Array(32).fill(4);
 
@@ -69,4 +69,3 @@ describe('resolveExistingSessionEncryptionKeyBase64', () => {
     expect(Array.from(opened)).toEqual(Array.from(dataKey));
   });
 });
-
