@@ -104,9 +104,18 @@ jobs:
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       EAS_PLATFORM: android
       # Local Android release builds can exceed default heap limits during D8 dex merging.
-      # Raise heap and reduce concurrent workers for reliability on GitHub-hosted runners.
-      JAVA_TOOL_OPTIONS: -Xmx6g -Dfile.encoding=UTF-8
-      GRADLE_OPTS: -Xmx6g -Dfile.encoding=UTF-8 -Dorg.gradle.workers.max=2 -Dkotlin.daemon.jvm.options=-Xmx2g
+      # Raise heap and reduce concurrency for reliability on GitHub-hosted runners.
+      #
+      # Key detail: EAS local builds run Gradle in a generated Android project under /tmp, so we can't
+      # rely on a checked-in gradle.properties. We instead tune via environment variables.
+      #
+      # D8 (dex merging) can run in-process via Gradle's Worker API; in that case, it shares the
+      # Gradle JVM heap. Disabling the daemon + forcing a single worker reduces peak RSS and avoids
+      # frequent OOMs during :app:mergeDexRelease.
+      JAVA_TOOL_OPTIONS: -Xmx5g -Dfile.encoding=UTF-8
+      GRADLE_OPTS: -Xmx5g -Dfile.encoding=UTF-8 -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.workers.max=1 -Dkotlin.daemon.jvm.options=-Xmx2g
+      ORG_GRADLE_PROJECT_org.gradle.jvmargs: -Xmx5g -Dfile.encoding=UTF-8
+      ORG_GRADLE_PROJECT_kotlin.daemon.jvmargs: -Xmx2g
     steps:
       - name: Checkout
         uses: actions/checkout@v4
