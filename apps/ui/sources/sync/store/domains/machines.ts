@@ -51,6 +51,8 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     sessions: state.sessions,
                     machines: mergedMachines,
                     groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject,
+                    activeGroupingV1: state.settings.sessionListActiveGroupingV1,
+                    inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
                 });
 
                 const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();

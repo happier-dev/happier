@@ -50,14 +50,20 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                 saveSettings(newSettings, state.settingsVersion ?? 0);
 
                 const shouldRebuildSessionListViewData =
-                    Object.prototype.hasOwnProperty.call(delta, 'groupInactiveSessionsByProject') &&
-                    delta.groupInactiveSessionsByProject !== state.settings.groupInactiveSessionsByProject;
+                    (Object.prototype.hasOwnProperty.call(delta, 'groupInactiveSessionsByProject') &&
+                        delta.groupInactiveSessionsByProject !== state.settings.groupInactiveSessionsByProject) ||
+                    (Object.prototype.hasOwnProperty.call(delta, 'sessionListActiveGroupingV1') &&
+                        delta.sessionListActiveGroupingV1 !== state.settings.sessionListActiveGroupingV1) ||
+                    (Object.prototype.hasOwnProperty.call(delta, 'sessionListInactiveGroupingV1') &&
+                        delta.sessionListInactiveGroupingV1 !== state.settings.sessionListInactiveGroupingV1);
 
                 if (shouldRebuildSessionListViewData) {
                     const sessionListViewData = buildSessionListViewDataWithServerScope({
                         sessions: state.sessions,
                         machines: state.machines,
                         groupInactiveSessionsByProject: newSettings.groupInactiveSessionsByProject,
+                        activeGroupingV1: newSettings.sessionListActiveGroupingV1,
+                        inactiveGroupingV1: newSettings.sessionListInactiveGroupingV1,
                     });
                     return {
                         ...state,
@@ -80,13 +86,17 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                     saveSettings(nextSettings, nextVersion);
 
                     const shouldRebuildSessionListViewData =
-                        nextSettings.groupInactiveSessionsByProject !== state.settings.groupInactiveSessionsByProject;
+                        nextSettings.groupInactiveSessionsByProject !== state.settings.groupInactiveSessionsByProject ||
+                        nextSettings.sessionListActiveGroupingV1 !== state.settings.sessionListActiveGroupingV1 ||
+                        nextSettings.sessionListInactiveGroupingV1 !== state.settings.sessionListInactiveGroupingV1;
 
                     const sessionListViewData = shouldRebuildSessionListViewData
                         ? buildSessionListViewDataWithServerScope({
                             sessions: state.sessions,
                             machines: state.machines,
                             groupInactiveSessionsByProject: nextSettings.groupInactiveSessionsByProject,
+                            activeGroupingV1: nextSettings.sessionListActiveGroupingV1,
+                            inactiveGroupingV1: nextSettings.sessionListInactiveGroupingV1,
                         })
                         : state.sessionListViewData;
 
@@ -107,13 +117,17 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                 saveSettings(nextSettings, nextVersion);
 
                 const shouldRebuildSessionListViewData =
-                    nextSettings.groupInactiveSessionsByProject !== state.settings.groupInactiveSessionsByProject;
+                    nextSettings.groupInactiveSessionsByProject !== state.settings.groupInactiveSessionsByProject ||
+                    nextSettings.sessionListActiveGroupingV1 !== state.settings.sessionListActiveGroupingV1 ||
+                    nextSettings.sessionListInactiveGroupingV1 !== state.settings.sessionListInactiveGroupingV1;
 
                 const sessionListViewData = shouldRebuildSessionListViewData
                     ? buildSessionListViewDataWithServerScope({
                         sessions: state.sessions,
                         machines: state.machines,
                         groupInactiveSessionsByProject: nextSettings.groupInactiveSessionsByProject,
+                        activeGroupingV1: nextSettings.sessionListActiveGroupingV1,
+                        inactiveGroupingV1: nextSettings.sessionListInactiveGroupingV1,
                     })
                     : state.sessionListViewData;
 
