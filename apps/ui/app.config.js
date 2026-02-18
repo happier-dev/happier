@@ -86,8 +86,22 @@ const updatesConfig = {
     }
 };
 
-if (!process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV) {
-    process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV = updatesChannel === 'production' ? 'production' : 'preview';
+const normalizeCiFlag = (raw) => {
+    const value = String(raw ?? '').trim().toLowerCase();
+    return value === '1' || value === 'true' || value === 'yes';
+};
+
+const isBuildContext =
+    normalizeCiFlag(process.env.CI) ||
+    normalizeCiFlag(process.env.EAS_BUILD);
+
+const variantFeaturePolicyEnv =
+    appVariant === 'production' ? 'production' : appVariant === 'preview' ? 'preview' : '';
+const buildFeaturePolicyEnv =
+    updatesChannel === 'production' ? 'production' : updatesChannel === 'preview' ? 'preview' : '';
+const resolvedFeaturePolicyEnv = variantFeaturePolicyEnv || (isBuildContext ? buildFeaturePolicyEnv : '');
+if (!process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV && resolvedFeaturePolicyEnv) {
+    process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV = resolvedFeaturePolicyEnv;
 }
 
 const linkHost = (process.env.EXPO_APP_LINK_HOST || DEFAULTS.linkHost).trim();
