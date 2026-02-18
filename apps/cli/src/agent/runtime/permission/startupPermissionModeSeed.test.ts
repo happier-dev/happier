@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { resolveStartupPermissionModeFromSession } from './startupPermissionModeSeed';
 
@@ -67,5 +67,22 @@ describe('resolveStartupPermissionModeFromSession', () => {
     });
 
     expect(res).toBeNull();
+  });
+
+  it('does not fetch transcript intent for fresh sessions', async () => {
+    const fetchLatestUserPermissionIntentFromTranscript = vi.fn(async () => {
+      throw new Error('should not fetch transcript for fresh sessions');
+    });
+
+    const res = await resolveStartupPermissionModeFromSession({
+      sessionKind: 'fresh',
+      session: {
+        getMetadataSnapshot: () => ({ permissionMode: 'yolo', permissionModeUpdatedAt: 30 } as any),
+        fetchLatestUserPermissionIntentFromTranscript,
+      },
+    });
+
+    expect(res).toEqual({ mode: 'yolo', updatedAt: 30 });
+    expect(fetchLatestUserPermissionIntentFromTranscript).not.toHaveBeenCalled();
   });
 });

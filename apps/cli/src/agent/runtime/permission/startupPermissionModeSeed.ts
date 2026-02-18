@@ -3,12 +3,20 @@ import { resolveLatestPermissionIntent } from '@happier-dev/agents';
 import { normalizePermissionModeToIntent } from './permissionModeCanonical';
 
 export async function resolveStartupPermissionModeFromSession(opts: {
+  /**
+   * Controls whether transcript-derived permission intent is allowed.
+   *
+   * - `fresh`: do not fetch transcript (avoids unnecessary network on brand-new sessions)
+   * - `attach`/`resume`: allow transcript fetch to recover newer intent when metadata write failed
+   */
+  sessionKind?: 'fresh' | 'attach' | 'resume';
   session: {
     getMetadataSnapshot: () => Metadata | null;
     fetchLatestUserPermissionIntentFromTranscript: (opts?: { take?: number }) => Promise<{ intent: PermissionMode; updatedAt: number } | null>;
   };
   take?: number;
 }): Promise<{ mode: PermissionMode; updatedAt: number } | null> {
+  const sessionKind = opts.sessionKind ?? 'attach';
   const metadata = opts.session.getMetadataSnapshot();
 
   const rawMetadataMode = (metadata as any)?.permissionMode;
@@ -19,10 +27,13 @@ export async function resolveStartupPermissionModeFromSession(opts: {
     updatedAt: rawMetadataUpdatedAt,
   };
 
-  const transcript = await opts.session.fetchLatestUserPermissionIntentFromTranscript({ take: opts.take });
-  const transcriptCandidate = transcript
-    ? { rawMode: transcript.intent, updatedAt: transcript.updatedAt }
-    : { rawMode: null, updatedAt: null };
+  let transcriptCandidate: { rawMode: PermissionMode | null; updatedAt: number | null } = { rawMode: null, updatedAt: null };
+  if (sessionKind !== 'fresh') {
+    const transcript = await opts.session.fetchLatestUserPermissionIntentFromTranscript({ take: opts.take });
+    transcriptCandidate = transcript
+      ? { rawMode: transcript.intent, updatedAt: transcript.updatedAt }
+      : { rawMode: null, updatedAt: null };
+  }
 
   // Metadata is the intended source of truth for new sessions. However, in practice we can still end up with
   // transcript messages that reflect a newer intent change (e.g. the user sent a message with an updated
