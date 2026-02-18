@@ -1,4 +1,4 @@
-import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { AgentBackend } from '@/agent/core/AgentBackend';
 
@@ -22,16 +22,18 @@ import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/Execution
 import { isSafePermissionModeForIntent, resolveExecutionRunPolicy } from '@/agent/executionRuns/policy/ExecutionRunPolicy';
 import { VoiceAgentError } from '@/agent/voice/agent/VoiceAgentManager';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
+import { fetchServerFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 
 function invalidParams(): { ok: false; error: string; errorCode: string } {
   return { ok: false, error: 'Invalid params', errorCode: 'execution_run_invalid_action_input' };
 }
 
 export function registerExecutionRunHandlers(
-  rpc: RpcHandlerManager,
+  rpc: RpcHandlerRegistrar,
   ctx: Readonly<{
     sessionId: string;
     cwd: string;
+    serverUrl?: string;
     parentProvider: ACPProvider;
     createBackend: (opts: { runId?: string; backendId: string; permissionMode: string; modelId?: string; start?: any }) => AgentBackend;
     sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
@@ -39,6 +41,7 @@ export function registerExecutionRunHandlers(
       appendUserText: (text: string, meta: Record<string, unknown>) => void | Promise<void>;
       appendAssistantText: (text: string, meta: Record<string, unknown>) => void | Promise<void>;
     }>;
+    getServerFeaturesSnapshot?: () => CliServerFeaturesSnapshot | undefined;
     policy?: Readonly<{
       maxConcurrentRuns?: number;
       boundedTimeoutMs?: number;
@@ -69,6 +72,8 @@ export function registerExecutionRunHandlers(
     budgetRegistry: ctx.budgetRegistry,
   });
 
+  let cachedServerSnapshot: CliServerFeaturesSnapshot | undefined;
+
   async function startRun(raw: unknown): Promise<
     | { ok: true; runId: string; callId: string; sidechainId: string }
     | { ok: false; error: string; errorCode: string }
@@ -76,7 +81,19 @@ export function registerExecutionRunHandlers(
     const parsed = ExecutionRunStartRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
     if (parsed.data.intent === 'voice_agent') {
-      const voiceDecision = resolveCliFeatureDecision({ featureId: 'voice', env: process.env });
+      const serverSnapshot = ctx.getServerFeaturesSnapshot?.() ?? cachedServerSnapshot;
+      let voiceDecision = resolveCliFeatureDecision({ featureId: 'voice', env: process.env, serverSnapshot });
+
+      if (
+        voiceDecision.state === 'unknown'
+        && voiceDecision.blockedBy === 'server'
+        && ctx.serverUrl
+      ) {
+        cachedServerSnapshot = await fetchServerFeaturesSnapshot({ serverUrl: ctx.serverUrl });
+        const nextSnapshot = ctx.getServerFeaturesSnapshot?.() ?? cachedServerSnapshot;
+        voiceDecision = resolveCliFeatureDecision({ featureId: 'voice', env: process.env, serverSnapshot: nextSnapshot });
+      }
+
       if (voiceDecision.state !== 'enabled') {
         return { ok: false, error: 'Voice feature disabled', errorCode: 'execution_run_not_allowed' };
       }

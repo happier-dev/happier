@@ -207,16 +207,22 @@ describe('ExecutionRunManager (review intent)', () => {
       ioMode: 'request_response',
     });
 
-    const started: Awaited<typeof startPromise> = (await Promise.race([
-      startPromise,
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timed out waiting for start')), 25)),
-    ])) as any;
+    // Prevent deadlocks if start() ever regresses to awaiting backend.startSession().
+    // The assertion below (startSessionResolved === false) proves start() returned before provisioning completed.
+    const autoResolveStartSession = setTimeout(() => {
+      resolveStartSession({ sessionId: 'child_session_1' as SessionId });
+    }, 2_000);
+
+    const started = await startPromise;
+    clearTimeout(autoResolveStartSession);
 
     expect(startSessionCalled).toBe(true);
     expect(startSessionResolved).toBe(false);
 
     // Now allow the run to proceed and complete so the test doesn't leak background work.
-    resolveStartSession({ sessionId: 'child_session_1' as SessionId });
+    if (!startSessionResolved) {
+      resolveStartSession({ sessionId: 'child_session_1' as SessionId });
+    }
     await manager.waitForTerminal(started.runId);
     expect(manager.get(started.runId)?.status).toBe('succeeded');
   });

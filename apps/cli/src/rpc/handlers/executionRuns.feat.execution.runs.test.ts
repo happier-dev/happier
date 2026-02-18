@@ -2,12 +2,29 @@ import { describe, expect, it } from 'vitest';
 
 import type { AgentBackend, AgentMessage, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
-import type { ExecutionRunStartResponse } from '@happier-dev/protocol';
+import { FeaturesResponseSchema, type ExecutionRunStartResponse } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 
 import { createEncryptedRpcTestClient } from './encryptedRpc.testkit';
-import { registerExecutionRunHandlers } from './executionRuns';
+import { registerExecutionRunHandlers as registerExecutionRunHandlersBase } from './executionRuns';
 import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
+
+const voiceEnabledServerSnapshot = {
+  status: 'ready',
+  features: FeaturesResponseSchema.parse({
+    features: {
+      voice: { enabled: true },
+    },
+    capabilities: {},
+  }),
+} as const satisfies CliServerFeaturesSnapshot;
+
+const registerExecutionRunHandlers: typeof registerExecutionRunHandlersBase = (rpc, ctx) =>
+  registerExecutionRunHandlersBase(rpc, {
+    ...ctx,
+    getServerFeaturesSnapshot: ctx.getServerFeaturesSnapshot ?? (() => voiceEnabledServerSnapshot),
+  });
 
 function createStaticBackend(responseText: string): AgentBackend {
   let handler: AgentMessageHandler | null = null;

@@ -175,7 +175,8 @@ describe('registerCommonHandlers capabilities', () => {
 
             const executionRunsData = expectCapabilityData(result, 'tool.executionRuns');
             expect(executionRunsData.available).toBe(true);
-            expect(executionRunsData.intents).toEqual(['review', 'plan', 'delegate', 'voice_agent']);
+            // voice_agent is gated by build policy + feature decisions; preview policy currently denies voice.agent by default.
+            expect(executionRunsData.intents).toEqual(['review', 'plan', 'delegate']);
             expect(executionRunsData.backends).toEqual(
                 expect.objectContaining({
                     claude: expect.objectContaining({ available: true }),

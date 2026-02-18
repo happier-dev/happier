@@ -160,6 +160,7 @@ export class ApiSessionClient extends EventEmitter {
                     registerExecutionRunHandlers(this.rpcHandlerManager, {
                       sessionId: this.sessionId,
                       cwd: this.metadata?.path ?? process.cwd(),
+                      serverUrl: configuration.serverUrl,
                       parentProvider,
                       createBackend: ({ backendId, permissionMode, modelId, start }) =>
                         createExecutionRunBackend({ cwd: this.metadata?.path ?? process.cwd(), backendId, permissionMode, modelId, start }),
