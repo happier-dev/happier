@@ -238,11 +238,14 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
     });
 
     let decoded: any[] = [];
+    let withStructured: any[] = [];
+    let lastStructured: any = null;
     await waitFor(async () => {
       const rows = await fetchAllMessages(serverBaseUrl, auth.token, sessionId);
       decoded = rows
         .map((row) => decryptLegacyBase64(row.content.c, secret))
         .filter(Boolean) as any[];
+
       const applyMessage = decoded.find((m) => {
         const inlineText = typeof m?.text === 'string' ? m.text : null;
         const contentText =
@@ -252,12 +255,15 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
         const text = inlineText ?? contentText;
         return typeof text === 'string' && text.includes('@happier/review.apply_accepted_findings');
       });
-      return Boolean(applyMessage);
-    }, { timeoutMs: 20_000, intervalMs: 250 });
 
-    const withStructured = decoded.filter((m) => m?.meta?.happier?.kind === 'review_findings.v1');
+      withStructured = decoded.filter((m) => m?.meta?.happier?.kind === 'review_findings.v1');
+      lastStructured = withStructured.length > 0 ? withStructured[withStructured.length - 1] : null;
+      const lastStatus = lastStructured?.meta?.happier?.payload?.triage?.findings?.[0]?.status;
+
+      return Boolean(applyMessage) && withStructured.length >= 1 && lastStatus === 'accept';
+    }, { timeoutMs: 30_000, intervalMs: 250 });
+
     expect(withStructured.length).toBeGreaterThanOrEqual(1);
-    const last = withStructured[withStructured.length - 1];
-    expect(last.meta.happier.payload?.triage?.findings?.[0]?.status).toBe('accept');
+    expect(lastStructured?.meta?.happier?.payload?.triage?.findings?.[0]?.status).toBe('accept');
   }, 120_000);
 });
