@@ -15,6 +15,47 @@ function asString(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
 
+function isBoolean(value: unknown): value is boolean {
+  return value === true || value === false;
+}
+
+function extractAssistantText(message: unknown): string | null {
+  const record = asRecord(message);
+  if (!record) return null;
+  if (record.role !== 'assistant') return null;
+  const content = record.content;
+  if (!Array.isArray(content)) return null;
+
+  let text = '';
+  for (const item of content) {
+    const entry = asRecord(item);
+    if (!entry) continue;
+    if (entry.type !== 'text') continue;
+    const chunk = asString(entry.text);
+    if (chunk === null) continue;
+    text += chunk;
+  }
+
+  return text;
+}
+
+function extractTextFromToolResult(value: unknown): string | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const content = record.content;
+  if (!Array.isArray(content)) return null;
+  let text = '';
+  for (const item of content) {
+    const entry = asRecord(item);
+    if (!entry) continue;
+    if (entry.type !== 'text') continue;
+    const chunk = asString(entry.text);
+    if (chunk === null) continue;
+    text += chunk;
+  }
+  return text;
+}
+
 export function mapPiRpcEventToAgentMessages(event: unknown): AgentMessage[] {
   const record = asRecord(event);
   if (!record) return [];
@@ -34,12 +75,18 @@ export function mapPiRpcEventToAgentMessages(event: unknown): AgentMessage[] {
     if (!assistantMessageEvent) return [];
     const assistantType = asNonEmptyString(assistantMessageEvent.type);
     if (!assistantType) return [];
-    if (assistantType === 'text_delta') {
-      const delta = asString(assistantMessageEvent.delta);
-      if (delta === null || delta.length === 0) return [];
-      return [{ type: 'model-output', textDelta: delta }];
+    if (assistantType === 'text_start' || assistantType === 'text_delta' || assistantType === 'text_end') {
+      const fullText = extractAssistantText(record.message);
+      if (fullText === null || fullText.length === 0) return [];
+      return [{ type: 'model-output', fullText }];
     }
     return [];
+  }
+
+  if (type === 'message_end') {
+    const fullText = extractAssistantText(record.message);
+    if (fullText === null || fullText.length === 0) return [];
+    return [{ type: 'model-output', fullText }];
   }
 
   if (type === 'tool_execution_start') {
@@ -54,7 +101,17 @@ export function mapPiRpcEventToAgentMessages(event: unknown): AgentMessage[] {
     const callId = asNonEmptyString(record.toolCallId);
     const toolName = asNonEmptyString(record.toolName);
     if (!callId || !toolName) return [];
-    return [{ type: 'tool-result', callId, toolName, result: record.result }];
+    const isError = isBoolean(record.isError) ? record.isError : undefined;
+    return [{ type: 'tool-result', callId, toolName, result: record.result, ...(isError ? { isError: true } : {}) }];
+  }
+
+  if (type === 'tool_execution_update') {
+    const callId = asNonEmptyString(record.toolCallId);
+    const toolName = asNonEmptyString(record.toolName);
+    if (!callId || !toolName) return [];
+    const chunk = extractTextFromToolResult(record.partialResult);
+    if (chunk === null || chunk.length === 0) return [];
+    return [{ type: 'tool-result', callId, toolName, result: { _stream: true, stdoutChunk: chunk } }];
   }
 
   return [];

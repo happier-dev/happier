@@ -10,8 +10,16 @@ export interface PiBackendOptions extends AgentFactoryOptions {
 }
 
 export function buildPiToolsForPermissionMode(permissionMode?: PermissionMode): string[] {
-  const mode = typeof permissionMode === 'string' ? permissionMode : 'default';
-  if (mode === 'read-only' || mode === 'plan') {
+  const rawMode = typeof permissionMode === 'string' ? permissionMode : 'default';
+
+  // Normalize legacy aliases into canonical permission intents.
+  const mode = rawMode === 'acceptEdits'
+    ? 'safe-yolo'
+    : rawMode === 'bypassPermissions'
+      ? 'yolo'
+      : rawMode;
+
+  if (mode === 'plan' || mode === 'read-only') {
     return ['read', 'grep', 'find', 'ls'];
   }
   if (mode === 'safe-yolo') {

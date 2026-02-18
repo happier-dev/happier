@@ -5,16 +5,14 @@ import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { AgentBackend } from '@/agent/core';
-
 import { PiRpcBackend } from './PiRpcBackend';
 
 function makeTempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
 
-function makeFakePiRpcLoadSessionScript(dir: string): string {
-  const scriptPath = join(dir, 'fake-pi-rpc-load-session.js');
+function makeFakePiRpcCrashAfterFirstTurnScript(dir: string): string {
+  const scriptPath = join(dir, 'fake-pi-rpc-crash-after-first-turn.js');
   const script = `
 const fs = require('node:fs');
 const readline = require('node:readline');
@@ -24,10 +22,7 @@ if (bootLog) {
   fs.appendFileSync(bootLog, JSON.stringify({ argv: process.argv.slice(2) }) + '\\n');
 }
 
-const sessionIndex = process.argv.indexOf('--session');
-const sessionPath = sessionIndex >= 0 ? process.argv[sessionIndex + 1] : null;
-let sessionId = sessionPath && sessionPath.includes('pi-session-1') ? 'pi-session-1' : null;
-
+let promptCount = 0;
 const rl = readline.createInterface({ input: process.stdin });
 const out = (obj) => process.stdout.write(JSON.stringify(obj) + '\\n');
 
@@ -40,32 +35,35 @@ rl.on('line', (line) => {
   }
 
   switch (command.type) {
-    case 'new_session':
-      out({ id: command.id, type: 'response', command: 'new_session', success: false, error: 'unexpected new_session in loadSession test' });
-      return;
     case 'get_state':
       out({
         id: command.id,
         type: 'response',
         command: 'get_state',
         success: true,
-        data: { sessionId, sessionFile: sessionPath, model: { id: 'gpt-4o-mini', provider: 'openai', name: 'GPT-4o mini' } }
+        data: {
+          sessionId: 'pi-session-1',
+          sessionFile: process.env.SESSION_FILE_PATH,
+          model: { id: 'gpt-4o-mini', provider: 'openai', name: 'GPT-4o mini' }
+        }
       });
       return;
     case 'get_available_models':
-      out({
-        id: command.id,
-        type: 'response',
-        command: 'get_available_models',
-        success: true,
-        data: { models: [{ id: 'gpt-4o-mini', provider: 'openai', name: 'GPT-4o mini' }] }
-      });
+      out({ id: command.id, type: 'response', command: 'get_available_models', success: true, data: { models: [] } });
       return;
     case 'get_commands':
       out({ id: command.id, type: 'response', command: 'get_commands', success: true, data: { commands: [] } });
       return;
+    case 'prompt':
+      promptCount += 1;
+      out({ id: command.id, type: 'response', command: 'prompt', success: true });
+      out({ type: 'turn_end' });
+      if (promptCount === 1) {
+        setTimeout(() => process.exit(0), 10);
+      }
+      return;
     default:
-      out({ id: command.id, type: 'response', command: command.type, success: true });
+      out({ id: command.id, type: 'response', command: command.type, success: true, data: {} });
       return;
   }
 });
@@ -84,9 +82,9 @@ function parseBootLog(raw: string): Array<{ argv: string[] }> {
     .flatMap((row) => (Array.isArray(row.argv) ? [{ argv: row.argv.map(String) }] : []));
 }
 
-describe('PiRpcBackend loadSession', () => {
+describe('PiRpcBackend ensureProcess recovery', () => {
   let workDir: string | null = null;
-  let backend: AgentBackend | null = null;
+  let backend: PiRpcBackend | null = null;
 
   afterEach(async () => {
     try {
@@ -98,8 +96,8 @@ describe('PiRpcBackend loadSession', () => {
     }
   });
 
-  it('supports loadSession by restarting with --session', async () => {
-    workDir = makeTempDir('happier-pi-load-session-');
+  it('restarts with --session when the RPC process exits after a session is established', async () => {
+    workDir = makeTempDir('happier-pi-recovery-');
     const piDir = join(workDir, 'pi-agent');
     const sessionsDir = join(piDir, 'sessions', '--workdir--');
     const bootLogPath = join(workDir, 'boot.log');
@@ -110,7 +108,7 @@ describe('PiRpcBackend loadSession', () => {
     writeFileSync(authPath, JSON.stringify({ 'openai-codex': { type: 'oauth', access: 'a', refresh: 'r', expires: 999999999 } }) + '\\n');
     writeFileSync(sessionPath, '{"role":"system","content":[{"type":"text","text":"stub"}]}' + '\\n');
 
-    const fake = makeFakePiRpcLoadSessionScript(workDir);
+    const fake = makeFakePiRpcCrashAfterFirstTurnScript(workDir);
     backend = new PiRpcBackend({
       cwd: workDir,
       command: process.execPath,
@@ -118,48 +116,22 @@ describe('PiRpcBackend loadSession', () => {
       env: {
         BOOT_LOG_PATH: bootLogPath,
         PI_CODING_AGENT_DIR: piDir,
+        SESSION_FILE_PATH: sessionPath,
       },
     });
 
-    expect(typeof backend.loadSession).toBe('function');
-    const loaded = await backend.loadSession!('pi-session-1' as any);
-    expect(loaded.sessionId).toBe('pi-session-1');
+    const started = await backend.startSession();
+    await backend.sendPrompt(started.sessionId, 'first');
+
+    // Give the child process time to exit.
+    await new Promise((r) => setTimeout(r, 30));
+
+    await backend.sendPrompt(started.sessionId, 'second');
 
     const boots = parseBootLog(await readFile(bootLogPath, 'utf8'));
-    expect(boots.length).toBe(1);
-    expect(boots[0]!.argv).toContain('--session');
-    expect(boots[0]!.argv).toContain(sessionPath);
-  });
-
-  it('fails closed when session file cannot be resolved (no --continue fallback)', async () => {
-    workDir = makeTempDir('happier-pi-load-session-missing-');
-    const piDir = join(workDir, 'pi-agent');
-    const bootLogPath = join(workDir, 'boot.log');
-    const authPath = join(piDir, 'auth.json');
-
-    mkdirSync(piDir, { recursive: true, mode: 0o700 });
-    writeFileSync(authPath, JSON.stringify({ 'openai-codex': { type: 'oauth', access: 'a', refresh: 'r', expires: 999999999 } }) + '\\n');
-
-    const fake = makeFakePiRpcLoadSessionScript(workDir);
-    backend = new PiRpcBackend({
-      cwd: workDir,
-      command: process.execPath,
-      args: [fake],
-      env: {
-        BOOT_LOG_PATH: bootLogPath,
-        PI_CODING_AGENT_DIR: piDir,
-      },
-    });
-
-    await expect(backend.loadSession!('pi-session-1' as any)).rejects.toThrow(/resolve/i);
-
-    let boots: Array<{ argv: string[] }> = [];
-    try {
-      boots = parseBootLog(await readFile(bootLogPath, 'utf8'));
-    } catch {
-      // ignored
-    }
-    expect(boots.length).toBe(0);
+    expect(boots.length).toBe(2);
+    expect(boots[1]!.argv).toContain('--session');
+    expect(boots[1]!.argv).toContain(sessionPath);
   });
 });
 

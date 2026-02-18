@@ -86,6 +86,18 @@ describe('describeEffectivePermissionMode', () => {
         expect(reasonCodes(res)).toContain('approval_setting_controls_auto_approval');
     });
 
+    it('keeps default for pi (tool gating handled at spawn)', () => {
+        const res = describeEffectivePermissionMode({
+            agentType: 'pi',
+            selectedMode: 'default',
+            metadata: buildMetadata(),
+            applyTiming: 'immediate',
+        });
+
+        expect(res.effectiveMode).toBe('default');
+        expect(reasonCodes(res)).not.toContain('read_only_enforced_by_tool_gating');
+    });
+
     it('emits read_only_best_effort when provider maps read-only to a non-read-only native mode', () => {
         const res = describeEffectivePermissionMode({
             agentType: 'claude',

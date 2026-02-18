@@ -27,6 +27,7 @@ export type PiRpcResponse = Readonly<{
 
 export type PiRpcStateData = Readonly<{
   sessionId?: string;
+  sessionFile?: string;
   isStreaming?: boolean;
   model?: Readonly<{ id?: string; provider?: string; name?: string }> | null;
 }>;

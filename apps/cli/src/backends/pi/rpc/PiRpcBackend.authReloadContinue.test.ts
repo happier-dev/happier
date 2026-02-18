@@ -11,8 +11,8 @@ function makeTempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
 
-function makeFakePiRpcContinueScript(dir: string): string {
-  const scriptPath = join(dir, 'fake-pi-rpc-continue.js');
+function makeFakePiRpcSessionScript(dir: string): string {
+  const scriptPath = join(dir, 'fake-pi-rpc-session.js');
   const script = `
 const fs = require('node:fs');
 const readline = require('node:readline');
@@ -22,8 +22,10 @@ if (bootLog) {
   fs.appendFileSync(bootLog, JSON.stringify({ argv: process.argv.slice(2) }) + '\\n');
 }
 
-const continued = process.argv.includes('--continue') || process.argv.includes('-c');
-let sessionId = continued ? 'pi-session-1' : null;
+const argv = process.argv.slice(2);
+const sessionFlagIndex = argv.indexOf('--session');
+const sessionFile = sessionFlagIndex >= 0 ? argv[sessionFlagIndex + 1] : null;
+let sessionId = sessionFile ? 'pi-session-1' : null;
 
 const rl = readline.createInterface({ input: process.stdin });
 const out = (obj) => process.stdout.write(JSON.stringify(obj) + '\\n');
@@ -38,11 +40,9 @@ rl.on('line', (line) => {
 
   switch (command.type) {
     case 'new_session':
-      if (continued) {
-        out({ id: command.id, type: 'response', command: 'new_session', success: false, error: 'unexpected new_session while continued' });
-        return;
-      }
       sessionId = 'pi-session-1';
+      const agentDir = process.env.PI_CODING_AGENT_DIR;
+      const nextSessionFile = agentDir ? (agentDir + '/sessions/session-pi-session-1.jsonl') : null;
       out({ id: command.id, type: 'response', command: 'new_session', success: true, data: { cancelled: false } });
       return;
     case 'get_state':
@@ -53,7 +53,8 @@ rl.on('line', (line) => {
         success: true,
         data: {
           sessionId,
-          model: { id: 'gpt-4o-mini', provider: 'openai', name: 'GPT-4o mini' }
+          sessionFile: sessionFile || (process.env.PI_CODING_AGENT_DIR ? (process.env.PI_CODING_AGENT_DIR + '/sessions/session-pi-session-1.jsonl') : null),
+          model: { id: 'gpt-4o-mini', provider: 'openai', name: 'GPT-4o mini' },
         }
       });
       return;
@@ -71,7 +72,10 @@ rl.on('line', (line) => {
       return;
     case 'prompt':
       out({ id: command.id, type: 'response', command: 'prompt', success: true });
-      out({ type: 'turn_end' });
+      setTimeout(() => out({ type: 'turn_end' }), 100);
+      return;
+    case 'steer':
+      out({ id: command.id, type: 'response', command: 'steer', success: true });
       return;
     default:
       out({ id: command.id, type: 'response', command: command.type, success: true });
@@ -93,7 +97,7 @@ function parseBootLog(raw: string): Array<{ argv: string[] }> {
     .flatMap((row) => (Array.isArray(row.argv) ? [{ argv: row.argv.map(String) }] : []));
 }
 
-describe('PiRpcBackend auth reload + --continue restart', () => {
+describe('PiRpcBackend auth reload restart deferral', () => {
   let workDir: string | null = null;
   let backend: PiRpcBackend | null = null;
 
@@ -107,16 +111,20 @@ describe('PiRpcBackend auth reload + --continue restart', () => {
     }
   });
 
-  it('restarts with --continue when PI_CODING_AGENT_DIR/auth.json changes', async () => {
+  it('defers auth.json-triggered restart until idle (no mid-turn restart)', async () => {
     workDir = makeTempDir('happier-pi-auth-reload-');
     const piDir = join(workDir, 'pi-agent');
     const bootLogPath = join(workDir, 'boot.log');
     const authPath = join(piDir, 'auth.json');
+    const sessionDir = join(piDir, 'sessions');
+    const sessionFile = join(sessionDir, 'session-pi-session-1.jsonl');
 
     mkdirSync(piDir, { recursive: true, mode: 0o700 });
+    mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
+    writeFileSync(sessionFile, '');
     writeFileSync(authPath, JSON.stringify({ 'openai-codex': { type: 'oauth', access: 'a', refresh: 'r', expires: 999999999 } }) + '\\n');
 
-    const fake = makeFakePiRpcContinueScript(workDir);
+    const fake = makeFakePiRpcSessionScript(workDir);
     backend = new PiRpcBackend({
       cwd: workDir,
       command: process.execPath,
@@ -128,16 +136,21 @@ describe('PiRpcBackend auth reload + --continue restart', () => {
     });
 
     const started = await backend.startSession();
-    await backend.sendPrompt(started.sessionId, 'hello');
+    const inFlight = backend.sendPrompt(started.sessionId, 'hello');
 
     // Update auth.json so the next turn triggers a restart.
+    await new Promise((resolve) => setTimeout(resolve, 10));
     writeFileSync(authPath, JSON.stringify({ 'openai-codex': { type: 'oauth', access: 'a2', refresh: 'r2', expires: 999999999 } }) + '\\n');
+
+    // Steer can happen while a turn is in-flight; auth reload must not restart mid-turn.
+    await backend.sendSteerPrompt(started.sessionId, 'steer');
+    await inFlight;
 
     await backend.sendPrompt(started.sessionId, 'after');
 
     const boots = parseBootLog(await readFile(bootLogPath, 'utf8'));
     expect(boots.length).toBe(2);
-    expect(boots[0]!.argv).not.toContain('--continue');
-    expect(boots[1]!.argv).toContain('--continue');
+    expect(boots[0]!.argv).not.toContain('--session');
+    expect(boots[1]!.argv).toEqual(expect.arrayContaining(['--session', sessionFile]));
   });
 });

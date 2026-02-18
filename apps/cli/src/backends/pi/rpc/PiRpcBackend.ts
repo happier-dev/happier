@@ -1,8 +1,8 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { stat } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import readline from 'node:readline';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import spawn from 'cross-spawn';
 
@@ -40,6 +40,28 @@ type PendingTurn = {
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout;
 };
+
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: Error) => void;
+};
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve: ((value: T) => void) | null = null;
+  let reject: ((error: Error) => void) | null = null;
+
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+
+  if (!resolve || !reject) {
+    throw new Error('Failed to initialize deferred promise');
+  }
+
+  return { promise, resolve, reject };
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -79,8 +101,12 @@ export class PiRpcBackend implements AgentBackend {
   private readonly pendingRequests = new Map<string, PendingRpcRequest>();
   private readonly openPromptRequestIds = new Set<string>();
   private pendingTurn: PendingTurn | null = null;
+  private pendingTurnBarrier: Deferred<void> | null = null;
   private sessionId: string | null = null;
+  private sessionFile: string | null = null;
   private lastAuthJsonMtimeMs: number | null = null;
+  private authRestartPendingMtimeMs: number | null = null;
+  private authRestartInFlight: Promise<void> | null = null;
   private currentModelProvider: string | null = null;
   private readonly modelProviderById = new Map<string, string>();
   private sessionModelState: { currentModelId: string; availableModels: Array<{ id: string; name: string; description?: string }> } | null =
@@ -111,8 +137,10 @@ export class PiRpcBackend implements AgentBackend {
 
     const stateBefore = await this.getState();
     const existingSessionId = asNonEmptyString(stateBefore.sessionId);
+    const existingSessionFile = asNonEmptyString(stateBefore.sessionFile);
     if (existingSessionId) {
       this.sessionId = existingSessionId;
+      this.sessionFile = existingSessionFile;
       await this.captureAuthJsonSnapshot();
       await this.publishRuntimeState(stateBefore);
       this.emitMessage({ type: 'status', status: 'idle' });
@@ -126,15 +154,69 @@ export class PiRpcBackend implements AgentBackend {
 
     const stateAfter = await this.getState();
     const nextSessionId = asNonEmptyString(stateAfter.sessionId);
+    const nextSessionFile = asNonEmptyString(stateAfter.sessionFile);
     if (!nextSessionId) {
       throw new Error('Pi did not return a session id');
     }
 
     this.sessionId = nextSessionId;
+    this.sessionFile = nextSessionFile;
     await this.captureAuthJsonSnapshot();
     await this.publishRuntimeState(stateAfter);
     this.emitMessage({ type: 'status', status: 'idle' });
     return { sessionId: nextSessionId };
+  }
+
+  private async resolveSessionFileForSessionId(expectedSessionId: string): Promise<string | null> {
+    const candidateDirs = new Set<string>();
+    const fromEnv = asNonEmptyString(this.options.env.PI_CODING_AGENT_DIR);
+    if (fromEnv) {
+      candidateDirs.add(fromEnv);
+      candidateDirs.add(join(fromEnv, 'sessions'));
+    }
+    if (this.sessionFile) candidateDirs.add(dirname(this.sessionFile));
+
+    const matches: Array<{ path: string; mtimeMs: number }> = [];
+    const visited = new Set<string>();
+    const queue: Array<{ dir: string; depth: number }> = [];
+    const maxDepth = 4;
+    const enqueue = (dir: string, depth: number) => {
+      if (depth > maxDepth) return;
+      if (visited.has(dir)) return;
+      visited.add(dir);
+      queue.push({ dir, depth });
+    };
+    for (const dir of candidateDirs) enqueue(dir, 0);
+
+    while (queue.length) {
+      const next = queue.shift();
+      if (!next) break;
+      try {
+        const entries = await readdir(next.dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory()) {
+            if (next.depth < maxDepth) enqueue(join(next.dir, entry.name), next.depth + 1);
+            continue;
+          }
+          if (!entry.isFile()) continue;
+          const name = entry.name;
+          if (!name.includes(expectedSessionId)) continue;
+          if (!name.endsWith('.jsonl')) continue;
+          const path = join(next.dir, name);
+          try {
+            const s = await stat(path);
+            matches.push({ path, mtimeMs: typeof s.mtimeMs === 'number' ? s.mtimeMs : 0 });
+          } catch {
+            // ignore
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    matches.sort((a, b) => (b.mtimeMs - a.mtimeMs) || a.path.localeCompare(b.path));
+    return matches[0]?.path ?? null;
   }
 
   async loadSession(sessionId: SessionId): Promise<StartSessionResult> {
@@ -150,7 +232,7 @@ export class PiRpcBackend implements AgentBackend {
     // If we're already attached to a session, validate that it matches.
     if (this.sessionId) {
       if (this.sessionId !== expectedSessionId) {
-        throw new Error(`Pi session mismatch (expected ${this.sessionId}, got ${expectedSessionId})`);
+        throw new Error(`Pi session mismatch (expected ${expectedSessionId}, got ${this.sessionId})`);
       }
       return { sessionId: this.sessionId };
     }
@@ -159,24 +241,29 @@ export class PiRpcBackend implements AgentBackend {
       throw new Error('Cannot load Pi session while a turn is in-flight');
     }
 
-    // `--continue` is the Pi CLI's resume primitive. We do not assume the process is already running:
-    // - createAcpRuntime.reset() disposes backends, so resume happens in a fresh process.
-    // - resume should work even across process boundaries, as long as PI_CODING_AGENT_DIR persists.
+    // `--session <path>` is Pi's deterministic resume primitive.
+    // We intentionally avoid `--continue` here because it resumes "most recent", which can be the wrong
+    // session when multiple sessions exist in PI_CODING_AGENT_DIR.
     this.emitMessage({ type: 'status', status: 'starting' });
     try {
       await this.stopRpcProcessForRestart();
-      this.spawnRpcProcess({ args: [...this.options.args, '--continue'] });
+      const sessionFile = await this.resolveSessionFileForSessionId(expectedSessionId);
+      if (!sessionFile) {
+        throw new Error(`Unable to resolve Pi session file for session id '${expectedSessionId}'`);
+      }
+      this.spawnRpcProcess({ args: [...this.options.args, '--session', sessionFile] });
 
       const state = await this.getState();
       const resumedSessionId = asNonEmptyString(state.sessionId);
       if (!resumedSessionId) {
-        throw new Error('Pi did not return a session id after --continue');
+        throw new Error('Pi did not return a session id after --session');
       }
       if (resumedSessionId !== expectedSessionId) {
-        throw new Error(`Pi session mismatch after --continue (expected ${expectedSessionId}, got ${resumedSessionId})`);
+        throw new Error(`Pi session mismatch after --session (expected ${expectedSessionId}, got ${resumedSessionId})`);
       }
 
       this.sessionId = resumedSessionId;
+      this.sessionFile = asNonEmptyString(state.sessionFile) ?? sessionFile;
       await this.captureAuthJsonSnapshot();
       await this.publishRuntimeState(state);
       this.emitMessage({ type: 'status', status: 'idle' });
@@ -199,38 +286,64 @@ export class PiRpcBackend implements AgentBackend {
 
   async sendPrompt(sessionId: SessionId, prompt: string): Promise<void> {
     this.assertSession(sessionId);
+
+    const barrier = createDeferred<void>();
+    this.pendingTurnBarrier = barrier;
+    const settleBarrier = (error?: Error) => {
+      if (this.pendingTurnBarrier !== barrier) return;
+      this.pendingTurnBarrier = null;
+      if (error) {
+        barrier.reject(error);
+        return;
+      }
+      barrier.resolve(undefined);
+    };
+
     const maybeRestart = this.maybeRestartForUpdatedAuthJson();
-    if (maybeRestart) await maybeRestart;
-    const message = prompt.trim();
-    if (!message) return;
-
-    const turn = this.createPendingTurn(240_000);
     try {
-      await this.sendCommand({ type: 'prompt', message });
-    } catch (error) {
-      const promptError = asError(error);
-      const normalizedError = promptError.message.toLowerCase();
-      const canFallbackToSteer =
-        normalizedError.includes('already processing') || normalizedError.includes('streamingbehavior');
-
-      if (canFallbackToSteer) {
-        try {
-          await this.sendCommand({ type: 'steer', message });
-          await turn;
-          return;
-        } catch (steerError) {
-          const resolvedSteerError = asError(steerError);
-          this.rejectPendingTurn(resolvedSteerError);
-          await turn.catch(() => undefined);
-          throw resolvedSteerError;
-        }
+      if (maybeRestart) await maybeRestart;
+      const message = prompt.trim();
+      if (!message) {
+        settleBarrier();
+        return;
       }
 
-      this.rejectPendingTurn(promptError);
-      await turn.catch(() => undefined);
-      throw promptError;
+      // Ensure we have a live process *before* allocating a pending turn.
+      // If the process died between turns, `ensureProcess()` may need to restart and reattach via --session.
+      await this.ensureProcess();
+
+      const turn = this.createPendingTurn(240_000);
+      settleBarrier();
+      try {
+        await this.sendCommand({ type: 'prompt', message });
+      } catch (error) {
+        const promptError = asError(error);
+        const normalizedError = promptError.message.toLowerCase();
+        const canFallbackToSteer =
+          normalizedError.includes('already processing') || normalizedError.includes('streamingbehavior');
+
+        if (canFallbackToSteer) {
+          try {
+            await this.sendCommand({ type: 'steer', message });
+            await turn;
+            return;
+          } catch (steerError) {
+            const resolvedSteerError = asError(steerError);
+            this.rejectPendingTurn(resolvedSteerError);
+            await turn.catch(() => undefined);
+            throw resolvedSteerError;
+          }
+        }
+
+        this.rejectPendingTurn(promptError);
+        await turn.catch(() => undefined);
+        throw promptError;
+      }
+      await turn;
+    } catch (error) {
+      settleBarrier(asError(error));
+      throw error;
     }
-    await turn;
   }
 
   async sendSteerPrompt(sessionId: SessionId, prompt: string): Promise<void> {
@@ -263,6 +376,9 @@ export class PiRpcBackend implements AgentBackend {
   }
 
   async waitForResponseComplete(timeoutMs = 120_000): Promise<void> {
+    if (!this.pendingTurn && this.pendingTurnBarrier) {
+      await this.pendingTurnBarrier.promise;
+    }
     if (!this.pendingTurn) return;
     const turn = this.pendingTurn;
 
@@ -333,9 +449,10 @@ export class PiRpcBackend implements AgentBackend {
     }
     if (this.process) return;
     if (this.sessionId) {
-      // Once a session is established, never silently respawn a new RPC process.
-      // A respawn would desynchronize the session id and any pending turn state.
-      throw new Error('Pi RPC process is not running');
+      // Best-effort recovery: if we have an established session id but the process is gone, attempt to
+      // restart and reattach to the same session via `--session`.
+      await this.restartAndContinue();
+      return;
     }
 
     this.spawnRpcProcess({ args: this.options.args });
@@ -412,6 +529,22 @@ export class PiRpcBackend implements AgentBackend {
     if (!authPath) return;
 
     return (async () => {
+      if (this.authRestartInFlight) {
+        // If a restart is already in-flight, await it when we're idle, but never block an in-flight turn.
+        if (this.pendingTurn) return;
+        try {
+          await this.authRestartInFlight;
+        } catch {
+          // best-effort
+        }
+        return;
+      }
+
+      // If we already observed an auth change during a turn, defer stat + restart until idle.
+      if (this.pendingTurn && this.authRestartPendingMtimeMs !== null) {
+        return;
+      }
+
       let nextMtimeMs: number | null = null;
       try {
         const s = await stat(authPath);
@@ -426,9 +559,29 @@ export class PiRpcBackend implements AgentBackend {
       }
       if (nextMtimeMs === null || nextMtimeMs === this.lastAuthJsonMtimeMs) return;
 
-      this.lastAuthJsonMtimeMs = nextMtimeMs;
-      await this.restartAndContinue();
-      await this.captureAuthJsonSnapshot();
+      if (this.pendingTurn) {
+        // Auth changed mid-turn: never restart while Pi is streaming a response.
+        this.authRestartPendingMtimeMs = nextMtimeMs;
+        return;
+      }
+
+      // Idle boundary: attempt a best-effort restart so the new credentials are picked up.
+      this.authRestartInFlight = (async () => {
+        try {
+          await this.restartAndContinue();
+          this.lastAuthJsonMtimeMs = nextMtimeMs;
+          this.authRestartPendingMtimeMs = null;
+          await this.captureAuthJsonSnapshot();
+        } catch (error) {
+          // Best-effort: keep running with the existing process; we'll retry on the next idle boundary.
+          this.authRestartPendingMtimeMs = nextMtimeMs;
+          logger.debug('[pi] Failed to restart after auth.json update (non-fatal)', error);
+        } finally {
+          this.authRestartInFlight = null;
+        }
+      })();
+
+      await this.authRestartInFlight;
     })();
   }
 
@@ -440,16 +593,21 @@ export class PiRpcBackend implements AgentBackend {
     }
 
     await this.stopRpcProcessForRestart();
-    this.spawnRpcProcess({ args: [...this.options.args, '--continue'] });
+    const sessionFile = this.sessionFile ?? (await this.resolveSessionFileForSessionId(expectedSessionId));
+    if (!sessionFile) {
+      throw new Error(`Pi process is not running (unable to resolve session file for session id '${expectedSessionId}')`);
+    }
+    this.spawnRpcProcess({ args: [...this.options.args, '--session', sessionFile] });
 
     const state = await this.getState();
     const nextSessionId = asNonEmptyString(state.sessionId);
     if (!nextSessionId) {
-      throw new Error('Pi did not return a session id after --continue');
+      throw new Error('Pi did not return a session id after --session');
     }
     if (nextSessionId !== expectedSessionId) {
-      throw new Error(`Pi session mismatch after --continue (expected ${expectedSessionId}, got ${nextSessionId})`);
+      throw new Error(`Pi session mismatch after --session (expected ${expectedSessionId}, got ${nextSessionId})`);
     }
+    this.sessionFile = asNonEmptyString(state.sessionFile) ?? sessionFile;
     await this.publishRuntimeState(state);
     this.emitMessage({ type: 'status', status: 'idle' });
   }
@@ -571,30 +729,29 @@ export class PiRpcBackend implements AgentBackend {
   }
 
   private async publishUsageStatsBestEffort(): Promise<void> {
-    if (this.disposed) return;
-    if (!this.process) return;
+      if (this.disposed) return;
+      if (!this.process) return;
 
     try {
       const stats = await this.getSessionStats();
-      const sessionId = asNonEmptyString((stats as any).sessionId);
+      const sessionId = asNonEmptyString(stats.sessionId);
       if (!sessionId) return;
 
-      const assistantMessagesRaw = (stats as any).assistantMessages;
+      const assistantMessagesRaw = stats.assistantMessages;
       const assistantMessages =
         typeof assistantMessagesRaw === 'number' && Number.isFinite(assistantMessagesRaw) ? assistantMessagesRaw : null;
       const rawKey = assistantMessages !== null ? `${sessionId}:${assistantMessages}` : sessionId;
       if (this.lastPublishedUsageKey === rawKey) return;
       this.lastPublishedUsageKey = rawKey;
 
-      const tokensRecord = asRecord((stats as any).tokens) ?? {};
       const asNonNegative = (v: unknown): number | null =>
         typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
 
-      const input = asNonNegative(tokensRecord.input);
-      const output = asNonNegative(tokensRecord.output);
-      const cacheRead = asNonNegative(tokensRecord.cacheRead);
-      const cacheWrite = asNonNegative(tokensRecord.cacheWrite);
-      const total = asNonNegative(tokensRecord.total);
+      const input = asNonNegative(stats.tokens?.input);
+      const output = asNonNegative(stats.tokens?.output);
+      const cacheRead = asNonNegative(stats.tokens?.cacheRead);
+      const cacheWrite = asNonNegative(stats.tokens?.cacheWrite);
+      const total = asNonNegative(stats.tokens?.total);
 
       const tokens: Record<string, number> = {};
       if (input !== null) tokens.input = input;
@@ -604,7 +761,7 @@ export class PiRpcBackend implements AgentBackend {
       if (total !== null) tokens.total = total;
       if (Object.keys(tokens).length === 0) return;
 
-      const costRaw = (stats as any).cost;
+      const costRaw = stats.cost;
       const costTotal = typeof costRaw === 'number' && Number.isFinite(costRaw) && costRaw >= 0 ? costRaw : null;
 
       this.emitMessage({
@@ -612,7 +769,7 @@ export class PiRpcBackend implements AgentBackend {
         key: `pi:${rawKey}`,
         tokens,
         ...(costTotal !== null ? { cost: { total: costTotal } } : {}),
-      } as any);
+      });
     } catch {
       // best-effort
     }
@@ -765,21 +922,32 @@ export class PiRpcBackend implements AgentBackend {
       this.currentModelProvider = currentModelProvider;
     }
 
-    const available = await this.getAvailableModels();
-    const models = Array.isArray(available.models) ? available.models : [];
-    this.modelProviderById.clear();
-    const normalized = models
-      .map((entry) => {
-        const model = asRecord(entry);
-        const id = asNonEmptyString(model?.id);
-        const provider = asNonEmptyString(model?.provider);
-        if (!id || !provider) return null;
-        const name = asNonEmptyString(model?.name) ?? `${provider}/${id}`;
-        this.modelProviderById.set(id, provider);
-        this.modelProviderById.set(`${provider}/${id}`, provider);
-        return { id, name, description: provider };
-      })
-      .filter((entry): entry is { id: string; name: string; description: string } => entry !== null);
+    let normalized: Array<{ id: string; name: string; description: string }> =
+      (this.sessionModelState?.availableModels ?? []).map((m) => ({
+        id: m.id,
+        name: m.name,
+        description: m.description ?? '',
+      }));
+
+    try {
+      const available = await this.getAvailableModels();
+      const models = Array.isArray(available.models) ? available.models : [];
+      this.modelProviderById.clear();
+      normalized = models
+        .map((entry) => {
+          const model = asRecord(entry);
+          const id = asNonEmptyString(model?.id);
+          const provider = asNonEmptyString(model?.provider);
+          if (!id || !provider) return null;
+          const name = asNonEmptyString(model?.name) ?? `${provider}/${id}`;
+          this.modelProviderById.set(id, provider);
+          this.modelProviderById.set(`${provider}/${id}`, provider);
+          return { id, name, description: provider };
+        })
+        .filter((entry): entry is { id: string; name: string; description: string } => entry !== null);
+    } catch {
+      // Best-effort: model introspection should not block session start/resume.
+    }
 
     this.sessionModelState = {
       currentModelId,
@@ -795,26 +963,30 @@ export class PiRpcBackend implements AgentBackend {
       },
     });
 
-    const commands = await this.getCommands();
-    const commandList = Array.isArray(commands.commands) ? commands.commands : [];
-    const availableCommands = commandList
-      .map((entry) => {
-        const item = asRecord(entry);
-        const name = asNonEmptyString(item?.name);
-        if (!name) return null;
-        const description = asNonEmptyString(item?.description) ?? undefined;
-        return {
-          command: name.startsWith('/') ? name : `/${name}`,
-          ...(description ? { description } : {}),
-        };
-      })
-      .filter((entry): entry is { command: string; description?: string } => entry !== null);
+    try {
+      const commands = await this.getCommands();
+      const commandList = Array.isArray(commands.commands) ? commands.commands : [];
+      const availableCommands = commandList
+        .map((entry) => {
+          const item = asRecord(entry);
+          const name = asNonEmptyString(item?.name);
+          if (!name) return null;
+          const description = asNonEmptyString(item?.description) ?? undefined;
+          return {
+            command: name.startsWith('/') ? name : `/${name}`,
+            ...(description ? { description } : {}),
+          };
+        })
+        .filter((entry): entry is { command: string; description?: string } => entry !== null);
 
-    this.emitMessage({
-      type: 'event',
-      name: 'available_commands_update',
-      payload: { availableCommands },
-    });
+      this.emitMessage({
+        type: 'event',
+        name: 'available_commands_update',
+        payload: { availableCommands },
+      });
+    } catch {
+      // Best-effort: commands introspection should not block session start/resume.
+    }
   }
 
   private async resolveModelSelection(modelIdRaw: string): Promise<{ provider: string; modelId: string }> {
