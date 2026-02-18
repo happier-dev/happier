@@ -171,7 +171,7 @@ export function createDaemonControlApp({
             tmpDir: z.union([z.string(), z.null()]).optional(),
           }).optional(),
         }).optional(),
-        environmentVariables: z.record(z.string()).optional(),
+        environmentVariables: z.record(z.string(), z.string()).optional(),
         connectedServices: z.unknown().optional(),
       }),
       response: {

@@ -71,7 +71,7 @@ import { createConnectedServicesAuthUpdatedRestartHandler } from './connectedSer
 import { ConnectedServiceQuotasCoordinator } from './connectedServices/quotas/ConnectedServiceQuotasCoordinator';
 import { createConnectedServiceQuotaFetchers } from './connectedServices/quotas/createConnectedServiceQuotaFetchers';
 import { resolveConnectedServiceQuotasDaemonOptions } from './connectedServices/quotas/resolveConnectedServiceQuotasDaemonOptions';
-import { resolveConnectedServicesQuotasEnabled } from './connectedServices/quotas/resolveConnectedServicesQuotasEnabled';
+import { resolveConnectedServicesQuotasDaemonEnabled } from './connectedServices/quotas/resolveConnectedServicesQuotasDaemonEnabled';
 import { startConnectedServiceQuotasLoop, type ConnectedServiceQuotasLoopHandle } from './connectedServices/quotas/startConnectedServiceQuotasLoop';
 import {
   HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY,
@@ -1076,7 +1076,11 @@ export async function startDaemon(): Promise<void> {
         (connectedServiceRefreshInterval as unknown as { unref?: () => void })?.unref?.();
       }
 
-      const connectedServicesQuotasEnabled = resolveConnectedServicesQuotasEnabled(process.env);
+      const connectedServicesQuotasEnabled = await resolveConnectedServicesQuotasDaemonEnabled({
+        env: process.env,
+        serverUrl: configuration.serverUrl,
+        timeoutMs: 1500,
+      });
       if (connectedServicesQuotasEnabled) {
 	        const quotasTickMs = resolvePositiveIntEnv(
 	          process.env.HAPPIER_CONNECTED_SERVICES_QUOTAS_TICK_MS,
