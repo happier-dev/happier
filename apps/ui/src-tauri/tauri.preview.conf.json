@@ -6,7 +6,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFCRTk2MjE4RjNCMEYxRUYKUldUdjhiRHpHR0xwcTFIUjMvb1FBbW5HOUFYSkd5aGlHa204MWZuRk50ekF5WVZQdU1mVkRWWnkK",
       "endpoints": [
-        "https://github.com/happier-dev/happier/releases/download/ui-preview/latest.json"
+        "https://github.com/happier-dev/happier/releases/download/ui-desktop-preview/latest.json"
       ]
     }
   },

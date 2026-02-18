@@ -33,7 +33,7 @@ describe('make-latest-json (tool)', () => {
             const outPath = path.join(tmp, 'latest.json');
 
             const repo = 'happier-dev/happier';
-            const releaseTag = 'ui-preview';
+            const releaseTag = 'ui-desktop-preview';
             const pubDate = '2026-02-06T00:00:00Z';
             const version = '1.2.3-preview.456';
             const notes = 'Rolling preview build.';
@@ -143,7 +143,7 @@ describe('make-latest-json (tool)', () => {
                 '--repo',
                 'happier-dev/happier',
                 '--release-tag',
-                'ui-preview',
+                'ui-desktop-preview',
                 '--artifacts-dir',
                 artifactsDir,
                 '--out',

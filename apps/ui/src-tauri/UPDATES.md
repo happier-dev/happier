@@ -37,11 +37,11 @@ You can do updater signing without code signing, and vice-versa.
 
 ## Recommended release model (repo convention)
 
-We publish UI component releases:
+We publish UI Desktop component releases:
 
-- Production: tag/release `ui-vX.Y.Z`
-- Preview (rolling prerelease): tag/release `ui-preview` (assets replaced on each build)
-- Stable update feed (rolling): tag/release `ui-stable` (hosts `latest.json` pointing at the latest `ui-vX.Y.Z` assets)
+- Production: tag/release `ui-desktop-vX.Y.Z`
+- Preview (rolling prerelease): tag/release `ui-desktop-preview` (assets replaced on each build)
+- Stable update feed (rolling): tag/release `ui-desktop-stable` (hosts `latest.json` pointing at the latest `ui-desktop-vX.Y.Z` assets)
 
 Desktop updater artifacts and feeds are published by `.github/workflows/build-tauri.yml` through the centralized publisher `.github/workflows/publish-ui-release.yml`.
 
@@ -57,7 +57,7 @@ Key pieces:
   - preview overrides endpoints in `tauri.preview.conf.json`
 - CI: enable `bundle.createUpdaterArtifacts` and publish:
   - platform update bundles (per target)
-  - `latest.json` (preview: `ui-preview/latest.json`, stable: `ui-stable/latest.json`)
+  - `latest.json` (preview: `ui-desktop-preview/latest.json`, stable: `ui-desktop-stable/latest.json`)
 
 Notes:
 - For preview vs production update channels, you usually either:
