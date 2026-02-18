@@ -16,7 +16,7 @@
   },
   "cli": {
     "subcommand": "claude",
-    "extraArgs": ["--started-by", "terminal"],
+    "extraArgs": ["--happy-starting-mode", "remote", "--started-by", "terminal"],
     "env": {
       "HEADLESS": "1",
       "HAPPIER_VARIANT": "dev"
