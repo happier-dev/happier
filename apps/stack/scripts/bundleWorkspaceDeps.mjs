@@ -15,6 +15,16 @@ export function bundleWorkspaceDeps(opts = {}) {
 
   const bundles = [
     {
+      packageName: '@happier-dev/protocol',
+      srcDir: resolve(repoRoot, 'packages', 'protocol'),
+      destDir: resolve(stackDir, 'node_modules', '@happier-dev', 'protocol'),
+    },
+    {
+      packageName: '@happier-dev/agents',
+      srcDir: resolve(repoRoot, 'packages', 'agents'),
+      destDir: resolve(stackDir, 'node_modules', '@happier-dev', 'agents'),
+    },
+    {
       packageName: '@happier-dev/cli-common',
       srcDir: resolve(repoRoot, 'packages', 'cli-common'),
       destDir: resolve(stackDir, 'node_modules', '@happier-dev', 'cli-common'),

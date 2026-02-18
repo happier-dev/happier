@@ -18,7 +18,9 @@
     "scripts/"
   ],
   "bundledDependencies": [
+    "@happier-dev/agents",
     "@happier-dev/cli-common",
+    "@happier-dev/protocol",
     "@happier-dev/release-runtime"
   ],
   "scripts": {
@@ -71,7 +73,9 @@
     "test:ci": "yarn -s test:unit"
   },
   "dependencies": {
+    "@happier-dev/agents": "0.0.0",
     "@happier-dev/cli-common": "0.0.0",
+    "@happier-dev/protocol": "0.0.0",
     "@happier-dev/release-runtime": "0.0.0",
     "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0"

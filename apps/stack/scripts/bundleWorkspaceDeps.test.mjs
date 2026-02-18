@@ -13,19 +13,72 @@ function writeJson(path, value) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
+test('bundledDependencies are declared in dependencies', () => {
+  const stackPackageJson = JSON.parse(readFileSync(resolve(repoRoot, 'apps', 'stack', 'package.json'), 'utf8'));
+
+  const bundled = stackPackageJson.bundledDependencies ?? [];
+  const deps = stackPackageJson.dependencies ?? {};
+
+  for (const name of bundled) {
+    assert.equal(Boolean(deps[name]), true, `Expected ${name} to be declared in dependencies`);
+  }
+});
+
 function createBundleFixture(prefix = 'happy-stack-bundle-workspace-deps-') {
   const repoRoot = mkdtempSync(join(tmpdir(), prefix));
   const stackDir = resolve(repoRoot, 'apps', 'stack');
+  const agentsDir = resolve(repoRoot, 'packages', 'agents');
   const cliCommonDir = resolve(repoRoot, 'packages', 'cli-common');
+  const protocolDir = resolve(repoRoot, 'packages', 'protocol');
   const releaseRuntimeDir = resolve(repoRoot, 'packages', 'release-runtime');
   writeJson(resolve(repoRoot, 'package.json'), { name: 'repo', private: true });
   writeFileSync(resolve(repoRoot, 'yarn.lock'), '# lock\n', 'utf8');
+  mkdirSync(resolve(agentsDir, 'dist'), { recursive: true });
   mkdirSync(resolve(cliCommonDir, 'dist'), { recursive: true });
+  mkdirSync(resolve(protocolDir, 'dist'), { recursive: true });
   mkdirSync(resolve(releaseRuntimeDir, 'dist'), { recursive: true });
   mkdirSync(stackDir, { recursive: true });
 
   // bundleWorkspaceDeps also bundles @happier-dev/release-runtime. Keep a minimal, build-like
   // workspace package present so these tests focus on bundling behavior instead of fixture setup.
+  writeJson(resolve(cliCommonDir, 'package.json'), {
+    name: '@happier-dev/cli-common',
+    version: '0.0.0',
+    type: 'module',
+    main: './dist/index.js',
+    types: './dist/index.d.ts',
+    exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
+    dependencies: {
+      '@happier-dev/agents': '0.0.0',
+    },
+  });
+  writeFileSync(resolve(cliCommonDir, 'dist', 'index.js'), 'export const common = 1;\n', 'utf8');
+
+  writeJson(resolve(agentsDir, 'package.json'), {
+    name: '@happier-dev/agents',
+    version: '0.0.0',
+    type: 'module',
+    main: './dist/index.js',
+    types: './dist/index.d.ts',
+    exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
+    scripts: { postinstall: 'echo should-not-run' },
+    dependencies: {
+      '@happier-dev/protocol': '0.0.0',
+    },
+  });
+  writeFileSync(resolve(agentsDir, 'dist', 'index.js'), 'export const agents = 1;\n', 'utf8');
+
+  writeJson(resolve(protocolDir, 'package.json'), {
+    name: '@happier-dev/protocol',
+    version: '0.0.0',
+    type: 'module',
+    main: './dist/index.js',
+    types: './dist/index.d.ts',
+    exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
+    scripts: { postinstall: 'echo should-not-run' },
+  });
+  writeFileSync(resolve(protocolDir, 'dist', 'index.js'), 'export const protocol = 1;\n', 'utf8');
+
   writeJson(resolve(releaseRuntimeDir, 'package.json'), {
     name: '@happier-dev/release-runtime',
     version: '0.0.0',
@@ -37,7 +90,7 @@ function createBundleFixture(prefix = 'happy-stack-bundle-workspace-deps-') {
   });
   writeFileSync(resolve(releaseRuntimeDir, 'dist', 'index.js'), 'export const release = 1;\n', 'utf8');
 
-  return { repoRoot, stackDir, cliCommonDir };
+  return { repoRoot, stackDir, agentsDir, cliCommonDir, protocolDir };
 }
 
 test('bundleWorkspaceDeps copies dist + writes a sanitized package.json without install scripts', () => {
@@ -65,6 +118,18 @@ test('bundleWorkspaceDeps copies dist + writes a sanitized package.json without 
 
     const bundledDistPath = resolve(stackDir, 'node_modules', '@happier-dev', 'cli-common', 'dist', 'index.js');
     assert.ok(existsSync(bundledDistPath), 'dist/index.js should be copied to bundled location');
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('bundleWorkspaceDeps bundles internal deps required by @happier-dev/cli-common (agents + protocol)', () => {
+  const { repoRoot, stackDir } = createBundleFixture('happy-stack-bundle-workspace-deps-internal-closure-');
+  try {
+    bundleWorkspaceDeps({ repoRoot, stackDir });
+
+    assert.ok(existsSync(resolve(stackDir, 'node_modules', '@happier-dev', 'agents', 'dist', 'index.js')));
+    assert.ok(existsSync(resolve(stackDir, 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.js')));
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }
