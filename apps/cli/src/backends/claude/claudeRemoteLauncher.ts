@@ -26,6 +26,9 @@ import { ClaudeRemoteSubagentFileCollector } from './remote/sidechains/claudeRem
 import { resolveHasTTY } from '@/ui/tty/resolveHasTTY';
 import { createNonBlockingStdout } from '@/ui/ink/nonBlockingStdout';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
+import { dirname, join } from 'node:path';
+import { getProjectPath } from './utils/path';
 
 interface PermissionsField {
     date: number;
@@ -76,6 +79,50 @@ function isAbortError(e: unknown): boolean {
     if (typeof err.code === 'string' && err.code === 'ABORT_ERR') return true;
 
     return false;
+}
+
+function resolveClaudeProjectDir(session: Session): string {
+    if (session.transcriptPath) {
+        return dirname(session.transcriptPath);
+    }
+    const claudeConfigDirOverride =
+        typeof session.claudeEnvVars?.CLAUDE_CONFIG_DIR === 'string'
+            ? session.claudeEnvVars.CLAUDE_CONFIG_DIR
+            : null;
+    return getProjectPath(session.path, claudeConfigDirOverride);
+}
+
+type ClaudeRemoteReadySession = Readonly<{
+    sessionId: string;
+    sendSessionEvent: (event: { type: 'ready' }) => void;
+}>;
+
+type ClaudeRemotePushSender = Readonly<{
+    sendToAllDevices: (title: string, body: string, opts: { sessionId: string }) => void;
+}>;
+
+export function createClaudeRemoteReadyHandler(params: Readonly<{
+    session: ClaudeRemoteReadySession;
+    pushSender: ClaudeRemotePushSender | null;
+    waitingForCommandLabel: string;
+    logPrefix: string;
+    getPending: () => unknown;
+    getQueueSize: () => number;
+}>): () => void {
+    return () => {
+        if (params.getPending()) return;
+        if (params.getQueueSize() !== 0) return;
+        if (!params.pushSender) {
+            params.session.sendSessionEvent({ type: 'ready' });
+            return;
+        }
+        sendReadyWithPushNotification({
+            session: params.session,
+            pushSender: params.pushSender,
+            waitingForCommandLabel: params.waitingForCommandLabel,
+            logPrefix: params.logPrefix,
+        });
+    };
 }
 
 export async function claudeRemoteLauncher(session: Session): Promise<'switch' | 'exit'> {
@@ -178,6 +225,12 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
     const subagentFileCollector = new ClaudeRemoteSubagentFileCollector({
         emitImported: (body, meta) => {
             messageQueue.enqueue(body, { meta });
+        },
+        resolveJsonlPathForAgentId: ({ agentId, claudeSessionId }) => {
+            if (!claudeSessionId) return null;
+            const sanitized = String(agentId ?? '').trim();
+            if (!sanitized) return null;
+            return join(resolveClaudeProjectDir(session), claudeSessionId, 'subagents', `agent-${sanitized}.jsonl`);
         },
     });
 
@@ -365,6 +418,15 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             let modeHash: string | null = null;
             let mode: EnhancedMode | null = null;
             try {
+                const readyHandler = createClaudeRemoteReadyHandler({
+                    session: session.client,
+                    pushSender: session.pushSender,
+                    waitingForCommandLabel: 'Claude',
+                    logPrefix: '[remote]',
+                    getPending: () => pending,
+                    getQueueSize: () => session.queue.size(),
+                });
+
                 const remoteResult = await claudeRemoteDispatch({
                     sessionId: session.sessionId,
                     transcriptPath: session.transcriptPath,
@@ -464,16 +526,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                         forceNewSession = true;
                         session.clearSessionId();
                     },
-                    onReady: () => {
-                        if (!pending && session.queue.size() === 0) {
-                            session.client.sendSessionEvent({ type: 'ready' });
-                            session.api.push().sendToAllDevices(
-                                'It\'s ready!',
-                                `Claude is waiting for your command`,
-                                { sessionId: session.client.sessionId }
-                            );
-                        }
-                    },
+                    onReady: readyHandler,
                     signal: abortController.signal,
                 });
                 

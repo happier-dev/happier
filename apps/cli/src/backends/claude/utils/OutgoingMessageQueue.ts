@@ -6,6 +6,7 @@
  */
 
 import { AsyncLock } from '@/utils/lock';
+import { logger } from '@/ui/logger';
 
 interface QueueItem {
     id: number;                    // Incremental ID for ordering
@@ -35,7 +36,7 @@ export class OutgoingMessageQueue {
         toolCallIds?: string[],
         meta?: Record<string, unknown>,
     }) {
-        this.lock.inLock(async () => {
+        void this.lock.inLock(async () => {
             const item: QueueItem = {
                 id: this.nextId++,
                 logMessage,
@@ -52,10 +53,14 @@ export class OutgoingMessageQueue {
             // If delayed, set timer to release it
             if (item.delayed) {
                 const timer = setTimeout(() => {
-                    this.releaseItem(item.id);
+                    void this.releaseItem(item.id).catch((error) => {
+                        logger.debug('[OutgoingMessageQueue] Failed releasing delayed item (non-fatal)', { error });
+                    });
                 }, item.delayMs);
                 this.delayTimers.set(item.id, timer);
             }
+        }).catch((error) => {
+            logger.debug('[OutgoingMessageQueue] Failed enqueueing message (non-fatal)', { error });
         });
         
         // Try to process queue
@@ -124,8 +129,14 @@ export class OutgoingMessageQueue {
             
             // Send if not already sent
             if (!item.sent) {
-                if (item.logMessage.type !== 'system') {
-                    this.sendFunction(item.logMessage, item.meta);
+                try {
+                    if (item.logMessage.type !== 'system') {
+                        this.sendFunction(item.logMessage, item.meta);
+                    }
+                } catch (error) {
+                    // Best-effort: avoid crashing the entire runner if the transport fails.
+                    // Drop the item and proceed so the queue doesn't wedge.
+                    logger.debug('[OutgoingMessageQueue] Send failed (non-fatal)', { error });
                 }
                 item.sent = true;
             }
@@ -174,7 +185,9 @@ export class OutgoingMessageQueue {
         }
         
         this.processTimer = setTimeout(() => {
-            this.processQueue();
+            void this.processQueue().catch((error) => {
+                logger.debug('[OutgoingMessageQueue] Failed processing queue (non-fatal)', { error });
+            });
         }, 0);
     }
     

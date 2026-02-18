@@ -246,7 +246,19 @@ export async function claudeRemoteAgentSdk(opts: {
     claudeExecutablePath?: string;
     allowedTools: string[];
     signal?: AbortSignal;
-    canCallTool: (toolName: string, input: unknown, mode: EnhancedMode, options: { signal: AbortSignal }) => Promise<PermissionResult>;
+    canCallTool: (
+        toolName: string,
+        input: unknown,
+        mode: EnhancedMode,
+        options: {
+            signal: AbortSignal;
+            toolUseId?: string | null;
+            agentId?: string | null;
+            suggestions?: unknown;
+            blockedPath?: string | null;
+            decisionReason?: string | null;
+        },
+    ) => Promise<PermissionResult>;
     /** JavaScript runtime to use for spawning Claude Code (default: 'node') */
     jsRuntime?: JsRuntime;
 
@@ -396,10 +408,70 @@ export async function claudeRemoteAgentSdk(opts: {
                 ],
             },
         ],
+        PermissionRequest: [
+            {
+                hooks: [
+                    async (input: any, toolUseID: string | undefined, options: { signal: AbortSignal }) => {
+                        if (!input || typeof input !== 'object') {
+                            return { continue: true, suppressOutput: true };
+                        }
+                        const toolName = typeof input.tool_name === 'string' ? input.tool_name : '';
+                        const toolInput = (input as any).tool_input;
+                        if (!toolName) {
+                            return { continue: true, suppressOutput: true };
+                        }
+
+                        const result = await opts.canCallTool(toolName, toolInput, mode, {
+                            signal: options.signal,
+                            toolUseId: typeof toolUseID === 'string' ? toolUseID : null,
+                            suggestions: (input as any).permission_suggestions,
+                        });
+
+                        if (result.behavior === 'allow') {
+                            const updatedInput =
+                                result.updatedInput && typeof result.updatedInput === 'object' && !Array.isArray(result.updatedInput)
+                                    ? (result.updatedInput as Record<string, unknown>)
+                                    : undefined;
+                            return {
+                                continue: true,
+                                suppressOutput: true,
+                                hookSpecificOutput: {
+                                    hookEventName: 'PermissionRequest',
+                                    decision: {
+                                        behavior: 'allow',
+                                        ...(updatedInput ? { updatedInput } : {}),
+                                    },
+                                },
+                            };
+                        }
+
+                        return {
+                            continue: true,
+                            suppressOutput: true,
+                            hookSpecificOutput: {
+                                hookEventName: 'PermissionRequest',
+                                decision: {
+                                    behavior: 'deny',
+                                    ...(typeof result.message === 'string' && result.message.length > 0 ? { message: result.message } : {}),
+                                    ...(result.interrupt !== undefined ? { interrupt: result.interrupt } : {}),
+                                },
+                            },
+                        };
+                    },
+                ],
+            },
+        ],
     };
 
-    const canUseTool = async (toolName: string, input: Record<string, unknown>, options: { signal: AbortSignal }) => {
-        const result = await opts.canCallTool(toolName, input, mode, { signal: options.signal });
+    const canUseTool = async (toolName: string, input: Record<string, unknown>, options: any) => {
+        const result = await opts.canCallTool(toolName, input, mode, {
+            signal: options.signal,
+            toolUseId: typeof options?.toolUseID === 'string' ? options.toolUseID : null,
+            agentId: typeof options?.agentID === 'string' ? options.agentID : null,
+            suggestions: options?.suggestions,
+            blockedPath: typeof options?.blockedPath === 'string' ? options.blockedPath : null,
+            decisionReason: typeof options?.decisionReason === 'string' ? options.decisionReason : null,
+        });
         return toAgentSdkPermissionResult(result);
     };
 

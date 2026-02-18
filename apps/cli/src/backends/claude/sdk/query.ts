@@ -352,13 +352,20 @@ export function query(config: {
     }
     logDebug(`Spawning Claude Code process: ${spawnCommand} ${spawnArgs.join(' ')} (using ${isCommandOnly ? 'clean' : 'normal'} env)`)
 
+    const lowerSpawnCommand = typeof spawnCommand === 'string' ? spawnCommand.toLowerCase() : '';
+    const shouldUseShell =
+        process.platform === 'win32' &&
+        !isJsFile &&
+        (isCommandOnly || lowerSpawnCommand.endsWith('.cmd') || lowerSpawnCommand.endsWith('.bat'));
+
     const child = spawn(spawnCommand, spawnArgs, {
         cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
         signal: config.options?.abort,
         env: spawnEnv,
-        // Use shell on Windows for global binaries and command-only mode
-        shell: !isJsFile && process.platform === 'win32'
+        // Use a shell on Windows only when needed to execute command-only or shell-script entrypoints.
+        // Avoid shell for native binaries to reduce quoting and spawn-surface variability.
+        shell: shouldUseShell,
     }) as ChildProcessWithoutNullStreams
     const managedChild = createManagedChildProcess(child)
 

@@ -2,6 +2,7 @@ import type { PermissionMode } from '@/api/types';
 import { logger } from '@/ui/logger';
 import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { randomUUID } from 'node:crypto';
+import { sendPermissionRequestPushNotificationForActiveAccount } from '@/settings/notifications/permissionRequestPush';
 import { open as openFile } from 'node:fs/promises';
 
 import type { Session } from '../session';
@@ -314,19 +315,17 @@ export class ClaudeLocalPermissionBridge {
         toolInput: unknown;
         createdAt: number;
     }): void {
-        try {
-            this.session.api.push().sendToAllDevices(
-                'Permission Request',
-                `Claude wants to ${getToolName(params.toolName)}`,
-                {
+        if (this.session.pushSender) {
+            try {
+                sendPermissionRequestPushNotificationForActiveAccount({
+                    pushSender: this.session.pushSender,
                     sessionId: this.session.client.sessionId,
-                    requestId: params.requestId,
-                    tool: params.toolName,
-                    type: 'permission_request',
-                },
-            );
-        } catch (error) {
-            logger.debug('[claude-local-permissions] Failed to broadcast permission request', error);
+                    permissionId: params.requestId,
+                    toolName: getToolName(params.toolName),
+                });
+            } catch (error) {
+                logger.debug('[claude-local-permissions] Failed to broadcast permission request', error);
+            }
         }
 
         updateAgentStateBestEffort(

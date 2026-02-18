@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import type { EnhancedMode } from './loop';
 import type { Session } from './session';
@@ -25,17 +25,30 @@ vi.mock('@/ui/logger', () => ({
 
 type LoopOptions = Parameters<(typeof import('./loop'))['loop']>[0];
 
-type LoopClientStub = Pick<
-  ApiSessionClient,
-  'keepAlive' | 'getMetadataSnapshot' | 'fetchLatestUserPermissionIntentFromTranscript' | 'updateMetadata'
->;
-
-function createLoopClient(overrides?: Partial<LoopClientStub>): LoopClientStub {
+function createLoopClient(overrides?: Partial<SessionClientPort>): SessionClientPort {
   return {
+    sessionId: 'session-test',
+    rpcHandlerManager: {
+      registerHandler: vi.fn(),
+      invokeLocal: vi.fn(async () => ({})),
+    },
+    sendSessionEvent: vi.fn(),
+    sendClaudeSessionMessage: vi.fn(),
+    sendAgentMessage: vi.fn(),
     keepAlive: vi.fn(),
     getMetadataSnapshot: () => null,
-    fetchLatestUserPermissionIntentFromTranscript: async () => null,
+    waitForMetadataUpdate: vi.fn(async () => false),
+    popPendingMessage: vi.fn(async () => false),
+    peekPendingMessageQueueV2Count: vi.fn(async () => 0),
+    discardPendingMessageQueueV2All: vi.fn(async () => 0),
+    discardCommittedMessageLocalIds: vi.fn(async () => 0),
     updateMetadata: vi.fn(),
+    updateAgentState: vi.fn(),
+    sendSessionDeath: vi.fn(),
+    flush: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    on: vi.fn(),
+    off: vi.fn(),
     ...overrides,
   };
 }
@@ -52,8 +65,7 @@ async function runLoop(options?: Partial<LoopOptions>): Promise<{ code: number; 
     path: '/tmp',
     onModeChange: () => {},
     mcpServers: {},
-    session: client as unknown as ApiSessionClient,
-    api: {} as never,
+    session: client,
     messageQueue,
     hookSettingsPath: '/tmp/hooks.json',
     onSessionReady: (session) => {
@@ -69,6 +81,17 @@ describe.sequential('loop', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
+
+  it('does not fetch transcript permission intent during loop startup seeding', async () => {
+    mockClaudeLocalLauncher.mockResolvedValueOnce({ type: 'exit', code: 0 });
+
+    const result = await runLoop();
+    try {
+      expect(result.code).toBe(0);
+    } finally {
+      result.capturedSession?.cleanup();
+    }
+  }, 15_000);
 
   it('updates Session.mode so keepAlive reports correct mode', async () => {
     mockClaudeLocalLauncher.mockResolvedValueOnce({ type: 'switch' });

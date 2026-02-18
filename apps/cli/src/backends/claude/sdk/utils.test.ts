@@ -28,6 +28,7 @@ describe('Claude SDK utils - getDefaultClaudeCodePath', () => {
     let workDir: string;
     let homeDir: string;
     let binDir: string;
+    const originalPlatform = process.platform;
 
     beforeEach(() => {
         for (const key of Object.keys(process.env)) delete process.env[key];
@@ -48,6 +49,7 @@ describe('Claude SDK utils - getDefaultClaudeCodePath', () => {
     });
 
     afterEach(() => {
+        Object.defineProperty(process, 'platform', { value: originalPlatform });
         for (const key of Object.keys(process.env)) delete process.env[key];
         Object.assign(process.env, originalEnv);
         if (workDir) rmSync(workDir, { recursive: true, force: true });
@@ -83,6 +85,21 @@ describe('Claude SDK utils - getDefaultClaudeCodePath', () => {
         mkdirSync(process.env.PATH, { recursive: true });
 
         expect(() => getDefaultClaudeCodePath()).toThrow(/Claude Code.*not installed/i);
+    });
+
+    it('returns %USERPROFILE%/.local/bin/claude.exe when installed there on Windows', () => {
+        Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+
+        // Ensure PATH has no claude.
+        process.env.PATH = join(workDir, 'empty-path-win');
+        mkdirSync(process.env.PATH, { recursive: true });
+
+        const localBin = join(homeDir, '.local', 'bin');
+        mkdirSync(localBin, { recursive: true });
+        const nativeClaudePath = join(localBin, 'claude.exe');
+        writeFileSync(nativeClaudePath, 'MZ', 'utf8');
+
+        expect(getDefaultClaudeCodePath()).toBe(nativeClaudePath);
     });
 
     it('prefers HAPPIER_CLAUDE_PATH when set', () => {

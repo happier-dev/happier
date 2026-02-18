@@ -10,6 +10,7 @@ import { discardQueuedAndPendingForLocalSwitch } from '@/agent/localControl/disc
 import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
 import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
+import { configuration } from '@/configuration';
 
 function upsertClaudePermissionModeArgs(args: string[] | undefined, mode: PermissionMode): string[] | undefined {
     const filtered: string[] = [];
@@ -42,7 +43,20 @@ function upsertClaudePermissionModeArgs(args: string[] | undefined, mode: Permis
 
 export type LauncherResult = { type: 'switch' } | { type: 'exit', code: number };
 
-export async function claudeLocalLauncher(session: Session): Promise<LauncherResult> {
+export async function claudeLocalLauncher(
+    session: Session,
+    opts?: {
+        /**
+         * Indicates why we are entering local mode.
+         *
+         * - `initial`: first local launch for this process (must not block spawn on server pending-queue inspection)
+         * - `switch`: switching from remote → local (must enforce discard/pending safety before switching)
+         */
+        entry?: 'initial' | 'switch';
+    },
+): Promise<LauncherResult> {
+
+        const entry = opts?.entry ?? 'initial';
 
 	    // Create scanner
 	    const scanner = await createSessionScanner({
@@ -159,21 +173,27 @@ export async function claudeLocalLauncher(session: Session): Promise<LauncherRes
             void doSwitch();
         }); // When any message is received, abort current process, clean queue and switch to remote mode
 
-        const discardResult = await discardQueuedAndPendingForLocalSwitch({
-            queue: session.queue,
-            getServerPendingCount: () => session.client.peekPendingMessageQueueV2Count(),
-            discardServerPending: () =>
-                session.client.discardPendingMessageQueueV2All({ reason: 'switch_to_local' }),
-            markQueuedAsDiscarded: (localIds) =>
-                session.client.discardCommittedMessageLocalIds({ localIds: [...localIds], reason: 'switch_to_local' }),
-            sendStatusMessage: (message) => {
-                session.client.sendSessionEvent({ type: 'message', message });
-            },
-            formatError: formatErrorForUi,
-        });
+        if (entry === 'switch') {
+            const pendingGateStartMs = configuration.startupTimingEnabled ? Date.now() : null;
+            const discardResult = await discardQueuedAndPendingForLocalSwitch({
+                queue: session.queue,
+                getServerPendingCount: () => session.client.peekPendingMessageQueueV2Count(),
+                discardServerPending: () =>
+                    session.client.discardPendingMessageQueueV2All({ reason: 'switch_to_local' }),
+                markQueuedAsDiscarded: (localIds) =>
+                    session.client.discardCommittedMessageLocalIds({ localIds: [...localIds], reason: 'switch_to_local' }),
+                sendStatusMessage: (message) => {
+                    session.client.sendSessionEvent({ type: 'message', message });
+                },
+                formatError: formatErrorForUi,
+            });
+            if (pendingGateStartMs !== null) {
+                logger.debug(`[claude-startup] claude_pending_queue_switch_gate=${Math.max(0, Date.now() - pendingGateStartMs)}ms`);
+            }
 
-        if (discardResult !== 'proceed') {
-            return { type: 'switch' };
+            if (discardResult !== 'proceed') {
+                return { type: 'switch' };
+            }
         }
 
         // Handle session start

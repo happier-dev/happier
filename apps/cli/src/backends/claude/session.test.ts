@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import { Session } from './session';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import type { EnhancedMode } from './loop';
@@ -7,16 +7,37 @@ import type { EnhancedMode } from './loop';
 type MetadataMap = Record<string, unknown>;
 type SessionFoundHookData = NonNullable<Parameters<Session['onSessionFound']>[1]>;
 
-type SessionClientStub = {
-  keepAlive: ReturnType<typeof vi.fn>;
-  updateMetadata: (updater: (current: MetadataMap) => MetadataMap) => void;
-  sendAgentMessage?: ReturnType<typeof vi.fn>;
-};
+function createSessionClientStub(overrides?: Partial<SessionClientPort>): SessionClientPort {
+  return {
+    sessionId: 'session-test',
+    rpcHandlerManager: {
+      registerHandler: vi.fn(),
+      invokeLocal: vi.fn(async () => ({})),
+    },
+    sendSessionEvent: vi.fn(),
+    sendClaudeSessionMessage: vi.fn(),
+    sendAgentMessage: vi.fn(),
+    keepAlive: vi.fn(),
+    getMetadataSnapshot: () => null,
+    waitForMetadataUpdate: vi.fn(async () => false),
+    popPendingMessage: vi.fn(async () => false),
+    peekPendingMessageQueueV2Count: vi.fn(async () => 0),
+    discardPendingMessageQueueV2All: vi.fn(async () => 0),
+    discardCommittedMessageLocalIds: vi.fn(async () => 0),
+    updateMetadata: vi.fn(),
+    updateAgentState: vi.fn(),
+    sendSessionDeath: vi.fn(),
+    flush: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    on: vi.fn(),
+    off: vi.fn(),
+    ...overrides,
+  };
+}
 
-function createSession(client: SessionClientStub, claudeArgs?: string[]): Session {
+function createSession(client: SessionClientPort, claudeArgs?: string[]): Session {
   return new Session({
-    api: {} as never,
-    client: client as unknown as ApiSessionClient,
+    client,
     path: '/tmp',
     logPath: '/tmp/log',
     sessionId: null,
@@ -34,10 +55,7 @@ function hookWithTranscript(transcriptPath: string): SessionFoundHookData {
 
 describe('Session', () => {
   it('defaults startedBy to terminal', () => {
-    const client: SessionClientStub = {
-      keepAlive: vi.fn(),
-      updateMetadata: vi.fn(),
-    };
+    const client = createSessionClientStub();
 
     const session = createSession(client);
 
@@ -49,14 +67,10 @@ describe('Session', () => {
   });
 
   it('stores startedBy when provided', () => {
-    const client: SessionClientStub = {
-      keepAlive: vi.fn(),
-      updateMetadata: vi.fn(),
-    };
+    const client = createSessionClientStub();
 
     const session = new Session({
-      api: {} as never,
-      client: client as unknown as ApiSessionClient,
+      client,
       path: '/tmp',
       logPath: '/tmp/log',
       sessionId: null,
@@ -66,7 +80,7 @@ describe('Session', () => {
       onModeChange: () => {},
       hookSettingsPath: '/tmp/hooks.json',
       startedBy: 'daemon',
-    } as any);
+    });
 
     try {
       expect((session as any).startedBy).toBe('daemon');
@@ -77,12 +91,11 @@ describe('Session', () => {
 
   it('adopts permissionMode from metadata without republishing it', () => {
     const metadataUpdates: MetadataMap[] = [];
-    const client: SessionClientStub = {
-      keepAlive: vi.fn(),
+    const client = createSessionClientStub({
       updateMetadata: (updater) => {
         metadataUpdates.push(updater({}));
       },
-    };
+    });
 
     const session = createSession(client);
 
@@ -106,12 +119,11 @@ describe('Session', () => {
 
   it('does not bump permissionModeUpdatedAt when permission mode does not change', () => {
     const metadataUpdates: MetadataMap[] = [];
-    const client: SessionClientStub = {
-      keepAlive: vi.fn(),
+    const client = createSessionClientStub({
       updateMetadata: (updater) => {
         metadataUpdates.push(updater({}));
       },
-    };
+    });
 
     const session = createSession(client);
 
@@ -130,12 +142,11 @@ describe('Session', () => {
   it('notifies sessionFound callbacks with transcriptPath when provided', () => {
     let metadata: MetadataMap = {};
 
-    const client: SessionClientStub = {
-      keepAlive: vi.fn(),
+    const client = createSessionClientStub({
       updateMetadata: (updater) => {
         metadata = updater(metadata);
       },
-    };
+    });
 
     const session = createSession(client);
 
@@ -156,12 +167,11 @@ describe('Session', () => {
   it('does not carry over transcriptPath when sessionId changes and hook lacks transcriptPath', () => {
     let metadata: MetadataMap = {};
 
-    const client: SessionClientStub = {
-      keepAlive: vi.fn(),
+    const client = createSessionClientStub({
       updateMetadata: (updater) => {
         metadata = updater(metadata);
       },
-    };
+    });
 
     const session = createSession(client);
 
@@ -185,10 +195,7 @@ describe('Session', () => {
   });
 
   it('clearSessionId clears transcriptPath as well', () => {
-    const client: SessionClientStub = {
-      keepAlive: vi.fn(),
-      updateMetadata: vi.fn(),
-    };
+    const client = createSessionClientStub();
 
     const session = createSession(client);
 
@@ -207,10 +214,7 @@ describe('Session', () => {
   });
 
   it('consumeOneTimeFlags consumes short -c and -r flags', () => {
-    const client: SessionClientStub = {
-      keepAlive: vi.fn(),
-      updateMetadata: vi.fn(),
-    };
+    const client = createSessionClientStub();
 
     const session = createSession(client, ['-c', '-r', 'abc-123', '--foo', 'bar']);
 
@@ -224,11 +228,7 @@ describe('Session', () => {
 
   it('emits ACP task lifecycle events when thinking toggles', () => {
     const sendAgentMessage = vi.fn();
-    const client: SessionClientStub = {
-      keepAlive: vi.fn(),
-      updateMetadata: vi.fn(),
-      sendAgentMessage,
-    };
+    const client = createSessionClientStub({ sendAgentMessage });
 
     const session = createSession(client);
 
@@ -255,11 +255,7 @@ describe('Session', () => {
 
   it('does not emit orphan ACP task_complete events', () => {
     const sendAgentMessage = vi.fn();
-    const client: SessionClientStub = {
-      keepAlive: vi.fn(),
-      updateMetadata: vi.fn(),
-      sendAgentMessage,
-    };
+    const client = createSessionClientStub({ sendAgentMessage });
 
     const session = createSession(client);
 

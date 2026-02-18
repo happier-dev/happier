@@ -1,23 +1,44 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import type { EnhancedMode } from './loop';
 
-type SessionClientStub = {
-  keepAlive: ReturnType<typeof vi.fn>;
-  updateMetadata: ReturnType<typeof vi.fn>;
-  sendAgentMessage?: ReturnType<typeof vi.fn>;
-};
+function createSessionClientStub(overrides?: Partial<SessionClientPort>): SessionClientPort {
+  return {
+    sessionId: 'session-test',
+    rpcHandlerManager: {
+      registerHandler: vi.fn(),
+      invokeLocal: vi.fn(async () => ({})),
+    },
+    sendSessionEvent: vi.fn(),
+    sendClaudeSessionMessage: vi.fn(),
+    sendAgentMessage: vi.fn(),
+    keepAlive: vi.fn(),
+    getMetadataSnapshot: () => null,
+    waitForMetadataUpdate: vi.fn(async () => false),
+    popPendingMessage: vi.fn(async () => false),
+    peekPendingMessageQueueV2Count: vi.fn(async () => 0),
+    discardPendingMessageQueueV2All: vi.fn(async () => 0),
+    discardCommittedMessageLocalIds: vi.fn(async () => 0),
+    updateMetadata: vi.fn(),
+    updateAgentState: vi.fn(),
+    sendSessionDeath: vi.fn(),
+    flush: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    on: vi.fn(),
+    off: vi.fn(),
+    ...overrides,
+  };
+}
 
-async function createSessionWithEnv(client: SessionClientStub, env: Record<string, string>) {
+async function createSessionWithEnv(client: SessionClientPort, env: Record<string, string>) {
   vi.resetModules();
   for (const [k, v] of Object.entries(env)) {
     process.env[k] = v;
   }
   const { Session } = await import('./session');
   const session = new Session({
-    api: {} as never,
-    client: client as unknown as ApiSessionClient,
+    client,
     path: '/tmp',
     logPath: '/tmp/log',
     sessionId: null,
@@ -32,11 +53,10 @@ async function createSessionWithEnv(client: SessionClientStub, env: Record<strin
 describe('Session keepAlive scheduling', () => {
   it('uses a slower keepAlive cadence while idle, and a faster cadence while thinking', async () => {
     vi.useFakeTimers();
-    const client: SessionClientStub = {
+    const client = createSessionClientStub({
       keepAlive: vi.fn(),
-      updateMetadata: vi.fn(),
       sendAgentMessage: vi.fn(),
-    };
+    });
 
     const session = await createSessionWithEnv(client, {
       HAPPIER_SESSION_KEEPALIVE_IDLE_MS: '10000',

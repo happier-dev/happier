@@ -6,13 +6,13 @@ import { z } from 'zod';
 import { PERMISSION_MODES, isPermissionMode } from '@/api/types';
 import { runClaude, type StartOptions } from '@/backends/claude/runClaude';
 import { claudeCliPath } from '@/backends/claude/claudeLocal';
-import { readSettings } from '@/persistence';
+import { readCredentials, readSettings } from '@/persistence';
 import { logger } from '@/ui/logger';
-import { authAndSetupMachineIfNeeded } from '@/ui/auth';
-import { fetchAccountSettingsSnapshot } from '@/settings/accountSettingsClient';
-import { assertBackendEnabledByAccountSettings } from '@/settings/backendEnabled';
-import { applyAccountSettingsToProcessEnv } from '@/settings/applyAccountSettingsToProcessEnv';
+import { authAndSetupMachineIfNeeded, ensureMachineIdInSettings } from '@/ui/auth';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { resolveProviderOutgoingMessageMetaExtras } from '@/settings/providerSettings';
+import { ensureDaemonRunningForSessionCommand, shouldAutoStartDaemonAfterAuth } from '@/daemon/ensureDaemon';
+import { configuration } from '@/configuration';
 import packageJson from '../../../../package.json';
 
 import type { CommandContext } from '@/cli/commandRegistry';
@@ -56,6 +56,7 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
   const options: StartOptions = {};
   let showHelp = false;
   let showVersion = false;
+  let refreshSettings = false;
   let chromeOverride: boolean | undefined = undefined;
   const unknownArgs: string[] = []; // Collect unknown args to pass through to claude
 
@@ -68,6 +69,8 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
     } else if (arg === '-v' || arg === '--version') {
       showVersion = true;
       unknownArgs.push(arg);
+    } else if (arg === '--refresh-settings') {
+      refreshSettings = true;
     } else if (arg === '--happy-starting-mode') {
       options.startingMode = z.enum(['local', 'remote']).parse(strippedArgs[++i]);
     } else if (arg === '--yolo') {
@@ -192,6 +195,7 @@ ${chalk.bold('Usage:')}
 
 ${chalk.bold('Examples:')}
   happier                    Start session
+  happier --refresh-settings  Force-refresh account settings before starting
   happier --yolo             Start with bypassing permissions
                               happier sugar for --dangerously-skip-permissions
   happier --chrome           Enable Chrome browser access for this session
@@ -233,12 +237,32 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
     // For mixed invocations, continue and pass --version through to Claude Code.
   }
 
-  const { credentials } = await authAndSetupMachineIfNeeded();
+  const startedBy = options.startedBy ?? 'terminal';
+  const startingMode = options.startingMode ?? 'local';
+  const shouldPreferFastBootstrap = startedBy === 'terminal' && startingMode === 'local';
+
+  let credentials = await readCredentials();
+  if (!credentials) {
+    const auth = await authAndSetupMachineIfNeeded();
+    credentials = auth.credentials;
+  } else {
+    if (!settings.machineId) {
+      await ensureMachineIdInSettings();
+    }
+    if (shouldAutoStartDaemonAfterAuth({ env: process.env, isDaemonProcess: configuration.isDaemonProcess })) {
+      void ensureDaemonRunningForSessionCommand().catch((error) => {
+        logger.debug('[claude] Failed to auto-start daemon (non-fatal)', error);
+      });
+    }
+  }
 
   try {
-    const snapshot = await fetchAccountSettingsSnapshot({ credentials });
-    assertBackendEnabledByAccountSettings({ agentId: 'claude', settings: snapshot.settings });
-    applyAccountSettingsToProcessEnv({ settings: snapshot.settings });
+    const snapshot = await bootstrapAccountSettingsContext({
+      agentId: 'claude',
+      credentials,
+      mode: shouldPreferFastBootstrap ? 'fast' : 'blocking',
+      refresh: refreshSettings ? 'force' : 'auto',
+    });
     options.claudeRemoteMetaDefaults = resolveProviderOutgoingMessageMetaExtras({
       agentId: 'claude',
       settings: snapshot.settings,

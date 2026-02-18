@@ -1,4 +1,3 @@
-import { ApiClient, ApiSessionClient } from "@/lib";
 import { MessageQueue2 } from "@/agent/runtime/modeMessageQueue";
 import { EnhancedMode } from "./loop";
 import { logger } from "@/ui/logger";
@@ -10,6 +9,8 @@ import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/perm
 import { configuration } from '@/configuration';
 import { ClaudePermissionRpcRouter } from './utils/permissionRpcRouter';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import type { SessionClientPort } from '@/api/session/sessionClientPort';
+import type { PushNotificationClient } from '@/api/pushNotifications';
 
 export type SessionFoundInfo = {
     sessionId: string;
@@ -19,8 +20,8 @@ export type SessionFoundInfo = {
 export class Session {
     readonly path: string;
     readonly logPath: string;
-    readonly api: ApiClient;
-    readonly client: ApiSessionClient;
+    readonly client: SessionClientPort;
+    pushSender: PushNotificationClient | null;
     readonly queue: MessageQueue2<EnhancedMode>;
     readonly claudeEnvVars?: Record<string, string>;
     claudeArgs?: string[];  // Made mutable to allow filtering
@@ -57,8 +58,8 @@ export class Session {
     private readonly keepAliveThinkingMs: number;
 
     constructor(opts: {
-        api: ApiClient,
-        client: ApiSessionClient,
+        client: SessionClientPort,
+        pushSender?: PushNotificationClient | null,
         path: string,
         logPath: string,
         sessionId: string | null,
@@ -75,8 +76,8 @@ export class Session {
         startedBy?: 'daemon' | 'terminal',
     }) {
         this.path = opts.path;
-        this.api = opts.api;
         this.client = opts.client;
+        this.pushSender = opts.pushSender ?? null;
         this.logPath = opts.logPath;
         this.sessionId = opts.sessionId;
         this.queue = opts.messageQueue;
@@ -95,6 +96,10 @@ export class Session {
         // Start keep alive
         this.client.keepAlive(this.thinking, this.mode);
         this.scheduleNextKeepAlive();
+    }
+
+    setPushSender(pushSender: PushNotificationClient | null): void {
+        this.pushSender = pushSender;
     }
 
     private scheduleNextKeepAlive(): void {

@@ -5,7 +5,15 @@ import type { EnhancedMode } from '../loop';
 
 type NextMessage = () => Promise<{ message: string; mode: EnhancedMode } | null>;
 
-export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage }>(opts: T): Promise<void> {
+type ClaudeRemoteDispatchDependencies = Readonly<{
+    claudeRemote: typeof claudeRemote;
+    claudeRemoteAgentSdk: typeof claudeRemoteAgentSdk;
+}>;
+
+export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage }>(
+    opts: T,
+    deps?: Partial<ClaudeRemoteDispatchDependencies>,
+): Promise<void> {
     const first = await opts.nextMessage();
     if (!first) return;
 
@@ -23,10 +31,13 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
         nextMessage,
     };
 
+    const resolvedLegacy = deps?.claudeRemote ?? claudeRemote;
+    const resolvedAgentSdk = deps?.claudeRemoteAgentSdk ?? claudeRemoteAgentSdk;
+
     if (first.mode.claudeRemoteAgentSdkEnabled === true) {
-        await claudeRemoteAgentSdk(runnerOpts as any);
+        await resolvedAgentSdk(runnerOpts as any);
         return;
     }
 
-    await claudeRemote(runnerOpts as any);
+    await resolvedLegacy(runnerOpts as any);
 }

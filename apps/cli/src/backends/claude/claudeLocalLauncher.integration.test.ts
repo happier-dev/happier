@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import type { PermissionMode } from '@/api/types';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { Session } from './session';
@@ -47,17 +47,7 @@ vi.mock('@/ui/logger', () => ({
 }));
 
 type SessionClientStub = EventEmitter &
-  Pick<
-    ApiSessionClient,
-    | 'keepAlive'
-    | 'updateMetadata'
-    | 'rpcHandlerManager'
-    | 'sendClaudeSessionMessage'
-    | 'sendSessionEvent'
-    | 'peekPendingMessageQueueV2Count'
-    | 'discardPendingMessageQueueV2All'
-    | 'discardCommittedMessageLocalIds'
-  > & {
+  SessionClientPort & {
     getMetadataSnapshot?: () => MetadataSnapshot;
   };
 
@@ -116,9 +106,13 @@ function createLocalHarness(options?: { metadataSnapshot?: MetadataSnapshot }): 
   const sendSessionEvent = vi.fn();
 
   const client = Object.assign(new EventEmitter(), {
+    sessionId: 'happy_sess_1',
     keepAlive: vi.fn(),
     updateMetadata: vi.fn(),
+    updateAgentState: vi.fn(),
     getMetadataSnapshot: options?.metadataSnapshot ? vi.fn(() => options.metadataSnapshot) : undefined,
+    waitForMetadataUpdate: vi.fn(async () => false),
+    popPendingMessage: vi.fn(async () => false),
     rpcHandlerManager: {
       registerHandler: vi.fn((method: string, handler: RpcHandler) => {
         if (method === 'switch') {
@@ -128,17 +122,21 @@ function createLocalHarness(options?: { metadataSnapshot?: MetadataSnapshot }): 
           abortDeferred.resolve(handler);
         }
       }),
+      invokeLocal: vi.fn(async () => ({})),
     },
     sendClaudeSessionMessage: vi.fn(),
+    sendAgentMessage: vi.fn(),
     sendSessionEvent,
     peekPendingMessageQueueV2Count: vi.fn().mockResolvedValue(0),
     discardPendingMessageQueueV2All: vi.fn().mockResolvedValue(0),
     discardCommittedMessageLocalIds: vi.fn().mockResolvedValue(0),
+    sendSessionDeath: vi.fn(),
+    flush: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
   }) as unknown as SessionClientStub;
 
   const session = new Session({
-    api: {} as never,
-    client: client as unknown as ApiSessionClient,
+    client,
     path: '/tmp',
     logPath: '/tmp/log',
     sessionId: null,
@@ -212,6 +210,36 @@ describe('claudeLocalLauncher', () => {
     const result = await claudeLocalLauncher(session);
 
     expect(mockClaudeLocal).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ type: 'exit', code: 0 });
+  });
+
+  it('does not block initial local startup on pending-queue inspection', async () => {
+    const { session, client } = createLocalHarness();
+
+    client.peekPendingMessageQueueV2Count = vi.fn(async () => {
+      throw new Error('pending queue inspection should not run for initial local startup');
+    });
+
+    mockClaudeLocal.mockImplementationOnce(async () => {});
+
+    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+    const result = await claudeLocalLauncher(session);
+
+    expect(result).toEqual({ type: 'exit', code: 0 });
+  });
+
+  it('inspects the pending queue when entering local mode from a remote switch', async () => {
+    const { session, client } = createLocalHarness();
+
+    const peek = vi.fn().mockResolvedValue(0);
+    client.peekPendingMessageQueueV2Count = peek;
+
+    mockClaudeLocal.mockImplementationOnce(async () => {});
+
+    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+    const result = await claudeLocalLauncher(session, { entry: 'switch' });
+
+    expect(peek).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ type: 'exit', code: 0 });
   });
 
@@ -391,23 +419,23 @@ describe('claudeLocalLauncher', () => {
     await expect(launcherPromise).resolves.toEqual({ type: 'switch' });
   });
 
-  it('declines remote→local switch when queued messages exist and user does not confirm discard', async () => {
-    const { session } = createLocalHarness();
+	  it('declines remote→local switch when queued messages exist and user does not confirm discard', async () => {
+	    const { session } = createLocalHarness();
 
     Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
     Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
 
-    session.queue.push('hello from app', defaultMode);
+	    session.queue.push('hello from app', defaultMode);
 
-    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
-    const result = await claudeLocalLauncher(session);
+	    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+	    const result = await claudeLocalLauncher(session, { entry: 'switch' });
 
     expect(result).toEqual({ type: 'switch' });
     expect(mockClaudeLocal).not.toHaveBeenCalled();
   });
 
-  it('discards queued messages when user confirms, then continues into local mode', async () => {
-    const { session, sendSessionEvent } = createLocalHarness();
+	  it('discards queued messages when user confirms, then continues into local mode', async () => {
+	    const { session, sendSessionEvent } = createLocalHarness();
 
     Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
     Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
@@ -415,10 +443,10 @@ describe('claudeLocalLauncher', () => {
     readlineAnswer = 'y';
     session.queue.push('hello from app', defaultMode);
 
-    mockClaudeLocal.mockImplementationOnce(async () => {});
+	    mockClaudeLocal.mockImplementationOnce(async () => {});
 
-    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
-    const result = await claudeLocalLauncher(session);
+	    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+	    const result = await claudeLocalLauncher(session, { entry: 'switch' });
 
     expect(result).toEqual({ type: 'exit', code: 0 });
     expect(session.queue.size()).toBe(0);

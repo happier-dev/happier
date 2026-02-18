@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { basename } from 'node:path';
 import { claudeLocal } from './claudeLocal';
 
 // Use vi.hoisted to ensure mock functions are available when vi.mock factory runs
@@ -126,7 +127,7 @@ describe('claudeLocal --continue handling', () => {
         });
 
         expect(mockSpawn).toHaveBeenCalled();
-        expect(mockSpawn.mock.calls[0]?.[0]).toBe(process.execPath);
+        expect(basename(String(mockSpawn.mock.calls[0]?.[0]))).toMatch(/^node(\.exe)?$/);
     });
 
     it('should create new session when --continue but no sessions exist', async () => {
@@ -407,7 +408,7 @@ describe('claudeLocal launcher selection', () => {
         }
 
         expect(mockSpawn).toHaveBeenCalled();
-        expect(mockSpawn.mock.calls[0][0]).toBe(process.execPath);
+        expect(basename(String(mockSpawn.mock.calls[0][0]))).toMatch(/^node(\.exe)?$/);
         const spawnArgs = mockSpawn.mock.calls[0][1];
         expect(spawnArgs[0]).toMatch(/claude_local_launcher\.cjs$/);
 

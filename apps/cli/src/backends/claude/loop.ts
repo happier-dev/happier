@@ -1,12 +1,11 @@
-import { ApiSessionClient } from "@/api/session/sessionClient"
+import type { SessionClientPort } from "@/api/session/sessionClientPort"
 import { MessageQueue2 } from "@/agent/runtime/modeMessageQueue"
 import { logger } from "@/ui/logger"
 import { Session } from "./session"
 import { claudeLocalLauncher, LauncherResult } from "./claudeLocalLauncher"
 import { claudeRemoteLauncher } from "./claudeRemoteLauncher"
-import { ApiClient } from "@/lib"
 import type { JsRuntime } from "./runClaude"
-import { resolveStartupPermissionModeFromSession } from '@/agent/runtime/permission/startupPermissionModeSeed';
+import type { PushNotificationClient } from "@/api/pushNotifications"
 
 // Re-export permission mode type from api/types
 // Single unified type with 7 modes - Codex modes mapped at SDK boundary
@@ -42,11 +41,12 @@ interface LoopOptions {
     path: string
     model?: string
     permissionMode?: PermissionMode
+    permissionModeUpdatedAt?: number
     startingMode?: 'local' | 'remote'
     onModeChange: (mode: 'local' | 'remote') => void
     mcpServers: Record<string, any>
-    session: ApiSessionClient
-    api: ApiClient,
+    session: SessionClientPort
+    pushSender?: PushNotificationClient | null
     claudeEnvVars?: Record<string, string>
     claudeArgs?: string[]
     messageQueue: MessageQueue2<EnhancedMode>
@@ -64,8 +64,8 @@ export async function loop(opts: LoopOptions): Promise<number> {
     // Get log path for debug display
     const logPath = logger.logFilePath;
     let session = new Session({
-        api: opts.api,
         client: opts.session,
+        pushSender: opts.pushSender ?? null,
         path: opts.path,
         sessionId: null,
         claudeEnvVars: opts.claudeEnvVars,
@@ -80,24 +80,28 @@ export async function loop(opts: LoopOptions): Promise<number> {
         startedBy: opts.startedBy ?? 'terminal',
     });
 
-    // Seed the permission mode from the canonical session metadata snapshot (if present).
-    // This is critical for attach flows where the UI may have set permissions (immediate) without any user messages,
-    // and for ensuring local↔remote switches preserve the selected mode.
-    const seeded = await resolveStartupPermissionModeFromSession({ session: opts.session as any, take: 50 });
-    if (seeded) {
-        session.adoptLastPermissionModeFromMetadata(seeded.mode, seeded.updatedAt);
+    // Seed permission mode without blocking on transcript fetches.
+    // The session's metadata snapshot is already available locally, and for fresh sessions
+    // the current CLI process seeds metadata explicitly in runClaude.ts.
+    const snapshot = opts.session.getMetadataSnapshot?.() as any;
+    const snapshotMode = typeof snapshot?.permissionMode === 'string' ? (snapshot.permissionMode as PermissionMode) : null;
+    const snapshotUpdatedAt = typeof snapshot?.permissionModeUpdatedAt === 'number' ? snapshot.permissionModeUpdatedAt : 0;
+    if (snapshotMode && snapshotUpdatedAt > 0) {
+        session.adoptLastPermissionModeFromMetadata(snapshotMode, snapshotUpdatedAt);
     } else {
         session.lastPermissionMode = opts.permissionMode ?? 'default';
-        session.lastPermissionModeUpdatedAt = 0;
+        session.lastPermissionModeUpdatedAt = typeof opts.permissionModeUpdatedAt === 'number' ? opts.permissionModeUpdatedAt : 0;
     }
     opts.onSessionReady?.(session)
 
     let mode: 'local' | 'remote' = opts.startingMode ?? 'local';
+    let localEntry: 'initial' | 'switch' = mode === 'local' ? 'initial' : 'switch';
     while (true) {
         logger.debug(`[loop] Iteration with mode: ${mode}`);
         switch (mode) {
             case 'local': {
-                const result = await claudeLocalLauncher(session);
+                const result = await claudeLocalLauncher(session, { entry: localEntry });
+                localEntry = 'switch';
                 switch (result.type) {
                     case 'switch':
                         mode = 'remote';
@@ -119,6 +123,7 @@ export async function loop(opts: LoopOptions): Promise<number> {
                     case 'switch':
                         mode = 'local';
                         session.onModeChange(mode);
+                        localEntry = 'switch';
                         break;
                     default:
                         const _: never = reason satisfies never;

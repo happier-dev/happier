@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { appendFile, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { Session } from './session';
 import type { EnhancedMode } from './loop';
 
-type RpcHandler = (params?: unknown) => unknown | Promise<unknown>;
+type RpcHandler = (params?: any) => any | Promise<any>;
 type SessionFoundHookData = NonNullable<Parameters<Session['onSessionFound']>[1]>;
 type RemoteDispatchMockOptions = {
   signal?: AbortSignal;
@@ -55,21 +55,17 @@ vi.mock('@/lib', () => ({
   },
 }));
 
-type SessionClientStub = {
-  sessionId: string;
-  keepAlive: ReturnType<typeof vi.fn>;
-  updateMetadata: ReturnType<typeof vi.fn>;
-  updateAgentState: ReturnType<typeof vi.fn>;
+type SessionClientStub = SessionClientPort & {
   rpcHandlerManager: {
-    registerHandler: (method: string, handler: RpcHandler) => void;
+    registerHandler: (method: string, handler: any) => void;
+    invokeLocal: (method: string, params: unknown) => Promise<unknown>;
   };
-  sendClaudeSessionMessage: ReturnType<typeof vi.fn>;
-  sendSessionEvent: ReturnType<typeof vi.fn>;
 };
 
 type RemoteHarness = {
   session: Session;
   client: SessionClientStub;
+  sendClaudeSessionMessage: ReturnType<typeof vi.fn>;
   switchHandlerReady: Promise<RpcHandler>;
 };
 
@@ -102,29 +98,41 @@ function hookWithTranscript(transcriptPath: string): SessionFoundHookData {
 
 function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHarness {
   const switchDeferred = createDeferred<RpcHandler>();
+  const sendClaudeSessionMessage = vi.fn();
 
   const client: SessionClientStub = {
     sessionId: 'happy_sess_1',
+    sendAgentMessage: vi.fn(),
     keepAlive: vi.fn(),
     updateMetadata: vi.fn(),
     updateAgentState: vi.fn((updater) => updater({})),
     rpcHandlerManager: {
-      registerHandler: vi.fn((method: string, handler: RpcHandler) => {
+      registerHandler: vi.fn((method: string, handler: any) => {
         if (method === 'switch') {
           switchDeferred.resolve(handler);
         }
       }),
+      invokeLocal: vi.fn(async () => ({})),
     },
-    sendClaudeSessionMessage: vi.fn(),
+    sendClaudeSessionMessage,
     sendSessionEvent: vi.fn(),
+    getMetadataSnapshot: () => null,
+    waitForMetadataUpdate: vi.fn(async () => false),
+    popPendingMessage: vi.fn(async () => false),
+    peekPendingMessageQueueV2Count: vi.fn(async () => 0),
+    discardPendingMessageQueueV2All: vi.fn(async () => 0),
+    discardCommittedMessageLocalIds: vi.fn(async () => 0),
+    sendSessionDeath: vi.fn(),
+    flush: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    on: vi.fn(),
+    off: vi.fn(),
   };
 
   const sendToAllDevices = vi.fn();
   const session = new Session({
-    api: {
-      push: () => ({ sendToAllDevices }),
-    } as never,
-    client: client as unknown as ApiSessionClient,
+    client,
+    pushSender: { sendToAllDevices } as any,
     path: '/tmp',
     logPath: '/tmp/log',
     sessionId: options?.sessionId ?? null,
@@ -139,6 +147,7 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
   return {
     session,
     client,
+    sendClaudeSessionMessage,
     switchHandlerReady: switchDeferred.promise,
   };
 }
@@ -259,8 +268,8 @@ describe.sequential('claudeRemoteLauncher', () => {
     expect(mockResetParentChain).toHaveBeenCalledTimes(1);
   });
 
-  it('replaces TaskOutput tool_result transcript payloads with an empty string (content is streamed via sidechain)', async () => {
-    const { session, client, switchHandlerReady } = createRemoteHarness();
+	  it('replaces TaskOutput tool_result transcript payloads with an empty string (content is streamed via sidechain)', async () => {
+	    const { session, sendClaudeSessionMessage, switchHandlerReady } = createRemoteHarness();
 
     const taskOutputToolUseId = 'tool_taskoutput_1';
 
@@ -315,17 +324,19 @@ describe.sequential('claudeRemoteLauncher', () => {
     });
 
     const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
-    const launcherPromise = claudeRemoteLauncher(session);
+	    const launcherPromise = claudeRemoteLauncher(session);
 
-    await vi.waitFor(() => {
-      expect(client.sendClaudeSessionMessage).toHaveBeenCalled();
-    });
+	    await vi.waitFor(() => {
+	      expect(sendClaudeSessionMessage).toHaveBeenCalled();
+	    });
 
-    const sent = client.sendClaudeSessionMessage.mock.calls.map((c) => c[0]).find((m: any) => {
-      const blocks = m?.message?.content;
-      if (!Array.isArray(blocks)) return false;
-      return blocks.some((b: any) => b?.type === 'tool_result' && b?.tool_use_id === taskOutputToolUseId);
-    });
+	    const sent = sendClaudeSessionMessage.mock.calls
+	      .map((c: any[]) => c[0])
+	      .find((m: any) => {
+	      const blocks = m?.message?.content;
+	      if (!Array.isArray(blocks)) return false;
+	      return blocks.some((b: any) => b?.type === 'tool_result' && b?.tool_use_id === taskOutputToolUseId);
+	    });
     expect(sent).toBeTruthy();
 
     const blocks = (sent as any).message.content as any[];
@@ -430,6 +441,98 @@ describe.sequential('claudeRemoteLauncher', () => {
       await expect(launcherPromise).resolves.toBe('switch');
     } finally {
       await rm(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('imports Task subagent JSONL from inferred ~/.claude projects path when output_file is missing', async () => {
+    const { session, client, switchHandlerReady } = createRemoteHarness();
+
+    const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happy-claude-config-'));
+    const agentId = 'aa5e728';
+    const claudeSessionId = 'claude_session_1';
+
+    const { getProjectPath } = await import('./utils/path');
+    const projectDir = getProjectPath(session.path, claudeConfigDir);
+    const subagentsDir = join(projectDir, claudeSessionId, 'subagents');
+    await mkdir(subagentsDir, { recursive: true });
+
+    const jsonlPath = join(subagentsDir, `agent-${agentId}.jsonl`);
+
+    const rootPrompt = {
+      type: 'user',
+      uuid: 'u1',
+      isSidechain: true,
+      agentId,
+      message: { role: 'user', content: 'Do work' },
+    };
+    const assistant = {
+      type: 'assistant',
+      uuid: 'a1',
+      isSidechain: true,
+      agentId,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+    };
+
+    await writeFile(jsonlPath, `${JSON.stringify(rootPrompt)}\n${JSON.stringify(assistant)}\n`, 'utf8');
+
+    try {
+      (session as any).claudeEnvVars = { CLAUDE_CONFIG_DIR: claudeConfigDir };
+
+      mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
+        const dispatchOpts = opts as RemoteDispatchMockOptions & { onMessage?: (m: unknown) => void };
+
+        dispatchOpts.onMessage?.({
+          type: 'assistant',
+          session_id: claudeSessionId,
+          parent_tool_use_id: null,
+          message: {
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tool_task_1',
+                name: 'Task',
+                input: { prompt: 'do work' },
+              },
+            ],
+          },
+        });
+
+        dispatchOpts.onMessage?.({
+          type: 'user',
+          session_id: claudeSessionId,
+          parent_tool_use_id: null,
+          message: {
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tool_task_1',
+                content: `Async agent launched successfully.\nagentId: ${agentId}\n`,
+              },
+            ],
+          },
+        });
+
+        await waitForAbort(dispatchOpts.signal);
+      });
+
+      // Ignore normal SDK-to-log conversions; we only care about imported file records.
+      mockConvert.mockReturnValue(null);
+
+      const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+      const launcherPromise = claudeRemoteLauncher(session);
+
+      await vi.waitFor(() => {
+        expect(client.sendClaudeSessionMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ type: 'assistant', uuid: 'a1', sidechainId: 'tool_task_1' }),
+          expect.objectContaining({ importedFrom: 'claude-subagent-file', claudeAgentId: agentId, sidechainId: 'tool_task_1' }),
+        );
+      });
+
+      const switchHandler = await switchHandlerReady;
+      expect(await switchHandler({ to: 'local' })).toBe(true);
+      await expect(launcherPromise).resolves.toBe('switch');
+    } finally {
+      await rm(claudeConfigDir, { recursive: true, force: true });
     }
   }, 30_000);
 });

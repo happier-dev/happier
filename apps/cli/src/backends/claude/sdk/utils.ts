@@ -161,11 +161,14 @@ function findLatestVersionedClaudeBinary(versionsDir: string): string | null {
             .reverse()
 
         for (const entry of entries) {
-            const direct = join(versionsDir, entry, 'claude')
-            if (existsSync(direct)) return direct
+            const names = process.platform === 'win32' ? ['claude.exe', 'claude'] : ['claude']
+            for (const name of names) {
+                const direct = join(versionsDir, entry, name)
+                if (existsSync(direct)) return direct
 
-            const inBin = join(versionsDir, entry, 'bin', 'claude')
-            if (existsSync(inBin)) return inBin
+                const inBin = join(versionsDir, entry, 'bin', name)
+                if (existsSync(inBin)) return inBin
+            }
         }
         return null
     } catch {
@@ -234,6 +237,14 @@ function findClaudeInNativeInstallerLocations(homeDir: string): string | null {
         const dotClaudeVersions = join(homeDir, '.claude', 'versions')
         const dotClaudeVersioned = findLatestVersionedClaudeBinary(dotClaudeVersions)
         if (dotClaudeVersioned) return dotClaudeVersioned
+
+        // Some installers (and user setups) mirror the Unix layout under %USERPROFILE%\.local\bin.
+        const localBinExe = join(homeDir, '.local', 'bin', 'claude.exe')
+        if (existsSync(localBinExe)) return localBinExe
+
+        const localVersions = join(homeDir, '.local', 'share', 'claude', 'versions')
+        const localVersioned = findLatestVersionedClaudeBinary(localVersions)
+        if (localVersioned) return localVersioned
 
         return null
     }

@@ -661,4 +661,146 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         }
     });
 
+    it('forwards toolUseID/agentID to canCallTool via canUseTool', async () => {
+        let capturedOptions: any = null;
+        const canCallTool = vi.fn(async () => ({ behavior: 'allow', updatedInput: {} }));
+
+        const createQuery = vi.fn((_params: any) => {
+            capturedOptions = _params.options;
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode() };
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            allowedTools: [],
+            mcpServers: {},
+            claudeEnvVars: {},
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool,
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            createQuery,
+        } as any);
+
+        expect(typeof capturedOptions?.canUseTool).toBe('function');
+
+        await capturedOptions.canUseTool(
+            'Read',
+            { file_path: '/tmp/file.txt' },
+            {
+                signal: new AbortController().signal,
+                toolUseID: 'toolu_123',
+                agentID: 'agent_456',
+            },
+        );
+
+        expect(canCallTool).toHaveBeenCalledWith(
+            'Read',
+            { file_path: '/tmp/file.txt' },
+            expect.anything(),
+            expect.objectContaining({ toolUseId: 'toolu_123', agentId: 'agent_456' }),
+        );
+    });
+
+    it('registers PermissionRequest hook and returns decision payload', async () => {
+        const canCallTool = vi.fn(async () => ({ behavior: 'deny', message: 'nope' }));
+
+        let capturedHooks: any = null;
+        const createQuery = vi.fn((_params: any) => {
+            capturedHooks = _params.options?.hooks;
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode() };
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            allowedTools: [],
+            mcpServers: {},
+            claudeEnvVars: {},
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool,
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            createQuery,
+        } as any);
+
+        expect(capturedHooks?.PermissionRequest?.[0]?.hooks?.length).toBe(1);
+
+        const output = await capturedHooks.PermissionRequest[0].hooks[0](
+            {
+                hook_event_name: 'PermissionRequest',
+                session_id: 'sess_1',
+                transcript_path: '/tmp/sess_1.jsonl',
+                cwd: '/tmp',
+                tool_name: 'Read',
+                tool_input: { file_path: '/tmp/file.txt' },
+            },
+            'toolu_123',
+            { signal: new AbortController().signal },
+        );
+
+        expect(canCallTool).toHaveBeenCalledWith(
+            'Read',
+            { file_path: '/tmp/file.txt' },
+            expect.anything(),
+            expect.objectContaining({ toolUseId: 'toolu_123' }),
+        );
+
+        expect(output).toEqual(
+            expect.objectContaining({
+                continue: true,
+                suppressOutput: true,
+                hookSpecificOutput: {
+                    hookEventName: 'PermissionRequest',
+                    decision: { behavior: 'deny', message: 'nope' },
+                },
+            }),
+        );
+    });
+
 });
