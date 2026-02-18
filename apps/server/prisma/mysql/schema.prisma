@@ -35,7 +35,7 @@ model Account {
     feedSeq         BigInt      @default(0)
     createdAt       DateTime    @default(now())
     updatedAt       DateTime    @updatedAt
-    settings        String?
+    settings        String? @db.LongText
     settingsVersion Int         @default(0)
 
     // Profile

@@ -102,11 +102,12 @@ function generateProviderSchemaFromPostgres(
         // `PublicSessionShare.tokenHash` stores a sha256 digest (32 bytes) and must be indexed.
         body = body.replace(/^(\s*tokenHash\s+Bytes\s+)@unique\b/gm, "$1@db.VarBinary(32) @unique");
 
-        // MySQL defaults `String` to VARCHAR(191), which is too small for our encrypted state blobs.
-        body = body.replace(/^(\s*metadata\s+String\b)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
-        body = body.replace(/^(\s*agentState\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
-        body = body.replace(/^(\s*daemonState\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
-    }
+	        // MySQL defaults `String` to VARCHAR(191), which is too small for our encrypted state blobs.
+	        body = body.replace(/^(\s*metadata\s+String\b)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
+	        body = body.replace(/^(\s*agentState\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
+	        body = body.replace(/^(\s*daemonState\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
+	        body = body.replace(/^(\s*settings\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
+	    }
 
     const header = [
         '// AUTO-GENERATED FILE - DO NOT EDIT.',
