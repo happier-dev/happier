@@ -11,6 +11,19 @@ export type RpcHandler<TRequest = any, TResponse = any> = (
     data: TRequest
 ) => TResponse | Promise<TResponse>;
 
+export type RpcHandlerRegistrar = Readonly<{
+    registerHandler: <TRequest = any, TResponse = any>(
+        method: string,
+        handler: RpcHandler<TRequest, TResponse>,
+    ) => void;
+}>;
+
+export type RpcHandlerInvoker = Readonly<{
+    invokeLocal: (method: string, params: unknown) => Promise<unknown>;
+}>;
+
+export type RpcHandlerManagerLike = RpcHandlerRegistrar & RpcHandlerInvoker;
+
 /**
  * Map of method names to their handlers
  */

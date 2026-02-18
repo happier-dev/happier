@@ -1,4 +1,4 @@
-import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { AGENTS, type AgentCatalogEntry } from '@/backends/catalog';
 import { checklists } from '@/capabilities/checklists';
 import { buildDetectContext } from '@/capabilities/context/buildDetectContext';
@@ -118,7 +118,7 @@ function augmentCliCapabilityWithProbeModels(cap: Capability, agentId: AgentCata
     };
 }
 
-export function registerCapabilitiesHandlers(rpcHandlerManager: RpcHandlerManager): void {
+export function registerCapabilitiesHandlers(rpcHandlerManager: RpcHandlerRegistrar): void {
     let servicePromise: Promise<ReturnType<typeof createCapabilitiesService>> | null = null;
 
     const createService = async (): Promise<ReturnType<typeof createCapabilitiesService>> => {

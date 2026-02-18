@@ -1,4 +1,4 @@
-import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { AgentBackend } from '@/agent/core/AgentBackend';
 
 import { EphemeralTaskRunRequestSchema } from '@happier-dev/protocol';
@@ -14,7 +14,7 @@ function invalidParams(): { ok: false; error: { code: string; message?: string }
 }
 
 export function registerEphemeralTaskHandlers(
-  rpc: RpcHandlerManager,
+  rpc: RpcHandlerRegistrar,
   ctx: Readonly<{
     workingDirectory: string;
     createBackend: (opts: { backendId: string; permissionMode: string }) => AgentBackend;

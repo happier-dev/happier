@@ -1,5 +1,5 @@
 import { logger } from '@/ui/logger';
-import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { run as runDifftastic } from '@/integrations/difftastic/index';
 import { validatePath } from './pathSecurity';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -17,7 +17,7 @@ interface DifftasticResponse {
     error?: string;
 }
 
-export function registerDifftasticHandler(rpcHandlerManager: RpcHandlerManager, workingDirectory: string): void {
+export function registerDifftasticHandler(rpcHandlerManager: RpcHandlerRegistrar, workingDirectory: string): void {
     // Difftastic handler - raw interface to difftastic
     rpcHandlerManager.registerHandler<DifftasticRequest, DifftasticResponse>(RPC_METHODS.DIFFTASTIC, async (data) => {
         logger.debug('Difftastic request with args:', data.args, 'cwd:', data.cwd);

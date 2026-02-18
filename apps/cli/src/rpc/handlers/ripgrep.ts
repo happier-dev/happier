@@ -1,5 +1,5 @@
 import { logger } from '@/ui/logger';
-import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { run as runRipgrep } from '@/integrations/ripgrep/index';
 import { validatePath } from './pathSecurity';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -17,7 +17,7 @@ interface RipgrepResponse {
     error?: string;
 }
 
-export function registerRipgrepHandler(rpcHandlerManager: RpcHandlerManager, workingDirectory: string): void {
+export function registerRipgrepHandler(rpcHandlerManager: RpcHandlerRegistrar, workingDirectory: string): void {
     // Ripgrep handler - raw interface to ripgrep
     rpcHandlerManager.registerHandler<RipgrepRequest, RipgrepResponse>(RPC_METHODS.RIPGREP, async (data) => {
         logger.debug('Ripgrep request with args:', data.args, 'cwd:', data.cwd);

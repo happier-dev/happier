@@ -1,7 +1,7 @@
 import { logger } from '@/ui/logger';
 import { exec, ExecOptions } from 'child_process';
 import { promisify } from 'util';
-import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { validatePath } from './pathSecurity';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -21,7 +21,7 @@ interface BashResponse {
     error?: string;
 }
 
-export function registerBashHandler(rpcHandlerManager: RpcHandlerManager, workingDirectory: string): void {
+export function registerBashHandler(rpcHandlerManager: RpcHandlerRegistrar, workingDirectory: string): void {
     // Shell command handler - executes commands in the default shell
     rpcHandlerManager.registerHandler<BashRequest, BashResponse>(RPC_METHODS.BASH, async (data) => {
         logger.debug('Shell command request:', data.command);

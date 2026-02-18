@@ -1,4 +1,4 @@
-import { RpcHandlerManager } from "@/api/rpc/RpcHandlerManager";
+import type { RpcHandlerRegistrar } from "@/api/rpc/types";
 import { logger } from "@/lib";
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -13,7 +13,7 @@ interface KillSessionResponse {
 
 
 export function registerKillSessionHandler(
-    rpcHandlerManager: RpcHandlerManager,
+    rpcHandlerManager: RpcHandlerRegistrar,
     killThisHappier: () => Promise<void>
 ) {
     rpcHandlerManager.registerHandler<KillSessionRequest, KillSessionResponse>(RPC_METHODS.KILL_SESSION, async () => {

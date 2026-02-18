@@ -1,7 +1,7 @@
 import type { TerminalSpawnOptions } from '@/terminal/runtime/terminalConfig';
 import type { PermissionMode } from '@/api/types';
 import type { CatalogAgentId } from '@/backends/types';
-import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { SpawnSessionErrorCode } from '@happier-dev/protocol';
 export { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 export type { SpawnSessionErrorCode } from '@happier-dev/protocol';
@@ -123,7 +123,7 @@ export type SpawnSessionResult =
  * Register all session RPC handlers with the daemon
  */
 export function registerSessionHandlers(
-    rpcHandlerManager: RpcHandlerManager,
+    rpcHandlerManager: RpcHandlerRegistrar,
     workingDirectory: string,
 ) {
     registerBashHandler(rpcHandlerManager, workingDirectory);

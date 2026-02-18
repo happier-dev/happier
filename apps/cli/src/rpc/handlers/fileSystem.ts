@@ -2,7 +2,7 @@ import { logger } from '@/ui/logger';
 import { readFile, writeFile, readdir, stat } from 'fs/promises';
 import { createHash } from 'crypto';
 import { basename, join } from 'path';
-import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { validatePath } from './pathSecurity';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -65,7 +65,7 @@ interface GetDirectoryTreeResponse {
     error?: string;
 }
 
-export function registerFileSystemHandlers(rpcHandlerManager: RpcHandlerManager, workingDirectory: string): void {
+export function registerFileSystemHandlers(rpcHandlerManager: RpcHandlerRegistrar, workingDirectory: string): void {
     // Read file handler - returns base64 encoded content
     rpcHandlerManager.registerHandler<ReadFileRequest, ReadFileResponse>(RPC_METHODS.READ_FILE, async (data) => {
         logger.debug('Read file request:', data.path);

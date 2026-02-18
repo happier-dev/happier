@@ -1,4 +1,4 @@
-import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { expandEnvironmentVariables } from '@/utils/expandEnvVars';
 import { isValidEnvVarKey, sanitizeEnvVarRecord } from '@/terminal/runtime/envVarSanitization';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -76,7 +76,7 @@ function redactSecret(value: string): string {
     return `${prefix}${'*'.repeat(maskedLen)}${suffix}`;
 }
 
-export function registerPreviewEnvHandler(rpcHandlerManager: RpcHandlerManager): void {
+export function registerPreviewEnvHandler(rpcHandlerManager: RpcHandlerRegistrar): void {
     // Environment preview handler - returns daemon-effective env values with secret policy applied.
     //
     // This is the recommended way for the UI to preview what a spawned session will receive:

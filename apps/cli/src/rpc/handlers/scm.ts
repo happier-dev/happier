@@ -20,14 +20,14 @@ import type {
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import {
     createNonRepositoryScmSnapshotResponse,
     notRepositoryResponse,
     runScmRoute,
 } from '@/scm/rpc/dispatch';
 
-export function registerScmHandlers(rpcHandlerManager: RpcHandlerManager, workingDirectory: string): void {
+export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, workingDirectory: string): void {
     rpcHandlerManager.registerHandler<ScmBackendDescribeRequest, ScmBackendDescribeResponse>(
         RPC_METHODS.SCM_BACKEND_DESCRIBE,
         async (request) =>
