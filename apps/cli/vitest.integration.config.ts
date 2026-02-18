@@ -1,7 +1,8 @@
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 import { resolve } from 'node:path'
 
 import dotenv from 'dotenv'
+import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating'
 
 const testEnv = dotenv.config({
     path: '.env.integration-test'
@@ -42,6 +43,7 @@ export default defineConfig({
             'src/**/*.e2e.test.ts',
             'scripts/**/*.integration.test.ts',
         ],
+        exclude: [...configDefaults.exclude, ...resolveVitestFeatureTestExcludeGlobs(process.env)],
         globalSetup: ['./src/test-setup.ts'],
         coverage: {
             provider: 'v8',

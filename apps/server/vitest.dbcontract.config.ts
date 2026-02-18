@@ -3,6 +3,8 @@ import tsconfigPaths from "vite-tsconfig-paths";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
+import { resolveVitestFeatureTestExcludeGlobs } from "../../scripts/testing/featureTestGating";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
@@ -10,6 +12,7 @@ export default defineConfig({
         globals: true,
         environment: "node",
         include: ["**/*.dbcontract.spec.ts"],
+        exclude: [...resolveVitestFeatureTestExcludeGlobs()],
         isolate: true,
         testTimeout: 60_000,
         hookTimeout: 60_000,

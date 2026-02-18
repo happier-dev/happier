@@ -3,6 +3,8 @@ import tsconfigPaths from 'vite-tsconfig-paths';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
+import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
@@ -20,6 +22,7 @@ export default defineConfig({
       'scripts/**/*.integration.test.ts',
       'scripts/**/*.real.integration.test.ts',
     ],
+    exclude: [...resolveVitestFeatureTestExcludeGlobs()],
     isolate: true,
     env: {
       HAPPIER_FEATURE_POLICY_ENV: '',
