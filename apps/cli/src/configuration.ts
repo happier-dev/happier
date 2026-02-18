@@ -38,10 +38,14 @@ class Configuration {
 
   public readonly isExperimentalEnabled: boolean
   public readonly disableCaffeinate: boolean
+  public readonly socketForceWebsocketOnly: boolean
 
   // Session connection keep-alive (ephemeral thinking state + online presence).
   public readonly sessionKeepAliveIdleMs: number
   public readonly sessionKeepAliveThinkingMs: number
+
+  // MCP server SSE keepalive (prevents client idle timeouts on long-lived streams).
+  public readonly mcpSseKeepAliveIntervalMs: number | null
 
   // Claude remote TaskOutput sidechain import limits (defense-in-depth against huge transcripts).
   public readonly claudeTaskOutputMaxPendingPerAgent: number
@@ -51,6 +55,9 @@ class Configuration {
 
   // Claude subagent local JSONL follower (used in remote mode when Task returns output_file).
   public readonly claudeSubagentJsonlPollIntervalMs: number
+
+  // Claude Task tool policy (remote mode).
+  public readonly claudeTaskAllowRunInBackground: boolean
 
   // Execution runs and ephemeral tasks (session-process budgets).
   public readonly executionRunsMaxConcurrentPerSession: number
@@ -63,6 +70,13 @@ class Configuration {
 
   // Memory search (daemon-local indexing) limits.
   public readonly memoryMaxTranscriptWindowMessages: number
+
+  // Startup coordinator / deferred session buffering (fast-start).
+  public readonly startupTimingEnabled: boolean
+  public readonly startupDeferredSessionBufferMaxEntries: number
+  public readonly startupDeferredSessionBufferMaxBytes: number
+  public readonly startupPermissionSeedTranscriptTake: number
+  public readonly startupOverridesCacheMaxAgeMs: number
 
   constructor() {
     // Check if we're running as daemon based on process args
@@ -110,6 +124,8 @@ class Configuration {
 
     this.isExperimentalEnabled = ['true', '1', 'yes'].includes(process.env.HAPPIER_EXPERIMENTAL?.toLowerCase() || '');
     this.disableCaffeinate = ['true', '1', 'yes'].includes(process.env.HAPPIER_DISABLE_CAFFEINATE?.toLowerCase() || '');
+    const forceWebsocketRaw = (process.env.HAPPIER_SOCKET_FORCE_WEBSOCKET ?? '').toString().trim().toLowerCase();
+    this.socketForceWebsocketOnly = ['true', '1', 'yes', 'on'].includes(forceWebsocketRaw);
 
     const idleMsRaw = Number.parseInt(String(process.env.HAPPIER_SESSION_KEEPALIVE_IDLE_MS ?? ''), 10);
     const thinkingMsRaw = Number.parseInt(String(process.env.HAPPIER_SESSION_KEEPALIVE_THINKING_MS ?? ''), 10);
@@ -118,6 +134,13 @@ class Configuration {
     // - idle: ~15s to reduce noise while maintaining presence
     this.sessionKeepAliveIdleMs = Number.isFinite(idleMsRaw) && idleMsRaw >= 1000 ? idleMsRaw : 15_000;
     this.sessionKeepAliveThinkingMs = Number.isFinite(thinkingMsRaw) && thinkingMsRaw >= 500 ? thinkingMsRaw : 2_000;
+
+    const mcpKeepAliveRaw = String(process.env.HAPPIER_MCP_SSE_KEEPALIVE_INTERVAL_MS ?? '').trim();
+    const mcpKeepAliveMs = Number.parseInt(mcpKeepAliveRaw, 10);
+    // Default: 15s. Must be < client idle timeouts (~5 minutes observed in Claude Code logs).
+    // Set to 0 to disable (not recommended).
+    this.mcpSseKeepAliveIntervalMs =
+      mcpKeepAliveRaw === '0' ? null : (Number.isFinite(mcpKeepAliveMs) && mcpKeepAliveMs >= 10 ? mcpKeepAliveMs : 15_000);
 
     const maxPendingRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_TASKOUTPUT_MAX_PENDING_PER_AGENT ?? ''), 10);
     const maxSeenUuidsRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_TASKOUTPUT_MAX_SEEN_UUIDS_PER_SIDECHAIN ?? ''), 10);
@@ -133,6 +156,9 @@ class Configuration {
     // Default: 250ms. Most imports will be watcher-driven; this is a safety net if fs watch misses events.
     this.claudeSubagentJsonlPollIntervalMs =
       Number.isFinite(subagentPollRaw) && subagentPollRaw >= 25 ? subagentPollRaw : 250;
+
+    const allowTaskBackgroundRaw = String(process.env.HAPPIER_CLAUDE_TASK_ALLOW_RUN_IN_BACKGROUND ?? '').trim().toLowerCase();
+    this.claudeTaskAllowRunInBackground = ['1', 'true', 'yes', 'on'].includes(allowTaskBackgroundRaw);
 
     const maxConcurrentRunsRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION ?? ''), 10);
     const maxConcurrentTasksRaw = Number.parseInt(String(process.env.HAPPIER_EPHEMERAL_TASKS_MAX_CONCURRENT_PER_SESSION ?? ''), 10);
@@ -186,6 +212,34 @@ class Configuration {
     } else {
       this.memoryMaxTranscriptWindowMessages = 250;
     }
+
+    const startupTimingRaw = String(process.env.HAPPIER_STARTUP_TIMING_ENABLED ?? '').trim().toLowerCase();
+    this.startupTimingEnabled = startupTimingRaw === '1' || startupTimingRaw === 'true' || startupTimingRaw === 'yes' || startupTimingRaw === 'on';
+
+    const startupMaxEntriesRaw = Number.parseInt(String(process.env.HAPPIER_STARTUP_DEFERRED_SESSION_MAX_ENTRIES ?? ''), 10);
+    const startupMaxBytesRaw = Number.parseInt(String(process.env.HAPPIER_STARTUP_DEFERRED_SESSION_MAX_BYTES ?? ''), 10);
+    // Defaults: conservative bounds to buffer early startup writes until the server session attaches.
+    this.startupDeferredSessionBufferMaxEntries =
+      Number.isFinite(startupMaxEntriesRaw) && startupMaxEntriesRaw >= 10 ? startupMaxEntriesRaw : 500;
+    this.startupDeferredSessionBufferMaxBytes =
+      Number.isFinite(startupMaxBytesRaw) && startupMaxBytesRaw >= 1024 ? startupMaxBytesRaw : 256_000;
+
+    const startupTranscriptTakeRaw = Number.parseInt(String(process.env.HAPPIER_STARTUP_PERMISSION_SEED_TRANSCRIPT_TAKE ?? ''), 10);
+    // Default: 50 messages (enough to recover the latest permission intent without excessive transcript fetches).
+    this.startupPermissionSeedTranscriptTake =
+      Number.isFinite(startupTranscriptTakeRaw) && startupTranscriptTakeRaw >= 1
+        ? Math.min(500, Math.trunc(startupTranscriptTakeRaw))
+        : 50;
+
+    const startupOverridesCacheAgeRaw = Number.parseInt(
+      String(process.env.HAPPIER_STARTUP_OVERRIDES_CACHE_MAX_AGE_MS ?? ''),
+      10,
+    );
+    // Default: 7 days. Used only to seed fast-start permission/model defaults when explicit args are missing.
+    this.startupOverridesCacheMaxAgeMs =
+      Number.isFinite(startupOverridesCacheAgeRaw) && startupOverridesCacheAgeRaw >= 0
+        ? Math.trunc(startupOverridesCacheAgeRaw)
+        : 7 * 24 * 60 * 60 * 1000;
 
     this.currentCliVersion = packageJson.version
 
