@@ -40,6 +40,20 @@ export function createSupervisedProcess(params: CreateSupervisedProcessParams): 
 
   const restartController = new RestartController(params.policy.restart, { random });
 
+  const logDebugBestEffort = (message: string, payload?: unknown) => {
+    try {
+      params.loggerDebug?.(message, payload);
+    } catch {
+      // ignore
+    }
+  };
+
+  const fireAndForget = (promise: Promise<unknown>, label: string) => {
+    promise.catch((error) => {
+      logDebugBestEffort(`[supervisedProcess] fire-and-forget task failed (non-fatal): ${label}`, error);
+    });
+  };
+
   let disposed = false;
   let running = false;
   let pendingTimer: NodeJS.Timeout | null = null;
@@ -69,7 +83,7 @@ export function createSupervisedProcess(params: CreateSupervisedProcessParams): 
     try {
       await params.onTermination(terminationEvent);
     } catch (error) {
-      params.loggerDebug?.(`[supervisedProcess] onTermination failed (non-fatal)`, error);
+      logDebugBestEffort(`[supervisedProcess] onTermination failed (non-fatal)`, error);
     }
 
     const decision = restartController.nextDecisionForTermination(terminationEvent);
@@ -78,10 +92,14 @@ export function createSupervisedProcess(params: CreateSupervisedProcessParams): 
       return;
     }
 
-    params.onRestartScheduled?.({ attempt: decision.attempt, delayMs: decision.delayMs, event: terminationEvent });
+    try {
+      params.onRestartScheduled?.({ attempt: decision.attempt, delayMs: decision.delayMs, event: terminationEvent });
+    } catch (error) {
+      logDebugBestEffort(`[supervisedProcess] onRestartScheduled failed (non-fatal)`, error);
+    }
     clearTimer();
     pendingTimer = setTimeout(() => {
-      void runOnce();
+      fireAndForget(runOnce(), 'restart');
     }, decision.delayMs);
     pendingTimer.unref?.();
   };
@@ -95,7 +113,7 @@ export function createSupervisedProcess(params: CreateSupervisedProcessParams): 
     start: () => {
       if (disposed) return;
       if (running) return;
-      void runOnce();
+      fireAndForget(runOnce(), 'start');
     },
     dispose: () => {
       disposed = true;
