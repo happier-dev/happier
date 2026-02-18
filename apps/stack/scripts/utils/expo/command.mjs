@@ -42,7 +42,8 @@ export async function expoExec({
   const runnerDir = dir;
   const cwd = projectDir ?? runnerDir;
   await ensureDepsInstalled(runnerDir, ensureDepsLabel, { quiet, env });
-  await ensureWorkspacePackagesBuiltForComponent(runnerDir, { quiet, env });
+  const workspaceDepsDir = projectDir ?? runnerDir;
+  await ensureWorkspacePackagesBuiltForComponent(workspaceDepsDir, { quiet, env });
   const expoBin = join(runnerDir, 'node_modules', '.bin', 'expo');
   await run(expoBin, args, { cwd, env, stdio: quiet ? 'ignore' : 'inherit' });
 }
@@ -60,7 +61,8 @@ export async function expoSpawn({
   const runnerDir = dir;
   const cwd = projectDir ?? runnerDir;
   await ensureDepsInstalled(runnerDir, ensureDepsLabel, { quiet, env });
-  await ensureWorkspacePackagesBuiltForComponent(runnerDir, { quiet, env });
+  const workspaceDepsDir = projectDir ?? runnerDir;
+  await ensureWorkspacePackagesBuiltForComponent(workspaceDepsDir, { quiet, env });
   const expoBin = join(runnerDir, 'node_modules', '.bin', 'expo');
   return spawnProc(label, expoBin, args, env, { cwd, ...(options ?? {}) });
 }
