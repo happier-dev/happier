@@ -194,6 +194,7 @@ export class MessageAdapter {
       toolName: msg.toolName,
       toolResult: msg.result,
       toolCallId: msg.callId,
+      ...(typeof (msg as any).isError === 'boolean' ? { toolIsError: (msg as any).isError } : {}),
     };
   }
 

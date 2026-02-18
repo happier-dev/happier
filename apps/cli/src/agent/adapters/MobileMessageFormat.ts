@@ -125,6 +125,7 @@ export interface NormalizedMobilePayload {
   toolArgs?: Record<string, unknown>;
   toolCallId?: string;
   toolResult?: unknown;
+  toolIsError?: boolean;
 
   /** Permission information */
   permissionId?: string;

@@ -62,6 +62,7 @@ export interface ToolResultMessage {
   toolName: string;
   result: unknown;
   callId: ToolCallId;
+  isError?: boolean;
 }
 
 /**

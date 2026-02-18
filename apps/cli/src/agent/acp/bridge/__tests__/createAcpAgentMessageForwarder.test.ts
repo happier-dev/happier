@@ -80,5 +80,26 @@ describe('createAcpAgentMessageForwarder', () => {
       sidechainId: 'call_parent_1',
     });
   });
-});
 
+  it('forwards tool-result isError when provided', () => {
+    const sent: ACPMessageData[] = [];
+    const sendAcp = vi.fn((_provider: any, body: ACPMessageData) => {
+      sent.push(body);
+    });
+
+    const forwarder = createAcpAgentMessageForwarder({
+      sendAcp,
+      provider: 'claude' as any,
+      makeId: () => 'id_1',
+    });
+
+    forwarder.forward({ type: 'tool-result', callId: 'tool_1', toolName: 'read', result: { ok: false }, isError: true } as any);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      type: 'tool-result',
+      callId: 'tool_1',
+      isError: true,
+    });
+  });
+});

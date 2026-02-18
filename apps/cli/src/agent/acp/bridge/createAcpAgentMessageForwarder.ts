@@ -77,6 +77,7 @@ export function createAcpAgentMessageForwarder(params: {
           callId: ns(msg.callId),
           output: msg.result,
           id: params.makeId(),
+          ...(typeof (msg as any).isError === 'boolean' ? { isError: (msg as any).isError } : {}),
           ...(sidechainId ? { sidechainId } : {}),
         });
         return;
@@ -195,4 +196,3 @@ export function createAcpAgentMessageForwarder(params: {
 
   return { forward };
 }
-
