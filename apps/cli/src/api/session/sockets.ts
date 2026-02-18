@@ -6,6 +6,7 @@ import { getSocketIoProxyOptions } from '@/utils/proxy/socketIoProxy';
 
 export function createSessionScopedSocket(opts: { token: string; sessionId: string }): Socket<ServerToClientEvents, ClientToServerEvents> {
     const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+    const transports = configuration.socketForceWebsocketOnly ? ['websocket'] : undefined;
     return io(serverUrl, {
         auth: {
             token: opts.token,
@@ -17,7 +18,7 @@ export function createSessionScopedSocket(opts: { token: string; sessionId: stri
         reconnectionAttempts: Infinity,
         reconnectionDelay: 1000,
         reconnectionDelayMax: 5000,
-        transports: ['websocket'],
+        ...(transports ? { transports } : null),
         withCredentials: true,
         autoConnect: false,
         ...getSocketIoProxyOptions({ targetUrl: serverUrl, env: process.env }),
@@ -26,6 +27,7 @@ export function createSessionScopedSocket(opts: { token: string; sessionId: stri
 
 export function createUserScopedSocket(opts: { token: string }): Socket<ServerToClientEvents, ClientToServerEvents> {
     const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+    const transports = configuration.socketForceWebsocketOnly ? ['websocket'] : undefined;
     return io(serverUrl, {
         auth: {
             token: opts.token,
@@ -36,7 +38,7 @@ export function createUserScopedSocket(opts: { token: string }): Socket<ServerTo
         reconnectionAttempts: Infinity,
         reconnectionDelay: 1000,
         reconnectionDelayMax: 5000,
-        transports: ['websocket'],
+        ...(transports ? { transports } : null),
         withCredentials: true,
         autoConnect: false,
         ...getSocketIoProxyOptions({ targetUrl: serverUrl, env: process.env }),

@@ -131,8 +131,9 @@ export class ApiMachineClient {
         const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
         logger.debug(`[API MACHINE] Connecting to ${serverUrl}`);
 
+        const transports = configuration.socketForceWebsocketOnly ? ['websocket'] : undefined;
         this.socket = io(serverUrl, {
-            transports: ['websocket'],
+            ...(transports ? { transports } : null),
             auth: {
                 token: this.token,
                 clientType: 'machine-scoped' as const,
