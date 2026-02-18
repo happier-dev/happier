@@ -15,6 +15,10 @@ function sha256Hex(s) {
   return createHash('sha256').update(String(s ?? ''), 'utf-8').digest('hex');
 }
 
+async function readJson(path) {
+  return JSON.parse(await readFile(path, 'utf-8'));
+}
+
 function resolveBuildStatePath({ label, dir }) {
   const homeDir = getHappyStacksHomeDir();
   const key = sha256Hex(resolve(dir));
@@ -229,6 +233,118 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
     console.log(`[local] installing ${label} dependencies (first run)...`);
   }
   await run(pm.cmd, ['install'], { cwd: dir, stdio, env });
+}
+
+function collectExpectedExportFileTargets(exportsField) {
+  const out = [];
+  const visit = (value) => {
+    if (!value) return;
+    if (typeof value === 'string') {
+      out.push(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const v of value) visit(v);
+      return;
+    }
+    if (typeof value === 'object') {
+      for (const v of Object.values(value)) visit(v);
+    }
+  };
+  visit(exportsField);
+  return out;
+}
+
+function collectExpectedPackageFilesFromPackageJson(pkgJson) {
+  const candidates = [];
+  for (const key of ['main', 'module', 'types']) {
+    const v = pkgJson?.[key];
+    if (typeof v === 'string' && v.trim()) candidates.push(v.trim());
+  }
+  candidates.push(...collectExpectedExportFileTargets(pkgJson?.exports));
+
+  // Only relative file targets are meaningful on disk.
+  return [...new Set(candidates)].filter((p) => typeof p === 'string' && (p.startsWith('./') || p.startsWith('dist/')));
+}
+
+async function ensureWorkspacePackageBuilt(pkgDir, { quiet = false, env: envIn = process.env } = {}) {
+  const pkgJsonPath = join(pkgDir, 'package.json');
+  if (!(await pathExists(pkgJsonPath))) return { built: false, reason: 'missing-package-json' };
+
+  const env = await applyStackCacheEnv(envIn);
+  const stdio = quiet ? 'ignore' : 'inherit';
+  const pkgJson = await readJson(pkgJsonPath);
+  const expectedFiles = collectExpectedPackageFilesFromPackageJson(pkgJson).map((p) => join(pkgDir, p));
+  if (expectedFiles.length === 0) return { built: false, reason: 'no-expected-files' };
+
+  const missingBefore = expectedFiles.filter((p) => !existsSync(p));
+  if (missingBefore.length === 0) return { built: false, reason: 'already-built' };
+
+  const buildScript = pkgJson?.scripts?.build;
+  if (!buildScript) {
+    throw new Error(
+      `[local] missing build outputs for ${pkgJson?.name ?? pkgDir}:\n` +
+        missingBefore.map((p) => `- ${p}`).join('\n') +
+        '\nFix: add a build script, or ensure the package does not export dist/* paths.',
+    );
+  }
+
+  const pm = await getComponentPm(pkgDir, env);
+  if (pm.name === 'yarn') {
+    await ensureYarnReady({ dir: pkgDir, env, quiet });
+    await run(pm.cmd, ['-s', 'build'], { cwd: pkgDir, stdio, env });
+  } else {
+    await run(pm.cmd, ['run', '-s', 'build'], { cwd: pkgDir, stdio, env });
+  }
+
+  const missingAfter = expectedFiles.filter((p) => !existsSync(p));
+  if (missingAfter.length > 0) {
+    throw new Error(
+      `[local] build completed but expected outputs are still missing for ${pkgJson?.name ?? pkgDir}:\n` +
+        missingAfter.map((p) => `- ${p}`).join('\n') +
+        '\nFix: ensure the package build generates the files referenced by package.json exports/main/types.',
+    );
+  }
+
+  return { built: true, reason: 'rebuilt' };
+}
+
+export async function ensureWorkspacePackagesBuiltForComponent(componentDir, { quiet = false, env = process.env } = {}) {
+  const monorepoRoot = coerceHappyMonorepoRootFromPath(componentDir);
+  if (!monorepoRoot) {
+    return { ok: true, built: [], skipped: ['not-monorepo'] };
+  }
+
+  const componentPkgPath = join(componentDir, 'package.json');
+  if (!(await pathExists(componentPkgPath))) {
+    return { ok: true, built: [], skipped: ['missing-component-package-json'] };
+  }
+
+  const componentPkg = await readJson(componentPkgPath);
+  const componentName = typeof componentPkg?.name === 'string' ? componentPkg.name : '';
+  const depSources = [componentPkg?.dependencies, componentPkg?.optionalDependencies, componentPkg?.devDependencies];
+  const internalDeps = new Set();
+  for (const src of depSources) {
+    if (!src || typeof src !== 'object') continue;
+    for (const name of Object.keys(src)) {
+      if (!name.startsWith('@happier-dev/')) continue;
+      if (name === componentName) continue;
+      internalDeps.add(name);
+    }
+  }
+
+  const built = [];
+  for (const name of internalDeps) {
+    const id = String(name).split('/')[1] ?? '';
+    if (!id) continue;
+    const pkgDir = join(monorepoRoot, 'packages', id);
+    if (!(await pathExists(join(pkgDir, 'package.json')))) continue;
+
+    const res = await ensureWorkspacePackageBuilt(pkgDir, { quiet, env });
+    if (res.built) built.push(name);
+  }
+
+  return { ok: true, built, skipped: [] };
 }
 
 export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: envIn = process.env } = {}) {
