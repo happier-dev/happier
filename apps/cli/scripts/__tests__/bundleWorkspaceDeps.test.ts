@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { bundleWorkspaceDeps } from '../bundleWorkspaceDeps.mjs';
+import { bundleWorkspaceDeps, vendorBundledDependencyFromRootNodeModules } from '../bundleWorkspaceDeps.mjs';
 
 function writeJson(path: string, value: unknown) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
@@ -14,6 +14,29 @@ describe('bundleWorkspaceDeps', () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'happy-bundle-workspace-deps-'));
     writeJson(resolve(repoRoot, 'package.json'), { name: 'repo', private: true });
     writeFileSync(resolve(repoRoot, 'yarn.lock'), '# lock\n', 'utf8');
+
+    // Hoisted runtime deps that must be vendored into apps/cli/node_modules for npm pack.
+    mkdirSync(resolve(repoRoot, 'node_modules', 'base64-js'), { recursive: true });
+    writeJson(resolve(repoRoot, 'node_modules', 'base64-js', 'package.json'), {
+      name: 'base64-js',
+      version: '1.5.1',
+      main: 'index.js',
+    });
+    writeFileSync(resolve(repoRoot, 'node_modules', 'base64-js', 'index.js'), 'module.exports = {};\n', 'utf8');
+    mkdirSync(resolve(repoRoot, 'node_modules', '@noble', 'hashes'), { recursive: true });
+    writeJson(resolve(repoRoot, 'node_modules', '@noble', 'hashes', 'package.json'), {
+      name: '@noble/hashes',
+      version: '1.8.0',
+      main: 'index.js',
+    });
+    writeFileSync(resolve(repoRoot, 'node_modules', '@noble', 'hashes', 'index.js'), 'module.exports = {};\n', 'utf8');
+    mkdirSync(resolve(repoRoot, 'node_modules', 'tweetnacl'), { recursive: true });
+    writeJson(resolve(repoRoot, 'node_modules', 'tweetnacl', 'package.json'), {
+      name: 'tweetnacl',
+      version: '1.0.3',
+      main: 'nacl-fast.js',
+    });
+    writeFileSync(resolve(repoRoot, 'node_modules', 'tweetnacl', 'nacl-fast.js'), 'module.exports = {};', 'utf8');
 
     const agentsDir = resolve(repoRoot, 'packages', 'agents');
     const cliCommonDir = resolve(repoRoot, 'packages', 'cli-common');
@@ -60,6 +83,8 @@ describe('bundleWorkspaceDeps', () => {
 
     bundleWorkspaceDeps({ repoRoot, happyCliDir });
 
+    expect(existsSync(join(happyCliDir, 'node_modules', 'base64-js', 'package.json'))).toBe(true);
+    expect(existsSync(join(happyCliDir, 'node_modules', '@noble', 'hashes', 'package.json'))).toBe(true);
     const bundledAgentsPkgJson = JSON.parse(
       readFileSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'agents', 'package.json'), 'utf8'),
     );
@@ -85,6 +110,29 @@ describe('bundleWorkspaceDeps', () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'happy-bundle-workspace-deps-tree-'));
     writeJson(resolve(repoRoot, 'package.json'), { name: 'repo', private: true });
     writeFileSync(resolve(repoRoot, 'yarn.lock'), '# lock\n', 'utf8');
+
+    // Hoisted runtime deps that must be vendored into apps/cli/node_modules for npm pack.
+    mkdirSync(resolve(repoRoot, 'node_modules', 'base64-js'), { recursive: true });
+    writeJson(resolve(repoRoot, 'node_modules', 'base64-js', 'package.json'), {
+      name: 'base64-js',
+      version: '1.5.1',
+      main: 'index.js',
+    });
+    writeFileSync(resolve(repoRoot, 'node_modules', 'base64-js', 'index.js'), 'module.exports = {};\n', 'utf8');
+    mkdirSync(resolve(repoRoot, 'node_modules', '@noble', 'hashes'), { recursive: true });
+    writeJson(resolve(repoRoot, 'node_modules', '@noble', 'hashes', 'package.json'), {
+      name: '@noble/hashes',
+      version: '1.8.0',
+      main: 'index.js',
+    });
+    writeFileSync(resolve(repoRoot, 'node_modules', '@noble', 'hashes', 'index.js'), 'module.exports = {};\n', 'utf8');
+    mkdirSync(resolve(repoRoot, 'node_modules', 'tweetnacl'), { recursive: true });
+    writeJson(resolve(repoRoot, 'node_modules', 'tweetnacl', 'package.json'), {
+      name: 'tweetnacl',
+      version: '1.0.3',
+      main: 'nacl-fast.js',
+    });
+    writeFileSync(resolve(repoRoot, 'node_modules', 'tweetnacl', 'nacl-fast.js'), 'module.exports = {};', 'utf8');
 
     const protocolDir = resolve(repoRoot, 'packages', 'protocol');
     const happyCliDir = resolve(repoRoot, 'apps', 'cli');
@@ -145,6 +193,9 @@ describe('bundleWorkspaceDeps', () => {
 
     bundleWorkspaceDeps({ repoRoot, happyCliDir });
 
+    expect(existsSync(join(happyCliDir, 'node_modules', 'base64-js', 'package.json'))).toBe(true);
+    expect(existsSync(join(happyCliDir, 'node_modules', '@noble', 'hashes', 'package.json'))).toBe(true);
+
     // dep-a is vendored because protocol declares it.
     expect(() =>
       readFileSync(
@@ -170,5 +221,29 @@ describe('bundleWorkspaceDeps', () => {
         'utf8',
       ),
     ).not.toThrow();
+  });
+
+  it('vendors a hoisted dependency into apps/cli/node_modules', () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'happier-bundle-workspaces-'));
+    const happyCliDir = join(repoRoot, 'apps', 'cli');
+
+    try {
+      mkdirSync(resolve(repoRoot, 'node_modules', 'tweetnacl'), { recursive: true });
+      writeJson(resolve(repoRoot, 'node_modules', 'tweetnacl', 'package.json'), {
+        name: 'tweetnacl',
+        version: '1.0.3',
+        main: 'nacl-fast.js',
+      });
+      writeFileSync(resolve(repoRoot, 'node_modules', 'tweetnacl', 'nacl-fast.js'), 'module.exports = {};', 'utf8');
+
+      mkdirSync(resolve(happyCliDir, 'node_modules'), { recursive: true });
+
+      vendorBundledDependencyFromRootNodeModules({ repoRoot, happyCliDir, packageName: 'tweetnacl' });
+
+      expect(existsSync(join(happyCliDir, 'node_modules', 'tweetnacl', 'package.json'))).toBe(true);
+      expect(existsSync(join(happyCliDir, 'node_modules', 'tweetnacl', 'nacl-fast.js'))).toBe(true);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
   });
 });

@@ -43,8 +43,14 @@ const tscBin = resolveTscBin();
 export function runTsc(tsconfigPath, opts) {
   const exec = opts?.execFileSync ?? execFileSync;
   const tsc = opts?.tscBin ?? tscBin;
+  const platform = opts?.platform ?? process.platform;
   try {
-    exec(tsc, ['-p', tsconfigPath], { stdio: 'inherit' });
+    if (platform === 'win32' && (tsc.endsWith('.cmd') || tsc.endsWith('.bat'))) {
+      const command = `"${tsc}" -p "${tsconfigPath}"`;
+      exec('cmd.exe', ['/d', '/s', '/c', command], { stdio: 'inherit' });
+    } else {
+      exec(tsc, ['-p', tsconfigPath], { stdio: 'inherit' });
+    }
   } catch (error) {
     const suffix = tsconfigPath ? ` (${tsconfigPath})` : '';
     const message = error instanceof Error ? error.message : String(error);

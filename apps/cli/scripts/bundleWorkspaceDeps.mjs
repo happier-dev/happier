@@ -1,3 +1,4 @@
+import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +10,33 @@ import {
 } from '../../../packages/cli-common/dist/workspaces/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+export function vendorBundledDependencyFromRootNodeModules(params) {
+  const repoRoot = params.repoRoot;
+  const happyCliDir = params.happyCliDir;
+  const packageName = params.packageName;
+
+  if (typeof repoRoot !== 'string' || repoRoot.length === 0) {
+    throw new Error('vendorBundledDependencyFromRootNodeModules requires repoRoot');
+  }
+  if (typeof happyCliDir !== 'string' || happyCliDir.length === 0) {
+    throw new Error('vendorBundledDependencyFromRootNodeModules requires happyCliDir');
+  }
+  if (typeof packageName !== 'string' || packageName.length === 0) {
+    throw new Error('vendorBundledDependencyFromRootNodeModules requires packageName');
+  }
+
+  const srcDir = resolve(repoRoot, 'node_modules', packageName);
+  const destDir = resolve(happyCliDir, 'node_modules', packageName);
+
+  if (!existsSync(srcDir)) {
+    throw new Error(`Unable to vendor dependency '${packageName}': missing ${srcDir}`);
+  }
+
+  mkdirSync(resolve(happyCliDir, 'node_modules'), { recursive: true });
+  rmSync(destDir, { recursive: true, force: true });
+  cpSync(srcDir, destDir, { recursive: true });
+}
 
 export function bundleWorkspaceDeps(opts = {}) {
   const repoRoot = opts.repoRoot ?? findRepoRoot(__dirname);
@@ -39,6 +67,12 @@ export function bundleWorkspaceDeps(opts = {}) {
       destPackageDir: b.destDir,
     });
   }
+
+  // `npm pack` only includes `bundledDependencies` if they're present under apps/cli/node_modules.
+  // Yarn hoists to the repo root by default, so we explicitly vendor these from the root node_modules.
+  vendorBundledDependencyFromRootNodeModules({ repoRoot, happyCliDir, packageName: 'base64-js' });
+  vendorBundledDependencyFromRootNodeModules({ repoRoot, happyCliDir, packageName: '@noble/hashes' });
+  vendorBundledDependencyFromRootNodeModules({ repoRoot, happyCliDir, packageName: 'tweetnacl' });
 }
 
 const invokedAsMain = (() => {
