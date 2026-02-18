@@ -205,15 +205,15 @@ test('secret-bearing workflows require release-admin actor guard before privileg
         guardStep,
         `${file} '${guardJob}' should use the composite release-actor-guard action`
       );
-      assert.equal(
-        guardStep?.with?.app_id,
-        undefined,
-        `${file} '${guardJob}' should not pass app_id secrets to the guard action`
+      assert.match(
+        String(guardStep?.with?.app_id ?? ''),
+        /secrets\.RELEASE_BOT_APP_ID/,
+        `${file} '${guardJob}' should pass RELEASE_BOT_APP_ID to the guard action`
       );
-      assert.equal(
-        guardStep?.with?.private_key,
-        undefined,
-        `${file} '${guardJob}' should not pass private_key secrets to the guard action`
+      assert.match(
+        String(guardStep?.with?.private_key ?? ''),
+        /secrets\.RELEASE_BOT_PRIVATE_KEY/,
+        `${file} '${guardJob}' should pass RELEASE_BOT_PRIVATE_KEY to the guard action`
       );
     }
 
