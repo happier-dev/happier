@@ -401,6 +401,58 @@ Applies to `apps/ui/sources`.
 - Do **not** create ad-hoc summary/report/status files.
 - Before marking work complete, ensure there are no stray `*_SUMMARY.md` / `*_ANALYSIS.md` files or similar; delete unapproved summaries.
 
+---
+
+## Internal Packages & CLI Packaging (CRITICAL)
+
+This repo has several **private workspace packages** (for example `packages/protocol`, `packages/agents`, `packages/cli-common`, `packages/release-runtime`) that are *not* published independently, but **must ship inside** published npm packages (currently: `apps/cli`, `apps/stack`, `packages/relay-server`).
+
+### How internal workspace shipping works
+- Published artifacts with bundled workspaces run `prepack`, which executes a `scripts/bundleWorkspaceDeps.mjs`:
+  - `apps/cli/scripts/bundleWorkspaceDeps.mjs`
+  - `apps/stack/scripts/bundleWorkspaceDeps.mjs`
+  - `packages/relay-server/scripts/bundleWorkspaceDeps.mjs`
+- `bundleWorkspaceDeps.mjs`:
+  1) Copies each internal workspace’s `dist/` into `<host>/node_modules/@happier-dev/<pkg>/dist`
+  2) Writes a **sanitized** `package.json` for each bundled workspace under `<host>/node_modules/@happier-dev/<pkg>/package.json`
+  3) Vendors each bundled workspace’s **external runtime dependency tree** into:
+     - `<host>/node_modules/@happier-dev/<pkg>/node_modules/**`
+     via `vendorBundledPackageRuntimeDependencies` in `packages/cli-common/src/workspaces/index.ts`
+
+### Dependency ownership rules (single source of truth)
+When you add a dependency, add it to the **package that imports it**:
+- If `packages/protocol` imports a library, add it to `packages/protocol/package.json#dependencies`.
+- If `apps/cli` imports a library directly, add it to `apps/cli/package.json#dependencies`.
+- **Do not** “mirror” protocol-only deps into `apps/cli/package.json` just because the CLI bundles protocol.
+  - Bundled workspaces are *not installed* by npm as independent packages, so their dependencies will not be installed automatically.
+  - Our bundler handles this by vendoring the dependency tree into the bundled workspace’s `node_modules` based on that workspace’s `package.json`.
+
+### Adding a new internal workspace package to the CLI
+If you introduce a new `packages/<name>` that must ship with the CLI:
+- Add it to `apps/cli/package.json#bundledDependencies` and `apps/cli/package.json#dependencies` (workspace version `"0.0.0"`).
+- Add it to the `bundles` list in `apps/cli/scripts/bundleWorkspaceDeps.mjs`.
+- Update/extend `apps/cli/scripts/__tests__/bundleWorkspaceDeps.test.ts` and `apps/cli/scripts/__tests__/publishBundledDependencies.test.ts`.
+
+### Bundling internal dependency closure (IMPORTANT)
+`vendorBundledPackageRuntimeDependencies(...)` **only** vendors **external** deps (it intentionally ignores `@happier-dev/*`).
+
+If a bundled workspace imports another internal workspace at runtime, the host package must also bundle that internal dependency.
+- Example: `@happier-dev/cli-common/providers` imports `@happier-dev/agents` which depends on `@happier-dev/protocol`, so `apps/stack` must bundle `@happier-dev/{cli-common,agents,protocol}` (not just `cli-common`).
+
+### “Missing dist / invalid exports” failures (Metro/Node)
+Internal packages use `package.json#exports` pointing at `dist/**`. If `dist` is missing, consumers may fail with messages like:
+- “invalid package.json configuration… exports … dist/<file>.js does not exist”
+
+Fixes/guardrails:
+- Build the workspace: `yarn workspace @happier-dev/protocol build` (or the relevant package).
+- Stack builds call `ensureWorkspacePackagesBuiltForComponent` (`apps/stack/scripts/utils/proc/pm.mjs`) before running Expo/Metro to fail fast and/or build missing internal workspace outputs.
+
+### Packaging sanity checks (do these when touching bundling/deps)
+- Run the `apps/cli` script tests around bundling.
+- Validate the tarball contents:
+  - `cd apps/cli && node scripts/bundleWorkspaceDeps.mjs && npm pack`
+  - Ensure protocol deps appear under `package/node_modules/@happier-dev/protocol/node_modules/**` (not duplicated at `package/node_modules/**` unless `apps/cli` imports them directly).
+
 ## principles
 
 Default to human-readable CLI output.
