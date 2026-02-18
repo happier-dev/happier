@@ -373,6 +373,7 @@ export class ApiSessionClient extends EventEmitter {
 
             const stateUpdateResult = handleSessionStateUpdate({
                 update: data,
+                updateSource: opts.source,
                 sessionId: this.sessionId,
                 metadata: this.metadata,
                 metadataVersion: this.metadataVersion,

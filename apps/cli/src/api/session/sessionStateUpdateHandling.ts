@@ -3,6 +3,7 @@ import type { AgentState, Metadata, Update } from '../types';
 
 export function handleSessionStateUpdate(params: {
     update: Update;
+    updateSource: 'session-scoped' | 'user-scoped';
     sessionId: string;
     metadata: Metadata | null;
     metadataVersion: number;
@@ -92,7 +93,11 @@ export function handleSessionStateUpdate(params: {
     }
 
     if (body?.t === 'update-machine') {
-        params.onWarning('[SOCKET] WARNING: Session client received unexpected machine update - ignoring');
+        // User-scoped sockets receive global machine updates; those are expected and irrelevant to session state.
+        // Session-scoped sockets should not receive machine updates; keep a warning in that case.
+        if (params.updateSource === 'session-scoped') {
+            params.onWarning('[SOCKET] WARNING: Session client received unexpected machine update - ignoring');
+        }
         return {
             handled: true,
             metadata: params.metadata,
