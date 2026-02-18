@@ -1460,7 +1460,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 
     const accountProfile = useProfile();
     const agentOptionState = agentNewSessionOptionStateByAgentId[agentType] ?? null;
-    const connectedServicesFeatureEnabled = useFeatureEnabled('connected.services');
+    const connectedServicesFeatureEnabled = useFeatureEnabled('connectedServices');
     const agentCore = React.useMemo(() => AGENTS_CORE[agentType], [agentType]);
 
     const supportedConnectedServiceIds = React.useMemo<ReadonlyArray<ConnectedServiceId>>(() => {
