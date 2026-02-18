@@ -24,7 +24,12 @@ type SettingsKey = Extract<keyof KnownSettings, string>;
 
 export type InstallSpecSettingKey = {
     [K in SettingsKey]: KnownSettings[K] extends string | null ? K : never;
-}[SettingsKey];
+}[SettingsKey] | 'codexMcpResumeInstallSpec' | 'codexAcpInstallSpec';
+
+function readStringSetting(settings: KnownSettings, key: string): string | null {
+    const value = (settings as unknown as Record<string, unknown>)[key];
+    return typeof value === 'string' ? value : null;
+}
 
 export type InstallableDepDataLike = {
     installed: boolean;
@@ -66,7 +71,7 @@ export function getInstallableDepRegistryEntries(): readonly InstallableDepRegis
     const codexResume: InstallableDepRegistryEntry = {
         key: 'codex-mcp-resume',
         experimental: true,
-        enabledWhen: (settings) => settings.codexBackendMode === 'mcp_resume',
+        enabledWhen: (settings) => readStringSetting(settings, 'codexBackendMode') === 'mcp_resume',
         depId: CODEX_MCP_RESUME_DEP_ID,
         depTitle: t('deps.installable.codexResume.title'),
         depIconName: 'refresh-circle-outline',
@@ -99,7 +104,7 @@ export function getInstallableDepRegistryEntries(): readonly InstallableDepRegis
     const codexAcp: InstallableDepRegistryEntry = {
         key: 'codex-acp',
         experimental: true,
-        enabledWhen: (settings) => settings.codexBackendMode === 'acp',
+        enabledWhen: (settings) => readStringSetting(settings, 'codexBackendMode') === 'acp',
         depId: CODEX_ACP_DEP_ID,
         depTitle: t('deps.installable.codexAcp.title'),
         depIconName: 'swap-horizontal-outline',

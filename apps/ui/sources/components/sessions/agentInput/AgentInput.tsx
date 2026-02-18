@@ -167,9 +167,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingHorizontal: 8,
     },
     permissionRequestsContainer: {
-        paddingHorizontal: 8,
         paddingTop: 10,
-        paddingBottom: 6,
         gap: 8,
     },
     permissionRequestTitle: {
@@ -178,9 +176,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         ...Typography.default('semiBold'),
     },
     permissionRequestCard: {
-        backgroundColor: (theme.colors as any).surfaceHighest ?? theme.colors.input.background,
-        borderRadius: 12,
-        borderWidth: 1,
+        borderBottomWidth: 1,
         borderColor: theme.colors.divider,
         overflow: 'hidden',
     },
@@ -678,13 +674,13 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         return computeAcpConfigOptionControls({ agentId, metadata: props.metadata ?? null });
     }, [agentId, props.metadata, props.onAcpConfigOptionChange]);
 
-	        const effectivePermissionLabel = React.useMemo(() => {
-	            return getPermissionModeLabelForAgentType(agentId, effectivePermissionPolicy.effectiveMode);
-	        }, [agentId, effectivePermissionPolicy.effectiveMode]);
+    const effectivePermissionLabel = React.useMemo(() => {
+        return getPermissionModeLabelForAgentType(agentId, effectivePermissionPolicy.effectiveMode);
+    }, [agentId, effectivePermissionPolicy.effectiveMode]);
 
-		    const permissionChipLabel = React.useMemo(() => {
-		        return getPermissionModeBadgeLabelForAgentType(agentId, effectivePermissionPolicy.effectiveMode);
-		    }, [agentId, effectivePermissionPolicy.effectiveMode]);
+    const permissionChipLabel = React.useMemo(() => {
+        return getPermissionModeBadgeLabelForAgentType(agentId, effectivePermissionPolicy.effectiveMode);
+    }, [agentId, effectivePermissionPolicy.effectiveMode]);
 
     // Handle settings button press
     const handleSettingsPress = React.useCallback(() => {
@@ -979,24 +975,15 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 	                                ) : null}
 
 	                                {/* Permission Mode Section */}
-		                                <PermissionModePicker
-		                                    title={getPermissionModeTitleForAgentType(agentId)}
-		                                    options={permissionModeOptions}
-		                                    selected={effectivePermissionPolicy.effectiveMode}
-		                                    onSelect={handleSettingsSelect}
-		                                    styles={styles}
-		                                />
-
-                                    <View style={styles.overlaySection}>
-                                        <Text style={styles.overlayOptionDescription}>
-                                            Effective: {effectivePermissionLabel}
-                                        </Text>
-                                        {effectivePermissionPolicy.notes.map((note, idx) => (
-                                            <Text key={idx} style={styles.overlayOptionDescription}>
-                                                {note}
-                                            </Text>
-                                        ))}
-                                    </View>
+                                    <PermissionModePicker
+                                        title={getPermissionModeTitleForAgentType(agentId)}
+                                        options={permissionModeOptions}
+                                        selected={effectivePermissionPolicy.effectiveMode}
+                                        onSelect={handleSettingsSelect}
+                                        styles={styles}
+                                        effectivePermissionLabel={effectivePermissionLabel}
+                                        effectivePermissionPolicy={effectivePermissionPolicy}
+                                    />
 
                                     {acpSessionModePickerControl ? (
                                         <>
@@ -1322,12 +1309,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 <View style={[styles.unifiedPanel, props.panelStyle]}>
                     {props.sessionId && pendingPermissionRequests.length > 0 ? (
                         <View style={styles.permissionRequestsContainer}>
-                            <Text style={styles.permissionRequestTitle}>{t('status.permissionRequired')}</Text>
                             {pendingPermissionRequests.map((req) => {
-                                const summary = formatPermissionRequestSummary({ toolName: req.tool, toolInput: req.arguments });
                                 return (
                                     <View key={req.id} style={styles.permissionRequestCard}>
-                                        <Text style={styles.permissionRequestSummary}>{summary}</Text>
                                         <PermissionFooter
                                             permission={{ id: req.id, status: 'pending' }}
                                             sessionId={props.sessionId!}

@@ -72,7 +72,7 @@ vi.mock('@/sync/sync', () => ({
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
-    useSettings: () => ({ backendEnabledById: {} }),
+    useSettings: () => ({ backendEnabledById: {}, sessionDefaultPermissionModeByAgent: {} }),
     useAllMachines: () => ([{ id: 'm1', metadata: { name: 'My Machine', host: 'm1' } }]),
 }));
 
@@ -131,6 +131,14 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
+vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
+    getPermissionModeLabelForAgentType: () => 'Ask',
+    getPermissionModeOptionsForAgentType: () => [
+        { value: 'default', label: 'Default', description: 'Use the global default', icon: 'list-outline' },
+        { value: 'ask', label: 'Ask', description: 'Ask each time', icon: 'help-circle-outline' },
+    ],
+}));
+
 vi.mock('@happier-dev/agents', async (importOriginal) => {
     const actual: any = await importOriginal();
     return { ...actual, getAgentAdvancedModeCapabilities: () => ({ supportsRuntimeModeSwitch: false }) };
@@ -157,5 +165,21 @@ describe('ProviderSettingsScreen', () => {
         expect(installer.props.capabilityId).toBe('cli.codex');
         expect(installer.props.installed).toBe(false);
         expect(installer.props.installability).toMatchObject({ kind: 'installable' });
+    });
+
+    it('includes a permissions section to set the default permission mode for this backend', async () => {
+        const Screen = (await import('./[providerId]')).default;
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(Screen));
+        });
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        const items = tree!.root.findAllByType('Item' as any);
+        const permissionItem = items.find((item: any) => item?.props?.title === 'settingsSession.permissions.defaultPermissionModeTitle');
+        expect(permissionItem).toBeTruthy();
     });
 });

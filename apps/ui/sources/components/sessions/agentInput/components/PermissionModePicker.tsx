@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Pressable, Text, View } from 'react-native';
 
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
+import type { EffectivePermissionModeDescription } from '@/sync/domains/permissions/describeEffectivePermissionMode';
 
 export type PermissionModePickerOption = Readonly<{
     value: PermissionMode;
@@ -28,6 +29,8 @@ export function PermissionModePicker(props: {
         overlayOptionLabelUnselected: any;
         overlayOptionDescription: any;
     }>;
+    effectivePermissionLabel: string;
+    effectivePermissionPolicy: EffectivePermissionModeDescription;
 }): React.ReactNode {
     const selected = React.useMemo(() => {
         if (props.options.some((option) => option.value === props.selected)) {
@@ -39,6 +42,16 @@ export function PermissionModePicker(props: {
     return (
         <View style={props.styles.overlaySection}>
             <Text style={props.styles.overlaySectionTitle}>{props.title}</Text>
+            <View style={{ paddingHorizontal: 16 }}>
+                <Text style={[props.styles.overlayOptionDescription]}>
+                    Effective: {props.effectivePermissionLabel}
+                </Text>
+                {props.effectivePermissionPolicy.notes.map((note, idx) => (
+                    <Text key={idx} style={props.styles.overlayOptionDescription}>
+                        {note}
+                    </Text>
+                ))}
+            </View>
             {props.options.map((option) => {
                 const isSelected = selected === option.value;
                 return (

@@ -26,6 +26,8 @@ import {
 import { useCLIDetection } from '@/hooks/auth/useCLIDetection';
 import { useCapabilityInstallability } from '@/hooks/machine/useCapabilityInstallability';
 import { ProviderCliInstallItem } from '@/components/settings/providers/ProviderCliInstallItem';
+import { getPermissionModeLabelForAgentType, getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
+import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 
 const ProviderSettingsNumberField = React.memo(function ProviderSettingsNumberField(props: {
     field: any;
@@ -190,6 +192,17 @@ export default React.memo(function ProviderSettingsScreen() {
         } as any);
     };
 
+    const defaultPermissionByAgent = (settings as any).sessionDefaultPermissionModeByAgent as Record<string, PermissionMode> | undefined;
+    const permissionMode = ((defaultPermissionByAgent as any)?.[providerId] ?? 'default') as PermissionMode;
+    const setPermissionMode = (next: PermissionMode) => {
+        sync.applySettings({
+            sessionDefaultPermissionModeByAgent: {
+                ...(defaultPermissionByAgent ?? {}),
+                [providerId]: next,
+            },
+        } as any);
+    };
+
     const resumeSupportKind = describeResumeSupportKind({
         supportsVendorResume: core.resume.supportsVendorResume,
         experimental: core.resume.experimental,
@@ -276,6 +289,49 @@ export default React.memo(function ProviderSettingsScreen() {
                         subtitle={core.availability.experimental ? t('settingsProviders.channelExperimental') : t('settingsProviders.channelStable')}
                         icon={<Ionicons name="flask-outline" size={29} color={theme.colors.textSecondary} />}
                         showChevron={false}
+                    />
+                </ItemGroup>
+
+                <ItemGroup
+                    title={t('settingsSession.permissions.title')}
+                    footer={t('settingsSession.permissions.backendFooter')}
+                >
+                    <DropdownMenu
+                        open={openMenu === 'permissionMode'}
+                        onOpenChange={(next) => setOpenMenu(next ? 'permissionMode' : null)}
+                        variant="selectable"
+                        search={false}
+                        selectedId={permissionMode as any}
+                        showCategoryTitles={false}
+                        matchTriggerWidth={true}
+                        connectToTrigger={true}
+                        rowKind="item"
+                        popoverBoundaryRef={popoverBoundaryRef}
+                        trigger={({ open, toggle }) => (
+                            <Item
+                                title={t('settingsSession.permissions.defaultPermissionModeTitle')}
+                                subtitle={getPermissionModeLabelForAgentType(providerId as any, permissionMode)}
+                                icon={<Ionicons name="shield-checkmark-outline" size={29} color="#34C759" />}
+                                rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
+                                onPress={toggle}
+                                showChevron={false}
+                                selected={false}
+                            />
+                        )}
+                        items={getPermissionModeOptionsForAgentType(providerId as any).map((opt) => ({
+                            id: opt.value,
+                            title: opt.label,
+                            subtitle: opt.description,
+                            icon: (
+                                <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                    <Ionicons name={opt.icon as any} size={22} color={theme.colors.textSecondary} />
+                                </View>
+                            ),
+                        }))}
+                        onSelect={(id) => {
+                            setPermissionMode(id as any);
+                            setOpenMenu(null);
+                        }}
                     />
                 </ItemGroup>
 

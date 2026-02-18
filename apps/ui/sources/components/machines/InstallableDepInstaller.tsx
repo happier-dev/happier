@@ -9,7 +9,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
-import type { KnownSettings } from '@/sync/domains/settings/settings';
+import type { InstallSpecSettingKey } from '@/capabilities/installableDepsRegistry';
 import { compareVersions, parseVersion } from '@/utils/system/versionUtils';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -20,12 +20,6 @@ type InstallableDepData = {
     lastInstallLogPath: string | null;
     registry?: { ok: true; latestVersion: string | null } | { ok: false; errorMessage: string };
 };
-
-type SettingsKey = Extract<keyof KnownSettings, string>;
-
-type InstallSpecSettingKey = {
-    [K in SettingsKey]: KnownSettings[K] extends string | null ? K : never;
-}[SettingsKey];
 
 function computeUpdateAvailable(data: InstallableDepData | null): boolean {
     if (!data?.installed) return false;
@@ -97,7 +91,7 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
             props.installSpecTitle,
             props.installSpecDescription,
             {
-                defaultValue: installSpec ?? '',
+                defaultValue: typeof installSpec === 'string' ? installSpec : '',
                 placeholder: t('deps.ui.installSpecPlaceholder'),
                 confirmText: t('common.save'),
                 cancelText: t('common.cancel'),

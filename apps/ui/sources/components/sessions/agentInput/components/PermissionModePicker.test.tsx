@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { PermissionModePicker } from './PermissionModePicker';
+import type { EffectivePermissionModeDescription } from '@/sync/domains/permissions/describeEffectivePermissionMode';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -41,8 +42,13 @@ function renderPicker(params: {
     selected: PermissionMode;
     onSelect?: ReturnType<typeof vi.fn<(mode: PermissionMode) => void>>;
     styles?: ReturnType<typeof buildStyles>;
+    effectivePermissionPolicy?: EffectivePermissionModeDescription;
+    effectivePermissionLabel?: string;
 }) {
     const onSelect = params.onSelect ?? vi.fn<(mode: PermissionMode) => void>();
+    const effectivePermissionPolicy: EffectivePermissionModeDescription =
+        params.effectivePermissionPolicy ?? { effectiveMode: params.selected, reasons: [], notes: [] };
+    const effectivePermissionLabel = params.effectivePermissionLabel ?? 'Effective';
     let tree: renderer.ReactTestRenderer | undefined;
     act(() => {
         tree = renderer.create(
@@ -55,6 +61,8 @@ function renderPicker(params: {
                 selected={params.selected}
                 onSelect={onSelect}
                 styles={params.styles ?? buildStyles()}
+                effectivePermissionLabel={effectivePermissionLabel}
+                effectivePermissionPolicy={effectivePermissionPolicy}
             />,
         );
     });

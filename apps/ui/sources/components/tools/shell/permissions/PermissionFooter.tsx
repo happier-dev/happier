@@ -28,6 +28,7 @@ interface PermissionFooterProps {
     metadata?: any;
     canApprovePermissions?: boolean;
     disabledReason?: 'public' | 'readOnly' | 'notGranted';
+    embedded?: boolean;
 }
 
 export const PermissionFooter: React.FC<PermissionFooterProps> = ({
@@ -38,6 +39,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     metadata,
     canApprovePermissions = true,
     disabledReason,
+    embedded = false,
 }) => {
     const { theme } = useUnistyles();
     const [loadingButton, setLoadingButton] = useState<'allow' | 'deny' | 'abort' | null>(null);
@@ -433,12 +435,13 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     const isCodexApprovedExecPolicy = isCodexDecision && isApproved && permission.decision === 'approved_execpolicy_amendment';
     const isCodexAborted = isCodexDecision && isDenied && permission.decision === 'abort';
 
+    //merge default styles with custom styles
     const styles = StyleSheet.create({
         container: {
-            paddingHorizontal: 12,
-            paddingVertical: 8,
             justifyContent: 'center',
             gap: 10,
+            paddingHorizontal: embedded ? 0 : 12,
+            paddingVertical: embedded ? 0 : 8,
         },
         summary: {
             fontSize: 12,
