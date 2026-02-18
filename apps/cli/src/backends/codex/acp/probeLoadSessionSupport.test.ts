@@ -71,4 +71,15 @@ describe.sequential('probeCodexAcpLoadSessionSupport', () => {
     expect(String(args?.env?.PATH ?? '')).toContain(shimsDir);
     expect(String(args?.env?.PATH ?? '')).toContain(pathDir);
   }, 15_000);
+
+  it('short-circuits when aborted and does not invoke capability probe', async () => {
+    const { probeCodexAcpLoadSessionSupport } = await import('./probeLoadSessionSupport');
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await probeCodexAcpLoadSessionSupport({ signal: controller.signal });
+
+    expect(result.ok).toBe(false);
+    expect(probeAcpAgentCapabilitiesMock).not.toHaveBeenCalled();
+  });
 });

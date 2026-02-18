@@ -29,7 +29,12 @@ export function createCodexLocalControlSupportResolver(
 
     const acpLoadSessionSupported = await (async () => {
       if (!params.experimentalCodexAcpEnabled) return false;
-      if (!opts.includeAcpProbe) return false;
+      if (!opts.includeAcpProbe) {
+        // Fast-start: do not block local mode on a potentially-slow ACP probe.
+        // If we already have a cached result from a prior probe, honor it.
+        // Otherwise, optimistically assume support and verify later when needed.
+        return typeof acpLoadSessionSupportedCache === 'boolean' ? acpLoadSessionSupportedCache : true;
+      }
       if (typeof acpLoadSessionSupportedCache === 'boolean') return acpLoadSessionSupportedCache;
       const probe = await probeAcpLoadSessionSupport();
       acpLoadSessionSupportedCache = probe.ok ? probe.loadSession === true : false;
@@ -53,4 +58,3 @@ export function createCodexLocalControlSupportResolver(
     return decision;
   };
 }
-

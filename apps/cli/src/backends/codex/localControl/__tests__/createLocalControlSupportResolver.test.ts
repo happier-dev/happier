@@ -58,5 +58,22 @@ describe('createCodexLocalControlSupportResolver', () => {
     expect(decision).toEqual({ ok: false, reason: 'acp-load-session-unsupported' });
     expect(probeAcpLoadSessionSupport).toHaveBeenCalledTimes(1);
   });
-});
 
+  it('does not block on ACP probe when includeAcpProbe=false (optimistic local fast-start)', async () => {
+    const probeAcpLoadSessionSupport = vi.fn(async () => ({ ok: true as const, loadSession: false }));
+
+    const resolveSupport = createCodexLocalControlSupportResolver(
+      {
+        startedBy: 'cli',
+        experimentalCodexAcpEnabled: true,
+        experimentalCodexResumeEnabled: true,
+      },
+      { probeAcpLoadSessionSupport },
+    );
+
+    const decision = await resolveSupport({ includeAcpProbe: false });
+
+    expect(decision).toEqual({ ok: true, backend: 'acp' });
+    expect(probeAcpLoadSessionSupport).not.toHaveBeenCalled();
+  });
+});

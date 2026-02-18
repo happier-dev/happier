@@ -35,11 +35,9 @@ import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRu
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
 import { archiveAndCloseSession } from '@/agent/runtime/archiveAndCloseSession';
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
-import { computePendingModelOverrideApplication, resolveModelOverrideFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
-import {
-  initializePermissionModeStateSync,
-  readPermissionModeUpdatedAtFromMetadataSnapshot,
-} from '@/agent/runtime/permission/permissionModeStateSync';
+import { initializeRuntimeOverridesSynchronizer } from '@/agent/runtime/runtimeOverridesSynchronizer';
+import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
 
 import type { AgentBackend } from '@/agent';
 import { GeminiReasoningProcessor } from '@/backends/gemini/utils/reasoningProcessor';
@@ -148,7 +146,13 @@ export async function runGemini(opts: {
   // Create session
   //
 
-  const initialPermissionMode: PermissionMode = normalizePermissionModeToIntent(opts.permissionMode ?? 'default') ?? 'default';
+  const accountSettings = getActiveAccountSettingsSnapshot()?.settings ?? null;
+  const permissionModeSeed = resolvePermissionModeSeedForAgentStart({
+    agentId: 'gemini',
+    explicitPermissionMode: opts.permissionMode,
+    accountSettings,
+  });
+  const initialPermissionMode: PermissionMode = permissionModeSeed.mode;
 
   const { state, metadata } = createSessionMetadata({
     flavor: 'gemini',
@@ -235,18 +239,14 @@ export async function runGemini(opts: {
 
   // Track current overrides to apply per message
   let currentPermissionMode: PermissionMode | undefined = initialPermissionMode;
-  let currentPermissionModeUpdatedAt = readPermissionModeUpdatedAtFromMetadataSnapshot(
-    session.getMetadataSnapshot(),
-  );
+  let currentPermissionModeUpdatedAt: number = typeof opts.permissionModeUpdatedAt === 'number' ? opts.permissionModeUpdatedAt : 0;
   let currentModel: string | undefined = undefined;
   let currentModelOverride: string | undefined = undefined;
   let currentModelOverrideUpdatedAt: number = 0;
 
-  const seededModelOverride = resolveModelOverrideFromMetadataSnapshot({ metadata: session.getMetadataSnapshot() });
-  if (seededModelOverride) {
-    currentModelOverride = seededModelOverride.modelId;
-    currentModelOverrideUpdatedAt = seededModelOverride.updatedAt;
-  }
+  const runtimePermissionModeRef = { current: currentPermissionMode ?? 'default', updatedAt: currentPermissionModeUpdatedAt };
+  const runtimeModelOverrideRef = { current: currentModelOverride ?? null, updatedAt: currentModelOverrideUpdatedAt };
+  let runtimeOverridesSync: Awaited<ReturnType<typeof initializeRuntimeOverridesSynchronizer>> | null = null;
 
   session.onUserMessage((message) => {
     // Resolve permission mode (validate) - same as Codex
@@ -254,16 +254,20 @@ export async function runGemini(opts: {
     if (message.meta?.permissionMode) {
       const nextPermissionMode = normalizePermissionModeToIntent(message.meta.permissionMode);
       if (nextPermissionMode) {
+        const updatedAt = resolvePermissionModeUpdatedAtFromMessage(message);
         const res = maybeUpdatePermissionModeMetadata({
           currentPermissionMode,
           nextPermissionMode,
           updateMetadata: (updater) =>
             updateMetadataBestEffort(session, updater, '[Gemini]', 'permission_mode_from_user_message'),
-          nowMs: () => resolvePermissionModeUpdatedAtFromMessage(message),
+          nowMs: () => updatedAt,
         });
         currentPermissionMode = res.currentPermissionMode;
         messagePermissionMode = currentPermissionMode;
         if (res.didChange) {
+          currentPermissionModeUpdatedAt = updatedAt;
+          runtimePermissionModeRef.current = currentPermissionMode ?? 'default';
+          runtimePermissionModeRef.updatedAt = currentPermissionModeUpdatedAt;
           // Update permission handler with new mode
           updatePermissionMode(messagePermissionMode);
           logger.debug(`[Gemini] Permission mode updated from user message to: ${currentPermissionMode}`);
@@ -564,45 +568,42 @@ export async function runGemini(opts: {
   let first = true;
 
   try {
-    let currentModeHash: string | null = null;
-    let pending: { message: string; mode: GeminiMode; isolate: boolean; hash: string } | null = null;
+	    let currentModeHash: string | null = null;
+	    let pending: { message: string; mode: GeminiMode; isolate: boolean; hash: string } | null = null;
 
-    const permissionModeStateSync = await initializePermissionModeStateSync({
-      explicitPermissionMode,
-      session,
-      currentPermissionModeUpdatedAt,
-      take: 50,
-      applyMode: ({ mode, updatedAt }) => {
-        currentPermissionMode = mode;
-        currentPermissionModeUpdatedAt = updatedAt;
-        updatePermissionMode(mode);
-      },
-    });
-    currentPermissionModeUpdatedAt = permissionModeStateSync.permissionModeUpdatedAt;
+	    runtimeOverridesSync = await initializeRuntimeOverridesSynchronizer({
+	      explicitPermissionMode:
+	        typeof explicitPermissionMode === 'string'
+	          ? normalizePermissionModeToIntent(explicitPermissionMode) ?? undefined
+	          : undefined,
+	      sessionKind: typeof opts.existingSessionId === 'string' && opts.existingSessionId.trim() ? 'attach' : 'fresh',
+	      take: configuration.startupPermissionSeedTranscriptTake,
+	      session: {
+	        getMetadataSnapshot: () => session.getMetadataSnapshot(),
+	        fetchLatestUserPermissionIntentFromTranscript: (args) => session.fetchLatestUserPermissionIntentFromTranscript(args),
+	      },
+	      permissionMode: runtimePermissionModeRef,
+	      modelOverride: runtimeModelOverrideRef,
+	      onPermissionModeApplied: () => {
+	        currentPermissionMode = runtimePermissionModeRef.current;
+	        currentPermissionModeUpdatedAt = runtimePermissionModeRef.updatedAt;
+	        updatePermissionMode(runtimePermissionModeRef.current);
+	        logger.debug(`[Gemini] Permission mode updated from sync to: ${runtimePermissionModeRef.current}`);
+	      },
+	      onModelOverrideApplied: () => {
+	        currentModelOverride = runtimeModelOverrideRef.current ?? undefined;
+	        currentModelOverrideUpdatedAt = runtimeModelOverrideRef.updatedAt;
+	        logger.debug(`[Gemini] Model override updated from sync to: ${runtimeModelOverrideRef.current ?? 'default'}`);
+	      },
+	    });
+	    runtimeOverridesSync.syncFromMetadata();
+	    void runtimeOverridesSync.seedFromSession().catch(() => {
+	      // Best-effort only.
+	    });
 
-    const syncPermissionModeFromMetadata = () => {
-      const previousMode = currentPermissionMode;
-      currentPermissionModeUpdatedAt = permissionModeStateSync.syncFromMetadata(session.getMetadataSnapshot());
-      if (previousMode !== currentPermissionMode) {
-        logger.debug(`[Gemini] Permission mode updated from metadata to: ${currentPermissionMode}`);
-      }
-    };
-
-    const syncModelOverrideFromMetadata = () => {
-      const computedPending = computePendingModelOverrideApplication({
-        metadata: session.getMetadataSnapshot(),
-        lastAppliedUpdatedAt: currentModelOverrideUpdatedAt,
-      });
-      if (!computedPending) return;
-      currentModelOverrideUpdatedAt = computedPending.updatedAt;
-      currentModelOverride = computedPending.modelId;
-      logger.debug(`[Gemini] Model override updated from metadata to: ${computedPending.modelId}`);
-    };
-
-    const syncControlsFromMetadata = () => {
-      syncPermissionModeFromMetadata();
-      syncModelOverrideFromMetadata();
-    };
+	    const syncControlsFromMetadata = () => {
+	      runtimeOverridesSync?.syncFromMetadata();
+	    };
 
     while (!shouldExit) {
       let message: { message: string; mode: GeminiMode; isolate: boolean; hash: string } | null = pending;

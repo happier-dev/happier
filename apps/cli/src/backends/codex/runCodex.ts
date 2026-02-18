@@ -26,13 +26,10 @@ import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTermina
 import { waitForMessagesOrPending } from '@/agent/runtime/waitForMessagesOrPending';
 import { connectionState } from '@/api/offline/serverConnectionErrors';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
+import { DeferredApiSessionClient } from '@/agent/runtime/startup/DeferredApiSessionClient';
+import { configuration } from '@/configuration';
 import { isExperimentalCodexAcpEnabled, isExperimentalCodexVendorResumeEnabled } from '@/backends/codex/experiments';
 import { maybeUpdatePermissionModeMetadata } from '@/agent/runtime/permission/permissionModeMetadata';
-import { resolveModelOverrideFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
-import {
-    applyPermissionIntentFromMetadataIfNewer,
-    applyStartupPermissionModeSeedIfNewer,
-} from '@/agent/runtime/permission/permissionModeStateSync';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 import { pushTextToMessageQueueWithSpecialCommands } from '@/agent/runtime/queueSpecialCommands';
 import { normalizePermissionModeToIntent, resolvePermissionModeUpdatedAtFromMessage } from '@/agent/runtime/permission/permissionModeCanonical';
@@ -44,7 +41,7 @@ import { createStartupMetadataOverrides } from '@/agent/runtime/createStartupMet
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
 import { archiveAndCloseSession } from '@/agent/runtime/archiveAndCloseSession';
-import { codexLocalLauncher } from './codexLocalLauncher';
+import { codexLocalLauncher, type CodexLauncherResult } from './codexLocalLauncher';
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
 import { applyLocalControlLaunchGating } from '@/agent/localControl/launchGating';
 import {
@@ -52,7 +49,6 @@ import {
     formatCodexLocalControlSwitchDeniedMessage,
 } from './localControl/localControlSupport';
 import { createCodexLocalControlSupportResolver } from './localControl/createLocalControlSupportResolver';
-import { resolveCodexMcpResumeServerCommand } from './resume/resolveMcpResumeServer';
 import { resolveCodexMcpServerSpawn } from './resume/resolveCodexMcpServer';
 import { probeCodexAcpLoadSessionSupport } from './acp/probeLoadSessionSupport';
 import { resolveCodexMessageModel } from './utils/resolveCodexMessageModel';
@@ -78,8 +74,16 @@ import { resolveCodexStartingMode } from './utils/resolveCodexStartingMode';
 import { abortAcpRuntimeTurnIfNeeded } from '@/agent/acp/runtime/createAcpRuntime';
 import { runMetadataOverridesWatcherLoop } from './utils/metadataOverridesWatcher';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { createStartupTiming } from '@/agent/runtime/startup/startupTiming';
+import { initializeRuntimeOverridesSynchronizer } from '@/agent/runtime/runtimeOverridesSynchronizer';
+import {
+    readStartupOverridesCacheForBackend,
+    writeStartupOverridesCacheForBackend,
+} from '@/agent/runtime/startup/startupOverridesCache';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
+import { runStartupCoordinator } from '@/agent/runtime/startup/startupCoordinator';
+import type { BackendStartupSpec, StartupContext } from '@/agent/runtime/startup/startupSpec';
 
 /**
  * Main entry point for the codex command with ink UI
@@ -120,22 +124,6 @@ export async function runCodex(opts: {
     // Set backend for offline warnings (before any API calls)
     connectionState.setBackend('Codex');
 
-    const { api, machineId } = await initializeBackendApiContext({
-        credentials: opts.credentials,
-        machineMetadata: initialMachineMetadata,
-        missingMachineIdMessage: '[START] No machine ID found in settings, which is unexpected since authAndSetupMachineIfNeeded should have created it. Please report this issue on https://github.com/happier-dev/happier/issues',
-        skipMachineRegistration: opts.startedBy === 'daemon',
-    });
-
-    // Log startup options
-    logger.debug(`[codex] Starting with options: startedBy=${opts.startedBy || 'terminal'}`);
-
-    logger.debug(`Using machineId: ${machineId}`);
-
-    //
-    // Attach to existing Happy session (inactive-session-resume) OR create a new one.
-    //
-
     const explicitPermissionMode = opts.permissionMode;
     const hasResumeArg = typeof opts.resume === 'string' && opts.resume.trim().length > 0;
     const accountSettings = hasResumeArg ? null : (getActiveAccountSettingsSnapshot()?.settings ?? null);
@@ -162,6 +150,165 @@ export async function runCodex(opts: {
             : initialModelId
                 ? Date.now()
                 : 0;
+
+    const messageQueue = new MessageQueue2<EnhancedMode>((mode) =>
+        hashObject({
+            permissionMode: mode.permissionMode,
+            // Intentionally ignore model in the mode hash: Codex cannot reliably switch models mid-session
+            // without losing in-memory context.
+        }),
+    );
+    const messageBuffer = new MessageBuffer();
+
+    const nowMs = () => Date.now();
+    const timing = createStartupTiming({ enabled: configuration.startupTimingEnabled, nowMs });
+
+    const resumeIdFromArgs = typeof opts.resume === 'string' && opts.resume.trim().length > 0 ? opts.resume.trim() : null;
+    let permissionModeSeededFromCache = false;
+    if (resumeIdFromArgs && typeof opts.permissionMode !== 'string') {
+        const cached = readStartupOverridesCacheForBackend({
+            backendId: 'codex',
+            nowMs: nowMs(),
+            maxAgeMs: configuration.startupOverridesCacheMaxAgeMs,
+        });
+        if (cached) {
+            initialPermissionMode = cached.permissionMode;
+            initialPermissionModeUpdatedAt = cached.permissionModeUpdatedAt;
+            if (cached.modelId) {
+                initialModelId = cached.modelId;
+                initialModelUpdatedAt = cached.modelUpdatedAt;
+            }
+            permissionModeSeededFromCache = true;
+        }
+    }
+
+    const hasTtyForLocal = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+    const startedByForLocalControl = opts.startedBy === 'daemon' ? 'daemon' : 'cli';
+    const experimentalCodexAcpEnabled = isExperimentalCodexAcpEnabled();
+    const experimentalCodexResumeEnabled = isExperimentalCodexVendorResumeEnabled();
+    const localControlEnabled = experimentalCodexAcpEnabled || experimentalCodexResumeEnabled;
+
+    const resolveLocalControlSupport = createCodexLocalControlSupportResolver({
+        startedBy: startedByForLocalControl,
+        experimentalCodexAcpEnabled,
+        experimentalCodexResumeEnabled,
+    });
+
+    let mode: 'local' | 'remote' = resolveCodexStartingMode({
+        explicitStartingMode: opts.startingMode,
+        startedBy: startedByForLocalControl,
+        hasTtyForLocal,
+        localControlEnabled,
+    });
+    let localModeFallbackMessage: string | null = null;
+
+    logger.debug('[codex] Starting mode resolved', {
+        explicitStartingMode: opts.startingMode ?? null,
+        startedBy: startedByForLocalControl,
+        hasTtyForLocal,
+        experimentalCodexAcpEnabled,
+        experimentalCodexResumeEnabled,
+        localControlEnabled,
+        mode,
+    });
+
+    if (mode === 'local') {
+        const support = await resolveLocalControlSupport({ includeAcpProbe: false });
+        const gated = applyLocalControlLaunchGating({ startingMode: 'local', support });
+        if (gated.mode === 'remote' && gated.fallback) {
+            const message = formatCodexLocalControlLaunchFallbackMessage(gated.fallback.reason);
+            logger.debug('[codex] Local-control mode is unavailable; falling back to remote.', support);
+            localModeFallbackMessage = message;
+            mode = 'remote';
+        }
+    }
+
+    const hasExplicitPermissionMode = typeof opts.permissionMode === 'string' || permissionModeSeededFromCache;
+    const shouldFastStartLocal =
+        mode === 'local' &&
+        startedByForLocalControl === 'cli' &&
+        (typeof opts.existingSessionId !== 'string' || !opts.existingSessionId.trim()) &&
+        (!resumeIdFromArgs || hasExplicitPermissionMode);
+
+    type CodexFastStartArtifacts = {
+        deferredSession: DeferredApiSessionClient;
+        localResult: CodexLauncherResult | null;
+    };
+
+    let deferredSession: DeferredApiSessionClient | null = null;
+    let localLauncherPromise: Promise<CodexLauncherResult> | null = null;
+    let fastStartCoordinator: ReturnType<typeof runStartupCoordinator<CodexFastStartArtifacts>> | null = null;
+    if (shouldFastStartLocal) {
+        const ctx: StartupContext = {
+            backendId: 'codex',
+            sessionKind: resumeIdFromArgs ? 'resume' : 'fresh',
+            startingModeIntent: 'local',
+            startedBy: startedByForLocalControl,
+            hasTty: hasTtyForLocal,
+            workspaceDir: process.cwd(),
+            nowMs,
+            timing,
+        };
+
+        const spec: BackendStartupSpec<CodexFastStartArtifacts> = {
+            backendId: 'codex',
+            createArtifacts: () => ({
+                deferredSession: new DeferredApiSessionClient({
+                    placeholderSessionId: `PID-${process.pid}`,
+                    limits: {
+                        maxEntries: configuration.startupDeferredSessionBufferMaxEntries,
+                        maxBytes: configuration.startupDeferredSessionBufferMaxBytes,
+                    },
+                }),
+                localResult: null,
+            }),
+            tasks: [],
+            spawnVendor: async ({ artifacts }) => {
+                artifacts.localResult = await codexLocalLauncher<EnhancedMode>({
+                    path: process.cwd(),
+                    api: null,
+                    session: artifacts.deferredSession as unknown as ApiSessionClient,
+                    messageQueue,
+                    permissionMode: initialPermissionMode,
+                    resumeId: resumeIdFromArgs,
+                });
+            },
+        };
+
+        fastStartCoordinator = runStartupCoordinator({ ctx, spec });
+        deferredSession = fastStartCoordinator.artifacts.deferredSession;
+        localLauncherPromise = fastStartCoordinator.spawnPromise.then(() => {
+            const res = fastStartCoordinator?.artifacts.localResult;
+            return res ?? { type: 'exit', code: 0 };
+        });
+    }
+
+    let deferredSessionAttached = false;
+    const attachDeferredSessionIfNeeded = async (target: ApiSessionClient): Promise<void> => {
+        if (!deferredSession) return;
+        if (deferredSessionAttached) return;
+        deferredSessionAttached = true;
+        await deferredSession.attach(target as any);
+    };
+
+    // Attach to existing Happy session (inactive-session-resume) OR create a new one.
+    //
+
+    const stopApiContextSpan = timing.startSpan('initialize_backend_api_context');
+    const { api, machineId } = await initializeBackendApiContext({
+        credentials: opts.credentials,
+        machineMetadata: initialMachineMetadata,
+        missingMachineIdMessage:
+            '[START] No machine ID found in settings, which is unexpected since authAndSetupMachineIfNeeded should have created it. Please report this issue on https://github.com/happier-dev/happier/issues',
+        skipMachineRegistration: opts.startedBy === 'daemon',
+    });
+    stopApiContextSpan();
+
+    // Log startup options
+    logger.debug(`[codex] Starting with options: startedBy=${opts.startedBy || 'terminal'}`);
+
+    logger.debug(`Using machineId: ${machineId}`);
+
     const { state, metadata } = createSessionMetadata({
         flavor: 'codex',
         machineId,
@@ -181,6 +328,7 @@ export async function runCodex(opts: {
     let permissionHandler: CodexRuntimePermissionHandler;
     // Offline reconnection handle (only relevant when creating a new session and server is unreachable)
     let reconnectionHandle: { cancel: () => void } | null = null;
+    const stopRunSessionSpan = timing.startSpan('initialize_backend_run_session');
     const initializedSession = await initializeBackendRunSession({
         api,
         sessionTag,
@@ -197,6 +345,7 @@ export async function runCodex(opts: {
             if (permissionHandler) {
                 permissionHandler.updateSession(newSession);
             }
+            void attachDeferredSessionIfNeeded(newSession);
         },
         onAttachMetadataSnapshotReady: (snapshot, attachSession) => {
             const maybeSnapshot = snapshot as { path?: unknown } | null;
@@ -235,31 +384,29 @@ export async function runCodex(opts: {
             );
         },
     });
+    stopRunSessionSpan();
     session = initializedSession.session;
     reconnectionHandle = initializedSession.reconnectionHandle;
+    // Do not attach the deferred session to an offline stub; wait for the reconnection swap.
+    if (initializedSession.attachedToExistingSession || initializedSession.reportedSessionId) {
+        await attachDeferredSessionIfNeeded(session);
+    }
     if (!initializedSession.attachedToExistingSession) {
         workspaceDirFromMetadata = typeof metadata.path === 'string' && metadata.path.trim().length > 0 ? metadata.path : null;
     }
 
-    if (typeof explicitPermissionMode !== 'string' && typeof opts.existingSessionId === 'string' && opts.existingSessionId.trim()) {
-        initialPermissionModeUpdatedAt = await applyStartupPermissionModeSeedIfNewer({
-            explicitPermissionMode,
-            session,
-            currentPermissionModeUpdatedAt: initialPermissionModeUpdatedAt,
-            take: 50,
-            apply: ({ mode, updatedAt }) => {
-                initialPermissionMode = mode;
-                initialPermissionModeUpdatedAt = updatedAt;
-            },
-        });
+    if (timing.enabled) {
+        logger.debug(
+            timing.formatSummaryLine({
+                prefix: '[codex-startup]',
+                includeIds: [
+                    'vendor_spawn_invoked',
+                    'initialize_backend_api_context',
+                    'initialize_backend_run_session',
+                ],
+            }),
+        );
     }
-
-    const messageQueue = new MessageQueue2<EnhancedMode>((mode) => hashObject({
-        permissionMode: mode.permissionMode,
-        // Intentionally ignore model in the mode hash: Codex cannot reliably switch models mid-session
-        // without losing in-memory context.
-    }));
-    const messageBuffer = new MessageBuffer();
 
     // Late-initialized when Codex ACP is enabled; referenced by the user-message binding for in-flight steering.
     let codexAcpRuntime: ReturnType<typeof createCodexAcpRuntime> | null = null;
@@ -270,6 +417,24 @@ export async function runCodex(opts: {
     let currentPermissionModeUpdatedAt: number = initialPermissionModeUpdatedAt;
     let currentModelId: string | null = initialModelId;
     let currentModelUpdatedAt: number = initialModelUpdatedAt;
+
+    const runtimePermissionModeRef = { current: currentPermissionMode ?? 'default', updatedAt: currentPermissionModeUpdatedAt };
+    const runtimeModelOverrideRef = { current: currentModelId, updatedAt: currentModelUpdatedAt };
+    let runtimeOverridesSync: Awaited<ReturnType<typeof initializeRuntimeOverridesSynchronizer>> | null = null;
+    const persistStartupOverridesCache = (): void => {
+        try {
+            writeStartupOverridesCacheForBackend({
+                backendId: 'codex',
+                permissionMode: runtimePermissionModeRef.current,
+                permissionModeUpdatedAt: runtimePermissionModeRef.updatedAt,
+                modelId: runtimeModelOverrideRef.current,
+                modelUpdatedAt: runtimeModelOverrideRef.updatedAt,
+                updatedAt: nowMs(),
+            });
+        } catch {
+            // ignore
+        }
+    };
 
     session.onUserMessage((message) => {
         // Resolve permission mode (accept all modes, will be mapped in switch statement)
@@ -291,6 +456,8 @@ export async function runCodex(opts: {
                 didChangePermissionMode = res.didChange;
                 if (res.didChange) {
                     currentPermissionModeUpdatedAt = updatedAt;
+                    runtimePermissionModeRef.current = currentPermissionMode ?? 'default';
+                    runtimePermissionModeRef.updatedAt = currentPermissionModeUpdatedAt;
                     logger.debug(`[Codex] Permission mode updated from user message to: ${currentPermissionMode}`);
                 }
             }
@@ -343,52 +510,8 @@ export async function runCodex(opts: {
 
     let thinking = false;
     let currentTaskId: string | null = null;
-
-    const hasTtyForLocal = Boolean(process.stdin.isTTY && process.stdout.isTTY);
-    const startedByForLocalControl = opts.startedBy === 'daemon' ? 'daemon' : 'cli';
-    const experimentalCodexAcpEnabled = isExperimentalCodexAcpEnabled();
-    const experimentalCodexResumeEnabled = isExperimentalCodexVendorResumeEnabled();
-
-    const mcpResumeServerCommand = experimentalCodexResumeEnabled
-        ? await resolveCodexMcpResumeServerCommand()
-        : null;
-    const mcpResumeServerAvailable = Boolean(mcpResumeServerCommand);
-
-    const resolveLocalControlSupport = createCodexLocalControlSupportResolver({
-        startedBy: startedByForLocalControl,
-        experimentalCodexAcpEnabled,
-        experimentalCodexResumeEnabled,
-    });
-
-    const localControlEnabled = experimentalCodexAcpEnabled || experimentalCodexResumeEnabled;
-    let mode: 'local' | 'remote' = resolveCodexStartingMode({
-        explicitStartingMode: opts.startingMode,
-        startedBy: startedByForLocalControl,
-        hasTtyForLocal,
-        localControlEnabled,
-    });
-    let localModeFallbackMessage: string | null = null;
-
-    logger.debug('[codex] Starting mode resolved', {
-        explicitStartingMode: opts.startingMode ?? null,
-        startedBy: startedByForLocalControl,
-        hasTtyForLocal,
-        experimentalCodexAcpEnabled,
-        experimentalCodexResumeEnabled,
-        localControlEnabled,
-        mode,
-    });
-
-    if (mode === 'local') {
-        const support = await resolveLocalControlSupport({ includeAcpProbe: true });
-        const gated = applyLocalControlLaunchGating({ startingMode: 'local', support });
-        if (gated.mode === 'remote' && gated.fallback) {
-            const message = formatCodexLocalControlLaunchFallbackMessage(gated.fallback.reason);
-            logger.debug('[codex] Local-control mode is unavailable; falling back to remote.', support);
-            session.sendSessionEvent({ type: 'message', message });
-            localModeFallbackMessage = message;
-            mode = 'remote';
-        }
+    if (localModeFallbackMessage) {
+        session.sendSessionEvent({ type: 'message', message: localModeFallbackMessage });
     }
 
     session.keepAlive(thinking, mode);
@@ -399,14 +522,15 @@ export async function runCodex(opts: {
 
     let resumeIdFromLocalControl: string | null = null;
     if (mode === 'local') {
-        const localResult = await codexLocalLauncher<EnhancedMode>({
-            path: workspaceDirFromMetadata ?? process.cwd(),
-            api,
-            session,
-            messageQueue,
-            permissionMode: initialPermissionMode,
-            resumeId: null,
-        });
+        const localResult = await (localLauncherPromise ??
+            codexLocalLauncher<EnhancedMode>({
+                path: workspaceDirFromMetadata ?? process.cwd(),
+                api,
+                session,
+                messageQueue,
+                permissionMode: initialPermissionMode,
+                resumeId: null,
+            }));
         if (localResult.type === 'exit') {
             clearInterval(keepAliveInterval);
             return;
@@ -584,7 +708,7 @@ export async function runCodex(opts: {
     > => {
         // Daemon-spawned sessions cannot safely switch to an interactive local TUI.
         if (opts.startedBy === 'daemon') return { ok: false, reason: 'started-by-daemon' };
-        const support = await resolveLocalControlSupport({ includeAcpProbe: true });
+        const support = await resolveLocalControlSupport({ includeAcpProbe: false });
         const gated = applyLocalControlLaunchGating({ startingMode: 'local', support });
         if (gated.mode === 'local') return { ok: true };
         return { ok: false, reason: gated.fallback?.reason ?? 'resume-disabled' };
@@ -638,7 +762,9 @@ export async function runCodex(opts: {
     if (useCodexAcp) {
         const resumeId = storedSessionIdForResume?.trim();
         if (resumeId) {
-            const probe = await probeCodexAcpLoadSessionSupport();
+            const stopProbeSpan = timing.startSpan('codex_acp_probe');
+            const probe = await probeCodexAcpLoadSessionSupport({ signal: abortController.signal });
+            stopProbeSpan();
             const preflight = resolveCodexAcpResumePreflight({
                 resumeId,
                 probe: probe.ok
@@ -727,6 +853,7 @@ export async function runCodex(opts: {
         codexAcpRuntime = createCodexAcpRuntime({
             directory,
             session,
+            pushSender: api.push(),
             messageBuffer,
             mcpServers,
             permissionHandler,
@@ -764,78 +891,97 @@ export async function runCodex(opts: {
 
     let first = true;
 
-    try {
-        let wasCreated = false;
-            let pending: { message: string; mode: EnhancedMode; isolate: boolean; hash: string } | null = null;
+	    try {
+	        let wasCreated = false;
+	            let pending: { message: string; mode: EnhancedMode; isolate: boolean; hash: string } | null = null;
 
-        const codexAcpRuntimeForSync = codexAcpRuntime;
-        const modelSync =
-            useCodexAcp && codexAcpRuntimeForSync
-                ? createModelOverrideSynchronizer({
-                      session: { getMetadataSnapshot: () => session.getMetadataSnapshot() },
-                      runtime: { setSessionModel: (modelId) => codexAcpRuntimeForSync.setSessionModel(modelId) },
-                      isStarted: () => wasCreated,
-                  })
-                : null;
+	        const codexAcpRuntimeForSync = codexAcpRuntime;
+	        const modelSync =
+	            useCodexAcp && codexAcpRuntimeForSync
+	                ? createModelOverrideSynchronizer({
+	                      session: { getMetadataSnapshot: () => session.getMetadataSnapshot() },
+	                      runtime: { setSessionModel: (modelId) => codexAcpRuntimeForSync.setSessionModel(modelId) },
+	                      isStarted: () => wasCreated,
+	                  })
+	                : null;
 
-        const syncRuntimeOverridesFromMetadata = (): void => {
-            currentPermissionModeUpdatedAt = applyPermissionIntentFromMetadataIfNewer({
-                metadata: session.getMetadataSnapshot(),
-                currentPermissionModeUpdatedAt,
-                apply: ({ intent, updatedAt }) => {
-                    currentPermissionModeUpdatedAt = updatedAt;
-                    currentPermissionMode = intent;
-                    applyPermissionModeToCodexPermissionHandler({
-                        permissionHandler,
-                        permissionMode: intent,
-                        permissionModeUpdatedAt: updatedAt,
-                    });
-                    if (useCodexAcp && codexAcpRuntime) {
-                        void syncCodexAcpSessionModeFromPermissionMode({
-                            runtime: codexAcpRuntime,
-                            permissionMode: intent,
-                            metadata: session.getMetadataSnapshot(),
-                        }).catch((e) => {
-                            logger.debug('[CodexACP] Failed to sync session mode from metadata (non-fatal)', e);
-                        });
-                    }
-                    logger.debug(`[Codex] Permission mode updated from metadata to: ${intent}`);
-                },
-            });
-        };
+	        runtimeOverridesSync = await initializeRuntimeOverridesSynchronizer({
+	            explicitPermissionMode: typeof explicitPermissionMode === 'string'
+	                ? normalizePermissionModeToIntent(explicitPermissionMode) ?? undefined
+	                : undefined,
+	            sessionKind:
+	                typeof opts.existingSessionId === 'string' && opts.existingSessionId.trim()
+	                    ? 'attach'
+	                    : typeof opts.resume === 'string' && opts.resume.trim()
+	                      ? 'resume'
+	                      : 'fresh',
+	            take: configuration.startupPermissionSeedTranscriptTake,
+	            session: {
+	                getMetadataSnapshot: () => session.getMetadataSnapshot(),
+	                fetchLatestUserPermissionIntentFromTranscript: (args) => session.fetchLatestUserPermissionIntentFromTranscript(args),
+	            },
+	            permissionMode: runtimePermissionModeRef,
+	            modelOverride: runtimeModelOverrideRef,
+		            onPermissionModeApplied: () => {
+		                currentPermissionMode = runtimePermissionModeRef.current;
+		                currentPermissionModeUpdatedAt = runtimePermissionModeRef.updatedAt;
+		                initialPermissionMode = runtimePermissionModeRef.current;
+		                initialPermissionModeUpdatedAt = runtimePermissionModeRef.updatedAt;
+                        persistStartupOverridesCache();
+		                applyPermissionModeToCodexPermissionHandler({
+		                    permissionHandler,
+		                    permissionMode: runtimePermissionModeRef.current,
+		                    permissionModeUpdatedAt: runtimePermissionModeRef.updatedAt,
+		                });
+	                if (useCodexAcp && codexAcpRuntime) {
+	                    void syncCodexAcpSessionModeFromPermissionMode({
+	                        runtime: codexAcpRuntime,
+	                        permissionMode: runtimePermissionModeRef.current,
+	                        metadata: session.getMetadataSnapshot(),
+	                    }).catch((e) => {
+	                        logger.debug('[CodexACP] Failed to sync session mode from metadata (non-fatal)', e);
+	                    });
+	                }
+		                logger.debug(`[Codex] Permission mode updated from sync to: ${runtimePermissionModeRef.current}`);
+		            },
+		            onModelOverrideApplied: () => {
+		                currentModelId = runtimeModelOverrideRef.current;
+		                currentModelUpdatedAt = runtimeModelOverrideRef.updatedAt;
+		                initialModelId = runtimeModelOverrideRef.current;
+		                initialModelUpdatedAt = runtimeModelOverrideRef.updatedAt;
+                        persistStartupOverridesCache();
+		                logger.debug(
+		                    `[Codex] Model override updated from sync to: ${runtimeModelOverrideRef.current ?? 'default'}`,
+		                );
+		            },
+		        });
 
-        const syncModelOverrideFromMetadata = (): void => {
-            const resolved = resolveModelOverrideFromMetadataSnapshot({
-                metadata: session.getMetadataSnapshot(),
-            });
-            if (resolved && resolved.updatedAt > currentModelUpdatedAt) {
-                currentModelUpdatedAt = resolved.updatedAt;
-                currentModelId = resolved.modelId;
-                logger.debug(`[Codex] Model override updated from metadata to: ${resolved.modelId}`);
-            }
+	        const syncOverridesFromMetadata = (): void => {
+	            runtimeOverridesSync?.syncFromMetadata();
+	            modelSync?.syncFromMetadata();
+	        };
+	        
+	        // Attach flows (and next_prompt apply timing) can result in a stable metadata snapshot
+	        // that never changes during this process lifetime. Ensure we adopt the latest persisted
+	        // permissionMode immediately, so local-control switches spawn Codex with the correct
+	        // sandbox/approval policy even before the next user message.
+		        syncOverridesFromMetadata();
+                persistStartupOverridesCache();
+		        void runtimeOverridesSync.seedFromSession().catch(() => {
+		            // Best-effort only.
+		        });
 
-            modelSync?.syncFromMetadata();
-        };
-        
-        // Attach flows (and next_prompt apply timing) can result in a stable metadata snapshot
-        // that never changes during this process lifetime. Ensure we adopt the latest persisted
-        // permissionMode immediately, so local-control switches spawn Codex with the correct
-        // sandbox/approval policy even before the next user message.
-        syncRuntimeOverridesFromMetadata();
-        syncModelOverrideFromMetadata();
-
-        // Keep metadata-driven overrides current even mid-turn. `waitForMetadataUpdate()` is
-        // responsible for ensuring user-scoped broadcasts are observed (via userSocket), so
-        // we run a lightweight watcher loop in the background.
-        void runMetadataOverridesWatcherLoop({
-            shouldExit: () => shouldExit,
-            getAbortSignal: () => abortController.signal,
-            waitForMetadataUpdate: (signal) => session.waitForMetadataUpdate(signal),
-            onUpdate: () => {
-                syncRuntimeOverridesFromMetadata();
-                syncModelOverrideFromMetadata();
-            },
-        });
+	        // Keep metadata-driven overrides current even mid-turn. `waitForMetadataUpdate()` is
+	        // responsible for ensuring user-scoped broadcasts are observed (via userSocket), so
+	        // we run a lightweight watcher loop in the background.
+	        void runMetadataOverridesWatcherLoop({
+	            shouldExit: () => shouldExit,
+	            getAbortSignal: () => abortController.signal,
+	            waitForMetadataUpdate: (signal) => session.waitForMetadataUpdate(signal),
+	            onUpdate: () => {
+	                syncOverridesFromMetadata();
+	            },
+	        });
 
         const localRemoteSwitchController = createLocalRemoteModeController({
             session,
@@ -888,12 +1034,11 @@ export async function runCodex(opts: {
                             messageQueue,
                             abortSignal: waitSignal,
                             popPendingMessage: () => session.popPendingMessage(),
-                            waitForMetadataUpdate: (signal) => session.waitForMetadataUpdate(signal),
-                            onMetadataUpdate: () => {
-                                syncRuntimeOverridesFromMetadata();
-                                syncModelOverrideFromMetadata();
-                            },
-                        });
+	                            waitForMetadataUpdate: (signal) => session.waitForMetadataUpdate(signal),
+	                            onMetadataUpdate: () => {
+	                                syncOverridesFromMetadata();
+	                            },
+	                        });
                     if (!batch) {
                         // If wait was aborted (e.g., remote abort with no active inference), ignore and continue
                         if (waitSignal.aborted && !shouldExit) {
