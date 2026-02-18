@@ -555,7 +555,10 @@ export async function claudeRemoteAgentSdk(opts: {
         fallbackModel: argOverrides.fallbackModel ?? mode.fallbackModel,
         maxTurns: argOverrides.maxTurns,
         systemPrompt: buildSystemPrompt(),
-        allowedTools: allowedTools ? allowedTools.concat(opts.allowedTools) : opts.allowedTools,
+        // Only pass an explicit allowlist when one is requested via mode/CLI overrides.
+        // Otherwise we would inadvertently block Claude Code built-in tools like Read/Edit/Write/Bash
+        // (breaking agent-sdk scenarios that require filesystem operations).
+        allowedTools: allowedTools ? allowedTools.concat(opts.allowedTools) : undefined,
         disallowedTools,
         strictMcpConfig: mode.claudeRemoteStrictMcpServerConfig === true || argOverrides.strictMcpConfig,
         canUseTool,
