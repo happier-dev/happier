@@ -4,24 +4,39 @@ import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
 import { createRequire } from 'module';
-import { existsSync } from 'fs';
 
 function preflightRequiredDependencies(projectRoot) {
-  const protocolPackageJsonPath = join(projectRoot, 'node_modules', '@happier-dev', 'protocol', 'package.json');
-  if (!existsSync(protocolPackageJsonPath)) {
-    console.error('Missing bundled package: @happier-dev/protocol');
-    console.error('Reinstall @happier-dev/cli to repair your installation.');
-    process.exit(1);
+  const cliRequire = createRequire(import.meta.url);
+  let protocolPackageJsonPath;
+  try {
+    protocolPackageJsonPath = cliRequire.resolve('@happier-dev/protocol/package.json');
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'MODULE_NOT_FOUND') {
+      console.error('Missing bundled package: @happier-dev/protocol');
+      console.error('Reinstall @happier-dev/cli to repair your installation.');
+      process.exit(1);
+    }
+    throw error;
   }
-  const require = createRequire(protocolPackageJsonPath);
-  const required = ['tweetnacl', 'base64-js', '@noble/hashes/hmac', '@noble/hashes/sha512'];
+
+  const protocolRequire = createRequire(protocolPackageJsonPath);
+
+  // `tweetnacl` is a direct runtime dependency of the CLI.
+  // `base64-js` and `@noble/hashes/*` are runtime dependencies of `@happier-dev/protocol` and may be
+  // vendored under the bundled protocol package's node_modules when installed via `npm`.
+  const required = [
+    { name: 'tweetnacl', resolveWith: cliRequire },
+    { name: 'base64-js', resolveWith: protocolRequire },
+    { name: '@noble/hashes/hmac', resolveWith: protocolRequire },
+    { name: '@noble/hashes/sha512', resolveWith: protocolRequire },
+  ];
 
   for (const dep of required) {
     try {
-      require.resolve(dep);
+      dep.resolveWith.resolve(dep.name);
     } catch (error) {
       if (error && typeof error === 'object' && 'code' in error && error.code === 'MODULE_NOT_FOUND') {
-        console.error(`Missing required dependency: ${dep}`);
+        console.error(`Missing required dependency: ${dep.name}`);
         console.error('Reinstall @happier-dev/cli to repair your installation.');
         process.exit(1);
       }
