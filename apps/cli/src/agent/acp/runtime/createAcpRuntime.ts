@@ -166,6 +166,7 @@ export function createAcpRuntime(params: {
   hooks?: {
     onBeginTurn?: () => void;
     onToolResult?: (params: { toolName: string; callId: string; result: unknown }) => void;
+    onPermissionRequest?: (params: { permissionId: string; toolName: string; payload: unknown; reason: string }) => void;
     onBeforeFlushTurn?: (params: {
       /**
        * Send an additional tool-call into the session transcript.
@@ -608,6 +609,16 @@ export function createAcpRuntime(params: {
         }
 
         case 'permission-request': {
+          const payloadRecord = asRecord((msg as any).payload);
+          const toolNameRaw = typeof payloadRecord?.toolName === 'string' ? payloadRecord.toolName : typeof (msg as any).reason === 'string' ? (msg as any).reason : '';
+          const toolName = typeof toolNameRaw === 'string' && toolNameRaw.trim() ? toolNameRaw.trim() : 'unknown_tool';
+          const permissionId = typeof (msg as any).id === 'string' && (msg as any).id.trim() ? String((msg as any).id).trim() : randomUUID();
+          const reason = typeof (msg as any).reason === 'string' ? String((msg as any).reason) : toolName;
+          try {
+            params.hooks?.onPermissionRequest?.({ permissionId, toolName, payload: (msg as any).payload, reason });
+          } catch (e) {
+            logger.debug(`[${params.provider}] Failed to run permission-request hook (non-fatal)`, e);
+          }
           forwarder.forward(msg);
           break;
         }
