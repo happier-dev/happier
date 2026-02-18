@@ -69,21 +69,26 @@ describe('core e2e: voice local_neural model-pack settings roundtrip', () => {
       },
     };
 
-    const postRes = await fetch(`${server.baseUrl}/v1/account/settings`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${auth.token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        settings: JSON.stringify(nextSettings),
-        expectedVersion: settingsVersion,
-      }),
-    });
-    expect(postRes.ok).toBe(true);
-    const postJson: unknown = await postRes.json().catch(() => null);
-    const postRow = asRecord(postJson);
-    if (!postRow) throw new Error('Expected account settings write response object');
+	    const postRes = await fetch(`${server.baseUrl}/v1/account/settings`, {
+	      method: 'POST',
+	      headers: {
+	        Authorization: `Bearer ${auth.token}`,
+	        'Content-Type': 'application/json',
+	      },
+	      body: JSON.stringify({
+	        settings: JSON.stringify(nextSettings),
+	        expectedVersion: settingsVersion,
+	      }),
+	    });
+	    if (!postRes.ok) {
+	      const body = await postRes.text().catch(() => '');
+	      throw new Error(
+	        `POST /v1/account/settings failed: ${postRes.status} ${postRes.statusText}${body ? `\n${body}` : ''}`,
+	      );
+	    }
+	    const postJson: unknown = await postRes.json().catch(() => null);
+	    const postRow = asRecord(postJson);
+	    if (!postRow) throw new Error('Expected account settings write response object');
     expect(postRow.success).toBe(true);
     expect(getNumber(postRow, 'version')).toBe(settingsVersion + 1);
 
