@@ -55,7 +55,7 @@ function NotAuthenticated() {
         void (async () => {
             try {
                 const features = await getReadyServerFeatures();
-                const methods = features?.features?.auth?.signup?.methods ?? [];
+                const methods = features?.capabilities?.auth?.signup?.methods ?? [];
                 const enabled = methods
                     .filter((m) => m.enabled === true)
                     .map((m) => String(m.id).trim().toLowerCase())
@@ -75,13 +75,13 @@ function NotAuthenticated() {
                 // Pick the first enabled external provider, preferring one that is configured.
                 const providers = enabled.filter((id) => id !== "anonymous");
                 const configuredProvider =
-                    providers.find((id) => features?.features?.oauth?.providers?.[id]?.configured === true) ?? null;
+                    providers.find((id) => features?.capabilities?.oauth?.providers?.[id]?.configured === true) ?? null;
                 const providerId = configuredProvider ?? providers[0] ?? null;
                 if (mounted) {
                     setSignupMode(providerId ? { kind: "provider", providerId } : { kind: "anonymous" });
                 }
 
-                const autoRedirect = features?.features?.auth?.ui?.autoRedirect ?? null;
+                const autoRedirect = features?.capabilities?.auth?.ui?.autoRedirect ?? null;
                 const autoRedirectProviderId = (autoRedirect?.providerId ?? "").trim().toLowerCase();
                 if (
                     !autoRedirectAttemptedRef.current &&

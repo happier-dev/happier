@@ -1,3 +1,7 @@
+import type { FeaturesResponse } from '@happier-dev/protocol';
+
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/rootLayoutTestkit';
+
 type ProviderState = { enabled: boolean; configured: boolean };
 
 type WelcomeFeaturesOverrides = {
@@ -5,6 +9,8 @@ type WelcomeFeaturesOverrides = {
     requiredProviders?: string[];
     autoRedirectEnabled?: boolean;
     autoRedirectProviderId?: string | null;
+    recoveryProviderResetEnabled?: boolean;
+    recoveryProviderResetProviders?: string[];
     oauthProviders?: Record<string, ProviderState>;
     authProviders?: Record<string, ProviderState>;
     providerOffboardingIntervalSeconds?: number;
@@ -47,35 +53,16 @@ function createAuthProvidersWithDetails(
 
 export function createWelcomeFeaturesResponse(
     overrides: WelcomeFeaturesOverrides = {},
-): {
-    features: {
-        sharing: {
-            session: { enabled: boolean };
-            public: { enabled: boolean };
-            contentKeys: { enabled: boolean };
-            pendingQueueV2: { enabled: boolean };
-        };
-        voice: { enabled: boolean; configured: boolean; provider: null };
-        social: {
-            friends: { enabled: boolean; allowUsername: boolean; requiredIdentityProviderId: string | null };
-        };
-        oauth: { providers: Record<string, ProviderState> };
-        auth: {
-            signup: { methods: Array<{ id: string; enabled: boolean }> };
-            login: { requiredProviders: string[] };
-            ui: { autoRedirect: { enabled: boolean; providerId: string | null } };
-            providers: ReturnType<typeof createAuthProvidersWithDetails>;
-            misconfig: [];
-        };
-    };
-} {
+): FeaturesResponse {
     const oauthProviders = overrides.oauthProviders ?? {
         github: { enabled: true, configured: true },
     };
     const authProviders = overrides.authProviders ?? oauthProviders;
     const intervalSeconds = overrides.providerOffboardingIntervalSeconds ?? 86400;
+    const providerResetEnabled = overrides.recoveryProviderResetEnabled ?? false;
+    const providerResetProviders = overrides.recoveryProviderResetProviders ?? [];
 
-    return {
+    return createRootLayoutFeaturesResponse({
         features: {
             sharing: {
                 session: { enabled: true },
@@ -83,10 +70,25 @@ export function createWelcomeFeaturesResponse(
                 contentKeys: { enabled: true },
                 pendingQueueV2: { enabled: true },
             },
-            voice: { enabled: false, configured: false, provider: null },
+            voice: { enabled: false, happierVoice: { enabled: false } },
             social: {
                 friends: {
                     enabled: false,
+                },
+            },
+            auth: {
+                recovery: {
+                    providerReset: { enabled: providerResetEnabled },
+                },
+                ui: {
+                    recoveryKeyReminder: { enabled: true },
+                },
+            },
+        },
+        capabilities: {
+            voice: { configured: false, provider: null, requested: false, disabledByBuildPolicy: false },
+            social: {
+                friends: {
                     allowUsername: false,
                     requiredIdentityProviderId: null,
                 },
@@ -101,6 +103,7 @@ export function createWelcomeFeaturesResponse(
                         ],
                 },
                 login: { requiredProviders: overrides.requiredProviders ?? [] },
+                recovery: { providerReset: { providers: providerResetEnabled ? providerResetProviders : [] } },
                 ui: {
                     autoRedirect: {
                         enabled: overrides.autoRedirectEnabled ?? false,
@@ -111,5 +114,5 @@ export function createWelcomeFeaturesResponse(
                 misconfig: [],
             },
         },
-    };
+    });
 }

@@ -35,7 +35,7 @@ export function getAuthProvider(id: string): AuthProvider | null {
     if (existing) return existing;
 
     const features = getCachedReadyServerFeatures();
-    const ui = features?.features?.auth?.providers?.[normalized]?.ui;
+    const ui = features?.capabilities?.auth?.providers?.[normalized]?.ui;
     const displayName = ui?.displayName ? String(ui.displayName) : defaultDisplayNameFromId(normalized);
 
     const fallback = createExternalOAuthProvider({

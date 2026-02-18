@@ -22,8 +22,9 @@ export default function LostAccess() {
         void (async () => {
             try {
                 const features = await getReadyServerFeatures();
-                const reset = features?.features?.auth?.recovery?.providerReset ?? null;
-                const enabled = reset?.enabled === true ? reset.providers : [];
+                const resetGate = features?.features?.auth?.recovery?.providerReset ?? null;
+                const providersList = features?.capabilities?.auth?.recovery?.providerReset?.providers ?? [];
+                const enabled = resetGate?.enabled === true ? providersList : [];
                 if (mounted) setProviders(enabled);
             } catch {
                 if (mounted) setProviders([]);

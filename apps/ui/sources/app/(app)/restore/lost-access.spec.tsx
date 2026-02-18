@@ -74,19 +74,12 @@ const baseWelcomeFeatures = createWelcomeFeaturesResponse({
     requiredProviders: ['github'],
     autoRedirectEnabled: false,
     autoRedirectProviderId: null,
+    recoveryProviderResetEnabled: true,
+    recoveryProviderResetProviders: ['github'],
 });
 
 vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
-    getReadyServerFeatures: async () => ({
-        ...baseWelcomeFeatures,
-        features: {
-            ...baseWelcomeFeatures.features,
-            auth: {
-                ...baseWelcomeFeatures.features.auth,
-                recovery: { providerReset: { enabled: true, providers: ['github'] } },
-            },
-        },
-    }),
+    getReadyServerFeatures: async () => baseWelcomeFeatures,
 }));
 
 function findProviderButtonAction(tree: renderer.ReactTestRenderer): () => Promise<void> | void {

@@ -1,53 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-type CachedFeaturesShape = {
-    features: {
-        bugReports: {
-            enabled: boolean;
-            providerUrl: string | null;
-            defaultIncludeDiagnostics: boolean;
-            maxArtifactBytes: number;
-            acceptedArtifactKinds: string[];
-            uploadTimeoutMs: number;
-        };
-        sharing: {
-            session: { enabled: boolean };
-            public: { enabled: boolean };
-            contentKeys: { enabled: boolean };
-            pendingQueueV2: { enabled: boolean };
-        };
-        voice: { enabled: boolean; configured: boolean; provider: null };
-        social: { friends: { enabled: boolean; allowUsername: boolean; requiredIdentityProviderId: null } };
-        oauth: { providers: Record<string, { enabled: boolean; configured: boolean }> };
-        auth: {
-            signup: { methods: Array<{ id: string; enabled: boolean }> };
-            login: { requiredProviders: string[] };
-            providers: Record<
-                string,
-                {
-                    enabled: boolean;
-                    configured: boolean;
-                    ui?: {
-                        displayName?: string;
-                        connectButtonColor?: string;
-                        badgeIconName?: string;
-                        supportsProfileBadge?: boolean;
-                    };
-                    restrictions: { usersAllowlist: boolean; orgsAllowlist: boolean; orgMatch: 'any' };
-                    offboarding: {
-                        enabled: boolean;
-                        intervalSeconds: number;
-                        mode: 'per-request-cache';
-                        source: 'claims';
-                    };
-                }
-            >;
-            misconfig: [];
-        };
-    };
-};
+import type { FeaturesResponse } from '@happier-dev/protocol';
 
-let cachedFeatures: CachedFeaturesShape | null = null;
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/rootLayoutTestkit';
+
+let cachedFeatures: FeaturesResponse | null = null;
 
 function buildCachedFeatures(
     providerId: string,
@@ -57,25 +14,18 @@ function buildCachedFeatures(
         badgeIconName?: string;
         supportsProfileBadge?: boolean;
     } = {},
-): CachedFeaturesShape {
-    return {
-        features: {
-            bugReports: {
-                enabled: true,
-                providerUrl: 'https://reports.happier.dev',
-                defaultIncludeDiagnostics: true,
-                maxArtifactBytes: 10 * 1024 * 1024,
-                acceptedArtifactKinds: ['ui-mobile', 'ui-desktop', 'cli', 'daemon', 'server', 'stack-service', 'user-note'],
-                uploadTimeoutMs: 120000,
-            },
-            sharing: {
-                session: { enabled: true },
-                public: { enabled: true },
-                contentKeys: { enabled: true },
-                pendingQueueV2: { enabled: true },
-            },
-            voice: { enabled: false, configured: false, provider: null },
-            social: { friends: { enabled: false, allowUsername: false, requiredIdentityProviderId: null } },
+): FeaturesResponse {
+    const ui = params.displayName
+        ? {
+              displayName: params.displayName,
+              ...(params.connectButtonColor ? { connectButtonColor: params.connectButtonColor } : {}),
+              ...(params.badgeIconName ? { badgeIconName: params.badgeIconName } : {}),
+              ...(params.supportsProfileBadge !== undefined ? { supportsProfileBadge: params.supportsProfileBadge } : {}),
+          }
+        : undefined;
+
+    return createRootLayoutFeaturesResponse({
+        capabilities: {
             oauth: { providers: { [providerId]: { enabled: true, configured: true } } },
             auth: {
                 signup: { methods: [{ id: providerId, enabled: true }] },
@@ -84,18 +34,7 @@ function buildCachedFeatures(
                     [providerId]: {
                         enabled: true,
                         configured: true,
-                        ...(params.displayName || params.connectButtonColor || params.badgeIconName || params.supportsProfileBadge
-                            ? {
-                                  ui: {
-                                      ...(params.displayName ? { displayName: params.displayName } : {}),
-                                      ...(params.connectButtonColor ? { connectButtonColor: params.connectButtonColor } : {}),
-                                      ...(params.badgeIconName ? { badgeIconName: params.badgeIconName } : {}),
-                                      ...(params.supportsProfileBadge !== undefined
-                                          ? { supportsProfileBadge: params.supportsProfileBadge }
-                                          : {}),
-                                  },
-                              }
-                            : {}),
+                        ...(ui ? { ui } : {}),
                         restrictions: { usersAllowlist: false, orgsAllowlist: false, orgMatch: 'any' },
                         offboarding: {
                             enabled: false,
@@ -105,10 +44,9 @@ function buildCachedFeatures(
                         },
                     },
                 },
-                misconfig: [],
             },
         },
-    };
+    });
 }
 
 vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({

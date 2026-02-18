@@ -23,6 +23,15 @@ export function createAccountFeaturesResponse(
             social: {
                 friends: {
                     enabled: overrides.friendsEnabled ?? true,
+                },
+            },
+        },
+        capabilities: {
+            ...base.capabilities,
+            social: {
+                ...base.capabilities.social,
+                friends: {
+                    ...base.capabilities.social.friends,
                     allowUsername: overrides.friendsAllowUsername ?? true,
                     requiredIdentityProviderId: null,
                 },
