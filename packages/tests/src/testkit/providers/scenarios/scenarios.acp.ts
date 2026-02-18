@@ -784,20 +784,50 @@ export function makeAcpEditResultIncludesDiffScenario(params: {
       const { writeFile } = await import('node:fs/promises');
       await writeFile(join(workspaceDir, filename), `${params.before}\n`, 'utf8');
     },
-    prompt: ({ workspaceDir }) =>
+    steps: [
       {
-        const targetPath = params.useAbsolutePath ? join(workspaceDir, filename) : filename;
-        return [
-          'Run exactly two tool calls:',
-          `- First, use the Read tool to read the file: ${targetPath}`,
-          `- Second, use a file-editing tool (Edit or Patch; not Write, not execute) to update the file: ${targetPath}`,
-          `- Replace the content "${params.before}" with "${params.after}"`,
-          '',
-          'This is an automated test. Do not use execute to edit files.',
-          'Then reply DONE.',
-          `Note: current working directory is ${workspaceDir}`,
-        ].join('\n');
+        id: 'read',
+        prompt: ({ workspaceDir }) => {
+          const targetPath = params.useAbsolutePath ? join(workspaceDir, filename) : filename;
+          return [
+            'Use exactly one tool call:',
+            `- Use the Read tool to read the file: ${targetPath}`,
+            '',
+            'Do not call any other tools yet. Then reply DONE.',
+            `Note: current working directory is ${workspaceDir}`,
+          ].join('\n');
+        },
+        satisfaction: {
+          requiredFixtureKeys: [
+            k(params.providerId, 'tool-call', 'Read'),
+            k(params.providerId, 'tool-result', 'Read'),
+          ],
+          requiredTraceSubstrings: [filename, params.before],
+        },
       },
+      {
+        id: 'edit',
+        prompt: ({ workspaceDir }) => {
+          const targetPath = params.useAbsolutePath ? join(workspaceDir, filename) : filename;
+          return [
+            'Use exactly one tool call:',
+            `- Use a file-editing tool (Edit or Patch; not Write, not execute) to update the file: ${targetPath}`,
+            `- Replace the content "${params.before}" with "${params.after}"`,
+            '',
+            'This is an automated test. Do not use execute to edit files.',
+            'Then reply DONE.',
+            `Note: current working directory is ${workspaceDir}`,
+          ].join('\n');
+        },
+        satisfaction: {
+          requiredAnyFixtureKeys: [
+            [k(params.providerId, 'tool-call', 'Edit'), k(params.providerId, 'tool-call', 'Patch')],
+            [k(params.providerId, 'tool-result', 'Edit'), k(params.providerId, 'tool-result', 'Patch')],
+          ],
+          requiredTraceSubstrings: [filename, params.after],
+        },
+      },
+    ],
     requiredAnyFixtureKeys: [
       [k(params.providerId, 'tool-call', 'Read')],
       [k(params.providerId, 'tool-result', 'Read')],

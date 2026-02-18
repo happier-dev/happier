@@ -29,9 +29,17 @@ describe('scenarioCatalog: auggie read_known_file path mode', () => {
 
     const scenario = scenarioCatalog.edit_result_includes_diff(auggie);
     const workspaceDir = '/tmp/happier-auggie-edit-known-file';
-    const prompt = scenario.prompt?.({ workspaceDir });
-    expect(typeof prompt).toBe('string');
-    expect(prompt).toContain(join(workspaceDir, 'e2e-edit-diff.txt'));
+    const target = join(workspaceDir, 'e2e-edit-diff.txt');
+
+    const prompt = scenario.prompt?.({ workspaceDir }) ?? null;
+    if (prompt) {
+      expect(prompt).toContain(target);
+      return;
+    }
+
+    const stepPrompts = (scenario.steps ?? []).map((step) => step.prompt({ workspaceDir }));
+    expect(stepPrompts.length).toBeGreaterThan(0);
+    expect(stepPrompts.some((text) => text.includes(target))).toBe(true);
   });
 
   it('uses absolute paths for auggie multi-file edit diff step prompts', async () => {

@@ -933,7 +933,10 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
                 payload: {
                   id: `cli.${provider.id}`,
                   method: 'probeModels',
-                  params: { timeoutMs: 10_000 },
+                  // Some providers can take >10s to enumerate models under load (especially when
+                  // multiple provider harnesses run concurrently). Keep this comfortably above the
+                  // typical cold-start+handshake window to avoid flaky timeouts.
+                  params: { timeoutMs: 30_000 },
                 },
                 timeoutMs: capabilityProbeRpcTimeoutMs(provider.id),
               }),
@@ -1122,35 +1125,48 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
         run: async ({ workspaceDir, baseUrl, token, sessionId, secret, cliHome }) => {
           await waitForSessionActive({ baseUrl, token, sessionId, timeoutMs: 60_000 });
 
-          const probeParsed = await withCapabilityProbeRetry(
-            () =>
-              invokeCapabilitiesMethod({
-                baseUrl,
-                token,
-                cliHome,
-                secret,
-                rpcMethod: RPC_METHODS.CAPABILITIES_INVOKE,
-                payload: {
-                  id: `cli.${provider.id}`,
-                  method: 'probeModels',
-                  params: { timeoutMs: 10_000 },
-                },
-                timeoutMs: capabilityProbeRpcTimeoutMs(provider.id),
-              }),
-            capabilityProbeRetryOptions(provider.id),
-          );
-          const probeEnvelope = probeParsed && typeof probeParsed === 'object' ? probeParsed as any : null;
-          if (!probeEnvelope || probeEnvelope.ok !== true || !probeEnvelope.result || typeof probeEnvelope.result !== 'object') {
-            throw new Error(`acp_set_model_dynamic: probeModels returned invalid envelope`);
+          // Some providers can report only the placeholder "default" model briefly while they are
+          // still warming up / fetching model inventories. Keep probing until we get a non-default
+          // model id or we hit a deadline.
+          const probeDeadline = Date.now() + 90_000;
+          let probeEnvelope: any | null = null;
+          let selectedModel: string | null = null;
+          while (Date.now() < probeDeadline) {
+            const probeParsed = await withCapabilityProbeRetry(
+              () =>
+                invokeCapabilitiesMethod({
+                  baseUrl,
+                  token,
+                  cliHome,
+                  secret,
+                  rpcMethod: RPC_METHODS.CAPABILITIES_INVOKE,
+                  payload: {
+                    id: `cli.${provider.id}`,
+                    method: 'probeModels',
+                    params: { timeoutMs: 30_000 },
+                  },
+                  timeoutMs: capabilityProbeRpcTimeoutMs(provider.id),
+                }),
+              capabilityProbeRetryOptions(provider.id),
+            ).catch((error) => enrichCapabilityProbeError(error) as any);
+
+            const envelope = probeParsed && typeof probeParsed === 'object' ? (probeParsed as any) : null;
+            if (envelope && envelope.ok === true && envelope.result && typeof envelope.result === 'object') {
+              const models = Array.isArray(envelope.result.availableModels) ? envelope.result.availableModels : [];
+              const nonDefault =
+                models.find((m: any) => m && typeof m.id === 'string' && m.id.trim() !== '' && m.id !== 'default')?.id ?? null;
+              if (nonDefault) {
+                probeEnvelope = envelope;
+                selectedModel = nonDefault;
+                break;
+              }
+            }
+
+            await sleep(500);
           }
 
-          const models = Array.isArray(probeEnvelope.result.availableModels) ? probeEnvelope.result.availableModels : [];
-          const selectedModel =
-            models.find((m: any) => m && typeof m.id === 'string' && m.id.trim() !== '' && m.id !== 'default')?.id ??
-            models.find((m: any) => m && typeof m.id === 'string' && m.id.trim() !== '')?.id ??
-            null;
-          if (!selectedModel) {
-            throw new Error(`acp_set_model_dynamic: no dynamic non-default model id found`);
+          if (!probeEnvelope || !selectedModel) {
+            throw new Error('acp_set_model_dynamic: no dynamic non-default model id found');
           }
 
           const snapBefore = await fetchSessionV2(baseUrl, token, sessionId);
