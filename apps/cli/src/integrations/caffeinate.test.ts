@@ -100,6 +100,24 @@ describe('caffeinate', () => {
         });
     });
 
+    it('does not register global unhandledRejection/uncaughtException handlers', async () => {
+        const fakeChild = createFakeChildProcess(777);
+        spawnMock.mockReturnValue(fakeChild);
+        const { startCaffeinate } = await importCaffeinateModule();
+
+        expect(startCaffeinate()).toBe(true);
+
+        const registeredEvents = vi
+            .mocked(process.on)
+            .mock.calls.map((call) => call[0]);
+
+        expect(registeredEvents).toContain('exit');
+        expect(registeredEvents).toContain('SIGINT');
+        expect(registeredEvents).toContain('SIGTERM');
+        expect(registeredEvents).not.toContain('unhandledRejection');
+        expect(registeredEvents).not.toContain('uncaughtException');
+    });
+
     it('unrefs the stop grace-period timer so shutdown is not delayed', async () => {
         const fakeChild = createFakeChildProcess(123);
         spawnMock.mockReturnValue(fakeChild);

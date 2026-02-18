@@ -132,14 +132,4 @@ function setupCleanupHandlers(): void {
     process.on('exit', cleanup);
     process.on('SIGINT', cleanup);
     process.on('SIGTERM', cleanup);
-    process.on('SIGUSR1', cleanup);
-    process.on('SIGUSR2', cleanup);
-    process.on('uncaughtException', (error) => {
-        logger.debug('[caffeinate] Uncaught exception, cleaning up:', error);
-        cleanup();
-    });
-    process.on('unhandledRejection', (reason, promise) => {
-        logger.debug('[caffeinate] Unhandled rejection, cleaning up:', reason);
-        cleanup();
-    });
 }
