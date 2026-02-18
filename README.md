@@ -9,7 +9,7 @@
   **End-to-end encrypted. Zero-knowledge. Built by developers, for developers.**
 </div>
 
-## Happier is not released, yet!
+## Happier is not released, yet! February 18 update: https://github.com/happier-dev/happier/discussions/37
 
 Make sure to star the repo and [subscribe to the announcements channel](https://github.com/happier-dev/happier/discussions/categories/announcements) to be informed as soon as it's out.
 
