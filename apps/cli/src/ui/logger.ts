@@ -8,8 +8,8 @@
 import chalk from 'chalk'
 import { appendFileSync } from 'fs'
 import { configuration } from '@/configuration'
-import { existsSync, readdirSync, statSync } from 'node:fs'
-import { join, basename } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 // Note: readDaemonState is imported lazily inside listDaemonLogFiles() to avoid
 // circular dependency: logger.ts ↔ persistence.ts
 
@@ -221,6 +221,19 @@ class Logger {
     try {
       appendFileSync(this.logFilePath, logLine)
     } catch (appendError) {
+      // Most common failure in tests/first-run is missing logs directory.
+      // Create it and retry once, but never throw from logging.
+      const err = appendError as NodeJS.ErrnoException
+      if (err?.code === 'ENOENT') {
+        try {
+          mkdirSync(dirname(this.logFilePath), { recursive: true })
+          appendFileSync(this.logFilePath, logLine)
+          return
+        } catch (retryError) {
+          appendError = retryError
+        }
+      }
+
       // Never throw from logging: log files are best-effort and should not break the CLI.
       // When DEBUG is set, surface the first write failure for easier debugging.
       if (process.env.DEBUG && !this.hasLoggedFileWriteError) {

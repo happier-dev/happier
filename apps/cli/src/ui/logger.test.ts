@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 describe('logger.debugLargeJson', () => {
     const originalDebug = process.env.DEBUG;
@@ -42,6 +42,26 @@ describe('logger.debugLargeJson', () => {
         expect(existsSync(logger.getLogPath())).toBe(true);
         const content = readFileSync(logger.getLogPath(), 'utf8');
         expect(content).toContain('[TEST] debugLargeJson');
+    });
+
+    it('creates logs dir on demand when writing the first debug entry', async () => {
+        process.env.DEBUG = '1';
+
+        const { logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
+        const logsDir = dirname(logger.getLogPath());
+        rmSync(logsDir, { recursive: true, force: true });
+
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            logger.debugLargeJson('[TEST] create logs dir', { secret: 'value' });
+        } finally {
+            errorSpy.mockRestore();
+        }
+
+        expect(existsSync(logsDir)).toBe(true);
+        expect(existsSync(logger.getLogPath())).toBe(true);
+        const content = readFileSync(logger.getLogPath(), 'utf8');
+        expect(content).toContain('[TEST] create logs dir');
     });
 
     it('does not throw if log file cannot be written (even when DEBUG is set)', async () => {
