@@ -7,11 +7,16 @@ import { createRequire } from 'module';
 
 function preflightRequiredDependencies(projectRoot) {
   const cliRequire = createRequire(import.meta.url);
-  let protocolPackageJsonPath;
+  let protocolEntryPath;
   try {
-    protocolPackageJsonPath = cliRequire.resolve('@happier-dev/protocol/package.json');
+    protocolEntryPath = cliRequire.resolve('@happier-dev/protocol');
   } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'MODULE_NOT_FOUND') {
+    if (
+      error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error.code === 'MODULE_NOT_FOUND' || error.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED')
+    ) {
       console.error('Missing bundled package: @happier-dev/protocol');
       console.error('Reinstall @happier-dev/cli to repair your installation.');
       process.exit(1);
@@ -19,7 +24,7 @@ function preflightRequiredDependencies(projectRoot) {
     throw error;
   }
 
-  const protocolRequire = createRequire(protocolPackageJsonPath);
+  const protocolRequire = createRequire(protocolEntryPath);
 
   // `tweetnacl` is a direct runtime dependency of the CLI.
   // `base64-js` and `@noble/hashes/*` are runtime dependencies of `@happier-dev/protocol` and may be

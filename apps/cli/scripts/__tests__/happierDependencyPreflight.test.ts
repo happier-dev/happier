@@ -14,6 +14,7 @@ describe('happier bin preflight', () => {
 
     mkdirSync(resolve(tempRoot, 'bin'), { recursive: true });
     mkdirSync(resolve(tempRoot, 'dist'), { recursive: true });
+    mkdirSync(resolve(tempRoot, 'node_modules', '@happier-dev', 'protocol', 'dist'), { recursive: true });
 
     // Global-install / packed layout:
     // - protocol is present as a bundled workspace package
@@ -32,7 +33,19 @@ describe('happier bin preflight', () => {
 
     writeFileSync(
       resolve(tempRoot, 'node_modules', '@happier-dev', 'protocol', 'package.json'),
-      JSON.stringify({ name: '@happier-dev/protocol', version: '0.0.0' }),
+      JSON.stringify({
+        name: '@happier-dev/protocol',
+        version: '0.0.0',
+        type: 'module',
+        exports: {
+          '.': './dist/index.js',
+        },
+      }),
+      'utf8',
+    );
+    writeFileSync(
+      resolve(tempRoot, 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.js'),
+      'export {};\n',
       'utf8',
     );
     writeFileSync(
@@ -90,15 +103,23 @@ describe('happier bin preflight', () => {
 
     mkdirSync(resolve(tempRoot, 'bin'), { recursive: true });
     mkdirSync(resolve(tempRoot, 'dist'), { recursive: true });
-    mkdirSync(resolve(tempRoot, 'node_modules', '@happier-dev', 'protocol'), { recursive: true });
+    mkdirSync(resolve(tempRoot, 'node_modules', '@happier-dev', 'protocol', 'dist'), { recursive: true });
 
     cpSync(resolve(repoRoot, 'apps', 'cli', 'bin', 'happier.mjs'), resolve(tempRoot, 'bin', 'happier.mjs'));
 
     writeFileSync(
       resolve(tempRoot, 'node_modules', '@happier-dev', 'protocol', 'package.json'),
-      JSON.stringify({ name: '@happier-dev/protocol', version: '0.0.0' }),
+      JSON.stringify({
+        name: '@happier-dev/protocol',
+        version: '0.0.0',
+        type: 'module',
+        exports: {
+          '.': './dist/index.js',
+        },
+      }),
       'utf8',
     );
+    writeFileSync(resolve(tempRoot, 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.js'), 'export {};\n', 'utf8');
     writeFileSync(
       resolve(tempRoot, 'dist', 'index.mjs'),
       "console.log('ok');\n",
@@ -124,16 +145,24 @@ describe('happier bin preflight', () => {
 
     mkdirSync(resolve(tempRoot, 'bin'), { recursive: true });
     mkdirSync(resolve(tempRoot, 'dist'), { recursive: true });
-    mkdirSync(resolve(tempRoot, 'node_modules', '@happier-dev', 'protocol'), { recursive: true });
+    mkdirSync(resolve(tempRoot, 'node_modules', '@happier-dev', 'protocol', 'dist'), { recursive: true });
     mkdirSync(resolve(tempRoot, 'node_modules', 'tweetnacl'), { recursive: true });
 
     cpSync(resolve(repoRoot, 'apps', 'cli', 'bin', 'happier.mjs'), resolve(tempRoot, 'bin', 'happier.mjs'));
 
     writeFileSync(
       resolve(tempRoot, 'node_modules', '@happier-dev', 'protocol', 'package.json'),
-      JSON.stringify({ name: '@happier-dev/protocol', version: '0.0.0' }),
+      JSON.stringify({
+        name: '@happier-dev/protocol',
+        version: '0.0.0',
+        type: 'module',
+        exports: {
+          '.': './dist/index.js',
+        },
+      }),
       'utf8',
     );
+    writeFileSync(resolve(tempRoot, 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.js'), 'export {};\n', 'utf8');
     writeFileSync(
       resolve(tempRoot, 'node_modules', 'tweetnacl', 'package.json'),
       JSON.stringify({ name: 'tweetnacl', version: '0.0.0', main: 'index.js' }),
@@ -162,7 +191,7 @@ describe('happier bin preflight', () => {
 
     mkdirSync(resolve(tempRoot, 'bin'), { recursive: true });
     mkdirSync(resolve(tempRoot, 'dist'), { recursive: true });
-    mkdirSync(resolve(tempRoot, 'node_modules', '@happier-dev', 'protocol'), { recursive: true });
+    mkdirSync(resolve(tempRoot, 'node_modules', '@happier-dev', 'protocol', 'dist'), { recursive: true });
     mkdirSync(resolve(tempRoot, 'node_modules', 'tweetnacl'), { recursive: true });
     mkdirSync(resolve(tempRoot, 'node_modules', 'base64-js'), { recursive: true });
 
@@ -170,9 +199,17 @@ describe('happier bin preflight', () => {
 
     writeFileSync(
       resolve(tempRoot, 'node_modules', '@happier-dev', 'protocol', 'package.json'),
-      JSON.stringify({ name: '@happier-dev/protocol', version: '0.0.0' }),
+      JSON.stringify({
+        name: '@happier-dev/protocol',
+        version: '0.0.0',
+        type: 'module',
+        exports: {
+          '.': './dist/index.js',
+        },
+      }),
       'utf8',
     );
+    writeFileSync(resolve(tempRoot, 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.js'), 'export {};\n', 'utf8');
     writeFileSync(
       resolve(tempRoot, 'node_modules', 'tweetnacl', 'package.json'),
       JSON.stringify({ name: 'tweetnacl', version: '0.0.0', main: 'index.js' }),
