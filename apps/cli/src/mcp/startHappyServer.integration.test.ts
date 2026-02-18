@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { request as httpRequest } from 'node:http';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -6,6 +7,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { AgentBackend } from '@/agent/core/AgentBackend';
+import { reloadConfiguration } from '@/configuration';
 import { registerExecutionRunHandlers } from '@/rpc/handlers/executionRuns';
 import { startHappyServer, type HappyMcpSessionClient } from '@/mcp/startHappyServer';
 
@@ -40,6 +42,92 @@ function parseMcpJsonText(result: any): any {
 }
 
 describe('startHappyServer (MCP integration)', () => {
+  it('emits SSE keepalive comments on the standalone GET stream (prevents idle timeouts)', async () => {
+    const prev = process.env.HAPPIER_MCP_SSE_KEEPALIVE_INTERVAL_MS;
+    process.env.HAPPIER_MCP_SSE_KEEPALIVE_INTERVAL_MS = '25';
+    reloadConfiguration();
+
+    const rpcHandlerManager = new RpcHandlerManager({
+      scopePrefix: 'sess_mcp_keepalive_1',
+      encryptionKey: new Uint8Array([1, 2, 3, 4]),
+      encryptionVariant: 'legacy',
+    });
+
+    registerExecutionRunHandlers(rpcHandlerManager, {
+      sessionId: 'sess_mcp_keepalive_1',
+      cwd: process.cwd(),
+      parentProvider: 'claude',
+      createBackend: () => createStaticBackend(JSON.stringify({ ok: true })),
+      sendAcp: () => {},
+    });
+
+    const fakeClient: HappyMcpSessionClient = {
+      sessionId: 'sess_mcp_keepalive_1',
+      rpcHandlerManager,
+      sendClaudeSessionMessage: () => {},
+    };
+
+    const server = await startHappyServer(fakeClient);
+    try {
+      const url = new URL(server.url);
+      const firstChunk = await new Promise<string>((resolve, reject) => {
+        let settled = false;
+        let timeoutId: NodeJS.Timeout | null = null;
+        const finish = (value: { ok: true; chunk: string } | { ok: false; error: Error }) => {
+          if (settled) return;
+          settled = true;
+          if (timeoutId) clearTimeout(timeoutId);
+          if (value.ok) resolve(value.chunk);
+          else reject(value.error);
+        };
+
+        const req = httpRequest(
+          {
+            method: 'GET',
+            host: url.hostname,
+            port: Number(url.port),
+            path: `${url.pathname}${url.search}`,
+            headers: {
+              Accept: 'text/event-stream',
+            },
+          },
+          (res) => {
+            if (res.statusCode !== 200) {
+              finish({ ok: false, error: new Error(`Unexpected status: ${res.statusCode}`) });
+              req.destroy();
+              return;
+            }
+            res.once('data', (chunk) => {
+              finish({ ok: true, chunk: Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk) });
+              req.destroy();
+            });
+            res.once('end', () => {
+              finish({ ok: false, error: new Error('SSE stream ended before any keepalive data was received') });
+            });
+            res.once('close', () => {
+              finish({ ok: false, error: new Error('SSE stream closed before any keepalive data was received') });
+            });
+          },
+        );
+        req.on('error', (err) => finish({ ok: false, error: err instanceof Error ? err : new Error(String(err)) }));
+        req.end();
+
+        timeoutId = setTimeout(() => {
+          req.destroy();
+          finish({ ok: false, error: new Error('Timed out waiting for SSE keepalive chunk') });
+        }, 1000);
+      });
+
+      // SSE comments start with ":" and are safe to interleave with event streams.
+      expect(firstChunk).toContain(':');
+    } finally {
+      server.stop();
+      if (prev === undefined) delete process.env.HAPPIER_MCP_SSE_KEEPALIVE_INTERVAL_MS;
+      else process.env.HAPPIER_MCP_SSE_KEEPALIVE_INTERVAL_MS = prev;
+      reloadConfiguration();
+    }
+  });
+
   it('exposes execution_run_* tools and can start/get/action a review run over HTTP transport', async () => {
     const sent: Array<{ body: ACPMessageData; meta?: Record<string, unknown> }> = [];
 
@@ -74,8 +162,9 @@ describe('startHappyServer (MCP integration)', () => {
     };
 
     const server = await startHappyServer(fakeClient);
+    let client: Client | null = null;
     try {
-      const client = new Client({ name: 'mcp-test', version: '1.0.0' }, { capabilities: {} });
+      client = new Client({ name: 'mcp-test', version: '1.0.0' }, { capabilities: {} });
       await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
 
       const tools = await client.listTools();
@@ -135,6 +224,7 @@ describe('startHappyServer (MCP integration)', () => {
       expect(sent.some((m) => (m.body as any)?.type === 'tool-call')).toBe(true);
       expect(sent.some((m) => (m.body as any)?.type === 'tool-result')).toBe(true);
     } finally {
+      await (client as any)?.close?.();
       server.stop();
     }
   });
@@ -169,8 +259,9 @@ describe('startHappyServer (MCP integration)', () => {
     };
 
     const server = await startHappyServer(fakeClient);
+    let client: Client | null = null;
     try {
-      const client = new Client({ name: 'mcp-test-disabled', version: '1.0.0' }, { capabilities: {} });
+      client = new Client({ name: 'mcp-test-disabled', version: '1.0.0' }, { capabilities: {} });
       await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
 
       const tools = await client.listTools();
@@ -185,6 +276,7 @@ describe('startHappyServer (MCP integration)', () => {
       const parsed = parseMcpJsonText(got);
       expect(parsed.errorCode).toBe('action_disabled');
     } finally {
+      await (client as any)?.close?.();
       server.stop();
       if (prev === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
       else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = prev;
