@@ -109,6 +109,33 @@ describe('Api server error handling', () => {
     });
 
     describe('getOrCreateSession', () => {
+        it('delays session creation when HAPPIER_E2E_DELAY_CREATE_SESSION_MS is set', async () => {
+            vi.useFakeTimers();
+            const prevDelay = process.env.HAPPIER_E2E_DELAY_CREATE_SESSION_MS;
+            process.env.HAPPIER_E2E_DELAY_CREATE_SESSION_MS = '1000';
+
+            try {
+                mockPost.mockResolvedValue({ status: 201, data: { session: { id: 's1' } } });
+
+                const promise = api.getOrCreateSession({ tag: 'test-tag', metadata: testMetadata as any, state: null });
+
+                expect(mockPost).not.toHaveBeenCalled();
+
+                await vi.advanceTimersByTimeAsync(999);
+                expect(mockPost).not.toHaveBeenCalled();
+
+                await vi.advanceTimersByTimeAsync(1);
+                await expect(promise).resolves.toEqual(expect.objectContaining({ id: 's1' }));
+            } finally {
+                vi.useRealTimers();
+                if (prevDelay === undefined) {
+                    delete process.env.HAPPIER_E2E_DELAY_CREATE_SESSION_MS;
+                } else {
+                    process.env.HAPPIER_E2E_DELAY_CREATE_SESSION_MS = prevDelay;
+                }
+            }
+        });
+
         it('should not log bearer tokens or vendor keys when axios errors occur', async () => {
             connectionState.reset();
             const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});

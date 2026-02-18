@@ -12,6 +12,7 @@ import { Credentials } from '@/persistence';
 import { resolveMachineEncryptionContext, resolveSessionEncryptionContext } from './client/encryptionKey';
 import { resolveLoopbackHttpUrl } from './client/loopbackUrl';
 import { openSessionDataEncryptionKey } from './client/openSessionDataEncryptionKey';
+import { serializeAxiosErrorForLog } from './client/serializeAxiosErrorForLog';
 import {
   shouldReturnMinimalMachineForGetOrCreateMachineError,
   shouldReturnNullForGetOrCreateSessionError,
@@ -52,40 +53,6 @@ export function isMachineIdConflictError(error: unknown): error is MachineIdConf
   if (!error || typeof error !== 'object') return false;
   const maybe = error as any;
   return maybe.name === 'MachineIdConflictError' && typeof maybe.machineId === 'string' && maybe.machineId.length > 0;
-}
-
-function redactUrlForLog(raw: unknown): string | undefined {
-  if (typeof raw !== 'string') return undefined;
-  const value = raw.trim();
-  if (!value) return undefined;
-  try {
-    const parsed = new URL(value);
-    parsed.search = '';
-    parsed.hash = '';
-    return parsed.toString();
-  } catch {
-    // Best-effort: strip query/hash to avoid leaking secrets in URLs.
-    return value.split('?')[0].split('#')[0];
-  }
-}
-
-function serializeAxiosErrorForLog(error: unknown): Record<string, unknown> {
-  if (axios.isAxiosError(error)) {
-    return {
-      name: error.name,
-      message: error.message,
-      code: (error as any)?.code,
-      status: error.response?.status,
-      method: typeof error.config?.method === 'string' ? error.config.method.toUpperCase() : undefined,
-      url: redactUrlForLog(error.config?.url),
-    };
-  }
-
-  if (error instanceof Error) {
-    return { name: error.name, message: error.message };
-  }
-
-  return { message: String(error) };
 }
 
 function resolveServerHttpBaseUrl(): string {
@@ -133,6 +100,15 @@ export class ApiClient {
       if (ms <= 0) return;
       await new Promise<void>((resolve) => setTimeout(resolve, ms));
     };
+
+    const e2eCreateSessionDelayMs = resolvePositiveIntEnv(
+      process.env.HAPPIER_E2E_DELAY_CREATE_SESSION_MS,
+      0,
+      { min: 0, max: 30_000 },
+    );
+    if (e2eCreateSessionDelayMs > 0) {
+      await sleep(e2eCreateSessionDelayMs);
+    }
 
     // Create session (retry transient 5xx, but do not enter offline mode for 5xx).
     for (let attempt = 1; attempt <= retryMaxAttempts; attempt += 1) {
@@ -418,20 +394,29 @@ export class ApiClient {
       if (response.status !== 200) {
         throw new Error(`Server returned status ${response.status}`);
       }
-      const schema = z.object({
-        sealed: SealedConnectedServiceCredentialV1Schema,
-        metadata: z.object({
-          kind: z.enum(['oauth', 'token']),
-          providerEmail: z.string().nullable().optional(),
-          providerAccountId: z.string().nullable().optional(),
-          expiresAt: z.number().nullable().optional(),
-        }),
-      });
-      const parsed = schema.safeParse(response.data);
-      if (!parsed.success) {
+
+      const raw = response.data;
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
         throw new Error('Invalid connected service credential response');
       }
-      return parsed.data;
+
+      const sealedParsed = SealedConnectedServiceCredentialV1Schema.safeParse((raw as any).sealed);
+      if (!sealedParsed.success) {
+        throw new Error('Invalid connected service credential response');
+      }
+
+      const metadataParsed = z.object({
+        kind: z.enum(['oauth', 'token']),
+        providerEmail: z.string().nullable().optional(),
+        providerAccountId: z.string().nullable().optional(),
+        expiresAt: z.number().nullable().optional(),
+      }).safeParse((raw as any).metadata);
+
+      if (!metadataParsed.success) {
+        throw new Error('Invalid connected service credential response');
+      }
+
+      return { sealed: sealedParsed.data, metadata: metadataParsed.data };
     } catch (error: unknown) {
       const status = axios.isAxiosError(error) ? error.response?.status : undefined;
       const code = (() => {
@@ -481,25 +466,33 @@ export class ApiClient {
     if (response.status !== 200) {
       throw new Error(`Server returned status ${response.status}`);
     }
-    const schema = z.object({
-      serviceId: ConnectedServiceIdSchema,
-      profiles: z.array(
-        z.object({
-          profileId: z.string().min(1),
-          status: z.enum(['connected', 'needs_reauth']),
-          kind: z.enum(['oauth', 'token']).nullable().optional(),
-          providerEmail: z.string().nullable().optional(),
-          providerAccountId: z.string().nullable().optional(),
-          expiresAt: z.number().nullable().optional(),
-          lastUsedAt: z.number().nullable().optional(),
-        }),
-      ),
-    });
-    const parsed = schema.safeParse(response.data);
-    if (!parsed.success) {
+    const raw = response.data;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
       throw new Error('Invalid connected service profiles response');
     }
-    return parsed.data;
+
+    const serviceIdParsed = ConnectedServiceIdSchema.safeParse((raw as any).serviceId);
+    if (!serviceIdParsed.success) {
+      throw new Error('Invalid connected service profiles response');
+    }
+
+    const profilesParsed = z.array(
+      z.object({
+        profileId: z.string().min(1),
+        status: z.enum(['connected', 'needs_reauth']),
+        kind: z.enum(['oauth', 'token']).nullable().optional(),
+        providerEmail: z.string().nullable().optional(),
+        providerAccountId: z.string().nullable().optional(),
+        expiresAt: z.number().nullable().optional(),
+        lastUsedAt: z.number().nullable().optional(),
+      }),
+    ).safeParse((raw as any).profiles);
+
+    if (!profilesParsed.success) {
+      throw new Error('Invalid connected service profiles response');
+    }
+
+    return { serviceId: serviceIdParsed.data, profiles: profilesParsed.data };
   }
 
   /**
@@ -582,20 +575,28 @@ export class ApiClient {
       if (response.status !== 200) {
         throw new Error(`Server returned status ${response.status}`);
       }
-      const schema = z.object({
-        sealed: SealedConnectedServiceQuotaSnapshotV1Schema,
-        metadata: z.object({
-          fetchedAt: z.number(),
-          staleAfterMs: z.number(),
-          status: z.enum(['ok', 'unavailable', 'estimated', 'error']),
-          refreshRequestedAt: z.number().optional(),
-        }),
-      });
-      const parsed = schema.safeParse(response.data);
-      if (!parsed.success) {
+      const raw = response.data;
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
         throw new Error('Invalid connected service quota snapshot response');
       }
-      return parsed.data;
+
+      const sealedParsed = SealedConnectedServiceQuotaSnapshotV1Schema.safeParse((raw as any).sealed);
+      if (!sealedParsed.success) {
+        throw new Error('Invalid connected service quota snapshot response');
+      }
+
+      const metadataParsed = z.object({
+        fetchedAt: z.number(),
+        staleAfterMs: z.number(),
+        status: z.enum(['ok', 'unavailable', 'estimated', 'error']),
+        refreshRequestedAt: z.number().optional(),
+      }).safeParse((raw as any).metadata);
+
+      if (!metadataParsed.success) {
+        throw new Error('Invalid connected service quota snapshot response');
+      }
+
+      return { sealed: sealedParsed.data, metadata: metadataParsed.data };
     } catch (error: unknown) {
       const status = axios.isAxiosError(error) ? error.response?.status : undefined;
       if (status === 404) return null;
