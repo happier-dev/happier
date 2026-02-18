@@ -139,9 +139,112 @@ export abstract class BasePermissionHandler {
         this.session.rpcHandlerManager.registerHandler<PermissionResponse, void>(
             'permission',
             async (response) => {
+                const responseAllowedTools = response.allowedTools ?? response.allowTools;
                 const pending = this.pendingRequests.get(response.id);
                 if (!pending) {
-                    logger.debug(`${this.getLogPrefix()} Permission request not found or already resolved`);
+                    // Lifecycle mismatch / race: UI responded, but the in-memory pending promise is gone
+                    // (reconnect/reset/race). Still finalize agent state best-effort so the UI doesn't
+                    // leave a stuck permission prompt forever.
+                    let result: PermissionResult;
+                    if (response.approved) {
+                        const wantsExecpolicyAmendment = response.decision === 'approved_execpolicy_amendment'
+                            && Boolean(response.execPolicyAmendment?.command?.length);
+
+                        if (wantsExecpolicyAmendment) {
+                            result = {
+                                decision: 'approved_execpolicy_amendment',
+                                execPolicyAmendment: response.execPolicyAmendment,
+                            };
+                        } else if (response.decision === 'approved_for_session') {
+                            result = { decision: 'approved_for_session' };
+                        } else {
+                            result = { decision: 'approved' };
+                        }
+                    } else {
+                        result = { decision: response.decision === 'denied' ? 'denied' : 'abort' };
+                    }
+
+                    if (response.approved) {
+                        if (Array.isArray(responseAllowedTools)) {
+                            for (const item of responseAllowedTools) {
+                                if (typeof item === 'string' && item.trim().length > 0) {
+                                    this.allowedToolIdentifiers.add(item.trim());
+                                }
+                            }
+                        } else if (result.decision === 'approved_for_session') {
+                            try {
+                                const snapshot = this.session.getAgentStateSnapshot?.() ?? null;
+                                const request = snapshot?.requests?.[response.id] ?? null;
+                                if (request?.tool) {
+                                    this.allowedToolIdentifiers.add(makeToolIdentifier(request.tool, request.arguments));
+                                }
+                            } catch (error) {
+                                logger.debug(`${this.getLogPrefix()} Failed to derive per-session allowlist (non-fatal)`, error);
+                            }
+                        }
+                    }
+
+                    if (this.toolTrace) {
+                        recordToolTraceEvent({
+                            direction: 'inbound',
+                            sessionId: this.session.sessionId,
+                            protocol: this.toolTrace.protocol,
+                            provider: this.toolTrace.provider,
+                            kind: 'permission-response',
+                            payload: {
+                                type: 'permission-response',
+                                permissionId: response.id,
+                                approved: response.approved,
+                                decision: result.decision,
+                            },
+                        });
+                    }
+
+                    this.updateAgentStateBestEffort((currentState) => {
+                        const request = currentState.requests?.[response.id];
+                        if (!request) return currentState;
+
+                        const { [response.id]: _, ...remainingRequests } = currentState.requests || {};
+                        const wantsDerivedAllowTools =
+                            response.approved
+                                && !Array.isArray(responseAllowedTools)
+                                && result.decision === 'approved_for_session';
+                        const derivedAllowTools =
+                            Array.isArray(responseAllowedTools)
+                                ? responseAllowedTools
+                                : (wantsDerivedAllowTools ? [makeToolIdentifier(request.tool, request.arguments)] : undefined);
+
+                        return {
+                            ...currentState,
+                            requests: remainingRequests,
+                            completedRequests: {
+                                ...currentState.completedRequests,
+                                [response.id]: {
+                                    ...request,
+                                    completedAt: Date.now(),
+                                    status: response.approved ? 'approved' : 'denied',
+                                    decision: result.decision,
+                                    // Persist allowlist for the UI and for future CLI reconnects.
+                                    ...(derivedAllowTools ? { allowedTools: derivedAllowTools } : null),
+                                }
+                            }
+                        } satisfies AgentState;
+                    }, 'permission response completion (stale)');
+
+                    if (result.decision === 'abort' && this.triggerAbortCallbackOnAbortDecision) {
+                        try {
+                            const cb = this.onAbortRequested;
+                            if (cb) {
+                                Promise.resolve(cb()).catch((error) => {
+                                    logger.debug(`${this.getLogPrefix()} onAbortRequested failed (non-fatal)`, error);
+                                });
+                            }
+                        } catch (error) {
+                            logger.debug(`${this.getLogPrefix()} onAbortRequested threw (non-fatal)`, error);
+                        }
+                    }
+
+                    logger.debug(`${this.getLogPrefix()} Permission response received without pending request; finalized agentState best-effort`);
                     return;
                 }
 
@@ -171,7 +274,6 @@ export abstract class BasePermissionHandler {
 
                 // Per-session allowlist: if user chooses "approved_for_session", remember this tool (and for
                 // shell/exec tools, remember the exact command) so future prompts can auto-approve.
-                const responseAllowedTools = response.allowedTools ?? response.allowTools;
                 if (response.approved) {
                     if (Array.isArray(responseAllowedTools)) {
                         for (const item of responseAllowedTools) {

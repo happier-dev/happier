@@ -40,6 +40,34 @@ class TestPermissionHandler extends BasePermissionHandler {
 }
 
 describe('BasePermissionHandler allowlist', () => {
+  it('finalizes agentState requests even when the pending request map is missing the entry (lifecycle mismatch)', async () => {
+    const session = new FakeSession();
+    // Simulate a permission prompt that exists in UI state, but the handler has lost the pending promise
+    // (e.g. reconnect/race/reset). If we ignore the response, the UI can stay stuck forever.
+    session.agentState.requests['perm-1'] = {
+      tool: 'bash',
+      arguments: { command: ['bash', '-lc', 'echo hello'] },
+      createdAt: Date.now(),
+    };
+
+    const handler = new TestPermissionHandler(session as any);
+
+    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    expect(rpc).toBeDefined();
+
+    await rpc!({ id: 'perm-1', approved: false, decision: 'denied' });
+
+    expect(session.agentState.requests['perm-1']).toBeUndefined();
+    expect(session.agentState.completedRequests['perm-1']).toEqual(
+      expect.objectContaining({
+        tool: 'bash',
+        status: 'denied',
+        decision: 'denied',
+        completedAt: expect.any(Number),
+      })
+    );
+  });
+
   it('remembers approved_for_session tool identifiers and clears them on reset', async () => {
     const session = new FakeSession();
     const handler = new TestPermissionHandler(session as any);
