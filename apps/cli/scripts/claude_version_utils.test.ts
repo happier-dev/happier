@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import {
   findGlobalClaudeCliPath,
@@ -9,7 +9,8 @@ import {
   findHomebrewCliPath,
   findNativeInstallerCliPath,
   getVersion,
-  compareVersions
+  compareVersions,
+  getClaudeCliPath
 } from '../scripts/claude_version_utils.cjs';
 
 describe('Claude Version Utils - Cross-Platform Detection', () => {
@@ -335,6 +336,38 @@ describe('Claude Version Utils - Cross-Platform Detection', () => {
         expect(result).toBe(expected);
       });
     });
+  });
+});
+
+describe('Claude Version Utils - getClaudeCliPath logging', () => {
+  const savedEnv = { ...process.env };
+
+  afterEach(() => {
+    process.env = { ...savedEnv };
+    vi.restoreAllMocks();
+  });
+
+  it('does not print "Using Claude Code ..." unless debug is enabled', () => {
+    process.env.HAPPIER_CLAUDE_PATH = 'claude';
+    delete process.env.DEBUG;
+    delete process.env.HAPPIER_DEBUG_CLAUDE_LAUNCHER;
+
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const resolved = getClaudeCliPath();
+
+    expect(resolved).toBe('claude');
+    expect(errSpy).not.toHaveBeenCalled();
+  });
+
+  it('prints "Using Claude Code ..." when debug is enabled', () => {
+    process.env.HAPPIER_CLAUDE_PATH = 'claude';
+    process.env.DEBUG = '1';
+
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const resolved = getClaudeCliPath();
+
+    expect(resolved).toBe('claude');
+    expect(errSpy).toHaveBeenCalled();
   });
 });
 

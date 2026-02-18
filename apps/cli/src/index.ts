@@ -18,8 +18,12 @@ import { fileURLToPath } from 'node:url';
 import packageJson from '../package.json';
 import { resolveNpmPackageNameOverride } from '@happier-dev/cli-common/update';
 import { installAxiosProxySupport } from '@/utils/proxy/axiosProxy';
+import { ensureWindowsUtf8CodePage } from '@/utils/platform/windows/ensureWindowsUtf8CodePage';
 
 void (async () => {
+  // Best-effort Windows console hardening for Unicode output (workaround for upstream reports of mojibake when
+  // launching via npm-generated wrappers). Opt-out via HAPPIER_WINDOWS_UTF8_CODEPAGE=0.
+  ensureWindowsUtf8CodePage();
   initToolTraceIfEnabled();
   installAxiosProxySupport({ axios, env: process.env });
   const cliRootDir = dirname(dirname(fileURLToPath(import.meta.url)));

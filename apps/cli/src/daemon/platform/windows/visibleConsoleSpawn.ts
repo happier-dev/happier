@@ -34,11 +34,12 @@ export function buildPowerShellStartProcessInvocation(params: {
 }
 
 export function parsePowerShellStartProcessPid(stdout: string): number | null {
-  const trimmed = stdout.trim();
+  // PowerShell can emit UTF-16LE-ish output depending on host/codepage. If upstream code decoded the raw bytes
+  // as UTF-8, the resulting string often contains NUL separators between characters.
+  const trimmed = stdout.replaceAll('\u0000', '').trim();
   if (!trimmed) return null;
   const match = trimmed.match(/\b(\d+)\b/);
   if (!match) return null;
   const pid = Number(match[1]);
   return Number.isFinite(pid) ? pid : null;
 }
-

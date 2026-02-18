@@ -42,6 +42,10 @@ describe('visibleConsoleSpawn', () => {
     expect(parsePowerShellStartProcessPid('Starting process...\r\nPID: 43210\r\n')).toBe(43210);
   });
 
+  it('parses pid from UTF-16-ish output that includes NUL separators', () => {
+    expect(parsePowerShellStartProcessPid('4\u00003\u00002\u00001\u00000\r\n')).toBe(43210);
+  });
+
   it('returns null when powershell output has no pid', () => {
     expect(parsePowerShellStartProcessPid('oops')).toBeNull();
     expect(parsePowerShellStartProcessPid('')).toBeNull();

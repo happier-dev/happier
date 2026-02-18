@@ -163,6 +163,81 @@ function pickClaudePathFromWhichOrWhereOutput(output, platform = process.platfor
     return best;
 }
 
+function isWindowsAppsExecutionAliasPath(filePath) {
+    const lower = (filePath || '').toString().toLowerCase();
+    return lower.includes('\\microsoft\\windowsapps\\') || lower.includes('/microsoft/windowsapps/');
+}
+
+function isWindowsShellShimPath(filePath) {
+    const lower = (filePath || '').toString().toLowerCase();
+    return lower.endsWith('.cmd') || lower.endsWith('.bat');
+}
+
+/**
+ * On Windows, prefer the native installer binary when PATH resolves to a shim/alias.
+ * This avoids TUI/ANSI/encoding regressions observed when launching via npm .cmd shims or WindowsApps aliases.
+ *
+ * @param {{path: string, source: string}|null} pathResult
+ * @param {string|null} nativePath
+ * @returns {string|null}
+ */
+function chooseWindowsClaudePathFromPathAndNative(pathResult, nativePath) {
+    const native = typeof nativePath === 'string' && nativePath.trim().length > 0 ? nativePath.trim() : null;
+    const pathCandidate = pathResult && typeof pathResult.path === 'string' ? pathResult.path.trim() : '';
+    if (!pathCandidate) return native;
+    if (!native) return pathCandidate;
+
+    // If PATH is already a non-WindowsApps .exe, keep it (it might be a user-managed install).
+    const lower = pathCandidate.toLowerCase();
+    if (lower.endsWith('.exe') && !isWindowsAppsExecutionAliasPath(pathCandidate)) {
+        return pathCandidate;
+    }
+
+    // Prefer native when PATH is a known shim/alias.
+    if (isWindowsAppsExecutionAliasPath(pathCandidate)) return native;
+    if (isWindowsShellShimPath(pathCandidate)) return native;
+    if (lower.endsWith('.js') || lower.endsWith('.cjs') || lower.endsWith('.mjs')) return native;
+
+    return pathCandidate;
+}
+
+/**
+ * Build a spawn invocation for running a binary Claude CLI.
+ *
+ * On Windows we wrap in cmd.exe to:
+ * - execute .cmd/.bat shims reliably
+ *
+ * @param {{cliPath: string, args: string[], platform?: string, comspec?: string|null}} params
+ * @returns {{command: string, args: string[]}}
+ */
+function buildClaudeBinarySpawnInvocation(params) {
+    const platform = params.platform || process.platform;
+    const cliPath = (params.cliPath || '').toString();
+    const args = Array.isArray(params.args) ? params.args : [];
+
+    if (platform === 'win32') {
+        const forceViaComspecRaw = (process.env.HAPPIER_WINDOWS_CLAUDE_SPAWN_VIA_CMDSPEC || '').toString().trim().toLowerCase();
+        const forceViaComspec =
+            forceViaComspecRaw.length > 0 &&
+            forceViaComspecRaw !== '0' &&
+            forceViaComspecRaw !== 'false' &&
+            forceViaComspecRaw !== 'off' &&
+            forceViaComspecRaw !== 'no';
+
+        if (forceViaComspec || isWindowsShellShimPath(cliPath)) {
+            const comspec = (params.comspec || process.env.ComSpec || 'cmd.exe').toString();
+            return {
+                command: comspec,
+                args: ['/d', '/s', '/c', cliPath, ...args],
+            };
+        }
+
+        return { command: cliPath, args };
+    }
+
+    return { command: cliPath, args };
+}
+
 /**
  * Detect installation source from resolved path
  * Uses concrete path patterns, no assumptions
@@ -371,6 +446,18 @@ function findNativeInstallerCliPath() {
                 return exePath;
             }
         }
+
+        // Some installations mirror Unix layout under %USERPROFILE%\.local\bin.
+        const localBinExe = path.join(homeDir, '.local', 'bin', 'claude.exe');
+        if (fs.existsSync(localBinExe)) {
+            return localBinExe;
+        }
+
+        const localVersions = path.join(homeDir, '.local', 'share', 'claude', 'versions');
+        if (fs.existsSync(localVersions)) {
+            const found = findLatestVersionBinary(localVersions);
+            if (found) return found;
+        }
     }
     
     // Check ~/.local/bin/claude symlink (most common location on macOS/Linux)
@@ -463,10 +550,20 @@ function findGlobalClaudeCliPath() {
 
     // 2. Check PATH (respects user's shell config)
     const pathResult = findClaudeInPath();
+
+    // 3. Prefer native installer locations on Windows when PATH points at a shim/alias.
+    // This avoids a class of Windows-only TUI/encoding issues reported upstream when launching via npm shims.
+    const nativePath = findNativeInstallerCliPath();
+    if (process.platform === 'win32' && nativePath) {
+        const chosen = chooseWindowsClaudePathFromPathAndNative(pathResult, nativePath);
+        if (chosen && (!pathResult || chosen !== pathResult.path)) {
+            return { path: chosen, source: 'native installer' };
+        }
+    }
+
     if (pathResult) return pathResult;
 
-    // 3. Prefer native installer locations when PATH isn't configured (common for daemons / non-login shells)
-    const nativePath = findNativeInstallerCliPath();
+    // 4. Prefer native installer locations when PATH isn't configured (common for daemons / non-login shells)
     if (nativePath) return { path: nativePath, source: 'native installer' };
 
     const homebrewPath = findHomebrewCliPath();
@@ -520,6 +617,14 @@ function compareVersions(a, b) {
  * @returns {string} Path to cli.js
  * @throws {Error} If no global installation found
  */
+function shouldLogClaudeDetection() {
+    const raw = ((process.env.HAPPIER_DEBUG_CLAUDE_LAUNCHER ?? process.env.DEBUG) || '').toString().trim();
+    if (!raw) return false;
+    const lower = raw.toLowerCase();
+    if (lower === '0' || lower === 'false' || lower === 'off' || lower === 'no') return false;
+    return true;
+}
+
 function getClaudeCliPath() {
     const happierOverrideRaw = (process.env.HAPPIER_CLAUDE_PATH || '').trim();
     const happyOverrideRaw = (process.env.HAPPY_CLAUDE_PATH || '').trim();
@@ -527,7 +632,9 @@ function getClaudeCliPath() {
     const overrideRaw = (happierOverrideRaw || happyOverrideRaw || '').trim();
     if (overrideRaw) {
         if (overrideRaw === 'claude') {
-            console.error(`\x1b[90mUsing Claude Code from ${envVarName ?? 'HAPPIER_CLAUDE_PATH'}=claude\x1b[0m`);
+            if (shouldLogClaudeDetection()) {
+                console.error(`\x1b[90mUsing Claude Code from ${envVarName ?? 'HAPPIER_CLAUDE_PATH'}=claude\x1b[0m`);
+            }
             return 'claude';
         }
 
@@ -538,7 +645,9 @@ function getClaudeCliPath() {
             process.exit(1);
         }
 
-        console.error(`\x1b[90mUsing Claude Code from ${envVarName ?? 'HAPPIER_CLAUDE_PATH'} (${resolvedOverride})\x1b[0m`);
+        if (shouldLogClaudeDetection()) {
+            console.error(`\x1b[90mUsing Claude Code from ${envVarName ?? 'HAPPIER_CLAUDE_PATH'} (${resolvedOverride})\x1b[0m`);
+        }
         return resolvedOverride;
     }
 
@@ -560,7 +669,9 @@ function getClaudeCliPath() {
 
     const version = getVersion(result.path);
     const versionStr = version ? ` v${version}` : '';
-    console.error(`\x1b[90mUsing Claude Code${versionStr} from ${result.source}\x1b[0m`);
+    if (shouldLogClaudeDetection()) {
+        console.error(`\x1b[90mUsing Claude Code${versionStr} from ${result.source}\x1b[0m`);
+    }
 
     return result.path;
 }
@@ -606,7 +717,8 @@ function runClaudeCli(cliPath) {
         // Note: Interceptors won't work with binary files, but that's acceptable
         // as binary files are self-contained and don't need interception
         const args = process.argv.slice(2);
-        const child = spawn(cliPath, args, withWindowsHide({
+        const invocation = buildClaudeBinarySpawnInvocation({ cliPath, args });
+        const child = spawn(invocation.command, invocation.args, withWindowsHide({
             stdio: 'inherit',
             env: process.env
         }));
@@ -625,6 +737,8 @@ module.exports = {
     findGlobalClaudeCliPath,
     findClaudeInPath,
     pickClaudePathFromWhichOrWhereOutput,
+    chooseWindowsClaudePathFromPathAndNative,
+    buildClaudeBinarySpawnInvocation,
     detectSourceFromPath,
     findNpmGlobalCliPath,
     findBunGlobalCliPath,
