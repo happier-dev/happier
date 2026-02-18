@@ -1,5 +1,3 @@
-import { z } from 'zod';
-
 import { SessionSummaryShardV1Schema, SessionSynopsisV1Schema, type SessionSummaryShardV1, type SessionSynopsisV1 } from '@happier-dev/protocol';
 
 import { parseTrailingJsonObject } from '@/agent/executionRuns/profiles/shared/parseTrailingJsonObject';
@@ -8,24 +6,28 @@ export type ParseMemoryHintsOutputResult =
   | Readonly<{ ok: true; shard: SessionSummaryShardV1; synopsis: SessionSynopsisV1 | null }>
   | Readonly<{ ok: false; errorCode: 'invalid_model_output' | 'schema_validation_failed'; error: string }>;
 
-const ModelOutputSchema = z
-  .object({
-    shard: SessionSummaryShardV1Schema,
-    synopsis: z.union([SessionSynopsisV1Schema, z.null()]).optional(),
-  })
-  .passthrough();
-
 export function parseMemoryHintsOutput(params: Readonly<{ rawText: string }>): ParseMemoryHintsOutputResult {
   const parsedJson = parseTrailingJsonObject(String(params.rawText ?? ''));
-  if (!parsedJson) {
+  if (!parsedJson || typeof parsedJson !== 'object' || Array.isArray(parsedJson)) {
     return { ok: false, errorCode: 'invalid_model_output', error: 'No JSON object found in model output.' };
   }
 
-  const parsed = ModelOutputSchema.safeParse(parsedJson);
-  if (!parsed.success) {
-    return { ok: false, errorCode: 'schema_validation_failed', error: parsed.error.message };
+  const record = parsedJson as Record<string, unknown>;
+
+  const shardParsed = SessionSummaryShardV1Schema.safeParse(record.shard);
+  if (!shardParsed.success) {
+    return { ok: false, errorCode: 'schema_validation_failed', error: shardParsed.error.message };
   }
 
-  const synopsis = parsed.data.synopsis === undefined ? null : parsed.data.synopsis;
-  return { ok: true, shard: parsed.data.shard, synopsis };
+  let synopsis: SessionSynopsisV1 | null = null;
+  const synopsisRaw = record.synopsis;
+  if (synopsisRaw !== undefined && synopsisRaw !== null) {
+    const synopsisParsed = SessionSynopsisV1Schema.safeParse(synopsisRaw);
+    if (!synopsisParsed.success) {
+      return { ok: false, errorCode: 'schema_validation_failed', error: synopsisParsed.error.message };
+    }
+    synopsis = synopsisParsed.data;
+  }
+
+  return { ok: true, shard: shardParsed.data, synopsis };
 }
