@@ -49,19 +49,19 @@ function emitActiveServerChanged(next: { serverId: string; serverUrl: string; ge
 }
 
 describe('featureDecisionRuntime', () => {
-    it('ignores non-public build policy env vars in UI bundles', async () => {
-        vi.resetModules();
+	    it('ignores non-public build policy env vars in UI bundles', async () => {
+	        vi.resetModules();
 
         const previousDenyPublic = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
         const previousDenyPrivate = process.env.HAPPIER_BUILD_FEATURES_DENY;
         delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
         process.env.HAPPIER_BUILD_FEATURES_DENY = 'voice';
 
-        try {
-            const { getStorage } = await import('@/sync/domains/state/storage');
-            getStorage().getState().applySettingsLocal({ experiments: true });
-            const settings = getStorage().getState().settings;
-            const { resolveRuntimeFeatureDecisionFromSnapshot } = await import('./featureDecisionRuntime');
+	        try {
+	            const { getStorage } = await import('@/sync/domains/state/storage');
+	            getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { voice: true } });
+	            const settings = getStorage().getState().settings;
+	            const { resolveRuntimeFeatureDecisionFromSnapshot } = await import('./featureDecisionRuntime');
 
             // When server features are still loading, a server-required feature should remain unresolved
             // unless it is blocked by a *public* build policy.
@@ -81,16 +81,17 @@ describe('featureDecisionRuntime', () => {
         }
     });
 
-    it('applies build policy without waiting for server probes in runtime scope', async () => {
-        vi.resetModules();
+	    it('applies build policy without waiting for server probes in runtime scope', async () => {
+	        vi.resetModules();
 
         const previousDeny = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
         process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = 'voice';
 
-        try {
-            const { getStorage } = await import('@/sync/domains/state/storage');
-            const settings = getStorage().getState().settings;
-            const { resolveRuntimeFeatureDecisionFromSnapshot } = await import('./featureDecisionRuntime');
+	        try {
+	            const { getStorage } = await import('@/sync/domains/state/storage');
+	            getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { voice: true } });
+	            const settings = getStorage().getState().settings;
+	            const { resolveRuntimeFeatureDecisionFromSnapshot } = await import('./featureDecisionRuntime');
 
             const decision = resolveRuntimeFeatureDecisionFromSnapshot({
                 featureId: 'voice',

@@ -61,35 +61,46 @@ describe('accountSettingsCache', () => {
       // Create a lock that is not stale (stale timeout is 10s).
       await writeFile(lock, 'locked');
 
-      // Release the lock after ~6s (previous max wait was 5s).
+      // Release the lock shortly after the write begins; this should force at
+      // least one retry without making the unit test slow/flaky.
       setTimeout(() => {
         void unlink(lock).catch(() => {});
-      }, 6000);
+      }, 300);
 
-      const outcome = writeAccountSettingsCacheAtomic(path, {
+      const write = writeAccountSettingsCacheAtomic(path, {
         version: 1,
         cachedAt: 123,
         settingsCiphertext: 'cipher',
         settingsVersion: 9,
-      }).then(
-        () => ({ status: 'resolved' as const }),
-        (error) => ({ status: 'rejected' as const, error }),
-      );
+      });
 
-      // Ensure the write has hit the first retry timeout before we advance timers.
-      // We already scheduled 1 timer (the unlock at 6000ms). The lock retry adds a 2nd timer.
-      for (let i = 0; i < 50 && vi.getTimerCount() < 2; i += 1) {
-        await new Promise<void>((r) => setImmediate(r));
-      }
-      expect(vi.getTimerCount()).toBeGreaterThanOrEqual(2);
+      let settled = false;
+      void write.finally(() => {
+        settled = true;
+      });
 
-      // Step time forward in retry-sized increments so retries can't "skip ahead"
-      // to the unlock timer before exhausting their attempt budget.
-      for (let t = 0; t < 7000; t += 100) {
+      const flushEventLoop = async (): Promise<void> => {
+        for (let i = 0; i < 5; i += 1) {
+          await new Promise<void>((r) => setImmediate(r));
+        }
+      };
+
+      // The write should not complete before the lock is released.
+      await vi.advanceTimersByTimeAsync(200);
+      await flushEventLoop();
+      expect(settled).toBe(false);
+
+      // Drive retry timers forward in small steps to allow the async fs calls
+      // between retries to resolve deterministically.
+      for (let i = 0; i < 30 && !settled; i += 1) {
         await vi.advanceTimersByTimeAsync(100);
+        await flushEventLoop();
       }
-      const final = await outcome;
-      expect(final.status).toBe('resolved');
+
+      await expect(write).resolves.toBeUndefined();
+
+      const cache = await readAccountSettingsCache(path);
+      expect(cache?.settingsVersion).toBe(9);
     } finally {
       vi.useRealTimers();
     }

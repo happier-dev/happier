@@ -11,15 +11,15 @@ afterEach(() => {
 });
 
 describe('useFeatureEnabled', () => {
-    it('returns true when a feature is enabled', async () => {
-        vi.resetModules();
-        stubServerFeaturesFetch({ voiceEnabled: true });
+	    it('returns true when a feature is enabled', async () => {
+	        vi.resetModules();
+	        stubServerFeaturesFetch({ voiceEnabled: true });
 
-        const { getStorage } = await import('@/sync/domains/state/storage');
-        getStorage().getState().applySettingsLocal({ experiments: true });
+	        const { getStorage } = await import('@/sync/domains/state/storage');
+	        getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { voice: true } });
 
-        const { useFeatureEnabled } = await import('./useFeatureEnabled');
-        const seen = await renderHookAndCollectValues(() => useFeatureEnabled('voice'));
+	        const { useFeatureEnabled } = await import('./useFeatureEnabled');
+	        const seen = await renderHookAndCollectValues(() => useFeatureEnabled('voice'));
 
         expect(seen.at(-1)).toBe(true);
     });

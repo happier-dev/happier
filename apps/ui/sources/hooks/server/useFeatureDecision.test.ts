@@ -64,12 +64,12 @@ describe('useFeatureDecision', () => {
         expect(seen.at(-1)?.scope.scopeKind).toBe('main_selection');
     }, 30_000);
 
-    it('returns enabled decision when the feature is available', async () => {
-        vi.resetModules();
-        stubServerFeaturesFetch({ voiceEnabled: true });
+	    it('returns enabled decision when the feature is available', async () => {
+	        vi.resetModules();
+	        stubServerFeaturesFetch({ voiceEnabled: true });
 
-        const { getStorage } = await import('@/sync/domains/state/storage');
-        getStorage().getState().applySettingsLocal({ experiments: true });
+	        const { getStorage } = await import('@/sync/domains/state/storage');
+	        getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { voice: true } });
 
         const { useFeatureDecision } = await import('./useFeatureDecision');
         const seen = await renderHookAndCollectValues(() => useFeatureDecision('voice'));
@@ -78,19 +78,19 @@ describe('useFeatureDecision', () => {
         expect(seen.at(-1)?.blockedBy).toBeNull();
     }, 30_000);
 
-    it('returns unsupported when the features endpoint is missing', async () => {
-        vi.resetModules();
-        vi.stubGlobal(
-            'fetch',
-            vi.fn(async () => ({
+	    it('returns unsupported when the features endpoint is missing', async () => {
+	        vi.resetModules();
+	        vi.stubGlobal(
+	            'fetch',
+	            vi.fn(async () => ({
                 ok: false,
                 status: 404,
                 json: async () => ({}),
             })) as any,
-        );
+	        );
 
-        const { getStorage } = await import('@/sync/domains/state/storage');
-        getStorage().getState().applySettingsLocal({ experiments: true });
+	        const { getStorage } = await import('@/sync/domains/state/storage');
+	        getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { voice: true } });
 
         const { useFeatureDecision } = await import('./useFeatureDecision');
         const seen = await renderHookAndCollectValues(() => useFeatureDecision('voice'));
@@ -99,12 +99,12 @@ describe('useFeatureDecision', () => {
         expect(seen.at(-1)?.blockerCode).toBe('endpoint_missing');
     }, 30_000);
 
-    it('returns unknown when probing features fails', async () => {
-        vi.resetModules();
-        stubServerFeaturesFetchFailure();
+	    it('returns unknown when probing features fails', async () => {
+	        vi.resetModules();
+	        stubServerFeaturesFetchFailure();
 
-        const { getStorage } = await import('@/sync/domains/state/storage');
-        getStorage().getState().applySettingsLocal({ experiments: true });
+	        const { getStorage } = await import('@/sync/domains/state/storage');
+	        getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { voice: true } });
 
         const { useFeatureDecision } = await import('./useFeatureDecision');
         const seen = await renderHookAndCollectValues(() => useFeatureDecision('voice'));

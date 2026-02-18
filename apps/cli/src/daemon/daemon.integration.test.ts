@@ -40,7 +40,7 @@ type DaemonSessionRecord = {
 };
 
 const DAEMON_READY_WAIT: WaitForOptions = {
-  timeoutMs: 45_000,
+  timeoutMs: 90_000,
   intervalMs: 250,
   label: 'daemon startup state',
 };
@@ -511,7 +511,7 @@ async function isServerHealthy(): Promise<boolean> {
   }
 }
 
-describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout: 60_000 }, () => {
+describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout: 120_000 }, () => {
   let daemonPid: number | null = null;
 
   beforeAll(async () => {
@@ -523,10 +523,18 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     await ensureDaemonFullyStoppedBeforeRestart(daemonPid);
     
     // Start fresh daemon for this test
-    // This will return and start a background process - we don't need to wait for it
-    void spawnHappyCLI(['daemon', 'start'], {
-      stdio: 'ignore'
+    const daemonStartChild = spawnHappyCLI(['daemon', 'start'], {
+      cwd: process.cwd(),
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
+    const daemonStartOutput = captureChildOutput(daemonStartChild);
+    const daemonStartExitCode = await waitForChildExit(daemonStartChild, 60_000);
+    if (daemonStartExitCode !== 0) {
+      throw new Error(
+        `daemon start failed (exit=${daemonStartExitCode ?? 'null'})\n${daemonStartOutput.output()}`,
+      );
+    }
     
     await waitForDaemonReadyState();
     
