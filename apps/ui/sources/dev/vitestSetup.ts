@@ -131,6 +131,7 @@ vi.mock('react-native-unistyles', () => {
             header: { background: '#fff', tint: '#000' },
             button: { primary: { tint: '#000' } },
             shadow: { color: '#000', opacity: 0.2 },
+            modal: { border: '#ddd' },
             switch: { track: { inactive: '#ccc', active: '#4ade80' }, thumb: { active: '#fff' } },
             input: { background: '#eee' },
             status: { error: '#ff3b30' },

@@ -326,7 +326,9 @@ describe('syncSettings local-only server-selection settings', () => {
             credentials,
             encryption: encryptionStub,
             pendingSettings: {
-                serverSelectionGroups: [{ id: 'grp-dev', name: 'Dev', serverIds: ['server-a'] }],
+                serverSelectionGroups: [
+                    { id: 'grp-dev', name: 'Dev', serverIds: ['server-a'], presentation: 'grouped' },
+                ],
                 serverSelectionActiveTargetKind: 'group',
                 serverSelectionActiveTargetId: 'grp-dev',
             },

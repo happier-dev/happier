@@ -67,7 +67,7 @@ export function summarizeSettingsDelta(delta: Partial<Settings>): Record<string,
     return out;
 }
 
-export function summarizeSettings(settings: Settings, extra?: { version?: number | null }): Record<string, unknown> {
+export function summarizeSettings(settings: Partial<Settings>, extra?: { version?: number | null }): Record<string, unknown> {
     return {
         ...(extra ? extra : {}),
         schemaVersion: (settings as any)?.schemaVersion ?? null,
