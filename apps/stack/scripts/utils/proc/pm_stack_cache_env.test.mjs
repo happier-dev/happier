@@ -161,7 +161,7 @@ test('ensureDepsInstalled prefers yarn when component is inside the Happy monore
     await rm(root, { recursive: true, force: true });
   });
 
-  // Create the minimum monorepo markers (packages/ layout) + root yarn.lock.
+  // Create the minimum monorepo markers (apps/ layout) + root yarn.lock.
   await mkdir(join(root, 'apps', 'ui'), { recursive: true });
   await mkdir(join(root, 'apps', 'cli'), { recursive: true });
   await mkdir(join(root, 'apps', 'server'), { recursive: true });
@@ -187,6 +187,45 @@ test('ensureDepsInstalled prefers yarn when component is inside the Happy monore
   await ensureDepsInstalled(componentDir, 'happier-server', { quiet: true });
   const out = await readFile(outputPath, 'utf-8');
   assert.ok(out.includes('install') || out.includes('--version'));
+});
+
+test('ensureDepsInstalled refreshes monorepo dependencies when root yarn.lock changes', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-pm-happy-monorepo-refresh-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await mkdir(join(root, 'apps', 'ui'), { recursive: true });
+  await mkdir(join(root, 'apps', 'cli'), { recursive: true });
+  await mkdir(join(root, 'apps', 'server'), { recursive: true });
+  await writeFile(join(root, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(root, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(root, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(root, 'package.json'), '{ "name": "monorepo", "private": true }\n', 'utf-8');
+
+  // Simulate an already-installed workspace (so we don't trigger the first-run install branch).
+  await mkdir(join(root, 'apps', 'ui', 'node_modules'), { recursive: true });
+
+  // Simulate a previous monorepo install.
+  await mkdir(join(root, 'node_modules'), { recursive: true });
+  await writeFile(join(root, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
+
+  // Root yarn.lock is newer than the integrity file -> should trigger `yarn install`.
+  await writeFile(join(root, 'yarn.lock'), '# yarn\n', 'utf-8');
+
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  await writeYarnArgDumpStub({ binDir, outputPath });
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_ENV_FILE: null,
+  });
+
+  await ensureDepsInstalled(join(root, 'apps', 'ui'), 'happier-ui', { quiet: true });
+  const out = await readFile(outputPath, 'utf-8');
+  assert.match(out, /\binstall\b/);
 });
 
 test('ensureDepsInstalled falls back to npm in binary mode when yarn is unavailable', async (t) => {

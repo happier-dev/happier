@@ -162,21 +162,33 @@ export async function applyStackCacheEnv(baseEnv) {
 }
 
 export async function ensureDepsInstalled(dir, label, { quiet = false, env: envIn = process.env } = {}) {
-  const pkgJson = join(dir, 'package.json');
-  if (!(await pathExists(pkgJson))) {
+  const componentDir = dir;
+  const componentPkgJson = join(componentDir, 'package.json');
+  if (!(await pathExists(componentPkgJson))) {
     return;
   }
 
-  const nodeModules = join(dir, 'node_modules');
+  const monorepoRoot = coerceHappyMonorepoRootFromPath(componentDir);
+  const installDir = (() => {
+    if (!monorepoRoot) return componentDir;
+    const rootPkgJson = join(monorepoRoot, 'package.json');
+    return existsSync(rootPkgJson) ? monorepoRoot : componentDir;
+  })();
+
+  const installPkgJson = join(installDir, 'package.json');
+  const nodeModules = join(installDir, 'node_modules');
   const stdio = quiet ? 'ignore' : 'inherit';
   const env = await applyStackCacheEnv(envIn);
-  const pm = await getComponentPm(dir, env);
+  const pm = await getComponentPm(installDir, env);
   if (pm.name === 'yarn') {
-    await ensureYarnReady({ dir, env, quiet });
+    await ensureYarnReady({ dir: installDir, env, quiet });
   }
 
   if (await pathExists(nodeModules)) {
-    const yarnLock = join(dir, 'yarn.lock');
+    // Yarn workspaces keep yarn.lock at the monorepo root. If invoked from a workspace directory,
+    // we must read lock/integrity from the root; otherwise "deps changed" detection silently breaks
+    // (because apps/* typically has no yarn.lock, and node_modules is often nohoisted).
+    const yarnLock = join(installDir, 'yarn.lock');
     const yarnIntegrity = join(nodeModules, '.yarn-integrity');
 
     // If dependencies changed since the last install, re-run install even if node_modules exists.
@@ -187,6 +199,11 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
       } catch {
         return 0;
       }
+    };
+
+    const componentPkgMtimeMs = async () => {
+      if (installDir === componentDir) return 0;
+      return await mtimeMs(componentPkgJson);
     };
 
     const patchesMtimeMs = async () => {
@@ -213,15 +230,16 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
 
     if (pm.name === 'yarn' && (await pathExists(yarnLock))) {
       const lockM = await mtimeMs(yarnLock);
-      const pkgM = await mtimeMs(pkgJson);
+      const pkgM = await mtimeMs(installPkgJson);
+      const componentPkgM = await componentPkgMtimeMs();
       const intM = await mtimeMs(yarnIntegrity);
       const patchM = await patchesMtimeMs();
-      if (!intM || lockM > intM || pkgM > intM || patchM > intM) {
+      if (!intM || lockM > intM || pkgM > intM || componentPkgM > intM || patchM > intM) {
         if (!quiet) {
           // eslint-disable-next-line no-console
           console.log(`[local] refreshing ${label} dependencies (yarn.lock/package.json/patches changed)...`);
         }
-        await run(pm.cmd, ['install'], { cwd: dir, stdio, env });
+        await run(pm.cmd, ['install'], { cwd: installDir, stdio, env });
       }
     }
 
@@ -232,7 +250,7 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
     // eslint-disable-next-line no-console
     console.log(`[local] installing ${label} dependencies (first run)...`);
   }
-  await run(pm.cmd, ['install'], { cwd: dir, stdio, env });
+  await run(pm.cmd, ['install'], { cwd: installDir, stdio, env });
 }
 
 function collectExpectedExportFileTargets(exportsField) {
