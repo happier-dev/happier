@@ -1,4 +1,4 @@
-import { buildServicePath } from './path';
+import { buildServicePath } from './servicePath';
 
 const LINUX_DEFAULT_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 
