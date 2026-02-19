@@ -3,6 +3,10 @@
   "private": true,
   "scripts": {
     "build:packages": "yarn workspace @happier-dev/protocol build && yarn workspace @happier-dev/agents build",
+    "dev": "node ./apps/stack/scripts/repo_local.mjs dev",
+    "start": "node ./apps/stack/scripts/repo_local.mjs start",
+    "build": "node ./apps/stack/scripts/repo_local.mjs build",
+    "tui": "node ./apps/stack/scripts/repo_local.mjs tui",
     "ci:act": "bash scripts/ci/run-act-tests.sh",
     "test": "yarn -s test:unit",
     "test:unit": "yarn workspace @happier-dev/protocol test && yarn workspace @happier-dev/agents test && yarn workspace @happier-dev/app test && yarn workspace @happier-dev/cli test:unit && yarn --cwd apps/server test:unit && yarn --cwd packages/relay-server test && yarn --cwd apps/stack test:unit",

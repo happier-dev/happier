@@ -10,11 +10,13 @@ function usage() {
     'examples:',
     '  node apps/stack/scripts/repo_local.mjs dev',
     '  node apps/stack/scripts/repo_local.mjs start --restart',
-    '  node apps/stack/scripts/repo_local.mjs tui dev',
+    '  node apps/stack/scripts/repo_local.mjs tui',
+    '  node apps/stack/scripts/repo_local.mjs tui stack dev exp1',
     '',
     'notes:',
     '  - Forces using this repo checkout (no re-exec to global hstack install).',
     '  - Does not select a stack; hstack will run in stackless mode and infer repo from CWD.',
+    '  - `tui` defaults to `tui dev` when no command is provided.',
     '  - Use --dry-run to print the resolved invocation as JSON.',
   ].join('\n');
 }
@@ -27,7 +29,19 @@ function main() {
   }
 
   const dryRun = argvRaw.includes('--dry-run');
-  const argv = argvRaw.filter((a) => a !== '--dry-run');
+  const argvWithoutDryRun = argvRaw.filter((a) => a !== '--dry-run');
+
+  // Root script convenience:
+  // `yarn tui` should work from monorepo checkout without additional args.
+  // Default to `hstack tui dev` while preserving explicit forwarded args.
+  let argv = argvWithoutDryRun;
+  if (argvWithoutDryRun[0] === 'tui') {
+    const forwarded = argvWithoutDryRun.slice(1);
+    const hasForwardedCommand = forwarded.some((arg) => !arg.startsWith('-'));
+    if (!hasForwardedCommand) {
+      argv = ['tui', 'dev', ...forwarded];
+    }
+  }
 
   const scriptsDir = dirname(fileURLToPath(import.meta.url)); // <repo>/apps/stack/scripts
   const repoRoot = dirname(dirname(dirname(scriptsDir))); // <repo>

@@ -48,3 +48,44 @@ test('repo-local wrapper dry-run prints hstack invocation with repo-local env', 
   assert.ok(String(data.env.HAPPIER_STACK_INVOKED_CWD ?? '').trim() !== '');
 });
 
+test('repo-local wrapper defaults `tui` to `tui dev` when no forwarded args are provided', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir); // apps/stack
+  const repoRoot = dirname(dirname(packageRoot)); // repo root
+
+  const res = await runNode(
+    [join(packageRoot, 'scripts', 'repo_local.mjs'), 'tui', '--dry-run'],
+    {
+      cwd: repoRoot,
+      env: process.env,
+    }
+  );
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const data = JSON.parse(res.stdout);
+  assert.equal(data.ok, true);
+  assert.equal(data.args[1], 'tui');
+  assert.equal(data.args[2], 'dev');
+});
+
+test('repo-local wrapper preserves explicit `tui` forwarded args', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir); // apps/stack
+  const repoRoot = dirname(dirname(packageRoot)); // repo root
+
+  const res = await runNode(
+    [join(packageRoot, 'scripts', 'repo_local.mjs'), 'tui', 'stack', 'dev', 'exp1', '--dry-run'],
+    {
+      cwd: repoRoot,
+      env: process.env,
+    }
+  );
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const data = JSON.parse(res.stdout);
+  assert.equal(data.ok, true);
+  assert.equal(data.args[1], 'tui');
+  assert.equal(data.args[2], 'stack');
+  assert.equal(data.args[3], 'dev');
+  assert.equal(data.args[4], 'exp1');
+});
