@@ -98,6 +98,9 @@ export const zhHans: TranslationStructure = {
       general: "常规",
       results: "结果",
     },
+    createItem: {
+      prefix: "添加",
+    },
   },
 
   profile: {
@@ -363,6 +366,9 @@ export const zhHans: TranslationStructure = {
     expExecutionRuns: "Execution runs",
     expExecutionRunsSubtitle:
       "Enable execution runs (sub-agents / reviews) control plane surfaces",
+    expAttachmentsUploads: "Attachment uploads",
+    expAttachmentsUploadsSubtitle:
+      "Enable file/image uploads so the agent can read them from disk",
     expUsageReporting: "Usage reporting",
     expUsageReportingSubtitle: "Enable usage and token reporting screens",
     expScmOperations: "版本控制操作",
@@ -393,6 +399,14 @@ export const zhHans: TranslationStructure = {
       "Use authenticated voice token flow (paywall-aware)",
     voice: "语音",
     voiceSubtitle: "启用语音功能",
+    expVoiceAgent: "Voice agent",
+    expVoiceAgentSubtitle: "Enable daemon-backed voice agent surfaces (requires execution runs)",
+    expConnectedServices: "Connected services",
+    expConnectedServicesSubtitle: "Enable connected services settings and session bindings",
+    expConnectedServicesQuotas: "Connected services quotas",
+    expConnectedServicesQuotasSubtitle: "Show quota badges and usage meters for connected services",
+    expMemorySearch: "Memory search",
+    expMemorySearchSubtitle: "Enable local memory search screens and settings",
     expFriends: "好友",
     expFriendsSubtitle: "启用好友功能（收件箱标签页与会话分享）",
     webFeatures: "Web 功能",
@@ -906,6 +920,16 @@ export const zhHans: TranslationStructure = {
     serverGroupMustHaveServer: "A server group must include at least one server.",
   },
 
+  sessionTags: {
+    searchOrAddPlaceholder: "搜索或添加标签",
+    editTagsLabel: "编辑标签",
+    noTagsFound: "未找到标签",
+    newTagItem: "新建标签…",
+    newTagTitle: "新建标签",
+    newTagMessage: "请输入新标签名称。",
+    newTagConfirm: "添加",
+  },
+
   sessionInfo: {
     // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
     killSession: "终止会话",
@@ -949,6 +973,8 @@ export const zhHans: TranslationStructure = {
     lastUpdated: "最后更新",
     sequence: "序列",
     quickActions: "快速操作",
+    pinSession: "置顶会话",
+    unpinSession: "取消置顶",
     copyResumeCommand: "复制恢复命令",
     viewMachine: "查看设备",
     viewMachineSubtitle: "查看设备详情和会话",
@@ -1048,6 +1074,7 @@ export const zhHans: TranslationStructure = {
   },
 
   agentInput: {
+    dropToAttach: "拖放以附加文件",
     envVars: {
       title: "环境变量",
       titleWithCount: ({ count }: { count: number }) => `环境变量 (${count})`,
@@ -1224,7 +1251,8 @@ export const zhHans: TranslationStructure = {
       webSearch: "Web 搜索",
       reasoning: "推理",
       applyChanges: "更新文件",
-      viewDiff: "当前文件更改",
+      viewDiff: "Diff",
+      turnDiff: "Turn diff",
       question: "问题",
       changeTitle: "更改标题",
     },
@@ -1359,6 +1387,20 @@ export const zhHans: TranslationStructure = {
           "Put messages into Pending first; send later using “Steer now”.",
       },
     },
+    thinking: {
+      title: "Thinking",
+      footer:
+        "Controls how agent thinking messages appear in the session transcript.",
+      displayModeTitle: "Thinking display",
+      displayMode: {
+        inlineTitle: "Inline (default)",
+        inlineSubtitle: "Show thinking messages directly in the transcript.",
+        toolTitle: "Tool card",
+        toolSubtitle: "Show thinking messages as a Reasoning tool card.",
+        hiddenTitle: "Hidden",
+        hiddenSubtitle: "Hide thinking messages from the transcript.",
+      },
+    },
     toolRendering: {
       title: "Tool rendering",
       footer:
@@ -1434,6 +1476,13 @@ export const zhHans: TranslationStructure = {
         "Enabled: exports your legacy account secret to the terminal so older terminals can connect. Not recommended.",
       legacySecretExportDisabledSubtitle:
         "Disabled (recommended): provision terminals with the content key only (Terminal Connect V2).",
+    },
+    sessionList: {
+      title: "会话列表",
+      footer: "自定义会话列表每行显示的内容。",
+      tagsTitle: "会话标签",
+      tagsEnabledSubtitle: "在会话列表中显示标签控件",
+      tagsDisabledSubtitle: "隐藏标签控件",
     },
   },
   settingsVoice: {

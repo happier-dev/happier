@@ -110,6 +110,9 @@ export const ru: TranslationStructure = {
       general: "Общее",
       results: "Результаты",
     },
+    createItem: {
+      prefix: "Добавить",
+    },
   },
 
   connect: {
@@ -363,6 +366,9 @@ export const ru: TranslationStructure = {
     expExecutionRuns: "Execution runs",
     expExecutionRunsSubtitle:
       "Enable execution runs (sub-agents / reviews) control plane surfaces",
+    expAttachmentsUploads: "Attachment uploads",
+    expAttachmentsUploadsSubtitle:
+      "Enable file/image uploads so the agent can read them from disk",
     expUsageReporting: "Usage reporting",
     expUsageReportingSubtitle: "Enable usage and token reporting screens",
     expScmOperations: "Операции контроля версий",
@@ -393,6 +399,14 @@ export const ru: TranslationStructure = {
       "Use authenticated voice token flow (paywall-aware)",
     voice: "Голос",
     voiceSubtitle: "Включить голосовые функции",
+    expVoiceAgent: "Voice agent",
+    expVoiceAgentSubtitle: "Enable daemon-backed voice agent surfaces (requires execution runs)",
+    expConnectedServices: "Connected services",
+    expConnectedServicesSubtitle: "Enable connected services settings and session bindings",
+    expConnectedServicesQuotas: "Connected services quotas",
+    expConnectedServicesQuotasSubtitle: "Show quota badges and usage meters for connected services",
+    expMemorySearch: "Memory search",
+    expMemorySearchSubtitle: "Enable local memory search screens and settings",
     expFriends: "Друзья",
     expFriendsSubtitle: "Включить функции друзей (вкладка «Входящие» и обмен сессиями)",
     webFeatures: "Веб-функции",
@@ -806,6 +820,16 @@ export const ru: TranslationStructure = {
     serverGroupMustHaveServer: "A server group must include at least one server.",
   },
 
+  sessionTags: {
+    searchOrAddPlaceholder: "Найти или добавить теги",
+    editTagsLabel: "Редактировать теги",
+    noTagsFound: "Теги не найдены",
+    newTagItem: "Новый тег…",
+    newTagTitle: "Новый тег",
+    newTagMessage: "Введите название нового тега.",
+    newTagConfirm: "Добавить",
+  },
+
   sessionInfo: {
     // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
     killSession: "Завершить сессию",
@@ -851,6 +875,8 @@ export const ru: TranslationStructure = {
     lastUpdated: "Последнее обновление",
     sequence: "Последовательность",
     quickActions: "Быстрые действия",
+    pinSession: "Закрепить сессию",
+    unpinSession: "Открепить сессию",
     copyResumeCommand: "Скопировать команду возобновления",
     viewMachine: "Посмотреть машину",
     viewMachineSubtitle: "Посмотреть детали машины и сессии",
@@ -1122,11 +1148,12 @@ export const ru: TranslationStructure = {
 	  },
 
 	  agentInput: {
+	    dropToAttach: "Перетащите, чтобы прикрепить файлы",
 	    envVars: {
 	      title: "Переменные окружения",
-      titleWithCount: ({ count }: { count: number }) =>
-        `Переменные окружения (${count})`,
-    },
+	      titleWithCount: ({ count }: { count: number }) =>
+	        `Переменные окружения (${count})`,
+	    },
     resumeChip: {
       withId: ({ title, id }: { title: string; id: string }) =>
         `${title}: ${id}`,
@@ -1300,7 +1327,8 @@ export const ru: TranslationStructure = {
       webSearch: "Веб-поиск",
       reasoning: "Рассуждение",
       applyChanges: "Обновить файл",
-      viewDiff: "Текущие изменения файла",
+      viewDiff: "Diff",
+      turnDiff: "Turn diff",
       question: "Вопрос",
       changeTitle: "Изменить заголовок",
     },
@@ -1443,6 +1471,20 @@ export const ru: TranslationStructure = {
           "Put messages into Pending first; send later using “Steer now”.",
       },
     },
+    thinking: {
+      title: "Thinking",
+      footer:
+        "Controls how agent thinking messages appear in the session transcript.",
+      displayModeTitle: "Thinking display",
+      displayMode: {
+        inlineTitle: "Inline (default)",
+        inlineSubtitle: "Show thinking messages directly in the transcript.",
+        toolTitle: "Tool card",
+        toolSubtitle: "Show thinking messages as a Reasoning tool card.",
+        hiddenTitle: "Hidden",
+        hiddenSubtitle: "Hide thinking messages from the transcript.",
+      },
+    },
     toolRendering: {
       title: "Tool rendering",
       footer:
@@ -1518,6 +1560,13 @@ export const ru: TranslationStructure = {
         "Enabled: exports your legacy account secret to the terminal so older terminals can connect. Not recommended.",
       legacySecretExportDisabledSubtitle:
         "Disabled (recommended): provision terminals with the content key only (Terminal Connect V2).",
+    },
+    sessionList: {
+      title: "Список сессий",
+      footer: "Настройте, что показывается в каждой строке сессии.",
+      tagsTitle: "Теги сессии",
+      tagsEnabledSubtitle: "Управление тегами отображается в списке",
+      tagsDisabledSubtitle: "Управление тегами скрыто",
     },
   },
   settingsVoice: {

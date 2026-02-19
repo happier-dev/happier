@@ -88,6 +88,9 @@ export const ca: TranslationStructure = {
             general: 'General',
             results: 'Resultats',
         },
+        createItem: {
+            prefix: 'Afegeix',
+        },
     },
 
     profile: {
@@ -337,6 +340,8 @@ export const ca: TranslationStructure = {
         expAutomationsSubtitle: 'Activa l\'UI d\'automatitzacions i la programació',
         expExecutionRuns: 'Execution runs',
         expExecutionRunsSubtitle: 'Enable execution runs (sub-agents / reviews) control plane surfaces',
+        expAttachmentsUploads: 'Attachment uploads',
+        expAttachmentsUploadsSubtitle: 'Enable file/image uploads so the agent can read them from disk',
         expUsageReporting: 'Informe d’ús',
         expUsageReportingSubtitle: 'Activa pantalles d’ús i tokens',
         expScmOperations: 'Operacions de control de versions',
@@ -359,6 +364,14 @@ export const ca: TranslationStructure = {
         expVoiceAuthFlowSubtitle: 'Utilitza el flux autenticat de tokens de veu (amb paywall)',
         voice: 'Veu',
         voiceSubtitle: 'Activa les funcions de veu',
+        expVoiceAgent: 'Voice agent',
+        expVoiceAgentSubtitle: 'Enable daemon-backed voice agent surfaces (requires execution runs)',
+        expConnectedServices: 'Connected services',
+        expConnectedServicesSubtitle: 'Enable connected services settings and session bindings',
+        expConnectedServicesQuotas: 'Connected services quotas',
+        expConnectedServicesQuotasSubtitle: 'Show quota badges and usage meters for connected services',
+        expMemorySearch: 'Memory search',
+        expMemorySearchSubtitle: 'Enable local memory search screens and settings',
         expFriends: 'Amics',
         expFriendsSubtitle: 'Activa les funcions d’amics (pestanya de Safata d’entrada i compartició de sessions)',
         webFeatures: 'Funcions web',
@@ -828,6 +841,16 @@ deps: {
         serverGroupMustHaveServer: 'Un grup de servidors ha d\'incloure almenys un servidor.',
     },
 
+    sessionTags: {
+        searchOrAddPlaceholder: 'Cerca o afegeix etiquetes',
+        editTagsLabel: 'Edita etiquetes',
+        noTagsFound: 'No s\'han trobat etiquetes',
+        newTagItem: 'Nova etiqueta…',
+        newTagTitle: 'Nova etiqueta',
+        newTagMessage: 'Introdueix un nom per a la nova etiqueta.',
+        newTagConfirm: 'Afegeix',
+    },
+
     sessionInfo: {
         // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
         killSession: 'Finalitza la sessió',
@@ -871,6 +894,8 @@ deps: {
         lastUpdated: 'Última actualització',
         sequence: 'Seqüència',
         quickActions: 'Accions ràpides',
+        pinSession: 'Fixar sessió',
+        unpinSession: 'Desfixar sessió',
         copyResumeCommand: 'Copia l’ordre de reprendre',
         viewMachine: 'Veure la màquina',
         viewMachineSubtitle: 'Veure detalls de la màquina i sessions',
@@ -964,6 +989,7 @@ deps: {
     },
 
     agentInput: {
+        dropToAttach: 'Deixa anar per adjuntar fitxers',
         envVars: {
             title: 'Variables d\'entorn',
             titleWithCount: ({ count }: { count: number }) => `Variables d'entorn (${count})`,
@@ -1130,7 +1156,8 @@ deps: {
             webSearch: 'Cerca web',
             reasoning: 'Raonament',
             applyChanges: 'Actualitza fitxer',
-            viewDiff: 'Canvis del fitxer actual',
+            viewDiff: 'Diff',
+            turnDiff: 'Turn diff',
             question: 'Pregunta',
             changeTitle: 'Canvia el títol',
         },
@@ -1235,6 +1262,19 @@ deps: {
                 queueForReviewSubtitle: 'Put messages into Pending first; send later using “Steer now”.',
             },
         },
+        thinking: {
+            title: 'Thinking',
+            footer: 'Controls how agent thinking messages appear in the session transcript.',
+            displayModeTitle: 'Thinking display',
+            displayMode: {
+                inlineTitle: 'Inline (default)',
+                inlineSubtitle: 'Show thinking messages directly in the transcript.',
+                toolTitle: 'Tool card',
+                toolSubtitle: 'Show thinking messages as a Reasoning tool card.',
+                hiddenTitle: 'Hidden',
+                hiddenSubtitle: 'Hide thinking messages from the transcript.',
+            },
+        },
         toolRendering: {
             title: 'Tool rendering',
             footer: 'Controls how much tool detail is shown in the session timeline. This is a UI preference; it does not change agent behavior.',
@@ -1299,6 +1339,13 @@ deps: {
                 'Enabled: exports your legacy account secret to the terminal so older terminals can connect. Not recommended.',
             legacySecretExportDisabledSubtitle:
                 'Disabled (recommended): provision terminals with the content key only (Terminal Connect V2).',
+        },
+        sessionList: {
+            title: 'Llista de sessions',
+            footer: 'Personalitza què apareix a cada fila de sessió.',
+            tagsTitle: 'Etiquetes de sessió',
+            tagsEnabledSubtitle: 'Controls d\'etiquetes visibles a la llista de sessions',
+            tagsDisabledSubtitle: 'Controls d\'etiquetes ocults',
         },
     },
     settingsVoice: {

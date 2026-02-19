@@ -82,6 +82,9 @@ export const ja: TranslationStructure = {
       general: "一般",
       results: "結果",
     },
+    createItem: {
+      prefix: "追加",
+    },
   },
 
   profile: {
@@ -667,6 +670,9 @@ export const ja: TranslationStructure = {
     expExecutionRuns: "Execution runs",
     expExecutionRunsSubtitle:
       "Enable execution runs (sub-agents / reviews) control plane surfaces",
+    expAttachmentsUploads: "Attachment uploads",
+    expAttachmentsUploadsSubtitle:
+      "Enable file/image uploads so the agent can read them from disk",
     expUsageReporting: "Usage reporting",
     expUsageReportingSubtitle: "Enable usage and token reporting screens",
     expScmOperations: "バージョン管理操作",
@@ -697,6 +703,14 @@ export const ja: TranslationStructure = {
       "Use authenticated voice token flow (paywall-aware)",
     voice: "音声",
     voiceSubtitle: "音声機能を有効化",
+    expVoiceAgent: "Voice agent",
+    expVoiceAgentSubtitle: "Enable daemon-backed voice agent surfaces (requires execution runs)",
+    expConnectedServices: "Connected services",
+    expConnectedServicesSubtitle: "Enable connected services settings and session bindings",
+    expConnectedServicesQuotas: "Connected services quotas",
+    expConnectedServicesQuotasSubtitle: "Show quota badges and usage meters for connected services",
+    expMemorySearch: "Memory search",
+    expMemorySearchSubtitle: "Enable local memory search screens and settings",
     expFriends: "友だち",
     expFriendsSubtitle: "友だち機能（受信箱タブとセッション共有）を有効化",
     webFeatures: "Web機能",
@@ -1241,6 +1255,16 @@ export const ja: TranslationStructure = {
     serverGroupMustHaveServer: "A server group must include at least one server.",
   },
 
+  sessionTags: {
+    searchOrAddPlaceholder: "タグを検索または追加",
+    editTagsLabel: "タグを編集",
+    noTagsFound: "タグが見つかりません",
+    newTagItem: "新しいタグ…",
+    newTagTitle: "新しいタグ",
+    newTagMessage: "新しいタグ名を入力してください。",
+    newTagConfirm: "追加",
+  },
+
   sessionInfo: {
     // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
     killSession: "セッションを終了",
@@ -1292,6 +1316,8 @@ export const ja: TranslationStructure = {
     lastUpdated: "最終更新",
     sequence: "シーケンス",
     quickActions: "クイックアクション",
+    pinSession: "セッションをピン留め",
+    unpinSession: "ピン留め解除",
     copyResumeCommand: "再開コマンドをコピー",
     viewMachine: "マシンを表示",
     viewMachineSubtitle: "マシンの詳細とセッションを表示",
@@ -1394,6 +1420,7 @@ export const ja: TranslationStructure = {
   },
 
   agentInput: {
+    dropToAttach: "ドロップして添付",
     envVars: {
       title: "環境変数",
       titleWithCount: ({ count }: { count: number }) => `環境変数 (${count})`,
@@ -1591,7 +1618,8 @@ export const ja: TranslationStructure = {
       webSearch: "Web検索",
       reasoning: "推論",
       applyChanges: "ファイルを更新",
-      viewDiff: "現在のファイル変更",
+      viewDiff: "Diff",
+      turnDiff: "Turn diff",
       question: "質問",
       changeTitle: "タイトルを変更",
     },
@@ -1708,6 +1736,20 @@ export const ja: TranslationStructure = {
           "Put messages into Pending first; send later using “Steer now”.",
       },
     },
+    thinking: {
+      title: "Thinking",
+      footer:
+        "Controls how agent thinking messages appear in the session transcript.",
+      displayModeTitle: "Thinking display",
+      displayMode: {
+        inlineTitle: "Inline (default)",
+        inlineSubtitle: "Show thinking messages directly in the transcript.",
+        toolTitle: "Tool card",
+        toolSubtitle: "Show thinking messages as a Reasoning tool card.",
+        hiddenTitle: "Hidden",
+        hiddenSubtitle: "Hide thinking messages from the transcript.",
+      },
+    },
     toolRendering: {
       title: "Tool rendering",
       footer:
@@ -1783,6 +1825,13 @@ export const ja: TranslationStructure = {
         "Enabled: exports your legacy account secret to the terminal so older terminals can connect. Not recommended.",
       legacySecretExportDisabledSubtitle:
         "Disabled (recommended): provision terminals with the content key only (Terminal Connect V2).",
+    },
+    sessionList: {
+      title: "セッション一覧",
+      footer: "各セッション行に表示する内容をカスタマイズします。",
+      tagsTitle: "セッションタグ",
+      tagsEnabledSubtitle: "セッション一覧にタグ操作を表示",
+      tagsDisabledSubtitle: "タグ操作を非表示",
     },
   },
   settingsVoice: {

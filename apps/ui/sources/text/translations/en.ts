@@ -101,6 +101,9 @@ export const en = {
             general: 'General',
             results: 'Results',
         },
+        createItem: {
+            prefix: 'Add',
+        },
     },
 
     profile: {
@@ -350,6 +353,8 @@ export const en = {
         expAutomationsSubtitle: 'Enable automations UI surfaces and scheduling',
         expExecutionRuns: 'Execution runs',
         expExecutionRunsSubtitle: 'Enable execution runs (sub-agents / reviews) control plane surfaces',
+        expAttachmentsUploads: 'Attachment uploads',
+        expAttachmentsUploadsSubtitle: 'Enable file/image uploads so the agent can read them from disk',
         expUsageReporting: 'Usage reporting',
         expUsageReportingSubtitle: 'Enable usage and token reporting screens',
         expScmOperations: 'Source control operations',
@@ -372,6 +377,14 @@ export const en = {
         expVoiceAuthFlowSubtitle: 'Use authenticated voice token flow (paywall-aware)',
         voice: 'Voice',
         voiceSubtitle: 'Enable voice input/output and voice assistant settings',
+        expVoiceAgent: 'Voice agent',
+        expVoiceAgentSubtitle: 'Enable daemon-backed voice agent surfaces (requires execution runs)',
+        expConnectedServices: 'Connected services',
+        expConnectedServicesSubtitle: 'Enable connected services settings and session bindings',
+        expConnectedServicesQuotas: 'Connected services quotas',
+        expConnectedServicesQuotasSubtitle: 'Show quota badges and usage meters for connected services',
+        expMemorySearch: 'Memory search',
+        expMemorySearchSubtitle: 'Enable local memory search screens and settings',
             expFriends: 'Friends',
             expFriendsSubtitle: 'Enable Friends features (Inbox tab and session sharing)',
             webFeatures: 'Web Features',
@@ -622,7 +635,8 @@ export const en = {
             save: 'Save',
             clearAndRemove: 'Clear',
             helpText: 'You can find session IDs in the Session Info screen.',
-            cannotApplyBody: 'This resume ID can’t be applied right now. Happier will start a new session instead.',
+            cannotApplyBody:
+                'This resume ID can’t be applied right now. Happier will start a new session instead.\n\nIf you expected resume to work, check that the provider is configured for resume (e.g. Codex backend mode set to ACP or MCP + resume) and that the required machine dependencies are installed.',
         },
         codexResumeBanner: {
             title: 'Codex resume',
@@ -842,6 +856,16 @@ export const en = {
         serverGroupMustHaveServer: 'A server group must include at least one server.',
     },
 
+    sessionTags: {
+        searchOrAddPlaceholder: 'Add or search tag…',
+        editTagsLabel: 'Edit tags',
+        noTagsFound: 'No tags found',
+        newTagItem: 'New tag…',
+        newTagTitle: 'New tag',
+        newTagMessage: 'Enter a name for the new tag.',
+        newTagConfirm: 'Add',
+    },
+
     sessionInfo: {
         // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
         killSession: 'Kill Session',
@@ -885,6 +909,8 @@ export const en = {
         lastUpdated: 'Last Updated',
         sequence: 'Sequence',
         quickActions: 'Quick Actions',
+        pinSession: 'Pin session',
+        unpinSession: 'Unpin session',
         copyResumeCommand: 'Copy resume command',
         viewMachine: 'View Machine',
         viewMachineSubtitle: 'View machine details and sessions',
@@ -978,6 +1004,7 @@ export const en = {
     },
 
     agentInput: {
+        dropToAttach: 'Drop to attach files',
         envVars: {
             title: 'Env Vars',
             titleWithCount: ({ count }: { count: number }) => `Env Vars (${count})`,
@@ -1144,7 +1171,8 @@ export const en = {
             webSearch: 'Web Search',
             reasoning: 'Reasoning',
             applyChanges: 'Update file',
-            viewDiff: 'Current file changes',
+            viewDiff: 'Diff',
+            turnDiff: 'Turn diff',
             question: 'Question',
             changeTitle: 'Change Title',
         },
@@ -1249,6 +1277,19 @@ export const en = {
 	                queueForReviewSubtitle: 'Put messages into Pending first; send later using “Steer now”.',
 	            },
 	        },
+	        thinking: {
+	            title: 'Thinking',
+	            footer: 'Controls how agent thinking messages appear in the session transcript.',
+	            displayModeTitle: 'Thinking display',
+	            displayMode: {
+	                inlineTitle: 'Inline (default)',
+	                inlineSubtitle: 'Show thinking messages directly in the transcript.',
+	                toolTitle: 'Tool card',
+	                toolSubtitle: 'Show thinking messages as a Reasoning tool card.',
+	                hiddenTitle: 'Hidden',
+	                hiddenSubtitle: 'Hide thinking messages from the transcript.',
+	            },
+	        },
         toolRendering: {
             title: 'Tool rendering',
             footer: 'Controls how much tool detail is shown in the session timeline. This is a UI preference; it does not change agent behavior.',
@@ -1313,6 +1354,13 @@ export const en = {
                 'Enabled: exports your legacy account secret to the terminal so older terminals can connect. Not recommended.',
             legacySecretExportDisabledSubtitle:
                 'Disabled (recommended): provision terminals with the content key only (Terminal Connect V2).',
+        },
+        sessionList: {
+            title: 'Session list',
+            footer: 'Customize what appears on each session row.',
+            tagsTitle: 'Session tags',
+            tagsEnabledSubtitle: 'Tag controls visible in the session list',
+            tagsDisabledSubtitle: 'Tag controls hidden',
         },
     },
     settingsVoice: {
@@ -1477,8 +1525,8 @@ export const en = {
             mediatorAgentSourceSubtitle: 'Use the session backend, or force a specific agent backend',
             mediatorAgentSourceSession: 'Session backend',
             mediatorAgentSourceAgent: 'Specific agent',
-            mediatorAgentId: 'Voice agent',
-            mediatorAgentIdSubtitle: 'Which agent backend to use for the voice agent (when not using session)',
+            mediatorAgentId: 'Voice agent backend',
+            mediatorAgentIdSubtitle: 'Which agent backend the voice agent uses (when not following the session).',
             mediatorPermissionPolicy: 'Voice agent permissions',
             mediatorPermissionPolicySubtitle: 'Restrict tool usage while running the voice agent',
             mediatorPermissionReadOnly: 'Read-only',
@@ -1532,7 +1580,7 @@ export const en = {
             deviceStt: 'Device STT (experimental)',
             deviceSttSubtitle: 'Use on-device speech recognition instead of an OpenAI-compatible endpoint',
             sttBaseUrl: 'STT Base URL',
-            sttBaseUrlTitle: 'STT Base URL',
+            sttBaseUrlTitle: 'Speech to text',
             sttBaseUrlDescription: 'Base URL for OpenAI-compatible transcription endpoint (typically ends with /v1).',
             sttApiKey: 'STT API Key',
             sttApiKeyTitle: 'STT API Key',
@@ -1546,7 +1594,7 @@ export const en = {
             ttsProvider: 'TTS Provider',
             ttsProviderSubtitle: 'Choose device TTS, an OpenAI-compatible endpoint, or Kokoro (web/desktop)',
             ttsBaseUrl: 'TTS Base URL',
-            ttsBaseUrlTitle: 'TTS Base URL',
+            ttsBaseUrlTitle: 'Text to speech',
             ttsBaseUrlDescription: 'Base URL for OpenAI-compatible speech endpoint (typically ends with /v1).',
             ttsApiKey: 'TTS API Key',
             ttsApiKeyTitle: 'TTS API Key',
@@ -1778,6 +1826,12 @@ export const en = {
         renamePlaceholder: 'Enter machine name',
         renamedSuccess: 'Machine renamed successfully',
         renameFailed: 'Failed to rename machine',
+        actions: {
+            removeMachine: 'Remove Machine',
+            removeMachineSubtitle: 'Revokes this machine and removes it from your account.',
+            removeMachineConfirmBody: 'This will revoke access from this machine (including access keys and automation assignments). You can reconnect later by signing in again from the CLI.',
+            removeMachineAlreadyRemoved: 'This machine has already been removed from your account.',
+        },
         lastKnownPid: 'Last Known PID',
         lastKnownHttpPort: 'Last Known HTTP Port',
         startedAt: 'Started At',

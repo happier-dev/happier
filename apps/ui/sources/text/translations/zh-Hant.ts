@@ -248,6 +248,14 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         experimentalFeaturesDisabled: '僅使用穩定功能',
         voice: '語音',
         voiceSubtitle: '啟用語音功能',
+        expVoiceAgent: 'Voice agent',
+        expVoiceAgentSubtitle: 'Enable daemon-backed voice agent surfaces (requires execution runs)',
+        expConnectedServices: 'Connected services',
+        expConnectedServicesSubtitle: 'Enable connected services settings and session bindings',
+        expConnectedServicesQuotas: 'Connected services quotas',
+        expConnectedServicesQuotasSubtitle: 'Show quota badges and usage meters for connected services',
+        expMemorySearch: 'Memory search',
+        expMemorySearchSubtitle: 'Enable local memory search screens and settings',
         expScmOperations: '版本控制操作',
         expScmOperationsSubtitle: '啟用實驗性的版本控制寫入操作（stage/commit/push/pull）',
         expFilesReviewComments: 'File review comments',
@@ -447,6 +455,16 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         serverGroupMustHaveServer: 'A server group must include at least one server.',
     },
 
+    sessionTags: {
+        searchOrAddPlaceholder: '搜尋或新增標籤',
+        editTagsLabel: '編輯標籤',
+        noTagsFound: '找不到標籤',
+        newTagItem: '新增標籤…',
+        newTagTitle: '新增標籤',
+        newTagMessage: '輸入新標籤名稱。',
+        newTagConfirm: '新增',
+    },
+
     sessionInfo: {
         // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
         killSession: '終止工作階段',
@@ -472,6 +490,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         lastUpdated: '最後更新',
         sequence: '序列',
         quickActions: '快速操作',
+        pinSession: '釘選工作階段',
+        unpinSession: '取消釘選',
         viewMachine: '查看裝置',
         viewMachineSubtitle: '查看裝置詳情和工作階段',
         killSessionSubtitle: '立即終止工作階段',
@@ -522,6 +542,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     agentInput: {
+        dropToAttach: '拖放以附加檔案',
         permissionMode: {
             title: '權限模式',
             default: '預設',
@@ -634,7 +655,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             webSearch: 'Web 搜尋',
             reasoning: '推理',
             applyChanges: '更新檔案',
-            viewDiff: '目前檔案更改',
+            viewDiff: 'Diff',
+            turnDiff: 'Turn diff',
             question: '問題',
         },
         askUserQuestion: {
@@ -721,6 +743,19 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 steerImmediatelySubtitle: 'Send right away and steer the current turn (no interrupt).',
                 queueForReviewTitle: 'Queue in Pending',
                 queueForReviewSubtitle: 'Put messages into Pending first; send later using “Steer now”.',
+            },
+        },
+        thinking: {
+            title: 'Thinking',
+            footer: 'Controls how agent thinking messages appear in the session transcript.',
+            displayModeTitle: 'Thinking display',
+            displayMode: {
+                inlineTitle: 'Inline (default)',
+                inlineSubtitle: 'Show thinking messages directly in the transcript.',
+                toolTitle: 'Tool card',
+                toolSubtitle: 'Show thinking messages as a Reasoning tool card.',
+                hiddenTitle: 'Hidden',
+                hiddenSubtitle: 'Hide thinking messages from the transcript.',
             },
         },
         toolRendering: {

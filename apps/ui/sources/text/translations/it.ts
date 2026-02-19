@@ -97,6 +97,9 @@ export const it: TranslationStructure = {
       general: "Generale",
       results: "Risultati",
     },
+    createItem: {
+      prefix: "Aggiungi",
+    },
   },
 
   profile: {
@@ -689,6 +692,9 @@ export const it: TranslationStructure = {
     expExecutionRuns: "Execution runs",
     expExecutionRunsSubtitle:
       "Enable execution runs (sub-agents / reviews) control plane surfaces",
+    expAttachmentsUploads: "Attachment uploads",
+    expAttachmentsUploadsSubtitle:
+      "Enable file/image uploads so the agent can read them from disk",
     expUsageReporting: "Usage reporting",
     expUsageReportingSubtitle: "Enable usage and token reporting screens",
     expScmOperations: "Operazioni di controllo versione",
@@ -719,6 +725,14 @@ export const it: TranslationStructure = {
       "Use authenticated voice token flow (paywall-aware)",
     voice: "Voce",
     voiceSubtitle: "Abilita le funzioni vocali",
+    expVoiceAgent: "Voice agent",
+    expVoiceAgentSubtitle: "Enable daemon-backed voice agent surfaces (requires execution runs)",
+    expConnectedServices: "Connected services",
+    expConnectedServicesSubtitle: "Enable connected services settings and session bindings",
+    expConnectedServicesQuotas: "Connected services quotas",
+    expConnectedServicesQuotasSubtitle: "Show quota badges and usage meters for connected services",
+    expMemorySearch: "Memory search",
+    expMemorySearchSubtitle: "Enable local memory search screens and settings",
     expFriends: "Amici",
     expFriendsSubtitle: "Abilita le funzioni Amici (scheda Posta in arrivo e condivisione sessioni)",
     webFeatures: "Funzionalità web",
@@ -1275,6 +1289,16 @@ export const it: TranslationStructure = {
     serverGroupMustHaveServer: "A server group must include at least one server.",
   },
 
+  sessionTags: {
+    searchOrAddPlaceholder: "Cerca o aggiungi tag",
+    editTagsLabel: "Modifica tag",
+    noTagsFound: "Nessun tag trovato",
+    newTagItem: "Nuovo tag…",
+    newTagTitle: "Nuovo tag",
+    newTagMessage: "Inserisci un nome per il nuovo tag.",
+    newTagConfirm: "Aggiungi",
+  },
+
   sessionInfo: {
     // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
     killSession: "Termina sessione",
@@ -1319,6 +1343,8 @@ export const it: TranslationStructure = {
     lastUpdated: "Ultimo aggiornamento",
     sequence: "Sequenza",
     quickActions: "Azioni rapide",
+    pinSession: "Fissa sessione",
+    unpinSession: "Rimuovi fissaggio",
     copyResumeCommand: "Copia comando di ripresa",
     viewMachine: "Visualizza macchina",
     viewMachineSubtitle: "Visualizza dettagli e sessioni della macchina",
@@ -1421,6 +1447,7 @@ export const it: TranslationStructure = {
   },
 
   agentInput: {
+    dropToAttach: "Rilascia per allegare file",
     envVars: {
       title: "Var env",
       titleWithCount: ({ count }: { count: number }) => `Var env (${count})`,
@@ -1621,7 +1648,8 @@ export const it: TranslationStructure = {
       webSearch: "Ricerca web",
       reasoning: "Ragionamento",
       applyChanges: "Aggiorna file",
-      viewDiff: "Modifiche file attuali",
+      viewDiff: "Diff",
+      turnDiff: "Turn diff",
       question: "Domanda",
       changeTitle: "Cambia titolo",
     },
@@ -1740,6 +1768,20 @@ export const it: TranslationStructure = {
           "Put messages into Pending first; send later using “Steer now”.",
       },
     },
+    thinking: {
+      title: "Thinking",
+      footer:
+        "Controls how agent thinking messages appear in the session transcript.",
+      displayModeTitle: "Thinking display",
+      displayMode: {
+        inlineTitle: "Inline (default)",
+        inlineSubtitle: "Show thinking messages directly in the transcript.",
+        toolTitle: "Tool card",
+        toolSubtitle: "Show thinking messages as a Reasoning tool card.",
+        hiddenTitle: "Hidden",
+        hiddenSubtitle: "Hide thinking messages from the transcript.",
+      },
+    },
     toolRendering: {
       title: "Tool rendering",
       footer:
@@ -1815,6 +1857,13 @@ export const it: TranslationStructure = {
         "Enabled: exports your legacy account secret to the terminal so older terminals can connect. Not recommended.",
       legacySecretExportDisabledSubtitle:
         "Disabled (recommended): provision terminals with the content key only (Terminal Connect V2).",
+    },
+    sessionList: {
+      title: "Elenco sessioni",
+      footer: "Personalizza cosa appare in ogni riga della sessione.",
+      tagsTitle: "Tag della sessione",
+      tagsEnabledSubtitle: "Controlli tag visibili nell'elenco sessioni",
+      tagsDisabledSubtitle: "Controlli tag nascosti",
     },
   },
   settingsVoice: {
