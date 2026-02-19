@@ -11,6 +11,7 @@ import { sealConnectedServiceCredential } from '@/sync/domains/connectedServices
 import { getConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { buildConnectedServiceCredentialRecord, ConnectedServiceCredentialRecordV1Schema, ConnectedServiceIdSchema, type ConnectedServiceCredentialRecordV1, type ConnectedServiceId } from '@happier-dev/protocol';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { buildOpenAiCodexAuthorizationUrl, exchangeOpenAiCodexTokens, OPENAI_CODEX_OAUTH } from '@/sync/domains/connectedServices/oauth/openAiCodexOauth';
 import { buildAnthropicAuthorizationUrl, exchangeAnthropicTokens, ANTHROPIC_OAUTH } from '@/sync/domains/connectedServices/oauth/anthropicOauth';
@@ -117,7 +118,7 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
           });
         },
         onSuccess: (record: unknown) => {
-          void (async () => {
+          fireAndForget((async () => {
             try {
               await registerMaybeRecord(record);
               await Modal.alert('Connected', `${entry.displayName} (${profileId}) is connected.`);
@@ -125,7 +126,7 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
             } catch (e: unknown) {
               await Modal.alert('Error', e instanceof Error ? e.message : 'Failed to connect');
             }
-          })();
+          })(), { tag: 'ConnectedServiceOauthView.onSuccess.openai' });
         },
       };
 
@@ -165,7 +166,7 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
           });
         },
         onSuccess: (record: unknown) => {
-          void (async () => {
+          fireAndForget((async () => {
             try {
               await registerMaybeRecord(record);
               await Modal.alert('Connected', `${entry.displayName} (${profileId}) is connected.`);
@@ -173,7 +174,7 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
             } catch (e: unknown) {
               await Modal.alert('Error', e instanceof Error ? e.message : 'Failed to connect');
             }
-          })();
+          })(), { tag: 'ConnectedServiceOauthView.onSuccess.anthropic' });
         },
       };
 
@@ -213,7 +214,7 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
           });
         },
         onSuccess: (record: unknown) => {
-          void (async () => {
+          fireAndForget((async () => {
             try {
               await registerMaybeRecord(record);
               await Modal.alert('Connected', `${entry.displayName} (${profileId}) is connected.`);
@@ -221,7 +222,7 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
             } catch (e: unknown) {
               await Modal.alert('Error', e instanceof Error ? e.message : 'Failed to connect');
             }
-          })();
+          })(), { tag: 'ConnectedServiceOauthView.onSuccess.gemini' });
         },
       };
 

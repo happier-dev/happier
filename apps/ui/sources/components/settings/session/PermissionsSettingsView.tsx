@@ -11,7 +11,7 @@ import { t } from '@/text';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
-import { getPermissionModeLabelForAgentType, getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
+import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 
 type PermissionApplyTiming = 'immediate' | 'next_prompt';
@@ -80,17 +80,12 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
                     connectToTrigger={true}
                     rowKind="item"
                     popoverBoundaryRef={popoverBoundaryRef}
-                    trigger={({ open, toggle }) => (
-                        <Item
-                            title={t('settingsSession.defaultPermissions.applyPermissionChangesTitle')}
-                            subtitle={applyTimingLabel}
-                            icon={<Ionicons name="shield-checkmark-outline" size={29} color="#34C759" />}
-                            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-                            onPress={toggle}
-                            showChevron={false}
-                            selected={false}
-                        />
-                    )}
+                    itemTrigger={{
+                        title: t('settingsSession.defaultPermissions.applyPermissionChangesTitle'),
+                        icon: <Ionicons name="shield-checkmark-outline" size={29} color="#34C759" />,
+                        // Keep the compact label as a fallback; selected option subtitle will override by default.
+                        subtitle: applyTimingLabel,
+                    }}
                     items={applyTimingOptions.map((opt) => ({
                         id: opt.key,
                         title: opt.title,
@@ -126,18 +121,11 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
                             connectToTrigger={true}
                             rowKind="item"
                             popoverBoundaryRef={popoverBoundaryRef}
-                            trigger={({ open, toggle }) => (
-                                <Item
-                                    title={t(core.displayNameKey)}
-                                    subtitle={getPermissionModeLabelForAgentType(agentId as any, mode)}
-                                    icon={<Ionicons name={core.ui.agentPickerIconName as any} size={29} color={theme.colors.textSecondary} />}
-                                    rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-                                    onPress={toggle}
-                                    showChevron={false}
-                                    showDivider={showDivider}
-                                    selected={false}
-                                />
-                            )}
+                            itemTrigger={{
+                                title: t(core.displayNameKey),
+                                icon: <Ionicons name={core.ui.agentPickerIconName as any} size={29} color={theme.colors.textSecondary} />,
+                                itemProps: { showDivider },
+                            }}
                             items={getPermissionModeOptionsForAgentType(agentId as any).map((opt) => ({
                                 id: opt.value,
                                 title: opt.label,

@@ -57,10 +57,11 @@ export function useActiveSelectionMachineGroups(params: Readonly<{
                 ?? (serverId === params.activeServerSnapshot.serverId ? params.allMachines : null)
                 ?? [];
             const status = params.machineListStatusByServerId[serverId] ?? 'idle';
+            const visibleMachines = machines.filter((machine) => !machine.revokedAt);
             return {
                 serverId,
                 serverName: serverNameById.get(serverId) ?? serverId,
-                machines,
+                machines: visibleMachines,
                 status,
             };
         });
@@ -73,9 +74,7 @@ export function useActiveSelectionMachineGroups(params: Readonly<{
         visibleMachineServerIds,
     ]);
 
-    const hasAnyVisibleMachines = showMachinesGroupedByServer
-        ? visibleMachineGroups.length > 0
-        : params.allMachines.length > 0;
+    const hasAnyVisibleMachines = visibleMachineGroups.some((group) => group.machines.length > 0);
 
     return {
         showMachinesGroupedByServer,

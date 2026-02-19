@@ -1,14 +1,20 @@
 import React from 'react';
 import { Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { FEATURE_IDS, featureRequiresServerSnapshot, readServerEnabledBit, type FeatureId } from '@happier-dev/protocol';
+import {
+    FEATURE_IDS,
+    featureRequiresServerSnapshot,
+    getFeatureDependencies,
+    isFeatureServerRepresented,
+    readServerEnabledBit,
+    type FeatureId,
+} from '@happier-dev/protocol';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { useSettingMutable, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { Switch } from '@/components/ui/forms/Switch';
 import { t } from '@/text';
-import { Modal } from '@/modal';
 import { FeatureDiagnosticsPanel } from '@/components/settings/features/FeatureDiagnosticsPanel';
 import {
     buildUiFeatureToggleDefaults,
@@ -23,8 +29,6 @@ export default React.memo(function FeaturesSettingsScreen() {
     const [experiments, setExperiments] = useSettingMutable('experiments');
     const [featureToggles, setFeatureToggles] = useSettingMutable('featureToggles');
     const [useProfiles, setUseProfiles] = useSettingMutable('useProfiles');
-    const [agentInputEnterToSend, setAgentInputEnterToSend] = useSettingMutable('agentInputEnterToSend');
-    const [agentInputHistoryScope, setAgentInputHistoryScope] = useSettingMutable('agentInputHistoryScope');
     const [commandPaletteEnabled, setCommandPaletteEnabled] = useLocalSettingMutable('commandPaletteEnabled');
     const [markdownCopyV2, setMarkdownCopyV2] = useLocalSettingMutable('markdownCopyV2');
     const [showEnvironmentBadge, setShowEnvironmentBadge] = useSettingMutable('showEnvironmentBadge');
@@ -46,11 +50,51 @@ export default React.memo(function FeaturesSettingsScreen() {
 
     const serverSnapshot = useServerFeaturesMainSelectionSnapshot(selection.serverIds, { enabled: shouldProbeServerForToggleVisibility });
 
+    const serverProbeFeatureIdsByFeatureId = React.useMemo(() => {
+        const memo = new Map<FeatureId, FeatureId[]>();
+
+        const resolve = (featureId: FeatureId): FeatureId[] => {
+            const cached = memo.get(featureId);
+            if (cached) return cached;
+
+            const serverFeatureIdSet = new Set<FeatureId>();
+            const visited = new Set<FeatureId>();
+            const queue: FeatureId[] = [featureId];
+
+            while (queue.length > 0) {
+                const current = queue.shift()!;
+                if (visited.has(current)) continue;
+                visited.add(current);
+
+                if (isFeatureServerRepresented(current)) {
+                    serverFeatureIdSet.add(current);
+                }
+
+                for (const dep of getFeatureDependencies(current)) {
+                    queue.push(dep);
+                }
+            }
+
+            const result = [...serverFeatureIdSet];
+            memo.set(featureId, result);
+            return result;
+        };
+
+        for (const def of toggleDefinitions) {
+            resolve(def.featureId);
+        }
+
+        return memo;
+    }, [toggleDefinitions]);
+
     const isToggleHardDisabledByServer = React.useCallback(
         (featureId: FeatureId): boolean => {
             if (!featureRequiresServerSnapshot(featureId)) return false;
             if (serverSnapshot.status !== 'ready') return false;
             if (serverSnapshot.serverIds.length === 0) return false;
+
+            const serverFeatureIdsToProbe = serverProbeFeatureIdsByFeatureId.get(featureId) ?? [];
+            if (serverFeatureIdsToProbe.length === 0) return false;
 
             for (const serverId of serverSnapshot.serverIds) {
                 const snapshot = serverSnapshot.snapshotsByServerId[serverId];
@@ -66,13 +110,15 @@ export default React.memo(function FeaturesSettingsScreen() {
                     return true;
                 }
 
-                const enabled = readServerEnabledBit(snapshot.features, featureId) === true;
-                if (!enabled) return true;
+                for (const serverFeatureId of serverFeatureIdsToProbe) {
+                    const enabled = readServerEnabledBit(snapshot.features, serverFeatureId) === true;
+                    if (!enabled) return true;
+                }
             }
 
             return false;
         },
-        [serverSnapshot],
+        [serverProbeFeatureIdsByFeatureId, serverSnapshot],
     );
 
     const visibleToggleDefinitions = React.useMemo(() => {
@@ -93,6 +139,58 @@ export default React.memo(function FeaturesSettingsScreen() {
             ...defaults,
         });
     }, [featureToggles, setFeatureToggles]);
+
+    const toggleSettings = React.useMemo(() => ({ experiments, featureToggles }), [experiments, featureToggles]);
+
+    const toggleableFeatureIdSet = React.useMemo(() => {
+        return new Set(toggleDefinitions.map((d) => d.featureId));
+    }, [toggleDefinitions]);
+
+    const dependentsByFeatureId = React.useMemo(() => {
+        const map = new Map<FeatureId, FeatureId[]>();
+        for (const def of toggleDefinitions) {
+            map.set(def.featureId, []);
+        }
+        for (const def of toggleDefinitions) {
+            for (const dep of getFeatureDependencies(def.featureId)) {
+                if (!toggleableFeatureIdSet.has(dep)) continue;
+                const list = map.get(dep);
+                if (list) list.push(def.featureId);
+            }
+        }
+        return map;
+    }, [toggleDefinitions, toggleableFeatureIdSet]);
+
+    const isLocallyBlockedByDependencies = React.useCallback((featureId: FeatureId): boolean => {
+        for (const dep of getFeatureDependencies(featureId)) {
+            if (!toggleableFeatureIdSet.has(dep)) continue;
+            if (!resolveUiFeatureToggleEnabled(toggleSettings, dep)) return true;
+        }
+        return false;
+    }, [toggleSettings, toggleableFeatureIdSet]);
+
+    const applyLocalToggleChange = React.useCallback((featureId: FeatureId, next: boolean) => {
+        const nextToggles: Record<string, boolean> = {
+            ...(featureToggles ?? {}),
+            [featureId]: next,
+        };
+
+        if (!next) {
+            const queue: FeatureId[] = [featureId];
+            const visited = new Set<FeatureId>(queue);
+            while (queue.length > 0) {
+                const current = queue.shift()!;
+                for (const dependent of dependentsByFeatureId.get(current) ?? []) {
+                    if (visited.has(dependent)) continue;
+                    visited.add(dependent);
+                    nextToggles[dependent] = false;
+                    queue.push(dependent);
+                }
+            }
+        }
+
+        setFeatureToggles(nextToggles);
+    }, [dependentsByFeatureId, featureToggles, setFeatureToggles]);
 
     return (
         <ItemList style={{ paddingTop: 0 }}>
@@ -153,32 +251,6 @@ export default React.memo(function FeaturesSettingsScreen() {
                     footer={t('settingsFeatures.webFeaturesDescription')}
                 >
                     <Item
-                        title={t('settingsFeatures.enterToSend')}
-                        subtitle={agentInputEnterToSend ? t('settingsFeatures.enterToSendEnabled') : t('settingsFeatures.enterToSendDisabled')}
-                        icon={<Ionicons name="return-down-forward-outline" size={29} color="#007AFF" />}
-                        rightElement={<Switch value={agentInputEnterToSend} onValueChange={setAgentInputEnterToSend} />}
-                        showChevron={false}
-                    />
-                    <Item
-                        title={t('settingsFeatures.historyScope')}
-                        subtitle={agentInputHistoryScope === 'global'
-                            ? t('settingsFeatures.historyScopeGlobal')
-                            : t('settingsFeatures.historyScopePerSession')}
-                        icon={<Ionicons name="time-outline" size={29} color="#007AFF" />}
-                        showChevron={true}
-                        onPress={async () => {
-                            const wantsGlobal = await Modal.confirm(
-                                t('settingsFeatures.historyScopeModalTitle'),
-                                t('settingsFeatures.historyScopeModalMessage'),
-                                {
-                                    cancelText: t('settingsFeatures.historyScopePerSessionOption'),
-                                    confirmText: t('settingsFeatures.historyScopeGlobalOption'),
-                                }
-                            );
-                            setAgentInputHistoryScope(wantsGlobal ? 'global' : 'perSession');
-                        }}
-                    />
-                    <Item
                         title={t('settingsFeatures.commandPalette')}
                         subtitle={commandPaletteEnabled ? t('settingsFeatures.commandPaletteEnabled') : t('settingsFeatures.commandPaletteDisabled')}
                         icon={<Ionicons name="keypad-outline" size={29} color="#007AFF" />}
@@ -219,7 +291,8 @@ export default React.memo(function FeaturesSettingsScreen() {
                     footer="Per-feature local toggles (independent of server support)."
                 >
                     {standardToggleDefinitions.map((d) => {
-                        const enabled = resolveUiFeatureToggleEnabled({ experiments, featureToggles }, d.featureId);
+                        const blockedByDependencies = isLocallyBlockedByDependencies(d.featureId);
+                        const enabled = blockedByDependencies ? false : resolveUiFeatureToggleEnabled(toggleSettings, d.featureId);
 
                         return (
                             <Item
@@ -230,12 +303,8 @@ export default React.memo(function FeaturesSettingsScreen() {
                                 rightElement={
                                     <Switch
                                         value={enabled}
-                                        onValueChange={(next) => {
-                                            setFeatureToggles({
-                                                ...(featureToggles ?? {}),
-                                                [d.featureId]: next,
-                                            });
-                                        }}
+                                        disabled={blockedByDependencies}
+                                        onValueChange={(next) => applyLocalToggleChange(d.featureId, next)}
                                     />
                                 }
                                 showChevron={false}
@@ -251,7 +320,8 @@ export default React.memo(function FeaturesSettingsScreen() {
                     footer={t('settingsFeatures.experimentalOptionsDescription')}
                 >
                     {experimentalToggleDefinitions.map((d) => {
-                        const enabled = resolveUiFeatureToggleEnabled({ experiments, featureToggles }, d.featureId);
+                        const blockedByDependencies = isLocallyBlockedByDependencies(d.featureId);
+                        const enabled = blockedByDependencies ? false : resolveUiFeatureToggleEnabled(toggleSettings, d.featureId);
 
                         return (
                             <Item
@@ -262,12 +332,8 @@ export default React.memo(function FeaturesSettingsScreen() {
                                 rightElement={
                                     <Switch
                                         value={enabled}
-                                        onValueChange={(next) => {
-                                            setFeatureToggles({
-                                                ...(featureToggles ?? {}),
-                                                [d.featureId]: next,
-                                            });
-                                        }}
+                                        disabled={blockedByDependencies}
+                                        onValueChange={(next) => applyLocalToggleChange(d.featureId, next)}
                                     />
                                 }
                                 showChevron={false}

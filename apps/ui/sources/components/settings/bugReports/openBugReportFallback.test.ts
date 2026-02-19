@@ -96,3 +96,19 @@ describe('openBugReportFallbackIssueUrl', () => {
         expect(canOpenUrl).not.toHaveBeenCalled();
     });
 });
+
+describe('openBugReportIssueUrlSilently', () => {
+    it('attempts to open the URL but does not throw when openUrl fails', async () => {
+        const { openBugReportIssueUrlSilently } = await import('./openBugReportFallback');
+
+        const openUrl = vi.fn(async () => {
+            throw new Error('open failed');
+        });
+
+        await expect(
+            openBugReportIssueUrlSilently('https://github.com/happier-dev/happier/issues/36', { openUrl }),
+        ).resolves.toBeUndefined();
+
+        expect(openUrl).toHaveBeenCalledTimes(1);
+    });
+});

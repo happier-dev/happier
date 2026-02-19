@@ -340,11 +340,11 @@ export const Item = React.memo<ItemProps>((props) => {
 
                 {/* Right Section */}
                 <View style={styles.rightSection}>
-                    {detail && !rightElement && (
+                    {detail && (
                         <Text 
                             style={[
                                 styles.detail, 
-                                { marginRight: showAccessory ? 6 : 0 },
+                                { marginRight: rightElement || showAccessory ? 8 : 0 },
                                 detailStyle
                             ]}
                             numberOfLines={1}

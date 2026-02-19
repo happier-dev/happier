@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Platform, Text, TextInput, View, type ViewStyle } from 'react-native';
+import { Platform, Text, TextInput, View, type ViewStyle, type StyleProp, type TextStyle } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Popover, type PopoverPlacement } from '@/components/ui/popover';
@@ -8,7 +9,8 @@ import { t } from '@/text';
 import type { SelectableRowVariant } from '@/components/ui/lists/SelectableRow';
 import { SelectableMenuResults } from '@/components/ui/forms/dropdown/SelectableMenuResults';
 import type { SelectableMenuItem } from '@/components/ui/forms/dropdown/selectableMenuTypes';
-import { useSelectableMenu } from '@/components/ui/forms/dropdown/useSelectableMenu';
+import { useSelectableMenu, CREATE_ITEM_ID } from '@/components/ui/forms/dropdown/useSelectableMenu';
+import { Item, type ItemProps } from '@/components/ui/lists/Item';
 
 export type DropdownMenuItem = Readonly<{
     id: string;
@@ -21,20 +23,72 @@ export type DropdownMenuItem = Readonly<{
     disabled?: boolean;
 }>;
 
+export type DropdownMenuCreateItemDisplay = Readonly<{
+    title: string;
+    titleNode?: React.ReactNode;
+    subtitle?: string;
+    subtitleNode?: React.ReactNode;
+    category?: string;
+    icon?: React.ReactNode;
+    rightElement?: React.ReactNode;
+    disabled?: boolean;
+    rowContainerStyle?: StyleProp<ViewStyle>;
+    titleStyle?: StyleProp<TextStyle>;
+    subtitleStyle?: StyleProp<TextStyle>;
+    leftGap?: number;
+}>;
+
+export type DropdownMenuItemTriggerConfig = Readonly<{
+    title: string;
+    icon?: React.ReactNode;
+    /**
+     * Fallback subtitle when no selected item subtitle is available, or when `showSelectedSubtitle` is false.
+     */
+    subtitle?: React.ReactNode;
+    /**
+     * When true (default), render the selected item's title in the right-side `detail`.
+     */
+    showSelectedDetail?: boolean;
+    /**
+     * When true (default), render the selected item's subtitle as the row subtitle.
+     */
+    showSelectedSubtitle?: boolean;
+    /**
+     * Optional: customize which detail string is shown (defaults to selected title).
+     */
+    detailFormatter?: (selectedItem: DropdownMenuItem | null) => string | null;
+    /**
+     * Optional: customize which subtitle is shown (defaults to selected subtitle or fallback subtitle).
+     */
+    subtitleFormatter?: (selectedItem: DropdownMenuItem | null) => React.ReactNode;
+    /**
+     * Pass-through props for the underlying `Item` trigger (excluding computed fields).
+     */
+    itemProps?: Partial<
+        Omit<ItemProps, 'title' | 'subtitle' | 'detail' | 'icon' | 'rightElement' | 'onPress' | 'showChevron' | 'selected'>
+    >;
+}>;
+
 export type DropdownMenuProps = Readonly<{
     /**
      * The trigger element.
      * Prefer the render-prop form so DropdownMenu can provide a consistent `toggle()` helper.
      * A ref will be attached internally for anchoring (the trigger is rendered inside that host).
      */
-    trigger:
+    trigger?:
         | React.ReactNode
         | ((props: Readonly<{
             open: boolean;
             toggle: () => void;
             openMenu: () => void;
             closeMenu: () => void;
+            selectedItem: DropdownMenuItem | null;
         }>) => React.ReactNode);
+    /**
+     * Convenience: render a standardized `Item`-style trigger. This is recommended for settings-style
+     * select rows so the selected label and description are visible without opening the menu.
+     */
+    itemTrigger?: DropdownMenuItemTriggerConfig;
     open: boolean;
     onOpenChange: (next: boolean) => void;
 
@@ -56,7 +110,7 @@ export type DropdownMenuProps = Readonly<{
     /** When true, shows a search field and enables keyboard navigation on web. */
     search?: boolean;
     searchPlaceholder?: string;
-    emptyLabel?: string;
+    emptyLabel?: string | null;
     placement?: PopoverPlacement;
     /** Gap between the trigger and the menu (default 0 for dropdown feel). */
     gap?: number;
@@ -81,6 +135,17 @@ export type DropdownMenuProps = Readonly<{
      * Intended for "dropdown" inputs where the menu should feel like a single control.
      */
     connectToTrigger?: boolean;
+    /**
+     * When provided and the search query yields zero results, a synthetic "Add '{query}'" row is
+     * shown. Selecting it (by tap or Enter) calls this callback with the trimmed query string.
+     * Only meaningful when `search` is true.
+     */
+    onCreateItem?: ((query: string) => void) | null;
+    /**
+     * Optional: customize the synthetic create row ("Add ...") when `onCreateItem` is provided.
+     * When omitted, a simple string label is used.
+     */
+    createItemDisplay?: ((query: string) => DropdownMenuCreateItemDisplay) | null;
 }>;
 
 export function DropdownMenu(props: DropdownMenuProps) {
@@ -88,8 +153,11 @@ export function DropdownMenu(props: DropdownMenuProps) {
     const anchorRef = React.useRef<View>(null);
 
     const rowVariant: SelectableRowVariant = props.variant ?? 'slim';
+    const createItemDisplay = props.createItemDisplay ?? null;
     const matchTriggerWidth = props.matchTriggerWidth ?? true;
     const maxWidthCap = props.maxWidthCap ?? (matchTriggerWidth ? 1024 : 320);
+    const emptyLabel = props.emptyLabel === undefined ? t('commandPalette.noCommandsFound') : props.emptyLabel;
+    const contentPadding = rowVariant === 'slim' ? 12 : 16;
     const edgePadding = React.useMemo(() => {
         // When the menu is meant to visually "connect" to the trigger, horizontal edge padding
         // creates an inset that makes the popover look misaligned. Keep vertical breathing room.
@@ -140,17 +208,57 @@ export function DropdownMenu(props: DropdownMenuProps) {
         }
         openMenu();
     }, [openMenu, props]);
+
+    const selectedItemForTrigger = React.useMemo((): DropdownMenuItem | null => {
+        const selectedId = typeof props.selectedId === 'string' ? props.selectedId.trim() : '';
+        if (!selectedId) return null;
+        const found = props.items.find((it) => it.id === selectedId) ?? null;
+        if (!found || found.disabled) return null;
+        return found;
+    }, [props.items, props.selectedId]);
+
     const triggerNode = React.useMemo(() => {
+        if (props.itemTrigger) {
+            const cfg = props.itemTrigger;
+            const showSelectedDetail = cfg.showSelectedDetail !== false;
+            const showSelectedSubtitle = cfg.showSelectedSubtitle !== false;
+            const detail =
+                showSelectedDetail
+                    ? (cfg.detailFormatter
+                        ? cfg.detailFormatter(selectedItemForTrigger)
+                        : (selectedItemForTrigger?.title ?? null))
+                    : null;
+            const subtitle =
+                cfg.subtitleFormatter
+                    ? cfg.subtitleFormatter(selectedItemForTrigger)
+                    : (showSelectedSubtitle ? (selectedItemForTrigger?.subtitle ?? cfg.subtitle ?? null) : (cfg.subtitle ?? null));
+
+            return (
+                <Item
+                    title={cfg.title}
+                    subtitle={subtitle ?? undefined}
+                    detail={detail ?? undefined}
+                    icon={cfg.icon}
+                    rightElement={<Ionicons name={props.open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
+                    onPress={toggle}
+                    showChevron={false}
+                    selected={false}
+                    {...(cfg.itemProps ?? {})}
+                />
+            );
+        }
+
         if (typeof props.trigger === 'function') {
             return props.trigger({
                 open: props.open,
                 toggle,
                 openMenu,
                 closeMenu,
+                selectedItem: selectedItemForTrigger,
             });
         }
         return props.trigger;
-    }, [closeMenu, openMenu, props, toggle]);
+    }, [closeMenu, openMenu, props.itemTrigger, props.open, props.trigger, selectedItemForTrigger, theme.colors.textSecondary, toggle]);
 
     const {
         searchQuery,
@@ -164,7 +272,34 @@ export function DropdownMenu(props: DropdownMenuProps) {
         items: selectableItems,
         onRequestClose,
         initialSelectedId: props.selectedId ?? null,
+        onCreateItem: props.onCreateItem ?? null,
+        createItemFactory: createItemDisplay
+            ? ((query) => {
+                const display = createItemDisplay(query);
+                return {
+                    title: display.title,
+                    titleNode: display.titleNode,
+                    subtitle: display.subtitle,
+                    subtitleNode: display.subtitleNode,
+                    category: display.category,
+                    left: display.icon ?? null,
+                    right: display.rightElement ?? null,
+                    disabled: display.disabled,
+                    rowContainerStyle: display.rowContainerStyle,
+                    rowTitleStyle: display.titleStyle,
+                    rowSubtitleStyle: display.subtitleStyle,
+                    leftGap: display.leftGap,
+                };
+            })
+            : null,
     });
+
+    const handleCreate = React.useCallback(() => {
+        const query = searchQuery.trim();
+        if (!query || !props.onCreateItem) return;
+        props.onOpenChange(false);
+        props.onCreateItem(query);
+    }, [props, searchQuery]);
 
     const handleKeyDown = React.useCallback((e: any) => {
         if (Platform.OS !== 'web') return;
@@ -174,10 +309,14 @@ export function DropdownMenu(props: DropdownMenuProps) {
         e.preventDefault?.();
         e.stopPropagation?.();
         handleKeyPress(key, (item) => {
+            if (item.id === CREATE_ITEM_ID) {
+                handleCreate();
+                return;
+            }
             props.onOpenChange(false);
             props.onSelect(item.id);
         });
-    }, [handleKeyPress, props]);
+    }, [handleCreate, handleKeyPress, props]);
 
     return (
         <View
@@ -228,9 +367,9 @@ export function DropdownMenu(props: DropdownMenuProps) {
                         >
                             {props.search ? (
                                 <View style={{
-                                    paddingHorizontal: rowVariant === 'slim' ? 12 : 16,
-                                    paddingTop: rowVariant === 'slim' ? 8 : 10,
-                                    paddingBottom: rowVariant === 'slim' ? 6 : 8,
+                                    paddingHorizontal: contentPadding,
+                                    paddingTop: contentPadding,
+                                    paddingBottom: rowVariant === 'slim' ? 4 : 8,
                                 }}>
                                     <TextInput
                                         ref={inputRef as any}
@@ -238,9 +377,9 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                         onChangeText={handleSearchChange}
                                         placeholder={props.searchPlaceholder ?? t('commandPalette.placeholder')}
                                         placeholderTextColor="#999"
+                                        autoFocus={false}
                                         autoCorrect={false}
                                         autoCapitalize="none"
-                                        autoFocus
                                         onKeyPress={handleKeyDown}
                                         style={{
                                             borderRadius: rowVariant === 'slim' ? 8 : 10,
@@ -255,19 +394,25 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                 </View>
                             ) : null}
 
-                            <SelectableMenuResults
-                                categories={filteredCategories}
-                                selectedIndex={selectedIndex}
-                                onSelectionChange={setSelectedIndex}
-                                onPressItem={(item) => {
-                                    props.onOpenChange(false);
-                                    props.onSelect(item.id);
-                                }}
-                                rowVariant={rowVariant}
-                                emptyLabel={props.emptyLabel ?? t('commandPalette.noCommandsFound')}
-                                showCategoryTitles={props.showCategoryTitles}
-                                rowKind={props.rowKind}
-                            />
+                            <View style={{ paddingBottom: contentPadding }}>
+                                <SelectableMenuResults
+                                    categories={filteredCategories}
+                                    selectedIndex={selectedIndex}
+                                    onSelectionChange={setSelectedIndex}
+                                    onPressItem={(item) => {
+                                        if (item.id === CREATE_ITEM_ID) {
+                                            handleCreate();
+                                            return;
+                                        }
+                                        props.onOpenChange(false);
+                                        props.onSelect(item.id);
+                                    }}
+                                    rowVariant={rowVariant}
+                                    emptyLabel={emptyLabel}
+                                    showCategoryTitles={props.showCategoryTitles}
+                                    rowKind={props.rowKind}
+                                />
+                            </View>
                         </FloatingOverlay>
                     )}
                 </Popover>

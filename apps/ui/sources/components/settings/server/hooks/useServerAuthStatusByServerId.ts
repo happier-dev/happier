@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export type ServerAuthStatus = 'signedIn' | 'signedOut' | 'unknown';
 
@@ -11,7 +12,7 @@ export function useServerAuthStatusByServerId(servers: ReadonlyArray<ServerProfi
 
     React.useEffect(() => {
         let cancelled = false;
-        void (async () => {
+        fireAndForget((async () => {
             const entries = await Promise.all(servers.map(async (profile) => {
                 try {
                     const creds = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl);
@@ -24,7 +25,7 @@ export function useServerAuthStatusByServerId(servers: ReadonlyArray<ServerProfi
             const next: Record<string, ServerAuthStatus> = {};
             for (const [id, status] of entries) next[id] = status;
             setStatusById(next);
-        })();
+        })(), { tag: 'useServerAuthStatusByServerId.load' });
         return () => {
             cancelled = true;
         };
@@ -32,4 +33,3 @@ export function useServerAuthStatusByServerId(servers: ReadonlyArray<ServerProfi
 
     return statusById;
 }
-

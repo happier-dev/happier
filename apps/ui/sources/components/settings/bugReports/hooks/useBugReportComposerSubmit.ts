@@ -10,7 +10,7 @@ import { clearBugReportLogBuffer } from '@/utils/system/bugReportLogBuffer';
 
 import { collectBugReportDiagnosticsArtifacts } from '../bugReportDiagnostics';
 import type { BugReportsFeature } from '../bugReportFeatureDefaults';
-import { openBugReportFallbackIssueUrl } from '../openBugReportFallback';
+import { openBugReportFallbackIssueUrl, openBugReportIssueUrlSilently } from '../openBugReportFallback';
 import { submitBugReportToService } from '../bugReportServiceClient';
 import { submitBugReportFromDraft, validateBugReportDraft } from '../bugReportSubmissionFlow';
 import type { BugReportComposerSubmissionInput } from '../bugReportSubmissionFlow';
@@ -103,7 +103,8 @@ export function useBugReportComposerSubmit(input: Readonly<{
         },
       });
 
-      await openBugReportFallbackIssueUrl(result.issueUrl);
+      // Best-effort only: avoid stacking extra modals over the success state if opening fails.
+      void openBugReportIssueUrlSilently(result.issueUrl);
       clearBugReportUserActionTrail();
       clearBugReportLogBuffer();
       router.back();

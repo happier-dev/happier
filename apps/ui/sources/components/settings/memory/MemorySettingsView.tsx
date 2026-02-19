@@ -14,6 +14,7 @@ import { Modal } from '@/modal';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useAllMachines } from '@/sync/domains/state/storage';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
 import { DEFAULT_MEMORY_SETTINGS, MemorySettingsV1Schema, RPC_METHODS, type MemorySettingsV1 } from '@happier-dev/protocol';
 import { MemorySettingsBudgetsSection } from './MemorySettingsBudgetsSection';
@@ -24,6 +25,7 @@ type IndexMode = MemorySettingsV1['indexMode'];
 
 export const MemorySettingsView = React.memo(function MemorySettingsView() {
     const { theme } = useUnistyles();
+    const memorySearchEnabled = useFeatureEnabled('memory.search');
     const machines = useAllMachines();
     const activeServerSnapshot = getActiveServerSnapshot();
     const serverId = activeServerSnapshot.serverId;
@@ -43,6 +45,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
     }, [machines, selectedMachineId]);
 
     const fetchSettings = React.useCallback(async () => {
+        if (!memorySearchEnabled) return;
         if (!serverId || !selectedMachineId) return;
         setLoading(true);
         try {
@@ -56,13 +59,15 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
         } finally {
             setLoading(false);
         }
-    }, [selectedMachineId, serverId]);
+    }, [memorySearchEnabled, selectedMachineId, serverId]);
 
     React.useEffect(() => {
+        if (!memorySearchEnabled) return;
         void fetchSettings();
-    }, [fetchSettings]);
+    }, [fetchSettings, memorySearchEnabled]);
 
     const writeSettings = React.useCallback(async (next: MemorySettingsV1) => {
+        if (!memorySearchEnabled) return;
         if (!serverId || !selectedMachineId) return;
         const raw = await machineRpcWithServerScope<unknown, unknown>({
             machineId: selectedMachineId,
@@ -72,7 +77,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
         });
         const parsed = MemorySettingsV1Schema.parse(raw);
         setSettings(parsed);
-    }, [selectedMachineId, serverId]);
+    }, [memorySearchEnabled, selectedMachineId, serverId]);
 
     const machineItems = React.useMemo(() => {
         return machines.map((m) => ({
@@ -113,6 +118,24 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
         return label && label.trim().length > 0 ? label : 'No machine';
     }, [machines, selectedMachineId]);
 
+    if (!memorySearchEnabled) {
+        return (
+            <ItemList style={{ paddingTop: 0 }}>
+                <ItemGroup
+                    title="Local Memory Search"
+                    footer="Enable memory search in Features to configure local indexing."
+                >
+                    <Item
+                        title="Memory search is disabled"
+                        subtitle="Open Settings → Features to enable memory.search"
+                        icon={<Ionicons name="search-outline" size={29} color="#34C759" />}
+                        onPress={() => { void Modal.alert('Memory search disabled', 'Enable memory.search in Settings → Features.'); }}
+                    />
+                </ItemGroup>
+            </ItemList>
+        );
+    }
+
     return (
         <ItemList style={{ paddingTop: 0 }}>
             <ItemGroup
@@ -137,14 +160,10 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                             setSelectedMachineId(id);
                             setMachineMenuOpen(false);
                         }}
-                        trigger={({ toggle }) => (
-                            <Item
-                                title="Change machine"
-                                icon={<Ionicons name="swap-horizontal-outline" size={29} color="#5856D6" />}
-                                onPress={toggle}
-                                showChevron={false}
-                            />
-                        )}
+                        itemTrigger={{
+                            title: 'Change machine',
+                            icon: <Ionicons name="swap-horizontal-outline" size={29} color="#5856D6" />,
+                        }}
                     />
                 </View>
                 <Item
@@ -177,15 +196,10 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                         void writeSettings({ ...settings, indexMode: mode });
                         setIndexModeMenuOpen(false);
                     }}
-                    trigger={({ toggle }) => (
-                        <Item
-                            title="Mode"
-                            subtitle={settings.indexMode === 'deep' ? 'Deep' : 'Light (recommended)'}
-                            icon={<Ionicons name="options-outline" size={29} color="#FF9500" />}
-                            onPress={toggle}
-                            showChevron={false}
-                        />
-                    )}
+                    itemTrigger={{
+                        title: 'Mode',
+                        icon: <Ionicons name="options-outline" size={29} color="#FF9500" />,
+                    }}
                 />
             </ItemGroup>
 
@@ -208,21 +222,10 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                         void writeSettings({ ...settings, backfillPolicy: policy });
                         setBackfillMenuOpen(false);
                     }}
-                    trigger={({ toggle }) => (
-                        <Item
-                            title="Policy"
-                            subtitle={
-                                settings.backfillPolicy === 'all_history'
-                                    ? 'All history'
-                                    : settings.backfillPolicy === 'last_30_days'
-                                        ? 'Last 30 days'
-                                        : 'New only (recommended)'
-                            }
-                            icon={<Ionicons name="time-outline" size={29} color="#AF52DE" />}
-                            onPress={toggle}
-                            showChevron={false}
-                        />
-                    )}
+                    itemTrigger={{
+                        title: 'Policy',
+                        icon: <Ionicons name="time-outline" size={29} color="#AF52DE" />,
+                    }}
                 />
             </ItemGroup>
 
@@ -295,19 +298,10 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                         });
                         setSummarizerPermissionMenuOpen(false);
                     }}
-                    trigger={({ toggle }) => (
-                        <Item
-                            title="Summarizer permissions"
-                            subtitle={
-                                settings.hints.summarizerPermissionMode === 'read_only'
-                                    ? 'Read-only'
-                                    : 'No tools (recommended)'
-                            }
-                            icon={<Ionicons name="lock-closed-outline" size={29} color="#FF3B30" />}
-                            onPress={toggle}
-                            showChevron={false}
-                        />
-                    )}
+                    itemTrigger={{
+                        title: 'Summarizer permissions',
+                        icon: <Ionicons name="lock-closed-outline" size={29} color="#FF3B30" />,
+                    }}
                 />
             </ItemGroup>
 

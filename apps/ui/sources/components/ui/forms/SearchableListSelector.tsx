@@ -29,6 +29,13 @@ export interface SelectorConfig<T> {
     } | null;
 
     /**
+     * When true, the row is visually disabled and does not call `onSelect`.
+     *
+     * Note: even if the row is disabled, we still render it (e.g. offline machines).
+     */
+    isItemDisabled?: (item: T, context?: any) => boolean;
+
+    /**
      * Optional extra element rendered next to the status (e.g. small CLI glyphs).
      * Kept separate from status.text so it can be interactive (tap/hover).
      */
@@ -155,7 +162,10 @@ export function SearchableListSelector<T>(props: SearchableListSelectorProps<T>)
 
         if (config.allowCustomInput && text.trim()) {
             const parsedItem = config.parseFromDisplay(text.trim(), context);
-            if (parsedItem) onSelect(parsedItem);
+            if (parsedItem) {
+                const disabled = config.isItemDisabled?.(parsedItem, context) ?? false;
+                if (!disabled) onSelect(parsedItem);
+            }
         }
     };
 
@@ -214,6 +224,7 @@ export function SearchableListSelector<T>(props: SearchableListSelectorProps<T>)
     const renderItem = (item: T, isSelected: boolean, isLast: boolean, showDividerOverride?: boolean, forRecent = false, forFavorite = false) => {
         const itemId = config.getItemId(item);
         const title = config.getItemTitle(item);
+        const isDisabled = config.isItemDisabled?.(item, context) ?? false;
         const subtitle = forRecent && config.getRecentItemSubtitle
             ? config.getRecentItemSubtitle(item)
             : config.getItemSubtitle?.(item);
@@ -233,6 +244,7 @@ export function SearchableListSelector<T>(props: SearchableListSelectorProps<T>)
                 title={title}
                 subtitle={subtitle}
                 subtitleLines={0}
+                disabled={isDisabled}
                 leftElement={icon}
                 rightElement={(
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: ITEM_SPACING_GAP }}>
@@ -251,7 +263,10 @@ export function SearchableListSelector<T>(props: SearchableListSelectorProps<T>)
                         {renderFavoriteToggle(item, isFavorite)}
                     </View>
                 )}
-                onPress={() => onSelect(item)}
+                onPress={() => {
+                    if (config.isItemDisabled?.(item, context)) return;
+                    onSelect(item);
+                }}
                 showChevron={false}
                 selected={isSelected}
                 showDivider={showDividerOverride !== undefined ? showDividerOverride : !isLast}

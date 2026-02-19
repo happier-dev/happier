@@ -41,7 +41,7 @@ export function SelectableMenuResults(props: {
     onSelectionChange: (index: number) => void;
     onPressItem: (item: SelectableMenuItem) => void;
     rowVariant: SelectableRowVariant;
-    emptyLabel: string;
+    emptyLabel?: string | null;
     showCategoryTitles?: boolean;
     rowKind?: 'selectableRow' | 'item';
 }) {
@@ -51,6 +51,7 @@ export function SelectableMenuResults(props: {
     const allItems = React.useMemo(() => props.categories.flatMap((c) => c.items), [props.categories]);
 
     if (props.categories.length === 0 || allItems.length === 0) {
+        if (!props.emptyLabel) return null;
         return (
             <View style={styles.emptyContainer}>
                 <Text style={styles.emptyText}>
@@ -82,7 +83,7 @@ export function SelectableMenuResults(props: {
                             {rowKind === 'item' ? (
                                 <Item
                                     title={item.title}
-                                    subtitle={item.subtitle}
+                                    subtitle={item.subtitleNode ?? item.subtitle}
                                     icon={item.left}
                                     rightElement={item.right}
                                     selected={isSelected}
@@ -100,9 +101,13 @@ export function SelectableMenuResults(props: {
                                     selected={isSelected}
                                     disabled={item.disabled}
                                     left={item.left}
+                                    leftGap={item.leftGap}
                                     right={item.right}
-                                    title={item.title}
-                                    subtitle={item.subtitle}
+                                    title={item.titleNode ?? item.title}
+                                    subtitle={item.subtitleNode ?? item.subtitle}
+                                    containerStyle={item.rowContainerStyle}
+                                    titleStyle={item.rowTitleStyle}
+                                    subtitleStyle={item.rowSubtitleStyle}
                                     onPress={() => {
                                         if (item.disabled) return;
                                         props.onPressItem(item);
@@ -119,7 +124,7 @@ export function SelectableMenuResults(props: {
 
                 return (
                     <View key={category.id}>
-                        {showCategoryTitles ? (
+                        {showCategoryTitles && category.title.trim().length > 0 ? (
                             <Text style={styles.categoryTitle}>
                                 {category.title}
                             </Text>

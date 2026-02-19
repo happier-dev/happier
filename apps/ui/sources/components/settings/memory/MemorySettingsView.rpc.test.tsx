@@ -70,6 +70,10 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     machineRpcWithServerScope: machineRpcSpy,
 }));
 
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => true,
+}));
+
 afterEach(() => {
     machineRpcSpy.mockReset();
     modalPrompt.mockReset();

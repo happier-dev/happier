@@ -123,22 +123,15 @@ export const ToolRenderingSettingsView = React.memo(function ToolRenderingSettin
                     connectToTrigger={true}
                     rowKind="item"
                     popoverBoundaryRef={popoverBoundaryRef}
-                    trigger={({ open, toggle }) => (
-                        <Item
-                            title={t('settingsSession.toolRendering.defaultToolDetailLevelTitle')}
-                            subtitle={
-                                (() => {
-                                    const key = TOOL_DETAIL_LEVEL_OPTIONS.find((opt) => opt.key === toolViewDetailLevelDefault)?.titleKey;
-                                    return key ? tToolDetail(key) : String(toolViewDetailLevelDefault);
-                                })()
-                            }
-                            icon={<Ionicons name="construct-outline" size={29} color="#007AFF" />}
-                            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-                            onPress={toggle}
-                            showChevron={false}
-                            selected={false}
-                        />
-                    )}
+                    itemTrigger={{
+                        title: t('settingsSession.toolRendering.defaultToolDetailLevelTitle'),
+                        icon: <Ionicons name="construct-outline" size={29} color="#007AFF" />,
+                        // Preserve the compact label as fallback; selected option subtitle will override by default.
+                        subtitle: (() => {
+                            const key = TOOL_DETAIL_LEVEL_OPTIONS.find((opt) => opt.key === toolViewDetailLevelDefault)?.titleKey;
+                            return key ? tToolDetail(key) : String(toolViewDetailLevelDefault);
+                        })(),
+                    }}
                     items={TOOL_DETAIL_LEVEL_OPTIONS.map((opt) => ({
                         id: opt.key,
                         title: tToolDetail(opt.titleKey),
@@ -166,22 +159,14 @@ export const ToolRenderingSettingsView = React.memo(function ToolRenderingSettin
                     connectToTrigger={true}
                     rowKind="item"
                     popoverBoundaryRef={popoverBoundaryRef}
-                    trigger={({ open, toggle }) => (
-                        <Item
-                            title={t('settingsSession.toolRendering.localControlDefaultTitle')}
-                            subtitle={
-                                (() => {
-                                    const key = TOOL_DETAIL_LEVEL_OPTIONS.find((opt) => opt.key === toolViewDetailLevelDefaultLocalControl)?.titleKey;
-                                    return key ? tToolDetail(key) : String(toolViewDetailLevelDefaultLocalControl);
-                                })()
-                            }
-                            icon={<Ionicons name="shield-outline" size={29} color="#FF9500" />}
-                            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-                            onPress={toggle}
-                            showChevron={false}
-                            selected={false}
-                        />
-                    )}
+                    itemTrigger={{
+                        title: t('settingsSession.toolRendering.localControlDefaultTitle'),
+                        icon: <Ionicons name="shield-outline" size={29} color="#FF9500" />,
+                        subtitle: (() => {
+                            const key = TOOL_DETAIL_LEVEL_OPTIONS.find((opt) => opt.key === toolViewDetailLevelDefaultLocalControl)?.titleKey;
+                            return key ? tToolDetail(key) : String(toolViewDetailLevelDefaultLocalControl);
+                        })(),
+                    }}
                     items={TOOL_DETAIL_LEVEL_OPTIONS.map((opt) => ({
                         id: opt.key,
                         title: tToolDetail(opt.titleKey),
@@ -230,23 +215,15 @@ export const ToolRenderingSettingsView = React.memo(function ToolRenderingSettin
                             connectToTrigger={true}
                             rowKind="item"
                             popoverBoundaryRef={popoverBoundaryRef}
-                            trigger={({ open, toggle }) => (
-                                <Item
-                                    title={toolKey.title}
-                                    subtitle={
-                                        (() => {
-                                            const key = TOOL_DETAIL_LEVEL_WITH_DEFAULT_OPTIONS.find((opt) => opt.key === selected)?.titleKey;
-                                            return key ? tToolDetail(key) : String(selected);
-                                        })()
-                                    }
-                                    icon={<Ionicons name="construct-outline" size={29} color={theme.colors.textSecondary} />}
-                                    rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-                                    onPress={toggle}
-                                    showChevron={false}
-                                    showDivider={showDivider}
-                                    selected={false}
-                                />
-                            )}
+                            itemTrigger={{
+                                title: toolKey.title,
+                                icon: <Ionicons name="construct-outline" size={29} color={theme.colors.textSecondary} />,
+                                subtitle: (() => {
+                                    const key = TOOL_DETAIL_LEVEL_WITH_DEFAULT_OPTIONS.find((opt) => opt.key === selected)?.titleKey;
+                                    return key ? tToolDetail(key) : String(selected);
+                                })(),
+                                itemProps: { showDivider },
+                            }}
                             items={TOOL_DETAIL_LEVEL_WITH_DEFAULT_OPTIONS.map((opt) => ({
                                 id: opt.key,
                                 title: tToolDetail(opt.titleKey),
@@ -278,4 +255,3 @@ export const ToolRenderingSettingsView = React.memo(function ToolRenderingSettin
 });
 
 export default ToolRenderingSettingsView;
-

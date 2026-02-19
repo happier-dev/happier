@@ -21,6 +21,7 @@ export default React.memo(function SessionSettingsScreen() {
     const router = useRouter();
     const popoverBoundaryRef = React.useRef<any>(null);
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
+    const thinkingVisibilityEnabled = useFeatureEnabled('messages.thinkingVisibility');
 
     const [useTmux, setUseTmux] = useSettingMutable('sessionUseTmux');
     const [tmuxSessionName, setTmuxSessionName] = useSettingMutable('sessionTmuxSessionName');
@@ -30,13 +31,22 @@ export default React.memo(function SessionSettingsScreen() {
     const [messageSendMode, setMessageSendMode] = useSettingMutable('sessionMessageSendMode');
     const [busySteerSendPolicy, setBusySteerSendPolicy] = useSettingMutable('sessionBusySteerSendPolicy');
 
+    const [agentInputEnterToSend, setAgentInputEnterToSend] = useSettingMutable('agentInputEnterToSend');
+    const [agentInputHistoryScope, setAgentInputHistoryScope] = useSettingMutable('agentInputHistoryScope');
+
+    const [sessionThinkingDisplayMode, setSessionThinkingDisplayMode] = useSettingMutable('sessionThinkingDisplayMode');
+
     const [terminalConnectLegacySecretExportEnabled, setTerminalConnectLegacySecretExportEnabled] = useSettingMutable('terminalConnectLegacySecretExportEnabled');
 
     const [sessionReplayEnabled, setSessionReplayEnabled] = useSettingMutable('sessionReplayEnabled');
     const [sessionReplayStrategy, setSessionReplayStrategy] = useSettingMutable('sessionReplayStrategy');
     const [sessionReplayRecentMessagesCount, setSessionReplayRecentMessagesCount] = useSettingMutable('sessionReplayRecentMessagesCount');
 
+    const [sessionTagsEnabled, setSessionTagsEnabled] = useSettingMutable('sessionTagsEnabled');
+
+    const [openHistoryScopeMenu, setOpenHistoryScopeMenu] = React.useState<boolean>(false);
     const [openReplayMenu, setOpenReplayMenu] = React.useState<boolean>(false);
+    const [openThinkingDisplayMenu, setOpenThinkingDisplayMenu] = React.useState<boolean>(false);
 
     const options: Array<{ key: MessageSendMode; title: string; subtitle: string }> = [
         {
@@ -82,8 +92,58 @@ export default React.memo(function SessionSettingsScreen() {
         },
     ];
 
+    const thinkingDisplayOptions: Array<{ key: 'inline' | 'tool' | 'hidden'; title: string; subtitle: string }> = [
+        {
+            key: 'inline',
+            title: t('settingsSession.thinking.displayMode.inlineTitle'),
+            subtitle: t('settingsSession.thinking.displayMode.inlineSubtitle'),
+        },
+        {
+            key: 'tool',
+            title: t('settingsSession.thinking.displayMode.toolTitle'),
+            subtitle: t('settingsSession.thinking.displayMode.toolSubtitle'),
+        },
+        {
+            key: 'hidden',
+            title: t('settingsSession.thinking.displayMode.hiddenTitle'),
+            subtitle: t('settingsSession.thinking.displayMode.hiddenSubtitle'),
+        },
+    ];
+
+    const normalizedHistoryScope = agentInputHistoryScope === 'global' ? 'global' : 'perSession';
+    const historyScopeOptions: ReadonlyArray<{
+        id: 'perSession' | 'global';
+        title: string;
+        subtitle: string;
+        iconName: React.ComponentProps<typeof Ionicons>['name'];
+    }> = [
+        {
+            id: 'perSession',
+            title: t('settingsFeatures.historyScopePerSessionOption'),
+            subtitle: t('settingsFeatures.historyScopePerSession'),
+            iconName: 'repeat-outline',
+        },
+        {
+            id: 'global',
+            title: t('settingsFeatures.historyScopeGlobalOption'),
+            subtitle: t('settingsFeatures.historyScopeGlobal'),
+            iconName: 'globe-outline',
+        },
+    ];
+
     return (
         <ItemList ref={popoverBoundaryRef} style={{ paddingTop: 0 }}>
+            <ItemGroup title={t('settingsSession.sessionList.title')} footer={t('settingsSession.sessionList.footer')}>
+                <Item
+                    title={t('settingsSession.sessionList.tagsTitle')}
+                    subtitle={sessionTagsEnabled ? t('settingsSession.sessionList.tagsEnabledSubtitle') : t('settingsSession.sessionList.tagsDisabledSubtitle')}
+                    icon={<Ionicons name="pricetag-outline" size={29} color="#007AFF" />}
+                    rightElement={<Switch value={Boolean(sessionTagsEnabled)} onValueChange={setSessionTagsEnabled} />}
+                    showChevron={false}
+                    onPress={() => setSessionTagsEnabled(!sessionTagsEnabled)}
+                />
+            </ItemGroup>
+
             <ItemGroup title={t('settingsSession.messageSending.title')} footer={t('settingsSession.messageSending.footer')}>
                 {options.map((option) => (
                     <Item
@@ -114,6 +174,88 @@ export default React.memo(function SessionSettingsScreen() {
                             showChevron={false}
                         />
                     ))}
+                </ItemGroup>
+            ) : null}
+
+            {Platform.OS === 'web' ? (
+                <ItemGroup
+                    title={t('settingsFeatures.webFeatures')}
+                    footer={t('settingsFeatures.webFeaturesDescription')}
+                >
+                    <Item
+                        title={t('settingsFeatures.enterToSend')}
+                        subtitle={agentInputEnterToSend ? t('settingsFeatures.enterToSendEnabled') : t('settingsFeatures.enterToSendDisabled')}
+                        icon={<Ionicons name="return-down-forward-outline" size={29} color="#007AFF" />}
+                        rightElement={<Switch value={agentInputEnterToSend} onValueChange={setAgentInputEnterToSend} />}
+                        showChevron={false}
+                        onPress={() => setAgentInputEnterToSend(!agentInputEnterToSend)}
+                    />
+
+                    <DropdownMenu
+                        open={openHistoryScopeMenu}
+                        onOpenChange={setOpenHistoryScopeMenu}
+                        variant="selectable"
+                        search={false}
+                        selectedId={normalizedHistoryScope as any}
+                        showCategoryTitles={false}
+                        matchTriggerWidth={true}
+                        connectToTrigger={true}
+                        rowKind="item"
+                        popoverBoundaryRef={popoverBoundaryRef}
+                        itemTrigger={{
+                            title: t('settingsFeatures.historyScope'),
+                            icon: <Ionicons name="time-outline" size={29} color="#007AFF" />,
+                        }}
+                        items={historyScopeOptions.map((opt) => ({
+                            id: opt.id,
+                            title: opt.title,
+                            subtitle: opt.subtitle,
+                            icon: (
+                                <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                    <Ionicons name={opt.iconName as any} size={22} color={theme.colors.textSecondary} />
+                                </View>
+                            ),
+                        }))}
+                        onSelect={(id) => {
+                            setAgentInputHistoryScope(id as any);
+                            setOpenHistoryScopeMenu(false);
+                        }}
+                    />
+                </ItemGroup>
+            ) : null}
+
+            {thinkingVisibilityEnabled ? (
+                <ItemGroup title={t('settingsSession.thinking.title')} footer={t('settingsSession.thinking.footer')}>
+                    <DropdownMenu
+                        open={openThinkingDisplayMenu}
+                        onOpenChange={setOpenThinkingDisplayMenu}
+                        variant="selectable"
+                        search={false}
+                        selectedId={String(sessionThinkingDisplayMode ?? 'inline')}
+                        showCategoryTitles={false}
+                        matchTriggerWidth={true}
+                        connectToTrigger={true}
+                        rowKind="item"
+                        popoverBoundaryRef={popoverBoundaryRef}
+                        itemTrigger={{
+                            title: t('settingsSession.thinking.displayModeTitle'),
+                            icon: <Ionicons name="bulb-outline" size={29} color="#007AFF" />,
+                        }}
+                        items={thinkingDisplayOptions.map((opt) => ({
+                            id: opt.key,
+                            title: opt.title,
+                            subtitle: opt.subtitle,
+                            icon: (
+                                <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                    <Ionicons name="bulb-outline" size={22} color={theme.colors.textSecondary} />
+                                </View>
+                            ),
+                        }))}
+                        onSelect={(id) => {
+                            setSessionThinkingDisplayMode(id as any);
+                            setOpenThinkingDisplayMenu(false);
+                        }}
+                    />
                 </ItemGroup>
             ) : null}
 
@@ -164,17 +306,10 @@ export default React.memo(function SessionSettingsScreen() {
                             connectToTrigger={true}
                             rowKind="item"
                             popoverBoundaryRef={popoverBoundaryRef}
-                            trigger={({ open, toggle }) => (
-                                <Item
-                                    title={t('settingsSession.replayResume.strategyTitle')}
-                                    subtitle={replayStrategyOptions.find((opt) => opt.key === sessionReplayStrategy)?.title ?? String(sessionReplayStrategy)}
-                                    icon={<Ionicons name="list-outline" size={29} color="#34C759" />}
-                                    rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-                                    onPress={toggle}
-                                    showChevron={false}
-                                    selected={false}
-                                />
-                            )}
+                            itemTrigger={{
+                                title: t('settingsSession.replayResume.strategyTitle'),
+                                icon: <Ionicons name="list-outline" size={29} color="#34C759" />,
+                            }}
                             items={replayStrategyOptions.map((opt) => ({
                                 id: opt.key,
                                 title: opt.title,

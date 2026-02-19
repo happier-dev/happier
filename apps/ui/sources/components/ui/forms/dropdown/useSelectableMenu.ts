@@ -22,10 +22,14 @@ function groupByCategory(items: ReadonlyArray<SelectableMenuItem>, defaultCatego
     }));
 }
 
+export const CREATE_ITEM_ID = '__create__';
+
 export function useSelectableMenu(params: {
     items: ReadonlyArray<SelectableMenuItem>;
     onRequestClose: () => void;
     initialSelectedId?: string | null;
+    onCreateItem?: ((query: string) => void) | null;
+    createItemFactory?: ((query: string) => Omit<SelectableMenuItem, 'id'>) | null;
 }) {
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedIndex, setSelectedIndex] = useState(0);
@@ -48,9 +52,22 @@ export function useSelectableMenu(params: {
             return titleMatch || subtitleMatch;
         });
 
-        if (filtered.length === 0) return [];
+        if (filtered.length === 0) {
+            if (params.onCreateItem) {
+                const queryText = searchQuery.trim();
+                const createItem = params.createItemFactory
+                    ? params.createItemFactory(queryText)
+                    : { title: `${t('dropdown.createItem.prefix')} "${queryText}"` };
+                return [{
+                    id: '__create_category__',
+                    title: '',
+                    items: [{ id: CREATE_ITEM_ID, ...createItem }],
+                }];
+            }
+            return [];
+        }
         return groupByCategory(filtered, resultsCategoryTitle);
-    }, [allItemsRaw, defaultCategoryTitle, resultsCategoryTitle, searchQuery]);
+    }, [allItemsRaw, defaultCategoryTitle, params.createItemFactory, params.onCreateItem, resultsCategoryTitle, searchQuery]);
 
     const allItems = useMemo(() => {
         return filteredCategories.flatMap((c) => c.items);

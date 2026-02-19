@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const machineRpcSpy = vi.fn();
+const featureEnabledState: Record<string, boolean> = { 'memory.search': true };
 
 vi.mock('react-native', () => ({
     View: 'View',
@@ -36,6 +37,10 @@ vi.mock('react-native-unistyles', () => ({
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
+}));
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: (featureId: string) => featureEnabledState[featureId] === true,
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
@@ -89,9 +94,29 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 
 afterEach(() => {
     machineRpcSpy.mockReset();
+    featureEnabledState['memory.search'] = true;
 });
 
 describe('Memory settings (enable switch)', () => {
+    it('does not fetch settings when memory.search is disabled', async () => {
+        featureEnabledState['memory.search'] = false;
+        machineRpcSpy.mockImplementation(async () => {
+            throw new Error('unexpected rpc');
+        });
+
+        const mod = await import('./memory');
+        const Screen = mod.default;
+
+        let tree!: ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(Screen));
+        });
+
+        const switches = tree.root.findAllByType('Switch' as any);
+        expect(switches).toHaveLength(0);
+        expect(machineRpcSpy).not.toHaveBeenCalled();
+    });
+
     it('writes daemon.memory.settings.set when toggling enabled', async () => {
         machineRpcSpy.mockImplementation(async (params: any) => {
             if (params?.method === 'daemon.memory.settings.get') {

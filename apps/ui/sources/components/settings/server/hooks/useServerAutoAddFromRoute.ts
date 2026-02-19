@@ -4,6 +4,7 @@ import { t } from '@/text';
 import { validateServerUrl } from '@/sync/domains/server/serverConfig';
 import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 function normalizeUrl(raw: string): string {
     return canonicalizeServerUrl(raw);
@@ -38,7 +39,7 @@ export function useServerAutoAddFromRoute(params: Readonly<{
         if (handledRef.current) return;
         handledRef.current = true;
 
-        void (async () => {
+        fireAndForget((async () => {
             const url = params.url;
             if (!url) return;
             const validation = validateServerUrl(url);
@@ -59,6 +60,11 @@ export function useServerAutoAddFromRoute(params: Readonly<{
 
             await params.onSwitchServerById(profile.id, { normalizeRoute: false });
             params.onAfterSuccess();
-        })();
+        })(), {
+            tag: 'useServerAutoAddFromRoute.autoAdd',
+            onError: () => {
+                params.setError(t('errors.operationFailed'));
+            },
+        });
     }, [params]);
 }

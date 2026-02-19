@@ -2,6 +2,7 @@ import React from 'react';
 
 import type { BugReportSimilarIssue } from '../bugReportServiceClient';
 import { searchBugReportSimilarIssues } from '../bugReportServiceClient';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 function buildQueryText(input: {
   title: string;
@@ -66,7 +67,7 @@ export function useBugReportSimilarIssues(input: {
 
     let canceled = false;
     const handle = setTimeout(() => {
-      void (async () => {
+      fireAndForget((async () => {
         try {
           setLoading(true);
           setError(null);
@@ -87,7 +88,7 @@ export function useBugReportSimilarIssues(input: {
           if (canceled) return;
           setLoading(false);
         }
-      })();
+      })(), { tag: 'useBugReportSimilarIssues.search' });
     }, 600);
 
     return () => {
@@ -105,4 +106,3 @@ export function useBugReportSimilarIssues(input: {
 
   return { loading, issues, error };
 }
-

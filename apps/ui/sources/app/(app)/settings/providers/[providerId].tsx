@@ -307,17 +307,11 @@ export default React.memo(function ProviderSettingsScreen() {
                         connectToTrigger={true}
                         rowKind="item"
                         popoverBoundaryRef={popoverBoundaryRef}
-                        trigger={({ open, toggle }) => (
-                            <Item
-                                title={t('settingsSession.permissions.defaultPermissionModeTitle')}
-                                subtitle={getPermissionModeLabelForAgentType(providerId as any, permissionMode)}
-                                icon={<Ionicons name="shield-checkmark-outline" size={29} color="#34C759" />}
-                                rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-                                onPress={toggle}
-                                showChevron={false}
-                                selected={false}
-                            />
-                        )}
+                        itemTrigger={{
+                            title: t('settingsSession.permissions.defaultPermissionModeTitle'),
+                            subtitle: getPermissionModeLabelForAgentType(providerId as any, permissionMode),
+                            icon: <Ionicons name="shield-checkmark-outline" size={29} color="#34C759" />,
+                        }}
                         items={getPermissionModeOptionsForAgentType(providerId as any).map((opt) => ({
                             id: opt.value,
                             title: opt.label,
@@ -370,7 +364,6 @@ export default React.memo(function ProviderSettingsScreen() {
                                     );
                                 }
                                 const currentId = typeof value === 'string' ? value : (options[0]?.id ?? '');
-                                const subtitle = options.find((o) => o.id === currentId)?.title ?? String(currentId);
 
                                 return (
                                     <DropdownMenu
@@ -385,17 +378,12 @@ export default React.memo(function ProviderSettingsScreen() {
                                         connectToTrigger={true}
                                         rowKind="item"
                                         popoverBoundaryRef={popoverBoundaryRef}
-                                        trigger={({ open, toggle }) => (
-                                            <Item
-                                                title={field.title}
-                                                subtitle={field.subtitle ?? subtitle}
-                                                icon={<Ionicons name="list-outline" size={29} color={theme.colors.textSecondary} />}
-                                                rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-                                                onPress={toggle}
-                                                showChevron={false}
-                                                selected={false}
-                                            />
-                                        )}
+                                        itemTrigger={{
+                                            title: field.title,
+                                            subtitle: field.subtitle ?? undefined,
+                                            showSelectedSubtitle: field.subtitle ? false : undefined,
+                                            icon: <Ionicons name="list-outline" size={29} color={theme.colors.textSecondary} />,
+                                        }}
                                         items={options.map((opt) => ({
                                             id: opt.id,
                                             title: opt.title,

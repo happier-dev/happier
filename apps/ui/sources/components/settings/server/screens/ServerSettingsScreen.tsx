@@ -61,16 +61,18 @@ export function ServerSettingsScreen() {
                         onCreateServerGroup={controller.onCreateServerGroup}
                     />
 
-                    <ServerGroupsSection
-                        groupSelectionEnabled={controller.groupSelectionEnabled}
-                        setGroupSelectionEnabled={controller.setGroupSelectionEnabled}
-                        groupSelectionPresentation={controller.groupSelectionPresentation}
-                        activeServerGroupId={controller.activeServerGroupId}
-                        selectedGroupServerIds={controller.selectedGroupServerIds}
-                        servers={controller.servers}
-                        onToggleGroupPresentation={controller.onToggleGroupPresentation}
-                        onToggleGroupServer={controller.onToggleGroupServer}
-                    />
+                    {controller.serverGroups.length > 0 ? (
+                        <ServerGroupsSection
+                            groupSelectionEnabled={controller.groupSelectionEnabled}
+                            setGroupSelectionEnabled={controller.setGroupSelectionEnabled}
+                            groupSelectionPresentation={controller.groupSelectionPresentation}
+                            activeServerGroupId={controller.activeServerGroupId}
+                            selectedGroupServerIds={controller.selectedGroupServerIds}
+                            servers={controller.servers}
+                            onToggleGroupPresentation={controller.onToggleGroupPresentation}
+                            onToggleGroupServer={controller.onToggleGroupServer}
+                        />
+                    ) : null}
                 </ItemList>
             </KeyboardAvoidingView>
         </>

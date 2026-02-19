@@ -20,6 +20,7 @@ import { ProfilesList } from '@/components/profiles/ProfilesList';
 import { SecretRequirementModal, type SecretRequirementModalResult } from '@/components/secrets/requirements';
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 import { getRequiredSecretEnvVarNames } from '@/sync/domains/profiles/profileSecrets';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 interface ProfileManagerProps {
     onProfileSelect?: (profile: AIBackendProfile | null) => void;
@@ -116,7 +117,7 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
     }, []);
 
     const requestCloseEditor = React.useCallback(() => {
-        void (async () => {
+        fireAndForget((async () => {
             if (!isEditingDirtyRef.current) {
                 closeEditor();
                 return;
@@ -144,7 +145,7 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
                 // Save the form state (not the initial profile snapshot).
                 saveRef.current?.();
             }
-        })();
+        })(), { tag: 'ProfilesScreen.requestCloseEditor' });
     }, [closeEditor, editingProfile]);
 
     React.useEffect(() => {
@@ -158,7 +159,7 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
 
             e.preventDefault();
 
-            void (async () => {
+            fireAndForget((async () => {
                 const isBuiltIn = !!editingProfile && DEFAULT_PROFILES.some((bp) => bp.id === editingProfile.id);
                 const saveText = isBuiltIn ? t('common.saveAs') : t('common.save');
                 const message = isBuiltIn
@@ -188,7 +189,7 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
                         (navigation as any).dispatch(e.data.action);
                     }
                 }
-            })();
+            })(), { tag: 'ProfilesScreen.beforeRemove' });
         });
 
         return () => subscription?.remove?.();

@@ -58,7 +58,27 @@ vi.mock('@/components/ui/forms/Switch', () => ({
 }));
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: ({ trigger }: any) => React.createElement('DropdownMenu', null, trigger({ open: false, toggle: () => undefined })),
+    DropdownMenu: (props: any) => {
+        const toggle = () => props.onOpenChange?.(!props.open);
+        const openMenu = () => props.onOpenChange?.(true);
+        const closeMenu = () => props.onOpenChange?.(false);
+        const triggerNode =
+            typeof props.trigger === 'function'
+                ? props.trigger({ open: Boolean(props.open), toggle, openMenu, closeMenu, selectedItem: null })
+                : props.trigger;
+        const itemTriggerNode = props.itemTrigger
+            ? React.createElement('Item', {
+                title: props.itemTrigger.title,
+                subtitle: props.itemTrigger.subtitle,
+                icon: props.itemTrigger.icon,
+                detail: undefined,
+                onPress: toggle,
+                showChevron: false,
+                selected: false,
+            })
+            : null;
+        return React.createElement('DropdownMenu', props, itemTriggerNode ?? triggerNode ?? null);
+    },
 }));
 
 vi.mock('@/components/ui/text/StyledText', () => ({

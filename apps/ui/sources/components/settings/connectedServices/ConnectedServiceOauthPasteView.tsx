@@ -12,6 +12,7 @@ import { sync } from '@/sync/sync';
 import { exchangeConnectedServiceOauthViaProxy, registerConnectedServiceCredentialSealed } from '@/sync/api/account/apiConnectedServicesV2';
 import { sealConnectedServiceCredential } from '@/sync/domains/connectedServices/sealConnectedServiceCredential';
 import { generateOauthState, generatePkceCodes, parseOauthCallbackUrl } from '@/utils/auth/oauthCore';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import {
   buildConnectedServiceCredentialRecord,
@@ -140,13 +141,13 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
 
   React.useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    fireAndForget((async () => {
       const nextState = generateOauthState();
       const nextPkce = await generatePkceCodes();
       if (cancelled) return;
       setState(nextState);
       setPkce(nextPkce);
-    })();
+    })(), { tag: 'ConnectedServiceOauthPasteView.initPkce' });
     return () => {
       cancelled = true;
     };

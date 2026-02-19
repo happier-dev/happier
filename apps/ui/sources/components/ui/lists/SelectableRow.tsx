@@ -10,6 +10,7 @@ export type SelectableRowProps = Readonly<{
     subtitle?: React.ReactNode;
     left?: React.ReactNode;
     right?: React.ReactNode;
+    leftGap?: number;
 
     selected?: boolean;
     disabled?: boolean;
@@ -175,7 +176,7 @@ export function SelectableRow(props: SelectableRowProps) {
             {...pressableProps}
         >
             {props.left ? (
-                <View style={styles.left}>
+                <View style={[styles.left, typeof props.leftGap === 'number' ? { marginRight: props.leftGap } : null]}>
                     {props.left}
                 </View>
             ) : null}

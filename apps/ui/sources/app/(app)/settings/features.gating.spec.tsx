@@ -183,4 +183,106 @@ describe('FeaturesSettingsScreen gating', () => {
         expect(allTitles).not.toContain('settingsFeatures.sessionListInactiveGrouping');
         expect(titles).not.toContain('settingsFeatures.expFriends');
     });
+
+    it('keeps client toggle entries visible when server snapshot lacks their enabled bit', async () => {
+        useEffectiveServerSelectionMock.mockReturnValue({ serverIds: ['server-1'] });
+        useServerFeaturesMainSelectionSnapshotMock.mockReturnValue({
+            status: 'ready',
+            serverIds: ['server-1'],
+            snapshotsByServerId: {
+                'server-1': {
+                    status: 'ready',
+                    features: createRootLayoutFeaturesResponse({
+                        features: {
+                            voice: { enabled: true, happierVoice: { enabled: false } },
+                        },
+                    }),
+                },
+            },
+        });
+
+        const { default: FeaturesSettingsScreen } = await import('./features');
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(FeaturesSettingsScreen));
+        });
+
+        const items = tree!.root.findAllByType('Item' as any);
+        const voiceAgentItem = items.find((i) => i.props.title === 'settingsFeatures.expVoiceAgent') ?? null;
+        expect(voiceAgentItem).toBeTruthy();
+    });
+
+    it('turning off connectedServices also disables connectedServices.quotas', async () => {
+        vi.resetModules();
+        const setFeatureToggles = vi.fn();
+
+        useSettingMutableMock.mockImplementation((key: string) => {
+            if (key === 'experiments') return createNoopMutable(true);
+            if (key === 'featureToggles') return [{ connectedServices: true, 'connectedServices.quotas': true }, setFeatureToggles] as const;
+            if (key === 'useProfiles') return createNoopMutable(false);
+            if (key === 'agentInputEnterToSend') return createNoopMutable(false);
+            if (key === 'agentInputHistoryScope') return createNoopMutable('perSession');
+            if (key === 'hideInactiveSessions') return createNoopMutable(false);
+            if (key === 'groupInactiveSessionsByProject') return createNoopMutable(false);
+            if (key === 'showEnvironmentBadge') return createNoopMutable(false);
+            if (key === 'useEnhancedSessionWizard') return createNoopMutable(false);
+            if (key === 'useMachinePickerSearch') return createNoopMutable(false);
+            if (key === 'usePathPickerSearch') return createNoopMutable(false);
+            return createNoopMutable(null);
+        });
+
+        const { default: FeaturesSettingsScreen } = await import('./features');
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(FeaturesSettingsScreen));
+        });
+
+        const items = tree!.root.findAllByType('Item' as any);
+        const connectedServicesItem = items.find((i) => i.props.title === 'settingsFeatures.expConnectedServices') ?? null;
+        expect(connectedServicesItem).toBeTruthy();
+
+        await act(async () => {
+            connectedServicesItem!.props.rightElement.props.onValueChange(false);
+        });
+
+        expect(setFeatureToggles).toHaveBeenCalledWith(expect.objectContaining({
+            connectedServices: false,
+            'connectedServices.quotas': false,
+        }));
+    });
+
+    it('disables the connectedServices.quotas toggle when connectedServices is disabled', async () => {
+        vi.resetModules();
+        const setFeatureToggles = vi.fn();
+
+        useSettingMutableMock.mockImplementation((key: string) => {
+            if (key === 'experiments') return createNoopMutable(true);
+            if (key === 'featureToggles') return [{ connectedServices: false, 'connectedServices.quotas': true }, setFeatureToggles] as const;
+            if (key === 'useProfiles') return createNoopMutable(false);
+            if (key === 'agentInputEnterToSend') return createNoopMutable(false);
+            if (key === 'agentInputHistoryScope') return createNoopMutable('perSession');
+            if (key === 'hideInactiveSessions') return createNoopMutable(false);
+            if (key === 'groupInactiveSessionsByProject') return createNoopMutable(false);
+            if (key === 'showEnvironmentBadge') return createNoopMutable(false);
+            if (key === 'useEnhancedSessionWizard') return createNoopMutable(false);
+            if (key === 'useMachinePickerSearch') return createNoopMutable(false);
+            if (key === 'usePathPickerSearch') return createNoopMutable(false);
+            return createNoopMutable(null);
+        });
+
+        const { default: FeaturesSettingsScreen } = await import('./features');
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(FeaturesSettingsScreen));
+        });
+
+        const items = tree!.root.findAllByType('Item' as any);
+        const quotasItem = items.find((i) => i.props.title === 'settingsFeatures.expConnectedServicesQuotas') ?? null;
+        expect(quotasItem).toBeTruthy();
+        expect(quotasItem!.props.rightElement.props.disabled).toBe(true);
+        expect(quotasItem!.props.rightElement.props.value).toBe(false);
+    });
 });

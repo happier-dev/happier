@@ -63,10 +63,31 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 vi.mock('@/agents/catalog/catalog', () => ({
     getAgentCore: () => ({ displayNameKey: 'agent.claude' }),
     isAgentId: () => true,
+    DEFAULT_AGENT_ID: 'claude',
 }));
 
-vi.mock('@/sync/domains/models/modelOptions', () => ({
-    getModelOptionsForAgentType: () => [{ value: 'model1', label: 'Model 1', description: 'Default' }],
+vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState', () => ({
+    useNewSessionPreflightModelsState: () => ({
+        preflightModels: null,
+        modelOptions: [{ value: 'model1', label: 'Model 1', description: 'Default' }],
+        probe: { phase: 'idle', refreshedAt: null, refresh: () => {} },
+    }),
+}));
+
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
+}));
+
+vi.mock('@/sync/store/hooks', () => ({
+    useAllMachines: () => [],
+}));
+
+vi.mock('@/sync/domains/state/storage', () => ({
+    useSetting: () => [],
+}));
+
+vi.mock('@/components/settings/pickers/resolvePreferredMachineId', () => ({
+    resolvePreferredMachineId: () => null,
 }));
 
 vi.mock('@/text', () => ({

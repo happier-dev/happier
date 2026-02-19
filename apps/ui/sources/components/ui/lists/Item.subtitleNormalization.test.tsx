@@ -121,6 +121,54 @@ describe('Item', () => {
         });
     });
 
+    it('renders detail even when rightElement is provided', async () => {
+        const { Item } = await import('./Item');
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                <Item
+                    title="Title"
+                    subtitle="Subtitle"
+                    detail="Detail"
+                    rightElement={React.createElement('RightEl')}
+                    showChevron={false}
+                />,
+            );
+        });
+
+        const textNodes = (tree! as any).root.findAllByType('Text' as any);
+        const texts = textNodes.map((n: any) => n.props?.children);
+        expect(texts).toContain('Detail');
+    });
+
+    it('adds spacing between detail and rightElement', async () => {
+        const { Item } = await import('./Item');
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                <Item
+                    title="Title"
+                    subtitle="Subtitle"
+                    detail="Detail"
+                    rightElement={React.createElement('RightEl')}
+                    showChevron={false}
+                />,
+            );
+        });
+
+        const detailNode = (tree! as any).root
+            .findAllByType('Text' as any)
+            .find((n: any) => n.props?.children === 'Detail');
+        expect(detailNode).toBeTruthy();
+
+        const style = detailNode!.props?.style;
+        const styles = Array.isArray(style) ? style : [style];
+        const marginRight = styles.reduce((acc: number, s: any) => (s && typeof s === 'object' && typeof s.marginRight === 'number' ? s.marginRight : acc), 0);
+        expect(marginRight).toBeGreaterThan(0);
+    });
+
     it('uses a not-allowed cursor on web when disabled', async () => {
         const { Item } = await import('./Item');
 

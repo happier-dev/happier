@@ -200,16 +200,12 @@ export default React.memo(function AppearanceSettingsScreen() {
                     matchTriggerWidth={true}
                     connectToTrigger={true}
                     rowKind="item"
-                    trigger={({ open, toggle }) => (
-                        <Item
-                            title={t('settingsFeatures.sessionListActiveGrouping')}
-                            subtitle={t('settingsFeatures.sessionListActiveGroupingSubtitle')}
-                            icon={<Ionicons name="folder-open-outline" size={29} color="#007AFF" />}
-                            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color="#8E8E93" />}
-                            onPress={toggle}
-                            showChevron={false}
-                        />
-                    )}
+                    itemTrigger={{
+                        title: t('settingsFeatures.sessionListActiveGrouping'),
+                        subtitle: t('settingsFeatures.sessionListActiveGroupingSubtitle'),
+                        icon: <Ionicons name="folder-open-outline" size={29} color="#007AFF" />,
+                        showSelectedSubtitle: false,
+                    }}
                     items={groupingMenuItems}
                     onSelect={(itemId) => selectGrouping(itemId, 'active')}
                 />
@@ -223,16 +219,12 @@ export default React.memo(function AppearanceSettingsScreen() {
                     matchTriggerWidth={true}
                     connectToTrigger={true}
                     rowKind="item"
-                    trigger={({ open, toggle }) => (
-                        <Item
-                            title={t('settingsFeatures.sessionListInactiveGrouping')}
-                            subtitle={t('settingsFeatures.sessionListInactiveGroupingSubtitle')}
-                            icon={<Ionicons name="calendar-outline" size={29} color="#34C759" />}
-                            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color="#8E8E93" />}
-                            onPress={toggle}
-                            showChevron={false}
-                        />
-                    )}
+                    itemTrigger={{
+                        title: t('settingsFeatures.sessionListInactiveGrouping'),
+                        subtitle: t('settingsFeatures.sessionListInactiveGroupingSubtitle'),
+                        icon: <Ionicons name="calendar-outline" size={29} color="#34C759" />,
+                        showSelectedSubtitle: false,
+                    }}
                     items={groupingMenuItems}
                     onSelect={(itemId) => selectGrouping(itemId, 'inactive')}
                 />

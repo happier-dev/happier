@@ -82,6 +82,13 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
+vi.mock('@/components/ui/lists/Item', () => ({
+    Item: (props: any) => {
+        const React = require('react');
+        return React.createElement('Item', props);
+    },
+}));
+
 describe('DropdownMenu', () => {
     beforeEach(() => {
         useSelectableMenuSpy.mockReset();
@@ -173,6 +180,31 @@ describe('DropdownMenu', () => {
         expect(tree?.root.findAllByType('Popover' as any).length).toBe(0);
     });
 
+    it('does not auto-focus the search field by default', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const { Text } = await import('react-native');
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        act(() => {
+            tree = renderer.create(
+                React.createElement(DropdownMenu, {
+                    open: true,
+                    onOpenChange: vi.fn(),
+                    items: [{ id: 'a', title: 'A' }],
+                    onSelect: () => {},
+                    trigger: React.createElement(Text, null, 'Trigger'),
+                    search: true,
+                }),
+            );
+        });
+
+        const inputs = tree?.root.findAllByType('TextInput' as any) ?? [];
+        expect(inputs.length).toBeGreaterThan(0);
+        for (const input of inputs) {
+            expect(input.props?.autoFocus).not.toBe(true);
+        }
+    });
+
     it('passes default and explicit row rendering options to SelectableMenuResults', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
 
@@ -220,5 +252,116 @@ describe('DropdownMenu', () => {
         expect(Array.isArray(args.items)).toBe(true);
         expect(args.items[0]?.id).toBe('a');
         expect(args.items[0]?.right).toBe(null);
+    });
+
+    it('can render an Item-style trigger that shows the selected label and subtitle by default', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        act(() => {
+            tree = renderer.create(
+                React.createElement(DropdownMenu as any, {
+                    open: false,
+                    onOpenChange: vi.fn(),
+                    items: [
+                        { id: 'a', title: 'Alpha', subtitle: 'First' },
+                        { id: 'b', title: 'Beta', subtitle: 'Second' },
+                    ],
+                    selectedId: 'b',
+                    onSelect: () => {},
+                    itemTrigger: {
+                        title: 'Pick one',
+                    },
+                }),
+            );
+        });
+
+        const item = tree?.root.findByType('Item' as any);
+        expect(item?.props?.title).toBe('Pick one');
+        expect(item?.props?.detail).toBe('Beta');
+        expect(item?.props?.subtitle).toBe('Second');
+    });
+
+    it('allows disabling selected detail/subtitle in the Item-style trigger', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        act(() => {
+            tree = renderer.create(
+                React.createElement(DropdownMenu as any, {
+                    open: false,
+                    onOpenChange: vi.fn(),
+                    items: [
+                        { id: 'a', title: 'Alpha', subtitle: 'First' },
+                        { id: 'b', title: 'Beta', subtitle: 'Second' },
+                    ],
+                    selectedId: 'b',
+                    onSelect: () => {},
+                    itemTrigger: {
+                        title: 'Pick one',
+                        showSelectedDetail: false,
+                        showSelectedSubtitle: false,
+                        subtitle: 'Static subtitle',
+                    },
+                }),
+            );
+        });
+
+        const item = tree?.root.findByType('Item' as any);
+        expect(item?.props?.title).toBe('Pick one');
+        expect(item?.props?.detail).toBeUndefined();
+        expect(item?.props?.subtitle).toBe('Static subtitle');
+    });
+
+    it('passes through an explicit null emptyLabel (does not fall back to the default label)', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        act(() => {
+            tree = renderer.create(
+                React.createElement(DropdownMenu, {
+                    open: true,
+                    onOpenChange: vi.fn(),
+                    items: [{ id: 'a', title: 'A' }],
+                    onSelect: () => {},
+                    trigger: React.createElement('View'),
+                    emptyLabel: null,
+                }),
+            );
+        });
+
+        const selectableResults = tree?.root.findByType('SelectableMenuResults' as any);
+        expect(selectableResults?.props?.emptyLabel).toBe(null);
+    });
+
+    it('uses symmetric content padding and adds bottom padding under results', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const { Text, TextInput, View } = await import('react-native');
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        act(() => {
+            tree = renderer.create(
+                React.createElement(DropdownMenu, {
+                    open: true,
+                    onOpenChange: vi.fn(),
+                    items: [{ id: 'a', title: 'A' }],
+                    onSelect: () => {},
+                    trigger: React.createElement(Text, null, 'Trigger'),
+                    search: true,
+                }),
+            );
+        });
+
+        const input = tree?.root.findByType(TextInput as any);
+        const inputWrapper = input?.parent;
+        expect(inputWrapper?.type === 'View' || inputWrapper?.type === View).toBe(true);
+        expect(inputWrapper?.props?.style).toMatchObject({ paddingHorizontal: 12, paddingTop: 12, paddingBottom: 4 });
+
+        const paddingNodes = tree?.root.findAll((node: any) => {
+            const style = node?.props?.style;
+            const list = Array.isArray(style) ? style : style ? [style] : [];
+            return list.some((entry: any) => entry && typeof entry === 'object' && entry.paddingBottom === 12);
+        }) ?? [];
+        expect(paddingNodes.length).toBeGreaterThan(0);
     });
 });
