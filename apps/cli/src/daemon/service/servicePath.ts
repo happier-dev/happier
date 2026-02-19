@@ -1,4 +1,14 @@
+/**
+ * Shared PATH construction utility for daemon service installers.
+ *
+ * Provides buildServicePath() to merge the node binary directory,
+ * the caller's current PATH, and platform-specific defaults with
+ * deduplication and order preservation.
+ */
+
 import { dirname } from 'node:path';
+
+const FALLBACK_PATH = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
 
 function splitPath(p: string): string[] {
   return String(p ?? '')
@@ -20,7 +30,7 @@ export function buildServicePath(params: Readonly<{
   const execPath = params.execPath ?? process.execPath;
   const basePath = params.basePath ?? process.env.PATH ?? '';
   const nodeDir = execPath ? dirname(execPath) : '';
-  const defaults = splitPath(params.defaultPath ?? '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin');
+  const defaults = splitPath(params.defaultPath ?? FALLBACK_PATH);
   const fromNode = nodeDir ? [nodeDir] : [];
   const fromEnv = splitPath(basePath);
 
@@ -31,5 +41,5 @@ export function buildServicePath(params: Readonly<{
     seen.add(part);
     out.push(part);
   }
-  return out.join(':') || '/usr/bin:/bin:/usr/sbin:/sbin';
+  return out.join(':') || FALLBACK_PATH;
 }
