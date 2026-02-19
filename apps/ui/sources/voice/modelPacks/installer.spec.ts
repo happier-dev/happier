@@ -144,6 +144,141 @@ describe('modelPacks installer (native)', () => {
     }
   });
 
+  it('rewrites GitHub release file URLs to match the manifest origin', async () => {
+    const { createHash } = await import('node:crypto');
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const expectedSha = createHash('sha256').update(Buffer.from(bytes)).digest('hex');
+
+    const writes = new Map<string, Uint8Array[]>();
+
+    class Directory {
+      uri: string;
+      exists = true;
+      constructor(...uris: any[]) {
+        const packId = String(uris[uris.length - 1] ?? '');
+        this.uri = `file:///docs/happier/voice/modelPacks/${packId}`;
+      }
+      create() {}
+      delete() {}
+    }
+
+    class File {
+      uri: string;
+      constructor(...uris: any[]) {
+        const [base, name] = uris;
+        if (base?.uri && typeof name === 'string') {
+          this.uri = `${String(base.uri).replace(/\/$/, '')}/${name}`;
+        } else if (typeof base === 'string' && typeof name === 'string') {
+          this.uri = `${base.replace(/\/$/, '')}/${name}`;
+        } else if (typeof uris[0] === 'string') {
+          this.uri = uris[0];
+        } else {
+          this.uri = 'file:///docs/happier/voice/modelPacks/example/pack.json';
+        }
+      }
+      get exists() {
+        return writes.has(this.uri);
+      }
+      create() {
+        if (!writes.has(this.uri)) writes.set(this.uri, []);
+      }
+      write(data: string | Uint8Array) {
+        const buf = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+        writes.set(this.uri, [new Uint8Array(buf)]);
+      }
+      writableStream() {
+        const uri = this.uri;
+        return new WritableStream({
+          write(chunk: Uint8Array) {
+            const arr = writes.get(uri) ?? [];
+            arr.push(new Uint8Array(chunk));
+            writes.set(uri, arr);
+          },
+        });
+      }
+      async bytes() {
+        const arr = writes.get(this.uri) ?? [];
+        const total = arr.reduce((acc, b) => acc + b.length, 0);
+        const out = new Uint8Array(total);
+        let off = 0;
+        for (const b of arr) {
+          out.set(b, off);
+          off += b.length;
+        }
+        return out;
+      }
+      async text() {
+        const buf = await this.bytes();
+        return new TextDecoder().decode(buf);
+      }
+      delete() {
+        writes.delete(this.uri);
+      }
+    }
+
+    const manifestUrl = 'https://github.com/happier-dev/happier-assets/releases/download/model-packs/example__manifest.json';
+    const expectedDownloadPrefix = 'https://github.com/happier-dev/happier-assets/releases/download/model-packs/';
+
+    const fetchImpl = async (url: string) => {
+      if (url.includes('__manifest.json')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            packId: 'example',
+            kind: 'tts_sherpa',
+            model: 'kokoro',
+            version: 'v1',
+            files: [
+              {
+                path: 'model.onnx',
+                url: 'https://github.com/happier/happier-assets/releases/download/model-packs/example__model.onnx?v=1',
+                sha256: expectedSha,
+                sizeBytes: bytes.length,
+              },
+            ],
+          }),
+        } as any;
+      }
+
+      if (!url.startsWith(expectedDownloadPrefix)) {
+        throw new Error(`unexpected_file_url:${url}`);
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (k: string) => (k.toLowerCase() === 'content-length' ? String(bytes.length) : null) },
+        body: {
+          getReader() {
+            let done = false;
+            return {
+              async read() {
+                if (done) return { done: true, value: undefined };
+                done = true;
+                return { done: false, value: bytes };
+              },
+            };
+          },
+        },
+      } as any;
+    };
+
+    await ensureModelPackInstalled(
+      {
+        packId: 'example',
+        mode: 'download_if_missing',
+        manifestUrl,
+        timeoutMs: 5000,
+        signal: new AbortController().signal,
+      },
+      {
+        fs: { Directory, File, Paths: { document: 'file:///docs/' } } as any,
+        fetch: fetchImpl as any,
+      },
+    );
+  });
+
   it('rejects pack manifests that contain unsafe paths', async () => {
     class Directory {
       uri: string;

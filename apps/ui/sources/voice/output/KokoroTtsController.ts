@@ -1,6 +1,6 @@
 import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/VoicePlaybackController';
 import { playAudioBytesWithStopper } from '@/voice/output/playAudioBytesWithStopper';
-import { synthesizeKokoroWav } from '@/voice/kokoro/runtime/synthesizeKokoroWav';
+import { streamKokoroWavSentences } from '@/voice/kokoro/runtime/synthesizeKokoroWav';
 import { isKokoroRuntimeSupported } from '@/voice/kokoro/runtime/kokoroSupport';
 
 export async function speakKokoroText(opts: {
@@ -44,20 +44,20 @@ export async function speakKokoroText(opts: {
       };
     };
 
-    const wavBytes = await synthesizeKokoroWav({
+    for await (const chunk of streamKokoroWavSentences({
       text: opts.text,
       assetSetId: typeof opts.assetSetId === 'string' ? opts.assetSetId : null,
       voiceId: opts.voiceId,
       speed: opts.speed,
       timeoutMs: opts.timeoutMs,
       signal: controller.signal,
-    });
-
-    await playAudioBytesWithStopper({
-      bytes: wavBytes,
-      format: 'wav',
-      registerPlaybackStopper: registerPlaybackOnly,
-    });
+    })) {
+      await playAudioBytesWithStopper({
+        bytes: chunk.wavBytes,
+        format: 'wav',
+        registerPlaybackStopper: registerPlaybackOnly,
+      });
+    }
   } finally {
     clearStopper();
   }

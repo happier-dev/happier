@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { synthesizeKokoroWav } from '@/voice/kokoro/runtime/synthesizeKokoroWav.native';
+import { prepareKokoroTts } from '@/voice/kokoro/runtime/synthesizeKokoroWav.native';
 
 describe('synthesizeKokoroWav (native)', () => {
   it('throws when the model pack is not installed', async () => {
@@ -288,5 +289,55 @@ describe('synthesizeKokoroWav (native)', () => {
     expect(kokoroNativeModule.synthesizeToWavFile).toHaveBeenCalledWith(
       expect.objectContaining({ voiceId: 'af_bella', sid: 1 }),
     );
+  });
+
+  it('forwards model pack download progress (including file) during prepare', async () => {
+    const onProgress = vi.fn();
+
+    const kokoroNativeModule = {
+      initialize: vi.fn().mockResolvedValue(undefined),
+      listVoices: vi.fn().mockResolvedValue([]),
+      synthesizeToWavFile: vi.fn().mockResolvedValue({ wavPath: 'file:///tmp/out.wav', sampleRate: 24000 }),
+      cancel: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const ensureInstalled = vi.fn().mockImplementation(async (opts: any) => {
+      opts?.onProgress?.({ loaded: 1, total: 4, file: 'onnx/model_quantized.onnx' });
+      return {
+        packDirUri: 'file:///docs/happier/voice/modelPacks/kokoro-test',
+        manifest: {
+          packId: 'kokoro-test',
+          kind: 'tts_sherpa',
+          model: 'kokoro',
+          version: '1.0.0',
+          voices: [{ id: 'af_bella', title: 'Bella', sid: 0 }],
+          files: [],
+        } as any,
+      };
+    });
+
+    class File {
+      uri: string;
+      constructor(...uris: any[]) {
+        this.uri = typeof uris[0] === 'string' ? uris[0] : 'file:///tmp/out.wav';
+      }
+    }
+
+    await prepareKokoroTts(
+      {
+        assetSetId: 'kokoro-test',
+        timeoutMs: 5000,
+        signal: new AbortController().signal,
+        onProgress,
+      },
+      {
+        kokoroNativeModule,
+        ensureInstalled,
+        resolveManifestUrl: () => 'https://example.com/manifest.json',
+        fs: { File, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' }, deleteAsync: vi.fn() } as any,
+      },
+    );
+
+    expect(onProgress).toHaveBeenCalledWith({ loaded: 1, total: 4, file: 'onnx/model_quantized.onnx' });
   });
 });

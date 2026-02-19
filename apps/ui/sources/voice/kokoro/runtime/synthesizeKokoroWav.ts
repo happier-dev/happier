@@ -1,1 +1,1 @@
-export { synthesizeKokoroWav, prepareKokoroTts } from './synthesizeKokoroWav.web';
+export { synthesizeKokoroWav, prepareKokoroTts, streamKokoroWavSentences } from './synthesizeKokoroWav.web';

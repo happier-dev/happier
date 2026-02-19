@@ -34,6 +34,33 @@ function cacheBustUrl(url: string): string {
   return trimmed.includes('?') ? `${trimmed}&${suffix}` : `${trimmed}?${suffix}`;
 }
 
+function rewriteGithubReleaseManifestFileUrls(manifest: ModelPackManifest, manifestUrl: string): ModelPackManifest {
+  let url: URL;
+  try {
+    url = new URL(manifestUrl);
+  } catch {
+    return manifest;
+  }
+
+  // Only rewrite for GitHub release download URLs:
+  // https://github.com/<owner>/<repo>/releases/download/<tag>/<file>
+  const parts = url.pathname.split('/').filter(Boolean);
+  if (parts.length < 6) return manifest;
+  const [owner, repo, releases, download, tag] = parts;
+  if (releases !== 'releases' || download !== 'download') return manifest;
+
+  const base = `${url.origin}/${owner}/${repo}/releases/download/${tag}/`;
+  const version = typeof (manifest as any)?.buildId === 'string' && (manifest as any).buildId.trim() ? (manifest as any).buildId.trim() : null;
+
+  const files = manifest.files.map((f) => {
+    const fileName = `${manifest.packId}__${String(f.path).split('/').join('__')}`;
+    const rewritten = `${base}${encodeURIComponent(fileName)}${version ? `?v=${encodeURIComponent(version)}` : ''}`;
+    return { ...f, url: rewritten };
+  });
+
+  return { ...manifest, files };
+}
+
 export async function fetchRemoteManifest(opts: {
   fetchImpl: typeof fetch;
   manifestUrl: string;
@@ -46,6 +73,6 @@ export async function fetchRemoteManifest(opts: {
   ]);
   if (!response.ok) throw new Error(`model_pack_manifest_download_failed:${response.status}`);
   const json = await raceWithAbort(opts.signal, [response.json(), createTimeoutPromise(opts.timeoutMs)]);
-  return parseModelPackManifest(json);
+  const manifest = parseModelPackManifest(json);
+  return rewriteGithubReleaseManifestFileUrls(manifest, opts.manifestUrl);
 }
-

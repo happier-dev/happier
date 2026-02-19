@@ -245,7 +245,7 @@ export async function prepareKokoroTts(
       timeoutMs: opts.timeoutMs,
       signal: opts.signal,
       onProgress: (p) => {
-        opts.onProgress?.({ loaded: p.loaded, total: p.total });
+        opts.onProgress?.({ loaded: p.loaded, total: p.total, file: (p as any)?.file });
       },
     },
     { fs: fs as any },
@@ -255,4 +255,20 @@ export async function prepareKokoroTts(
     createAbortPromise(opts.signal),
     createTimeoutPromise(opts.timeoutMs),
   ]);
+}
+
+export function streamKokoroWavSentences(opts: {
+  text: string;
+  assetSetId?: string | null;
+  voiceId: string;
+  speed: number;
+  timeoutMs: number;
+  signal: AbortSignal;
+}): AsyncIterable<{ wavBytes: ArrayBuffer; sentenceText: string }> {
+  const single = synthesizeKokoroWav(opts);
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield { wavBytes: await single, sentenceText: opts.text };
+    },
+  };
 }
