@@ -12,6 +12,7 @@ import { ServerScopedMachineSelector } from '@/components/sessions/new/component
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
 import { Ionicons } from '@expo/vector-icons';
 import { sync } from '@/sync/sync';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { prefetchMachineCapabilities } from '@/hooks/server/useMachineCapabilitiesCache';
 import { invalidateMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';
 import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
@@ -19,6 +20,7 @@ import { HeaderTitleWithAction } from '@/components/navigation/HeaderTitleWithAc
 import { getActiveServerId, listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { resolveActiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
 
 function useMachinePickerScreenOptions(params: {
     title: string;
@@ -172,7 +174,7 @@ export default React.memo(function MachinePickerScreen() {
     const screenOptions = useMachinePickerScreenOptions({
         title: t('newSession.selectMachineTitle'),
         onBack: () => router.back(),
-        onRefresh: () => { void handleRefresh(); },
+        onRefresh: () => { fireAndForget(handleRefresh(), { tag: 'MachinePickerScreen.refreshMachinesAndCapabilities' }); },
         isRefreshing,
         theme,
     });
@@ -206,6 +208,7 @@ export default React.memo(function MachinePickerScreen() {
         const serverGroup = serverScopedMachineGroups.find((group) => group.serverId === selectedServerId);
         if (!serverGroup || serverGroup.loading || serverGroup.signedOut) return;
         if (serverGroup.machines.length !== 1) return;
+        if (!isMachineOnline(serverGroup.machines[0]! as any)) return;
         autoSelectedSingleMachineRef.current = true;
         void handleSelectMachine(serverGroup.machines[0]!);
     }, [handleSelectMachine, selectedMachineId, selectedServerId, serverScopedMachineGroups]);

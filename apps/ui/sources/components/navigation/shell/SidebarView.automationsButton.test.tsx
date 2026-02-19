@@ -115,8 +115,10 @@ vi.mock('@/hooks/server/useAutomationsSupport', () => ({
     useAutomationsSupport: () => ({ enabled: automationsSupportState.enabled }),
 }));
 
+const featureEnabledState: Record<string, boolean> = { voice: false };
+
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: () => false,
+    useFeatureEnabled: (featureId: string) => featureEnabledState[featureId] === true,
 }));
 
 vi.mock('@/sync/runtime/appVariant', () => ({
@@ -167,6 +169,23 @@ describe('SidebarView header automations button', () => {
     beforeEach(() => {
         routerPushSpy.mockReset();
         automationsSupportState.enabled = true;
+        featureEnabledState.voice = false;
+    });
+
+    it('navigates to home when logo is pressed', async () => {
+        const { SidebarView } = await import('./SidebarView');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<SidebarView />);
+        });
+
+        const button = findPressableByLabel(tree!, 'common.home');
+        await act(async () => {
+            button.props.onPress();
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/');
     });
 
     it('shows automations button next to logo and navigates to automations', async () => {
@@ -196,7 +215,19 @@ describe('SidebarView header automations button', () => {
         expect(tree!.root.findAllByType('FABWide')).toHaveLength(0);
     });
 
-    it('always includes VoiceSurface even when realtime is disconnected', async () => {
+    it('does not render VoiceSurface when voice is disabled', async () => {
+        const { SidebarView } = await import('./SidebarView');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<SidebarView />);
+        });
+
+        expect(tree!.root.findAllByType('VoiceSurface')).toHaveLength(0);
+    });
+
+    it('renders VoiceSurface when voice is enabled', async () => {
+        featureEnabledState.voice = true;
         const { SidebarView } = await import('./SidebarView');
 
         let tree: renderer.ReactTestRenderer | null = null;

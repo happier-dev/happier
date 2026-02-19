@@ -10,6 +10,7 @@ import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFe
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { SecretKeyBackupModal } from '@/components/account/SecretKeyBackupModal';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export const RecoveryKeyReminderBanner = React.memo(() => {
     const auth = useAuth();
@@ -19,7 +20,7 @@ export const RecoveryKeyReminderBanner = React.memo(() => {
 
     React.useEffect(() => {
         let mounted = true;
-        void (async () => {
+        fireAndForget((async () => {
             const [isDismissed, features] = await Promise.all([
                 TokenStorage.getRecoveryKeyReminderDismissed().catch(() => true),
                 getReadyServerFeatures({ timeoutMs: 800 }).catch(() => null),
@@ -29,7 +30,7 @@ export const RecoveryKeyReminderBanner = React.memo(() => {
             if (!mounted) return;
             setDismissed(isDismissed);
             setEnabled(featureEnabled);
-        })();
+        })(), { tag: 'RecoveryKeyReminderBanner.loadState' });
         return () => {
             mounted = false;
         };

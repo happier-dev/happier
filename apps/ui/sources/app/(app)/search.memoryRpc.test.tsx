@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const machineRpcSpy = vi.fn();
 const routerPushSpy = vi.fn();
+const featureEnabledState: Record<string, boolean> = { 'memory.search': true };
 
 vi.mock('react-native', () => ({
     View: 'View',
@@ -30,6 +31,10 @@ vi.mock('react-native-unistyles', () => ({
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
+}));
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: (featureId: string) => featureEnabledState[featureId] === true,
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
@@ -60,9 +65,29 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 afterEach(() => {
     machineRpcSpy.mockReset();
     routerPushSpy.mockReset();
+    featureEnabledState['memory.search'] = true;
 });
 
 describe('Memory search screen', () => {
+    it('does not call daemon.memory.search when memory.search is disabled', async () => {
+        featureEnabledState['memory.search'] = false;
+        machineRpcSpy.mockImplementation(async () => {
+            throw new Error('unexpected rpc');
+        });
+
+        const mod = await import('./search');
+        const Screen = mod.default;
+
+        let tree!: ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(Screen));
+        });
+
+        const btns = tree.root.findAllByProps({ testID: 'memory-search-submit' });
+        expect(btns).toHaveLength(0);
+        expect(machineRpcSpy).not.toHaveBeenCalled();
+    });
+
     it('calls daemon.memory.search when searching', async () => {
         machineRpcSpy.mockImplementation(async (params: any) => {
             if (params?.method === 'daemon.memory.search') {

@@ -5,6 +5,7 @@ export type ParsedTerminalConnectUrl = Readonly<{
 
 const TERMINAL_PREFIX = 'happier://terminal?';
 const SAFE_SERVER_PROTOCOLS = new Set(['http:', 'https:']);
+const TERMINAL_CONNECT_WEB_PATH = '/terminal/connect';
 
 function normalizeServerUrl(raw: string): string | null {
     const value = String(raw ?? '').trim();
@@ -13,6 +14,31 @@ function normalizeServerUrl(raw: string): string | null {
         const parsed = new URL(value);
         if (!SAFE_SERVER_PROTOCOLS.has(parsed.protocol)) return null;
         return parsed.toString().replace(/\/+$/, '');
+    } catch {
+        return null;
+    }
+}
+
+function normalizeWebPathname(pathname: string): string {
+    return String(pathname ?? '').replace(/\/+$/, '');
+}
+
+function parseTerminalConnectWebUrl(raw: string): ParsedTerminalConnectUrl | null {
+    try {
+        const parsed = new URL(raw);
+        if (!SAFE_SERVER_PROTOCOLS.has(parsed.protocol)) return null;
+        if (normalizeWebPathname(parsed.pathname) !== TERMINAL_CONNECT_WEB_PATH) return null;
+
+        const hashTail = String(parsed.hash ?? '').replace(/^#/, '');
+        const source = hashTail || String(parsed.search ?? '').replace(/^\?/, '');
+        if (!source) return null;
+
+        const params = new URLSearchParams(source);
+        const key = (params.get('key') ?? '').trim();
+        if (!key) return null;
+
+        const serverUrl = normalizeServerUrl(params.get('server') ?? '');
+        return { publicKeyB64Url: key, serverUrl };
     } catch {
         return null;
     }
@@ -32,7 +58,9 @@ export function buildTerminalConnectDeepLink(params: Readonly<{
 
 export function parseTerminalConnectUrl(url: string): ParsedTerminalConnectUrl | null {
     const raw = String(url ?? '');
-    if (!raw.startsWith(TERMINAL_PREFIX)) return null;
+    if (!raw.startsWith(TERMINAL_PREFIX)) {
+        return parseTerminalConnectWebUrl(raw);
+    }
 
     const tail = raw.slice(TERMINAL_PREFIX.length);
     if (!tail) return null;

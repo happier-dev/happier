@@ -39,10 +39,10 @@ describe('make-latest-json (tool)', () => {
             const notes = 'Rolling preview build.';
 
             const filesByPlatform: Record<string, { name: string; sig: string }> = {
-                'linux-x86_64': { name: 'happier-ui-preview-linux-x86_64.AppImage.tar.gz', sig: 'sig-linux' },
-                'windows-x86_64': { name: 'happier-ui-preview-windows-x86_64.msi.zip', sig: 'sig-windows' },
-                'darwin-x86_64': { name: 'happier-ui-preview-darwin-x86_64.app.tar.gz', sig: 'sig-macos-intel' },
-                'darwin-aarch64': { name: 'happier-ui-preview-darwin-aarch64.app.tar.gz', sig: 'sig-macos-arm' },
+                'linux-x86_64': { name: 'happier-ui-desktop-preview-linux-x86_64.AppImage.tar.gz', sig: 'sig-linux' },
+                'windows-x86_64': { name: 'happier-ui-desktop-preview-windows-x86_64.msi.zip', sig: 'sig-windows' },
+                'darwin-x86_64': { name: 'happier-ui-desktop-preview-darwin-x86_64.app.tar.gz', sig: 'sig-macos-intel' },
+                'darwin-aarch64': { name: 'happier-ui-desktop-preview-darwin-aarch64.app.tar.gz', sig: 'sig-macos-arm' },
             };
 
             for (const [platformKey, { name, sig }] of Object.entries(filesByPlatform)) {

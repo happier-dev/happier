@@ -10,6 +10,10 @@ const syncRestoreMock = vi.fn(async () => {});
 const hideAsyncMock = vi.fn(async () => {});
 let mockedPlatformOS: string = 'web';
 
+const { fromModuleMock } = vi.hoisted(() => ({
+    fromModuleMock: vi.fn(),
+}));
+
 vi.mock('react-native-quick-base64', () => ({}));
 
 vi.mock('expo-splash-screen', () => ({
@@ -20,6 +24,12 @@ vi.mock('expo-splash-screen', () => ({
 
 vi.mock('expo-font', () => ({
     loadAsync: loadAsyncMock,
+}));
+
+vi.mock('expo-asset', () => ({
+    Asset: {
+        fromModule: (...args: any[]) => fromModuleMock(...args),
+    },
 }));
 
 vi.mock('expo-notifications', () => ({
@@ -192,7 +202,9 @@ describe('app/_layout init resilience', () => {
         vi.clearAllMocks();
     });
 
-    it('continues boot when font loading fails', async () => {
+    it('continues boot when native font loading fails', async () => {
+        mockedPlatformOS = 'ios';
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         loadAsyncMock.mockRejectedValueOnce(new Error('6000ms timeout exceeded'));
 
         const RootLayout = (await import('./_layout')).default;
@@ -209,6 +221,46 @@ describe('app/_layout init resilience', () => {
 
         expect(loadAsyncMock).toHaveBeenCalledTimes(1);
         expect(syncRestoreMock).not.toHaveBeenCalled();
+        expect(tree!.toJSON()).not.toBeNull();
+        consoleErrorSpy.mockRestore();
+    });
+
+    it('injects web font faces and does not invoke expo-font on web', async () => {
+        mockedPlatformOS = 'web';
+        fromModuleMock.mockImplementation(() => ({ uri: 'https://example.com/font.ttf' }));
+
+        let appended: any | null = null;
+        const appendChild = vi.fn((node: any) => {
+            appended = node;
+        });
+
+        Object.defineProperty(globalThis, 'document', {
+            value: {
+                getElementById: vi.fn(() => null),
+                createElement: vi.fn(() => ({ textContent: '', id: '' })),
+                head: { appendChild },
+            },
+            configurable: true,
+        });
+
+        const RootLayout = (await import('./_layout')).default;
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(RootLayout));
+        });
+
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(loadAsyncMock).toHaveBeenCalledTimes(0);
+        expect(appendChild).toHaveBeenCalledTimes(1);
+        expect(typeof appended?.textContent).toBe('string');
+        expect(appended.textContent).toContain('@font-face');
+        expect(appended.textContent).toContain('Inter-Regular');
+        expect(appended.textContent).toContain('example.com/font.ttf');
         expect(tree!.toJSON()).not.toBeNull();
     });
 
@@ -341,7 +393,10 @@ describe('app/_layout init resilience', () => {
             await Promise.resolve();
         });
 
-        expect(loadAsyncMock).toHaveBeenCalledTimes(1);
+        // On web we no longer invoke expo-font at all (it uses FontFaceObserver with a hard-coded
+        // timeout and can surface uncaught errors / unhandled rejections). Web fonts are injected
+        // via `@font-face` rules instead.
+        expect(loadAsyncMock).toHaveBeenCalledTimes(0);
         expect(tree!.toJSON()).not.toBeNull();
         // Non-automation web startup should not install global error suppression handlers.
         expect(addEventListenerSpy).not.toHaveBeenCalled();
@@ -397,6 +452,7 @@ describe('app/_layout init resilience', () => {
         });
 
         expect(tree!.toJSON()).not.toBeNull();
+        expect(loadAsyncMock).toHaveBeenCalledTimes(0);
         const fontInitErrors = consoleErrorSpy.mock.calls.filter(
             (call) => call[0] === 'Failed to load fonts during init, continuing startup:'
         );
@@ -425,7 +481,7 @@ describe('app/_layout init resilience', () => {
             await Promise.resolve();
         });
 
-        expect(loadAsyncMock).toHaveBeenCalledTimes(1);
+        expect(loadAsyncMock).toHaveBeenCalledTimes(0);
         expect(tree!.toJSON()).not.toBeNull();
 
         const fontInitErrors = consoleErrorSpy.mock.calls.filter(

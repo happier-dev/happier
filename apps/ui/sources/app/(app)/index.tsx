@@ -21,6 +21,7 @@ import { getAuthProvider } from "@/auth/providers/registry";
 import { Modal } from "@/modal";
 import { getPendingTerminalConnect } from "@/sync/domains/pending/pendingTerminalConnect";
 import { isSafeExternalAuthUrl } from "@/auth/providers/externalAuthUrl";
+import { fireAndForget } from "@/utils/system/fireAndForget";
 
 export default function Home() {
     const auth = useAuth();
@@ -52,7 +53,7 @@ function NotAuthenticated() {
 
     React.useEffect(() => {
         let mounted = true;
-        void (async () => {
+        fireAndForget((async () => {
             try {
                 const features = await getReadyServerFeatures();
                 const methods = features?.capabilities?.auth?.signup?.methods ?? [];
@@ -98,7 +99,7 @@ function NotAuthenticated() {
             } catch {
                 if (mounted) setSignupMode({ kind: "anonymous" });
             }
-        })();
+        })(), { tag: "HomeScreen.loadSignupModeAndAutoRedirect" });
         return () => {
             mounted = false;
         };

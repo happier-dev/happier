@@ -21,6 +21,17 @@ describe('parseTerminalConnectUrl', () => {
         });
     });
 
+    it('parses terminal connect web URLs with hash parameters', () => {
+        expect(
+            parseTerminalConnectUrl(
+                'https://web.happier.dev/terminal/connect#server=https%3A%2F%2Fstack.example.test&key=abcDEF_123-zzz',
+            ),
+        ).toEqual({
+            publicKeyB64Url: 'abcDEF_123-zzz',
+            serverUrl: 'https://stack.example.test',
+        });
+    });
+
     it('rejects non-terminal links', () => {
         expect(parseTerminalConnectUrl('happier://server?url=https%3A%2F%2Fstack.example.test')).toBeNull();
     });

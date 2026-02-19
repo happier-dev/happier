@@ -4,6 +4,7 @@ import { StyleSheet, UnistylesRuntime } from 'react-native-unistyles';
 
 import { darkTheme, lightTheme } from './theme';
 import { loadThemePreference } from './sync/domains/state/persistence';
+import { fireAndForget } from './utils/system/fireAndForget';
 
 const appThemes = {
     light: lightTheme,
@@ -59,7 +60,7 @@ const setRootBackgroundColor = () => {
             ? appThemes.dark.colors.groupped.background
             : appThemes.light.colors.groupped.background;
         UnistylesRuntime.setRootViewBackgroundColor(color);
-        void SystemUI.setBackgroundColorAsync(color);
+        fireAndForget(SystemUI.setBackgroundColorAsync(color), { tag: 'unistyles.setRootBackgroundColor' });
         return;
     }
 
@@ -67,8 +68,7 @@ const setRootBackgroundColor = () => {
         ? appThemes.dark.colors.groupped.background
         : appThemes.light.colors.groupped.background;
     UnistylesRuntime.setRootViewBackgroundColor(color);
-    void SystemUI.setBackgroundColorAsync(color);
+    fireAndForget(SystemUI.setBackgroundColorAsync(color), { tag: 'unistyles.setRootBackgroundColor' });
 };
 
 setRootBackgroundColor();
-

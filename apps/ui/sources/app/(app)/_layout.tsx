@@ -13,10 +13,12 @@ import { t } from '@/text';
 import { useAuth } from '@/auth/context/AuthContext';
 import { isPublicRouteForUnauthenticated } from '@/auth/routing/authRouting';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
-import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
-import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
+import { getActiveServerUrl, listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import { normalizeServerUrl, setActiveServerAndSwitch, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
 import { clearPendingNotificationNav, getPendingNotificationNav, setPendingNotificationNav } from '@/sync/domains/pending/pendingNotificationNav';
 import { getPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
+import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export const unstable_settings = {
     initialRouteName: 'index',
@@ -28,6 +30,29 @@ function extractServerUrlFromNotificationData(data: unknown): string | null {
     const serverUrl = typeof rec.serverUrl === 'string' ? rec.serverUrl : typeof rec.server === 'string' ? rec.server : '';
     const normalized = normalizeServerUrl(serverUrl);
     return normalized ? normalized : null;
+}
+
+function isUnsafeNotificationServerUrl(serverUrl: string): boolean {
+    const normalized = normalizeServerUrl(serverUrl);
+    if (!normalized) return true;
+    try {
+        const url = new URL(normalized);
+        const host = url.hostname.trim().toLowerCase();
+        return host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '::1' || host === '[::1]';
+    } catch {
+        return true;
+    }
+}
+
+function findSavedServerProfileForUrl(serverUrl: string): { id: string; serverUrl: string } | null {
+    const targetKey = createServerUrlComparableKey(serverUrl);
+    if (!targetKey) return null;
+    for (const profile of listServerProfiles()) {
+        if (createServerUrlComparableKey(profile.serverUrl) === targetKey) {
+            return { id: profile.id, serverUrl: profile.serverUrl };
+        }
+    }
+    return null;
 }
 
 function readServerUrlOverrideFromWebLocation(): Readonly<{ serverUrl: string; cleanedRelativeUrl: string }> | null {
@@ -103,7 +128,7 @@ export default function RootLayout() {
             return;
         }
 
-        void (async () => {
+        fireAndForget((async () => {
             try {
                 await upsertActivateAndSwitchServer({
                     serverUrl: desired,
@@ -114,7 +139,7 @@ export default function RootLayout() {
             } catch {
                 // keep URL normalization best-effort; server switch can still be repaired elsewhere
             }
-        })();
+        })(), { tag: 'RootLayout.webServerOverride' });
 
         try {
             window.history.replaceState(null, '', override.cleanedRelativeUrl);
@@ -163,7 +188,7 @@ export default function RootLayout() {
             const target = normalizeServerUrl(pendingTerminalConnect.serverUrl);
             if (target && target !== active) {
                 pendingTerminalHandledRef.current = true;
-                void (async () => {
+                fireAndForget((async () => {
                     try {
                         await upsertActivateAndSwitchServer({
                             serverUrl: pendingTerminalConnect.serverUrl,
@@ -175,7 +200,7 @@ export default function RootLayout() {
                         // keep navigation best-effort; terminal flow can still recover with explicit server param
                     }
                     router.push(route);
-                })();
+                })(), { tag: 'RootLayout.pendingTerminalConnect' });
                 return;
             }
 
@@ -222,22 +247,48 @@ export default function RootLayout() {
                 if (serverUrl) {
                     const active = normalizeServerUrl(getActiveServerUrl());
                     if (serverUrl !== active) {
-                        setPendingNotificationNav({ serverUrl, route });
-                        void (async () => {
-                            try {
-                                await upsertActivateAndSwitchServer({
-                                    serverUrl,
-                                    source: 'notification',
-                                    scope: 'device',
-                                    refreshAuth: auth.refreshFromActiveServer,
-                                });
-                                clearPendingNotificationNav();
-                                router.push(route);
-                            } catch {
-                                // keep pending notification nav as fallback
-                            }
-                        })();
-                        return;
+                        const saved = findSavedServerProfileForUrl(serverUrl);
+                        if (saved) {
+                            setPendingNotificationNav({ serverUrl: saved.serverUrl, route });
+                            fireAndForget((async () => {
+                                try {
+                                    await setActiveServerAndSwitch({
+                                        serverId: saved.id,
+                                        scope: 'device',
+                                        refreshAuth: auth.refreshFromActiveServer,
+                                    });
+                                    clearPendingNotificationNav();
+                                    router.push(route);
+                                } catch {
+                                    // keep pending notification nav as fallback
+                                }
+                            })(), { tag: 'RootLayout.notificationNav.savedServer' });
+                            return;
+                        }
+
+                        if (isUnsafeNotificationServerUrl(serverUrl)) {
+                            router.push(route);
+                            return;
+                        }
+
+                        if (listServerProfiles().length === 0) {
+                            setPendingNotificationNav({ serverUrl, route });
+                            fireAndForget((async () => {
+                                try {
+                                    await upsertActivateAndSwitchServer({
+                                        serverUrl,
+                                        source: 'notification',
+                                        scope: 'device',
+                                        refreshAuth: auth.refreshFromActiveServer,
+                                    });
+                                    clearPendingNotificationNav();
+                                    router.push(route);
+                                } catch {
+                                    // keep pending notification nav as fallback
+                                }
+                            })(), { tag: 'RootLayout.notificationNav.autoAddServer' });
+                            return;
+                        }
                     }
                 }
                 router.push(route);
@@ -262,7 +313,7 @@ export default function RootLayout() {
     React.useEffect(() => {
         if (!auth.isAuthenticated) return;
         let cancelled = false;
-        void (async () => {
+        fireAndForget((async () => {
             try {
                 // Defer loading sync/storage modules until needed to keep module evaluation light
                 // (important for test environments and faster route transitions).
@@ -285,7 +336,7 @@ export default function RootLayout() {
             } catch {
                 // Non-fatal: feature gating should never crash the root layout.
             }
-        })();
+        })(), { tag: 'RootLayout.happierVoiceGate' });
         return () => {
             cancelled = true;
         };

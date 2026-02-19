@@ -26,7 +26,7 @@ describe('buildCommandPaletteCommands', () => {
       sessionsById: {},
       isDev: false,
       activeSessionId: 'session-1',
-      features: { executionRunsEnabled: true, voiceEnabled: true },
+      features: { executionRunsEnabled: true, voiceEnabled: true, memorySearchEnabled: false },
       nav: {
         push: (path) => pushes.push(path),
         navigateToSession: () => {},
@@ -73,7 +73,7 @@ describe('buildCommandPaletteCommands', () => {
       sessionsById: {},
       isDev: false,
       activeSessionId: null,
-      features: { executionRunsEnabled: true, voiceEnabled: false },
+      features: { executionRunsEnabled: true, voiceEnabled: false, memorySearchEnabled: false },
       nav: {
         push: (path) => pushes.push(path),
         navigateToSession: () => {},
@@ -104,7 +104,7 @@ describe('buildCommandPaletteCommands', () => {
       },
       isDev: false,
       activeSessionId: 'session-1',
-      features: { executionRunsEnabled: true, voiceEnabled: false },
+      features: { executionRunsEnabled: true, voiceEnabled: false, memorySearchEnabled: false },
       nav: {
         push: () => {},
         navigateToSession: () => {},
@@ -144,7 +144,7 @@ describe('buildCommandPaletteCommands', () => {
       sessionsById: {},
       isDev: false,
       activeSessionId: 'session-1',
-      features: { executionRunsEnabled: true, voiceEnabled: false },
+      features: { executionRunsEnabled: true, voiceEnabled: false, memorySearchEnabled: false },
       nav: {
         push: () => {},
         navigateToSession: () => {},
@@ -157,7 +157,7 @@ describe('buildCommandPaletteCommands', () => {
     expect(commandTitles(cmds)).not.toEqual(expect.arrayContaining(['Start review run']));
   });
 
-  it('includes a memory search navigation command', async () => {
+  it('includes a memory search navigation command when enabled', async () => {
     const pushes: string[] = [];
     mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
 
@@ -165,7 +165,7 @@ describe('buildCommandPaletteCommands', () => {
       sessionsById: {},
       isDev: false,
       activeSessionId: null,
-      features: { executionRunsEnabled: false, voiceEnabled: false },
+      features: { executionRunsEnabled: false, voiceEnabled: false, memorySearchEnabled: true },
       nav: {
         push: (path) => pushes.push(path),
         navigateToSession: () => {},
@@ -179,5 +179,25 @@ describe('buildCommandPaletteCommands', () => {
     expect(cmd).toBeTruthy();
     await cmd!.action();
     expect(pushes).toEqual(['/search']);
+  });
+
+  it('omits the memory search navigation command when disabled', async () => {
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
+
+    const cmds = buildCommandPaletteCommands({
+      sessionsById: {},
+      isDev: false,
+      activeSessionId: null,
+      features: { executionRunsEnabled: false, voiceEnabled: false, memorySearchEnabled: false },
+      nav: {
+        push: () => {},
+        navigateToSession: () => {},
+      },
+      auth: { logout: async () => {} },
+      actions: { execute: async () => ({ ok: true, result: {} }) },
+      alert: async () => {},
+    });
+
+    expect(cmds.some((c) => c.id === 'memory-search')).toBe(false);
   });
 });

@@ -6,12 +6,14 @@ import { useRouter } from 'expo-router';
 import { useAllMachines } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
 import { MemorySearchResultV1Schema, RPC_METHODS } from '@happier-dev/protocol';
 
 export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
+    const memorySearchEnabled = useFeatureEnabled('memory.search');
     const machines = useAllMachines();
     const activeServerSnapshot = getActiveServerSnapshot();
     const serverId = activeServerSnapshot.serverId;
@@ -35,6 +37,7 @@ export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
     }, [machineId, machines]);
 
     const runSearch = React.useCallback(async () => {
+        if (!memorySearchEnabled) return;
         const q = query.trim();
         if (!q || !serverId || !machineId) return;
         setStatus('loading');
@@ -66,7 +69,26 @@ export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
             setHits([]);
             setStatus('error');
         }
-    }, [machineId, query, serverId]);
+    }, [machineId, memorySearchEnabled, query, serverId]);
+
+    if (!memorySearchEnabled) {
+        return (
+            <View style={{ flex: 1, padding: 16, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ color: theme.colors.textSecondary }}>
+                    Memory search is disabled.
+                </Text>
+                <Pressable
+                    testID="memory-search-open-features"
+                    onPress={() => router.push('/settings/features' as any)}
+                    style={{ paddingVertical: 10 }}
+                >
+                    <Text style={{ color: theme.colors.text }}>
+                        Open feature settings
+                    </Text>
+                </Pressable>
+            </View>
+        );
+    }
 
     return (
         <View style={{ flex: 1, padding: 16 }}>

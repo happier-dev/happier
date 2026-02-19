@@ -13,6 +13,7 @@ import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { QRCode } from '@/components/qr/QRCode';
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {
@@ -81,11 +82,11 @@ export default function Restore() {
     // Start QR authentication when component mounts
     useEffect(() => {
         let mounted = true;
-        void (async () => {
+        fireAndForget((async () => {
             const features = await getReadyServerFeatures({ timeoutMs: 800 });
             const enabled = features?.features?.auth?.recovery?.providerReset?.enabled === true;
             if (mounted) setProviderResetEnabled(enabled);
-        })();
+        })(), { tag: 'Restore.loadProviderResetEnabled' });
         return () => {
             mounted = false;
         };

@@ -5,6 +5,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '@/auth/context/AuthContext';
 import { Modal } from '@/modal';
 import { HappyError } from '@/utils/errors/errors';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
@@ -71,7 +72,7 @@ export default function OAuthProviderReturn() {
             if (!cancelled) router.replace(path);
         };
 
-        void (async () => {
+        fireAndForget((async () => {
             const providerId = (paramString(params, 'provider') ?? '').trim().toLowerCase();
             if (!providerId) {
                 safeReplace('/');
@@ -353,7 +354,7 @@ export default function OAuthProviderReturn() {
                     safeSetBusy(false);
                 }
             }
-        })();
+        })(), { tag: 'OAuthProviderReturn.handleRedirect' });
 
         return () => {
             cancelled = true;

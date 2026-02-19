@@ -19,10 +19,12 @@ vi.mock('expo-notifications', () => ({
 
 const pushSpy = vi.fn();
 const upsertActivateAndSwitchServerSpy = vi.fn(async (_params: { serverUrl: string; source: string; scope: string; refreshAuth: unknown }) => true);
+const setActiveServerAndSwitchSpy = vi.fn(async (_params: { serverId: string; scope: string; refreshAuth: unknown }) => true);
 const applySettingsSpy = vi.fn();
 const clearPendingTerminalConnectSpy = vi.fn();
 const clearPendingNotificationNavSpy = vi.fn();
 let activeServerUrl = 'https://api.happier.dev';
+let serverProfilesValue: { id: string; serverUrl: string }[] = [];
 let pendingTerminalConnectValue: { publicKeyB64Url: string; serverUrl: string } | null = null;
 let pendingNotificationNavValue: { serverUrl: string; route: string } | null = null;
 let lastRenderer: renderer.ReactTestRenderer | null = null;
@@ -101,6 +103,7 @@ vi.mock('@/sync/sync', () => ({
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerUrl: () => activeServerUrl,
+    listServerProfiles: () => serverProfilesValue.map((p) => ({ ...p, name: p.id, createdAt: 0, updatedAt: 0, lastUsedAt: 0 })),
     getActiveServerSnapshot: () => ({
         serverId: 'server-1',
         serverUrl: activeServerUrl,
@@ -113,6 +116,7 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     normalizeServerUrl: (value: string) => String(value ?? '').trim().replace(/\/+$/, ''),
     upsertActivateAndSwitchServer: upsertActivateAndSwitchServerSpy,
+    setActiveServerAndSwitch: setActiveServerAndSwitchSpy,
 }));
 
 vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
@@ -142,6 +146,7 @@ vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
 
 afterEach(() => {
     activeServerUrl = 'https://api.happier.dev';
+    serverProfilesValue = [];
     pendingTerminalConnectValue = null;
     pendingNotificationNavValue = null;
     try {
@@ -154,6 +159,7 @@ afterEach(() => {
     lastRenderer = null;
     pushSpy.mockClear();
     upsertActivateAndSwitchServerSpy.mockReset();
+    setActiveServerAndSwitchSpy.mockReset();
     clearPendingTerminalConnectSpy.mockClear();
     clearPendingNotificationNavSpy.mockClear();
     vi.restoreAllMocks();
@@ -244,6 +250,10 @@ describe('App RootLayout notifications', () => {
     });
 
     it('switches server and navigates when a notification includes serverUrl', async () => {
+        serverProfilesValue = [
+            { id: 'server-1', serverUrl: 'https://api.happier.dev' },
+            { id: 'server-2', serverUrl: 'https://company.example.test' },
+        ];
         const Notifications = await import('expo-notifications');
         vi.spyOn(Notifications, 'getLastNotificationResponseAsync').mockResolvedValue({
             actionIdentifier: Notifications.DEFAULT_ACTION_IDENTIFIER,
@@ -267,12 +277,44 @@ describe('App RootLayout notifications', () => {
 
         await renderRootLayout();
 
-        expect(upsertActivateAndSwitchServerSpy).toHaveBeenCalledWith({
-            serverUrl: 'https://company.example.test',
-            source: 'notification',
+        expect(setActiveServerAndSwitchSpy).toHaveBeenCalledWith({
+            serverId: 'server-2',
             scope: 'device',
             refreshAuth: expect.any(Function),
         });
         expect(pushSpy).toHaveBeenCalledWith('/session/s_456');
+    });
+
+    it('does not auto-switch to loopback serverUrl from notifications', async () => {
+        serverProfilesValue = [
+            { id: 'server-1', serverUrl: 'https://api.happier.dev' },
+        ];
+        activeServerUrl = 'https://api.happier.dev';
+        const Notifications = await import('expo-notifications');
+        vi.spyOn(Notifications, 'getLastNotificationResponseAsync').mockResolvedValue({
+            actionIdentifier: Notifications.DEFAULT_ACTION_IDENTIFIER,
+            notification: {
+                date: Date.parse('2026-02-09T00:00:00.000Z'),
+                request: {
+                    identifier: 'n3',
+                    trigger: null,
+                    content: {
+                        title: null,
+                        subtitle: null,
+                        body: null,
+                        categoryIdentifier: null,
+                        sound: null,
+                        data: { sessionId: 's_789', serverUrl: 'http://localhost:3005' },
+                    },
+                },
+            },
+        });
+        vi.spyOn(Notifications, 'addNotificationResponseReceivedListener').mockImplementation(() => ({ remove: () => {} }));
+
+        await renderRootLayout();
+
+        expect(setActiveServerAndSwitchSpy).not.toHaveBeenCalled();
+        expect(upsertActivateAndSwitchServerSpy).not.toHaveBeenCalled();
+        expect(pushSpy).toHaveBeenCalledWith('/session/s_789');
     });
 });

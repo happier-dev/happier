@@ -100,6 +100,10 @@ describe('PendingMessagesModal', () => {
         modalConfirm.mockReset();
         modalAlert.mockReset();
         sessionValue = null;
+
+        // The modal triggers a best-effort fetch on mount. Default it to a resolved promise so
+        // call sites can safely attach `.catch(...)` without blowing up in tests.
+        fetchPendingMessages.mockResolvedValue(undefined);
     });
 
     function findPressableByTestId(tree: renderer.ReactTestRenderer, testID: string): ReactTestInstance | undefined {

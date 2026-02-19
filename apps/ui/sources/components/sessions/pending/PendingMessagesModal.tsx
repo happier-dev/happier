@@ -7,6 +7,7 @@ import { useSession, useSessionPendingMessages } from '@/sync/domains/state/stor
 import { sync } from '@/sync/sync';
 import { Modal } from '@/modal';
 import { sessionAbort } from '@/sync/ops';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export function PendingMessagesModal(props: { sessionId: string; onClose: () => void }) {
     const { theme } = useUnistyles();
@@ -22,7 +23,7 @@ export function PendingMessagesModal(props: { sessionId: string; onClose: () => 
     );
 
     React.useEffect(() => {
-        void sync.fetchPendingMessages(props.sessionId);
+        fireAndForget(sync.fetchPendingMessages(props.sessionId), { tag: 'PendingMessagesModal.fetchPendingMessages' });
     }, [props.sessionId]);
 
     const handleEdit = React.useCallback(async (pendingId: string, currentText: string) => {

@@ -17,4 +17,14 @@ export const systemPrompt = trimIdent(`
     # Plan mode with options
 
     When you are in the plan mode, you must use the options mode to give the user a easy way to answer your questions if you know possible answers. Do not assume what is needed, when there is discrepancy between what you need and what you have, you must use the options mode.
+
+    # Attachments
+
+    A user message may include an attachments block:
+
+    [attachments]
+    - <path> (...)
+    [/attachments]
+
+    When present, read the referenced file paths (using the Read tool) before answering. If a file cannot be read, explain the error and ask the user how to proceed.
 `);

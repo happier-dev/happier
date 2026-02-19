@@ -1,6 +1,17 @@
 {
   "entries": [
     {
+      "version": 8,
+      "date": "2026-02-18",
+      "summary": "This update includes a small navigation quality-of-life fix, improves QR scanning for terminal connect links, and prevents intermittent web startup errors related to font loading.",
+      "changes": [
+        "Fixed the sidebar logo button so it reliably returns you to the home screen.",
+        "Fixed “Open Camera” so it can scan terminal connect QR codes that contain the web connect URL (not just the `happier://terminal?...` deep link).",
+        "Fixed intermittent web font loading timeouts that could surface as “6000ms timeout exceeded” errors during startup."
+      ],
+      "rawMarkdown": "## Version 8 - 2026-02-18\n\n\nThis update includes a small navigation quality-of-life fix, improves QR scanning for terminal connect links, and prevents intermittent web startup errors related to font loading.\n\n- Fixed the sidebar logo button so it reliably returns you to the home screen.\n- Fixed “Open Camera” so it can scan terminal connect QR codes that contain the web connect URL (not just the `happier://terminal?...` deep link).\n- Fixed intermittent web font loading timeouts that could surface as “6000ms timeout exceeded” errors during startup."
+    },
+    {
       "version": 7,
       "date": "2026-01-31",
       "summary": "This release rebrands the project to Happier and updates the app/CLI identity end-to-end so installs, links, and defaults match the new name.",
@@ -86,5 +97,5 @@
       "rawMarkdown": "## Version 1 - 2025-05-12\n\n\nWelcome to Happier - your secure, encrypted mobile companion for Claude Code. This inaugural release establishes the foundation for private, powerful AI interactions on the go.\n\n- Implemented end-to-end encrypted session management ensuring complete privacy\n- Integrated intelligent voice assistant with natural conversation capabilities\n- Added experimental file manager with syntax highlighting and tree navigation\n- Built seamless real-time synchronization across all your devices\n- Established native support for iOS, Android, and responsive web interfaces"
     }
   ],
-  "latestVersion": 7
+  "latestVersion": 8
 }

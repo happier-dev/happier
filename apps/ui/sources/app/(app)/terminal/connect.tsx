@@ -15,6 +15,7 @@ import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
 import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
 import { clearPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { buildTerminalConnectDeepLink } from '@/utils/path/terminalConnectUrl';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export default function TerminalConnectScreen() {
     const router = useRouter();
@@ -59,7 +60,7 @@ export default function TerminalConnectScreen() {
             serverUrl: desiredServerUrl || getActiveServerUrl(),
         });
 
-        void (async () => {
+        fireAndForget((async () => {
             if (desiredServerUrl) {
                 try {
                     await upsertActivateAndSwitchServer({
@@ -73,7 +74,7 @@ export default function TerminalConnectScreen() {
                 }
             }
             router.replace('/');
-        })();
+        })(), { tag: 'TerminalConnectScreen.redirectToAuth' });
     }, [auth.isAuthenticated, auth.refreshFromActiveServer, hashProcessed, publicKey, router, serverUrlFromHash]);
 
     const handleConnect = async () => {

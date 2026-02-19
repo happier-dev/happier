@@ -333,6 +333,54 @@ describe('machine picker server scope', () => {
         expect(routerBackSpy).toHaveBeenCalledTimes(1);
     });
 
+    it('does not auto-select when the only machine for the selected server is offline', async () => {
+        setActiveServerAndSwitchSpy.mockReset();
+        navigationDispatchSpy.mockReset();
+        routerBackSpy.mockReset();
+        refreshMachinesThrottledSpy.mockReset();
+        prefetchMachineCapabilitiesSpy.mockReset();
+        capturedMachineSelectorProps = null;
+
+        state.localSearchParams = {
+            selectedId: '',
+            spawnServerId: 'server-b',
+        };
+
+        scopedMachinesState.groups = [
+            {
+                serverId: 'server-b',
+                serverName: 'Server B',
+                loading: false,
+                signedOut: false,
+                machines: [
+                    {
+                        id: 'machine-1',
+                        serverId: 'server-b',
+                        metadata: { host: 'host-1', displayName: 'Machine 1', homeDir: '/home/me' },
+                        active: false,
+                        createdAt: 1,
+                        updatedAt: 1,
+                        activeAt: 0,
+                        seq: 1,
+                        metadataVersion: 1,
+                        daemonState: null,
+                        daemonStateVersion: 0,
+                    },
+                ],
+            },
+        ] as any;
+
+        const Screen = (await import('./machine')).default;
+        await act(async () => {
+            renderer.create(React.createElement(Screen));
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(navigationDispatchSpy).not.toHaveBeenCalled();
+        expect(routerBackSpy).not.toHaveBeenCalled();
+    });
+
     it('normalizes invalid requested serverId to the allowed active target server', async () => {
         setActiveServerAndSwitchSpy.mockReset();
         navigationDispatchSpy.mockReset();

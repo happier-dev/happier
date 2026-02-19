@@ -14,6 +14,7 @@ import { resolveActiveServerSelectionFromRawSettings } from '@/sync/domains/serv
 import { useUnistyles } from 'react-native-unistyles';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { promptSignedOutServerSwitchConfirmation } from '@/components/settings/server/modals/ServerSwitchAuthPrompt';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 type ServerPickerParams = {
     selectedId?: string;
@@ -147,7 +148,7 @@ export default React.memo(function ServerPickerScreen() {
                                 icon={<Ionicons name="server-outline" size={18} color={theme.colors.textSecondary} />}
                                 selected={isSelected}
                                 onPress={() => {
-                                    void (async () => {
+                                    fireAndForget((async () => {
                                         const auth = await confirmSignedOutTarget(target.id);
                                         if (!auth.allowed) return;
 
@@ -157,7 +158,7 @@ export default React.memo(function ServerPickerScreen() {
                                         }
 
                                         setParamsOnPreviousAndClose(target.id);
-                                    })();
+                                    })(), { tag: 'ServerPickerScreen.selectServer' });
                                 }}
                             />
                         );

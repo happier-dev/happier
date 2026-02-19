@@ -3,6 +3,7 @@ import '../theme.css';
 import * as React from 'react';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Fonts from 'expo-font';
+import { Asset } from 'expo-asset';
 import * as Notifications from 'expo-notifications';
 import { FontAwesome } from '@expo/vector-icons';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -330,6 +331,63 @@ let lock = new AsyncLock();
 let loaded = false;
 let suppressFontTimeoutErrorsUntilMs = 0;
 let webFontLoadAttemptedAtMs = 0;
+
+function escapeCssString(value: string): string {
+    // Enough for our controlled font family names; avoid pulling in a heavier CSS escaping dependency.
+    return value.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+}
+
+function injectWebFontFaces(fontMap: Parameters<typeof Fonts.loadAsync>[0]): void {
+    if (typeof document === 'undefined') return;
+    if (typeof document.getElementById !== 'function') return;
+    if (typeof document.createElement !== 'function') return;
+    const head = document.head;
+    if (!head) return;
+
+    const styleId = 'happier-web-font-faces';
+    if (document.getElementById(styleId)) return;
+
+    const rules: string[] = [];
+    for (const [fontFamily, fontModule] of Object.entries(fontMap)) {
+        try {
+            if (!fontModule) continue;
+            let uri: string | null = null;
+            if (typeof fontModule === 'string' || typeof fontModule === 'number') {
+                uri = Asset.fromModule(fontModule).uri;
+            } else if (
+                typeof fontModule === 'object'
+                && fontModule !== null
+                && 'uri' in fontModule
+                && typeof (fontModule as { uri?: unknown }).uri === 'string'
+            ) {
+                uri = (fontModule as { uri: string }).uri;
+            }
+            if (!uri) continue;
+
+            const lower = uri.toLowerCase();
+            const format =
+                lower.endsWith('.woff2') ? 'woff2'
+                : lower.endsWith('.woff') ? 'woff'
+                : lower.endsWith('.otf') ? 'opentype'
+                : lower.endsWith('.ttf') ? 'truetype'
+                : null;
+
+            const src = format ? `url("${uri}") format("${format}")` : `url("${uri}")`;
+            rules.push(
+                `@font-face{font-family:"${escapeCssString(fontFamily)}";src:${src};font-display:swap;}`
+            );
+        } catch {
+            // Best-effort only; don't let font injection break app startup.
+        }
+    }
+
+    if (rules.length === 0) return;
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.textContent = rules.join('\n');
+    head.appendChild(style);
+}
+
 async function loadFonts() {
     await lock.inLock(async () => {
         if (loaded) {
@@ -339,11 +397,6 @@ async function loadFonts() {
         // Prefer DOM detection over Platform.OS so web builds remain resilient even if Platform.OS is
         // surprising in some environments.
         const isWeb = Platform.OS === 'web' || (typeof document !== 'undefined');
-
-        // Check if running in Tauri
-        const isTauri = isWeb &&
-            typeof window !== 'undefined' &&
-            (window as any).__TAURI_INTERNALS__ !== undefined;
 
         const isWebAutomation = isWeb &&
             typeof navigator !== 'undefined' &&
@@ -444,24 +497,13 @@ async function loadFonts() {
             ...FontAwesome.font,
         };
 
-        // On web, expo-font uses FontFaceObserver with a hard-coded 6s timeout. In practice, this
-        // can time out in headless/automation contexts even when the font files are reachable,
-        // causing dev overlays to appear. Don't block app startup on web font loading.
+        // On web, expo-font uses FontFaceObserver with a hard-coded ~6s timeout. In practice, this
+        // can time out (and surface as uncaught errors / unhandled rejections) even when font files
+        // are reachable. Avoid expo-font entirely on web and inject `@font-face` rules instead.
         if (isWeb) {
-            // In automation contexts, don't invoke expo-font at all, since its FontFaceObserver path
-            // can emit timeout errors as dev overlays (even when callers ignore the promise).
-            if (isWebAutomation) return;
-
-            if (isTauri) {
-                // For Tauri, fonts are loaded via CSS and we should not wait.
-            }
-
-            // Fire and forget; swallow errors to avoid unhandled rejections (and dev overlays).
-            // expo-font can also throw synchronously in some web/dev environments.
             try {
                 webFontLoadAttemptedAtMs = Date.now();
-                const maybePromise = Fonts.loadAsync(fontMap);
-                void Promise.resolve(maybePromise).catch(() => {});
+                injectWebFontFaces(fontMap);
             } catch {
                 // Do not surface font init issues on web.
             }

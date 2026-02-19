@@ -264,6 +264,7 @@ export const SidebarView = React.memo(() => {
     const { width: windowWidth } = useWindowDimensions();
     const sidebarWidth = Math.min(Math.max(Math.floor(windowWidth * 0.3), 250), 360);
     const showZen = useFeatureEnabled('zen.navigation');
+    const voiceEnabled = useFeatureEnabled('voice');
     // With Zen enabled: 4 icons (148px total), threshold 408px > max 360px → always left-justify
     // Without Zen: 3 icons (108px total), threshold 328px → left-justify below ~340px
     const shouldLeftJustify = showZen || sidebarWidth < 340;
@@ -278,6 +279,10 @@ export const SidebarView = React.memo(() => {
 
     const handleNewSession = React.useCallback(() => {
         router.push('/new');
+    }, [router]);
+
+    const handleHome = React.useCallback(() => {
+        router.push('/');
     }, [router]);
 
     const handleAutomations = React.useCallback(() => {
@@ -312,13 +317,19 @@ export const SidebarView = React.memo(() => {
                 <PopoverBoundaryProvider boundaryRef={popoverBoundaryRef}>
                 <View style={[styles.header, { height: headerHeight }]}>
                     {/* Logo - always first */}
-                    <View style={styles.logoContainer}>
+                    <Pressable
+                        onPress={handleHome}
+                        hitSlop={15}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('common.home')}
+                        style={[styles.logoContainer, styles.iconButton]}
+                    >
                         <Image
                             source={theme.dark ? require('@/assets/images/logo-white.png') : require('@/assets/images/logo-black.png')}
                             contentFit="contain"
                             style={[styles.logo, { height: 24, width: 24 }]}
                         />
-                    </View>
+                    </Pressable>
                     {showAutomations ? (
                         <Pressable
                             onPress={handleAutomations}
@@ -431,7 +442,7 @@ export const SidebarView = React.memo(() => {
                         ) : null}
                     </View>
                 )}
-                <VoiceSurface variant="sidebar" />
+                {voiceEnabled ? <VoiceSurface variant="sidebar" /> : null}
                 <MainView variant="sidebar" />
                 </PopoverBoundaryProvider>
             </View>

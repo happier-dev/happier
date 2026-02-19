@@ -16,6 +16,7 @@ import { Modal } from '@/modal';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
 import { Ionicons } from '@expo/vector-icons';
 import { PopoverPortalTargetProvider } from '@/components/ui/popover';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export default React.memo(function ProfileEditScreen() {
     const { theme } = useUnistyles();
@@ -124,7 +125,7 @@ export default React.memo(function ProfileEditScreen() {
 
             e.preventDefault();
 
-            void (async () => {
+            fireAndForget((async () => {
                 const decision = await confirmDiscard();
                 if (decision === 'discard') {
                     isDirtyRef.current = false;
@@ -132,7 +133,7 @@ export default React.memo(function ProfileEditScreen() {
                 } else if (decision === 'save') {
                     saveRef.current?.();
                 }
-            })();
+            })(), { tag: 'ProfileEditScreen.beforeRemove' });
         });
 
         return () => subscription?.remove?.();
@@ -228,7 +229,7 @@ export default React.memo(function ProfileEditScreen() {
     };
 
     const handleCancel = React.useCallback(() => {
-        void (async () => {
+        fireAndForget((async () => {
             if (!isDirtyRef.current) {
                 router.back();
                 return;
@@ -240,7 +241,7 @@ export default React.memo(function ProfileEditScreen() {
             } else if (decision === 'save') {
                 saveRef.current?.();
             }
-        })();
+        })(), { tag: 'ProfileEditScreen.cancel' });
     }, [confirmDiscard, router]);
 
     const headerTitle = profile.name ? t('profiles.editProfile') : t('profiles.addProfile');

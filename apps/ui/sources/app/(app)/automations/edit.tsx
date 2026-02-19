@@ -17,6 +17,7 @@ import { Text } from '@/components/ui/text/StyledText';
 import { updateExistingSessionAutomationTemplateMessage } from '@/sync/domains/automations/automationExistingSessionTemplateUpdate';
 import { tryDecodeAutomationTemplateEnvelope } from '@/sync/domains/automations/automationTemplateTransport';
 import { decodeAutomationTemplate } from '@/sync/domains/automations/automationTemplateCodec';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export default React.memo(function AutomationEditScreen() {
     const { theme } = useUnistyles();
@@ -61,7 +62,7 @@ export default React.memo(function AutomationEditScreen() {
     React.useEffect(() => {
         if (!automation || automation.targetType !== 'existing_session') return;
         let alive = true;
-        void (async () => {
+        fireAndForget((async () => {
             try {
                 setMessageLoading(true);
                 const envelope = tryDecodeAutomationTemplateEnvelope(automation.templateCiphertext);
@@ -83,7 +84,7 @@ export default React.memo(function AutomationEditScreen() {
                 if (!alive) return;
                 setMessageLoading(false);
             }
-        })();
+        })(), { tag: 'AutomationEditScreen.loadExistingSessionTemplateMessage' });
         return () => {
             alive = false;
         };

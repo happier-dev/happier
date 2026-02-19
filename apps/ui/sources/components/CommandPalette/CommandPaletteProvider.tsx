@@ -32,6 +32,7 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
     const segments = useSegments();
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const voiceEnabled = useFeatureEnabled('voice');
+    const memorySearchEnabled = useFeatureEnabled('memory.search');
     const actionExecutor = useMemo(
         () => createDefaultActionExecutor({ resolveServerIdForSessionId: resolveServerIdForSessionIdFromLocalCache }),
         [],
@@ -45,7 +46,7 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
             sessionsById: sessions as any,
             isDev: __DEV__ === true,
             activeSessionId,
-            features: { executionRunsEnabled, voiceEnabled },
+            features: { executionRunsEnabled, voiceEnabled, memorySearchEnabled },
             nav: {
                 push: (path) => router.push(path as any),
                 navigateToSession,
@@ -58,7 +59,7 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
                 await Modal.alert(title, message);
             },
         });
-    }, [segments, sessions, executionRunsEnabled, voiceEnabled, router, navigateToSession, logout, actionExecutor]);
+    }, [segments, sessions, executionRunsEnabled, voiceEnabled, memorySearchEnabled, router, navigateToSession, logout, actionExecutor]);
 
     const showCommandPalette = useCallback(() => {
         if (Platform.OS !== 'web' || !commandPaletteEnabled) return;

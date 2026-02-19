@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import type { PlanOutputV1 } from '@happier-dev/protocol';
 import { sync } from '@/sync/sync';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export function PlanOutputMessageCard(props: Readonly<{ payload: PlanOutputV1; sessionId: string }>) {
     const [error, setError] = React.useState<string | null>(null);
@@ -13,7 +14,7 @@ export function PlanOutputMessageCard(props: Readonly<{ payload: PlanOutputV1; s
     const milestones = props.payload.milestones ?? [];
 
     const handleAdopt = React.useCallback(() => {
-        void (async () => {
+        fireAndForget((async () => {
             setError(null);
             setIsSending(true);
             try {
@@ -33,7 +34,7 @@ export function PlanOutputMessageCard(props: Readonly<{ payload: PlanOutputV1; s
             } finally {
                 setIsSending(false);
             }
-        })();
+        })(), { tag: 'PlanOutputMessageCard.adoptPlan' });
     }, [props.payload, props.sessionId]);
 
     return (

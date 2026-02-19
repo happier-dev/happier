@@ -40,7 +40,7 @@ export function buildCommandPaletteCommands(params: Readonly<{
   sessionsById: Record<string, any>;
   isDev: boolean;
   activeSessionId: string | null;
-  features: Readonly<{ executionRunsEnabled: boolean; voiceEnabled: boolean }>;
+  features: Readonly<{ executionRunsEnabled: boolean; voiceEnabled: boolean; memorySearchEnabled: boolean }>;
   nav: Readonly<{
     push: (path: string) => void;
     navigateToSession: (sessionId: string) => void;
@@ -90,14 +90,6 @@ export function buildCommandPaletteCommands(params: Readonly<{
       action: () => nav.push('/settings'),
     },
     {
-      id: 'memory-search',
-      title: 'Search Memory',
-      subtitle: 'Search across past conversations',
-      icon: 'search-outline',
-      category: 'Navigation',
-      action: () => nav.push('/search'),
-    },
-    {
       id: 'account',
       title: 'Account',
       subtitle: 'Manage your account',
@@ -114,6 +106,17 @@ export function buildCommandPaletteCommands(params: Readonly<{
       action: () => nav.push('/terminal/connect'),
     },
   ];
+
+  if (features.memorySearchEnabled) {
+    cmds.push({
+      id: 'memory-search',
+      title: 'Search Memory',
+      subtitle: 'Search across past conversations',
+      icon: 'search-outline',
+      category: 'Navigation',
+      action: () => nav.push('/search'),
+    });
+  }
 
   for (const sessionId of extractRecentSessionIds(sessionsById)) {
     const session = sessionsById[sessionId];

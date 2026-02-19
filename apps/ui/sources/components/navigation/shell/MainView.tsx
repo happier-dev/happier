@@ -25,6 +25,7 @@ import { ConnectionStatusControl } from '@/components/navigation/ConnectionStatu
 import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useTabState } from '@/hooks/ui/useTabState';
 
 interface MainViewProps {
@@ -208,6 +209,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     const router = useRouter();
     const friendRequests = useFriendRequests();
     const inboxFriendsEnabled = useFriendsEnabled();
+    const voiceEnabled = useFeatureEnabled('voice');
     // Tab state management
     // NOTE: Zen tab removed - the feature never got to a useful state
     const { activeTab, setActiveTab } = useTabState();
@@ -297,7 +299,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
                         headerShadowVisible={false}
                         headerTransparent={true}
                     />
-                    <VoiceSurface variant="sidebar" />
+                    {voiceEnabled ? <VoiceSurface variant="sidebar" /> : null}
                 </View>
                 {renderTabContent()}
             </View>

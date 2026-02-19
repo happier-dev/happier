@@ -14,7 +14,7 @@ afterEach(() => {
 describe('AutomationsGate', () => {
     it('renders children when automations are enabled and experiments are on', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ automationsEnabled: true, automationsExistingSessionTarget: true });
+        stubServerFeaturesFetch({ automationsEnabled: true });
 
         const [{ AutomationsGate }, { getStorage }] = await Promise.all([
             import('./AutomationsGate'),
@@ -43,7 +43,7 @@ describe('AutomationsGate', () => {
 
     it('renders a disabled state when experiments are off', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ automationsEnabled: true, automationsExistingSessionTarget: true });
+        stubServerFeaturesFetch({ automationsEnabled: true });
 
         const { AutomationsGate } = await import('./AutomationsGate');
 

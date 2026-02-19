@@ -67,6 +67,13 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useFriendRequests: () => [],
     useSocketStatus: () => ({ status: 'connected' }),
     useRealtimeStatus: () => ({ status: 'idle' }),
+    useSetting: (key: string) => {
+        if (key === 'serverSelectionGroups') return [];
+        if (key === 'serverSelectionActiveTargetKind') return 'main_selection';
+        if (key === 'serverSelectionActiveTargetId') return '';
+        return null;
+    },
+    useSettings: () => ({}),
 }));
 
 vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
@@ -87,6 +94,10 @@ vi.mock('@/hooks/server/useFriendsIdentityReadiness', () => ({
 
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({
     useAutomationsSupport: () => ({ enabled: true }),
+}));
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => false,
 }));
 
 vi.mock('@/hooks/ui/useTabState', () => ({

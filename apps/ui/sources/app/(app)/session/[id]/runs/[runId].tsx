@@ -13,6 +13,7 @@ import { t } from '@/text';
 import { renderExecutionRunStructuredMeta } from '@/components/sessions/runs/renderExecutionRunStructuredMeta';
 import { ExecutionRunDetailsPanel } from '@/components/sessions/runs/ExecutionRunDetailsPanel';
 import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 type LoadState =
     | { status: 'loading' }
@@ -161,7 +162,7 @@ export default function SessionRunDetailsScreen() {
                                 accessibilityLabel="Stop run"
                                 onPress={() => {
                                     if (!sessionId || !runId) return;
-                                    void (async () => {
+                                    fireAndForget((async () => {
                                         setStopError(null);
                                         setIsStopping(true);
                                         try {
@@ -176,7 +177,7 @@ export default function SessionRunDetailsScreen() {
                                         } finally {
                                             setIsStopping(false);
                                         }
-                                    })();
+                                    })(), { tag: 'SessionRunDetailsScreen.stopRun' });
                                 }}
                                 disabled={isStopping}
                                 style={{
@@ -223,7 +224,7 @@ export default function SessionRunDetailsScreen() {
                                         if (!sessionId || !runId) return;
                                         const msg = sendText.trim();
                                         if (!msg) return;
-                                        void (async () => {
+                                        fireAndForget((async () => {
                                             setSendError(null);
                                             setIsSending(true);
                                             try {
@@ -238,7 +239,7 @@ export default function SessionRunDetailsScreen() {
                                             } finally {
                                                 setIsSending(false);
                                             }
-                                        })();
+                                        })(), { tag: 'SessionRunDetailsScreen.sendToRun' });
                                     }}
                                     disabled={isSending || sendText.trim().length === 0}
                                     style={{

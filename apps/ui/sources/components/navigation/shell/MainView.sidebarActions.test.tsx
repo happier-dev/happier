@@ -88,6 +88,10 @@ vi.mock('@/hooks/server/useAutomationsSupport', () => ({
     useAutomationsSupport: () => ({ enabled: true }),
 }));
 
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => false,
+}));
+
 vi.mock('@/hooks/ui/useTabState', () => ({
     useTabState: () => ({
         activeTab: 'sessions',

@@ -11,6 +11,7 @@ import { getServerUrl } from '@/sync/domains/server/serverConfig';
 import { getActiveServerId, listServerProfiles, setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { useAuth } from '@/auth/context/AuthContext';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useRouter } from 'expo-router';
 import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { Typography } from '@/constants/Typography';
@@ -149,7 +150,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
 
     React.useEffect(() => {
         let cancelled = false;
-        void (async () => {
+        fireAndForget((async () => {
             const entries = await Promise.all(servers.map(async (profile) => {
                 try {
                     const creds = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl);
@@ -162,7 +163,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
             const next: Record<string, 'signedIn' | 'signedOut' | 'unknown'> = {};
             for (const [id, status] of entries) next[id] = status;
             setAuthStatusByServerId(next);
-        })();
+        })(), { tag: 'ConnectionStatusControl.loadAuthStatusByServerId' });
         return () => {
             cancelled = true;
         };

@@ -12,12 +12,14 @@ import { useAuth } from '@/auth/context/AuthContext';
 import { useShallow } from 'zustand/react/shallow';
 import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { t } from '@/text';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
 export const ZenHome = () => {
     const insets = useSafeAreaInsets();
     const { theme } = useUnistyles();
     const auth = useAuth();
     const realtimeStatus = useRealtimeStatus();
+    const voiceEnabled = useFeatureEnabled('voice');
 
     // Get todos from storage
     const todoState = storage(useShallow(state => state.todoState));
@@ -86,7 +88,7 @@ export const ZenHome = () => {
     return (
         <>
             <ZenHeader />
-            {realtimeStatus !== 'disconnected' && (
+            {voiceEnabled && realtimeStatus !== 'disconnected' && (
                 <VoiceSurface variant="sidebar" />
             )}
             <ScrollView

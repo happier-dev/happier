@@ -6,6 +6,7 @@ import type { ReviewFindingsV1, ReviewTriageStatus } from '@happier-dev/protocol
 
 import { sessionExecutionRunAction } from '@/sync/ops/sessionExecutionRuns';
 import { sync } from '@/sync/sync';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 function formatFindingLocation(finding: ReviewFindingsV1['findings'][number]): string | null {
     if (!finding.filePath) return null;
@@ -62,7 +63,7 @@ export function ReviewFindingsMessageCard(props: {
     const hasDraft = Object.keys(draftStatusByFindingId).length > 0;
 
     const handleApplyTriage = React.useCallback(() => {
-        void (async () => {
+        fireAndForget((async () => {
             setSaveError(null);
             setIsSaving(true);
             try {
@@ -79,7 +80,7 @@ export function ReviewFindingsMessageCard(props: {
             } finally {
                 setIsSaving(false);
             }
-        })();
+        })(), { tag: 'ReviewFindingsMessageCard.applyTriage' });
     }, [props.sessionId, props.payload.runRef.runId, triageOverlay]);
 
     const acceptedFindingIds = React.useMemo(() => {
@@ -89,7 +90,7 @@ export function ReviewFindingsMessageCard(props: {
     }, [draftStatusByFindingId]);
 
     const handleApplyAcceptedFindings = React.useCallback(() => {
-        void (async () => {
+        fireAndForget((async () => {
             if (acceptedFindingIds.length === 0) return;
             setApplyError(null);
             setIsApplying(true);
@@ -118,7 +119,7 @@ export function ReviewFindingsMessageCard(props: {
             } finally {
                 setIsApplying(false);
             }
-        })();
+        })(), { tag: 'ReviewFindingsMessageCard.applyAcceptedFindings' });
     }, [acceptedFindingIds, findings, props.payload.runRef.callId, props.payload.runRef.runId, props.sessionId]);
 
     return (

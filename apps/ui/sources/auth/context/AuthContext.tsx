@@ -6,6 +6,7 @@ import { trackLogout } from '@/track';
 import { subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { startConcurrentSessionCacheSync, stopConcurrentSessionCacheSync } from '@/sync/runtime/orchestration/concurrentSessionCache';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 interface AuthContextType {
     isAuthenticated: boolean;
@@ -64,7 +65,7 @@ export function AuthProvider({ children, initialCredentials }: { children: React
             const serverKey = `${snapshot.serverId}|${snapshot.serverUrl}`;
             if (activeServerKeyRef.current === serverKey) return;
             activeServerKeyRef.current = serverKey;
-            void refreshFromActiveServer();
+            fireAndForget(refreshFromActiveServer(), { tag: 'AuthContext.refreshFromActiveServer' });
         });
         return unsubscribe;
     }, [refreshFromActiveServer]);

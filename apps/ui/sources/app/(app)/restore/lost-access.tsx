@@ -12,6 +12,7 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getAuthProvider } from '@/auth/providers/registry';
 import { Modal } from '@/modal';
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export default function LostAccess() {
     const router = useRouter();
@@ -19,7 +20,7 @@ export default function LostAccess() {
 
     React.useEffect(() => {
         let mounted = true;
-        void (async () => {
+        fireAndForget((async () => {
             try {
                 const features = await getReadyServerFeatures();
                 const resetGate = features?.features?.auth?.recovery?.providerReset ?? null;
@@ -29,7 +30,7 @@ export default function LostAccess() {
             } catch {
                 if (mounted) setProviders([]);
             }
-        })();
+        })(), { tag: 'LostAccess.loadRecoveryProviders' });
         return () => {
             mounted = false;
         };
