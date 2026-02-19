@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { InteractionManager } from 'react-native';
 
+import { fireAndForget } from '@/utils/system/fireAndForget';
+
 export function useNewSessionCapabilitiesPrefetch(params: Readonly<{
     enabled: boolean;
     serverId?: string | null;
@@ -42,12 +44,15 @@ export function useNewSessionCapabilitiesPrefetch(params: Readonly<{
                     const machine = params.machines.find((m) => m.id === machineId);
                     if (!machine) continue;
                     if (!params.isMachineOnline(machine)) continue;
-                    void params.prefetchMachineCapabilitiesIfStale({
-                        machineId,
-                        serverId: params.serverId,
-                        staleMs: params.staleMs,
-                        request: params.request,
-                    });
+                    fireAndForget(
+                        Promise.resolve().then(() => params.prefetchMachineCapabilitiesIfStale({
+                            machineId,
+                            serverId: params.serverId,
+                            staleMs: params.staleMs,
+                            request: params.request,
+                        })),
+                        { tag: `useNewSessionCapabilitiesPrefetch.prefetchWizardMachineGlyphs:${machineId}` },
+                    );
                 }
             } catch {
                 // best-effort prefetch only
@@ -65,12 +70,15 @@ export function useNewSessionCapabilitiesPrefetch(params: Readonly<{
         if (!params.isMachineOnline(machine)) return;
 
         InteractionManager.runAfterInteractions(() => {
-            void params.prefetchMachineCapabilitiesIfStale({
-                machineId: params.selectedMachineId!,
-                serverId: params.serverId,
-                staleMs: params.staleMs,
-                request: params.request,
-            });
+            fireAndForget(
+                Promise.resolve().then(() => params.prefetchMachineCapabilitiesIfStale({
+                    machineId: params.selectedMachineId!,
+                    serverId: params.serverId,
+                    staleMs: params.staleMs,
+                    request: params.request,
+                })),
+                { tag: `useNewSessionCapabilitiesPrefetch.prefetchSelectedMachine:${params.selectedMachineId}` },
+            );
         });
     }, [params.machines, params.selectedMachineId]);
 }

@@ -40,6 +40,11 @@ interface MultiTextInputProps {
     onKeyPress?: OnKeyPressCallback;
     onSelectionChange?: (selection: { start: number; end: number }) => void;
     onStateChange?: (state: TextInputState) => void;
+    // Web-only: file attachments via paste or drag-and-drop.
+    onFilesPasted?: (files: readonly File[]) => void;
+    onFilesDropped?: (files: readonly File[]) => void;
+    // Web-only: signal when a file drag is hovering over the input.
+    onFileDragActiveChange?: (active: boolean) => void;
 }
 
 export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextInputProps>((props, ref) => {

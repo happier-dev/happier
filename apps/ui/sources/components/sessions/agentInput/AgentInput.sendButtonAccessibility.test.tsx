@@ -90,6 +90,12 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
+const featureEnabledState: Record<string, boolean> = { voice: true };
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: (featureId: string) => featureEnabledState[featureId] === true,
+}));
+
 vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: (key: string) => {
         if (key === 'profiles') return [];
@@ -220,6 +226,38 @@ vi.mock('@/sync/acp/configOptionsControl', () => ({
 }));
 
 describe('AgentInput (send button accessibility)', () => {
+    it('hides the voice icon when voice is disabled (no text)', async () => {
+        featureEnabledState.voice = false;
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    sessionId="session-1"
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onMicPress={() => {}}
+                    isMicActive={false}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                />
+            );
+        });
+
+        const send = findSendPressable(tree!);
+        const images = send.findAllByType('Image' as any);
+        expect(images.length).toBe(0);
+
+        const octicons = send.findAllByType('Octicons' as any);
+        expect(octicons.some((n) => n.props?.name === 'arrow-up')).toBe(true);
+
+        act(() => tree!.unmount());
+        featureEnabledState.voice = true;
+    });
+
     it('sets an accessible label for session creation context (no sessionId)', async () => {
         const { AgentInput } = await import('./AgentInput');
 

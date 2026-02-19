@@ -19,6 +19,14 @@ function findPressableByLabel(tree: renderer.ReactTestRenderer, label: string): 
     ))[0];
 }
 
+function findPressableByAccessibilityLabel(tree: renderer.ReactTestRenderer, label: string): ReactTestInstance | undefined {
+    return tree.root.findAll((node) => (
+        typeof node.props?.onPress === 'function' &&
+        typeof node.props?.accessibilityLabel === 'string' &&
+        node.props.accessibilityLabel === label
+    ))[0];
+}
+
 function findSearchInput(tree: renderer.ReactTestRenderer): ReactTestInstance | undefined {
     return tree.root.findAll((node) => (
         typeof node.props?.onChangeText === 'function' &&
@@ -29,6 +37,12 @@ function findSearchInput(tree: renderer.ReactTestRenderer): ReactTestInstance | 
 
 function findTextNode(tree: renderer.ReactTestRenderer, value: string): ReactTestInstance | undefined {
     return tree.root.findAll((node) => nodeContainsExactText(node, value))[0];
+}
+
+function findNodeByAccessibilityLabel(tree: renderer.ReactTestRenderer, label: string): ReactTestInstance | undefined {
+    return tree.root.findAll((node) => (
+        typeof node.props?.accessibilityLabel === 'string' && node.props.accessibilityLabel === label
+    ))[0];
 }
 
 describe('ModelPickerOverlay', () => {
@@ -185,5 +199,56 @@ describe('ModelPickerOverlay', () => {
         });
 
         expect(onRequestCustomModel).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows a loading indicator when models are being probed', () => {
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        act(() => {
+            tree = renderer.create(
+                <ModelPickerOverlay
+                    title="Model"
+                    effectiveLabel="Default"
+                    notes={[]}
+                    options={[{ value: 'default', label: 'Default', description: '' }]}
+                    selectedValue="default"
+                    emptyText="empty"
+                    canEnterCustomModel={false}
+                    onSelect={() => {}}
+                    probe={{ phase: 'loading' }}
+                />,
+            );
+        });
+
+        expect(findNodeByAccessibilityLabel(tree!, 'Loading models…')).toBeTruthy();
+    });
+
+    it('calls refresh handler from the picker when provided', () => {
+        const onRefresh = vi.fn();
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        act(() => {
+            tree = renderer.create(
+                <ModelPickerOverlay
+                    title="Model"
+                    effectiveLabel="Default"
+                    notes={[]}
+                    options={[{ value: 'default', label: 'Default', description: '' }]}
+                    selectedValue="default"
+                    emptyText="empty"
+                    canEnterCustomModel={false}
+                    onSelect={() => {}}
+                    probe={{ phase: 'idle', onRefresh }}
+                />,
+            );
+        });
+
+        const refreshButton = findPressableByAccessibilityLabel(tree!, 'Refresh models');
+        expect(refreshButton).toBeTruthy();
+
+        act(() => {
+            refreshButton?.props?.onPress?.();
+        });
+
+        expect(onRefresh).toHaveBeenCalledTimes(1);
     });
 });

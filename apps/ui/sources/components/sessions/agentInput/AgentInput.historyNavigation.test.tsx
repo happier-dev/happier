@@ -122,6 +122,15 @@ vi.mock('@/sync/domains/state/storage', () => ({
     if (key === 'agentInputHistoryScope') return 'perSession';
     return null;
   },
+  useSettings: () => ({
+    profiles: [],
+    agentInputEnterToSend: true,
+    agentInputActionBarLayout: 'wrap',
+    agentInputChipDensity: 'labels',
+    sessionPermissionModeApplyTiming: 'immediate',
+    agentInputHistoryScope: 'perSession',
+  }),
+  useSessionMessages: () => ({ messages: [], isLoaded: true }),
 }));
 
 vi.mock('@/hooks/session/useUserMessageHistory', () => ({

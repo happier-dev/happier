@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Modal } from '@/modal';
 import { sync } from '@/sync/sync';
 import { getTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
     DEFAULT_NEW_SESSION_AUTOMATION_DRAFT,
     sanitizeNewSessionAutomationDraft,
@@ -59,6 +60,7 @@ import { useNewSessionDraftAutoPersist } from '@/components/sessions/new/hooks/u
 import { useCreateNewSession } from '@/components/sessions/new/hooks/useCreateNewSession';
 import { useNewSessionWizardProps } from '@/components/sessions/new/hooks/useNewSessionWizardProps';
 import { getAutomationChipLabel } from '@/components/sessions/new/modules/automationChipModel';
+import { canCreateNewSession } from '@/components/sessions/new/modules/canCreateNewSession';
 import { resolveNewSessionCapabilityServerId } from '@/components/sessions/new/modules/resolveNewSessionCapabilityServerId';
 import { resolveEffectiveAutomationDraft, shouldShowAutomationActionChips } from '@/components/sessions/new/modules/automationFeatureGate';
 import { listAgentInputActionChipActionIds } from '@/components/sessions/agentInput/actionChips/listAgentInputActionChipActionIds';
@@ -316,7 +318,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             // Throttled to avoid spamming the server when navigating back/forth.
             // Defer until after interactions so the screen feels instant on iOS.
             InteractionManager.runAfterInteractions(() => {
-                void sync.refreshMachinesThrottled({ staleMs: 15_000 });
+                fireAndForget(sync.refreshMachinesThrottled({ staleMs: 15_000 }), { tag: 'NewSessionScreenModel.refreshMachinesThrottled.focus' });
             });
         }, [])
     );
@@ -483,10 +485,11 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         machineIdParam,
         pathParam,
     });
-    const { preflightModels, modelOptions } = useNewSessionPreflightModelsState({
+    const { preflightModels, modelOptions, probe: modelOptionsProbeState } = useNewSessionPreflightModelsState({
         agentType,
         selectedMachineId,
         capabilityServerId,
+        cwd: selectedPath,
     });
 
     const allProfilesRequirementNames = React.useMemo(() => {
@@ -830,7 +833,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 
     const selectedMachine = React.useMemo(() => {
         if (!selectedMachineId) return null;
-        return machines.find(m => m.id === selectedMachineId);
+        return machines.find(m => m.id === selectedMachineId) ?? null;
     }, [selectedMachineId, machines]);
 
     const secretRequirements = React.useMemo(() => {
@@ -918,15 +921,15 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         // - machine list from server (new machines / metadata updates)
         // - CLI detection cache for selected machine (glyphs + login/availability)
         // - machine env presence preflight cache (API key env var presence)
-        void sync.refreshMachinesThrottled({ staleMs: 0, force: true });
+        fireAndForget(sync.refreshMachinesThrottled({ staleMs: 0, force: true }), { tag: 'NewSessionScreenModel.refreshMachinesThrottled.manual' });
         refreshMachineEnvPresence();
 
         if (selectedMachineId) {
-            void prefetchMachineCapabilities({
+            fireAndForget(prefetchMachineCapabilities({
                 machineId: selectedMachineId,
                 serverId: capabilityServerId,
                 request: CAPABILITIES_REQUEST_NEW_SESSION,
-            });
+            }), { tag: 'NewSessionScreenModel.prefetchMachineCapabilities' });
         }
     }, [capabilityServerId, refreshMachineEnvPresence, selectedMachineId, sync]);
 
@@ -1077,8 +1080,12 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 
     // Validation
     const canCreate = React.useMemo(() => {
-        return selectedMachineId !== null && selectedPath.trim() !== '';
-    }, [selectedMachineId, selectedPath]);
+        return canCreateNewSession({
+            selectedMachineId,
+            selectedMachine,
+            selectedPath,
+        });
+    }, [selectedMachine, selectedMachineId, selectedPath]);
 
     // On iOS, keep tap handlers extremely light so selection state can commit instantly.
     // We defer any follow-up adjustments (agent/session-type/permission defaults) until after interactions.
@@ -1844,6 +1851,11 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
                 handleAgentClick,
                 permissionMode,
                 handlePermissionModeChange,
+                modelOptions,
+                modelOptionsProbe: {
+                    phase: modelOptionsProbeState.phase,
+                    onRefresh: modelOptionsProbeState.refresh,
+                },
                 modelMode,
                 setModelMode,
                 connectionStatus,
@@ -1921,6 +1933,10 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         agentType,
         setAgentType,
         modelOptions,
+        modelOptionsProbe: {
+            phase: modelOptionsProbeState.phase,
+            onRefresh: modelOptionsProbeState.refresh,
+        },
         modelMode,
         setModelMode,
         selectedIndicatorColor,

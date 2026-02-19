@@ -40,6 +40,8 @@ interface MultiTextInputProps {
     onKeyPress?: OnKeyPressCallback;
     onSelectionChange?: (selection: { start: number; end: number }) => void;
     onStateChange?: (state: TextInputState) => void;
+    onFilesPasted?: (files: readonly File[]) => void;
+    onFilesDropped?: (files: readonly File[]) => void;
 }
 
 export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextInputProps>((props, ref) => {
@@ -141,6 +143,58 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         }
     }, [value, onSelectionChange, onStateChange]);
 
+    const handlePaste = React.useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+        const cb = props.onFilesPasted;
+        const items = e.clipboardData?.items;
+        if (!cb || !items) return;
+
+        const files: File[] = [];
+        for (const item of Array.from(items)) {
+            if (item.kind !== 'file') continue;
+            const file = item.getAsFile();
+            if (file) files.push(file);
+        }
+        if (files.length > 0) cb(files);
+    }, [props.onFilesPasted]);
+
+    const dragDepthRef = React.useRef(0);
+    const setDragActive = React.useCallback((active: boolean) => {
+        props.onFileDragActiveChange?.(active);
+    }, [props.onFileDragActiveChange]);
+
+    const handleDragEnter = React.useCallback((e: React.DragEvent<HTMLTextAreaElement>) => {
+        if (!props.onFilesDropped) return;
+        const types = Array.from(e.dataTransfer?.types ?? []);
+        if (!types.includes('Files')) return;
+        dragDepthRef.current += 1;
+        setDragActive(true);
+    }, [props.onFilesDropped, setDragActive]);
+
+    const handleDragLeave = React.useCallback((e: React.DragEvent<HTMLTextAreaElement>) => {
+        if (!props.onFilesDropped) return;
+        const types = Array.from(e.dataTransfer?.types ?? []);
+        if (!types.includes('Files')) return;
+        dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+        if (dragDepthRef.current === 0) {
+            setDragActive(false);
+        }
+    }, [props.onFilesDropped, setDragActive]);
+
+    const handleDragOver = React.useCallback((e: React.DragEvent<HTMLTextAreaElement>) => {
+        if (!props.onFilesDropped) return;
+        e.preventDefault();
+    }, [props.onFilesDropped]);
+
+    const handleDrop = React.useCallback((e: React.DragEvent<HTMLTextAreaElement>) => {
+        const cb = props.onFilesDropped;
+        if (!cb) return;
+        e.preventDefault();
+        dragDepthRef.current = 0;
+        setDragActive(false);
+        const files = Array.from(e.dataTransfer?.files ?? []);
+        if (files.length > 0) cb(files);
+    }, [props.onFilesDropped, setDragActive]);
+
     // Imperative handle for direct control
     React.useImperativeHandle(ref, () => ({
         setTextAndSelection: (text: string, selection: { start: number; end: number }) => {
@@ -197,6 +251,11 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
                 onChange={handleChange}
                 onSelect={handleSelect}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+                onDragEnter={handleDragEnter}
+                onDragLeave={handleDragLeave}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
                 readOnly={props.editable === false}
                 maxRows={maxRows}
                 autoCapitalize="sentences"

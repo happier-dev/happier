@@ -73,7 +73,9 @@ export function useServerScopedMachineOptions(params: UseServerScopedMachineOpti
             const baseMachines = isActive
                 ? params.activeMachines
                 : (machineListByServerId[serverId] ?? []);
-            const machines = (baseMachines ?? []).map((machine) => buildServerScopedMachine(machine, { serverId, serverName }));
+            const machines = (baseMachines ?? [])
+                .filter((machine) => !machine.revokedAt)
+                .map((machine) => buildServerScopedMachine(machine, { serverId, serverName }));
             return {
                 serverId,
                 serverName,

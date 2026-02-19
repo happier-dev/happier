@@ -6,6 +6,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Color from 'color';
 import { Typography } from '@/constants/Typography';
 import { AgentInput } from '@/components/sessions/agentInput';
+import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
@@ -29,6 +30,10 @@ import { getAgentCore } from '@/agents/catalog/catalog';
 import { getAgentPickerOptions } from '@/agents/catalog/agentPickerOptions';
 import { CliNotDetectedBanner, type CliNotDetectedBannerDismissScope } from '@/components/sessions/new/components/CliNotDetectedBanner';
 import { InstallableDepInstaller, type InstallableDepInstallerProps } from '@/components/machines/InstallableDepInstaller';
+import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
+import { useAttachmentDraftManager } from '@/components/sessions/attachments/useAttachmentDraftManager';
+import { formatAttachmentsBlock, uploadAttachmentDraftsToSession } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
+import { sync } from '@/sync/sync';
 
 export interface NewSessionWizardLayoutProps {
     theme: any;
@@ -74,6 +79,7 @@ export interface NewSessionWizardAgentProps {
     agentType: AgentId;
     setAgentType: (agent: AgentId) => void;
     modelOptions: ReadonlyArray<{ value: ModelMode; label: string; description: string }>;
+    modelOptionsProbe?: React.ComponentProps<typeof AgentInput>['modelOptionsOverrideProbe'];
     modelMode: ModelMode | undefined;
     setModelMode: (mode: ModelMode) => void;
     selectedIndicatorColor: string;
@@ -108,7 +114,7 @@ export interface NewSessionWizardMachineProps {
 export interface NewSessionWizardFooterProps {
     sessionPrompt: string;
     setSessionPrompt: (v: string) => void;
-    handleCreateSession: () => void;
+    handleCreateSession: (opts?: Readonly<{ initialMessage?: 'send' | 'skip'; afterCreated?: (sessionId: string) => void | Promise<void> }>) => void;
     canCreate: boolean;
     isCreating: boolean;
     emptyAutocompletePrefixes: React.ComponentProps<typeof AgentInput>['autocompletePrefixes'];
@@ -183,6 +189,78 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         scrollToWizardSection('agent');
     }, [scrollToWizardSection]);
 
+    const attachmentsUploadsEnabled = useFeatureEnabled('attachments.uploads');
+    const attachmentsUploadConfig = useAttachmentsUploadConfig();
+    const attachmentDraftManager = useAttachmentDraftManager({
+        enabled: attachmentsUploadsEnabled,
+        maxFileBytes: attachmentsUploadConfig.maxFileBytes,
+    });
+    const {
+        filePickerRef,
+        drafts,
+        hasSendableAttachments,
+        agentInputAttachments,
+        addWebFiles,
+        addPickedAttachments,
+        applyDraftPatch,
+        clearDrafts,
+    } = attachmentDraftManager;
+
+    const extraActionChips = React.useMemo(() => {
+        const base = props.footer.agentInputExtraActionChips ?? [];
+        if (!attachmentsUploadsEnabled) return base;
+        return [
+            {
+                key: 'attachments-add',
+                render: ({ chipStyle, iconColor, showLabel, textStyle }: any) => (
+                    <Pressable
+                        onPress={() => filePickerRef.current?.open()}
+                        disabled={props.footer.isCreating}
+                        style={({ pressed }) => chipStyle(Boolean(pressed))}
+                    >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Ionicons name="attach-outline" size={16} color={iconColor} />
+                            {showLabel ? <Text style={textStyle}>Attach</Text> : null}
+                        </View>
+                    </Pressable>
+                ),
+            },
+            ...base,
+        ] as any;
+    }, [attachmentsUploadsEnabled, filePickerRef, props.footer.agentInputExtraActionChips, props.footer.isCreating]);
+
+    const handleSend = React.useCallback(() => {
+        if (!attachmentsUploadsEnabled || drafts.length === 0) {
+            props.footer.handleCreateSession();
+            return;
+        }
+
+        const initialPrompt = String(props.footer.sessionPrompt ?? '');
+        props.footer.handleCreateSession({
+            initialMessage: 'skip',
+            afterCreated: async (sessionId) => {
+                const { uploaded } = await uploadAttachmentDraftsToSession({
+                    sessionId,
+                    drafts,
+                    config: attachmentsUploadConfig,
+                    applyDraftPatch,
+                });
+                const attachmentsBlock = formatAttachmentsBlock(uploaded);
+                const trimmed = initialPrompt.trim();
+                const text = trimmed.length > 0 ? `${trimmed}\n\n${attachmentsBlock}` : attachmentsBlock;
+                await sync.sendMessage(sessionId, text);
+                clearDrafts();
+            },
+        });
+    }, [
+        applyDraftPatch,
+        attachmentsUploadConfig,
+        attachmentsUploadsEnabled,
+        clearDrafts,
+        drafts,
+        props.footer,
+    ]);
+
     const onRefreshMachines = props.machine.onRefreshMachines;
 
     const {
@@ -220,6 +298,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         agentType,
         setAgentType,
         modelOptions,
+        modelOptionsProbe,
         modelMode,
         setModelMode,
         selectedIndicatorColor,
@@ -250,14 +329,13 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         setFavoriteDirectories,
     } = props.machine;
 
-    const {
-        sessionPrompt,
-        setSessionPrompt,
-        handleCreateSession,
-        canCreate,
-        isCreating,
-        emptyAutocompletePrefixes,
-        emptyAutocompleteSuggestions,
+	    const {
+	        sessionPrompt,
+	        setSessionPrompt,
+	        canCreate,
+	        isCreating,
+	        emptyAutocompletePrefixes,
+	        emptyAutocompleteSuggestions,
         connectionStatus,
         resumeSessionId,
         onResumeClick,
@@ -684,13 +762,16 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
 	                            <AgentInput
 	                                value={sessionPrompt}
 	                                onChangeText={setSessionPrompt}
-	                                onSend={handleCreateSession}
+	                                onSend={handleSend}
 	                                isSendDisabled={!canCreate}
 	                                isSending={isCreating}
 	                                placeholder={t('session.inputPlaceholder')}
 	                                autocompletePrefixes={emptyAutocompletePrefixes}
 	                                autocompleteSuggestions={emptyAutocompleteSuggestions}
-                                    extraActionChips={props.footer.agentInputExtraActionChips}
+	                                    extraActionChips={extraActionChips}
+	                                    attachments={agentInputAttachments}
+	                                    onAttachmentsAdded={attachmentsUploadsEnabled ? addWebFiles : undefined}
+	                                    hasSendableAttachments={hasSendableAttachments}
 	                                inputMaxHeight={inputMaxHeight}
 	                                agentType={agentType}
 	                                onAgentClick={handleAgentInputAgentClick}
@@ -699,6 +780,8 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
 	                                onPermissionClick={handleAgentInputPermissionClick}
                                 modelMode={modelMode}
                                 onModelModeChange={setModelMode}
+                                modelOptionsOverride={modelOptions}
+                                modelOptionsOverrideProbe={modelOptionsProbe}
                                 connectionStatus={connectionStatus}
                                 machineName={selectedMachine?.metadata?.displayName || selectedMachine?.metadata?.host}
                                 onMachineClick={handleAgentInputMachineClick}
@@ -707,16 +790,19 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                 resumeSessionId={resumeSessionId}
                                 onResumeClick={onResumeClick}
                                 resumeIsChecking={resumeIsChecking}
-                                contentPaddingHorizontal={0}
-                                {...(useProfiles ? {
-                                    profileId: selectedProfileId,
-                                                onProfileClick: handleAgentInputProfileClick,
-                                    envVarsCount: selectedProfileEnvVarsCount || undefined,
-                                    onEnvVarsClick: selectedProfileEnvVarsCount > 0 ? handleEnvVarsClick : undefined,
-                                } : {})}
-                            />
-                        </View>
-                    </View>
+	                                contentPaddingHorizontal={0}
+	                                {...(useProfiles ? {
+	                                    profileId: selectedProfileId,
+	                                                onProfileClick: handleAgentInputProfileClick,
+	                                    envVarsCount: selectedProfileEnvVarsCount || undefined,
+	                                    onEnvVarsClick: selectedProfileEnvVarsCount > 0 ? handleEnvVarsClick : undefined,
+	                                } : {})}
+	                            />
+	                            {attachmentsUploadsEnabled ? (
+	                                <AttachmentFilePicker ref={filePickerRef} onAttachmentsPicked={addPickedAttachments} multiple />
+	                            ) : null}
+	                        </View>
+	                    </View>
                 </View>
             </View>
         </KeyboardAvoidingView>

@@ -103,6 +103,14 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
         return null;
     },
+    useSettings: () => ({
+        profiles: [],
+        agentInputEnterToSend: true,
+        agentInputActionBarLayout: 'wrap',
+        agentInputChipDensity: 'labels',
+        sessionPermissionModeApplyTiming: 'immediate',
+    }),
+    useSessionMessages: () => ({ messages: [], isLoaded: true }),
 }));
 
 vi.mock('@/sync/domains/state/storageStore', () => ({

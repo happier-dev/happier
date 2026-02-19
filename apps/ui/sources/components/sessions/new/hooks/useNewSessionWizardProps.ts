@@ -77,6 +77,7 @@ export function useNewSessionWizardProps(params: Readonly<{
     agentType: AgentId;
     setAgentType: (agent: AgentId) => void;
     modelOptions: ReadonlyArray<{ value: ModelMode; label: string; description: string }>;
+    modelOptionsProbe?: NewSessionWizardAgentProps['modelOptionsProbe'];
     modelMode: ModelMode | undefined;
     setModelMode: (mode: ModelMode) => void;
     selectedIndicatorColor: string;
@@ -299,6 +300,7 @@ export function useNewSessionWizardProps(params: Readonly<{
             agentType: params.agentType,
             setAgentType: params.setAgentType,
             modelOptions: params.modelOptions,
+            modelOptionsProbe: params.modelOptionsProbe,
             modelMode: params.modelMode,
             setModelMode: params.setModelMode,
             selectedIndicatorColor: params.selectedIndicatorColor,
@@ -317,6 +319,7 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.isCliBannerDismissed,
         params.modelMode,
         params.modelOptions,
+        params.modelOptionsProbe,
         params.permissionMode,
         params.profileMap,
         params.selectedIndicatorColor,

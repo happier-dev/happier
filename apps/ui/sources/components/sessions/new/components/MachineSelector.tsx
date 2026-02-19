@@ -36,6 +36,10 @@ export interface MachineSelectorProps {
     favoritesSectionTitle?: string;
     allSectionTitle?: string;
     noItemsMessage?: string;
+    /**
+     * When true, offline machines are visible but non-selectable (greyed out + not-allowed cursor on web).
+     */
+    disableOfflineMachines?: boolean;
 }
 
 export function MachineSelector({
@@ -57,6 +61,7 @@ export function MachineSelector({
     favoritesSectionTitle: favoritesSectionTitleProp,
     allSectionTitle: allSectionTitleProp,
     noItemsMessage: noItemsMessageProp,
+    disableOfflineMachines = true,
 }: MachineSelectorProps) {
     const { theme } = useUnistyles();
 
@@ -65,6 +70,16 @@ export function MachineSelector({
     const favoritesSectionTitle = favoritesSectionTitleProp ?? t('newSession.machinePicker.favoritesTitle');
     const allSectionTitle = allSectionTitleProp ?? t('newSession.machinePicker.allTitle');
     const noItemsMessage = noItemsMessageProp ?? t('newSession.machinePicker.emptyMessage');
+
+    const visibleMachines = React.useMemo(() => machines.filter((machine) => !machine.revokedAt), [machines]);
+    const visibleRecentMachines = React.useMemo(
+        () => recentMachines.filter((machine) => !machine.revokedAt),
+        [recentMachines],
+    );
+    const visibleFavoriteMachines = React.useMemo(
+        () => favoriteMachines.filter((machine) => !machine.revokedAt),
+        [favoriteMachines],
+    );
 
     return (
         <SearchableListSelector<Machine>
@@ -95,6 +110,7 @@ export function MachineSelector({
                         isPulsing: !offline,
                     };
                 },
+                isItemDisabled: disableOfflineMachines ? (machine) => !isMachineOnline(machine) : undefined,
                 ...(showCliGlyphs ? {
                     getItemStatusExtra: (machine: Machine) => (
                         <MachineCliGlyphs
@@ -107,7 +123,7 @@ export function MachineSelector({
                 } : {}),
                 formatForDisplay: (machine) => machine.metadata?.displayName || machine.metadata?.host || machine.id,
                 parseFromDisplay: (text) => {
-                    return machines.find(m =>
+                    return visibleMachines.find(m =>
                         m.metadata?.displayName === text || m.metadata?.host === text || m.id === text
                     ) || null;
                 },
@@ -128,9 +144,9 @@ export function MachineSelector({
                 showSearch,
                 allowCustomInput: false,
             }}
-            items={machines}
-            recentItems={recentMachines}
-            favoriteItems={favoriteMachines}
+            items={visibleMachines}
+            recentItems={visibleRecentMachines}
+            favoriteItems={visibleFavoriteMachines}
             selectedItem={selectedMachine}
             onSelect={onSelect}
             onToggleFavorite={onToggleFavorite}

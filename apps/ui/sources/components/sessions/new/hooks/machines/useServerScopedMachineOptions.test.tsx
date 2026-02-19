@@ -174,4 +174,47 @@ describe('useServerScopedMachineOptions', () => {
         expect(remoteGroup?.machines).toEqual([]);
         expect(fetchAndApplyMachinesMock).not.toHaveBeenCalled();
     });
+
+    it('filters revoked machines out of all groups', async () => {
+        const captured: Array<ReturnType<typeof useServerScopedMachineOptions>> = [];
+
+        getCredentialsForServerUrlMock.mockReset();
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'token', secret: 'secret' });
+        fetchAndApplyMachinesMock.mockReset();
+
+        const activeRevoked = { ...createMachine('machine-a'), revokedAt: 123 } as Machine;
+        const remoteRevoked = { ...createMachine('machine-b'), revokedAt: 456 } as Machine;
+
+        act(() => {
+            storage.setState((state) => ({
+                ...state,
+                machineListByServerId: {
+                    ...state.machineListByServerId,
+                    'server-b': [remoteRevoked],
+                },
+                machineListStatusByServerId: {
+                    ...state.machineListStatusByServerId,
+                    'server-b': 'idle',
+                },
+            }));
+        });
+
+        await act(async () => {
+            renderer.create(
+                <Probe
+                    allowedServerIds={['server-a', 'server-b']}
+                    activeServerId="server-a"
+                    activeMachines={[activeRevoked]}
+                    onGroups={(groups) => captured.push(groups)}
+                />,
+            );
+            await Promise.resolve();
+        });
+
+        const latest = captured.at(-1) ?? [];
+        const activeGroup = latest.find((group) => group.serverId === 'server-a');
+        const remoteGroup = latest.find((group) => group.serverId === 'server-b');
+        expect(activeGroup?.machines).toEqual([]);
+        expect(remoteGroup?.machines).toEqual([]);
+    });
 });

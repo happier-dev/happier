@@ -1,13 +1,20 @@
 import * as React from 'react';
 import type { ViewStyle } from 'react-native';
-import { Platform, View } from 'react-native';
+import { Platform, Pressable, Text, View } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SessionTypeSelectorRows } from '@/components/ui/forms/SessionTypeSelector';
 import { AgentInput } from '@/components/sessions/agentInput';
+import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
+import { Ionicons } from '@expo/vector-icons';
 import { PopoverBoundaryProvider } from '@/components/ui/popover';
 import { PopoverPortalTargetProvider } from '@/components/ui/popover';
 import { t } from '@/text';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
+import { useAttachmentDraftManager } from '@/components/sessions/attachments/useAttachmentDraftManager';
+import { formatAttachmentsBlock, uploadAttachmentDraftsToSession } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
+import { sync } from '@/sync/sync';
 
 export function NewSessionSimplePanel(props: Readonly<{
     popoverBoundaryRef: React.RefObject<View>;
@@ -23,7 +30,7 @@ export function NewSessionSimplePanel(props: Readonly<{
     setSessionType: (t: 'simple' | 'worktree') => void;
     sessionPrompt: string;
     setSessionPrompt: (v: string) => void;
-    handleCreateSession: () => void;
+    handleCreateSession: (opts?: Readonly<{ initialMessage?: 'send' | 'skip'; afterCreated?: (sessionId: string) => void | Promise<void> }>) => void;
     canCreate: boolean;
     isCreating: boolean;
     emptyAutocompletePrefixes: React.ComponentProps<typeof AgentInput>['autocompletePrefixes'];
@@ -36,6 +43,8 @@ export function NewSessionSimplePanel(props: Readonly<{
     handlePermissionModeChange: React.ComponentProps<typeof AgentInput>['onPermissionModeChange'];
     modelMode: React.ComponentProps<typeof AgentInput>['modelMode'];
     setModelMode: React.ComponentProps<typeof AgentInput>['onModelModeChange'];
+    modelOptions: ReadonlyArray<{ value: string; label: string; description: string }>;
+    modelOptionsProbe?: React.ComponentProps<typeof AgentInput>['modelOptionsOverrideProbe'];
     connectionStatus: React.ComponentProps<typeof AgentInput>['connectionStatus'];
     machineName: string | undefined;
     handleMachineClick: React.ComponentProps<typeof AgentInput>['onMachineClick'];
@@ -51,6 +60,78 @@ export function NewSessionSimplePanel(props: Readonly<{
     selectedProfileEnvVarsCount: number;
     handleEnvVarsClick: () => void;
 }>): React.ReactElement {
+    const attachmentsUploadsEnabled = useFeatureEnabled('attachments.uploads');
+    const attachmentsUploadConfig = useAttachmentsUploadConfig();
+    const attachmentDraftManager = useAttachmentDraftManager({
+        enabled: attachmentsUploadsEnabled,
+        maxFileBytes: attachmentsUploadConfig.maxFileBytes,
+    });
+    const {
+        filePickerRef,
+        drafts,
+        hasSendableAttachments,
+        agentInputAttachments,
+        addWebFiles,
+        addPickedAttachments,
+        applyDraftPatch,
+        clearDrafts,
+    } = attachmentDraftManager;
+
+    const extraActionChips = React.useMemo(() => {
+        const base = props.agentInputExtraActionChips ?? [];
+        if (!attachmentsUploadsEnabled) return base;
+        return [
+            {
+                key: 'attachments-add',
+                render: ({ chipStyle, iconColor, showLabel, textStyle }: any) => (
+                    <Pressable
+                        onPress={() => filePickerRef.current?.open()}
+                        disabled={props.isCreating}
+                        style={({ pressed }) => chipStyle(Boolean(pressed))}
+                    >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Ionicons name="attach-outline" size={16} color={iconColor} />
+                            {showLabel ? <Text style={textStyle}>Attach</Text> : null}
+                        </View>
+                    </Pressable>
+                ),
+            },
+            ...base,
+        ] as any;
+    }, [attachmentsUploadsEnabled, filePickerRef, props.agentInputExtraActionChips, props.isCreating]);
+
+    const handleSend = React.useCallback(() => {
+        if (!attachmentsUploadsEnabled || drafts.length === 0) {
+            props.handleCreateSession();
+            return;
+        }
+
+        const initialPrompt = String(props.sessionPrompt ?? '');
+        props.handleCreateSession({
+            initialMessage: 'skip',
+            afterCreated: async (sessionId) => {
+                const { uploaded } = await uploadAttachmentDraftsToSession({
+                    sessionId,
+                    drafts,
+                    config: attachmentsUploadConfig,
+                    applyDraftPatch,
+                });
+                const attachmentsBlock = formatAttachmentsBlock(uploaded);
+                const trimmed = initialPrompt.trim();
+                const text = trimmed.length > 0 ? `${trimmed}\n\n${attachmentsBlock}` : attachmentsBlock;
+                await sync.sendMessage(sessionId, text);
+                clearDrafts();
+            },
+        });
+    }, [
+        applyDraftPatch,
+        attachmentsUploadConfig,
+        attachmentsUploadsEnabled,
+        clearDrafts,
+        drafts,
+        props,
+    ]);
+
     return (
         <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -113,20 +194,25 @@ export function NewSessionSimplePanel(props: Readonly<{
                                         <AgentInput
                                             value={props.sessionPrompt}
                                             onChangeText={props.setSessionPrompt}
-                                            onSend={props.handleCreateSession}
+                                            onSend={handleSend}
                                             isSendDisabled={!props.canCreate}
                                             isSending={props.isCreating}
                                             placeholder={t('session.inputPlaceholder')}
                                             autocompletePrefixes={props.emptyAutocompletePrefixes}
                                             autocompleteSuggestions={props.emptyAutocompleteSuggestions}
-                                            extraActionChips={props.agentInputExtraActionChips}
+                                            extraActionChips={extraActionChips}
                                             inputMaxHeight={props.sessionPromptInputMaxHeight}
                                             agentType={props.agentType}
                                             onAgentClick={props.handleAgentClick}
+                                            attachments={agentInputAttachments}
+                                            onAttachmentsAdded={attachmentsUploadsEnabled ? addWebFiles : undefined}
+                                            hasSendableAttachments={hasSendableAttachments}
                                             permissionMode={props.permissionMode}
                                             onPermissionModeChange={props.handlePermissionModeChange}
                                             modelMode={props.modelMode}
                                             onModelModeChange={props.setModelMode}
+                                            modelOptionsOverride={props.modelOptions}
+                                            modelOptionsOverrideProbe={props.modelOptionsProbe}
                                             connectionStatus={props.connectionStatus}
                                             machineName={props.machineName}
                                             onMachineClick={props.handleMachineClick}
@@ -146,6 +232,9 @@ export function NewSessionSimplePanel(props: Readonly<{
                                                 }
                                                 : {})}
                                         />
+                                        {attachmentsUploadsEnabled ? (
+                                            <AttachmentFilePicker ref={filePickerRef} onAttachmentsPicked={addPickedAttachments} multiple />
+                                        ) : null}
                                     </View>
                                 </View>
                             </View>

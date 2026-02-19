@@ -7,7 +7,7 @@ import { MultiTextInput, KeyPressEvent } from '@/components/ui/forms/MultiTextIn
 import { Switch } from '@/components/ui/forms/Switch';
 import { Typography } from '@/constants/Typography';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
-import { getModelOptionsForSession, supportsFreeformModelSelectionForSession } from '@/sync/domains/models/modelOptions';
+import { getModelOptionsForSession, supportsFreeformModelSelectionForSession, type ModelOption } from '@/sync/domains/models/modelOptions';
 import { describeEffectiveModelMode } from '@/sync/domains/models/describeEffectiveModelMode';
 import { Modal } from '@/modal';
 import {
@@ -32,7 +32,7 @@ import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 import { TextInputState, MultiTextInputHandle } from '@/components/ui/forms/MultiTextInput';
 import { applySuggestion } from '@/components/autocomplete/applySuggestion';
 import { SourceControlStatusBadge, useHasMeaningfulScmStatus } from '@/components/sessions/sourceControl/status';
-import { ModelPickerOverlay } from '@/components/model/ModelPickerOverlay';
+import { ModelPickerOverlay, type ModelPickerProbeState } from '@/components/model/ModelPickerOverlay';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSetting } from '@/sync/domains/state/storage';
 import { useUserMessageHistory } from '@/hooks/session/useUserMessageHistory';
@@ -48,6 +48,7 @@ import { ResumeChip, formatResumeChipLabel, RESUME_CHIP_ICON_NAME, RESUME_CHIP_I
 import { PathAndResumeRow } from './PathAndResumeRow';
 import { getHasAnyAgentInputActions, shouldShowPathAndResumeRow } from './actionBarLogic';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { computeAgentInputDefaultMaxHeight } from './inputMaxHeight';
 import { getContextWarning } from './contextWarning';
 import { shouldRenderPermissionChip } from './permissionChipVisibility';
@@ -71,6 +72,13 @@ export type AgentInputExtraActionChip = Readonly<{
     render: (ctx: AgentInputExtraActionChipRenderContext) => React.ReactNode;
 }>;
 
+export type AgentInputAttachment = Readonly<{
+    key: string;
+    label: string;
+    status?: 'pending' | 'uploading' | 'uploaded' | 'error';
+    onRemove?: () => void;
+}>;
+
 interface AgentInputProps {
     value: string;
     placeholder: string;
@@ -84,9 +92,36 @@ interface AgentInputProps {
     onPermissionModeChange?: (mode: PermissionMode) => void;
     onPermissionClick?: () => void;
     onAcpSessionModeChange?: (modeId: string) => void;
+    /**
+     * Optional override for ACP "session mode" picker options (e.g. OpenCode plan/build).
+     *
+     * Used by new-session flows to surface ACP modes before a session exists.
+     */
+    acpSessionModeOptionsOverride?: ReadonlyArray<Readonly<{ id: string; name: string; description?: string }>>;
+    /**
+     * Optional selected ACP mode when using `acpSessionModeOptionsOverride`.
+     *
+     * When null/empty, the UI should behave like "Default" (no override).
+     */
+    acpSessionModeSelectedIdOverride?: string | null;
+    /**
+     * Optional: show a probe/loading state + refresh control in the ACP mode picker.
+     */
+    acpSessionModeOptionsOverrideProbe?: ModelPickerProbeState;
     onAcpConfigOptionChange?: (configId: string, valueId: AcpConfigOptionValueId) => void;
     modelMode?: ModelMode;
     onModelModeChange?: (mode: ModelMode) => void;
+    /**
+     * Optional override for model picker options.
+     *
+     * Used by new-session flows to display preflight/probed model lists before a session exists.
+     */
+    modelOptionsOverride?: readonly ModelOption[];
+    /**
+     * Optional: show a probe/loading state + refresh control in the model picker.
+     * Intended for preflight (no-session) flows that dynamically probe models.
+     */
+    modelOptionsOverrideProbe?: ModelPickerProbeState;
     metadata?: Metadata | null;
     onAbort?: () => void | Promise<void>;
     showAbortButton?: boolean;
@@ -129,6 +164,8 @@ interface AgentInputProps {
     panelStyle?: ViewStyle;
     maxWidthCap?: number | null;
     extraActionChips?: ReadonlyArray<AgentInputExtraActionChip>;
+    attachments?: ReadonlyArray<AgentInputAttachment>;
+    onAttachmentsAdded?: (files: readonly File[]) => void;
     hasSendableAttachments?: boolean;
     permissionRequests?: ReadonlyArray<PendingPermissionRequest>;
     canApprovePermissions?: boolean;
@@ -469,6 +506,64 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     actionButtonIcon: {
         color: theme.colors.button.secondary.tint,
     },
+    attachmentsRow: {
+        paddingHorizontal: 12,
+        paddingTop: 8,
+        paddingBottom: 4,
+    },
+    attachmentChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        backgroundColor: theme.colors.surface,
+    },
+    attachmentChipText: {
+        color: theme.colors.text,
+        fontSize: 12,
+        maxWidth: 180,
+        ...Typography.default(),
+    },
+    fileDropOverlay: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 50,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.78)',
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        borderRadius: Platform.select({ default: 16, android: 20 }),
+        ...(Platform.OS === 'web'
+            ? ({
+                // RN-web supports `backdropFilter`; native platforms ignore it.
+                backdropFilter: 'blur(2px)',
+            } as any)
+            : null),
+    },
+    fileDropOverlayContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        borderRadius: 999,
+        backgroundColor: 'rgba(255,255,255,0.92)',
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+    },
+    fileDropOverlayText: {
+        color: theme.colors.textSecondary,
+        fontSize: 13,
+        ...Typography.default('semiBold'),
+    },
 }));
 
 export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, AgentInputProps>((props, ref) => {
@@ -476,6 +571,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const { theme } = useUnistyles();
     const { width: screenWidth, height: screenHeight } = useWindowDimensions();
     const keyboardHeight = useKeyboardHeight();
+    const voiceEnabled = useFeatureEnabled('voice');
 
     const defaultInputMaxHeight = React.useMemo(() => {
         return computeAgentInputDefaultMaxHeight({
@@ -487,12 +583,60 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     const hasText = props.value.trim().length > 0;
     const hasSendableContent = hasText || props.hasSendableAttachments === true;
+    const micPressHandler = voiceEnabled ? props.onMicPress : undefined;
+    const micActive = voiceEnabled && props.isMicActive === true;
+    const [fileDragActive, setFileDragActive] = React.useState(false);
 
     const pendingPermissionRequests = props.permissionRequests ?? [];
     const canApprovePermissions = props.canApprovePermissions ?? true;
 
     const agentId: AgentId = resolveAgentIdFromFlavor(props.metadata?.flavor) ?? props.agentType ?? DEFAULT_AGENT_ID;
-    const modelOptions = React.useMemo(() => getModelOptionsForSession(agentId, props.metadata ?? null), [agentId, props.metadata]);
+    const lastNonEmptySessionModelOptionsRef = React.useRef<readonly ModelOption[] | null>(null);
+    React.useEffect(() => {
+        lastNonEmptySessionModelOptionsRef.current = null;
+    }, [agentId, props.sessionId]);
+
+    const sessionModelsState = React.useMemo(() => {
+        if (props.modelOptionsOverride) return { hasSessionModelsState: false, availableCount: 0 };
+        const raw = (props.metadata as any)?.acpSessionModelsV1;
+        const provider = typeof raw?.provider === 'string' ? raw.provider.trim() : '';
+        if (!provider || provider !== agentId) return { hasSessionModelsState: false, availableCount: 0 };
+        const available = Array.isArray(raw?.availableModels) ? raw.availableModels : [];
+        return { hasSessionModelsState: true, availableCount: available.length };
+    }, [agentId, props.metadata, props.modelOptionsOverride]);
+
+    const baseModelOptions = React.useMemo(() => {
+        if (props.modelOptionsOverride) return props.modelOptionsOverride;
+        return getModelOptionsForSession(agentId, props.metadata ?? null);
+    }, [agentId, props.metadata, props.modelOptionsOverride]);
+
+    const modelOptions = React.useMemo(() => {
+        if (props.modelOptionsOverride) return baseModelOptions;
+        if (sessionModelsState.hasSessionModelsState && sessionModelsState.availableCount === 0) {
+            const sticky = lastNonEmptySessionModelOptionsRef.current;
+            if (sticky && sticky.length > 0) return sticky;
+        }
+        return baseModelOptions;
+    }, [baseModelOptions, props.modelOptionsOverride, sessionModelsState.availableCount, sessionModelsState.hasSessionModelsState]);
+
+    const sessionModelOptionsProbe = React.useMemo<ModelPickerProbeState | null>(() => {
+        if (props.modelOptionsOverride) return null;
+        if (!sessionModelsState.hasSessionModelsState) return null;
+        if (sessionModelsState.availableCount > 0) return null;
+        const phase: ModelPickerProbeState['phase'] = lastNonEmptySessionModelOptionsRef.current ? 'refreshing' : 'loading';
+        return { phase };
+    }, [props.modelOptionsOverride, sessionModelsState.availableCount, sessionModelsState.hasSessionModelsState]);
+
+    React.useEffect(() => {
+        if (props.modelOptionsOverride) return;
+        if (!sessionModelsState.hasSessionModelsState) {
+            lastNonEmptySessionModelOptionsRef.current = null;
+            return;
+        }
+        if (sessionModelsState.availableCount > 0 && modelOptions.length > 0) {
+            lastNonEmptySessionModelOptionsRef.current = modelOptions;
+        }
+    }, [modelOptions, props.modelOptionsOverride, sessionModelsState.availableCount, sessionModelsState.hasSessionModelsState]);
 
     // Profile data
     const profiles = useSetting('profiles');
@@ -615,6 +759,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     // Settings modal state
     const [showSettings, setShowSettings] = React.useState(false);
     const overlayAnchorRef = React.useRef<View>(null);
+    const settingsAnchorRef = React.useRef<View>(null);
 
     const actionBarFades = useScrollEdgeFades({
         enabledEdges: { left: true, right: true },
@@ -668,6 +813,29 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (!props.onAcpSessionModeChange) return null;
         return computeAcpSessionModePickerControl({ agentId, metadata: props.metadata ?? null });
     }, [agentId, props.metadata, props.onAcpSessionModeChange]);
+
+    const preflightAcpSessionModeOptions = React.useMemo(() => {
+        const raw = props.acpSessionModeOptionsOverride;
+        if (!Array.isArray(raw) || raw.length === 0) return null;
+        const cleaned = raw
+            .filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string')
+            .map((m) => ({
+                id: String(m.id),
+                name: String(m.name),
+                ...(typeof m.description === 'string' ? { description: m.description } : {}),
+            }))
+            .filter((m) => m.id.trim().length > 0 && m.name.trim().length > 0);
+        return cleaned.length > 0 ? cleaned : null;
+    }, [props.acpSessionModeOptionsOverride]);
+
+    const preflightAcpSessionModeEffective = React.useMemo(() => {
+        const selected = typeof props.acpSessionModeSelectedIdOverride === 'string'
+            ? props.acpSessionModeSelectedIdOverride.trim()
+            : '';
+        const effectiveId = selected || 'default';
+        const opt = preflightAcpSessionModeOptions?.find((o) => o.id === effectiveId) ?? null;
+        return { id: effectiveId, name: opt?.name ?? (effectiveId === 'default' ? 'Default' : effectiveId) };
+    }, [preflightAcpSessionModeOptions, props.acpSessionModeSelectedIdOverride]);
 
     const acpConfigOptionControls = React.useMemo(() => {
         if (!props.onAcpConfigOptionChange) return null;
@@ -942,12 +1110,17 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 	                {showSettings && (
 	                    <Popover
 	                        open={showSettings}
-	                        anchorRef={overlayAnchorRef}
+	                        anchorRef={settingsAnchorRef}
 	                        boundaryRef={null}
 	                        placement="top"
 	                        gap={8}
 	                        maxHeightCap={400}
-	                        portal={{ web: true }}
+	                        portal={{
+	                            web: true,
+	                            native: true,
+	                            matchAnchorWidth: false,
+	                            anchorAlign: 'start',
+	                        }}
                         edgePadding={{
                             horizontal: Platform.OS === 'web' ? (screenWidth > 700 ? 12 : 16) : 0,
                             vertical: 12,
@@ -1001,6 +1174,72 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
                                                 {acpSessionModePickerControl.options.map((option) => {
                                                     const isSelected = acpSessionModePickerControl.effectiveModeId === option.id;
+                                                    return (
+                                                        <Pressable
+                                                            key={option.id}
+                                                            onPress={() => {
+                                                                hapticsLight();
+                                                                props.onAcpSessionModeChange?.(option.id);
+                                                            }}
+                                                            style={({ pressed }) => [
+                                                                styles.overlayOptionRow,
+                                                                pressed ? styles.overlayOptionRowPressed : null,
+                                                            ]}
+                                                        >
+                                                            <View
+                                                                style={[
+                                                                    styles.overlayRadioOuter,
+                                                                    isSelected
+                                                                        ? styles.overlayRadioOuterSelected
+                                                                        : styles.overlayRadioOuterUnselected,
+                                                                ]}
+                                                            >
+                                                                {isSelected && (
+                                                                    <View style={styles.overlayRadioInner} />
+                                                                )}
+                                                            </View>
+                                                            <View style={{ flexShrink: 1 }}>
+                                                                <Text
+                                                                    style={[
+                                                                        styles.overlayOptionLabel,
+                                                                        isSelected
+                                                                            ? styles.overlayOptionLabelSelected
+                                                                            : styles.overlayOptionLabelUnselected,
+                                                                    ]}
+                                                                >
+                                                                    {option.name}
+                                                                </Text>
+                                                                {option.description ? (
+                                                                    <Text style={styles.overlayOptionDescription}>
+                                                                        {option.description}
+                                                                    </Text>
+                                                                ) : null}
+                                                            </View>
+                                                        </Pressable>
+                                                    );
+                                                })}
+                                            </View>
+                                        </>
+                                    ) : preflightAcpSessionModeOptions && props.onAcpSessionModeChange ? (
+                                        <>
+                                            <View style={styles.overlayDivider} />
+                                            <View style={styles.overlaySection}>
+                                                <Text style={styles.overlaySectionTitle}>
+                                                    Mode
+                                                </Text>
+
+                                                <Text style={styles.overlayOptionDescription}>
+                                                    {props.acpSessionModeOptionsOverrideProbe?.phase === 'loading'
+                                                        ? 'Loading modes…'
+                                                        : props.acpSessionModeOptionsOverrideProbe?.phase === 'refreshing'
+                                                            ? 'Refreshing modes…'
+                                                            : preflightAcpSessionModeEffective.id === 'default'
+                                                                ? 'Use the default mode for this agent.'
+                                                                : `Start in: ${preflightAcpSessionModeEffective.name}`}
+                                                </Text>
+
+                                                {preflightAcpSessionModeOptions.map((option) => {
+                                                    const isSelected = preflightAcpSessionModeEffective.id === option.id;
                                                     return (
                                                         <Pressable
                                                             key={option.id}
@@ -1227,6 +1466,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     canEnterCustomModel={canEnterCustomModel}
                                     customLabel={`${t('profiles.custom')}…`}
                                     customDescription="Use a model id that isn’t listed."
+                                    probe={props.modelOptionsOverrideProbe ?? (sessionModelOptionsProbe ?? undefined)}
                                     onSelect={(value) => {
                                         hapticsLight();
                                         props.onModelModeChange?.(value);
@@ -1307,6 +1547,14 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
                 {/* Box 2: Action Area (Input + Send) */}
                 <View style={[styles.unifiedPanel, props.panelStyle]}>
+                    {fileDragActive && typeof props.onAttachmentsAdded === 'function' ? (
+                        <View testID="agent-input-drop-overlay" pointerEvents="none" style={styles.fileDropOverlay}>
+                            <View style={styles.fileDropOverlayContent}>
+                                <Ionicons name="attach-outline" size={18} color={theme.colors.textSecondary} />
+                                <Text style={styles.fileDropOverlayText}>{t('agentInput.dropToAttach')}</Text>
+                            </View>
+                        </View>
+                    ) : null}
                     {props.sessionId && pendingPermissionRequests.length > 0 ? (
                         <View style={styles.permissionRequestsContainer}>
                             {pendingPermissionRequests.map((req) => {
@@ -1326,6 +1574,55 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             })}
                         </View>
                     ) : null}
+
+                    {props.attachments && props.attachments.length > 0 ? (
+                        <View style={styles.attachmentsRow}>
+                            <ScrollView
+                                horizontal
+                                showsHorizontalScrollIndicator={false}
+                                contentContainerStyle={{ gap: 8 }}
+                            >
+                                {props.attachments.map((att) => {
+                                    const removingDisabled = att.status === 'uploading';
+                                    return (
+                                        <View key={att.key} style={styles.attachmentChip}>
+                                            <Ionicons
+                                                name="document-outline"
+                                                size={14}
+                                                color={theme.colors.textSecondary}
+                                            />
+                                            <Text
+                                                numberOfLines={1}
+                                                style={styles.attachmentChipText}
+                                            >
+                                                {att.label}
+                                            </Text>
+                                            {att.status === 'uploading' ? (
+                                                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                                            ) : null}
+                                            {att.onRemove ? (
+                                                <Pressable
+                                                    onPress={() => {
+                                                        if (removingDisabled) return;
+                                                        hapticsLight();
+                                                        att.onRemove?.();
+                                                    }}
+                                                    disabled={removingDisabled}
+                                                    hitSlop={8}
+                                                >
+                                                    <Ionicons
+                                                        name="close-circle"
+                                                        size={16}
+                                                        color={theme.colors.textSecondary}
+                                                    />
+                                                </Pressable>
+                                            ) : null}
+                                        </View>
+                                    );
+                                })}
+                            </ScrollView>
+                        </View>
+                    ) : null}
                     {/* Input field */}
                     <View style={[styles.inputContainer, props.minHeight ? { minHeight: props.minHeight } : undefined]}>
                         <MultiTextInput
@@ -1339,6 +1636,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             onStateChange={handleInputStateChange}
                             maxHeight={props.inputMaxHeight ?? defaultInputMaxHeight}
                             editable={!props.disabled}
+                            onFilesDropped={props.onAttachmentsAdded}
+                            onFilesPasted={props.onAttachmentsAdded}
+                            onFileDragActiveChange={typeof props.onAttachmentsAdded === 'function' ? setFileDragActive : undefined}
                         />
                     </View>
 
@@ -1369,6 +1669,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
                                     const permissionOrControlsChip = (showPermissionChip || actionBarIsCollapsed) ? (
                                         <Pressable
+                                            ref={settingsAnchorRef}
                                             key="permission"
                                             onPress={() => {
                                                 hapticsLight();
@@ -1666,21 +1967,21 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
                                 {/* Send/Voice button - aligned with first row */}
                                 <PrimaryCircleIconButton
-                                    active={hasSendableContent || props.isSending || Boolean(props.onMicPress)}
+                                    active={hasSendableContent || props.isSending || Boolean(micPressHandler)}
                                     loading={props.isSending}
-                                    disabled={props.disabled || props.isSendDisabled || props.isSending || (!hasSendableContent && !props.onMicPress)}
+                                    disabled={props.disabled || props.isSendDisabled || props.isSending || (!hasSendableContent && !micPressHandler)}
                                     accessibilityLabel={
                                         hasSendableContent
                                             ? (props.sessionId ? t('common.send') : t('newSession.title'))
-                                            : (props.onMicPress ? t('voiceAssistant.label') : (props.sessionId ? t('common.send') : t('newSession.title')))
+                                            : (micPressHandler ? t('voiceAssistant.label') : (props.sessionId ? t('common.send') : t('newSession.title')))
                                     }
                                     accessibilityHint={
-                                        (!hasSendableContent && !props.onMicPress)
+                                        (!hasSendableContent && !micPressHandler)
                                             ? t('session.inputPlaceholder')
                                             : undefined
                                     }
                                     accessibilityState={{
-                                        disabled: Boolean(props.disabled || props.isSendDisabled || props.isSending || (!hasSendableContent && !props.onMicPress)),
+                                        disabled: Boolean(props.disabled || props.isSendDisabled || props.isSending || (!hasSendableContent && !micPressHandler)),
                                     }}
                                     hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
                                     onPress={() => {
@@ -1688,7 +1989,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         if (hasSendableContent) {
                                             handleSend();
                                         } else {
-                                            props.onMicPress?.();
+                                            micPressHandler?.();
                                         }
                                     }}
                                     style={{ marginLeft: 8, marginRight: 8 }}
@@ -1700,8 +2001,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             color={theme.colors.button.primary.tint}
                                             style={{ marginTop: Platform.OS === 'web' ? 2 : 0 }}
                                         />
-                                    ) : props.onMicPress ? (
-                                        props.isMicActive ? (
+                                    ) : micPressHandler ? (
+                                        micActive ? (
                                             <Ionicons name="stop-circle" size={22} color={theme.colors.button.primary.tint} />
                                         ) : (
                                             <Image

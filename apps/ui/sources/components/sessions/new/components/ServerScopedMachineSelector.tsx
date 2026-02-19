@@ -71,7 +71,11 @@ export function ServerScopedMachineSelector(props: ServerScopedMachineSelectorPr
                                         icon={<Ionicons name="desktop-outline" size={20} color={theme.colors.textSecondary} />}
                                         selected={isSelected}
                                         detail={online ? t('status.online') : t('status.offline')}
-                                        onPress={() => props.onSelect(machine)}
+                                        disabled={!online}
+                                        onPress={() => {
+                                            if (!online) return;
+                                            props.onSelect(machine);
+                                        }}
                                     />
                                 );
                             })

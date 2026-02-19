@@ -1,6 +1,8 @@
 import { AgentContentView } from '@/components/sessions/transcript/AgentContentView';
 import { AgentInput } from '@/components/sessions/agentInput';
-import type { AgentInputExtraActionChip, AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/AgentInput';
+import type { AgentInputAttachment, AgentInputExtraActionChip, AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/AgentInput';
+import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
+import type { AttachmentFilePickerHandle, PickedAttachment } from '@/components/sessions/attachments/AttachmentFilePicker.types';
 import { buildSessionAgentInputActionChips } from '@/components/sessions/agentInput/actionChips/buildSessionAgentInputActionChips';
 import { getSuggestions } from '@/components/autocomplete/suggestions';
 import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView';
@@ -29,9 +31,11 @@ import { supportsAcpAgentModeOverrides } from '@/sync/acp/sessionModeControl';
 import { t } from '@/text';
 import { tracking, trackMessageSent } from '@/track';
 import { isRunningOnMac } from '@/utils/platform/platform';
+import { randomUUID } from '@/platform/randomUUID';
 import { useDeviceType, useHeaderHeight, useIsLandscape, useIsTablet } from '@/utils/platform/responsive';
 import { formatPathRelativeToHome, getSessionAvatarId, getSessionName, listPendingPermissionRequests, shouldShowAbortButtonForSessionState, useSessionStatus } from '@/utils/sessions/sessionUtils';
 import { isVersionSupported, MINIMUM_CLI_VERSION } from '@/utils/system/versionUtils';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { getMachineCapabilitiesSnapshot, prefetchMachineCapabilities, useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
 import { describeAcpLoadSessionSupport } from '@/agents/runtime/acpRuntimeResume';
 import type { ModelMode, PermissionMode } from '@/sync/domains/permissions/permissionTypes';
@@ -62,6 +66,9 @@ import { countEnabledAutomationsLinkedToSession } from '@/sync/domains/automatio
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { executeSessionComposerResolution } from '@/sync/domains/input/slashCommands/executeSessionComposerResolution';
+import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
+import { useAttachmentDraftManager } from '@/components/sessions/attachments/useAttachmentDraftManager';
+import { formatAttachmentsBlock, uploadAttachmentDraftsToSession } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
 
 function formatResumeSupportDetailCode(code: 'cliNotDetected' | 'capabilityProbeFailed' | 'acpProbeFailed' | 'loadSessionFalse'): string {
     switch (code) {
@@ -82,18 +89,18 @@ export const SessionView = React.memo((props: { id: string; jumpToSeq?: number |
     const session = useSession(sessionId);
     const isDataReady = useIsDataReady();
     const { theme } = useUnistyles();
-    const automations = useAutomations();
-    const automationsSupport = useAutomationsSupport();
-    const showAutomations = automationsSupport?.enabled !== false;
-    const executionRunsEnabled = useFeatureEnabled('execution.runs');
-    const safeArea = useSafeAreaInsets();
+	    const automations = useAutomations();
+		    const automationsSupport = useAutomationsSupport();
+		    const showAutomations = automationsSupport?.enabled !== false;
+		    const executionRunsEnabled = useFeatureEnabled('execution.runs');
+		    const safeArea = useSafeAreaInsets();
     const isLandscape = useIsLandscape();
     const deviceType = useDeviceType();
     const headerHeight = useHeaderHeight();
     const realtimeStatus = useRealtimeStatus();
     const isTablet = useIsTablet();
-    const voiceSnap = useVoiceSessionSnapshot();
-    const showTopHeader = !(isLandscape && deviceType === 'phone' && Platform.OS !== 'web');
+		    const voiceSnap = useVoiceSessionSnapshot();
+		    const showTopHeader = !(isLandscape && deviceType === 'phone' && Platform.OS !== 'web');
 
     const sessionAutomationsEnabledCount = React.useMemo(() => {
         if (!showAutomations) return 0;
@@ -298,15 +305,47 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
     const capabilityServerId = activeServerId;
     const alwaysShowContextSize = useSetting('alwaysShowContextSize');
     const actionsSettingsV1 = useSetting('actionsSettingsV1');
+    const scmSessionAutoRefreshIntervalMsSetting = useSetting('scmSessionAutoRefreshIntervalMs' as any);
+    const scmSessionAutoRefreshIntervalMs =
+        typeof scmSessionAutoRefreshIntervalMsSetting === 'number' && Number.isFinite(scmSessionAutoRefreshIntervalMsSetting) && scmSessionAutoRefreshIntervalMsSetting >= 5_000
+            ? scmSessionAutoRefreshIntervalMsSetting
+            : 5 * 60 * 1000;
     const voice = useSetting('voice') as any;
     const voiceProviderId = voice?.providerId ?? 'off';
     const voiceSnap = useVoiceSessionSnapshot();
     const { messages: pendingMessages } = useSessionPendingMessages(sessionId);
     const settings = useSettings();
-    const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments');
-    const executionRunsEnabled = useFeatureEnabled('execution.runs');
-    const reviewCommentDrafts = useSessionReviewCommentsDrafts(sessionId);
-    const hasReviewCommentDrafts = reviewCommentsEnabled && reviewCommentDrafts.length > 0;
+	    const voiceEnabled = useFeatureEnabled('voice');
+	    const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments');
+	    const executionRunsEnabled = useFeatureEnabled('execution.runs');
+		    const attachmentsUploadsEnabled = useFeatureEnabled('attachments.uploads');
+		    const reviewCommentDrafts = useSessionReviewCommentsDrafts(sessionId);
+		    const hasReviewCommentDrafts = reviewCommentsEnabled && reviewCommentDrafts.length > 0;
+
+		    const attachmentsUploadConfig = useAttachmentsUploadConfig();
+
+		    const attachmentDraftManager = useAttachmentDraftManager({
+		        enabled: attachmentsUploadsEnabled,
+		        maxFileBytes: attachmentsUploadConfig.maxFileBytes,
+		    });
+		    const filePickerRef = attachmentDraftManager.filePickerRef;
+		    const attachmentDrafts = attachmentDraftManager.drafts;
+		    const agentInputAttachments = attachmentDraftManager.agentInputAttachments;
+		    const addAttachments = attachmentDraftManager.addWebFiles;
+		    const addPickedAttachments = attachmentDraftManager.addPickedAttachments;
+		    const [isUploadingAttachments, setIsUploadingAttachments] = React.useState(false);
+
+    React.useEffect(() => {
+        if (!sessionId) return;
+        // Screen-scoped SCM refresh: keep the status badge reasonably up-to-date without noisy polling.
+        scmStatusSync.invalidateFromAutoRefresh(sessionId);
+        const interval = setInterval(() => {
+            scmStatusSync.invalidateFromAutoRefresh(sessionId);
+        }, scmSessionAutoRefreshIntervalMs);
+        return () => {
+            clearInterval(interval);
+        };
+    }, [scmSessionAutoRefreshIntervalMs, sessionId]);
 
     const resolveServerIdForSessionId = React.useCallback((sid: string): string | null => {
         const state: any = storage.getState();
@@ -387,7 +426,7 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
     const lastMarkedRef = React.useRef<{ sessionSeq: number } | null>(null);
 
     const markSessionViewed = React.useCallback(() => {
-        void sync.markSessionViewed(sessionId).catch(() => { });
+        fireAndForget(sync.markSessionViewed(sessionId), { tag: 'SessionView.markSessionViewed' });
     }, [sessionId]);
 
     useFocusEffect(React.useCallback(() => {
@@ -431,7 +470,7 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
     }, [markSessionViewed, session.seq]);
 
     React.useEffect(() => {
-        void sync.fetchPendingMessages(sessionId).catch(() => { });
+        fireAndForget(sync.fetchPendingMessages(sessionId), { tag: 'SessionView.fetchPendingMessages' });
     }, [sessionId, session.pendingVersion]);
 
     // Handle dismissing CLI version warning
@@ -448,42 +487,42 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
 
     // Function to update permission mode
     const updatePermissionMode = React.useCallback((mode: PermissionMode) => {
-        void applyPermissionModeSelection({
+        fireAndForget(applyPermissionModeSelection({
             sessionId,
             mode,
             applyTiming: settings.sessionPermissionModeApplyTiming === 'next_prompt' ? 'next_prompt' : 'immediate',
             updateSessionPermissionMode: (sid, nextMode) => storage.getState().updateSessionPermissionMode(sid, nextMode),
             getSessionPermissionModeUpdatedAt: (sid) => storage.getState().sessions[sid]?.permissionModeUpdatedAt ?? null,
             publishSessionPermissionModeToMetadata: (payload) => sync.publishSessionPermissionModeToMetadata(payload),
-        }).catch(() => { });
+        }), { tag: 'SessionView.updatePermissionMode' });
     }, [sessionId, settings.sessionPermissionModeApplyTiming]);
 
     const updateAcpSessionModeOverride = React.useCallback((modeId: string) => {
-        void sync.publishSessionAcpSessionModeOverrideToMetadata({
+        fireAndForget(sync.publishSessionAcpSessionModeOverrideToMetadata({
             sessionId,
             modeId,
             updatedAt: nowServerMs(),
-        }).catch(() => { });
+        }), { tag: 'SessionView.updateAcpSessionModeOverride' });
     }, [sessionId]);
 
     const updateAcpConfigOptionOverride = React.useCallback((configId: string, valueId: string) => {
-        void sync.publishSessionAcpConfigOptionOverrideToMetadata({
+        fireAndForget(sync.publishSessionAcpConfigOptionOverrideToMetadata({
             sessionId,
             configId,
             value: valueId,
             updatedAt: nowServerMs(),
-        }).catch(() => { });
+        }), { tag: 'SessionView.updateAcpConfigOptionOverride' });
     }, [sessionId]);
 
     // Function to update model mode (only for agents that expose model selection in the UI)
     const updateModelMode = React.useCallback((mode: ModelMode) => {
         if (!isModelSelectableForSession(agentId, session.metadata ?? null, mode)) return;
         storage.getState().updateSessionModelMode(sessionId, mode);
-        void sync.publishSessionModelOverrideToMetadata({
+        fireAndForget(sync.publishSessionModelOverrideToMetadata({
             sessionId,
             modelId: mode,
             updatedAt: nowServerMs(),
-        }).catch(() => { });
+        }), { tag: 'SessionView.updateModelMode' });
     }, [agentId, sessionId, session.metadata]);
 
     // Handle resuming an inactive session
@@ -679,9 +718,6 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
 
         // Trigger session sync
         sync.onSessionVisible(sessionId);
-
-        // Initialize git status sync for this session
-        scmStatusSync.getSync(sessionId);
     }, [sessionId, realtimeStatus]);
 
     const showInactiveNotResumableNotice = inactiveUi.noticeKind === 'not-resumable';
@@ -730,7 +766,7 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
             Modal.alert(t('common.error'), t('session.sharing.noEditPermission'));
             return;
         }
-        void (async () => {
+        fireAndForget((async () => {
             try {
                 const ok = await sessionSwitch(sessionId, 'remote');
                 if (ok !== true) {
@@ -739,14 +775,18 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
             } catch {
                 Modal.alert(t('common.error'), t('errors.failedToSwitchControl'));
             }
-        })();
+        })(), { tag: 'SessionView.requestSwitchToRemote' });
     }, [hasWriteAccess, sessionId]);
 
     const shouldRenderChatTimeline = React.useMemo(() => shouldRenderChatTimelineForSession({
         committedMessagesCount: messages.length,
         pendingMessagesCount: pendingMessages.length,
         controlledByUser: Boolean(session.agentState?.controlledByUser),
-    }), [messages.length, pendingMessages.length, session.agentState?.controlledByUser]);
+        // Some sessions can have a non-zero committed transcript seq but end up with 0 visible
+        // main-timeline messages (e.g. newest page is sidechain-only). In that case, we must
+        // still render the transcript so it can page backwards to find visible messages.
+        forceRenderFooter: isLoaded === true && (session.seq ?? 0) > 0 && messages.length === 0,
+    }), [isLoaded, messages.length, pendingMessages.length, session.agentState?.controlledByUser, session.seq]);
 
 	    let content = (
 	        <>
@@ -775,15 +815,37 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
     // Determine the status text to show for inactive sessions
     const inactiveStatusText = inactiveUi.inactiveStatusTextKey ? t(inactiveUi.inactiveStatusTextKey) : null;
 
-    const shouldShowInput = inactiveUi.shouldShowInput;
-    const reviewCommentDraftCount = reviewCommentDrafts.length;
-    const extraActionChips: ReadonlyArray<AgentInputExtraActionChip> | undefined = React.useMemo(() => {
-        const chips: AgentInputExtraActionChip[] = [];
+	    const shouldShowInput = inactiveUi.shouldShowInput;
+	    const reviewCommentDraftCount = reviewCommentDrafts.length;
+	    const extraActionChips: ReadonlyArray<AgentInputExtraActionChip> | undefined = React.useMemo(() => {
+	        const chips: AgentInputExtraActionChip[] = [];
 
-        if (reviewCommentsEnabled && reviewCommentDraftCount > 0) {
-            chips.push({
-                key: 'review-comments',
-                render: (ctx: AgentInputExtraActionChipRenderContext) => (
+	        if (attachmentsUploadsEnabled && !isReadOnly) {
+	            chips.push({
+	                key: 'attachments-add',
+	                render: (ctx: AgentInputExtraActionChipRenderContext) => (
+	                    <Pressable
+	                        onPress={() => {
+	                            filePickerRef.current?.open();
+	                        }}
+	                        disabled={isUploadingAttachments}
+	                        style={({ pressed }) => ctx.chipStyle(Boolean(pressed))}
+	                    >
+	                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+	                            <Ionicons name="attach-outline" size={16} color={ctx.iconColor} />
+	                            {ctx.showLabel ? (
+	                                <Text style={ctx.textStyle}>Attach</Text>
+	                            ) : null}
+	                        </View>
+	                    </Pressable>
+	                ),
+	            });
+	        }
+
+	        if (reviewCommentsEnabled && reviewCommentDraftCount > 0) {
+	            chips.push({
+	                key: 'review-comments',
+	                render: (ctx: AgentInputExtraActionChipRenderContext) => (
                     <Pressable
                         onPress={() => {
                             const preview = reviewCommentDrafts
@@ -826,18 +888,20 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
         })();
         chips.push(...buildSessionAgentInputActionChips({ sessionId, defaultBackendId, instructionsText: message }));
 
-        return chips.length > 0 ? chips : undefined;
-    }, [actionsSettingsV1, agentId, message, reviewCommentDraftCount, reviewCommentDrafts, reviewCommentsEnabled, session, sessionId]);
+	        return chips.length > 0 ? chips : undefined;
+	    }, [actionsSettingsV1, agentId, attachmentsUploadsEnabled, isReadOnly, isUploadingAttachments, message, reviewCommentDraftCount, reviewCommentDrafts, reviewCommentsEnabled, session, sessionId]);
 
     const input = shouldShowInput ? (
         <View>
-            {voiceProviderId !== 'off' ? <VoiceSurface variant="session" sessionId={sessionId} /> : null}
+            {voiceEnabled && voiceProviderId !== 'off' ? <VoiceSurface variant="session" sessionId={sessionId} /> : null}
             <AgentInput
                 placeholder={isReadOnly ? t('session.sharing.viewOnlyMode') : t('session.inputPlaceholder')}
                 value={message}
                 onChangeText={setMessage}
                 sessionId={sessionId}
-                hasSendableAttachments={hasReviewCommentDrafts}
+                attachments={attachmentsUploadsEnabled ? agentInputAttachments : undefined}
+                onAttachmentsAdded={attachmentsUploadsEnabled ? addAttachments : undefined}
+                hasSendableAttachments={hasReviewCommentDrafts || (attachmentsUploadsEnabled && attachmentDrafts.length > 0)}
                 permissionRequests={listPendingPermissionRequests(session)}
                 canApprovePermissions={hasWriteAccess}
                 permissionDisabledReason={hasWriteAccess ? undefined : 'readOnly'}
@@ -910,9 +974,90 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
 	                    if (resolved.kind !== 'send') return;
 	                    const messageToSend = resolved.text;
 
+                    const configuredMode = storage.getState().settings.sessionMessageSendMode;
+                    const busySteerSendPolicy = storage.getState().settings.sessionBusySteerSendPolicy;
+                    const submitMode = chooseSubmitMode({ configuredMode, busySteerSendPolicy, session });
+
                     const additionalMessage = messageToSend;
-                    const trimmedText = messageToSend.trim();
-                    const shouldSendReviewComments = hasReviewCommentDrafts;
+	                    const trimmedText = messageToSend.trim();
+	                    const shouldSendReviewComments = hasReviewCommentDrafts;
+	                    const hasAttachments = attachmentsUploadsEnabled && attachmentDrafts.length > 0;
+
+	                    if (hasAttachments && !isSessionActive && !isResumable) {
+	                        Modal.alert(t('common.error'), t('session.inactiveNotResumableNoticeTitle'));
+	                        return;
+	                    }
+
+                    const outboundBase = shouldSendReviewComments
+                        ? { kind: 'review_comments' as const }
+                        : { kind: 'plain' as const };
+
+                    if (outboundBase.kind === 'plain' && trimmedText.length === 0 && !hasAttachments) {
+                        return;
+                    }
+
+                    const previousMessage = message;
+                    setMessage('');
+                    clearDraft();
+                    trackMessageSent();
+
+                    if (hasAttachments) {
+                        fireAndForget((async () => {
+                            setIsUploadingAttachments(true);
+                            try {
+                                if (!isSessionActive && isResumable) {
+                                    const resumed = await handleResumeSession();
+                                    if (!resumed) {
+                                        throw new Error(t('session.resumeFailed'));
+                                    }
+                                }
+
+	                                const { uploaded } = await uploadAttachmentDraftsToSession({
+	                                    sessionId,
+	                                    drafts: attachmentDrafts,
+	                                    config: attachmentsUploadConfig,
+	                                    applyDraftPatch: attachmentDraftManager.applyDraftPatch,
+	                                });
+	                                const attachmentsBlock = formatAttachmentsBlock(uploaded);
+
+                                const outbound = shouldSendReviewComments
+                                    ? {
+                                        text: buildReviewCommentsPromptText({
+                                            sessionId,
+                                            drafts: reviewCommentDrafts,
+                                            additionalMessage: trimmedText.length > 0 ? `${additionalMessage}\n\n${attachmentsBlock}` : attachmentsBlock,
+                                        }),
+                                        displayText: `${buildReviewCommentsDisplayText({ drafts: reviewCommentDrafts })}\n\n${attachmentsBlock}`,
+                                        metaOverrides: {
+                                            happier: {
+                                                kind: 'review_comments.v1',
+                                                payload: buildReviewCommentsV1MetaPayload({ sessionId, drafts: reviewCommentDrafts }),
+                                            },
+                                        } as Record<string, unknown>,
+                                    }
+                                    : {
+                                        text: trimmedText.length > 0 ? `${trimmedText}\n\n${attachmentsBlock}` : attachmentsBlock,
+                                        displayText: undefined,
+                                        metaOverrides: undefined,
+                                    };
+
+                                if (submitMode === 'interrupt') {
+                                    try { await sessionAbort(sessionId); } catch { }
+                                }
+                                await sync.sendMessage(sessionId, outbound.text, outbound.displayText, outbound.metaOverrides);
+                                if (shouldSendReviewComments) {
+                                    storage.getState().clearSessionReviewCommentDrafts(sessionId);
+                                }
+	                                attachmentDraftManager.clearDrafts();
+                            } catch (e) {
+                                setMessage(previousMessage);
+                                Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToSendMessage'));
+                            } finally {
+                                setIsUploadingAttachments(false);
+                            }
+                        })(), { tag: 'SessionView.sendMessage.attachments' });
+                        return;
+                    }
 
                     const outbound = shouldSendReviewComments
                         ? {
@@ -935,17 +1080,8 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
 
                     if (!outbound) return;
 
-                    const previousMessage = message;
-                    setMessage('');
-                    clearDraft();
-                    trackMessageSent();
-
-                    const configuredMode = storage.getState().settings.sessionMessageSendMode;
-                    const busySteerSendPolicy = storage.getState().settings.sessionBusySteerSendPolicy;
-                    const submitMode = chooseSubmitMode({ configuredMode, busySteerSendPolicy, session });
-
                     if (submitMode === 'server_pending') {
-                        void (async () => {
+                        fireAndForget((async () => {
                             try {
                                 await sync.enqueuePendingMessage(sessionId, outbound.text, outbound.displayText, outbound.metaOverrides);
                             } catch (e) {
@@ -988,13 +1124,13 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
                                     // Non-fatal: the message is already persisted in the pending queue.
                                 }
                             }
-                        })();
+                        })(), { tag: 'SessionView.sendMessage.serverPending' });
                         return;
                     }
 
                     // If session is inactive but resumable, resume it and send the message through the agent.
                     if (!isSessionActive && isResumable) {
-                        void (async () => {
+                        fireAndForget((async () => {
                             try {
                                 // Prefer server-side pending queue when supported so the message is preserved
                                 // even if spawning/resume fails.
@@ -1022,11 +1158,11 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
                                 setMessage(previousMessage);
                                 Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToResumeSession'));
                             }
-                        })();
+                        })(), { tag: 'SessionView.sendMessage.resumeInactive' });
                         return;
                     }
 
-                    void (async () => {
+                    fireAndForget((async () => {
                         try {
                             await sync.submitMessage(sessionId, outbound.text, outbound.displayText, outbound.metaOverrides);
                             if (shouldSendReviewComments) {
@@ -1036,9 +1172,9 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
                             setMessage(previousMessage);
                             Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToSendMessage'));
                         }
-                    })();
+                    })(), { tag: 'SessionView.sendMessage.submitMessage' });
                 }}
-                isSendDisabled={!shouldShowInput || isResuming || isReadOnly}
+                isSendDisabled={!shouldShowInput || isResuming || isReadOnly || isUploadingAttachments}
                 onMicPress={micButtonState.onMicPress}
                 isMicActive={micButtonState.isMicActive}
                 onAbort={() => sessionAbort(sessionId)}
@@ -1064,6 +1200,13 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
                 alwaysShowContextSize={alwaysShowContextSize}
                 extraActionChips={extraActionChips}
             />
+            {attachmentsUploadsEnabled ? (
+                <AttachmentFilePicker
+                    ref={filePickerRef}
+                    onAttachmentsPicked={addPickedAttachments}
+                    multiple
+                />
+            ) : null}
         </View>
     ) : null;
 

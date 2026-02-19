@@ -27,6 +27,7 @@ import { t } from '@/text';
 import { DEFAULT_AGENT_ID, getAgentCore, getAgentIconSource, getAgentIconTintColor, resolveAgentIdFromConnectedServiceId } from '@/agents/catalog/catalog';
 import { resolveSupportUsAction } from '@/components/settings/supportUsBehavior';
 import { recordBugReportUserAction } from '@/utils/system/bugReportActionTrail';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import type { FeatureId } from '@happier-dev/protocol';
@@ -49,6 +50,7 @@ export const SettingsView = React.memo(function SettingsView() {
     const memorySearchEnabled = useFeatureEnabled('memory.search');
     const voiceEnabled = useFeatureEnabled('voice');
     const sourceControlEnabled = useFeatureEnabled('scm.writeOperations');
+    const attachmentsUploadsEnabled = useFeatureEnabled('attachments.uploads');
     const showChangelog = getFeatureBuildPolicyDecision('app.ui.changelog' as const satisfies FeatureId) !== 'deny';
     const useProfiles = useSetting('useProfiles');
     const terminalUseTmux = useSetting('sessionUseTmux');
@@ -101,7 +103,7 @@ export const SettingsView = React.memo(function SettingsView() {
 
     useFocusEffect(
         React.useCallback(() => {
-            void sync.refreshMachinesThrottled({ staleMs: 30_000 });
+            fireAndForget(sync.refreshMachinesThrottled({ staleMs: 30_000 }), { tag: 'SettingsView.refreshMachinesThrottled' });
         }, [])
     );
 
@@ -403,6 +405,14 @@ export const SettingsView = React.memo(function SettingsView() {
                     icon={<Ionicons name="terminal-outline" size={29} color="#5856D6" />}
                     onPress={() => router.push('/(app)/settings/session')}
                 />
+                {attachmentsUploadsEnabled ? (
+                    <Item
+                        title="Attachments"
+                        subtitle="File upload preferences"
+                        icon={<Ionicons name="attach-outline" size={29} color="#007AFF" />}
+                        onPress={() => router.push('/(app)/settings/attachments')}
+                    />
+                ) : null}
                 <Item
                     title={t('settings.servers')}
                     subtitle={t('settings.serversSubtitle')}

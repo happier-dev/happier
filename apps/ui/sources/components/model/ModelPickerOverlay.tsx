@@ -1,11 +1,17 @@
 import React from 'react';
-import { Pressable, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { Ionicons } from '@expo/vector-icons';
 
 export type ModelPickerOption = Readonly<{
     value: string;
     label: string;
     description?: string;
+}>;
+
+export type ModelPickerProbeState = Readonly<{
+    phase: 'idle' | 'loading' | 'refreshing';
+    onRefresh?: () => void;
 }>;
 
 export function ModelPickerOverlay(props: {
@@ -20,6 +26,7 @@ export function ModelPickerOverlay(props: {
     customDescription?: string;
     onSelect: (value: string) => void;
     onRequestCustomModel?: () => void | Promise<void>;
+    probe?: ModelPickerProbeState;
 }) {
     const styles = stylesheet;
     const [query, setQuery] = React.useState('');
@@ -37,7 +44,40 @@ export function ModelPickerOverlay(props: {
 
     return (
         <View style={styles.section}>
-            <Text style={styles.title}>{props.title}</Text>
+            <View style={styles.titleRow}>
+                <Text style={styles.title}>{props.title}</Text>
+                {props.probe ? (
+                    typeof props.probe.onRefresh === 'function' ? (
+                        <Pressable
+                            onPress={props.probe.phase === 'idle' ? props.probe.onRefresh : undefined}
+                            style={({ pressed }) => [
+                                styles.refreshIconButton,
+                                pressed && props.probe.phase === 'idle' ? styles.refreshIconButtonPressed : null,
+                                props.probe.phase !== 'idle' ? styles.refreshIconButtonDisabled : null,
+                            ]}
+                            accessibilityRole="button"
+                            accessibilityLabel="Refresh models"
+                            hitSlop={6}
+                        >
+                            {props.probe.phase === 'idle' ? (
+                                <Ionicons name="refresh-outline" size={18} style={styles.refreshIcon as any} />
+                            ) : (
+                                <ActivityIndicator
+                                    size="small"
+                                    accessibilityLabel={props.probe.phase === 'loading' ? 'Loading models…' : 'Refreshing models…'}
+                                />
+                            )}
+                        </Pressable>
+                    ) : props.probe.phase !== 'idle' ? (
+                        <View style={styles.refreshIconButton}>
+                            <ActivityIndicator
+                                size="small"
+                                accessibilityLabel={props.probe.phase === 'loading' ? 'Loading models…' : 'Refreshing models…'}
+                            />
+                        </View>
+                    ) : null
+                ) : null}
+            </View>
             <View style={styles.effectiveBlock}>
                 <Text style={styles.noteText}>Effective: {props.effectiveLabel}</Text>
                 {props.notes.map((note, idx) => (
@@ -114,17 +154,43 @@ const stylesheet = StyleSheet.create((theme) => ({
     section: {
         paddingVertical: 16,
     },
+    titleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 16,
+        paddingBottom: 4,
+        gap: 10,
+    },
     title: {
         fontSize: 12,
         fontWeight: '600',
         color: theme.colors.textSecondary,
-        paddingHorizontal: 16,
-        paddingBottom: 4,
     },
     effectiveBlock: {
-        paddingHorizontal: 16,
         paddingTop: 2,
+        paddingHorizontal: 16,
         paddingBottom: 8,
+    },
+    refreshIcon: {
+        color: theme.colors.textSecondary,
+    },
+    refreshIconButton: {
+        minWidth: 30,
+        height: 30,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        backgroundColor: 'transparent',
+        flexShrink: 0,
+    },
+    refreshIconButtonPressed: {
+        backgroundColor: theme.colors.surfacePressed,
+    },
+    refreshIconButtonDisabled: {
+        opacity: 0.6,
     },
     noteText: {
         fontSize: 12,
