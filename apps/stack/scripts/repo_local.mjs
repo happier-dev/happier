@@ -23,7 +23,10 @@ function usage() {
 
 function main() {
   const argvRaw = process.argv.slice(2);
-  if (argvRaw.includes('--help') || argvRaw.includes('-h') || argvRaw[0] === 'help' || argvRaw.length === 0) {
+  const firstArg = argvRaw[0];
+  const showWrapperHelp =
+    argvRaw.length === 0 || firstArg === 'help' || firstArg === '--help' || firstArg === '-h';
+  if (showWrapperHelp) {
     process.stdout.write(usage() + '\n');
     process.exit(argvRaw.length === 0 ? 1 : 0);
   }
@@ -37,8 +40,7 @@ function main() {
   let argv = argvWithoutDryRun;
   if (argvWithoutDryRun[0] === 'tui') {
     const forwarded = argvWithoutDryRun.slice(1);
-    const hasForwardedCommand = forwarded.some((arg) => !arg.startsWith('-'));
-    if (!hasForwardedCommand) {
+    if (forwarded.length === 0) {
       argv = ['tui', 'dev', ...forwarded];
     }
   }

@@ -14,6 +14,7 @@ import { renderQrAscii } from './utils/ui/qr.mjs';
 import { resolveMobileQrPayload } from './utils/mobile/dev_client_links.mjs';
 import { worktreeSpecFromDir } from './utils/git/worktrees.mjs';
 import { stopStackForTuiExit } from './utils/tui/cleanup.mjs';
+import { isTuiHelpRequest, normalizeTuiForwardedArgs } from './utils/tui/args.mjs';
 import { terminateProcessGroup } from './utils/proc/terminate.mjs';
 
 function nowTs() {
@@ -98,12 +99,6 @@ function drawBox({ x, y, w, h, title, lines, scroll, active = false }) {
   }
 
   return { out, maxScroll };
-}
-
-function isTuiHelp(argv) {
-  if (!argv.length) return true;
-  if (argv.length === 1 && (argv[0] === '--help' || argv[0] === 'help')) return true;
-  return false;
 }
 
 function inferStackNameFromForwardedArgs(args) {
@@ -319,15 +314,19 @@ async function buildExpoQrPaneLines({ stackName }) {
 }
 
 async function main() {
-  const argv = process.argv.slice(2);
+  const argvRaw = process.argv.slice(2);
+  const argv = normalizeTuiForwardedArgs(argvRaw);
 
-  if (isTuiHelp(argv)) {
+  if (isTuiHelpRequest(argvRaw)) {
     printResult({
       json: false,
-      data: { usage: 'hstack tui <hstack args...>', json: false },
+      data: { usage: 'hstack tui [<hstack args...>]', json: false, defaultCommand: 'dev' },
       text: [
         '[tui] usage:',
-        '  hstack tui <hstack args...>',
+        '  hstack tui [<hstack args...>]',
+        '',
+        'defaults:',
+        '  hstack tui                 => hstack tui dev',
         '',
         'examples:',
         '  hstack tui stack dev resume-upstream',

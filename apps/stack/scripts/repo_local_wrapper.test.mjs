@@ -89,3 +89,43 @@ test('repo-local wrapper preserves explicit `tui` forwarded args', async () => {
   assert.equal(data.args[3], 'dev');
   assert.equal(data.args[4], 'exp1');
 });
+
+test('repo-local wrapper preserves flag-only tui args', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir); // apps/stack
+  const repoRoot = dirname(dirname(packageRoot)); // repo root
+
+  const res = await runNode(
+    [join(packageRoot, 'scripts', 'repo_local.mjs'), 'tui', '--json', '--dry-run'],
+    {
+      cwd: repoRoot,
+      env: process.env,
+    }
+  );
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const data = JSON.parse(res.stdout);
+  assert.equal(data.ok, true);
+  assert.equal(data.args[1], 'tui');
+  assert.equal(data.args[2], '--json');
+});
+
+test('repo-local wrapper forwards --help when a subcommand is provided', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir); // apps/stack
+  const repoRoot = dirname(dirname(packageRoot)); // repo root
+
+  const res = await runNode(
+    [join(packageRoot, 'scripts', 'repo_local.mjs'), 'auth', '--help', '--dry-run'],
+    {
+      cwd: repoRoot,
+      env: process.env,
+    }
+  );
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const data = JSON.parse(res.stdout);
+  assert.equal(data.ok, true);
+  assert.equal(data.args[1], 'auth');
+  assert.equal(data.args[2], '--help');
+});

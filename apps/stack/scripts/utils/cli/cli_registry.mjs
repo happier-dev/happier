@@ -226,7 +226,7 @@ export function gethstackRegistry() {
       name: 'tui',
       kind: 'node',
       scriptRelPath: 'scripts/tui.mjs',
-      rootUsage: 'hstack tui <hstack args...> [--json]',
+      rootUsage: 'hstack tui [<hstack args...>] [--json]',
       description: 'Run hstack commands in a split-pane TUI',
     },
     {
