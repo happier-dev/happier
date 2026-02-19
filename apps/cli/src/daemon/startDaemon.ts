@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 
 import { ApiClient } from '@/api/api';
+import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { ensureMachineRegistered } from '@/api/machine/ensureMachineRegistered';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { TrackedSession } from './types';
@@ -1229,7 +1230,11 @@ export async function startDaemon(): Promise<void> {
 	          },
 	        });
 	      } catch (error) {
-	        logger.warn('[DAEMON RUN] Machine registration unavailable at startup; continuing without machine sync until next restart', error);
+	        // IMPORTANT: Do not log raw Axios errors here; they can contain bearer tokens.
+	        logger.warn(
+	          '[DAEMON RUN] Machine registration unavailable at startup; continuing without machine sync until next restart',
+	          serializeAxiosErrorForLog(error),
+	        );
 	      }
       })();
 
@@ -1328,7 +1333,8 @@ export async function startDaemon(): Promise<void> {
     } catch {
       // ignore
     }
-    logger.debug('[DAEMON RUN][FATAL] Failed somewhere unexpectedly - exiting with code 1', error);
+    // IMPORTANT: Do not log raw Axios errors here; they can contain bearer tokens.
+    logger.debug('[DAEMON RUN][FATAL] Failed somewhere unexpectedly - exiting with code 1', serializeAxiosErrorForLog(error));
     process.exit(1);
   }
 }

@@ -280,4 +280,42 @@ describe('startDaemon automation wiring (integration)', () => {
       exitSpy.mockRestore();
     }
   });
+
+  it('does not leak bearer tokens when machine registration fails', async () => {
+    vi.useRealTimers();
+
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+    try {
+      const leakedBearer = 'Bearer super-secret-token';
+
+      const { ensureMachineRegistered } = await import('@/api/machine/ensureMachineRegistered');
+      (ensureMachineRegistered as unknown as { mockRejectedValueOnce: (value: unknown) => void }).mockRejectedValueOnce({
+        isAxiosError: true,
+        name: 'AxiosError',
+        message: 'Request failed with status code 401',
+        response: { status: 401 },
+        config: {
+          method: 'post',
+          url: 'http://127.0.0.1:3009/v1/machines',
+          headers: { Authorization: leakedBearer },
+        },
+      });
+
+      const { logger } = await import('@/ui/logger');
+      const { startDaemon } = await import('./startDaemon');
+
+      const run = startDaemon();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      harness.requestShutdown('happier-cli');
+      await run;
+
+      const warnMock = (logger as any).warn as any;
+      const debugMock = (logger as any).debug as any;
+      const serialized = JSON.stringify([...warnMock.mock.calls, ...debugMock.mock.calls]);
+      expect(serialized).not.toContain(leakedBearer);
+    } finally {
+      exitSpy.mockRestore();
+    }
+  });
 });
