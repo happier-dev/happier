@@ -118,7 +118,7 @@ describe('createCodexAcpBackend', () => {
         const mod = await import('./backend');
         const created = mod.createCodexAcpBackend({ cwd: homeDir, env: {} });
         expect(created.spawn.command).toBe('npx');
-        expect(created.spawn.args).toEqual(['-y', '@zed-industries/codex-acp']);
+        expect(created.spawn.args).toEqual(['--prefer-offline', '-y', '@zed-industries/codex-acp']);
       });
     } finally {
       await rm(homeDir, { recursive: true, force: true });
@@ -138,6 +138,7 @@ describe('createCodexAcpBackend', () => {
         const created = mod.createCodexAcpBackend({ cwd: homeDir, env: {}, permissionMode: 'yolo' });
         expect(created.spawn.command).toBe('npx');
         expect(created.spawn.args).toEqual([
+          '--prefer-offline',
           '-y',
           '@zed-industries/codex-acp',
           '-c',

@@ -148,7 +148,7 @@ describe.sequential('resolveCodexAcpSpawn', () => {
     const { resolveCodexAcpSpawn } = await import('./resolveCommand');
     const spawn = resolveCodexAcpSpawn();
     expect(spawn.command).toBe('npx');
-    expect(spawn.args.slice(0, 2)).toEqual(['-y', '@zed-industries/codex-acp']);
+    expect(spawn.args.slice(0, 3)).toEqual(['--prefer-offline', '-y', '@zed-industries/codex-acp']);
   });
 
   it('prefers codex-acp on PATH when available (npx mode auto)', async () => {

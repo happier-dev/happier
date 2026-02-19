@@ -113,7 +113,7 @@ export function resolveCodexAcpSpawnWithOptions(opts: ResolveCodexAcpSpawnOption
   const npxMode = readCodexAcpNpxMode();
   if (npxMode === 'force') {
     return appendPermissionModeDerivedOverrides(
-      appendConfigOverridesArgs({ command: 'npx', args: ['-y', '@zed-industries/codex-acp'] }),
+      appendConfigOverridesArgs({ command: 'npx', args: ['--prefer-offline', '-y', '@zed-industries/codex-acp'] }),
       opts,
     );
   }
@@ -127,7 +127,7 @@ export function resolveCodexAcpSpawnWithOptions(opts: ResolveCodexAcpSpawnOption
     return appendPermissionModeDerivedOverrides(appendConfigOverridesArgs({ command: 'codex-acp', args: [] }), opts);
   }
   return appendPermissionModeDerivedOverrides(
-    appendConfigOverridesArgs({ command: 'npx', args: ['-y', '@zed-industries/codex-acp'] }),
+    appendConfigOverridesArgs({ command: 'npx', args: ['--prefer-offline', '-y', '@zed-industries/codex-acp'] }),
     opts,
   );
 }
