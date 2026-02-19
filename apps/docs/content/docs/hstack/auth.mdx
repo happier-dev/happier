@@ -25,6 +25,12 @@ Auth seeding is best-effort and intentionally does **not** copy entire databases
 hstack auth seed
 ```
 
+If you need to re-authenticate an existing seed stack (for example, credentials are stale/incorrect but the CLI says “already authenticated”), run:
+
+```bash
+hstack auth seed --force
+```
+
 This runs the full guided flow to:
 
 - create the `dev-auth` stack (as a fresh identity)
@@ -124,6 +130,13 @@ If you’re working with a non-`main` stack:
 
 ```bash
 hstack stack auth <stack> login
+```
+
+To force re-authentication:
+
+```bash
+hstack auth login --force
+hstack stack auth <stack> login --force
 ```
 
 ### Web app targeting
