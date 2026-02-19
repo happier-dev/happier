@@ -91,6 +91,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
       - name: Create GitHub App token (release bot)
         id: app_token
         uses: actions/create-github-app-token@v1

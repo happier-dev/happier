@@ -105,6 +105,11 @@ jobs:
         with:
           ref: ${{ steps.resolve_source.outputs.ref }}
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 

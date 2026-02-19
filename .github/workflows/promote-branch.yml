@@ -92,6 +92,14 @@ jobs:
     runs-on: ubuntu-latest
     environment: release-shared
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
       - name: Validate inputs
         run: |
           set -euo pipefail
