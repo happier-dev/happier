@@ -39,7 +39,8 @@ describe('runUserAndTextPhase (streaming merge)', () => {
             allocateId,
             processUsageData: () => {},
             lastMainThinkingMessageId: null,
-            lastMainThinkingCreatedAt: null,
+            lastMainStreamMessageId: null,
+            lastMainStreamKey: null,
             isPermissionRequestToolCall: () => false,
         });
 
@@ -48,4 +49,3 @@ describe('runUserAndTextPhase (streaming merge)', () => {
         expect(agentMessages[0]?.text).toBe('Hello world');
     });
 });
-

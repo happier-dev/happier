@@ -2,7 +2,7 @@ import type { TracedMessage } from '../reducerTracer';
 import type { UsageData } from '../../typesRaw';
 import type { ReducerState } from '../reducer';
 import type { ToolCall } from '../../domains/messages/messageTypes';
-import { normalizeThinkingChunk, unwrapThinkingText, wrapThinkingText } from '../helpers/thinkingText';
+import { normalizeThinkingChunk, unwrapThinkingText } from '../helpers/thinkingText';
 import { cancelRunningTools } from '../helpers/cancelRunningApprovedTools';
 import { drainAndApplyOrphanToolResultsToMessage } from '../helpers/drainAndApplyOrphanToolResultsToMessage';
 
@@ -13,12 +13,10 @@ export function runUserAndTextPhase(params: Readonly<{
     allocateId: () => string;
     processUsageData: (state: ReducerState, usage: UsageData, timestamp: number) => void;
     lastMainThinkingMessageId: string | null;
-    lastMainThinkingCreatedAt: number | null;
+    lastMainStreamMessageId: string | null;
+    lastMainStreamKey: string | null;
     isPermissionRequestToolCall: (toolId: string, input: unknown) => boolean;
-}>): Readonly<{
-    lastMainThinkingMessageId: string | null;
-    lastMainThinkingCreatedAt: number | null;
-}> {
+}>): void {
     const {
         state,
         nonSidechainMessages,
@@ -29,9 +27,14 @@ export function runUserAndTextPhase(params: Readonly<{
     const isPermissionRequestToolCall = params.isPermissionRequestToolCall;
 
     let lastMainThinkingMessageId = params.lastMainThinkingMessageId;
-    let lastMainThinkingCreatedAt = params.lastMainThinkingCreatedAt;
-    let lastMainStreamMessageId: string | null = null;
-    let lastMainStreamKey: string | null = null;
+    let lastMainStreamMessageId: string | null = params.lastMainStreamMessageId;
+    let lastMainStreamKey: string | null = params.lastMainStreamKey;
+
+    const setStreamCursor = (next: { messageId: string; streamKey: string } | null) => {
+        state.streamMergeCursor = next;
+        lastMainStreamMessageId = next?.messageId ?? null;
+        lastMainStreamKey = next?.streamKey ?? null;
+    };
 
     //
     // Phase 1: Process non-sidechain user messages and text messages
@@ -70,18 +73,8 @@ export function runUserAndTextPhase(params: Readonly<{
 
             changed.add(mid);
             lastMainThinkingMessageId = null;
-            lastMainThinkingCreatedAt = null;
-            lastMainStreamMessageId = null;
-            lastMainStreamKey = null;
+            setStreamCursor(null);
         } else if (msg.role === 'agent') {
-            // Check if we've seen this agent message before
-            if (state.messageIds.has(msg.id)) {
-                continue;
-            }
-
-            // Mark this message as seen
-            state.messageIds.set(msg.id, msg.id);
-
             // Process usage data if present
             if (msg.usage) {
                 processUsageData(state, msg.usage, msg.createdAt);
@@ -108,10 +101,17 @@ export function runUserAndTextPhase(params: Readonly<{
                         const prev = state.messages.get(lastMainStreamMessageId!);
                         if (prev && typeof prev.text === 'string') {
                             prev.text = prev.text + String(c.text ?? '');
+                            if (typeof msg.seq === 'number') {
+                                const nextSeq = Math.trunc(msg.seq);
+                                if (prev.seq === null || nextSeq > prev.seq) {
+                                    prev.seq = nextSeq;
+                                }
+                            }
                             changed.add(lastMainStreamMessageId!);
                         }
+                        // Keep the cursor stable even if thinking/tool deltas arrive between text chunks.
+                        setStreamCursor({ messageId: lastMainStreamMessageId!, streamKey });
                         lastMainThinkingMessageId = null;
-                        lastMainThinkingCreatedAt = null;
                         continue;
                     }
 
@@ -138,22 +138,18 @@ export function runUserAndTextPhase(params: Readonly<{
                     });
                     changed.add(mid);
                     lastMainThinkingMessageId = null;
-                    lastMainThinkingCreatedAt = null;
-                    lastMainStreamMessageId = mid;
-                    lastMainStreamKey = streamKey;
+                    setStreamCursor(streamKey ? { messageId: mid, streamKey } : null);
                 } else if (c.type === 'thinking') {
                     const chunk = typeof c.thinking === 'string' ? normalizeThinkingChunk(c.thinking) : '';
-                    if (!chunk.trim()) {
+                    const hasVisibleText = chunk.trim().length > 0;
+                    const hasParagraphBreak = chunk.includes('\n\n');
+                    if (!hasVisibleText && !hasParagraphBreak) {
                         continue;
                     }
-                    lastMainStreamMessageId = null;
-                    lastMainStreamKey = null;
 
                     const prevThinkingId = lastMainThinkingMessageId;
                     const canAppendToPrevious =
                         prevThinkingId
-                        && lastMainThinkingCreatedAt !== null
-                        && msg.createdAt - lastMainThinkingCreatedAt < 120_000
                         && (() => {
                             const prev = state.messages.get(prevThinkingId);
                             return prev?.role === 'agent' && prev.isThinking && typeof prev.text === 'string';
@@ -163,7 +159,13 @@ export function runUserAndTextPhase(params: Readonly<{
                         const prev = prevThinkingId ? state.messages.get(prevThinkingId) : null;
                         if (prev && typeof prev.text === 'string') {
                             const merged = unwrapThinkingText(prev.text) + chunk;
-                            prev.text = wrapThinkingText(merged);
+                            prev.text = merged;
+                            if (typeof msg.seq === 'number') {
+                                const nextSeq = Math.trunc(msg.seq);
+                                if (prev.seq === null || nextSeq > prev.seq) {
+                                    prev.seq = nextSeq;
+                                }
+                            }
                             changed.add(prevThinkingId!);
                         }
                     } else {
@@ -174,7 +176,7 @@ export function runUserAndTextPhase(params: Readonly<{
                             seq: typeof msg.seq === 'number' ? msg.seq : null,
                             role: 'agent',
                             createdAt: msg.createdAt,
-                            text: wrapThinkingText(chunk),
+                            text: chunk,
                             isThinking: true,
                             tool: null,
                             event: null,
@@ -182,16 +184,13 @@ export function runUserAndTextPhase(params: Readonly<{
                         });
                         changed.add(mid);
                         lastMainThinkingMessageId = mid;
-                        lastMainThinkingCreatedAt = msg.createdAt;
                     }
                 } else if (c.type === 'tool-call') {
                     // Tool calls are handled in Phase 2 for permission matching and late-arriving updates,
                     // but we still materialize the tool-call message here to preserve the intra-message
                     // timeline ordering (thinking → tool → thinking).
                     lastMainThinkingMessageId = null;
-                    lastMainThinkingCreatedAt = null;
-                    lastMainStreamMessageId = null;
-                    lastMainStreamKey = null;
+                    setStreamCursor(null);
 
                     const existingMessageId = state.toolIdToMessageId.get(c.id);
                     if (existingMessageId) {
@@ -268,6 +267,4 @@ export function runUserAndTextPhase(params: Readonly<{
             }
         }
     }
-
-    return { lastMainThinkingMessageId, lastMainThinkingCreatedAt };
 }

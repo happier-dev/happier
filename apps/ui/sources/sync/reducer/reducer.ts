@@ -125,7 +125,6 @@ import { runSidechainsPhase } from "./phases/sidechains";
 import { runModeSwitchEventsPhase } from "./phases/modeSwitchEvents";
 import { equalOptionalStringArrays } from "./helpers/arrays";
 import { coerceStreamingToolResultChunk, mergeExistingStdStreamsIntoFinalResultIfMissing, mergeStreamingChunkIntoResult } from "./helpers/streamingToolResult";
-import { normalizeThinkingChunk, unwrapThinkingText, wrapThinkingText } from "./helpers/thinkingText";
 import { cancelRunningTools } from "./helpers/cancelRunningApprovedTools";
 import type { OrphanToolResultBucket } from "./helpers/orphanToolResults";
 
@@ -207,6 +206,7 @@ export type ReducerState = {
     messages: Map<string, ReducerMessage>;
     sidechains: Map<string, ReducerMessage[]>;
     tracerState: TracerState; // Tracer state for sidechain processing
+    streamMergeCursor: { messageId: string; streamKey: string } | null;
     latestTodos?: {
         todos: Array<{
             content: string;
@@ -236,7 +236,8 @@ export function createReducer(): ReducerState {
         localIds: new Map(),
         messageIds: new Map(),
         sidechains: new Map(),
-        tracerState: createTracer()
+        tracerState: createTracer(),
+        streamMergeCursor: null,
     }
 };
 
@@ -293,14 +294,51 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
         for (const m of chain) sidechainMessageIds.add(m.id);
     }
 
-    // Only allow streaming thinking chunks to append when the *latest* main-timeline message
-    // is itself a thinking message. This preserves a correct tool/thinking interleaving timeline.
+    // Only allow streaming chunks to append when the *latest* main-timeline message
+    // is itself appendable. Use transcript ordering (`seq`) when available to avoid
+    // relying on non-monotonic timestamps (e.g. mixed clock sources during streaming).
     let lastMainMessageId: string | null = null;
+    let lastMainMessageSeq: number | null = null;
     let lastMainMessageCreatedAt: number | null = null;
     for (const [mid, m] of state.messages) {
         if (sidechainMessageIds.has(mid)) continue;
-        if (lastMainMessageCreatedAt === null || m.createdAt > lastMainMessageCreatedAt || (m.createdAt === lastMainMessageCreatedAt)) {
+
+        const nextSeq =
+            typeof m.seq === 'number' && Number.isFinite(m.seq)
+                ? Math.trunc(m.seq)
+                : null;
+
+        if (lastMainMessageId === null) {
             lastMainMessageId = mid;
+            lastMainMessageSeq = nextSeq;
+            lastMainMessageCreatedAt = m.createdAt;
+            continue;
+        }
+
+        const prevSeq = lastMainMessageSeq;
+        const prevCreatedAt = lastMainMessageCreatedAt;
+
+        const shouldReplace = (() => {
+            if (prevSeq !== null && nextSeq !== null) {
+                if (nextSeq > prevSeq) return true;
+                if (nextSeq < prevSeq) return false;
+                // Tie-break: prefer later timestamps / later inserts.
+                if (prevCreatedAt === null) return true;
+                return m.createdAt >= prevCreatedAt;
+            }
+            if (prevSeq === null && nextSeq !== null) {
+                return true;
+            }
+            if (prevSeq !== null && nextSeq === null) {
+                return false;
+            }
+            if (prevCreatedAt === null) return true;
+            return m.createdAt > prevCreatedAt || m.createdAt === prevCreatedAt;
+        })();
+
+        if (shouldReplace) {
+            lastMainMessageId = mid;
+            lastMainMessageSeq = nextSeq;
             lastMainMessageCreatedAt = m.createdAt;
         }
     }
@@ -310,8 +348,17 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
         lastMain && lastMain.role === 'agent' && lastMain.isThinking && typeof lastMain.text === 'string'
             ? lastMainMessageId
             : null;
-    const lastMainThinkingCreatedAt =
-        lastMainThinkingMessageId && lastMainMessageCreatedAt !== null ? lastMainMessageCreatedAt : null;
+
+    // Seed streaming merge from a cursor that persists across reducer invocations.
+    // This avoids losing the merge position when thinking deltas arrive between text chunks.
+    const lastMainStreamKey =
+        state.streamMergeCursor && typeof state.streamMergeCursor.streamKey === 'string'
+            ? state.streamMergeCursor.streamKey
+            : null;
+    const lastMainStreamMessageId =
+        state.streamMergeCursor && typeof state.streamMergeCursor.messageId === 'string'
+            ? state.streamMergeCursor.messageId
+            : null;
 
 
     // First, trace all messages to identify sidechains
@@ -365,7 +412,8 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
 	        allocateId,
 	        processUsageData,
 	        lastMainThinkingMessageId,
-	        lastMainThinkingCreatedAt,
+            lastMainStreamMessageId,
+            lastMainStreamKey,
 	        isPermissionRequestToolCall,
 	    });
 	    // Phase 1 controls the only thinking merge state within this reducer call; no other phase should append.

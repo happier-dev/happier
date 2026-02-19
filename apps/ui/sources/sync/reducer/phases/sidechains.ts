@@ -2,7 +2,7 @@ import type { ToolCall } from '../../domains/messages/messageTypes';
 import type { TracedMessage } from '../reducerTracer';
 import type { ReducerMessage, ReducerState } from '../reducer';
 import { coerceStreamingToolResultChunk, mergeExistingStdStreamsIntoFinalResultIfMissing, mergeStreamingChunkIntoResult } from '../helpers/streamingToolResult';
-import { normalizeThinkingChunk, unwrapThinkingText, wrapThinkingText } from '../helpers/thinkingText';
+import { normalizeThinkingChunk, unwrapThinkingText } from '../helpers/thinkingText';
 
 export function runSidechainsPhase(params: Readonly<{
     state: ReducerState;
@@ -90,14 +90,16 @@ export function runSidechainsPhase(params: Readonly<{
                     }
                 } else if (c.type === 'thinking') {
                     const chunk = typeof c.thinking === 'string' ? normalizeThinkingChunk(c.thinking) : '';
-                    if (!chunk.trim()) {
+                    const hasVisibleText = chunk.trim().length > 0;
+                    const hasParagraphBreak = chunk.includes('\n\n');
+                    if (!hasVisibleText && !hasParagraphBreak) {
                         continue;
                     }
 
 	                    const last = existingSidechain[existingSidechain.length - 1];
 	                    if (last && last.role === 'agent' && last.isThinking && typeof last.text === 'string') {
 	                        const merged = unwrapThinkingText(last.text) + chunk;
-	                        last.text = wrapThinkingText(merged);
+	                        last.text = merged;
 	                        // Sidechain children must never be emitted as root-level transcript messages.
 	                        // Marking the owning Task/SubAgentRun tool-call as changed (below) is sufficient
 	                        // to refresh the child transcript in both the task view and the main session view.
@@ -109,7 +111,7 @@ export function runSidechainsPhase(params: Readonly<{
                             seq: typeof msg.seq === 'number' ? msg.seq : null,
                             role: 'agent',
                             createdAt: msg.createdAt,
-                            text: wrapThinkingText(chunk),
+                            text: chunk,
                             isThinking: true,
                             tool: null,
                             event: null,

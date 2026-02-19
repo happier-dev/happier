@@ -11,6 +11,30 @@ import { persistSessionPermissionData } from './sessionPermissionPersistence';
 import type { SessionPending } from './pending';
 import type { StoreGet, StoreSet } from './_shared';
 
+function normalizeSeq(seq: unknown): number | null {
+    if (typeof seq !== 'number' || !Number.isFinite(seq)) return null;
+    return Math.trunc(seq);
+}
+
+function compareTranscriptMessagesNewestFirst(a: Message, b: Message): number {
+    const aSeq = normalizeSeq((a as any).seq);
+    const bSeq = normalizeSeq((b as any).seq);
+    if (aSeq !== null && bSeq !== null && aSeq !== bSeq) {
+        return bSeq - aSeq;
+    }
+
+    if (a.createdAt !== b.createdAt) {
+        return b.createdAt - a.createdAt;
+    }
+
+    // Tie-breaker: prefer higher seq when timestamps match (helps deterministic ordering).
+    if (aSeq !== null && bSeq !== null && aSeq !== bSeq) {
+        return bSeq - aSeq;
+    }
+    // Stable deterministic fallback.
+    return String(b.id).localeCompare(String(a.id));
+}
+
 export type SessionMessages = {
     messages: Message[];
     messagesMap: Record<string, Message>;
@@ -67,7 +91,7 @@ export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
     }
 
     const messagesArray = Object.values(mergedMessagesMap)
-        .sort((a, b) => b.createdAt - a.createdAt);
+        .sort(compareTranscriptMessagesNewestFirst);
 
     const latestUsage = existing.reducerState.latestUsage
         ? { ...existing.reducerState.latestUsage }
@@ -167,7 +191,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
 
                 // Convert to array and sort by createdAt
                 const messagesArray = Object.values(mergedMessagesMap)
-                    .sort((a, b) => b.createdAt - a.createdAt);
+                    .sort(compareTranscriptMessagesNewestFirst);
 
                 const inferred = inferLatestUserPermissionModeFromMessages(messagesArray);
                 const inferredPermissionMode = inferred?.mode ?? null;

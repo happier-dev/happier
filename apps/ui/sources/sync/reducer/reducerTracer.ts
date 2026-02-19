@@ -70,6 +70,23 @@ function normalizePromptKey(prompt: string): string {
     return String(prompt ?? '').trim();
 }
 
+function firstNonEmptyString(...values: unknown[]): string | null {
+    for (const value of values) {
+        if (typeof value === 'string') {
+            const trimmed = value.trim();
+            if (trimmed) return trimmed;
+        }
+    }
+    return null;
+}
+
+function firstBoolean(...values: unknown[]): boolean | null {
+    for (const value of values) {
+        if (typeof value === 'boolean') return value;
+    }
+    return null;
+}
+
 function promptOrphanKey(promptKey: string): string {
     return `__prompt__:${promptKey}`;
 }
@@ -95,7 +112,14 @@ export interface TracerState {
     // Buffering for out-of-order messages that arrive before their parent
     orphanMessages: Map<string, OrphanBucket>;  // parentUuid -> orphan messages waiting for parent
     
-    // Track already processed messages to avoid duplicates
+    // Track already processed messages to avoid duplicates.
+    //
+    // IMPORTANT: do not dedupe agent messages by UUID alone.
+    // Tool calls and tool results can share the same UUID/tool id; collapsing them breaks tool streaming.
+    //
+    // We dedupe by a composite key that includes the transport id (message.id) plus the first content
+    // item type + uuid when present. This allows incremental streaming updates that reuse message.id
+    // while still preventing double-application of the same delta.
     processedIds: Set<string>;
 }
 
@@ -163,6 +187,23 @@ function getMessageUuid(message: NormalizedMessage): string | null {
     return null;
 }
 
+function getProcessedKey(message: NormalizedMessage): string {
+    if (message.role !== 'agent') {
+        return `id:${message.id}`;
+    }
+
+    const first = message.content[0] as any;
+    const type = typeof first?.type === 'string' ? String(first.type) : 'unknown';
+    const uuid =
+        typeof first?.uuid === 'string' && first.uuid.trim().length > 0
+            ? first.uuid.trim()
+            : null;
+
+    return uuid
+        ? `agent:${message.id}:${type}:${uuid}`
+        : `agent:${message.id}:${type}`;
+}
+
 // Extract parent UUID from the first content item of an agent message
 function getParentUuid(message: NormalizedMessage): string | null {
     if (message.role === 'agent' && message.content.length > 0) {
@@ -189,9 +230,10 @@ function processOrphans(state: TracerState, parentUuid: string, sidechainId: str
     // Process each orphan
     for (const orphan of bucket.messages) {
         const uuid = getMessageUuid(orphan);
+        const key = getProcessedKey(orphan);
         
-        // Mark as processed
-        state.processedIds.add(orphan.id);
+        // Mark as processed (dedupe key handles agent id reuse).
+        state.processedIds.add(key);
         
         // Assign sidechain ID
         if (uuid) {
@@ -221,10 +263,11 @@ export function traceMessages(state: TracerState, messages: NormalizedMessage[])
     pruneOrphans(state);
     
     for (const message of messages) {
-        // Skip if already processed
-        if (state.processedIds.has(message.id)) {
-            continue;
-        }
+        const uuid = getMessageUuid(message);
+        const key = getProcessedKey(message);
+
+        // Skip if already processed (dedupe key handles agent id reuse).
+        if (state.processedIds.has(key)) continue;
         
         // Extract Task tools and index them by message ID for later sidechain matching
         if (message.role === 'agent') {
@@ -252,20 +295,33 @@ export function traceMessages(state: TracerState, messages: NormalizedMessage[])
             }
         }
 
-        const uuid = getMessageUuid(message);
         const parentUuid = getParentUuid(message);
-        const explicitSidechainId = typeof message.sidechainId === 'string' && message.sidechainId.trim().length > 0
-            ? message.sidechainId
-            : undefined;
+        const meta = (message as any)?.meta as Record<string, unknown> | undefined;
+        const metaSidechainId = firstNonEmptyString(meta?.sidechainId, meta?.sidechain_id);
+        const metaIsSidechain = firstBoolean(meta?.isSidechain, meta?.is_sidechain);
+
+        const explicitSidechainId = firstNonEmptyString(message.sidechainId, metaSidechainId) ?? undefined;
         const inferredFromParent = parentUuid ? state.uuidToSidechainId.get(parentUuid) : undefined;
-        const shouldTreatAsSidechain = message.isSidechain || Boolean(explicitSidechainId) || Boolean(inferredFromParent);
+        // IMPORTANT: parentUUID is a threading hint, not an authoritative sidechain signal.
+        //
+        // We only use parent-based propagation when the provider has already indicated that the message
+        // is part of a sidechain (via isSidechain=true) or when an explicit sidechainId is present.
+        //
+        // This prevents a class of bugs where main-timeline messages become accidentally parented to the
+        // last sidechain UUID during streaming (cross-chain parent contamination), which would otherwise
+        // fold real main transcript output into a Task/SubAgentRun thread in an order-dependent way.
+        const shouldTreatAsSidechain =
+            message.isSidechain
+            || metaIsSidechain === true
+            || Boolean(explicitSidechainId)
+            || (message.isSidechain && Boolean(inferredFromParent));
         
         // Non-sidechain messages are returned immediately without sidechain ID.
         // Fallbacks:
         // - explicit sidechainId from provider metadata
         // - parent already mapped to a sidechain (when isSidechain flag is missing)
         if (!shouldTreatAsSidechain) {
-            state.processedIds.add(message.id);
+            state.processedIds.add(key);
             const tracedMessage: TracedMessage = {
                 ...message
             };
@@ -299,7 +355,7 @@ export function traceMessages(state: TracerState, messages: NormalizedMessage[])
         
         if ((explicitSidechainId || isSidechainRoot) && sidechainId) {
             // This is a sidechain root - mark it and process any waiting orphans
-            state.processedIds.add(message.id);
+            state.processedIds.add(key);
             if (uuid) {
                 state.uuidToSidechainId.set(uuid, sidechainId);
             }
@@ -321,7 +377,7 @@ export function traceMessages(state: TracerState, messages: NormalizedMessage[])
             
             if (parentSidechainId) {
                 // Parent is known - inherit the same sidechain ID
-                state.processedIds.add(message.id);
+                state.processedIds.add(key);
                 if (uuid) {
                     state.uuidToSidechainId.set(uuid, parentSidechainId);
                 }
@@ -348,7 +404,7 @@ export function traceMessages(state: TracerState, messages: NormalizedMessage[])
             if (pendingPromptKey) {
                 addOrphan(state, promptOrphanKey(pendingPromptKey), message);
             } else {
-                state.processedIds.add(message.id);
+                state.processedIds.add(key);
             }
         }
     }

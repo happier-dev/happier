@@ -48,6 +48,28 @@ describe('reducerTracer sidechain linking', () => {
         expect(traced[0].sidechainId).toBe('tool_task_123');
     });
 
+    it('treats meta.sidechainId as an explicit sidechainId', () => {
+        const state = createTracer();
+        const msg: NormalizedMessage = {
+            id: 'msg_meta_sc_1',
+            localId: null,
+            createdAt: 2100,
+            role: 'agent',
+            isSidechain: false,
+            content: [{
+                type: 'text',
+                text: 'subagent output',
+                uuid: 'meta-sc-uuid',
+                parentUUID: null,
+            }],
+            meta: { sidechainId: 'tool_task_meta_1' } as any,
+        };
+
+        const traced = traceMessages(state, [msg]);
+        expect(traced).toHaveLength(1);
+        expect(traced[0].sidechainId).toBe('tool_task_meta_1');
+    });
+
     it('assigns sidechainId to sidechain root messages using Task prompt mapping', () => {
         const state = createTracer();
         traceMessages(state, [buildTaskMessage()]);
@@ -104,8 +126,11 @@ describe('reducerTracer sidechain linking', () => {
 
         const traced = traceMessages(state, [childWithoutFlag]);
         expect(traced).toHaveLength(1);
-        expect(traced[0].sidechainId).toBe('tool1');
-        expect(state.uuidToSidechainId.get('child-uuid-2')).toBe('tool1');
+        // IMPORTANT: parentUUID alone is not authoritative for sidechains. If the provider does not
+        // explicitly mark the message as a sidechain (or include a sidechainId), we must treat it
+        // as a main-timeline message to avoid folding main transcript messages into sub-agent threads.
+        expect(traced[0].sidechainId).toBeUndefined();
+        expect(state.uuidToSidechainId.get('child-uuid-2')).toBeUndefined();
     });
 
     it('buffers sidechain roots until Task prompt mapping exists (prevents main transcript leakage)', () => {

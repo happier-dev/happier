@@ -180,8 +180,42 @@ export function normalizeRawMessage(
         };
     }
     if (raw.role === 'agent') {
-        if (raw.content.type === 'output') {
+        const metaSidechainIdRaw =
+            raw.meta && typeof (raw.meta as any).sidechainId === 'string'
+                ? (raw.meta as any).sidechainId
+                : (
+                    raw.meta && typeof (raw.meta as any).sidechain_id === 'string'
+                        ? (raw.meta as any).sidechain_id
+                        : undefined
+                );
+        const metaSidechainId =
+            typeof metaSidechainIdRaw === 'string' && metaSidechainIdRaw.trim().length > 0
+                ? metaSidechainIdRaw.trim()
+                : undefined;
+        const metaIsSidechain =
+            raw.meta && typeof (raw.meta as any).isSidechain === 'boolean'
+                ? Boolean((raw.meta as any).isSidechain)
+                : (
+                    raw.meta && typeof (raw.meta as any).is_sidechain === 'boolean'
+                        ? Boolean((raw.meta as any).is_sidechain)
+                        : false
+                );
 
+        const getOutputSidechainId = (data: any): string | undefined => {
+            const rawId =
+                typeof data?.sidechainId === 'string'
+                    ? data.sidechainId
+                    : (typeof data?.sidechain_id === 'string' ? data.sidechain_id : undefined);
+            return typeof rawId === 'string' && rawId.trim().length > 0 ? rawId.trim() : undefined;
+        };
+
+        const getOutputIsSidechain = (data: any): boolean => {
+            if (typeof data?.isSidechain === 'boolean') return Boolean(data.isSidechain);
+            if (typeof data?.is_sidechain === 'boolean') return Boolean(data.is_sidechain);
+            return false;
+        };
+
+        if (raw.content.type === 'output') {
             // Skip Meta messages
             if (raw.content.data.isMeta) {
                 return null;
@@ -238,18 +272,15 @@ export function normalizeRawMessage(
                         } as NormalizedAgentContent);
                     }
                 }
-                const sidechainId =
-                    typeof (raw.content.data as any).sidechainId === 'string'
-                        ? (raw.content.data as any).sidechainId
-                        : claudeParentToolUseId;
-                const legacyIsSidechain = raw.content.data.isSidechain ?? false;
-                return {
-                    id,
-                    localId,
-                    createdAt,
+	                const sidechainId = getOutputSidechainId(raw.content.data) ?? (metaSidechainId ?? claudeParentToolUseId);
+	                const legacyIsSidechain = getOutputIsSidechain(raw.content.data);
+	                return {
+	                    id,
+	                    localId,
+	                    createdAt,
                     role: 'agent',
                     sidechainId,
-                    isSidechain: Boolean(sidechainId) || legacyIsSidechain,
+                    isSidechain: Boolean(sidechainId) || legacyIsSidechain || metaIsSidechain,
                     content,
                     meta: raw.meta,
                     usage: raw.content.data.message.usage
@@ -263,14 +294,11 @@ export function normalizeRawMessage(
                     typeof (raw.content.data as any).parent_tool_use_id === 'string'
                         ? String((raw.content.data as any).parent_tool_use_id)
                         : undefined;
-                const sidechainId =
-                    typeof (raw.content.data as any).sidechainId === 'string'
-                        ? (raw.content.data as any).sidechainId
-                        : claudeParentToolUseId;
-                const isSidechain = Boolean(sidechainId) || (raw.content.data.isSidechain ?? false);
+	                const sidechainId = getOutputSidechainId(raw.content.data) ?? (metaSidechainId ?? claudeParentToolUseId);
+	                const isSidechain = Boolean(sidechainId) || getOutputIsSidechain(raw.content.data) || metaIsSidechain;
 
                 // Handle sidechain user messages
-                if (raw.content.data.isSidechain && raw.content.data.message && typeof raw.content.data.message.content === 'string') {
+                if (isSidechain && raw.content.data.message && typeof raw.content.data.message.content === 'string') {
                     // Return as a special agent message with sidechain content
                     return {
                         id,
@@ -435,11 +463,22 @@ export function normalizeRawMessage(
                 } satisfies NormalizedMessage;
             }
         }
-        // ACP (Agent Communication Protocol) - unified format for all agent providers
-        if (raw.content.type === 'acp') {
-            const sidechainId = typeof (raw.content.data as any).sidechainId === 'string' ? (raw.content.data as any).sidechainId : undefined;
-            const legacyIsSidechain = typeof (raw.content.data as any).isSidechain === 'boolean' ? (raw.content.data as any).isSidechain : false;
-            const isSidechain = Boolean(sidechainId) || legacyIsSidechain;
+	        // ACP (Agent Communication Protocol) - unified format for all agent providers
+	        if (raw.content.type === 'acp') {
+	            const sidechainIdRaw =
+	                typeof (raw.content.data as any).sidechainId === 'string'
+	                    ? String((raw.content.data as any).sidechainId)
+	                    : (typeof (raw.content.data as any).sidechain_id === 'string'
+	                        ? String((raw.content.data as any).sidechain_id)
+	                        : metaSidechainId);
+	            const sidechainId = typeof sidechainIdRaw === 'string' && sidechainIdRaw.trim().length > 0 ? sidechainIdRaw.trim() : undefined;
+	            const legacyIsSidechain =
+	                typeof (raw.content.data as any).isSidechain === 'boolean'
+	                    ? Boolean((raw.content.data as any).isSidechain)
+	                    : (typeof (raw.content.data as any).is_sidechain === 'boolean'
+	                        ? Boolean((raw.content.data as any).is_sidechain)
+	                        : false);
+	            const isSidechain = Boolean(sidechainId) || legacyIsSidechain || metaIsSidechain;
 
             if (raw.content.data.type === 'message') {
                 return {
