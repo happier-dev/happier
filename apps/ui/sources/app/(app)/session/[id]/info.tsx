@@ -7,7 +7,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Avatar } from '@/components/ui/avatar/Avatar';
-import { useSession, useIsDataReady, useSetting } from '@/sync/domains/state/storage';
+import { useSession, useIsDataReady, useLocalSetting, useSetting } from '@/sync/domains/state/storage';
 import { getSessionName, useSessionStatus, formatOSPlatform, formatPathRelativeToHome, getSessionAvatarId } from '@/utils/sessions/sessionUtils';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
@@ -70,7 +70,8 @@ function StatusDot({ color, isPulsing, size = 8 }: { color: string; isPulsing?: 
 function SessionInfoContent({ session }: { session: Session }) {
     const { theme } = useUnistyles();
     const router = useRouter();
-    const devModeEnabled = __DEV__;
+    const localDevModeEnabled = useLocalSetting('devModeEnabled');
+    const devModeEnabled = __DEV__ || localDevModeEnabled === true;
     const sessionName = getSessionName(session);
     const sessionStatus = useSessionStatus(session);
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
@@ -118,6 +119,13 @@ function SessionInfoContent({ session }: { session: Session }) {
         return getTmuxFallbackReason(session.metadata?.terminal);
     }, [session.metadata?.terminal]);
 
+    const sessionLogPath = React.useMemo(() => {
+        const value = typeof (session.metadata as any)?.sessionLogPath === 'string'
+            ? (session.metadata as any).sessionLogPath.trim()
+            : '';
+        return value.length > 0 ? value : null;
+    }, [session.metadata]);
+
     const handleCopySessionId = useCallback(async () => {
         if (!session) return;
         try {
@@ -147,6 +155,16 @@ function SessionInfoContent({ session }: { session: Session }) {
             Modal.alert(t('common.error'), t('sessionInfo.failedToCopyMetadata'));
         }
     }, [session]);
+
+    const handleCopySessionLogPath = useCallback(async () => {
+        if (!sessionLogPath) return;
+        try {
+            await Clipboard.setStringAsync(sessionLogPath);
+            Modal.alert(t('common.copied'), t('items.copiedToClipboard', { label: 'Session log path' }));
+        } catch {
+            Modal.alert(t('common.error'), t('sessionInfo.failedToCopyMetadata'));
+        }
+    }, [sessionLogPath]);
 
     const canStopSession = !session.accessLevel;
     const isArchivedSession = session.archivedAt != null;
@@ -388,6 +406,14 @@ function SessionInfoContent({ session }: { session: Session }) {
                             onPress={() => handleCopyCommand(`happier resume ${session.id}`)}
                         />
                     )}
+                    {devModeEnabled && Boolean(sessionLogPath) && (
+                        <Item
+                            title="View session log"
+                            subtitle="Open live log tail for this session"
+                            icon={<Ionicons name="document-text-outline" size={29} color="#007AFF" />}
+                            onPress={() => router.push(`/session/${session.id}/log`)}
+                        />
+                    )}
                     {session.metadata?.machineId && (
                         <Item
                             title={t('sessionInfo.viewMachine')}
@@ -496,6 +522,15 @@ function SessionInfoContent({ session }: { session: Session }) {
                                 title={t('sessionInfo.happyHome')}
                                 subtitle={formatPathRelativeToHome(session.metadata.happyHomeDir, session.metadata.homeDir)}
                                 icon={<Ionicons name="home-outline" size={29} color="#5856D6" />}
+                                showChevron={false}
+                            />
+                        )}
+                        {devModeEnabled && sessionLogPath && (
+                            <Item
+                                title="Session log path"
+                                subtitle={formatPathRelativeToHome(sessionLogPath, session.metadata.homeDir)}
+                                icon={<Ionicons name="document-text-outline" size={29} color="#5856D6" />}
+                                onPress={handleCopySessionLogPath}
                                 showChevron={false}
                             />
                         )}

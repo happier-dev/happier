@@ -115,6 +115,7 @@ export const MetadataSchema = z.object({
     homeDir: z.string().optional(), // User's home directory on the machine
     happyHomeDir: z.string().optional(), // Happy configuration directory 
     hostPid: z.number().optional(), // Process ID of the session
+    sessionLogPath: z.string().optional(), // Session-specific CLI log file path
     terminal: z.object({
         mode: z.enum(['plain', 'tmux']),
         requested: z.enum(['plain', 'tmux']).optional(),

@@ -58,4 +58,14 @@ describe('MetadataSchema', () => {
 
         expect((parsed as any).kimiSessionId).toBe('kimi-session-1');
     });
+
+    it('should preserve sessionLogPath when present', () => {
+        const parsed = MetadataSchema.parse({
+            path: '/tmp',
+            host: 'host',
+            sessionLogPath: '/Users/test/.happier/logs/session.log',
+        } as any);
+
+        expect((parsed as any).sessionLogPath).toBe('/Users/test/.happier/logs/session.log');
+    });
 });

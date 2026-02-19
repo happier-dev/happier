@@ -4,6 +4,7 @@
 
 import { apiSocket } from '../api/session/apiSocket';
 import { createRpcCallError, isRpcMethodNotAvailableError, readRpcErrorCode } from '../runtime/rpcErrors';
+import { assertRpcResponseWithSuccess } from '../runtime/assertRpcResponseWithSuccess';
 import { buildResumeHappySessionRpcParams, type ResumeHappySessionRpcParams } from '../domains/session/resume/resumeSessionPayload';
 import { storage } from '../domains/state/storage';
 import { nowServerMs } from '../runtime/time';
@@ -32,17 +33,6 @@ export {
     sessionScmRemotePush,
     sessionScmStatusSnapshot,
 } from './sessionScm';
-
-function assertRpcResponseWithSuccess<T extends { success: boolean }>(value: unknown): T {
-    if (!value || typeof value !== 'object' || typeof (value as { success?: unknown }).success !== 'boolean') {
-        // Treat as incompatibility with older daemons/CLIs: callers expect a `{ success }` envelope.
-        throw createRpcCallError({
-            error: 'RPC call returned an unsupported response',
-            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-        });
-    }
-    return value as T;
-}
 
 // Permission operation types
 interface SessionPermissionRequest {
@@ -90,6 +80,21 @@ interface SessionReadFileRequest {
 interface SessionReadFileResponse {
     success: boolean;
     content?: string; // base64 encoded
+    error?: string;
+}
+
+// Session log tail operation types
+interface SessionReadLogTailRequest {
+    maxBytes?: number;
+}
+
+interface SessionReadLogTailResponse {
+    success: boolean;
+    path?: string;
+    tail?: string;
+    truncated?: boolean;
+    bytesRead?: number;
+    totalBytes?: number;
     error?: string;
 }
 
@@ -452,6 +457,32 @@ export async function sessionReadFile(sessionId: string, path: string): Promise<
         return {
             success: false,
             error: error instanceof Error ? error.message : 'Unknown error'
+        };
+    }
+}
+
+/**
+ * Read the tail of a session log file from the running CLI session process.
+ */
+export async function sessionReadLogTail(
+    sessionId: string,
+    options?: SessionReadLogTailRequest,
+): Promise<SessionReadLogTailResponse> {
+    try {
+        const request: SessionReadLogTailRequest = {};
+        if (typeof options?.maxBytes === 'number' && Number.isFinite(options.maxBytes)) {
+            request.maxBytes = options.maxBytes;
+        }
+        const response = await apiSocket.sessionRPC<SessionReadLogTailResponse, SessionReadLogTailRequest>(
+            sessionId,
+            RPC_METHODS.SESSION_LOG_TAIL,
+            request,
+        );
+        return assertRpcResponseWithSuccess<SessionReadLogTailResponse>(response);
+    } catch (error) {
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
         };
     }
 }
