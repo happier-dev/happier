@@ -4,7 +4,11 @@ import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { openEncryptedDataKeyEnvelopeV1, SessionContinueWithReplayRpcResultSchema } from '@happier-dev/protocol';
+import {
+  openEncryptedDataKeyEnvelopeV1,
+  sealEncryptedDataKeyEnvelopeV1,
+  SessionContinueWithReplayRpcResultSchema,
+} from '@happier-dev/protocol';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
@@ -17,7 +21,7 @@ import { createDataKeyRpcClient } from '../../src/testkit/syntheticAgent/rpcClie
 import { encryptDataKeyBase64, decryptDataKeyBase64 } from '../../src/testkit/rpcCrypto';
 import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
-import { fetchAllMessages } from '../../src/testkit/sessions';
+import { createSession, fetchAllMessages } from '../../src/testkit/sessions';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 
 const run = createRunDirs({ runLabel: 'core' });
@@ -122,31 +126,17 @@ describe('core e2e: machine RPC session.continueWithReplay hydrates transcript i
       { timeoutMs: 20_000 },
     );
 
-    const spawnRes = await daemonControlPostJson<{ success: boolean; sessionId?: string }>({
-      port: daemon.state.httpPort,
-      path: '/spawn-session',
-      controlToken,
-      body: {
-        directory: workspaceDir,
-        terminal: { mode: 'plain' },
-        environmentVariables: {
-          HAPPIER_HOME_DIR: daemonHomeDir,
-          HAPPIER_SERVER_URL: server.baseUrl,
-          HAPPIER_WEBAPP_URL: server.baseUrl,
-          HAPPIER_VARIANT: 'dev',
-          HAPPIER_DISABLE_CAFFEINATE: '1',
-          HAPPIER_CLAUDE_PATH: fakeClaudePath,
-        },
-      },
+    // This test only needs a prior session with dataKey-encrypted messages; creating it via the server API is
+    // significantly more reliable than going through daemon /spawn-session (which involves starting a runner).
+    const dekPlain = Uint8Array.from(randomBytes(32));
+    const sealedDek = sealEncryptedDataKeyEnvelopeV1({
+      dataKey: dekPlain,
+      recipientPublicKey: seeded.publicKey,
+      randomBytes: (length) => Uint8Array.from(randomBytes(length)),
     });
-
-    expect(spawnRes.status).toBe(200);
-    expect(spawnRes.data.success).toBe(true);
-    const previousSessionId = spawnRes.data.sessionId;
-    expect(typeof previousSessionId).toBe('string');
-    if (typeof previousSessionId !== 'string' || previousSessionId.length === 0) {
-      throw new Error('Missing sessionId from daemon spawn-session');
-    }
+    const { sessionId: previousSessionId } = await createSession(server.baseUrl, auth.token, {
+      dataEncryptionKeyBase64: Buffer.from(sealedDek).toString('base64'),
+    });
 
     const encryptedDekBase64 = await fetchSessionDataEncryptionKeyBase64({
       baseUrl: server.baseUrl,
@@ -160,6 +150,7 @@ describe('core e2e: machine RPC session.continueWithReplay hydrates transcript i
     if (!dek || dek.length !== 32) {
       throw new Error('Failed to open session dataEncryptionKey');
     }
+    expect(Buffer.from(dek).toString('base64')).toBe(Buffer.from(dekPlain).toString('base64'));
 
     const userText = 'hello from e2e replay';
     const assistantText = 'hi from e2e replay';
@@ -225,4 +216,3 @@ describe('core e2e: machine RPC session.continueWithReplay hydrates transcript i
     ui.close();
   });
 });
-

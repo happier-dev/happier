@@ -24,9 +24,10 @@ function resolveRunLogsKeepCount(): number {
     process.env.HAPPY_E2E_RUN_LOG_KEEP_COUNT ??
     ''
   ).trim();
-  if (!raw) return 200;
+  // Keep this small by default: core e2e logs can be large enough to exhaust developer disk during long runs.
+  if (!raw) return 50;
   const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed < 1) return 200;
+  if (!Number.isFinite(parsed) || parsed < 1) return 50;
   return Math.min(parsed, 10_000);
 }
 

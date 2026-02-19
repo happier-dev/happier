@@ -40,6 +40,7 @@ import {
   makeAcpSearchKnownTokenScenario,
   makeAcpSearchLsEquivalenceScenario,
   makeAcpWriteInWorkspaceScenario,
+  makeAcpWriteThenStreamMarkdownTableScenario,
 } from './scenarios.acp';
 import { cleanupOutsideWorkspacePath, makeOutsideWorkspacePath } from '../harness/outsideWorkspacePath';
 
@@ -2418,6 +2419,20 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
       title: 'edit: write file and cat it',
       filename: 'e2e-write.txt',
       content: 'HELLO_E2E',
+    });
+  },
+
+  write_then_stream_markdown_table: (provider) => {
+    if (provider.id !== 'opencode' && provider.id !== 'kilo') {
+      throw new Error(`write_then_stream_markdown_table only supports opencode or kilo providers (got ${provider.id})`);
+    }
+    return makeAcpWriteThenStreamMarkdownTableScenario({
+      providerId: acpProviderId(provider),
+      id: 'write_then_stream_markdown_table',
+      title: 'streaming: write then stream markdown table',
+      filename: 'e2e-stream-table.txt',
+      fileContent: 'STREAM_TABLE_FILE_E2E',
+      marker: 'STREAM_TABLE_E2E_OK',
     });
   },
 

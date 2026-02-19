@@ -13,6 +13,7 @@
       "read_missing_file_in_workspace",
       "edit_result_includes_diff",
       "edit_write_file_and_cat",
+      "write_then_stream_markdown_table",
       "multi_file_edit_in_workspace",
       "multi_file_edit_in_workspace_includes_diff",
       "abort_turn_then_continue",

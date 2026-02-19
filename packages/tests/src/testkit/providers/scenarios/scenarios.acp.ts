@@ -170,6 +170,108 @@ export function makeAcpWriteInWorkspaceScenario(params: {
   };
 }
 
+export function makeAcpWriteThenStreamMarkdownTableScenario(params: {
+  providerId: string;
+  id?: string;
+  title?: string;
+  filename?: string;
+  fileContent: string;
+  marker: string;
+}): ProviderScenario {
+  const filename = params.filename ?? 'e2e-stream-table.txt';
+
+  return {
+    id: params.id ?? 'write_then_stream_markdown_table',
+    title: params.title ?? 'streaming: write a file then stream a markdown table',
+    tier: 'extended',
+    yolo: true,
+    prompt: ({ workspaceDir }) =>
+      [
+        'Use exactly one file-editing tool call:',
+        `- Write a file in the current working directory: ${filename}`,
+        `- Content: ${params.fileContent}`,
+        '',
+        'Then reply with a markdown table with at least 60 rows.',
+        `After the table, output a final line containing exactly: ${params.marker}`,
+        '',
+        'This is an automated test. Do not use execute to write the file.',
+        `Note: current working directory is ${workspaceDir}`,
+        '',
+        'Example table format:',
+        '| col_a | col_b |',
+        '| --- | --- |',
+        '| a | b |',
+      ].join('\n'),
+    requiredAnyFixtureKeys: [
+      [
+        k(params.providerId, 'tool-call', 'Patch'),
+        k(params.providerId, 'tool-call', 'Edit'),
+        k(params.providerId, 'tool-call', 'Write'),
+      ],
+      [
+        k(params.providerId, 'tool-result', 'Patch'),
+        k(params.providerId, 'tool-result', 'Edit'),
+        k(params.providerId, 'tool-result', 'Write'),
+      ],
+    ],
+    requiredMessageSubstrings: [params.marker],
+    verify: async ({ workspaceDir, baseUrl, token, sessionId, secret }) => {
+      const filePath = join(workspaceDir, filename);
+      const content = await readFile(filePath, 'utf8');
+      if (!content.includes(params.fileContent)) {
+        throw new Error('Expected file content not present after provider run');
+      }
+
+      const rows = await fetchAllMessages(baseUrl, token, sessionId);
+      const streamedTextByKey = new Map<string, string>();
+      const streamedChunkCountByKey = new Map<string, number>();
+
+      for (const row of rows) {
+        let decrypted: any;
+        try {
+          decrypted = decryptLegacyBase64(row.content.c, secret);
+        } catch {
+          continue;
+        }
+        if (!decrypted || typeof decrypted !== 'object') continue;
+
+        const role = typeof decrypted.role === 'string' ? decrypted.role : '';
+        if (role !== 'agent') continue;
+
+        const meta = decrypted.meta && typeof decrypted.meta === 'object' ? (decrypted.meta as Record<string, unknown>) : null;
+        const streamKey = meta && typeof meta.happierStreamKey === 'string' ? String(meta.happierStreamKey) : null;
+        if (!streamKey) continue;
+
+        const contentObj = decrypted.content && typeof decrypted.content === 'object' ? (decrypted.content as Record<string, unknown>) : null;
+        if (!contentObj || contentObj.type !== 'acp') continue;
+        const data = contentObj.data && typeof contentObj.data === 'object' ? (contentObj.data as Record<string, unknown>) : null;
+        if (!data || data.type !== 'message' || typeof data.message !== 'string') continue;
+
+        streamedChunkCountByKey.set(streamKey, (streamedChunkCountByKey.get(streamKey) ?? 0) + 1);
+        streamedTextByKey.set(streamKey, (streamedTextByKey.get(streamKey) ?? '') + data.message);
+      }
+
+      const matching = [...streamedTextByKey.entries()].filter(([, text]) => text.includes(params.marker));
+      if (matching.length === 0) {
+        throw new Error('Expected marker to appear in a streamed agent message with happierStreamKey meta');
+      }
+
+      const [matchedKey, matchedText] = matching[0]!;
+      const chunks = streamedChunkCountByKey.get(matchedKey) ?? 0;
+      if (chunks < 2) {
+        throw new Error(`Expected streamed response to be chunked (>=2 messages) but got ${chunks}`);
+      }
+
+      // Sanity-check the assistant produced something table-shaped (helps catch regressions where only the marker is emitted).
+      const hasTableSeparator = matchedText.includes('| ---') || matchedText.includes('|---');
+      const hasAnyPipeRow = matchedText.includes('|') && matchedText.includes('\n|');
+      if (!hasTableSeparator || !hasAnyPipeRow) {
+        throw new Error('Expected streamed response to include a markdown table');
+      }
+    },
+  };
+}
+
 /**
  * Experimental scenario to detect whether an ACP provider uses ACP fs methods for writes.
  *

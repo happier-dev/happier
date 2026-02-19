@@ -39,12 +39,12 @@ describe('core e2e: existing_session automation target', () => {
     await server?.stop();
   });
 
-  it('supports existing_session target lifecycle with feature gate enabled', async () => {
+  it('supports existing_session target lifecycle', async () => {
     const testDir = run.testDir('automations-existing-session-target');
     server = await startServerLight({
       testDir,
       extraEnv: {
-        HAPPIER_FEATURE_AUTOMATIONS__EXISTING_SESSION_TARGET: '1',
+        HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
       },
     });
     const auth = await createTestAuth(server.baseUrl);

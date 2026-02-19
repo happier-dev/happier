@@ -143,5 +143,5 @@ describe('core e2e: automation CRUD + run history', () => {
       path: '/v2/automations',
     });
     expect(listAfterDelete.some((entry) => entry.id === created.id)).toBe(false);
-  }, 45_000);
+  });
 });

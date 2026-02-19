@@ -14,7 +14,6 @@ import { waitFor } from '../../src/testkit/timing';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
 import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
-import { yarnCommand } from '../../src/testkit/process/commands';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
 import { enqueuePendingQueueV2 } from '../../src/testkit/pendingQueueV2';
@@ -152,15 +151,12 @@ new acp.AgentSideConnection((conn) => new FakeAgent(conn), stream);
       HAPPIER_E2E_PERMISSION_DELAY_MS: '250',
     };
 
-    await ensureCliDistBuilt({ testDir, env: cliEnv });
+    const cliDistEntrypoint = await ensureCliDistBuilt({ testDir, env: cliEnv });
 
     const proc: SpawnedProcess = spawnLoggedProcess({
-      command: yarnCommand(),
+      command: process.execPath,
       args: [
-        '-s',
-        'workspace',
-        '@happier-dev/cli',
-        'dev',
+        cliDistEntrypoint,
         'codex',
         '--existing-session',
         sessionId,

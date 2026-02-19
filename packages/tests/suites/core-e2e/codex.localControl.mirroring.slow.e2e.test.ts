@@ -15,7 +15,7 @@ import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
 import { waitFor } from '../../src/testkit/timing';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
-import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
+import { ensureCliSharedDepsBuilt } from '../../src/testkit/process/cliDist';
 import { yarnCommand } from '../../src/testkit/process/commands';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import { hasToolCall, parseToolTraceJsonl } from '../../src/testkit/toolTraceJsonl';
@@ -137,7 +137,7 @@ setInterval(() => {}, 1000);
       HAPPIER_CODEX_RESUME_MCP_SERVER_BIN: fakeCodexPath,
     };
 
-    await ensureCliDistBuilt({ testDir, env: cliEnv });
+    await ensureCliSharedDepsBuilt({ testDir, env: cliEnv });
 
     const proc: SpawnedProcess = spawnLoggedProcess({
       command: yarnCommand(),
