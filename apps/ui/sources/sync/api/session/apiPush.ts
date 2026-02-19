@@ -6,9 +6,10 @@ import { serverFetch } from '@/sync/http/client';
 export async function registerPushToken(
     credentials: AuthCredentials,
     token: string,
-    opts: Readonly<{ apiEndpoint?: string }> = {},
+    opts: Readonly<{ apiEndpoint?: string; clientServerUrl?: string }> = {},
 ): Promise<void> {
     const API_ENDPOINT = (opts.apiEndpoint ?? '').trim().replace(/\/+$/, '');
+    const CLIENT_SERVER_URL = (opts.clientServerUrl ?? '').trim().replace(/\/+$/, '');
     const path = API_ENDPOINT ? `${API_ENDPOINT}/v1/push-tokens` : '/v1/push-tokens';
     await backoff(async () => {
         // When the caller provides an explicit API endpoint, we intentionally allow cross-origin
@@ -23,7 +24,7 @@ export async function registerPushToken(
                 'Authorization': `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ token }),
+            body: JSON.stringify(CLIENT_SERVER_URL ? { token, clientServerUrl: CLIENT_SERVER_URL } : { token }),
         });
 
         if (!response.ok) {

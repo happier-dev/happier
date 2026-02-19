@@ -12,6 +12,7 @@ import {
     type FeatureId,
 } from '@happier-dev/protocol';
 import type { Settings } from '@/sync/domains/settings/settings';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import {
     getCachedServerFeaturesSnapshot,
@@ -49,12 +50,11 @@ export function useServerFeaturesRuntimeSnapshot(options?: Readonly<{ enabled?: 
         let cancelled = false;
         let requestToken = 0;
 
-        const loadForServerId = async (serverId: string | undefined, force?: boolean) => {
+        const loadForServerId = async (serverId: string | undefined) => {
             const token = requestToken + 1;
             requestToken = token;
             const next = await getServerFeaturesSnapshot({
                 serverId,
-                ...(force ? { force: true } : {}),
             });
             if (!cancelled && token === requestToken) {
                 setSnapshot(next);
@@ -67,14 +67,14 @@ export function useServerFeaturesRuntimeSnapshot(options?: Readonly<{ enabled?: 
 
             const cached = getCachedServerFeaturesSnapshot({ serverId });
             setSnapshot(cached ?? { status: 'loading' });
-            void loadForServerId(serverId, true);
+            fireAndForget(loadForServerId(serverId), { tag: 'useServerFeaturesSnapshot.subscribeActiveServer' });
         });
 
-        void (async () => {
+        fireAndForget((async () => {
             const cached = getCachedServerFeaturesSnapshot();
             if (cached && !cancelled) setSnapshot(cached);
-            await loadForServerId(undefined, false);
-        })();
+            await loadForServerId(undefined);
+        })(), { tag: 'useServerFeaturesSnapshot.initialLoad' });
 
         return () => {
             cancelled = true;
@@ -110,7 +110,7 @@ export function useServerFeaturesSnapshotForServerId(
         const load = async (serverId: string) => {
             const token = requestToken + 1;
             requestToken = token;
-            const next = await getServerFeaturesSnapshot({ serverId, force: true });
+            const next = await getServerFeaturesSnapshot({ serverId });
             if (!cancelled && token === requestToken) {
                 setSnapshot(next);
             }
@@ -125,7 +125,7 @@ export function useServerFeaturesSnapshotForServerId(
 
         const cached = getCachedServerFeaturesSnapshot({ serverId });
         setSnapshot(cached ?? { status: 'loading' });
-        void load(serverId);
+        fireAndForget(load(serverId), { tag: 'useServerFeaturesSnapshotForServerId.initialLoad' });
 
         return () => {
             cancelled = true;
@@ -203,7 +203,7 @@ export function useServerFeaturesMainSelectionSnapshot(
             requestToken = token;
 
             const results = await Promise.all(
-                serverIds.map(async (serverId) => [serverId, await getServerFeaturesSnapshot({ serverId, force: true })] as const),
+                serverIds.map(async (serverId) => [serverId, await getServerFeaturesSnapshot({ serverId })] as const),
             );
 
             if (cancelled || token !== requestToken) return;
@@ -232,7 +232,7 @@ export function useServerFeaturesMainSelectionSnapshot(
         }
 
         setState({ status: 'loading', serverIds, snapshotsByServerId });
-        void load(serverIds);
+        fireAndForget(load(serverIds), { tag: 'useServerFeaturesMainSelectionSnapshot.initialLoad' });
 
         return () => {
             cancelled = true;

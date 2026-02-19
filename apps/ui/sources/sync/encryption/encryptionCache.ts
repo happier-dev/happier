@@ -6,15 +6,19 @@ interface CacheEntry<T> {
     accessTime: number;
 }
 
+type MessageCacheEntry = CacheEntry<DecryptedMessage> & {
+    fingerprint: string;
+};
+
 /**
  * In-memory cache for decrypted session data to avoid expensive re-decryption
  * Uses sessionId + version as keys for agent state and metadata
- * Uses messageId as key for messages (immutable)
+ * Uses messageId + ciphertext fingerprint for messages (streaming can reuse ids)
  */
 export class EncryptionCache {
     private agentStateCache = new Map<string, CacheEntry<AgentState>>();
     private metadataCache = new Map<string, CacheEntry<Metadata>>();
-    private messageCache = new Map<string, CacheEntry<DecryptedMessage>>();
+    private messageCache = new Map<string, MessageCacheEntry>();
     private machineMetadataCache = new Map<string, CacheEntry<MachineMetadata>>();
     private daemonStateCache = new Map<string, CacheEntry<any>>();
     
@@ -82,9 +86,12 @@ export class EncryptionCache {
     /**
      * Get cached decrypted message
      */
-    getCachedMessage(messageId: string): DecryptedMessage | null {
+    getCachedMessage(messageId: string, fingerprint: string): DecryptedMessage | null {
         const entry = this.messageCache.get(messageId);
         if (entry) {
+            if (entry.fingerprint !== fingerprint) {
+                return null;
+            }
             entry.accessTime = Date.now();
             return entry.data;
         }
@@ -94,10 +101,11 @@ export class EncryptionCache {
     /**
      * Cache decrypted message
      */
-    setCachedMessage(messageId: string, data: DecryptedMessage): void {
+    setCachedMessage(messageId: string, data: DecryptedMessage, fingerprint: string): void {
         this.messageCache.set(messageId, {
             data,
-            accessTime: Date.now()
+            accessTime: Date.now(),
+            fingerprint,
         });
         
         // Evict if over limit

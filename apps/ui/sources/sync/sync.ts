@@ -26,6 +26,7 @@ import {
 } from './domains/state/persistence';
 import { initializeTracking, tracking } from '@/track';
 import { parseToken } from '@/utils/auth/parseToken';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { RevenueCat } from './domains/purchases';
 import { trackPaywallPresented, trackPaywallPurchased, trackPaywallCancelled, trackPaywallRestored, trackPaywallError } from '@/track';
 import { getActiveServerSnapshot } from './domains/server/serverRuntime';
@@ -531,9 +532,6 @@ class Sync {
         }
         ex.invalidate();
 
-        // Also invalidate git status sync for this session
-        scmStatusSync.getSync(sessionId).invalidate();
-
         // Notify voice assistant about session visibility
         const session = storage.getState().sessions[sessionId];
         if (session) {
@@ -728,13 +726,11 @@ class Sync {
                 return;
             }
 
-                const sessionEncryption = this.encryption.getSessionEncryption(params.sessionId);
-                if (!sessionEncryption) {
-                    // If the session/encryption isn't available (e.g. session list was cleared or the app is mid-rehydrate),
-                    // don't leave this retry stuck. Ask for a sessions refresh and reschedule with backoff.
-                    void this.fetchSessions().catch(() => {
-                        // best-effort only
-                    });
+	                const sessionEncryption = this.encryption.getSessionEncryption(params.sessionId);
+	                if (!sessionEncryption) {
+	                    // If the session/encryption isn't available (e.g. session list was cleared or the app is mid-rehydrate),
+	                    // don't leave this retry stuck. Ask for a sessions refresh and reschedule with backoff.
+	                    fireAndForget(this.fetchSessions(), { tag: 'Sync.pendingMessageCommitRetry.fetchSessions' });
 
                     const nextAttempt = attempt + 1;
                     if (nextAttempt >= 6) {
@@ -746,14 +742,14 @@ class Sync {
                     return;
                 }
 
-                const baseDelayMs = Math.min(30_000, 1_000 * Math.pow(2, nextAttempt));
-                const jitterMs = Math.floor(Math.random() * 250);
-                const timeout = setTimeout(() => {
-                    void run(nextAttempt);
-                }, baseDelayMs + jitterMs);
-                this.pendingMessageCommitRetryTimers.set(key, timeout);
-                return;
-            }
+	                const baseDelayMs = Math.min(30_000, 1_000 * Math.pow(2, nextAttempt));
+	                const jitterMs = Math.floor(Math.random() * 250);
+	                const timeout = setTimeout(() => {
+	                    fireAndForget(run(nextAttempt), { tag: `Sync.pendingMessageCommitRetry:${key}` });
+	                }, baseDelayMs + jitterMs);
+	                this.pendingMessageCommitRetryTimers.set(key, timeout);
+	                return;
+	            }
 
             const encrypted = await sessionEncryption.encryptRawRecord(pending.rawRecord as RawRecord);
             const payload = {
@@ -826,13 +822,13 @@ class Sync {
             const baseDelayMs = Math.min(30_000, 1_000 * Math.pow(2, nextAttempt));
             const jitterMs = Math.floor(Math.random() * 250);
             const timeout = setTimeout(() => {
-                void run(nextAttempt);
+                fireAndForget(run(nextAttempt), { tag: `Sync.pendingMessageCommitRetry:${key}` });
             }, baseDelayMs + jitterMs);
             this.pendingMessageCommitRetryTimers.set(key, timeout);
         };
 
         const timeout = setTimeout(() => {
-            void run(0);
+            fireAndForget(run(0), { tag: `Sync.pendingMessageCommitRetry:${key}` });
         }, 1_000);
         this.pendingMessageCommitRetryTimers.set(key, timeout);
     }
@@ -1440,6 +1436,7 @@ class Sync {
             encryption: this.encryption,
             machineDataKeys: this.machineDataKeys,
             applyMachines: (machines, replace) => storage.getState().applyMachines(machines, replace),
+            replace: false,
         });
     }
 
@@ -1789,14 +1786,14 @@ class Sync {
             }
         });
 
-        // Subscribe to connection state changes
-        apiSocket.onReconnected(() => {
-            void this.handleSocketReconnectedViaChanges({
-                fallback: () => {
-                    handleSocketReconnected({
-                        log,
-                        invalidateSessions: () => this.sessionsSync.invalidate(),
-                        invalidateMachines: () => this.machinesSync.invalidate(),
+	        // Subscribe to connection state changes
+	        apiSocket.onReconnected(() => {
+	            fireAndForget(this.handleSocketReconnectedViaChanges({
+	                fallback: () => {
+	                    handleSocketReconnected({
+	                        log,
+	                        invalidateSessions: () => this.sessionsSync.invalidate(),
+	                        invalidateMachines: () => this.machinesSync.invalidate(),
                         invalidateArtifacts: () => this.artifactsSync.invalidate(),
                         invalidateFriends: () => this.friendsSync.invalidate(),
                         invalidateFriendRequests: () => this.friendRequestsSync.invalidate(),
@@ -1812,12 +1809,12 @@ class Sync {
                             }
                             return loadedSessionIds
                         },
-                        invalidateMessagesForSession: (sessionId) => this.messagesSync.get(sessionId)?.invalidate(),
-                        invalidateScmStatusForSession: (sessionId) => scmStatusSync.invalidate(sessionId),
-                    });
-                },
-            });
-        });
+	                        invalidateMessagesForSession: (sessionId) => this.messagesSync.get(sessionId)?.invalidate(),
+	                        invalidateScmStatusForSession: (sessionId) => scmStatusSync.invalidate(sessionId),
+	                    });
+	                },
+	            }), { tag: 'Sync.handleSocketReconnectedViaChanges' });
+	        });
     }
 
     private getOrCreateMessagesSync(sessionId: string): InvalidateSync {
@@ -1964,18 +1961,18 @@ class Sync {
     }
 
     private handleUpdate = async (update: unknown) => {
-        await handleSocketUpdate({
-            update,
-            encryption: this.encryption,
-            artifactDataKeys: this.artifactDataKeys,
-            applySessions: (sessions) => this.applySessions(sessions),
-            fetchSessions: () => {
-                void this.fetchSessions();
-            },
-            applyMessages: (sessionId, messages) => this.applyMessages(sessionId, messages),
-            onSessionVisible: (sessionId) => this.onSessionVisible(sessionId),
-            isSessionMessagesLoaded: (sessionId) => storage.getState().sessionMessages[sessionId]?.isLoaded === true,
-            getSessionMaterializedMaxSeq: (sessionId) => this.sessionMaterializedMaxSeqById[sessionId] ?? 0,
+	        await handleSocketUpdate({
+	            update,
+	            encryption: this.encryption,
+	            artifactDataKeys: this.artifactDataKeys,
+	            applySessions: (sessions) => this.applySessions(sessions),
+	            fetchSessions: () => {
+	                fireAndForget(this.fetchSessions(), { tag: 'Sync.handleUpdate.fetchSessions' });
+	            },
+	            applyMessages: (sessionId, messages) => this.applyMessages(sessionId, messages),
+	            onSessionVisible: (sessionId) => this.onSessionVisible(sessionId),
+	            isSessionMessagesLoaded: (sessionId) => storage.getState().sessionMessages[sessionId]?.isLoaded === true,
+	            getSessionMaterializedMaxSeq: (sessionId) => this.sessionMaterializedMaxSeqById[sessionId] ?? 0,
             markSessionMaterializedMaxSeq: (sessionId, seq) => this.markSessionMaterializedMaxSeq(sessionId, seq),
             invalidateMessagesForSession: (sessionId) => {
                 const ex = this.messagesSync.get(sessionId);

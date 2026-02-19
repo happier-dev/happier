@@ -15,7 +15,7 @@ export type UiFeatureDefinition = Readonly<{
     }>;
 }>;
 
-export const UI_FEATURE_REGISTRY: Readonly<Record<FeatureId, UiFeatureDefinition>> = {
+export const UI_FEATURE_REGISTRY = {
     automations: {
         settingsToggle: {
             showInSettings: true,
@@ -25,9 +25,6 @@ export const UI_FEATURE_REGISTRY: Readonly<Record<FeatureId, UiFeatureDefinition
             subtitleKey: 'settingsFeatures.expAutomationsSubtitle',
             icon: { ioniconName: 'timer-outline', color: '#007AFF' },
         },
-    },
-    'automations.existingSessionTarget': {
-        settingsToggle: undefined,
     },
     'execution.runs': {
         settingsToggle: {
@@ -43,7 +40,7 @@ export const UI_FEATURE_REGISTRY: Readonly<Record<FeatureId, UiFeatureDefinition
         settingsToggle: {
             showInSettings: true,
             isExperimental: true,
-            defaultEnabled: true,
+            defaultEnabled: false,
             titleKey: 'settingsFeatures.voice',
             subtitleKey: 'settingsFeatures.voiceSubtitle',
             icon: { ioniconName: 'mic-outline', color: '#34C759' },
@@ -53,13 +50,34 @@ export const UI_FEATURE_REGISTRY: Readonly<Record<FeatureId, UiFeatureDefinition
         settingsToggle: undefined,
     },
     'voice.agent': {
-        settingsToggle: undefined,
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: true,
+            defaultEnabled: false,
+            titleKey: 'settingsFeatures.expVoiceAgent',
+            subtitleKey: 'settingsFeatures.expVoiceAgentSubtitle',
+            icon: { ioniconName: 'sparkles-outline', color: '#AF52DE' },
+        },
     },
     connectedServices: {
-        settingsToggle: undefined,
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: true,
+            defaultEnabled: false,
+            titleKey: 'settingsFeatures.expConnectedServices',
+            subtitleKey: 'settingsFeatures.expConnectedServicesSubtitle',
+            icon: { ioniconName: 'link-outline', color: '#007AFF' },
+        },
     },
     'connectedServices.quotas': {
-        settingsToggle: undefined,
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: true,
+            defaultEnabled: false,
+            titleKey: 'settingsFeatures.expConnectedServicesQuotas',
+            subtitleKey: 'settingsFeatures.expConnectedServicesQuotasSubtitle',
+            icon: { ioniconName: 'analytics-outline', color: '#34C759' },
+        },
     },
     'updates.ota': {
         settingsToggle: undefined,
@@ -108,6 +126,16 @@ export const UI_FEATURE_REGISTRY: Readonly<Record<FeatureId, UiFeatureDefinition
     bugReports: {
         settingsToggle: undefined,
     },
+    'attachments.uploads': {
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: true,
+            defaultEnabled: false,
+            titleKey: 'settingsFeatures.expAttachmentsUploads',
+            subtitleKey: 'settingsFeatures.expAttachmentsUploadsSubtitle',
+            icon: { ioniconName: 'attach-outline', color: '#007AFF' },
+        },
+    },
     'scm.writeOperations': {
         settingsToggle: {
             showInSettings: true,
@@ -149,7 +177,14 @@ export const UI_FEATURE_REGISTRY: Readonly<Record<FeatureId, UiFeatureDefinition
         },
     },
     'memory.search': {
-        settingsToggle: undefined,
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: true,
+            defaultEnabled: false,
+            titleKey: 'settingsFeatures.expMemorySearch',
+            subtitleKey: 'settingsFeatures.expMemorySearchSubtitle',
+            icon: { ioniconName: 'search-outline', color: '#34C759' },
+        },
     },
     'files.editor': {
         settingsToggle: {
@@ -207,7 +242,7 @@ export const UI_FEATURE_REGISTRY: Readonly<Record<FeatureId, UiFeatureDefinition
     'codex.resume.acp': {
         settingsToggle: undefined,
     },
-};
+} satisfies Readonly<Record<FeatureId, UiFeatureDefinition>>;
 
 export function getUiFeatureDefinition(featureId: FeatureId): UiFeatureDefinition {
     return UI_FEATURE_REGISTRY[featureId];

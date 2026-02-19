@@ -1,6 +1,8 @@
 import * as React from 'react';
 
 import { machinePreviewEnv, type PreviewEnvValue } from '@/sync/ops';
+import { ProbedResourceCache } from '@happier-dev/protocol';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export type EnvPresenceMeta = Record<string, { isSet: boolean; display: PreviewEnvValue['display'] }>;
 
@@ -18,8 +20,11 @@ type CacheEntry = {
     meta: EnvPresenceMeta;
 };
 
-const cache = new Map<string, CacheEntry>();
-const inflight = new Map<string, Promise<CacheEntry>>();
+const cache = new ProbedResourceCache<CacheEntry>({
+    // Call sites may use per-hook `ttlMs` freshness checks.
+    staleTimeMs: 0,
+    errorCooldownMs: 5_000,
+});
 
 function parseScopedMachineKey(cacheKey: string): { serverId: string | null; machineId: string } | null {
     const firstSep = cacheKey.indexOf('::');
@@ -53,11 +58,6 @@ export function invalidateMachineEnvPresence(params?: { machineId?: string; serv
     for (const key of cache.keys()) {
         if (!machineId || matchesInvalidationTarget(key, machineId, params?.serverId)) {
             cache.delete(key);
-        }
-    }
-    for (const key of inflight.keys()) {
-        if (!machineId || matchesInvalidationTarget(key, machineId, params?.serverId)) {
-            inflight.delete(key);
         }
     }
 }
@@ -138,7 +138,7 @@ export function useMachineEnvPresence(
 
         let cancelled = false;
         const now = Date.now();
-        const cached = cache.get(cacheKey);
+        const cached = cache.getSnapshot(cacheKey, now).data;
         const isFresh = cached ? now - cached.updatedAt <= ttlMs : false;
 
         if (cached && isFresh) {
@@ -192,22 +192,30 @@ export function useMachineEnvPresence(
             };
         };
 
-        const p = inflight.get(cacheKey) ?? run().finally(() => inflight.delete(cacheKey));
-        inflight.set(cacheKey, p);
+        const p = cache.ensure(cacheKey, run, { force: true });
 
-        void p.then((next) => {
-            if (cancelled) return;
-            cache.set(cacheKey, next);
-            setState({
-                isLoading: false,
-                isPreviewEnvSupported: next.isPreviewEnvSupported,
-                meta: next.meta,
-                refreshedAt: next.updatedAt,
-            });
-        }).catch(() => {
-            if (cancelled) return;
-            setState((prev) => ({ ...prev, isLoading: false }));
-        });
+        fireAndForget(
+            p.then((next) => {
+                if (cancelled) return;
+                if (!next) {
+                    setState((prev) => ({ ...prev, isLoading: false }));
+                    return;
+                }
+                setState({
+                    isLoading: false,
+                    isPreviewEnvSupported: next.isPreviewEnvSupported,
+                    meta: next.meta,
+                    refreshedAt: next.updatedAt,
+                });
+            }),
+            {
+                tag: 'useMachineEnvPresence.refresh',
+                onError: () => {
+                    if (cancelled) return;
+                    setState((prev) => ({ ...prev, isLoading: false }));
+                },
+            },
+        );
 
         return () => {
             cancelled = true;

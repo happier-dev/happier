@@ -176,7 +176,10 @@ export async function registerPushTokenIfAvailable(params: {
             if (!serverCredentials) continue;
 
             try {
-                await registerPushTokenApi(serverCredentials, token, { apiEndpoint: profile.serverUrl });
+                await registerPushTokenApi(serverCredentials, token, {
+                    apiEndpoint: profile.serverUrl,
+                    clientServerUrl: profile.serverUrl,
+                });
                 if (activeServerUrl && normalizeServerUrl(profile.serverUrl) === activeServerUrl) {
                     didRegisterActiveServer = true;
                 }
@@ -188,7 +191,9 @@ export async function registerPushTokenIfAvailable(params: {
 
         // Back-compat: if the active server isn't included in profiles for some reason, still try the passed credentials.
         if (!didRegisterActiveServer) {
-            await registerPushTokenApi(credentials, token);
+            await registerPushTokenApi(credentials, token, {
+                clientServerUrl: activeServerUrl ?? undefined,
+            });
         }
         log.log('Push token registered successfully');
     } catch (error) {

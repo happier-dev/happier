@@ -24,9 +24,27 @@ export class SessionEncryption {
      * Batch-first API for decrypting messages
      */
     async decryptMessages(messages: ApiMessage[]): Promise<(DecryptedMessage | null)[]> {
+        const computeCiphertextFingerprint = (ciphertextB64: string): string => {
+            // Avoid storing full ciphertext in-memory; keep a cheap fingerprint so we can
+            // detect streaming updates that reuse message ids.
+            const value = String(ciphertextB64 ?? '');
+            const len = value.length;
+            const start = value.slice(0, 24);
+            const end = value.slice(Math.max(0, len - 24));
+            return `enc:${len}:${start}:${end}`;
+        };
+
+        const computeMessageFingerprint = (message: ApiMessage): string => {
+            const content: any = (message as any)?.content;
+            if (content && content.t === 'encrypted' && typeof content.c === 'string') {
+                return computeCiphertextFingerprint(content.c);
+            }
+            return `plain:${String(content?.t ?? 'unknown')}`;
+        };
+
         // Check cache for all messages first
         const results: (DecryptedMessage | null)[] = new Array(messages.length);
-        const toDecrypt: { index: number; message: ApiMessage }[] = [];
+        const toDecrypt: { index: number; message: ApiMessage; fingerprint: string }[] = [];
 
         for (let i = 0; i < messages.length; i++) {
             const message = messages[i];
@@ -36,7 +54,8 @@ export class SessionEncryption {
             }
 
             // Check cache first
-            const cached = this.cache.getCachedMessage(message.id);
+            const fingerprint = computeMessageFingerprint(message);
+            const cached = this.cache.getCachedMessage(message.id, fingerprint);
             if (cached) {
                 // Encrypted messages that previously failed to decrypt (content: null) must be
                 // re-tried, because the session key/encryptor may become available later.
@@ -45,7 +64,7 @@ export class SessionEncryption {
                     continue;
                 }
             } else if (message.content.t === 'encrypted') {
-                toDecrypt.push({ index: i, message });
+                toDecrypt.push({ index: i, message, fingerprint });
             } else {
                 // Not encrypted or invalid
                 results[i] = {
@@ -55,7 +74,7 @@ export class SessionEncryption {
                     content: null,
                     createdAt: message.createdAt,
                 };
-                this.cache.setCachedMessage(message.id, results[i]!);
+                this.cache.setCachedMessage(message.id, results[i]!, fingerprint);
             }
         }
 
@@ -79,7 +98,7 @@ export class SessionEncryption {
                         content: decryptedData,
                         createdAt: message.createdAt,
                     };
-                    this.cache.setCachedMessage(message.id, result);
+                    this.cache.setCachedMessage(message.id, result, toDecrypt[i].fingerprint);
                     results[index] = result;
                 } else {
                     const result: DecryptedMessage = {

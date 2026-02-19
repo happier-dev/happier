@@ -15,7 +15,12 @@ import {
     SCM_REMOTE_CONFIRM_POLICIES,
 } from '@/scm/settings/preferences';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
-import { ActionsSettingsV1Schema, DEFAULT_NOTIFICATIONS_SETTINGS_V1, NotificationsSettingsV1Schema } from '@happier-dev/protocol';
+import {
+    ActionsSettingsV1Schema,
+    DEFAULT_ACTIONS_SETTINGS_V1,
+    DEFAULT_NOTIFICATIONS_SETTINGS_V1,
+    NotificationsSettingsV1Schema,
+} from '@happier-dev/protocol';
 import { VoiceSettingsSchema, voiceSettingsDefaults, voiceSettingsParse } from './voiceSettings';
 
 //
@@ -288,6 +293,7 @@ const SettingsSchemaBase = z.object({
     viewInline: z.boolean().describe('Whether to view inline tool calls'),
     inferenceOpenAIKey: z.string().nullish().describe('OpenAI API key for inference'),
     expandTodos: z.boolean().describe('Whether to expand todo lists'),
+    sessionThinkingDisplayMode: z.enum(['inline', 'tool', 'hidden']).describe('How to display agent thinking messages in the transcript'),
     showLineNumbers: z.boolean().describe('Whether to show line numbers in diffs'),
     showLineNumbersInToolViews: z.boolean().describe('Whether to show line numbers in tool view diffs'),
     wrapLinesInDiffs: z.boolean().describe('Whether to wrap long lines in diff views'),
@@ -306,6 +312,8 @@ const SettingsSchemaBase = z.object({
     scmDefaultDiffModeByBackend: z.record(z.string(), z.enum(SCM_DIFF_MODE_OPTIONS)).default({}).describe('Preferred default diff mode by backend id'),
     scmReviewMaxFiles: z.number().describe('Maximum file count for unified SCM diff review mode before falling back to single-file review'),
     scmReviewMaxChangedLines: z.number().describe('Maximum total changed lines for unified SCM diff review mode before falling back to single-file review'),
+    scmSessionAutoRefreshIntervalMs: z.number().describe('Auto-refresh interval for SCM status while viewing a session (milliseconds)'),
+    scmFilesAutoRefreshIntervalMs: z.number().describe('Auto-refresh interval for SCM status while viewing the Files screen (milliseconds)'),
     scmCommitMessageGeneratorEnabled: z.boolean().describe('Enable one-shot LLM commit message generation in the source-control commit flow'),
     scmCommitMessageGeneratorBackendId: z.string().describe('Backend id used for one-shot LLM commit message generation'),
     scmCommitMessageGeneratorInstructions: z.string().describe('User instructions appended to SCM commit message generation prompts'),
@@ -361,6 +369,13 @@ const SettingsSchemaBase = z.object({
     agentInputHistoryScope: z.enum(['perSession', 'global']).describe('Whether web arrow-key history should cycle per-session or globally'),
     agentInputActionBarLayout: z.enum(['auto', 'wrap', 'scroll', 'collapsed']).describe('Agent input action bar layout'),
     agentInputChipDensity: z.enum(['auto', 'labels', 'icons']).describe('Agent input action chip density'),
+    attachmentsUploadsUploadLocation: z.enum(['workspace', 'os_temp']).describe('Where to store uploaded attachments (workspace or OS temp)'),
+    attachmentsUploadsWorkspaceRelativeDir: z.string().describe('Workspace-relative directory for attachments when uploadLocation=workspace'),
+    attachmentsUploadsVcsIgnoreStrategy: z.enum(['git_info_exclude', 'gitignore', 'none']).describe('VCS ignore strategy for workspace uploads'),
+    attachmentsUploadsVcsIgnoreWritesEnabled: z.boolean().describe('Whether the app should attempt to write VCS ignore rules (best-effort)'),
+    attachmentsUploadsMaxFileBytes: z.number().describe('Maximum allowed attachment size (bytes)'),
+    attachmentsUploadsUploadTtlMs: z.number().describe('Upload session TTL (milliseconds)'),
+    attachmentsUploadsChunkSizeBytes: z.number().describe('Preferred upload chunk size (bytes)'),
     avatarStyle: z.string().describe('Avatar display style'),
     showFlavorIcons: z.boolean().describe('Whether to show AI provider icons in avatars'),
     compactSessionView: z.boolean().describe('Whether to use compact view for active sessions'),
@@ -407,6 +422,10 @@ const SettingsSchemaBase = z.object({
     // Manual per-group session ordering overrides for the session list.
     // Map: groupKey -> ordered list of session keys (serverId:sessionId).
     sessionListGroupOrderV1: z.record(z.string(), z.array(z.string())).default({}).describe('Manual ordering overrides by groupKey'),
+    // User-defined tags per session. Map: `${serverId}:${sessionId}` -> string[].
+    sessionTagsV1: z.record(z.string(), z.array(z.string())).default({}).describe('User-defined tags per session (key: serverId:sessionId, value: array of tag strings)'),
+    // Whether the tag affordance is shown in the session list.
+    sessionTagsEnabled: z.boolean().describe('Show tag controls in the session list'),
     // Dismissed CLI warning banners (supports both per-machine and global dismissal)
     dismissedCLIWarnings: z.object({
         perMachine: z.record(z.string(), z.record(z.string(), z.boolean()).default({})).default({}),
@@ -450,11 +469,12 @@ export type Settings = KnownSettings & Record<string, unknown>;
 // Defaults
 //
 
-export const settingsDefaults: Settings = {
+	export const settingsDefaults: Settings = {
     schemaVersion: SUPPORTED_SCHEMA_VERSION,
     viewInline: false,
     inferenceOpenAIKey: null,
     expandTodos: true,
+    sessionThinkingDisplayMode: 'inline',
     showLineNumbers: true,
     showLineNumbersInToolViews: false,
     wrapLinesInDiffs: false,
@@ -469,12 +489,14 @@ export const settingsDefaults: Settings = {
     scmDefaultDiffModeByBackend: {},
     scmReviewMaxFiles: 25,
     scmReviewMaxChangedLines: 2000,
+    scmSessionAutoRefreshIntervalMs: 300_000,
+    scmFilesAutoRefreshIntervalMs: 60_000,
     scmCommitMessageGeneratorEnabled: false,
     scmCommitMessageGeneratorBackendId: 'claude',
     scmCommitMessageGeneratorInstructions: '',
     scmIncludeCoAuthoredBy: false,
-    actionsSettingsV1: { v: 1, actions: {} },
-    notificationsSettingsV1: DEFAULT_NOTIFICATIONS_SETTINGS_V1,
+	    actionsSettingsV1: DEFAULT_ACTIONS_SETTINGS_V1,
+	    notificationsSettingsV1: DEFAULT_NOTIFICATIONS_SETTINGS_V1,
 
     filesDiffSyntaxHighlightingMode: 'simple',
     filesChangedFilesRowDensity: 'comfortable',
@@ -513,6 +535,13 @@ export const settingsDefaults: Settings = {
     agentInputHistoryScope: 'perSession',
     agentInputActionBarLayout: 'auto',
     agentInputChipDensity: 'auto',
+    attachmentsUploadsUploadLocation: 'workspace',
+    attachmentsUploadsWorkspaceRelativeDir: '.happier/uploads',
+    attachmentsUploadsVcsIgnoreStrategy: 'git_info_exclude',
+    attachmentsUploadsVcsIgnoreWritesEnabled: true,
+    attachmentsUploadsMaxFileBytes: 25 * 1024 * 1024,
+    attachmentsUploadsUploadTtlMs: 5 * 60 * 1000,
+    attachmentsUploadsChunkSizeBytes: 256 * 1024,
     avatarStyle: 'brutalist',
     showFlavorIcons: true,
     compactSessionView: false,
@@ -554,6 +583,9 @@ export const settingsDefaults: Settings = {
     pinnedSessionKeysV1: [],
     // Manual per-group ordering overrides (empty by default)
     sessionListGroupOrderV1: {},
+    // Session tags (empty by default)
+    sessionTagsV1: {},
+    sessionTagsEnabled: true,
     // Dismissed CLI warnings (empty by default)
     dismissedCLIWarnings: { perMachine: {}, global: {} },
     terminalConnectLegacySecretExportEnabled: false,
@@ -565,7 +597,20 @@ export const settingsDefaults: Settings = {
     toolViewTapAction: 'expand',
     toolViewExpandedDetailLevelDefault: 'full',
     toolViewExpandedDetailLevelByToolName: {},
-    ...Object.assign({}, ...PROVIDER_SETTINGS_PLUGINS.map((p) => p.settingsDefaults)),
+    ...(() => {
+        // Guardrail: provider plugins must not be able to wipe out core defaults by
+        // “overriding” them with `undefined` (this can also happen with leaky test mocks).
+        const merged: Record<string, unknown> = {};
+        for (const plugin of PROVIDER_SETTINGS_PLUGINS) {
+            const defaults = (plugin as any)?.settingsDefaults;
+            if (!defaults || typeof defaults !== 'object') continue;
+            for (const [key, value] of Object.entries(defaults as Record<string, unknown>)) {
+                if (value === undefined) continue;
+                merged[key] = value;
+            }
+        }
+        return merged;
+    })(),
 };
 Object.freeze(settingsDefaults);
 

@@ -9,7 +9,7 @@ describe('featureDecisionRuntime (feat.voice.agent)', () => {
         const storage = getStorage();
         storage.getState().applySettingsLocal({
             experiments: true,
-            featureToggles: { 'execution.runs': false },
+            featureToggles: { 'voice.agent': true, 'execution.runs': false },
         });
 
         const settings = storage.getState().settings;
@@ -33,4 +33,3 @@ describe('featureDecisionRuntime (feat.voice.agent)', () => {
         expect(decision?.blockedBy).toBe('dependency');
     });
 });
-

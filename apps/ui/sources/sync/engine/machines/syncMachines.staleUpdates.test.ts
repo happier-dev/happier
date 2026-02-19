@@ -9,6 +9,7 @@ type MachineUpdate = {
     daemonState?: { value: string; version: number }
     active?: boolean
     activeAt?: number
+    revokedAt?: number | null
 }
 
 function buildMachine(overrides: Partial<Machine> = {}): Machine {
@@ -19,6 +20,7 @@ function buildMachine(overrides: Partial<Machine> = {}): Machine {
         updatedAt: 2,
         active: true,
         activeAt: 2,
+        revokedAt: null,
         metadata: {
             host: 'localhost',
             platform: 'darwin',
@@ -111,6 +113,32 @@ describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
 
         expect(updated).toBeNull()
         errorSpy.mockRestore()
+    })
+
+    it('applies revoke updates from the socket payload', async () => {
+        const decryptMetadata = vi.fn(async () => ({ m: true }))
+        const decryptDaemonState = vi.fn(async () => ({ d: true }))
+
+        const existingMachine = buildMachine({ active: true, revokedAt: null })
+
+        const updated = await buildUpdatedMachineFromSocketUpdate({
+            machineUpdate: {
+                machineId: 'm1',
+                active: false,
+                revokedAt: 123,
+            } as MachineUpdate,
+            updateSeq: 999,
+            updateCreatedAt: 500,
+            existingMachine,
+            getMachineEncryption: () => ({
+                decryptMetadata,
+                decryptDaemonState,
+            }),
+        })
+
+        expect(updated).not.toBeNull()
+        expect(updated?.active).toBe(false)
+        expect(updated?.revokedAt).toBe(123)
     })
 
     it('keeps existing values when both metadata and daemonState updates are stale', async () => {

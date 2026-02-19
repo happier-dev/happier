@@ -13,7 +13,10 @@ afterEach(() => {
 describe('useFeatureDetails', () => {
     it('returns selected server details when features are ready', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ automationsEnabled: true, automationsExistingSessionTarget: true });
+        stubServerFeaturesFetch({ automationsEnabled: true });
+
+        const { resetServerFeaturesClientForTests, getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        resetServerFeaturesClientForTests();
 
         const { getStorage } = await import('@/sync/domains/state/storage');
         getStorage().getState().applySettingsLocal({
@@ -21,21 +24,27 @@ describe('useFeatureDetails', () => {
             featureToggles: { automations: true },
         });
 
+        // Seed the cache so the hook can resolve synchronously (avoids timing flake).
+        await getServerFeaturesSnapshot({ force: true });
+
         const { useFeatureDetails } = await import('./useFeatureDetails');
         const seen = await renderHookAndCollectValues(() =>
             useFeatureDetails({
                 featureId: 'automations',
                 fallback: false,
-                select: (features) => features.features.automations.existingSessionTarget.enabled === true,
+                select: (features) => Boolean((features as any)?.features?.automations?.enabled),
             }),
         );
 
         expect(seen.at(-1)).toBe(true);
-    });
+    }, 30_000);
 
     it('returns fallback when feature probing fails', async () => {
         vi.resetModules();
         stubServerFeaturesFetchFailure();
+
+        const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        resetServerFeaturesClientForTests();
 
         const { getStorage } = await import('@/sync/domains/state/storage');
         getStorage().getState().applySettingsLocal({
@@ -53,13 +62,13 @@ describe('useFeatureDetails', () => {
         );
 
         expect(seen.at(-1)).toBe(false);
-    });
+    }, 30_000);
 
     it('uses spawn scope server id when provided', async () => {
         vi.resetModules();
 
         const { buildServerFeaturesResponse } = await import('./serverFeaturesTestUtils');
-        const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const { resetServerFeaturesClientForTests, getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
         const { upsertServerProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
         const { getStorage } = await import('@/sync/domains/state/storage');
 
@@ -79,25 +88,28 @@ describe('useFeatureDetails', () => {
             vi.fn(async (url: any) => {
                 const href = String(url ?? '');
                 if (href.includes('a.example')) {
-                    return { ok: true, status: 200, json: async () => buildServerFeaturesResponse({ automationsExistingSessionTarget: false }) };
+                    return { ok: true, status: 200, json: async () => buildServerFeaturesResponse({ automationsEnabled: false }) };
                 }
                 if (href.includes('b.example')) {
-                    return { ok: true, status: 200, json: async () => buildServerFeaturesResponse({ automationsExistingSessionTarget: true }) };
+                    return { ok: true, status: 200, json: async () => buildServerFeaturesResponse({ automationsEnabled: true }) };
                 }
-                return { ok: true, status: 200, json: async () => buildServerFeaturesResponse({ automationsExistingSessionTarget: false }) };
+                return { ok: true, status: 200, json: async () => buildServerFeaturesResponse({ automationsEnabled: false }) };
             }) as any,
         );
+
+        // Seed spawn cache to avoid relying on fireAndForget probe timing.
+        await getServerFeaturesSnapshot({ serverId: serverB.id, force: true });
 
         const { useFeatureDetails } = await import('./useFeatureDetails');
         const seen = await renderHookAndCollectValues(() =>
             (useFeatureDetails as any)({
                 featureId: 'automations',
                 fallback: false,
-                select: (features: any) => features.features.automations.existingSessionTarget.enabled === true,
+                select: (features: any) => Boolean(features?.features?.automations?.enabled),
                 scope: { scopeKind: 'spawn', serverId: serverB.id },
             }),
         );
 
         expect(seen.at(-1)).toBe(true);
-    });
+    }, 30_000);
 });

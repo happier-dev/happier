@@ -7,6 +7,7 @@ import { computeConnectedServiceQuotaSummaryBadges } from '@/sync/domains/connec
 import { openConnectedServiceQuotaSnapshot } from '@/sync/domains/connectedServices/openConnectedServiceQuotaSnapshot';
 import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import { useSettings } from '@/sync/store/hooks';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import type { ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
 import { ConnectedServiceIdSchema, type ConnectedServiceId } from '@happier-dev/protocol';
@@ -41,13 +42,7 @@ export function useConnectedServiceQuotaBadges(
   const settings = useSettings();
   const quotasEnabled = useFeatureEnabled('connectedServices.quotas');
 
-  const [pollSeq, setPollSeq] = React.useState(0);
-  React.useEffect(() => {
-    if (!quotasEnabled) return;
-    if (!credentials) return;
-    const handle = setInterval(() => setPollSeq((value) => value + 1), QUOTA_BADGES_POLL_MS);
-    return () => clearInterval(handle);
-  }, [quotasEnabled, credentials]);
+  const [wakeSeq, setWakeSeq] = React.useState(0);
 
   const [cacheByKey, setCacheByKey] = React.useState<Record<string, SnapshotCacheEntry>>({});
   const cacheByKeyRef = React.useRef(cacheByKey);
@@ -57,6 +52,43 @@ export function useConnectedServiceQuotaBadges(
 
   const pinnedByKey = settings.connectedServicesQuotaPinnedMeterIdsByKey;
   const strategyByKey = settings.connectedServicesQuotaSummaryStrategyByKey;
+
+  React.useEffect(() => {
+    if (!quotasEnabled) return;
+    if (!credentials) return;
+
+    const now = Date.now();
+    let nextWakeAtMs = Number.POSITIVE_INFINITY;
+    let hasMissingCache = false;
+
+    for (const profile of profiles) {
+      const serviceIdRaw = String(profile.serviceId ?? '').trim();
+      const serviceIdParsed = ConnectedServiceIdSchema.safeParse(serviceIdRaw);
+      const profileId = String(profile.profileId ?? '').trim();
+      if (!serviceIdParsed.success || !profileId) continue;
+      const serviceId = serviceIdParsed.data;
+      const key = connectedServiceProfileKey({ serviceId, profileId });
+      const pinned = pinnedByKey[key] ?? [];
+      if (pinned.length === 0) continue;
+
+      const cached = cacheByKey[key];
+      if (!cached) {
+        hasMissingCache = true;
+        continue;
+      }
+      const dueAtMs = cached.nextFetchAtMs;
+      nextWakeAtMs = Math.min(nextWakeAtMs, dueAtMs);
+    }
+
+    // If we don't have cached scheduling info yet (first load), let the fetch effect run and populate
+    // `nextFetchAtMs` before arming timers. This avoids immediate 0ms wake loops/double fetches.
+    if (hasMissingCache) return;
+    if (!Number.isFinite(nextWakeAtMs)) return;
+
+    const delayMs = Math.max(0, nextWakeAtMs - now);
+    const handle = setTimeout(() => setWakeSeq((value) => value + 1), delayMs);
+    return () => clearTimeout(handle);
+  }, [cacheByKey, credentials, pinnedByKey, profiles, quotasEnabled, wakeSeq]);
 
   React.useEffect(() => {
     if (!quotasEnabled) return;
@@ -80,7 +112,7 @@ export function useConnectedServiceQuotaBadges(
     if (toFetch.length === 0) return;
 
     const controller = new AbortController();
-    void (async () => {
+    fireAndForget((async () => {
       await Promise.all(toFetch.map(async (entry) => {
         try {
           const sealed = await getConnectedServiceQuotaSnapshotSealed(credentials, {
@@ -119,10 +151,10 @@ export function useConnectedServiceQuotaBadges(
           });
         }
       }));
-    })();
+    })(), { tag: 'useConnectedServiceQuotaBadges.refresh' });
 
     return () => controller.abort();
-  }, [quotasEnabled, credentials, profiles, pinnedByKey, pollSeq]);
+  }, [quotasEnabled, credentials, profiles, pinnedByKey, wakeSeq]);
 
   const badgesByKey: Record<string, Array<{ meterId: string; text: string }>> = {};
   if (!quotasEnabled) return badgesByKey;

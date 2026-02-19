@@ -228,10 +228,10 @@ export async function handleUpdateContainer(params: {
 
             applySessions([nextSession]);
 
-            // Invalidate git status when agent state changes (files may have been modified)
+            // Agent state updates can be very frequent and are not a reliable proxy for SCM changes.
+            // SCM refresh cadence is handled by screen-scoped intervals (session/files views) and
+            // by explicit invalidations after SCM mutations.
             if (updateData.body.agentState) {
-                scmStatusSync.invalidate(updateData.body.id);
-
                 // Check for new permission requests and notify voice assistant
                 for (const nextRequest of deriveNewPermissionRequests(session.agentState?.requests, agentState?.requests)) {
                     voiceHooks.onPermissionRequested(

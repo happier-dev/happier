@@ -87,6 +87,7 @@ import { useNewSessionServerTargetState } from '@/components/sessions/new/hooks/
 import { useNewSessionAgentTypeState } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentTypeState';
 import { useNewSessionMachinePathState } from '@/components/sessions/new/hooks/screenModel/useNewSessionMachinePathState';
 import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
+import { useNewSessionPreflightSessionModesState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightSessionModesState';
 import { getActionSpec } from '@happier-dev/protocol';
 import { buildActionDraftInput } from '@/sync/domains/actions/buildActionDraftInput';
 
@@ -473,6 +474,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         return core.model.defaultMode;
     });
 
+    const [acpSessionModeId, setAcpSessionModeId] = React.useState<string | null>(null);
+
     const {
         selectedMachineId,
         setSelectedMachineId,
@@ -491,6 +494,14 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         capabilityServerId,
         cwd: selectedPath,
     });
+
+    const { preflightModes: preflightSessionModes, modeOptions: acpSessionModeOptions, probe: acpSessionModeProbeState } =
+        useNewSessionPreflightSessionModesState({
+            agentType,
+            selectedMachineId,
+            capabilityServerId,
+            cwd: selectedPath,
+        });
 
     const allProfilesRequirementNames = React.useMemo(() => {
         const names = new Set<string>();

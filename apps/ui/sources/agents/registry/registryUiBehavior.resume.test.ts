@@ -124,6 +124,26 @@ describe('getResumeRuntimeSupportPrefetchPlan', () => {
             });
         }
     });
+
+    it('prefetches Codex ACP runtime resume support with a higher timeout', () => {
+        expect(
+            getResumeRuntimeSupportPrefetchPlan({
+                agentId: 'codex',
+                settings: makeSettings({ codexBackendMode: 'acp' }),
+                results: undefined,
+            }),
+        ).toEqual({
+            request: {
+                requests: [
+                    {
+                        id: 'cli.codex',
+                        params: { includeAcpCapabilities: true, includeLoginStatus: true },
+                    },
+                ],
+            },
+            timeoutMs: 20_000,
+        });
+    });
 });
 
 describe('getResumePreflightPrefetchPlan', () => {

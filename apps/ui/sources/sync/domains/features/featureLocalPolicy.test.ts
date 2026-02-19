@@ -51,7 +51,7 @@ describe('featureLocalPolicy', () => {
             expect(resolveLocalFeaturePolicyEnabled('connectedServices.quotas', {
                 ...settingsDefaults,
                 experiments: true,
-                featureToggles: {},
+                featureToggles: { 'connectedServices.quotas': true },
             })).toBe(true);
         } finally {
             if (typeof envBackup === 'string') {
@@ -61,6 +61,62 @@ describe('featureLocalPolicy', () => {
                 delete env.EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED;
             }
         }
+    });
+
+    it('disables connectedServices by default when experiments are on', () => {
+        expect(resolveLocalFeaturePolicyEnabled('connectedServices', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: {},
+        })).toBe(false);
+    });
+
+    it('disables memory.search by default when experiments are on', () => {
+        expect(resolveLocalFeaturePolicyEnabled('memory.search', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: {},
+        })).toBe(false);
+    });
+
+    it('enables memory.search when explicitly enabled', () => {
+        expect(resolveLocalFeaturePolicyEnabled('memory.search', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: { 'memory.search': true },
+        })).toBe(true);
+    });
+
+    it('disables voice.agent by default when experiments are on', () => {
+        expect(resolveLocalFeaturePolicyEnabled('voice.agent', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: {},
+        })).toBe(false);
+    });
+
+    it('disables attachments.uploads by default when experiments are on', () => {
+        expect(resolveLocalFeaturePolicyEnabled('attachments.uploads', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: {},
+        })).toBe(false);
+    });
+
+    it('enables attachments.uploads when explicitly enabled', () => {
+        expect(resolveLocalFeaturePolicyEnabled('attachments.uploads', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: { 'attachments.uploads': true },
+        })).toBe(true);
+    });
+
+    it('enables voice.agent when explicitly enabled', () => {
+        expect(resolveLocalFeaturePolicyEnabled('voice.agent', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: { 'voice.agent': true },
+        })).toBe(true);
     });
 
     it('enables automations by default when experiments are on', () => {

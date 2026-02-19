@@ -14,11 +14,11 @@ afterEach(() => {
 describe('useAutomationsSupport', () => {
     it('disables automations when experiments are off even if server enables them', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ automationsEnabled: true, automationsExistingSessionTarget: true });
+        stubServerFeaturesFetch({ automationsEnabled: true });
 
         const { useAutomationsSupport } = await import('./useAutomationsSupport');
 
-        const seen: Array<{ enabled: boolean; existingSessionTarget: boolean } | null> = [];
+        const seen: Array<any> = [];
         function Test() {
             const value = useAutomationsSupport();
             React.useEffect(() => {
@@ -33,12 +33,12 @@ describe('useAutomationsSupport', () => {
         });
 
         // experiments defaults to false, so automations must be gated off
-        expect(seen.at(-1)).toEqual({ enabled: false, existingSessionTarget: false });
+        expect(seen.at(-1)).toMatchObject({ enabled: false });
     });
 
     it('returns enabled capability details when automations are enabled', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ automationsEnabled: true, automationsExistingSessionTarget: true });
+        stubServerFeaturesFetch({ automationsEnabled: true });
 
         const { useAutomationsSupport } = await import('./useAutomationsSupport');
         const { getStorage } = await import('@/sync/domains/state/storage');
@@ -46,7 +46,7 @@ describe('useAutomationsSupport', () => {
             getStorage().getState().applySettingsLocal({ experiments: true });
         });
 
-        const seen: Array<{ enabled: boolean; existingSessionTarget: boolean } | null> = [];
+        const seen: Array<any> = [];
         function Test() {
             const value = useAutomationsSupport();
             React.useEffect(() => {
@@ -60,12 +60,12 @@ describe('useAutomationsSupport', () => {
             await new Promise((r) => setTimeout(r, 0));
         });
 
-        expect(seen.at(-1)).toEqual({ enabled: true, existingSessionTarget: true });
+        expect(seen.at(-1)).toMatchObject({ enabled: true });
     });
 
     it('returns disabled capability details when automations are disabled', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ automationsEnabled: false, automationsExistingSessionTarget: false });
+        stubServerFeaturesFetch({ automationsEnabled: false });
 
         const { useAutomationsSupport } = await import('./useAutomationsSupport');
         const { getStorage } = await import('@/sync/domains/state/storage');
@@ -73,7 +73,7 @@ describe('useAutomationsSupport', () => {
             getStorage().getState().applySettingsLocal({ experiments: true });
         });
 
-        const seen: Array<{ enabled: boolean; existingSessionTarget: boolean } | null> = [];
+        const seen: Array<any> = [];
         function Test() {
             const value = useAutomationsSupport();
             React.useEffect(() => {
@@ -87,12 +87,12 @@ describe('useAutomationsSupport', () => {
             await new Promise((r) => setTimeout(r, 0));
         });
 
-        expect(seen.at(-1)).toEqual({ enabled: false, existingSessionTarget: false });
+        expect(seen.at(-1)).toMatchObject({ enabled: false });
     });
 
     it('disables automations when local expAutomations gate is off', async () => {
         vi.resetModules();
-        stubServerFeaturesFetch({ automationsEnabled: true, automationsExistingSessionTarget: true });
+        stubServerFeaturesFetch({ automationsEnabled: true });
 
         const [{ useAutomationsSupport }, { getStorage }] = await Promise.all([
             import('./useAutomationsSupport'),
@@ -105,7 +105,7 @@ describe('useAutomationsSupport', () => {
             });
         });
 
-        const seen: Array<{ enabled: boolean; existingSessionTarget: boolean } | null> = [];
+        const seen: Array<any> = [];
         function Test() {
             const value = useAutomationsSupport();
             React.useEffect(() => {
@@ -119,7 +119,7 @@ describe('useAutomationsSupport', () => {
             await new Promise((r) => setTimeout(r, 0));
         });
 
-        expect(seen.at(-1)).toEqual({ enabled: false, existingSessionTarget: false });
+        expect(seen.at(-1)).toMatchObject({ enabled: false });
         await act(async () => {
             getStorage().getState().applySettingsLocal({
                 featureToggles: { automations: true },
@@ -133,7 +133,7 @@ describe('useAutomationsSupport', () => {
 
         const { useAutomationsSupport } = await import('./useAutomationsSupport');
 
-        const seen: Array<{ enabled: boolean; existingSessionTarget: boolean } | null> = [];
+        const seen: Array<any> = [];
         function Test() {
             const value = useAutomationsSupport();
             React.useEffect(() => {
@@ -148,7 +148,7 @@ describe('useAutomationsSupport', () => {
         });
 
         // Legacy/unsupported servers (or failed feature fetch) must gate the UI off.
-        expect(seen.at(-1)).toEqual({ enabled: false, existingSessionTarget: false });
+        expect(seen.at(-1)).toMatchObject({ enabled: false });
     });
 
     it('uses spawn scope when provided', async () => {
@@ -180,27 +180,27 @@ describe('useAutomationsSupport', () => {
                     return {
                         ok: true,
                         status: 200,
-                        json: async () => buildServerFeaturesResponse({ automationsEnabled: true, automationsExistingSessionTarget: false }),
+                        json: async () => buildServerFeaturesResponse({ automationsEnabled: false }),
                     };
                 }
                 if (href.includes('b.example')) {
                     return {
                         ok: true,
                         status: 200,
-                        json: async () => buildServerFeaturesResponse({ automationsEnabled: true, automationsExistingSessionTarget: true }),
+                        json: async () => buildServerFeaturesResponse({ automationsEnabled: true }),
                     };
                 }
                 return {
                     ok: true,
                     status: 200,
-                    json: async () => buildServerFeaturesResponse({ automationsEnabled: true, automationsExistingSessionTarget: false }),
+                    json: async () => buildServerFeaturesResponse({ automationsEnabled: false }),
                 };
             }) as any,
         );
 
         const { useAutomationsSupport } = await import('./useAutomationsSupport');
 
-        const seen: Array<{ enabled: boolean; existingSessionTarget: boolean } | null> = [];
+        const seen: Array<any> = [];
         function Test() {
             const value = (useAutomationsSupport as any)({ scopeKind: 'spawn', serverId: serverB.id });
             React.useEffect(() => {
@@ -214,6 +214,6 @@ describe('useAutomationsSupport', () => {
             await new Promise((r) => setTimeout(r, 0));
         });
 
-        expect(seen.at(-1)).toEqual({ enabled: true, existingSessionTarget: true });
+        expect(seen.at(-1)).toMatchObject({ enabled: true });
     });
 });

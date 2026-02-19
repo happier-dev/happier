@@ -223,4 +223,68 @@ describe('featureDecisionRuntime', () => {
 
         nowSpy.mockRestore();
     });
+
+    it('does not refetch explicit serverId snapshots on remount while cache is fresh', async () => {
+        vi.resetModules();
+
+        let now = 0;
+        const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+
+        // Clean up any leaked listeners from prior tests (defensive); otherwise emitting an active
+        // server change can trigger state updates outside of this test's `act()` scopes.
+        activeServerListeners.listeners.clear();
+
+        await act(async () => {
+            emitActiveServerChanged({
+                serverId: 'server-a',
+                serverUrl: 'https://server-a.example.test',
+                generation: 1,
+            });
+            await flushHookEffects(2);
+        });
+
+        const { resetRuntimeFetch } = await import('@/sync/http/client');
+        resetRuntimeFetch();
+
+        const fetchMock = vi.fn(async () => ({
+            ok: true,
+            status: 200,
+            json: async () => createFeaturesPayload({ voiceEnabled: true }),
+        }) as Response);
+        vi.stubGlobal('fetch', fetchMock as any);
+
+        const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+
+        const { useServerFeaturesSnapshotForServerId } = await import('./featureDecisionRuntime');
+
+        function Test() {
+            useServerFeaturesSnapshotForServerId('server-a');
+            return React.createElement('View');
+        }
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(Test));
+            await flushHookEffects(20);
+        });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+
+        // Remount within TTL_READY_MS.
+        now = 1;
+        await act(async () => {
+            tree?.unmount();
+            tree = renderer.create(React.createElement(Test));
+            await flushHookEffects(20);
+        });
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            tree?.unmount();
+            await flushHookEffects(4);
+        });
+
+        nowSpy.mockRestore();
+    });
 });

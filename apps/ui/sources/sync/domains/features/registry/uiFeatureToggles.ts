@@ -21,21 +21,21 @@ export type UiFeatureToggleDefinition = Readonly<{
 }>;
 
 export function listUiFeatureToggleDefinitions(): ReadonlyArray<UiFeatureToggleDefinition> {
-    return Object.entries(UI_FEATURE_REGISTRY)
-        .map(([featureIdRaw, d]) => {
-            const featureId = featureIdRaw as FeatureId;
-            const toggle = d.settingsToggle;
-            if (!toggle?.showInSettings) return null;
-            return {
-                featureId,
-                isExperimental: toggle.isExperimental,
-                defaultEnabled: toggle.defaultEnabled,
-                titleKey: toggle.titleKey,
-                subtitleKey: toggle.subtitleKey,
-                icon: toggle.icon,
-            } satisfies UiFeatureToggleDefinition;
-        })
-        .filter((v): v is UiFeatureToggleDefinition => v !== null);
+    const out: UiFeatureToggleDefinition[] = [];
+    for (const [featureIdRaw, def] of Object.entries(UI_FEATURE_REGISTRY)) {
+        const featureId = featureIdRaw as FeatureId;
+        const toggle = def.settingsToggle;
+        if (!toggle?.showInSettings) continue;
+        out.push({
+            featureId,
+            isExperimental: toggle.isExperimental,
+            defaultEnabled: toggle.defaultEnabled,
+            titleKey: toggle.titleKey,
+            subtitleKey: toggle.subtitleKey,
+            icon: toggle.icon,
+        });
+    }
+    return out;
 }
 
 export function resolveUiFeatureToggleEnabled(settings: FeatureToggleSettings, featureId: FeatureId): boolean {

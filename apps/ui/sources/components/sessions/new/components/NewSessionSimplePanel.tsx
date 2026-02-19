@@ -45,6 +45,10 @@ export function NewSessionSimplePanel(props: Readonly<{
     setModelMode: React.ComponentProps<typeof AgentInput>['onModelModeChange'];
     modelOptions: ReadonlyArray<{ value: string; label: string; description: string }>;
     modelOptionsProbe?: React.ComponentProps<typeof AgentInput>['modelOptionsOverrideProbe'];
+    acpSessionModeOptions?: ReadonlyArray<Readonly<{ id: string; name: string; description?: string }>>;
+    acpSessionModeProbe?: React.ComponentProps<typeof AgentInput>['acpSessionModeOptionsOverrideProbe'];
+    acpSessionModeId?: string | null;
+    setAcpSessionModeId?: (modeId: string | null) => void;
     connectionStatus: React.ComponentProps<typeof AgentInput>['connectionStatus'];
     machineName: string | undefined;
     handleMachineClick: React.ComponentProps<typeof AgentInput>['onMachineClick'];
@@ -213,6 +217,14 @@ export function NewSessionSimplePanel(props: Readonly<{
                                             onModelModeChange={props.setModelMode}
                                             modelOptionsOverride={props.modelOptions}
                                             modelOptionsOverrideProbe={props.modelOptionsProbe}
+                                            acpSessionModeOptionsOverride={props.acpSessionModeOptions}
+                                            acpSessionModeSelectedIdOverride={props.acpSessionModeId ?? null}
+                                            acpSessionModeOptionsOverrideProbe={props.acpSessionModeProbe}
+                                            onAcpSessionModeChange={
+                                                props.acpSessionModeOptions && props.setAcpSessionModeId
+                                                    ? (modeId) => props.setAcpSessionModeId?.(modeId === 'default' ? null : modeId)
+                                                    : undefined
+                                            }
                                             connectionStatus={props.connectionStatus}
                                             machineName={props.machineName}
                                             onMachineClick={props.handleMachineClick}

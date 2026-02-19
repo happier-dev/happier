@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { DEFAULT_ACTIONS_SETTINGS_V1 } from '@happier-dev/protocol';
 import { settingsParse, applySettings, settingsDefaults, type Settings, AIBackendProfileSchema } from './settings';
 import { getBuiltInProfile } from '../profiles/profileUtils';
 
@@ -190,7 +191,7 @@ describe('settings', () => {
 
         it('defaults actions settings', () => {
             const parsed = settingsParse({} as any);
-            expect((parsed as any).actionsSettingsV1).toEqual({ v: 1, actions: {} });
+            expect((parsed as any).actionsSettingsV1).toEqual(DEFAULT_ACTIONS_SETTINGS_V1);
         });
 
         it('keeps valid actions settings action ids when one entry is invalid', () => {
@@ -563,6 +564,13 @@ describe('settings', () => {
                 ready: true,
                 permissionRequest: true,
             });
+            expect((settingsDefaults as any).attachmentsUploadsUploadLocation).toBe('workspace');
+            expect((settingsDefaults as any).attachmentsUploadsWorkspaceRelativeDir).toBe('.happier/uploads');
+            expect((settingsDefaults as any).attachmentsUploadsVcsIgnoreStrategy).toBe('git_info_exclude');
+            expect((settingsDefaults as any).attachmentsUploadsVcsIgnoreWritesEnabled).toBe(true);
+            expect((settingsDefaults as any).attachmentsUploadsMaxFileBytes).toBe(25 * 1024 * 1024);
+            expect((settingsDefaults as any).attachmentsUploadsUploadTtlMs).toBe(5 * 60 * 1000);
+            expect((settingsDefaults as any).attachmentsUploadsChunkSizeBytes).toBe(256 * 1024);
             expect((settingsDefaults as any).expGemini).toBeUndefined();
             expect((settingsDefaults as any).sessionDefaultPermissionModeClaude).toBeUndefined();
             expect((settingsDefaults as any).sessionDefaultPermissionModeCodex).toBeUndefined();

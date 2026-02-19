@@ -154,7 +154,7 @@ export const CODEX_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
             if (experiments.enabled !== true) return null;
             if (getSwitch(experiments, CODEX_SWITCH_RESUME_ACP) !== true) return null;
             if (!shouldPrefetchAcpCapabilities('codex', results)) return null;
-            return { request: buildAcpLoadSessionPrefetchRequest('codex'), timeoutMs: 8_000 };
+            return { request: buildAcpLoadSessionPrefetchRequest('codex'), timeoutMs: 20_000 };
         },
         getPreflightPrefetchPlan: ({ experiments }) => {
             if (experiments.enabled !== true) return null;

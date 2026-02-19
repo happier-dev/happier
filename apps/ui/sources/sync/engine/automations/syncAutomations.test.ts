@@ -83,7 +83,7 @@ describe('syncAutomations', () => {
                     json: async () =>
                         createRootLayoutFeaturesResponse({
                             features: {
-                                automations: { enabled: false, existingSessionTarget: { enabled: false } },
+                                automations: { enabled: false },
                             },
                         }),
                 } as unknown as Response;
@@ -120,7 +120,7 @@ describe('syncAutomations', () => {
                     json: async () =>
                         createRootLayoutFeaturesResponse({
                             features: {
-                                automations: { enabled: true, existingSessionTarget: { enabled: true } },
+                                automations: { enabled: true },
                             },
                         }),
                 } as unknown as Response;
@@ -158,7 +158,7 @@ describe('syncAutomations', () => {
                     json: async () =>
                         createRootLayoutFeaturesResponse({
                             features: {
-                                automations: { enabled: true, existingSessionTarget: { enabled: true } },
+                                automations: { enabled: true },
                             },
                         }),
                 } as unknown as Response;

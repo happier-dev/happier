@@ -1,4 +1,5 @@
 import type { FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
+import { AsyncTtlCache } from '@happier-dev/protocol';
 
 import { serverFetch } from '@/sync/http/client';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -15,15 +16,15 @@ const TTL_ERROR_RESPONSE_STATUS_MS = 30 * 1000;
 
 const FORCE_COOLDOWN_ENDPOINT_MISSING_MS = 60 * 1000;
 
-type CacheEntry = Readonly<{ value: ServerFeaturesSnapshot; at: number; ttlMs: number }>;
-
 export type ServerFeaturesSnapshot =
     | Readonly<{ status: 'ready'; features: ServerFeatures }>
     | Readonly<{ status: 'unsupported'; reason: 'endpoint_missing' | 'invalid_payload' }>
     | Readonly<{ status: 'error'; reason: 'network' | 'timeout' | 'response_status' }>;
 
-const cachedByServerId = new Map<string, CacheEntry>();
-const inFlightByServerId = new Map<string, Promise<ServerFeaturesSnapshot>>();
+const cache = new AsyncTtlCache<ServerFeaturesSnapshot>({
+    successTtlMs: TTL_READY_MS,
+    errorTtlMs: TTL_ERROR_NETWORK_MS,
+});
 
 function isEndpointMissing(status: number): boolean {
     return status === 404 || status === 405 || status === 501;
@@ -98,29 +99,37 @@ export async function getServerFeaturesSnapshot(params?: {
         ? normalizeBaseUrl(getServerProfileById(requestedServerId)?.serverUrl ?? '')
         : null;
 
-    const cached = cachedByServerId.get(cacheKey) ?? null;
-    if (cached) {
-        const ageMs = Date.now() - cached.at;
-        const fresh = ageMs >= 0 && ageMs < cached.ttlMs;
+    const cachedEntry = cache.get(cacheKey);
+    const cached = cachedEntry?.kind === 'success' ? cachedEntry.value : null;
+    if (cached && cachedEntry) {
+        const ageMs = Date.now() - cachedEntry.updatedAt;
+        const fresh = cache.isFresh(cachedEntry);
         if (fresh) {
-            if (!force) return cached.value;
+            if (!force) return cached;
 
-            const cooldownMs = getForceCooldownMs(cached.value);
+            const cooldownMs = getForceCooldownMs(cached);
             if (ageMs < cooldownMs) {
-                return cached.value;
+                return cached;
             }
         }
     }
 
-    const inFlight = inFlightByServerId.get(cacheKey);
-    if (inFlight) {
-        return await inFlight;
-    }
+    return await cache.runDedupe(cacheKey, async (): Promise<ServerFeaturesSnapshot> => {
+        const cachedEntry2 = cache.get(cacheKey);
+        const cached2 = cachedEntry2?.kind === 'success' ? cachedEntry2.value : null;
+        if (cached2 && cachedEntry2) {
+            const ageMs = Date.now() - cachedEntry2.updatedAt;
+            const fresh = cache.isFresh(cachedEntry2);
+            if (fresh) {
+                if (!force) return cached2;
+                const cooldownMs = getForceCooldownMs(cached2);
+                if (ageMs < cooldownMs) return cached2;
+            }
+        }
 
-        const request = (async (): Promise<ServerFeaturesSnapshot> => {
         if (isExplicitServerRequest && !explicitServerUrl) {
             const value: ServerFeaturesSnapshot = { status: 'error', reason: 'network' };
-            cachedByServerId.set(cacheKey, { value, at: Date.now(), ttlMs: getCacheTtlMs(value) });
+            cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
             return value;
         }
 
@@ -146,7 +155,7 @@ export async function getServerFeaturesSnapshot(params?: {
                 const value: ServerFeaturesSnapshot = isEndpointMissing(response.status)
                     ? { status: 'unsupported', reason: 'endpoint_missing' }
                     : { status: 'error', reason: 'response_status' };
-                cachedByServerId.set(cacheKey, { value, at: Date.now(), ttlMs: getCacheTtlMs(value) });
+                cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
                 return value;
             }
 
@@ -154,35 +163,30 @@ export async function getServerFeaturesSnapshot(params?: {
             const parsed = parseServerFeatures(payload);
             if (!parsed) {
                 const value: ServerFeaturesSnapshot = { status: 'unsupported', reason: 'invalid_payload' };
-                cachedByServerId.set(cacheKey, { value, at: Date.now(), ttlMs: getCacheTtlMs(value) });
+                cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
                 return value;
             }
 
             const value: ServerFeaturesSnapshot = { status: 'ready', features: parsed };
-            cachedByServerId.set(cacheKey, { value, at: Date.now(), ttlMs: getCacheTtlMs(value) });
+            cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
             return value;
         } catch (error) {
             const aborted = controller.signal.aborted || (error instanceof Error && error.name === 'AbortError');
             const value: ServerFeaturesSnapshot = { status: 'error', reason: aborted ? 'timeout' : 'network' };
-            cachedByServerId.set(cacheKey, { value, at: Date.now(), ttlMs: getCacheTtlMs(value) });
+            cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
             return value;
         } finally {
             clearTimeout(timer);
-            inFlightByServerId.delete(cacheKey);
         }
-    })();
-
-    inFlightByServerId.set(cacheKey, request);
-    return await request;
+    });
 }
 
 export function getCachedServerFeaturesSnapshot(params?: { serverId?: string }): ServerFeaturesSnapshot | null {
     const cacheKey = getCacheKey(params?.serverId);
-    const cached = cachedByServerId.get(cacheKey) ?? null;
-    return cached?.value ?? null;
+    const cached = cache.get(cacheKey);
+    return cached?.kind === 'success' ? cached.value : null;
 }
 
 export function resetServerFeaturesClientForTests(): void {
-    cachedByServerId.clear();
-    inFlightByServerId.clear();
+    cache.clear();
 }

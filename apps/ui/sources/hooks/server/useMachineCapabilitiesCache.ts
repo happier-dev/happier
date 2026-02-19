@@ -30,6 +30,14 @@ const listeners = new Map<string, Set<(state: MachineCapabilitiesCacheState) => 
 
 const DEFAULT_STALE_MS = 24 * 60 * 60 * 1000; // 24 hours
 const DEFAULT_FETCH_TIMEOUT_MS = 2500;
+const DEFAULT_ERROR_BACKOFF_MS = 60_000;
+
+type ScheduledFetch = Readonly<{
+    requestKey: string;
+    promise: Promise<void>;
+}>;
+
+const scheduledFetchByCacheKey = new Map<string, ScheduledFetch>();
 
 function normalizeServerId(raw: string | null | undefined): string {
     return String(raw ?? '').trim();
@@ -44,8 +52,7 @@ function resolveServerId(raw: string | null | undefined): string {
 function toCacheKey(machineIdRaw: string, serverIdRaw?: string | null): string {
     const machineId = String(machineIdRaw ?? '').trim();
     const serverId = resolveServerId(serverIdRaw);
-    if (!serverId) return machineId;
-    return `${serverId}::${machineId}`;
+    return JSON.stringify(['machineCapabilities', serverId || null, machineId]);
 }
 
 function getEntry(cacheKey: string): CacheEntry | null {
@@ -132,6 +139,73 @@ function getTimeoutMsForRequest(request: CapabilitiesDetectRequest, fallback: nu
     return fallback;
 }
 
+function readMachineCapabilitiesErrorBackoffMsFromEnv(): number {
+    const raw = String(process.env.EXPO_PUBLIC_HAPPIER_MACHINE_CAPABILITIES_ERROR_BACKOFF_MS ?? '').trim();
+    if (!raw) return DEFAULT_ERROR_BACKOFF_MS;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed)) return DEFAULT_ERROR_BACKOFF_MS;
+    return Math.max(0, Math.min(10 * 60_000, parsed));
+}
+
+function stableJsonStringify(value: unknown): string {
+    if (value === null || value === undefined) return 'null';
+    if (typeof value === 'string') return JSON.stringify(value);
+    if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'null';
+    if (typeof value === 'boolean') return value ? 'true' : 'false';
+    if (Array.isArray(value)) return `[${value.map((v) => stableJsonStringify(v)).join(',')}]`;
+    if (typeof value === 'object') {
+        const obj = value as Record<string, unknown>;
+        const keys = Object.keys(obj).sort();
+        return `{${keys.map((k) => `${JSON.stringify(k)}:${stableJsonStringify(obj[k])}`).join(',')}}`;
+    }
+    // functions/symbols/etc: treat as null for cache key stability
+    return 'null';
+}
+
+function detectRequestKey(request: CapabilitiesDetectRequest): string {
+    const checklistId = typeof request.checklistId === 'string' ? request.checklistId : null;
+    const requests = Array.isArray(request.requests) ? request.requests : [];
+    const normalizedRequests = requests
+        .map((r) => ({
+            id: String((r as any)?.id ?? ''),
+            params: isPlainObject((r as any)?.params) ? (r as any).params : null,
+        }))
+        .filter((r) => r.id.trim().length > 0)
+        .sort((a, b) => a.id.localeCompare(b.id) || stableJsonStringify(a.params).localeCompare(stableJsonStringify(b.params)));
+
+    const overridesRaw = isPlainObject(request.overrides) ? (request.overrides as Record<string, any>) : {};
+    const normalizedOverrides = Object.keys(overridesRaw)
+        .sort()
+        .map((id) => ({
+            id,
+            params: isPlainObject(overridesRaw[id]?.params) ? overridesRaw[id].params : null,
+        }));
+
+    return stableJsonStringify({
+        checklistId,
+        requests: normalizedRequests,
+        overrides: normalizedOverrides,
+    });
+}
+
+function shouldRefetchEntry(params: Readonly<{ entry: CacheEntry | null; staleMs: number; nowMs: number }>): boolean {
+    const { entry, staleMs, nowMs } = params;
+    if (!entry) return true;
+    const ageMs = nowMs - entry.updatedAt;
+    if (entry.state.status === 'idle') return true;
+    if (entry.state.status === 'loading') return false;
+    if (entry.state.status === 'loaded') return ageMs > staleMs;
+    if (entry.state.status === 'not-supported') return false;
+    if (entry.state.status === 'error') {
+        if (staleMs < 0) return true;
+        const backoffMs = readMachineCapabilitiesErrorBackoffMsFromEnv();
+        if (backoffMs <= 0) return true;
+        const thresholdMs = Math.min(staleMs, backoffMs);
+        return ageMs >= thresholdMs;
+    }
+    return ageMs > staleMs;
+}
+
 async function fetchAndMerge(params: {
     machineId: string;
     serverId?: string | null;
@@ -139,76 +213,96 @@ async function fetchAndMerge(params: {
     timeoutMs?: number;
 }): Promise<void> {
     const cacheKey = toCacheKey(params.machineId, params.serverId);
+    const requestKey = detectRequestKey(params.request);
+    const scheduled = scheduledFetchByCacheKey.get(cacheKey);
+    if (scheduled && scheduled.requestKey === requestKey) {
+        return await scheduled.promise;
+    }
+
+    const previousPromise = scheduled?.promise ?? Promise.resolve();
     const token = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
 
-    const existing = getEntry(cacheKey);
-    const prevSnapshot =
-        existing?.state.status === 'loaded'
-            ? existing.state.snapshot
-            : existing?.state.status === 'loading'
+    const scheduledPromise = previousPromise.then(async () => {
+        const existing = getEntry(cacheKey);
+        const prevSnapshot =
+            existing?.state.status === 'loaded'
                 ? existing.state.snapshot
-                : existing?.state.status === 'error'
+                : existing?.state.status === 'loading'
                     ? existing.state.snapshot
-                    : undefined;
+                    : existing?.state.status === 'error'
+                        ? existing.state.snapshot
+                        : undefined;
 
-    setEntry(cacheKey, {
-        state: { status: 'loading', ...(prevSnapshot ? { snapshot: prevSnapshot } : {}) },
-        updatedAt: Date.now(),
-        inFlightToken: token,
-    });
-
-    const timeoutMs = typeof params.timeoutMs === 'number'
-        ? params.timeoutMs
-        : getTimeoutMsForRequest(params.request, DEFAULT_FETCH_TIMEOUT_MS);
-
-    let result: MachineCapabilitiesDetectResult;
-    try {
-        result = await machineCapabilitiesDetect(params.machineId, params.request, {
-            timeoutMs,
-            serverId: params.serverId,
+        setEntry(cacheKey, {
+            state: { status: 'loading', ...(prevSnapshot ? { snapshot: prevSnapshot } : {}) },
+            updatedAt: Date.now(),
+            inFlightToken: token,
         });
-    } catch {
+
+        const timeoutMs = typeof params.timeoutMs === 'number'
+            ? params.timeoutMs
+            : getTimeoutMsForRequest(params.request, DEFAULT_FETCH_TIMEOUT_MS);
+
+        let result: MachineCapabilitiesDetectResult;
+        try {
+            result = await machineCapabilitiesDetect(params.machineId, params.request, {
+                timeoutMs,
+                serverId: params.serverId,
+            });
+        } catch {
+            const current = getEntry(cacheKey);
+            if (!current || current.inFlightToken !== token) {
+                return;
+            }
+
+            setEntry(cacheKey, {
+                state: prevSnapshot ? ({ status: 'error', snapshot: prevSnapshot } as const) : ({ status: 'error' } as const),
+                updatedAt: Date.now(),
+            });
+            return;
+        }
+
         const current = getEntry(cacheKey);
         if (!current || current.inFlightToken !== token) {
             return;
         }
+        const baseResponse = prevSnapshot?.response ?? null;
+
+        const nextState = (() => {
+            if (result.supported) {
+                const merged = mergeDetectResponses(baseResponse, result.response);
+                const snapshot: MachineCapabilitiesSnapshot = { response: merged };
+                return ({ status: 'loaded', snapshot } as const);
+            }
+
+            if (result.reason === 'not-supported') {
+                return { status: 'not-supported' } as const;
+            }
+
+            return prevSnapshot
+                ? ({ status: 'error', snapshot: prevSnapshot } as const)
+                : ({ status: 'error' } as const);
+        })();
 
         setEntry(cacheKey, {
-            state: prevSnapshot ? ({ status: 'error', snapshot: prevSnapshot } as const) : ({ status: 'error' } as const),
+            state: nextState,
             updatedAt: Date.now(),
         });
-        return;
-    }
-
-    const current = getEntry(cacheKey);
-    if (!current || current.inFlightToken !== token) {
-        return;
-    }
-    const baseResponse = prevSnapshot?.response ?? null;
-
-    const nextState = (() => {
-        if (result.supported) {
-            const merged = mergeDetectResponses(baseResponse, result.response);
-            const snapshot: MachineCapabilitiesSnapshot = { response: merged };
-            const stillInFlight = current?.inFlightToken !== token && typeof current?.inFlightToken === 'number';
-            return stillInFlight
-                ? ({ status: 'loading', snapshot } as const)
-                : ({ status: 'loaded', snapshot } as const);
-        }
-
-        if (result.reason === 'not-supported') {
-            return { status: 'not-supported' } as const;
-        }
-
-        return prevSnapshot
-            ? ({ status: 'error', snapshot: prevSnapshot } as const)
-            : ({ status: 'error' } as const);
-    })();
-
-    setEntry(cacheKey, {
-        state: nextState,
-        updatedAt: Date.now(),
     });
+
+    const finalPromise = scheduledPromise.finally(() => {
+        const current = scheduledFetchByCacheKey.get(cacheKey);
+        if (current?.promise === finalPromise) {
+            scheduledFetchByCacheKey.delete(cacheKey);
+        }
+    });
+
+    scheduledFetchByCacheKey.set(cacheKey, {
+        requestKey,
+        promise: finalPromise,
+    });
+
+    return await finalPromise;
 }
 
 export function prefetchMachineCapabilities(params: {
@@ -238,8 +332,8 @@ export function prefetchMachineCapabilitiesIfStale(params: {
         });
     }
     const now = Date.now();
-    const isStale = (now - existing.updatedAt) > params.staleMs;
-    if (isStale) {
+    const shouldFetch = shouldRefetchEntry({ entry: existing, staleMs: params.staleMs, nowMs: now });
+    if (shouldFetch) {
         return fetchAndMerge({
             machineId: params.machineId,
             serverId: params.serverId,
@@ -303,7 +397,7 @@ export function useMachineCapabilitiesCache(params: {
         }
 
         const now = Date.now();
-        const shouldFetch = !entry || (now - entry.updatedAt) > staleMs;
+        const shouldFetch = shouldRefetchEntry({ entry: entry ?? null, staleMs, nowMs: now });
         if (shouldFetch) {
             refresh();
         }

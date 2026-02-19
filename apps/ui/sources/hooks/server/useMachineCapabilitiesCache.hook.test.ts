@@ -97,6 +97,88 @@ describe('useMachineCapabilitiesCache (hook)', () => {
         expect(latest?.status).toBe('error');
     });
 
+    it('dedupes concurrent prefetches for the same machine+request', async () => {
+        vi.resetModules();
+
+        type DetectResponse = {
+            supported: true;
+            response: { protocolVersion: 1; results: Record<string, unknown> };
+        };
+        const resolvers: Array<(value: DetectResponse) => void> = [];
+        const machineCapabilitiesDetect = vi.fn(async () => {
+            return await new Promise((resolve) => {
+                resolvers.push(resolve as (value: DetectResponse) => void);
+            });
+        });
+
+        vi.doMock('@/sync/ops', () => {
+            return { machineCapabilitiesDetect };
+        });
+
+        const { prefetchMachineCapabilities } = await import('./useMachineCapabilitiesCache');
+
+        const request = newSessionRequest();
+        const p1 = prefetchMachineCapabilities({ machineId: 'm1', request, timeoutMs: 10_000 });
+        const p2 = prefetchMachineCapabilities({ machineId: 'm1', request, timeoutMs: 10_000 });
+
+        // Flush the queued fetch start (serialized per machine cache key).
+        await Promise.resolve();
+
+        expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(1);
+        expect(resolvers).toHaveLength(1);
+
+        resolvers[0]!({ supported: true, response: { protocolVersion: 1, results: {} } });
+        await expect(Promise.all([p1, p2])).resolves.toBeDefined();
+    });
+
+    it('retries error states after a short backoff even when staleMs is large', async () => {
+        vi.resetModules();
+        vi.useFakeTimers();
+        process.env.EXPO_PUBLIC_HAPPIER_MACHINE_CAPABILITIES_ERROR_BACKOFF_MS = '1000';
+
+        try {
+            vi.setSystemTime(1_000_000);
+            const machineCapabilitiesDetect = vi.fn(async () => {
+                throw new Error('boom');
+            });
+
+            vi.doMock('@/sync/ops', () => {
+                return { machineCapabilitiesDetect };
+            });
+
+            const { prefetchMachineCapabilitiesIfStale } = await import('./useMachineCapabilitiesCache');
+
+            await prefetchMachineCapabilitiesIfStale({
+                machineId: 'm1',
+                staleMs: 24 * 60 * 60 * 1000,
+                request: newSessionRequest(),
+                timeoutMs: 1,
+            });
+            expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(1);
+
+            vi.setSystemTime(1_000_000 + 999);
+            await prefetchMachineCapabilitiesIfStale({
+                machineId: 'm1',
+                staleMs: 24 * 60 * 60 * 1000,
+                request: newSessionRequest(),
+                timeoutMs: 1,
+            });
+            expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(1);
+
+            vi.setSystemTime(1_000_000 + 1000);
+            await prefetchMachineCapabilitiesIfStale({
+                machineId: 'm1',
+                staleMs: 24 * 60 * 60 * 1000,
+                request: newSessionRequest(),
+                timeoutMs: 1,
+            });
+            expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+            delete process.env.EXPO_PUBLIC_HAPPIER_MACHINE_CAPABILITIES_ERROR_BACKOFF_MS;
+        }
+    });
+
     it('keeps refresh stable when request identity changes and uses latest request', async () => {
         vi.resetModules();
 

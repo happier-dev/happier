@@ -132,20 +132,18 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
     React.useEffect(() => {
         if (CameraView.isModernBarcodeScannerAvailable) {
             const subscription = CameraView.onModernBarcodeScanned(async (event) => {
-                if (event.data.startsWith('happier://terminal?')) {
-                    if (isProcessingRef.current) {
-                        return;
+                if (!parseTerminalConnectUrl(event.data)) return;
+                if (isProcessingRef.current) return;
+
+                isProcessingRef.current = true;
+                try {
+                    // Dismiss scanner on Android is called automatically when barcode is scanned
+                    if (Platform.OS === 'ios') {
+                        await CameraView.dismissScanner().catch(() => {});
                     }
-                    isProcessingRef.current = true;
-                    try {
-                        // Dismiss scanner on Android is called automatically when barcode is scanned
-                        if (Platform.OS === 'ios') {
-                            await CameraView.dismissScanner().catch(() => {});
-                        }
-                        await processAuthUrl(event.data);
-                    } finally {
-                        isProcessingRef.current = false;
-                    }
+                    await processAuthUrl(event.data);
+                } finally {
+                    isProcessingRef.current = false;
                 }
             });
             return () => {

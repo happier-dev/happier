@@ -29,7 +29,12 @@ export function describeAcpLoadSessionSupport(agentId: AgentId, results: Capabil
     if (data?.available !== true) return { kind: 'unsupported', code: 'cliNotDetected' };
 
     const acp = data?.acp;
-    if (!(acp && typeof acp === 'object')) return { kind: 'unknown' };
+    if (!(acp && typeof acp === 'object')) {
+        return {
+            kind: 'unknown',
+            rawMessage: 'ACP capabilities are missing from the last CLI probe (includeAcpCapabilities was not requested).',
+        };
+    }
     if (acp.ok === false) return { kind: 'error', code: 'acpProbeFailed', rawMessage: acp.error?.message };
 
     const loadSession = acp.ok === true && acp.loadSession === true;

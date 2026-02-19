@@ -141,9 +141,12 @@ export function useAllMachines(): Machine[] {
   return getStorage()(
     useShallow((state) => {
       if (!state.isDataReady) return [];
-      return Object.values(state.machines)
-        .sort((a, b) => b.createdAt - a.createdAt)
-        .filter((v) => v.active);
+      return Object.values(state.machines).sort((a, b) => {
+        // Keep offline machines visible (reduces confusion + avoids flicker when presence flaps).
+        if (a.active !== b.active) return a.active ? -1 : 1;
+        if (b.createdAt !== a.createdAt) return b.createdAt - a.createdAt;
+        return a.id.localeCompare(b.id);
+      });
     })
   );
 }

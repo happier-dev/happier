@@ -153,13 +153,50 @@ describe('useConnectTerminal (scanner lifecycle)', () => {
     cameraDismissSpy.mockClear();
 
     const event = { data: 'happier://terminal?key=abc123&server=https%3A%2F%2Fapi.happier.dev' };
-    void onBarcodeScannedHandler!(event);
-    void onBarcodeScannedHandler!(event);
-
-    await act(async () => {});
+    await act(async () => {
+      void onBarcodeScannedHandler!(event);
+      void onBarcodeScannedHandler!(event);
+    });
 
     expect(authApproveSpy).toHaveBeenCalledTimes(1);
 
-    deferred.resolve(undefined);
+    await act(async () => {
+      deferred.resolve(undefined);
+    });
+  });
+
+  it('processes scanned terminal connect web URLs', async () => {
+    const deferred = createDeferred<void>();
+    const authApproveSpy = vi.fn(async () => deferred.promise);
+    vi.doMock('@/auth/flows/approve', () => ({
+      authApprove: authApproveSpy,
+    }));
+
+    const { useConnectTerminal } = await import('./useConnectTerminal');
+
+    function Probe() {
+      useConnectTerminal();
+      return null;
+    }
+
+    await act(async () => {
+      renderer.create(<Probe />);
+    });
+
+    expect(typeof onBarcodeScannedHandler).toBe('function');
+    authApproveSpy.mockClear();
+
+    const event = {
+      data: 'https://web.happier.dev/terminal/connect#key=abc123&server=https%3A%2F%2Fapi.happier.dev',
+    };
+    await act(async () => {
+      void onBarcodeScannedHandler!(event);
+    });
+
+    expect(authApproveSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      deferred.resolve(undefined);
+    });
   });
 });

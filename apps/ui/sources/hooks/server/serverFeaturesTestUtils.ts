@@ -10,7 +10,6 @@ type FixtureOverrides = {
     happierVoiceEnabled?: boolean;
     voiceConfigured?: boolean;
     automationsEnabled?: boolean;
-    automationsExistingSessionTarget?: boolean;
     connectedServicesEnabled?: boolean;
     connectedServicesQuotasEnabled?: boolean;
     updatesOtaEnabled?: boolean;
@@ -51,9 +50,11 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
     return {
         features: {
             bugReports: { enabled: true },
+            attachments: {
+                uploads: { enabled: true },
+            },
             automations: {
                 enabled: overrides.automationsEnabled ?? true,
-                existingSessionTarget: { enabled: overrides.automationsExistingSessionTarget ?? false },
             },
             connectedServices: {
                 enabled: overrides.connectedServicesEnabled ?? true,

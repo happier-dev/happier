@@ -42,7 +42,15 @@ type ManagedConcurrentServer = {
 };
 
 const REFRESH_DEBOUNCE_MS = 600;
-const REFRESH_INTERVAL_MS = 30000;
+const DEFAULT_REFRESH_INTERVAL_MS = 5 * 60_000;
+
+function readRefreshIntervalMs(): number {
+    const raw = String(process.env.EXPO_PUBLIC_HAPPIER_CONCURRENT_CACHE_REFRESH_INTERVAL_MS ?? '').trim();
+    if (!raw) return DEFAULT_REFRESH_INTERVAL_MS;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed)) return DEFAULT_REFRESH_INTERVAL_MS;
+    return Math.max(10_000, Math.min(60 * 60_000, parsed));
+}
 
 const managedServers = new Map<string, ManagedConcurrentServer>();
 
@@ -135,7 +143,31 @@ function updateConcurrentMachineListCache(input: {
         ...state,
         machineListByServerId: {
             ...state.machineListByServerId,
-            [input.serverId]: input.machines,
+            [input.serverId]: (() => {
+                if (!Array.isArray(input.machines)) {
+                    return input.machines;
+                }
+
+                const previous = state.machineListByServerId?.[input.serverId];
+                if (!Array.isArray(previous) || previous.length === 0) {
+                    return input.machines;
+                }
+
+                // SWR merge: keep older machines that are missing from this refresh response.
+                // This avoids confusing "disappear then reappear" flicker if a server returns a
+                // partial list transiently.
+                const nextIds = new Set(input.machines.map((m) => m.id));
+                if (nextIds.size === 0) {
+                    return previous;
+                }
+                const merged: Machine[] = [...input.machines];
+                for (const machine of previous) {
+                    if (!nextIds.has(machine.id)) {
+                        merged.push(machine);
+                    }
+                }
+                return merged;
+            })(),
         },
         machineListStatusByServerId: {
             ...state.machineListStatusByServerId,
@@ -323,11 +355,9 @@ function createManagedServer(target: ConcurrentTarget, credentials: AuthCredenti
     socket.on('connect', () => {
         queueRefresh(entry);
     });
-    // User-scoped sockets can emit high-frequency `ephemeral` events (machine activity, etc).
-    // Refreshing full snapshots on every event causes tight refresh loops and excessive polling.
-    socket.on('update', () => {
-        queueRefresh(entry);
-    });
+    // NOTE: Do not refresh full snapshots on user-scoped socket `update` events.
+    // Those events can be high-frequency (presence/activity), and full refresh loops are
+    // expensive + noisy. Periodic refresh handles eventual consistency for non-active servers.
 
     return entry;
 }
@@ -437,7 +467,7 @@ export function startConcurrentSessionCacheSync(): void {
             queueRefresh(entry);
         }
         scheduleReconcile();
-    }, REFRESH_INTERVAL_MS);
+    }, readRefreshIntervalMs());
 
     scheduleReconcile();
 }

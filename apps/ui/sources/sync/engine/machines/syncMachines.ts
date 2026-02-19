@@ -25,6 +25,13 @@ export async function buildUpdatedMachineFromSocketUpdate(params: {
 
     const machineId = machineUpdate.machineId; // Changed from .id to .machineId
 
+    const nextRevokedAt = (() => {
+        const revokedAt = machineUpdate.revokedAt;
+        if (revokedAt === null) return null;
+        if (typeof revokedAt === 'number' && Number.isFinite(revokedAt) && revokedAt > 0) return revokedAt;
+        return existingMachine?.revokedAt ?? null;
+    })();
+
     // Create or update machine with all required fields
     const updatedMachine: Machine = {
         id: machineId,
@@ -32,8 +39,9 @@ export async function buildUpdatedMachineFromSocketUpdate(params: {
         seq: existingMachine?.seq ?? 0,
         createdAt: existingMachine?.createdAt ?? updateCreatedAt,
         updatedAt: updateCreatedAt,
-        active: machineUpdate.active ?? existingMachine?.active ?? false,
+        active: nextRevokedAt ? false : (machineUpdate.active ?? existingMachine?.active ?? false),
         activeAt: machineUpdate.activeAt ?? existingMachine?.activeAt ?? updateCreatedAt,
+        revokedAt: nextRevokedAt,
         metadata: existingMachine?.metadata ?? null,
         metadataVersion: existingMachine?.metadataVersion ?? 0,
         daemonState: existingMachine?.daemonState ?? null,
@@ -102,25 +110,45 @@ export async function fetchAndApplyMachines(params: {
     machineDataKeys: Map<string, Uint8Array>;
     request?: (path: string, init: RequestInit) => Promise<Response>;
     applyMachines: (machines: Machine[], replace?: boolean) => void;
+    /**
+     * When true, drop any locally-cached machines that are missing from the
+     * latest fetch response.
+     *
+     * Defaults to false to keep machine lists stable during transient server
+     * inconsistencies (SWR-style) and to avoid confusing UI flicker.
+     */
+    replace?: boolean;
 }): Promise<void> {
     const { credentials, encryption, machineDataKeys, applyMachines } = params;
     const request =
         params.request
         ?? ((path: string, init: RequestInit) => serverFetch(path, init, { includeAuth: false }));
 
-    const response = await request('/v1/machines', {
-        headers: {
-            'Authorization': `Bearer ${credentials.token}`,
-            'Content-Type': 'application/json',
-        },
-    });
+    let response: Response;
+    try {
+        response = await request('/v1/machines', {
+            headers: {
+                'Authorization': `Bearer ${credentials.token}`,
+                'Content-Type': 'application/json',
+            },
+        });
+    } catch (error) {
+        console.error('Failed to fetch machines:', error);
+        return;
+    }
 
     if (!response.ok) {
         console.error(`Failed to fetch machines: ${response.status}`);
         return;
     }
 
-    const data = await response.json();
+    let data: unknown;
+    try {
+        data = await response.json();
+    } catch (error) {
+        console.error('Failed to parse machines response:', error);
+        return;
+    }
     const machines = data as Array<{
         id: string;
         metadata: string;
@@ -131,6 +159,7 @@ export async function fetchAndApplyMachines(params: {
         seq: number;
         active: boolean;
         activeAt: number; // Changed from lastActiveAt
+        revokedAt?: number | null;
         createdAt: number;
         updatedAt: number;
     }>;
@@ -185,6 +214,7 @@ export async function fetchAndApplyMachines(params: {
                 updatedAt: machine.updatedAt,
                 active: machine.active,
                 activeAt: machine.activeAt,
+                revokedAt: machine.revokedAt ?? null,
                 metadata,
                 metadataVersion: machine.metadataVersion,
                 daemonState,
@@ -200,6 +230,7 @@ export async function fetchAndApplyMachines(params: {
                 updatedAt: machine.updatedAt,
                 active: machine.active,
                 activeAt: machine.activeAt,
+                revokedAt: machine.revokedAt ?? null,
                 metadata: null,
                 metadataVersion: machine.metadataVersion,
                 daemonState: null,
@@ -208,7 +239,8 @@ export async function fetchAndApplyMachines(params: {
         }
     }
 
-    // Replace entire machine state with fetched machines
-    applyMachines(decryptedMachines, true);
+    // Prefer SWR-style merges by default: do not drop machines that are missing from a
+    // particular refresh response unless the caller opts into a hard replace.
+    applyMachines(decryptedMachines, params.replace ?? false);
     log.log(`🖥️ fetchMachines completed - processed ${decryptedMachines.length} machines`);
 }

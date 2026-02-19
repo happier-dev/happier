@@ -134,6 +134,7 @@ describe('useConnectedServiceQuotaBadges', () => {
   it('retries a pinned key after an initial miss', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000_000);
+    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
     try {
       useFeatureEnabledSpy.mockReturnValue(true);
 
@@ -187,6 +188,7 @@ describe('useConnectedServiceQuotaBadges', () => {
         { serviceId: 'anthropic', profileId: 'work' },
       ]));
 
+      expect(setIntervalSpy).not.toHaveBeenCalled();
       expect(getConnectedServiceQuotaSnapshotSealedSpy).toHaveBeenCalledTimes(1);
 
       await act(async () => {
@@ -202,6 +204,7 @@ describe('useConnectedServiceQuotaBadges', () => {
         await flushHookEffects();
       });
     } finally {
+      setIntervalSpy.mockRestore();
       vi.useRealTimers();
     }
   });

@@ -6,7 +6,7 @@ function createValidFeaturesResponse() {
     return {
         features: {
             bugReports: { enabled: true },
-            automations: { enabled: false, existingSessionTarget: { enabled: false } },
+            automations: { enabled: false },
             sharing: {
                 session: { enabled: true },
                 public: { enabled: true },

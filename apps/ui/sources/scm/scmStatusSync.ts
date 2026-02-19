@@ -3,8 +3,6 @@
  * Provides canonical repository status tracking using ScmRepositoryService.
  */
 
-import { AppState, type AppStateStatus } from 'react-native';
-
 import { storage } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { InvalidateSync } from '@/utils/sessions/sync';
@@ -32,20 +30,16 @@ export { isSessionPathWithinRepoRoot } from './sync/paths';
 export { collectChangedPaths } from './sync/snapshotDiff';
 
 export class ScmStatusSync {
-    private static readonly FAST_POLL_MS = 2_000;
-    private static readonly IDLE_POLL_MS = 8_000;
-    private static readonly FAST_POLL_WINDOW_MS = ATTRIBUTION_INVALIDATION_WINDOW_MS;
-
     // Map project keys to sync instances
     private projectSyncMap = new Map<string, InvalidateSync>();
     // Map session IDs to project keys for cleanup
     private sessionToProjectKey = new Map<string, string>();
-	    // Poll timers per project
-	    private projectPollTimers = new Map<string, ReturnType<typeof setTimeout>>();
-        // Projects that should not schedule background polls (for example: daemon capability missing)
-        private projectPollingSuspended = new Set<string>();
-    // Fast poll window per project
+    // Legacy/compat state maps for project key reassignment helpers.
+    // These are intentionally kept even though SCM polling is now driven by screen-level intervals.
+    private projectPollTimers = new Map<string, ReturnType<typeof setTimeout>>();
     private projectFastPollUntil = new Map<string, number>();
+    // Projects that should skip automatic refresh attempts until a user-initiated refresh occurs.
+    private projectAutoRefreshSuspended = new Set<string>();
     // Snapshot signatures per project to detect file tree changes
     private projectSnapshotSignature = new Map<string, string>();
     // Last snapshot per project to compute changed path attribution
@@ -56,18 +50,12 @@ export class ScmStatusSync {
     private projectLastInvalidationSource = new Map<string, InvalidationSource>();
     // Timestamp for last invalidation actor record to prevent stale attribution
     private projectLastInvalidatedBySessionAt = new Map<string, number>();
-    // Current app state used to pause polling when app is not visible
-    private appState: AppStateStatus = AppState.currentState;
-
-    constructor() {
-        AppState.addEventListener('change', this.handleAppStateChange);
-    }
 
 	    private get stateMaps(): ScmStatusSyncStateMaps {
 	        return {
 	            projectSyncMap: this.projectSyncMap,
 	            projectPollTimers: this.projectPollTimers,
-                projectPollingSuspended: this.projectPollingSuspended,
+                projectPollingSuspended: this.projectAutoRefreshSuspended,
 	            projectFastPollUntil: this.projectFastPollUntil,
 	            projectSnapshotSignature: this.projectSnapshotSignature,
 	            projectLastSnapshot: this.projectLastSnapshot,
@@ -92,27 +80,6 @@ export class ScmStatusSync {
         return `${resolveProjectMachineScopeId(session.metadata)}:${session.metadata.path}`;
     }
 
-    private handleAppStateChange = (nextState: AppStateStatus) => {
-        const wasActive = this.appState === 'active';
-        this.appState = nextState;
-
-        if (nextState !== 'active') {
-            for (const timer of this.projectPollTimers.values()) {
-                clearTimeout(timer);
-            }
-            this.projectPollTimers.clear();
-            return;
-        }
-
-        if (!wasActive) {
-            const now = Date.now();
-            for (const projectKey of this.projectSyncMap.keys()) {
-                this.projectFastPollUntil.set(projectKey, now + ScmStatusSync.FAST_POLL_WINDOW_MS);
-                this.invalidateProject(projectKey);
-            }
-        }
-    };
-
     /**
      * Get or create source-control status sync for a session (creates project-based sync)
      */
@@ -132,7 +99,6 @@ export class ScmStatusSync {
             this.projectSyncMap.set(projectKey, sync);
         }
 
-        this.scheduleProjectPoll(projectKey);
         return sync;
     }
 
@@ -140,7 +106,41 @@ export class ScmStatusSync {
      * Invalidate source-control status for a session (triggers refresh for the entire project)
      */
     invalidate(sessionId: string): void {
+        this.invalidateFromAutoRefresh(sessionId);
+    }
+
+    invalidateFromAutoRefresh(sessionId: string): void {
+        const projectKey = this.getProjectKeyForSession(sessionId);
+        if (!projectKey) return;
+        if (this.projectAutoRefreshSuspended.has(projectKey)) {
+            return;
+        }
         this.invalidateWithSource(sessionId, 'unknown');
+    }
+
+    async invalidateFromAutoRefreshAndAwait(sessionId: string): Promise<void> {
+        const projectKey = this.getProjectKeyForSession(sessionId);
+        if (!projectKey) return;
+        if (this.projectAutoRefreshSuspended.has(projectKey)) {
+            return;
+        }
+        const sync = this.getSync(sessionId);
+        await sync.invalidateAndAwait();
+    }
+
+    invalidateFromUser(sessionId: string): void {
+        const projectKey = this.getProjectKeyForSession(sessionId);
+        if (!projectKey) return;
+        this.projectAutoRefreshSuspended.delete(projectKey);
+        this.invalidateWithSource(sessionId, 'unknown');
+    }
+
+    async invalidateFromUserAndAwait(sessionId: string): Promise<void> {
+        const projectKey = this.getProjectKeyForSession(sessionId);
+        if (!projectKey) return;
+        this.projectAutoRefreshSuspended.delete(projectKey);
+        const sync = this.getSync(sessionId);
+        await sync.invalidateAndAwait();
     }
 
     invalidateFromMutation(sessionId: string): void {
@@ -151,11 +151,11 @@ export class ScmStatusSync {
         const projectKey = this.getProjectKeyForSession(sessionId);
         if (!projectKey) return;
 
+        this.projectAutoRefreshSuspended.delete(projectKey);
         this.projectLastInvalidatedBySession.set(projectKey, sessionId);
         this.projectLastInvalidationSource.set(projectKey, 'mutation');
         const now = Date.now();
         this.projectLastInvalidatedBySessionAt.set(projectKey, now);
-        this.projectFastPollUntil.set(projectKey, now + ScmStatusSync.FAST_POLL_WINDOW_MS);
         const sync = this.getSync(sessionId);
         await sync.invalidateAndAwait();
     }
@@ -195,9 +195,9 @@ export class ScmStatusSync {
             this.projectSyncMap.delete(projectKey);
         }
 
-	        this.clearProjectPollTimer(projectKey);
-            this.projectPollingSuspended.delete(projectKey);
-	        this.projectFastPollUntil.delete(projectKey);
+            this.projectPollTimers.delete(projectKey);
+            this.projectFastPollUntil.delete(projectKey);
+            this.projectAutoRefreshSuspended.delete(projectKey);
 	        this.projectSnapshotSignature.delete(projectKey);
 	        this.projectLastSnapshot.delete(projectKey);
 	        this.projectLastInvalidatedBySession.delete(projectKey);
@@ -209,40 +209,6 @@ export class ScmStatusSync {
         const sync = this.projectSyncMap.get(projectKey);
         if (!sync) return;
         sync.invalidate();
-        this.scheduleProjectPoll(projectKey);
-    }
-
-    private clearProjectPollTimer(projectKey: string): void {
-        const timer = this.projectPollTimers.get(projectKey);
-        if (timer) {
-            clearTimeout(timer);
-            this.projectPollTimers.delete(projectKey);
-        }
-    }
-
-	    private scheduleProjectPoll(projectKey: string): void {
-	        this.clearProjectPollTimer(projectKey);
-
-	        if (this.appState !== 'active') {
-	            return;
-	        }
-
-            if (this.projectPollingSuspended.has(projectKey)) {
-                return;
-            }
-
-	        const fastUntil = this.projectFastPollUntil.get(projectKey) ?? 0;
-	        const delay = Date.now() < fastUntil ? ScmStatusSync.FAST_POLL_MS : ScmStatusSync.IDLE_POLL_MS;
-
-        const timer = setTimeout(() => {
-            if (!this.projectSyncMap.has(projectKey)) {
-                this.clearProjectPollTimer(projectKey);
-                return;
-            }
-            this.invalidateProject(projectKey);
-        }, delay);
-
-        this.projectPollTimers.set(projectKey, timer);
     }
 
     private getAnySessionForProject(projectKey: string): string | null {
@@ -264,7 +230,6 @@ export class ScmStatusSync {
 	        if (!sessionId) return;
 
 	        let scheduledProjectKey = projectKey;
-            let suspendAfterFetch = false;
 	        try {
 	            const state = storage.getState();
 	            const snapshot = await scmRepositoryService.fetchSnapshotForSession(sessionId);
@@ -301,7 +266,6 @@ export class ScmStatusSync {
                 }
             }
 	            scheduledProjectKey = activeProjectKey;
-                this.projectPollingSuspended.delete(activeProjectKey);
 
             const previousSnapshot = this.projectLastSnapshot.get(activeProjectKey) ?? null;
             const changedPaths = collectChangedPaths(previousSnapshot, snapshot);
@@ -320,19 +284,40 @@ export class ScmStatusSync {
                 null;
             const now = Date.now();
 
-            for (const scopedSessionId of scopeSessionIds) {
-                state.updateSessionProjectScmSnapshot(scopedSessionId, snapshot);
-                state.updateSessionProjectScmSnapshotError(scopedSessionId, null);
+            const signature = buildSnapshotSignature(snapshot);
+            const previousSignature = this.projectSnapshotSignature.get(activeProjectKey);
+            const signatureChanged = signature !== previousSignature;
 
-                if (!snapshot.repo.isRepo) {
-                    state.applyScmStatus(scopedSessionId, null);
-                } else {
-                    state.applyScmStatus(scopedSessionId, snapshotToScmStatus(snapshot));
+            if (signatureChanged) {
+                this.projectSnapshotSignature.set(activeProjectKey, signature);
+                for (const scopedSessionId of scopeSessionIds) {
+                    state.updateSessionProjectScmSnapshot(scopedSessionId, snapshot);
+                    if (
+                        typeof (state as any).getSessionProjectScmSnapshotError === 'function'
+                        && (state as any).getSessionProjectScmSnapshotError(scopedSessionId)
+                    ) {
+                        state.updateSessionProjectScmSnapshotError(scopedSessionId, null);
+                    }
+
+                    if (!snapshot.repo.isRepo) {
+                        state.applyScmStatus(scopedSessionId, null);
+                    } else {
+                        state.applyScmStatus(scopedSessionId, snapshotToScmStatus(snapshot));
+                    }
+
+                    state.pruneSessionProjectScmTouchedPaths(scopedSessionId, activePaths);
+                    state.pruneSessionProjectScmCommitSelectionPaths(scopedSessionId, activePaths);
+                    state.pruneSessionProjectScmCommitSelectionPatches(scopedSessionId, activePaths);
                 }
-
-                state.pruneSessionProjectScmTouchedPaths(scopedSessionId, activePaths);
-                state.pruneSessionProjectScmCommitSelectionPaths(scopedSessionId, activePaths);
-                state.pruneSessionProjectScmCommitSelectionPatches(scopedSessionId, activePaths);
+            } else {
+                // No observable SCM changes; avoid churn. Still clear a previous error if present.
+                if (typeof (state as any).getSessionProjectScmSnapshotError === 'function') {
+                    for (const scopedSessionId of scopeSessionIds) {
+                        if ((state as any).getSessionProjectScmSnapshotError(scopedSessionId)) {
+                            state.updateSessionProjectScmSnapshotError(scopedSessionId, null);
+                        }
+                    }
+                }
             }
 
             if (shouldAttributeChangedPaths({
@@ -342,7 +327,7 @@ export class ScmStatusSync {
                 changedPathCount: changedPaths.length,
                 invalidatedAt: actorInvalidatedAt,
                 now,
-                freshnessWindowMs: ScmStatusSync.FAST_POLL_WINDOW_MS,
+                freshnessWindowMs: ATTRIBUTION_INVALIDATION_WINDOW_MS,
             }) && actorSessionId) {
                 state.markSessionProjectScmTouchedPaths(actorSessionId, changedPaths);
                 this.projectLastInvalidatedBySession.delete(activeProjectKey);
@@ -350,19 +335,15 @@ export class ScmStatusSync {
                 this.projectLastInvalidatedBySessionAt.delete(activeProjectKey);
             } else if (
                 actorInvalidatedAt !== null &&
-                now - actorInvalidatedAt > ScmStatusSync.FAST_POLL_WINDOW_MS
+                now - actorInvalidatedAt > ATTRIBUTION_INVALIDATION_WINDOW_MS
             ) {
                 this.projectLastInvalidatedBySession.delete(activeProjectKey);
                 this.projectLastInvalidationSource.delete(activeProjectKey);
                 this.projectLastInvalidatedBySessionAt.delete(activeProjectKey);
             }
 
-            this.projectLastSnapshot.set(activeProjectKey, snapshot);
-
-            const signature = buildSnapshotSignature(snapshot);
-            const previousSignature = this.projectSnapshotSignature.get(activeProjectKey);
-            if (signature !== previousSignature) {
-                this.projectSnapshotSignature.set(activeProjectKey, signature);
+            if (signatureChanged) {
+                this.projectLastSnapshot.set(activeProjectKey, snapshot);
                 await clearSearchCacheForProject(this.sessionToProjectKey, activeProjectKey);
             }
 	        } catch (error) {
@@ -378,14 +359,9 @@ export class ScmStatusSync {
                     ...(scmErrorCode ? { errorCode: scmErrorCode } : {}),
 	            });
                 if (scmErrorCode === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) {
-                    this.projectPollingSuspended.add(scheduledProjectKey);
-                    suspendAfterFetch = true;
+                    this.projectAutoRefreshSuspended.add(scheduledProjectKey);
                 }
 	            reportScmStatusSyncError({ projectKey, error });
-	        } finally {
-                if (!suspendAfterFetch) {
-	                this.scheduleProjectPoll(scheduledProjectKey);
-                }
 	        }
 	    }
 
@@ -397,7 +373,6 @@ export class ScmStatusSync {
         this.projectLastInvalidationSource.set(projectKey, source);
         const now = Date.now();
         this.projectLastInvalidatedBySessionAt.set(projectKey, now);
-        this.projectFastPollUntil.set(projectKey, now + ScmStatusSync.FAST_POLL_WINDOW_MS);
         this.invalidateProject(projectKey);
     }
 }

@@ -80,6 +80,10 @@ export interface NewSessionWizardAgentProps {
     setAgentType: (agent: AgentId) => void;
     modelOptions: ReadonlyArray<{ value: ModelMode; label: string; description: string }>;
     modelOptionsProbe?: React.ComponentProps<typeof AgentInput>['modelOptionsOverrideProbe'];
+    acpSessionModeOptions?: ReadonlyArray<Readonly<{ id: string; name: string; description?: string }>>;
+    acpSessionModeProbe?: React.ComponentProps<typeof AgentInput>['acpSessionModeOptionsOverrideProbe'];
+    acpSessionModeId?: string | null;
+    setAcpSessionModeId?: (modeId: string | null) => void;
     modelMode: ModelMode | undefined;
     setModelMode: (mode: ModelMode) => void;
     selectedIndicatorColor: string;
@@ -782,6 +786,14 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                 onModelModeChange={setModelMode}
                                 modelOptionsOverride={modelOptions}
                                 modelOptionsOverrideProbe={modelOptionsProbe}
+                                acpSessionModeOptionsOverride={props.agentProps.acpSessionModeOptions}
+                                acpSessionModeSelectedIdOverride={props.agentProps.acpSessionModeId ?? null}
+                                acpSessionModeOptionsOverrideProbe={props.agentProps.acpSessionModeProbe}
+                                onAcpSessionModeChange={
+                                    props.agentProps.acpSessionModeOptions && props.agentProps.setAcpSessionModeId
+                                        ? (modeId) => props.agentProps.setAcpSessionModeId?.(modeId === 'default' ? null : modeId)
+                                        : undefined
+                                }
                                 connectionStatus={connectionStatus}
                                 machineName={selectedMachine?.metadata?.displayName || selectedMachine?.metadata?.host}
                                 onMachineClick={handleAgentInputMachineClick}

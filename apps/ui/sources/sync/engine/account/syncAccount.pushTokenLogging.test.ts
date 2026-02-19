@@ -127,8 +127,14 @@ describe('registerPushTokenIfAvailable logging', () => {
 
         expect(mocks.getCredentialsForServerUrl).toHaveBeenCalledTimes(2);
         expect(mocks.registerPushToken).toHaveBeenCalledTimes(2);
-        expect(mocks.registerPushToken.mock.calls[0]?.[2]).toEqual({ apiEndpoint: 'https://s1.example.test' });
-        expect(mocks.registerPushToken.mock.calls[1]?.[2]).toEqual({ apiEndpoint: 'https://s2.example.test' });
+        expect(mocks.registerPushToken.mock.calls[0]?.[2]).toMatchObject({
+            apiEndpoint: 'https://s1.example.test',
+            clientServerUrl: 'https://s1.example.test',
+        });
+        expect(mocks.registerPushToken.mock.calls[1]?.[2]).toMatchObject({
+            apiEndpoint: 'https://s2.example.test',
+            clientServerUrl: 'https://s2.example.test',
+        });
         expect(messages.join('\n')).toContain('Push token registered successfully');
         expect(messages.join('\n')).not.toContain(secretPushToken);
     });
@@ -158,13 +164,19 @@ describe('registerPushTokenIfAvailable logging', () => {
         });
 
         expect(mocks.registerPushToken).toHaveBeenCalledTimes(3);
-        expect(mocks.registerPushToken.mock.calls[0]?.[2]).toEqual({ apiEndpoint: 'https://s1.example.test' });
-        expect(mocks.registerPushToken.mock.calls[1]?.[2]).toEqual({ apiEndpoint: 'https://s2.example.test' });
+        expect(mocks.registerPushToken.mock.calls[0]?.[2]).toMatchObject({
+            apiEndpoint: 'https://s1.example.test',
+            clientServerUrl: 'https://s1.example.test',
+        });
+        expect(mocks.registerPushToken.mock.calls[1]?.[2]).toMatchObject({
+            apiEndpoint: 'https://s2.example.test',
+            clientServerUrl: 'https://s2.example.test',
+        });
         expect(mocks.registerPushToken.mock.calls[2]?.[0]).toEqual({
             token: 'active-server-token',
             secret: 'active-server-secret',
         });
-        expect(mocks.registerPushToken.mock.calls[2]?.[2]).toBeUndefined();
+        expect(mocks.registerPushToken.mock.calls[2]?.[2]).toEqual({ clientServerUrl: 'https://s2.example.test' });
         expect(messages.join('\n')).toContain('Push token registered successfully');
         expect(messages.join('\n')).not.toContain(secretPushToken);
     });
@@ -191,7 +203,10 @@ describe('registerPushTokenIfAvailable logging', () => {
 
         expect(mocks.getCredentialsForServerUrl).toHaveBeenCalledTimes(1);
         expect(mocks.registerPushToken).toHaveBeenCalledTimes(2);
-        expect(mocks.registerPushToken.mock.calls[0]?.[2]).toEqual({ apiEndpoint: 'https://profile.example.test' });
+        expect(mocks.registerPushToken.mock.calls[0]?.[2]).toMatchObject({
+            apiEndpoint: 'https://profile.example.test',
+            clientServerUrl: 'https://profile.example.test',
+        });
         expect(mocks.registerPushToken.mock.calls[1]?.[0]).toEqual({
             token: 'active-server-token',
             secret: 'active-server-secret',

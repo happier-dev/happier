@@ -39,7 +39,7 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         vi.mocked(Notifications.requestPermissionsAsync).mockResolvedValue({ status: 'granted' } as any);
         vi.mocked(Notifications.getExpoPushTokenAsync).mockResolvedValue({ data: 'ExponentPushToken[secret-token]' } as any);
 
-        const fetchSpy = vi.fn(async (_input: RequestInfo | URL) => ({
+        const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({
             ok: true,
             json: async () => ({ success: true }),
         }));
@@ -72,5 +72,21 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
         expect(urls).toContain('https://remote-a.example.test/v1/push-tokens');
         expect(urls).toContain('https://company.example.test/v1/push-tokens');
         expect(messages.join('\n')).not.toContain('ExponentPushToken[secret-token]');
+
+        const bodiesByUrl = new Map<string, any>();
+        for (const call of fetchSpy.mock.calls) {
+            const url = String(call[0]);
+            const init = (call[1] ?? {}) as any;
+            const body = typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
+            bodiesByUrl.set(url, body);
+        }
+        expect(bodiesByUrl.get('https://remote-a.example.test/v1/push-tokens')).toMatchObject({
+            token: 'ExponentPushToken[secret-token]',
+            clientServerUrl: 'https://remote-a.example.test',
+        });
+        expect(bodiesByUrl.get('https://company.example.test/v1/push-tokens')).toMatchObject({
+            token: 'ExponentPushToken[secret-token]',
+            clientServerUrl: 'https://company.example.test',
+        });
     });
 });
