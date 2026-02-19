@@ -1,5 +1,7 @@
 module.exports = function (api) {
-  api.cache(true);
+  if (api && typeof api.cache === 'function') {
+    api.cache(true);
+  }
 
   // Determine which worklets plugin to use based on installed versions
   // Reanimated v4+ uses react-native-worklets/plugin
@@ -26,6 +28,15 @@ module.exports = function (api) {
       },
     },
     plugins: [
+      [
+        'module-resolver',
+        {
+          cwd: 'babelrc',
+          alias: {
+            '@': './sources',
+          },
+        },
+      ],
       ['react-native-unistyles/plugin', { root: 'sources' }],
       workletsPlugin // Must be last - automatically selects correct plugin for version
     ],

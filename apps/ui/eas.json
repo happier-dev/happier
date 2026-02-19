@@ -53,7 +53,8 @@
       "distribution": "internal",
       "channel": "preview",
       "android": {
-        "buildType": "apk"
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleRelease"
       },
       "env": {
         "APP_ENV": "preview"
@@ -75,7 +76,8 @@
       "distribution": "internal",
       "channel": "production",
       "android": {
-        "buildType": "apk"
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleRelease"
       },
       "env": {
         "APP_ENV": "production"
@@ -83,11 +85,24 @@
     }
   },
   "submit": {
+    "preview": {
+      "ios": {
+        "appleId": "leeroy.brun@gmail.com",
+        "ascAppId": "6759219841",
+        "appleTeamId": "L86V3EF623",
+        "ascApiKeyId": "58Q493BG53",
+        "ascApiKeyIssuerId": "69a6de85-8d20-47e3-e053-5b8c7c11a4d1",
+        "ascApiKeyPath": "./.eas/keys/AuthKey_58Q493BG53.p8"
+      }
+    },
     "production": {
       "ios": {
-        "appleId": "steve@bulkovo.com",
-        "ascAppId": "126165711",
-        "appleTeamId": "L86V3EF623"
+        "appleId": "leeroy.brun@gmail.com",
+        "ascAppId": "6758554297",
+        "appleTeamId": "L86V3EF623",
+        "ascApiKeyId": "58Q493BG53",
+        "ascApiKeyIssuerId": "69a6de85-8d20-47e3-e053-5b8c7c11a4d1",
+        "ascApiKeyPath": "./.eas/keys/AuthKey_58Q493BG53.p8"
       }
     }
   }

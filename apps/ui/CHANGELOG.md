@@ -1,5 +1,13 @@
 # Changelog
 
+## Version 8 - 2026-02-18
+
+This update includes a small navigation quality-of-life fix, improves QR scanning for terminal connect links, and prevents intermittent web startup errors related to font loading.
+
+- Fixed the sidebar logo button so it reliably returns you to the home screen.
+- Fixed “Open Camera” so it can scan terminal connect QR codes that contain the web connect URL (not just the `happier://terminal?...` deep link).
+- Fixed intermittent web font loading timeouts that could surface as “6000ms timeout exceeded” errors during startup.
+
 ## Version 7 - 2026-01-31
 
 This release rebrands the project to Happier and updates the app/CLI identity end-to-end so installs, links, and defaults match the new name.

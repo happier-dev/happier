@@ -3,6 +3,9 @@ import { resolve } from 'node:path'
 
 import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating'
 
+const maxForksEnv = Number.parseInt(process.env.VITEST_UI_MAX_FORKS ?? '', 10);
+const maxForks = Number.isFinite(maxForksEnv) && maxForksEnv > 0 ? maxForksEnv : 4;
+
 export default defineConfig({
     define: {
         __DEV__: false,
@@ -19,6 +22,12 @@ export default defineConfig({
         // Work around intermittent Node 25 + worker-thread resolution failures seen in large suites.
         // Forks are slower but much more stable for our UI runner locally.
         pool: 'forks',
+        // Cap fork parallelism to reduce CPU contention (many tests are time-sensitive under load).
+        poolOptions: {
+            forks: {
+                maxForks,
+            },
+        },
         // Our UI test suite is occasionally CPU-bound on developer machines / CI runners.
         // Increase the default timeout so unrelated load doesn't cause spurious failures.
         testTimeout: 20_000,
@@ -58,6 +67,8 @@ export default defineConfig({
             // Expo packages commonly depend on `expo-modules-core`, whose exports point to TS sources that import `react-native`.
             // In node/Vitest we stub the minimal surface needed by our tests.
             { find: 'expo-modules-core', replacement: resolve('./sources/dev/expoModulesCoreStub.ts') },
+            // `expo-constants` uses conditional exports that Vite/Vitest can't always resolve cleanly under node.
+            { find: 'expo-constants', replacement: resolve('./sources/dev/expoConstantsStub.ts') },
             // `expo-localization` depends on Expo modules that don't exist in Vitest's node env.
             { find: 'expo-localization', replacement: resolve('./sources/dev/expoLocalizationStub.ts') },
             // `expo-router` pulls in RN internals via its native dev-server helpers.

@@ -6,6 +6,37 @@ import { installVitestRnShim } from './vitestRnShim';
 // Clear it by default so feature tests can opt-in explicitly per case.
 process.env.HAPPIER_FEATURE_POLICY_ENV = '';
 
+type StorageLike = Readonly<{
+    getItem: (key: string) => string | null;
+    setItem: (key: string, value: string) => void;
+    removeItem: (key: string) => void;
+    clear: () => void;
+    key: (index: number) => string | null;
+    readonly length: number;
+}>;
+
+function createMemoryStorage(backing: Map<string, string>): StorageLike {
+    return {
+        getItem: (key) => backing.get(String(key)) ?? null,
+        setItem: (key, value) => {
+            backing.set(String(key), String(value));
+        },
+        removeItem: (key) => {
+            backing.delete(String(key));
+        },
+        clear: () => {
+            backing.clear();
+        },
+        key: (index) => {
+            const keys = Array.from(backing.keys());
+            return typeof keys[index] === 'string' ? keys[index] : null;
+        },
+        get length() {
+            return backing.size;
+        },
+    };
+}
+
 const originalConsoleError = console.error;
 console.error = (...args: unknown[]) => {
     if (typeof args[0] === 'string' && args[0].includes('react-test-renderer is deprecated')) {
@@ -23,12 +54,29 @@ vi.mock('react-native', async () => await import('./reactNativeStub'));
 // Vitest runs in Node; `react-native-mmkv` depends on React Native internals and can fail to parse.
 // Provide a minimal in-memory implementation for tests.
 const store = new Map<string, unknown>();
+const localStorageBacking = new Map<string, string>();
+const sessionStorageBacking = new Map<string, string>();
 
 beforeEach(() => {
+    // Some test files enable fake timers and forget to restore them. Force real timers at the start
+    // of every test to avoid cross-test leakage (Vitest workers may execute multiple test files).
+    vi.useRealTimers();
+
     store.clear();
+    localStorageBacking.clear();
+    sessionStorageBacking.clear();
+
+    // Node 25 exposes an incomplete `localStorage` global behind an experimental flag and warns about
+    // missing persistence paths. Our UI runtime expects the browser `Storage` shape, so provide a
+    // stable in-memory implementation for tests.
+    vi.stubGlobal('localStorage', createMemoryStorage(localStorageBacking) as unknown as Storage);
+    vi.stubGlobal('sessionStorage', createMemoryStorage(sessionStorageBacking) as unknown as Storage);
 });
 
 afterEach(() => {
+    // Ensure fake timers never leak across tests (even when a test fails mid-flight).
+    vi.useRealTimers();
+
     // Many tests use `vi.stubGlobal('fetch', ...)` and other globals. Ensure they don't leak across
     // test files (Vitest workers may reuse the same global between sequential test files).
     vi.unstubAllGlobals();

@@ -42,6 +42,7 @@ const nodeUrlShim = path.resolve(__dirname, "sources/platform/nodeShims/nodeUrlS
 const onnxruntimeWebStub = path.resolve(__dirname, "sources/platform/stubs/onnxruntimeWebStub.ts");
 const kokoroJsStub = path.resolve(__dirname, "sources/platform/stubs/kokoroJsStub.ts");
 const transformersStub = path.resolve(__dirname, "sources/platform/stubs/huggingfaceTransformersStub.ts");
+const fontFaceObserverWebShim = path.resolve(__dirname, "sources/platform/shims/fontFaceObserverWebShim.ts");
 
 const defaultResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
@@ -51,6 +52,12 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
       moduleName.startsWith("@huggingface/transformers/"))
   ) {
     return { type: "sourceFile", filePath: transformersStub };
+  }
+
+  // expo-font uses fontfaceobserver on web with a hard-coded timeout; in practice this can
+  // surface as unhandled errors. Use a web-safe shim that avoids throwing on timeouts.
+  if (platform === "web" && moduleName === "fontfaceobserver") {
+    return { type: "sourceFile", filePath: fontFaceObserverWebShim };
   }
 
   if (moduleName === "kokoro-js" || moduleName.startsWith("kokoro-js/")) {

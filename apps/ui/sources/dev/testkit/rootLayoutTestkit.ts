@@ -1,11 +1,13 @@
 import type { FeaturesResponse as RootLayoutFeatures } from '@happier-dev/protocol';
 
 type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' | 'capabilities'> & Readonly<{
-    features?: Omit<Partial<RootLayoutFeatures['features']>, 'automations' | 'connectedServices' | 'updates' | 'sharing' | 'social' | 'auth'> & Readonly<{
+    features?: Omit<Partial<RootLayoutFeatures['features']>, 'attachments' | 'automations' | 'connectedServices' | 'updates' | 'sharing' | 'voice' | 'social' | 'auth'> & Readonly<{
+        attachments?: Partial<RootLayoutFeatures['features']['attachments']>;
         automations?: Partial<RootLayoutFeatures['features']['automations']>;
         connectedServices?: Partial<RootLayoutFeatures['features']['connectedServices']>;
         updates?: Partial<RootLayoutFeatures['features']['updates']>;
         sharing?: Partial<RootLayoutFeatures['features']['sharing']>;
+        voice?: Partial<RootLayoutFeatures['features']['voice']>;
         social?: Partial<RootLayoutFeatures['features']['social']>;
         auth?: Partial<RootLayoutFeatures['features']['auth']>;
     }>;
@@ -19,9 +21,11 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
 const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
     features: {
         bugReports: { enabled: true },
+        attachments: {
+            uploads: { enabled: true },
+        },
         automations: {
             enabled: true,
-            existingSessionTarget: { enabled: false },
         },
         connectedServices: {
             enabled: true,
@@ -98,6 +102,7 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
     const nextAuth: Partial<RootLayoutFeatures['features']['auth']> = nextFeatures.auth ?? {};
     const nextSocial: Partial<RootLayoutFeatures['features']['social']> = nextFeatures.social ?? {};
     const nextSharing: Partial<RootLayoutFeatures['features']['sharing']> = nextFeatures.sharing ?? {};
+    const nextAttachments: Partial<RootLayoutFeatures['features']['attachments']> = nextFeatures.attachments ?? {};
     const nextConnectedServices: Partial<RootLayoutFeatures['features']['connectedServices']> =
         nextFeatures.connectedServices ?? {};
     const nextUpdates: Partial<RootLayoutFeatures['features']['updates']> = nextFeatures.updates ?? {};
@@ -114,6 +119,10 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
         features: {
             ...BASE_ROOT_LAYOUT_FEATURES.features,
             ...nextFeatures,
+            attachments: {
+                ...BASE_ROOT_LAYOUT_FEATURES.features.attachments,
+                ...nextAttachments,
+            },
             sharing: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.sharing,
                 ...nextSharing,
@@ -125,10 +134,6 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
             automations: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.automations,
                 ...nextAutomations,
-                existingSessionTarget: {
-                    ...BASE_ROOT_LAYOUT_FEATURES.features.automations.existingSessionTarget,
-                    ...(nextAutomations.existingSessionTarget ?? {}),
-                },
             },
             connectedServices: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.connectedServices,
