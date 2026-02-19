@@ -221,7 +221,7 @@ export function NewSessionSimplePanel(props: Readonly<{
                                             acpSessionModeSelectedIdOverride={props.acpSessionModeId ?? null}
                                             acpSessionModeOptionsOverrideProbe={props.acpSessionModeProbe}
                                             onAcpSessionModeChange={
-                                                props.acpSessionModeOptions && props.setAcpSessionModeId
+                                                (props.acpSessionModeOptions?.length ?? 0) > 0 && props.setAcpSessionModeId
                                                     ? (modeId) => props.setAcpSessionModeId?.(modeId === 'default' ? null : modeId)
                                                     : undefined
                                             }

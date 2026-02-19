@@ -78,6 +78,10 @@ export function useNewSessionWizardProps(params: Readonly<{
     setAgentType: (agent: AgentId) => void;
     modelOptions: ReadonlyArray<{ value: ModelMode; label: string; description: string }>;
     modelOptionsProbe?: NewSessionWizardAgentProps['modelOptionsProbe'];
+    acpSessionModeOptions?: NewSessionWizardAgentProps['acpSessionModeOptions'];
+    acpSessionModeProbe?: NewSessionWizardAgentProps['acpSessionModeProbe'];
+    acpSessionModeId?: NewSessionWizardAgentProps['acpSessionModeId'];
+    setAcpSessionModeId?: NewSessionWizardAgentProps['setAcpSessionModeId'];
     modelMode: ModelMode | undefined;
     setModelMode: (mode: ModelMode) => void;
     selectedIndicatorColor: string;
@@ -301,6 +305,10 @@ export function useNewSessionWizardProps(params: Readonly<{
             setAgentType: params.setAgentType,
             modelOptions: params.modelOptions,
             modelOptionsProbe: params.modelOptionsProbe,
+            acpSessionModeOptions: params.acpSessionModeOptions,
+            acpSessionModeProbe: params.acpSessionModeProbe,
+            acpSessionModeId: params.acpSessionModeId,
+            setAcpSessionModeId: params.setAcpSessionModeId,
             modelMode: params.modelMode,
             setModelMode: params.setModelMode,
             selectedIndicatorColor: params.selectedIndicatorColor,
@@ -320,11 +328,15 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.modelMode,
         params.modelOptions,
         params.modelOptionsProbe,
+        params.acpSessionModeId,
+        params.acpSessionModeOptions,
+        params.acpSessionModeProbe,
         params.permissionMode,
         params.profileMap,
         params.selectedIndicatorColor,
         params.sessionType,
         params.setAgentType,
+        params.setAcpSessionModeId,
         params.setModelMode,
         params.setSessionType,
         params.handlePermissionModeChange,
