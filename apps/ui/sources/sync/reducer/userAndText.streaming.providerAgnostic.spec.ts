@@ -48,4 +48,48 @@ describe('runUserAndTextPhase (streaming merge)', () => {
         expect(agentMessages).toHaveLength(1);
         expect(agentMessages[0]?.text).toBe('Hello world');
     });
+
+    it('merges consecutive root agent text chunks when happierStreamKey is missing but message id is reused', () => {
+        const state = createReducer();
+        const changed = new Set<string>();
+        let nextId = 0;
+        const allocateId = () => `m_${++nextId}`;
+
+        const now = 1_700_000_000_000;
+
+        runUserAndTextPhase({
+            state,
+            nonSidechainMessages: [
+                {
+                    id: 'agent_msg_1',
+                    localId: null,
+                    createdAt: now,
+                    isSidechain: false,
+                    role: 'agent',
+                    content: [{ type: 'text', text: 'Hello', uuid: 'u1', parentUUID: null }],
+                    meta: null,
+                },
+                {
+                    id: 'agent_msg_1',
+                    localId: null,
+                    createdAt: now + 1,
+                    isSidechain: false,
+                    role: 'agent',
+                    content: [{ type: 'text', text: ' world', uuid: 'u2', parentUUID: 'u1' }],
+                    meta: null,
+                },
+            ],
+            changed,
+            allocateId,
+            processUsageData: () => {},
+            lastMainThinkingMessageId: null,
+            lastMainStreamMessageId: null,
+            lastMainStreamKey: null,
+            isPermissionRequestToolCall: () => false,
+        });
+
+        const agentMessages = [...state.messages.values()].filter((m) => m.role === 'agent' && typeof m.text === 'string');
+        expect(agentMessages).toHaveLength(1);
+        expect(agentMessages[0]?.text).toBe('Hello world');
+    });
 });

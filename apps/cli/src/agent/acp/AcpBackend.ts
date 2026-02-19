@@ -1885,6 +1885,19 @@ export class AcpBackend implements AgentBackend {
           if (this.responseCompletionError) return;
           if (!this.waitingForResponse) return;
           if (this.activeToolCalls.size > 0) return;
+          // If the subprocess has already exited (but the exit handler hasn't run yet),
+          // prefer surfacing the exit as a response completion error instead of declaring
+          // the turn complete.
+          const exitCode = this.process?.exitCode;
+          if (typeof exitCode === 'number' && Number.isFinite(exitCode) && exitCode !== 0) {
+            this.failPendingResponseWait(new Error(`Exit code: ${exitCode}`));
+            return;
+          }
+          const signalCode = this.process?.signalCode;
+          if (typeof signalCode === 'string' && signalCode.trim().length > 0) {
+            this.failPendingResponseWait(new Error(`Signal: ${signalCode}`));
+            return;
+          }
           this.emitIdleStatus();
         }, graceMs);
       }
@@ -2211,6 +2224,10 @@ export class AcpBackend implements AgentBackend {
     }
 
     // Clear timeouts
+    if (this.postPromptCompletionIdleTimeout) {
+      clearTimeout(this.postPromptCompletionIdleTimeout);
+      this.postPromptCompletionIdleTimeout = null;
+    }
     if (this.idleTimeout) {
       clearTimeout(this.idleTimeout);
       this.idleTimeout = null;

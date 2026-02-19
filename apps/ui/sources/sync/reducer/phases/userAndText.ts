@@ -83,10 +83,16 @@ export function runUserAndTextPhase(params: Readonly<{
             // Process text and thinking content (tool calls handled in Phase 2)
             for (let c of msg.content) {
                 if (c.type === 'text') {
-                    const streamKey =
+                    const streamKeyFromMeta =
                         msg.meta && typeof (msg.meta as any).happierStreamKey === 'string'
                             ? String((msg.meta as any).happierStreamKey)
                             : null;
+
+                    // Provider-agnostic fallback: some transports reuse the same agent message id for
+                    // incremental chunks but do not attach a stable stream key. Use the transport id
+                    // as a merge key so streaming remains coherent until the server snapshot reload.
+                    const shouldUseIdFallback = !streamKeyFromMeta && msg.content.length === 1 && Boolean(msg.id);
+                    const streamKey = streamKeyFromMeta ?? (shouldUseIdFallback ? `id:${msg.id}` : null);
 
                     const canMerge =
                         streamKey
