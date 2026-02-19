@@ -10,6 +10,7 @@ import { KIMI_PROVIDER_SETTINGS_PLUGIN } from '../kimi/settings/plugin';
 import { OPENCODE_PROVIDER_SETTINGS_PLUGIN } from '../opencode/settings/plugin';
 import { PI_PROVIDER_SETTINGS_PLUGIN } from '../pi/settings/plugin';
 import { QWEN_PROVIDER_SETTINGS_PLUGIN } from '../qwen/settings/plugin';
+import { COPILOT_PROVIDER_SETTINGS_PLUGIN } from '../copilot/settings/plugin';
 
 export function assertProviderSettingsPluginsValid(plugins: readonly ProviderSettingsPlugin[]): void {
     const errors: string[] = [];
@@ -85,6 +86,7 @@ export const PROVIDER_SETTINGS_PLUGINS: readonly ProviderSettingsPlugin[] = [
     KIMI_PROVIDER_SETTINGS_PLUGIN,
     KILO_PROVIDER_SETTINGS_PLUGIN,
     PI_PROVIDER_SETTINGS_PLUGIN,
+    COPILOT_PROVIDER_SETTINGS_PLUGIN,
 ];
 
 assertProviderSettingsPluginsValid(PROVIDER_SETTINGS_PLUGINS);

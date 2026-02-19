@@ -8,6 +8,7 @@ export const PROVIDER_ENV_FLAG_BY_PRESET_ID = Object.freeze({
   kimi: 'HAPPIER_E2E_PROVIDER_KIMI',
   auggie: 'HAPPIER_E2E_PROVIDER_AUGGIE',
   pi: 'HAPPIER_E2E_PROVIDER_PI',
+  copilot: 'HAPPIER_E2E_PROVIDER_COPILOT',
 });
 
 export const PROVIDER_PRESET_IDS = Object.freeze(Object.keys(PROVIDER_ENV_FLAG_BY_PRESET_ID));

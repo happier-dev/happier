@@ -111,4 +111,13 @@ export const AGENTS_CORE = {
         },
         resume: { vendorResume: 'unsupported', vendorResumeIdField: 'piSessionId', runtimeGate: null },
     },
+    copilot: {
+        id: 'copilot',
+        cliSubcommand: 'copilot',
+        detectKey: 'copilot',
+        flavorAliases: ['github-copilot', 'copilot-cli'],
+        cloudConnect: null,
+        connectedServices: null,
+        resume: { vendorResume: 'supported', vendorResumeIdField: 'copilotSessionId', runtimeGate: 'acpLoadSession' },
+    },
 } as const satisfies Record<AgentId, AgentCore>;

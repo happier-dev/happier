@@ -12,6 +12,7 @@ import { QWEN_UI } from '@/agents/providers/qwen/ui';
 import { KIMI_UI } from '@/agents/providers/kimi/ui';
 import { KILO_UI } from '@/agents/providers/kilo/ui';
 import { PI_UI } from '@/agents/providers/pi/ui';
+import { COPILOT_UI } from '@/agents/providers/copilot/ui';
 
 export type AgentUiConfig = Readonly<{
     id: AgentId;
@@ -43,6 +44,7 @@ export const AGENTS_UI: Readonly<Record<AgentId, AgentUiConfig>> = Object.freeze
     kimi: KIMI_UI,
     kilo: KILO_UI,
     pi: PI_UI,
+    copilot: COPILOT_UI,
 });
 
 export function getAgentIconSource(agentId: AgentId): ImageSourcePropType {
