@@ -15,10 +15,34 @@ import {
 import { logger } from '@/ui/logger';
 import type { TransportHandler } from '@/agent/transport';
 import { nodeToWebStreams } from '@/agent/acp/nodeToWebStreams';
+import { AsyncTtlCache } from '@happier-dev/protocol';
 
 export type AcpProbeResult =
     | { ok: true; checkedAt: number; agentCapabilities: InitializeResponse['agentCapabilities'] }
     | { ok: false; checkedAt: number; error: { message: string } };
+
+const ACP_PROBE_SUCCESS_TTL_MS = 5 * 60_000;
+const ACP_PROBE_ERROR_TTL_MS = 30_000;
+
+const acpProbeCache = new AsyncTtlCache<AcpProbeResult>({
+    successTtlMs: ACP_PROBE_SUCCESS_TTL_MS,
+    errorTtlMs: ACP_PROBE_ERROR_TTL_MS,
+});
+
+function buildAcpProbeCacheKey(params: {
+    command: string;
+    args: ReadonlyArray<string>;
+    cwd: string;
+    timeoutMs: number;
+    agentName: string;
+}): string {
+    const command = String(params.command ?? '').trim();
+    const cwd = String(params.cwd ?? '').trim();
+    const agentName = String(params.agentName ?? '').trim();
+    const timeoutMs = Number.isFinite(params.timeoutMs) ? String(params.timeoutMs) : '';
+    const args = Array.isArray(params.args) ? params.args.map((a) => String(a ?? '')).join('\u0000') : '';
+    return `${agentName}:${timeoutMs}:${command}:${cwd}:${args}`;
+}
 
 async function terminateProcess(child: ChildProcess): Promise<void> {
     if (child.killed) return;
@@ -49,14 +73,28 @@ async function terminateProcess(child: ChildProcess): Promise<void> {
 
 export async function probeAcpAgentCapabilities(params: {
     command: string;
-    args: string[];
+    args: ReadonlyArray<string>;
     cwd: string;
     env: Record<string, string | undefined>;
     transport: TransportHandler;
     timeoutMs?: number;
 }): Promise<AcpProbeResult> {
-    const checkedAt = Date.now();
     const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : 2500;
+    const cacheKey = buildAcpProbeCacheKey({
+        command: params.command,
+        args: params.args,
+        cwd: params.cwd,
+        timeoutMs,
+        agentName: params.transport.agentName,
+    });
+    const cached = acpProbeCache.get(cacheKey);
+    if (cached?.kind === 'success' && acpProbeCache.isFresh(cached)) return cached.value;
+
+    return await acpProbeCache.runDedupe(cacheKey, async () => {
+        const cached2 = acpProbeCache.get(cacheKey);
+        if (cached2?.kind === 'success' && acpProbeCache.isFresh(cached2)) return cached2.value;
+
+    const checkedAt = Date.now();
 
     let child: ChildProcess | null = null;
     let spawnErrorPromise: Promise<never> | null = null;
@@ -183,13 +221,18 @@ export async function probeAcpAgentCapabilities(params: {
             ...(spawnErrorPromise ? [spawnErrorPromise] : []),
         ]);
 
-        return { ok: true, checkedAt, agentCapabilities: initResponse.agentCapabilities };
+        const result: AcpProbeResult = { ok: true, checkedAt, agentCapabilities: initResponse.agentCapabilities };
+        acpProbeCache.setSuccess(cacheKey, result, { ttlMs: ACP_PROBE_SUCCESS_TTL_MS });
+        return result;
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        return { ok: false, checkedAt, error: { message } };
+        const result: AcpProbeResult = { ok: false, checkedAt, error: { message } };
+        acpProbeCache.setSuccess(cacheKey, result, { ttlMs: ACP_PROBE_ERROR_TTL_MS });
+        return result;
     } finally {
         if (child) {
             await terminateProcess(child);
         }
     }
+    });
 }

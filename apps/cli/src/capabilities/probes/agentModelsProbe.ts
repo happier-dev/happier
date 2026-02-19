@@ -5,6 +5,7 @@ import type { AgentBackend } from '@/agent/core';
 import { AGENTS } from '@/backends/catalog';
 import type { CatalogAgentId } from '@/backends/types';
 import { getAgentModelConfig } from '@happier-dev/agents';
+import { AsyncTtlCache } from '@happier-dev/protocol';
 import { spawn } from 'node:child_process';
 
 export type ProbedAgentModel = Readonly<{ id: string; name: string; description?: string }>;
@@ -15,6 +16,19 @@ export type ProbedAgentModelsResult = Readonly<{
   supportsFreeform: boolean;
   source: 'dynamic' | 'static';
 }>;
+
+const DEFAULT_PROBE_MODELS_TIMEOUT_MS = 15_000;
+const PROBE_MODELS_SUCCESS_TTL_MS = 24 * 60 * 60_000;
+const PROBE_MODELS_FAILURE_TTL_MS = 60_000;
+const agentModelsProbeCache = new AsyncTtlCache<ProbedAgentModelsResult>({
+  successTtlMs: PROBE_MODELS_SUCCESS_TTL_MS,
+  errorTtlMs: PROBE_MODELS_FAILURE_TTL_MS,
+});
+
+function buildAgentModelsProbeCacheKey(agentId: CatalogAgentId, cwd: string): string {
+  const normalizedCwd = String(cwd ?? '').trim();
+  return `${agentId}:${normalizedCwd}`;
+}
 
 function buildStatic(agentId: CatalogAgentId): ProbedAgentModelsResult {
   const cfg = getAgentModelConfig(agentId);
@@ -228,66 +242,83 @@ export async function probeAgentModelsBestEffort(params: {
   cwd: string;
   timeoutMs?: number;
 }): Promise<ProbedAgentModelsResult> {
-  const fallback = buildStatic(params.agentId);
-  const modelConfig = getAgentModelConfig(params.agentId);
-  if (modelConfig.dynamicProbe === 'static-only') {
-    return fallback;
-  }
-  const entry = AGENTS[params.agentId];
+  const nowMs = Date.now();
+  const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
+  const cacheKey = buildAgentModelsProbeCacheKey(params.agentId, cwd);
 
-  const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : 3500;
+  const cached = agentModelsProbeCache.get(cacheKey);
+  if (cached?.kind === 'success' && agentModelsProbeCache.isFresh(cached, nowMs)) return cached.value;
 
-  // Prefer lightweight CLI preflight probes when the provider offers a `models` command.
-  // This avoids needing to start a full ACP session just to populate a menu.
-  const cliProbeArgsByAgent: Partial<Record<CatalogAgentId, ReadonlyArray<string>>> = {
-    opencode: ['models'],
-    kilo: ['models'],
-    auggie: ['model', 'list'],
-  };
-  const cliProbeArgs = cliProbeArgsByAgent[params.agentId];
-  if (Array.isArray(cliProbeArgs) && cliProbeArgs.length > 0) {
-    const command = resolveCliPathOverride({ agentId: params.agentId }) ?? params.agentId;
-    const models = await probeModelsFromCliModelsCommand({ command, args: cliProbeArgs, cwd: params.cwd, timeoutMs }).catch(() => null);
-    if (models) {
-      return {
-        ...fallback,
-        availableModels: models,
-        source: 'dynamic',
-      };
+  return await agentModelsProbeCache.runDedupe(cacheKey, async () => {
+    const cached2 = agentModelsProbeCache.get(cacheKey);
+    const nowMs2 = Date.now();
+    if (cached2?.kind === 'success' && agentModelsProbeCache.isFresh(cached2, nowMs2)) return cached2.value;
+
+    const fallback = buildStatic(params.agentId);
+    const modelConfig = getAgentModelConfig(params.agentId);
+    if (modelConfig.dynamicProbe === 'static-only') {
+      agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
+      return fallback;
     }
-  }
+    const entry = AGENTS[params.agentId];
 
-  if (!entry?.getAcpBackendFactory) return fallback;
+    const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
 
-  const permissionHandler: AcpPermissionHandler = {
-    handleToolCall: async () => ({ decision: 'abort' }),
-  };
-
-  let backend: AgentBackend | null = null;
-  try {
-    const created = await createCatalogAcpBackend<any>(params.agentId, {
-      cwd: params.cwd,
-      env: {},
-      mcpServers: {},
-      permissionHandler,
-      permissionMode: 'default',
-    });
-    backend = created.backend;
-
-    const models = await probeModelsFromAcpBackend({ backend, timeoutMs }).catch(() => null);
-    if (!models) return fallback;
-
-    return {
-      ...fallback,
-      availableModels: models,
-      source: 'dynamic',
+    // Prefer lightweight CLI preflight probes when the provider offers a `models` command.
+    // This avoids needing to start a full ACP session just to populate a menu.
+    const cliProbeArgsByAgent: Partial<Record<CatalogAgentId, ReadonlyArray<string>>> = {
+      opencode: ['models'],
+      kilo: ['models'],
+      auggie: ['model', 'list'],
     };
-  } catch {
-    return fallback;
-  } finally {
-    const disposable = backend as any;
-    if (disposable && typeof disposable.dispose === 'function') {
-      await disposable.dispose().catch(() => {});
+    const cliProbeArgs = cliProbeArgsByAgent[params.agentId];
+    if (Array.isArray(cliProbeArgs) && cliProbeArgs.length > 0) {
+      const command = resolveCliPathOverride({ agentId: params.agentId }) ?? params.agentId;
+      const models = await probeModelsFromCliModelsCommand({ command, args: cliProbeArgs, cwd, timeoutMs }).catch(() => null);
+      if (models) {
+        const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
+        agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
+        return res;
+      }
     }
-  }
+
+    if (!entry?.getAcpBackendFactory) {
+      agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+      return fallback;
+    }
+
+    const permissionHandler: AcpPermissionHandler = {
+      handleToolCall: async () => ({ decision: 'abort' }),
+    };
+
+    let backend: AgentBackend | null = null;
+    try {
+      const created = await createCatalogAcpBackend<any>(params.agentId, {
+        cwd,
+        env: {},
+        mcpServers: {},
+        permissionHandler,
+        permissionMode: 'default',
+      });
+      backend = created.backend;
+
+      const models = await probeModelsFromAcpBackend({ backend, timeoutMs }).catch(() => null);
+      if (!models) {
+        agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+        return fallback;
+      }
+
+      const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
+      agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
+      return res;
+    } catch {
+      agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+      return fallback;
+    } finally {
+      const disposable = backend as any;
+      if (disposable && typeof disposable.dispose === 'function') {
+        await disposable.dispose().catch(() => {});
+      }
+    }
+  });
 }

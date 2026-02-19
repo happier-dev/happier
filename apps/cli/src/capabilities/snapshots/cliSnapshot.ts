@@ -1,12 +1,14 @@
 import { execFile } from 'child_process';
 import type { ExecOptions } from 'child_process';
 import { constants as fsConstants } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { access } from 'fs/promises';
 import { homedir } from 'os';
 import { join, delimiter as PATH_DELIMITER } from 'path';
 import { promisify } from 'util';
 
 import { AGENTS, type CatalogAgentId, type CliDetectSpec } from '@/backends/catalog';
+import { AsyncTtlCache } from '@happier-dev/protocol';
 
 const execFileAsync = promisify(execFile);
 
@@ -69,6 +71,20 @@ export interface DetectCliSnapshot {
     path: string | null;
     clis: Record<DetectCliName, DetectCliEntry>;
     tmux: DetectTmuxEntry;
+}
+
+const CLI_SNAPSHOT_TTL_MS = 30_000;
+
+const cliSnapshotCache = new AsyncTtlCache<DetectCliSnapshot>({
+    successTtlMs: CLI_SNAPSHOT_TTL_MS,
+    errorTtlMs: 2_000,
+});
+
+function buildCliSnapshotCacheKey(params: DetectCliRequest, pathEnv: string | null): string {
+    const includeLoginStatus = params.includeLoginStatus === true ? '1' : '0';
+    const path = String(pathEnv ?? '');
+    const pathExt = process.platform === 'win32' ? String(process.env.PATHEXT ?? '') : '';
+    return `${includeLoginStatus}:${pathExt}:${path}`;
 }
 
 async function resolveCommandOnPath(command: string, pathEnv: string | null): Promise<string | null> {
@@ -334,6 +350,10 @@ async function detectTmuxVersion(params: { resolvedPath: string }): Promise<stri
 async function detectCliLoginStatus(params: { name: DetectCliName; resolvedPath: string }): Promise<boolean | null> {
     // Best-effort, must never throw.
     try {
+        if (params.name === 'gemini') {
+            return detectGeminiCliLoginStatus();
+        }
+
         const timeoutMs = 800;
         const loginArgs = await resolveCliLoginStatusArgs(params.name);
         if (!loginArgs) return null;
@@ -365,6 +385,78 @@ async function detectCliLoginStatus(params: { name: DetectCliName; resolvedPath:
     }
 }
 
+function detectGeminiCliLoginStatus(): boolean | null {
+    // Non-interactive probe: never execute `gemini auth ...` because it can open a browser window.
+    //
+    // Gemini CLI can authenticate via:
+    // - API key (GEMINI_API_KEY / GOOGLE_API_KEY or local config)
+    // - Local OAuth creds file (~/.gemini/oauth_creds.json)
+    // - gcloud ADC (~/.config/gcloud/application_default_credentials.json)
+    //
+    // We treat "any plausible credential present" as logged in. If we cannot read anything reliably,
+    // return null (unknown) rather than risking a false negative.
+    try {
+        const envApiKeyCandidates = [process.env.GEMINI_API_KEY, process.env.GOOGLE_API_KEY]
+            .map((v) => (typeof v === 'string' ? v.trim() : ''))
+            .filter(Boolean);
+        if (envApiKeyCandidates.length > 0) return true;
+
+        const home = resolveHomeDir();
+        const candidatePaths = [
+            join(home, '.gemini', 'oauth_creds.json'),
+            join(home, '.gemini', 'config.json'),
+            join(home, '.config', 'gemini', 'config.json'),
+            join(home, '.gemini', 'auth.json'),
+            join(home, '.config', 'gemini', 'auth.json'),
+            join(home, '.config', 'gcloud', 'application_default_credentials.json'),
+        ];
+
+        const hasPlausibleCreds = (value: unknown): boolean => {
+            if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+            const rec = value as Record<string, unknown>;
+
+            const strings = [
+                rec.access_token,
+                rec.refresh_token,
+                rec.token,
+                rec.apiKey,
+                rec.GEMINI_API_KEY,
+            ].filter((v): v is string => typeof v === 'string' && v.trim().length > 0);
+            if (strings.length > 0) return true;
+
+            // gcloud ADC authorized_user shape
+            if (rec.type === 'authorized_user' && typeof rec.refresh_token === 'string' && rec.refresh_token.trim().length > 0) {
+                return true;
+            }
+
+            return false;
+        };
+
+        let sawAnyCandidateFile = false;
+        let sawAnyParseError = false;
+        let sawAnyParseableFile = false;
+        for (const path of candidatePaths) {
+            if (!existsSync(path)) continue;
+            try {
+                const raw = readFileSync(path, 'utf8');
+                sawAnyCandidateFile = true;
+                const parsed = JSON.parse(raw) as unknown;
+                sawAnyParseableFile = true;
+                if (hasPlausibleCreds(parsed)) return true;
+            } catch {
+                // Ignore parse/read errors; we'll fall back to unknown if we saw files but couldn't read them.
+                sawAnyCandidateFile = true;
+                sawAnyParseError = true;
+            }
+        }
+
+        if (sawAnyCandidateFile && sawAnyParseError && !sawAnyParseableFile) return null;
+        return false;
+    } catch {
+        return null;
+    }
+}
+
 /**
  * CLI status snapshot - checks whether CLIs are resolvable on daemon PATH.
  *
@@ -375,6 +467,14 @@ async function detectCliLoginStatus(params: { name: DetectCliName; resolvedPath:
 export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Promise<DetectCliSnapshot> {
     const pathEnv = typeof process.env.PATH === 'string' ? process.env.PATH : null;
     const includeLoginStatus = Boolean(data?.includeLoginStatus);
+    const cacheKey = buildCliSnapshotCacheKey({ includeLoginStatus }, pathEnv);
+    const cached = cliSnapshotCache.get(cacheKey);
+    if (cached?.kind === 'success' && cliSnapshotCache.isFresh(cached)) return cached.value;
+
+    return await cliSnapshotCache.runDedupe(cacheKey, async () => {
+        const cached2 = cliSnapshotCache.get(cacheKey);
+        if (cached2?.kind === 'success' && cliSnapshotCache.isFresh(cached2)) return cached2.value;
+
     const names = Object.keys(AGENTS) as DetectCliName[];
 
     const pairs = await Promise.all(
@@ -418,4 +518,14 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Pro
         clis: Object.fromEntries(pairs) as Record<DetectCliName, DetectCliEntry>,
         tmux,
     };
+    }).then((snapshot) => {
+        cliSnapshotCache.setSuccess(cacheKey, snapshot);
+        return snapshot;
+    }).catch(() => {
+        // Best-effort: never throw from a snapshot helper.
+        cliSnapshotCache.setError(cacheKey);
+        const names = Object.keys(AGENTS) as DetectCliName[];
+        const clis = Object.fromEntries(names.map((name) => [name, { available: false } satisfies DetectCliEntry])) as Record<DetectCliName, DetectCliEntry>;
+        return { path: pathEnv, clis, tmux: { available: false } };
+    });
 }

@@ -19,6 +19,8 @@ import { probeAgentModelsBestEffort } from '@/capabilities/probes/agentModelsPro
 import type { AgentId, ProviderCliInstallPlatform } from '@happier-dev/agents';
 import { installProviderCli, resolvePlatformFromNodePlatform } from '@happier-dev/cli-common/providers';
 
+const DEFAULT_PROBE_MODELS_TIMEOUT_MS = 15_000;
+
 function titleCase(value: string): string {
     if (!value) return value;
     return `${value[0].toUpperCase()}${value.slice(1)}`;
@@ -78,8 +80,10 @@ function createGenericCliCapability(agentId: AgentCatalogEntry['id']): Capabilit
                 return { ok: false, error: { message: `Unsupported method: ${method}`, code: 'unsupported-method' } };
             }
             const timeoutMsRaw = (params ?? {}).timeoutMs;
-            const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : 3500;
-            const result = await probeAgentModelsBestEffort({ agentId, cwd: process.cwd(), timeoutMs });
+            const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
+            const cwdRaw = (params ?? {}).cwd;
+            const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
+            const result = await probeAgentModelsBestEffort({ agentId, cwd, timeoutMs });
             return { ok: true, result };
         },
     };
@@ -103,8 +107,10 @@ function augmentCliCapabilityWithProbeModels(cap: Capability, agentId: AgentCata
         }
         if (method === 'probeModels') {
             const timeoutMsRaw = (params ?? {}).timeoutMs;
-            const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : 3500;
-            const result = await probeAgentModelsBestEffort({ agentId, cwd: process.cwd(), timeoutMs });
+            const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
+            const cwdRaw = (params ?? {}).cwd;
+            const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
+            const result = await probeAgentModelsBestEffort({ agentId, cwd, timeoutMs });
             return { ok: true, result };
         }
         if (baseInvoke) return await baseInvoke({ method, params });
