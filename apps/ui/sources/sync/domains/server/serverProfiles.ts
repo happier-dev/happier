@@ -133,6 +133,16 @@ function parsePreconfiguredServersFromEnv(): PreconfiguredServer[] {
         append(singleUrl, '', isStackContext() ? 'stack-env' : 'url');
     }
 
+    // On web with no explicitly configured server, fall back to same-origin so that
+    // self-hosted deployments (e.g. https://happier.example.com) get a server profile
+    // without needing EXPO_PUBLIC_HAPPY_SERVER_URL set at build time.
+    if (entries.length === 0 && typeof window !== 'undefined' && window.location?.origin) {
+        const originUrl = normalizeUrl(String(window.location.origin));
+        if (originUrl && originUrl !== 'null') {
+            append(originUrl, '', 'url');
+        }
+    }
+
     return entries;
 }
 
