@@ -122,3 +122,78 @@ export async function waitForIdleViaSocket(params: Readonly<{
 
   return result;
 }
+
+export async function readLatestAgentStateSummaryViaSocket(params: Readonly<{
+  token: string;
+  sessionId: string;
+  ctx: SessionEncryptionContext;
+  timeoutMs: number;
+}>): Promise<AgentStateSummary | null> {
+  const socket = createSessionScopedSocket({ token: params.token, sessionId: params.sessionId }) as unknown as Socket;
+  const timeoutMs = Math.max(1, Math.trunc(params.timeoutMs));
+
+  const result = await new Promise<AgentStateSummary | null>((resolve, reject) => {
+    let settled = false;
+
+    const cleanup = () => {
+      if (settled) return;
+      settled = true;
+      try {
+        socket.off('update', onUpdate as any);
+        socket.off('connect_error', onConnectError as any);
+      } catch {
+        // ignore
+      }
+      try {
+        socket.disconnect();
+        socket.close();
+      } catch {
+        // ignore
+      }
+    };
+
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve(null);
+    }, timeoutMs);
+
+    const onConnectError = (err: any) => {
+      clearTimeout(timer);
+      cleanup();
+      reject(err instanceof Error ? err : new Error(String(err)));
+    };
+
+    const onUpdate = (raw: unknown) => {
+      const parsed = UpdateContainerSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const update: UpdateContainer = parsed.data;
+
+      if (update.body?.t !== 'update-session') return;
+      const body = update.body as any;
+      if (String(body.id ?? '') !== params.sessionId) return;
+
+      const agentStateCiphertext = body.agentState?.value;
+      if (typeof agentStateCiphertext !== 'string' || agentStateCiphertext.trim().length === 0) return;
+
+      try {
+        const decrypted = decrypt(
+          params.ctx.encryptionKey,
+          params.ctx.encryptionVariant,
+          decodeBase64(agentStateCiphertext, 'base64'),
+        );
+        const summary = summarizeAgentState(decrypted);
+        clearTimeout(timer);
+        cleanup();
+        resolve(summary);
+      } catch {
+        return;
+      }
+    };
+
+    socket.on('connect_error', onConnectError as any);
+    socket.on('update', onUpdate as any);
+    socket.connect();
+  });
+
+  return result;
+}

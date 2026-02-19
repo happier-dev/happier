@@ -59,6 +59,55 @@ export async function fetchSessionById(params: Readonly<{ token: string; session
   return session as RawSessionRecord;
 }
 
+function looksLikeMissingV2SessionRoute404(data: unknown, sessionId: string): boolean {
+  if (!data || typeof data !== 'object') return false;
+  const anyData = data as any;
+  const error = typeof anyData.error === 'string' ? anyData.error : '';
+  const path = typeof anyData.path === 'string' ? anyData.path : '';
+  const message = typeof anyData.message === 'string' ? anyData.message : '';
+  if (error !== 'Not found') return false;
+  const needle = `/v2/sessions/${sessionId}`;
+  return (path && path.includes(needle)) || (message && message.includes(needle));
+}
+
+export async function fetchSessionByIdCompat(params: Readonly<{ token: string; sessionId: string }>): Promise<RawSessionRecord | null> {
+  const serverUrl = resolveServerHttpBaseUrl();
+  const response = await axios.get(`${serverUrl}/v2/sessions/${params.sessionId}`, {
+    headers: {
+      Authorization: `Bearer ${params.token}`,
+      'Content-Type': 'application/json',
+    },
+    timeout: 10_000,
+    validateStatus: () => true,
+  });
+
+  if (response.status === 404) {
+    if (!looksLikeMissingV2SessionRoute404(response.data, params.sessionId)) return null;
+
+    let cursor: string | undefined = undefined;
+    for (let page = 0; page < 20; page++) {
+      const res = await fetchSessionsPage({ token: params.token, cursor, limit: 200 });
+      const match = res.sessions.find((row) => (row as any) && String((row as any).id ?? '') === params.sessionId);
+      if (match) return match as unknown as RawSessionRecord;
+      if (!res.hasNext || !res.nextCursor) return null;
+      cursor = res.nextCursor;
+    }
+    return null;
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw new Error(`Unauthorized (${response.status})`);
+  }
+  if (response.status !== 200) {
+    throw new Error(`Unexpected status from /v2/sessions/${params.sessionId}: ${response.status}`);
+  }
+
+  const session = (response.data as any)?.session;
+  if (!session || typeof session !== 'object') {
+    throw new Error('Unexpected /v2/sessions response shape');
+  }
+  return session as RawSessionRecord;
+}
+
 export async function fetchSessionsPage(params: Readonly<{
   token: string;
   cursor?: string;
@@ -179,4 +228,3 @@ export async function getOrCreateSessionByTag(params: Readonly<{
   }
   return { session: session as RawSessionRecord };
 }
-

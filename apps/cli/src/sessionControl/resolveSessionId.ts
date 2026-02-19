@@ -1,5 +1,5 @@
 import type { Credentials } from '@/persistence';
-import { fetchSessionsPage } from './sessionsHttp';
+import { fetchSessionById, fetchSessionsPage } from './sessionsHttp';
 import { tryDecryptSessionMetadata } from './sessionEncryptionContext';
 
 export type ResolveSessionIdResult =
@@ -17,10 +17,13 @@ export async function resolveSessionIdOrPrefix(params: Readonly<{
   const input = normalizeIdOrPrefix(params.idOrPrefix);
   if (!input) return { ok: false, code: 'session_not_found' };
 
-  // If it looks like a full session id, do not page.
-  // (We still accept it even if it doesn't match the typical `sess_` prefix.)
+  // Fast path: if the input is a full session id, prefer exact match over prefix paging.
+  // If the session is not found, fall back to prefix+tag resolution.
   if (input.length >= 12) {
-    return { ok: true, sessionId: input };
+    const exact = await fetchSessionById({ token: params.credentials.token, sessionId: input });
+    if (exact) {
+      return { ok: true, sessionId: input };
+    }
   }
 
   const maxPagesRaw = (process.env.HAPPIER_SESSION_ID_PREFIX_SCAN_MAX_PAGES ?? '').trim();
@@ -59,4 +62,3 @@ export async function resolveSessionIdOrPrefix(params: Readonly<{
   if (matches.length === 0) return { ok: false, code: 'session_not_found' };
   return { ok: false, code: 'session_id_ambiguous', candidates: matches.slice(0, 10) };
 }
-
