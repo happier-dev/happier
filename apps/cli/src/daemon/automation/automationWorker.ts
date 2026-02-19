@@ -6,7 +6,7 @@ import type {
 import { createAutomationAssignmentCache } from './automationAssignmentCache';
 import { classifyAutomationWorkerError, nextAutomationRetryDelayMs } from './automationBackoffPolicy';
 import { createAutomationClaimClient } from './automationClaimClient';
-import { getAutomationWorkerFeatureDecision, isExistingSessionAutomationTargetEnabled } from './automationFeatureGate';
+import { getAutomationWorkerFeatureDecision } from './automationFeatureGate';
 import { executeClaimedRun, type ClaimableRunPayload } from './automationRunExecutor';
 import { resolveAutomationPollingConfig } from './automationScheduler';
 import type { AutomationTemplateEncryption } from './automationTemplateExecution';
@@ -87,7 +87,6 @@ export function startAutomationWorker(params: {
   }
 
   const scheduler = resolveAutomationPollingConfig(env);
-  const existingSessionTargetEnabled = isExistingSessionAutomationTargetEnabled(env);
   const claimClient = createAutomationClaimClient({ token: params.token });
   const assignments = createAutomationAssignmentCache();
   const budgetTokenId = `automation_worker:${params.machineId}`;
@@ -162,7 +161,6 @@ export function startAutomationWorker(params: {
         spawnSession: params.spawnSession,
         heartbeatMs: scheduler.heartbeatMs,
         leaseDurationMs: scheduler.leaseDurationMs,
-        existingSessionTargetEnabled,
         encryption: params.encryption,
         claimed,
       });
@@ -217,7 +215,6 @@ export function startAutomationWorker(params: {
     assignmentsRefreshMs: scheduler.assignmentsRefreshMs,
     leaseDurationMs: scheduler.leaseDurationMs,
     heartbeatMs: scheduler.heartbeatMs,
-    existingSessionTargetEnabled,
   });
 
   return {

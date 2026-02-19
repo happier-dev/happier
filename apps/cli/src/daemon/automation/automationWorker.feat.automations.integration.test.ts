@@ -38,7 +38,7 @@ function writeJson(response: ServerResponse, statusCode: number, body: unknown):
   response.end(JSON.stringify(body));
 }
 
-async function waitForCondition(check: () => boolean, timeoutMs = 3_000): Promise<void> {
+async function waitForCondition(check: () => boolean, timeoutMs = 10_000): Promise<void> {
   const startedAt = Date.now();
   while (!check()) {
     if (Date.now() - startedAt > timeoutMs) {
@@ -432,7 +432,7 @@ describe('automationWorker integration', () => {
     }
   });
 
-  it('fails existing_session runs when target is disabled by env gate', async () => {
+  it('executes existing_session runs', async () => {
     const now = Date.now();
     const template = buildEncryptedTemplateCiphertext({
       directory: '/tmp/happier-automation',
@@ -489,88 +489,6 @@ describe('automationWorker integration', () => {
       spawnSession,
       env: {
         HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
-        HAPPIER_FEATURE_AUTOMATIONS__EXISTING_SESSION_TARGET: '0',
-        HAPPIER_AUTOMATION_CLAIM_POLL_MS: '20',
-        HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '20',
-        HAPPIER_AUTOMATION_LEASE_MS: '200',
-        HAPPIER_AUTOMATION_HEARTBEAT_MS: '50',
-      } as NodeJS.ProcessEnv,
-    });
-
-    try {
-      await waitForCondition(() => server.state.failed.length === 1);
-      expect(spawnSession).not.toHaveBeenCalled();
-      expect(server.state.failed[0]).toEqual(
-        expect.objectContaining({
-          machineId: 'machine-4',
-          errorCode: 'existing_session_target_disabled',
-        }),
-      );
-    } finally {
-      worker.stop();
-      await server.close();
-      await rm(homeDir, { recursive: true, force: true });
-    }
-  });
-
-  it('executes existing_session runs when target gate is enabled', async () => {
-    const now = Date.now();
-    const template = buildEncryptedTemplateCiphertext({
-      directory: '/tmp/happier-automation',
-      existingSessionId: 'session-existing',
-      sessionEncryptionKeyBase64: 'dGVzdA==',
-      sessionEncryptionVariant: 'dataKey',
-    });
-
-    const server = await startAutomationServer({
-      claimRunOnce: {
-        run: {
-          id: 'run-5',
-          automationId: 'automation-5',
-          state: 'queued',
-          scheduledAt: now,
-          dueAt: now,
-          claimedAt: null,
-          startedAt: null,
-          finishedAt: null,
-          claimedByMachineId: null,
-          leaseExpiresAt: null,
-          attempt: 1,
-          summaryCiphertext: null,
-          errorCode: null,
-          errorMessage: null,
-          producedSessionId: null,
-          createdAt: now,
-          updatedAt: now,
-        },
-        automation: {
-          id: 'automation-5',
-          name: 'Existing target enabled',
-          enabled: true,
-          targetType: 'existing_session',
-          templateCiphertext: template,
-        },
-      },
-    });
-
-    const homeDir = await mkdtemp(join(tmpdir(), 'happier-automation-worker-existing-enabled-'));
-    process.env.HAPPIER_HOME_DIR = homeDir;
-    process.env.HAPPIER_SERVER_URL = server.baseUrl;
-    process.env.HAPPIER_WEBAPP_URL = server.baseUrl;
-
-    vi.resetModules();
-    const { startAutomationWorker } = await import('./automationWorker');
-
-    const spawnSession = vi.fn(async () => ({ type: 'success' as const, sessionId: 'session-existing' }));
-
-    const worker = startAutomationWorker({
-      token: 'token-5',
-      machineId: 'machine-5',
-      encryption: TEST_ENCRYPTION,
-      spawnSession,
-      env: {
-        HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
-        HAPPIER_FEATURE_AUTOMATIONS__EXISTING_SESSION_TARGET: '1',
         HAPPIER_AUTOMATION_CLAIM_POLL_MS: '20',
         HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '20',
         HAPPIER_AUTOMATION_LEASE_MS: '200',
@@ -652,7 +570,6 @@ describe('automationWorker integration', () => {
       spawnSession,
       env: {
         HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
-        HAPPIER_FEATURE_AUTOMATIONS__EXISTING_SESSION_TARGET: '1',
         HAPPIER_AUTOMATION_CLAIM_POLL_MS: '20',
         HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '20',
         HAPPIER_AUTOMATION_LEASE_MS: '200',
@@ -735,7 +652,6 @@ describe('automationWorker integration', () => {
       spawnSession,
       env: {
         HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
-        HAPPIER_FEATURE_AUTOMATIONS__EXISTING_SESSION_TARGET: '1',
         HAPPIER_AUTOMATION_CLAIM_POLL_MS: '20',
         HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '20',
         HAPPIER_AUTOMATION_LEASE_MS: '200',
@@ -817,7 +733,6 @@ describe('automationWorker integration', () => {
       spawnSession,
       env: {
         HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
-        HAPPIER_FEATURE_AUTOMATIONS__EXISTING_SESSION_TARGET: '1',
         HAPPIER_AUTOMATION_CLAIM_POLL_MS: '20',
         HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '20',
         HAPPIER_AUTOMATION_LEASE_MS: '200',

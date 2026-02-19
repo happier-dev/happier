@@ -12,7 +12,6 @@ function buildFeaturesResponse(): FeaturesResponse {
       bugReports: { enabled: true },
       automations: {
         enabled: true,
-        existingSessionTarget: { enabled: true },
       },
       connectedServices: {
         enabled: true,

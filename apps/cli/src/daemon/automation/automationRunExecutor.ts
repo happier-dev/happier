@@ -70,7 +70,6 @@ export async function executeClaimedRun(params: {
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   heartbeatMs: number;
   leaseDurationMs: number;
-  existingSessionTargetEnabled: boolean;
   encryption: AutomationTemplateEncryption;
   claimed: ClaimableRunPayload;
 }): Promise<void> {
@@ -81,7 +80,6 @@ export async function executeClaimedRun(params: {
     spawnSession,
     heartbeatMs,
     leaseDurationMs,
-    existingSessionTargetEnabled,
     encryption,
     claimed,
   } = params;
@@ -131,15 +129,6 @@ export async function executeClaimedRun(params: {
     }
 
     const template = parsedTemplate.value;
-    if (template.targetType === 'existing_session' && !existingSessionTargetEnabled) {
-      await claimClient.failRun({
-        runId: claimed.run.id,
-        machineId,
-        errorCode: 'existing_session_target_disabled',
-        errorMessage: 'existing_session automation target is disabled by daemon configuration',
-      });
-      return;
-    }
 
     const spawnResult = template.targetType === 'existing_session'
       ? await runAutomationAgainstExistingSession({

@@ -10,10 +10,3 @@ export function getAutomationWorkerFeatureDecision(env: NodeJS.ProcessEnv) {
 export function isAutomationWorkerEnabled(env: NodeJS.ProcessEnv): boolean {
   return getAutomationWorkerFeatureDecision(env).state === 'enabled';
 }
-
-export function isExistingSessionAutomationTargetEnabled(env: NodeJS.ProcessEnv): boolean {
-  return resolveCliGlobalOnlyFeatureDecision({
-    featureId: 'automations.existingSessionTarget',
-    env,
-  }).state === 'enabled';
-}
