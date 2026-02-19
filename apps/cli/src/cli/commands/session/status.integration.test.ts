@@ -9,12 +9,21 @@ import {
   sealEncryptedDataKeyEnvelopeV1,
 } from '@happier-dev/protocol';
 
+const { mockIo } = vi.hoisted(() => ({
+  mockIo: vi.fn(),
+}));
+
+vi.mock('socket.io-client', () => ({
+  io: mockIo,
+}));
+
 describe('happier session status (integration)', () => {
   const originalServerUrl = process.env.HAPPIER_SERVER_URL;
   const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
   const originalHomeDir = process.env.HAPPIER_HOME_DIR;
   let server: Server | null = null;
   let happyHomeDir = '';
+  let idleAgentStateCiphertext = '';
 
   beforeEach(async () => {
     happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-session-status-'));
@@ -47,6 +56,16 @@ describe('happier session status (integration)', () => {
         {
           controlledByUser: false,
           requests: { r1: { type: 'tool', createdAt: 1 } },
+        },
+        dek,
+      ),
+      'base64',
+    );
+    idleAgentStateCiphertext = encodeBase64Session(
+      encryptWithDataKey(
+        {
+          controlledByUser: false,
+          requests: {},
         },
         dek,
       ),
@@ -99,6 +118,44 @@ describe('happier session status (integration)', () => {
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
+
+    mockIo.mockReset();
+    mockIo.mockImplementation(() => {
+      const handlers = new Map<string, Array<(...args: any[]) => void>>();
+      const on = vi.fn((event: string, cb: (...args: any[]) => void) => {
+        const list = handlers.get(event) ?? [];
+        list.push(cb);
+        handlers.set(event, list);
+      });
+      const off = vi.fn((event: string, cb: (...args: any[]) => void) => {
+        const list = handlers.get(event) ?? [];
+        handlers.set(event, list.filter((v) => v !== cb));
+      });
+      const connect = vi.fn(() => {
+        setTimeout(() => {
+          const list = handlers.get('update') ?? [];
+          for (const cb of list) {
+            cb({
+              id: 'u1',
+              seq: 2,
+              createdAt: Date.now(),
+              body: {
+                t: 'update-session',
+                id: 'sess_integration_status_123',
+                agentState: { value: idleAgentStateCiphertext, version: 1 },
+              },
+            });
+          }
+        }, 10);
+      });
+      return {
+        on,
+        off,
+        connect,
+        disconnect: vi.fn(),
+        close: vi.fn(),
+      };
+    });
   });
 
   afterEach(async () => {
@@ -154,5 +211,33 @@ describe('happier session status (integration)', () => {
       logSpy.mockRestore();
     }
   });
-});
 
+  it('supports --live and prefers the latest agentState from socket updates', async () => {
+    const { handleSessionCommand } = await import('./index');
+
+    const stdout: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
+      stdout.push(args.join(' '));
+    });
+
+    try {
+      await handleSessionCommand(['status', 'sess_integration_status_123', '--live', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(new Uint8Array(32).fill(8)),
+            machineKey: new Uint8Array(32).fill(8),
+          },
+        }),
+      });
+
+      const parsed = JSON.parse(stdout.join('\n').trim());
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_status');
+      expect(parsed.data?.agentState?.pendingRequestsCount).toBe(0);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+});

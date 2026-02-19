@@ -7,10 +7,14 @@ import { reloadConfiguration } from '@/configuration';
 import { readSettings } from '@/persistence';
 
 let promptAnswers: string[] = [];
+let promptQuestions: string[] = [];
 
 vi.mock('node:readline', () => ({
   createInterface: () => ({
-    question: (_prompt: string, cb: (answer: string) => void) => cb(promptAnswers.shift() ?? ''),
+    question: (prompt: string, cb: (answer: string) => void) => {
+      promptQuestions.push(prompt);
+      cb(promptAnswers.shift() ?? '');
+    },
     close: () => {},
   }),
 }));
@@ -21,6 +25,7 @@ vi.mock('@/utils/spawnHappyCLI', () => ({
 }));
 
 import { handleServerCommand } from './server';
+import { runServerSubcommand } from './server/subcommands';
 
 function setTtyMode(stdinIsTTY: boolean, stdoutIsTTY: boolean): () => void {
   const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
@@ -46,11 +51,10 @@ describe('happier server add guided flow', () => {
     const restoreTty = setTtyMode(true, true);
     promptAnswers = [
       'https://company.example.test', // server URL
-      '', // web app URL (use default)
       'Company', // profile name
       'y', // use as active
-      'n', // start daemon now
     ];
+    promptQuestions = [];
 
     try {
       process.env.HAPPIER_HOME_DIR = home;
@@ -76,6 +80,7 @@ describe('happier server add guided flow', () => {
       reloadConfiguration();
       await rm(home, { recursive: true, force: true });
       promptAnswers = [];
+      promptQuestions = [];
       spawnHappyCLIMock.mockReset();
     }
   });
@@ -89,7 +94,7 @@ describe('happier server add guided flow', () => {
       process.env.HAPPIER_HOME_DIR = home;
       reloadConfiguration();
 
-      await expect(handleServerCommand(['add'])).rejects.toThrow('Non-interactive mode');
+      await expect(runServerSubcommand('add', ['add'])).rejects.toThrow('Non-interactive mode');
       expect(spawnHappyCLIMock).not.toHaveBeenCalled();
     } finally {
       restoreTty();
@@ -133,6 +138,69 @@ describe('happier server add guided flow', () => {
       else process.env.HAPPIER_SERVER_URL = prevServerUrl;
       if (prevWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
       else process.env.HAPPIER_WEBAPP_URL = prevWebappUrl;
+      reloadConfiguration();
+      await rm(home, { recursive: true, force: true });
+      spawnHappyCLIMock.mockReset();
+    }
+  });
+
+  it('does not prompt when --name/--server-url/--use are provided in interactive mode', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-server-add-no-prompts-'));
+    const prevHome = process.env.HAPPIER_HOME_DIR;
+    const restoreTty = setTtyMode(true, true);
+    promptAnswers = [];
+    promptQuestions = [];
+
+    try {
+      process.env.HAPPIER_HOME_DIR = home;
+      reloadConfiguration();
+
+      await handleServerCommand([
+        'add',
+        '--name',
+        'Company',
+        '--server-url',
+        'https://company.example.test',
+        '--use',
+      ]);
+
+      expect(promptQuestions).toEqual([]);
+    } finally {
+      restoreTty();
+      if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = prevHome;
+      reloadConfiguration();
+      await rm(home, { recursive: true, force: true });
+      promptAnswers = [];
+      promptQuestions = [];
+      spawnHappyCLIMock.mockReset();
+    }
+  });
+
+  it('defaults webapp URL to Happier Cloud webapp when --server-url points at the cloud API', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-server-add-cloud-webapp-'));
+    const prevHome = process.env.HAPPIER_HOME_DIR;
+    const restoreTty = setTtyMode(false, false);
+
+    try {
+      process.env.HAPPIER_HOME_DIR = home;
+      reloadConfiguration();
+
+      await handleServerCommand([
+        'add',
+        '--name',
+        'CloudCopy',
+        '--server-url',
+        'https://api.happier.dev',
+      ]);
+
+      const settings = await readSettings();
+      expect(settings.servers?.CloudCopy?.serverUrl).toBe('https://api.happier.dev');
+      expect(settings.servers?.CloudCopy?.webappUrl).toBe('https://app.happier.dev');
+    } finally {
+      restoreTty();
+      if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = prevHome;
       reloadConfiguration();
       await rm(home, { recursive: true, force: true });
       spawnHappyCLIMock.mockReset();

@@ -1,0 +1,37 @@
+{
+  "id": "happier-session-control",
+  "skills": ["skills/happier-session-control"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "happierHomeDir": {
+        "type": "string",
+        "description": "If set, exported as HAPPIER_HOME_DIR for the happier process."
+      },
+      "happierServer": {
+        "type": "string",
+        "description": "Server profile id/name to target via prefix: happier --server <id-or-name> ..."
+      },
+      "happierServerUrl": {
+        "type": "string",
+        "description": "Ad-hoc server URL to target via prefix: happier --server-url <url> ..."
+      },
+      "happierWebappUrl": {
+        "type": "string",
+        "description": "Required when happierServerUrl is set; used via prefix: happier --webapp-url <url> ..."
+      },
+      "defaultTimeoutSeconds": {
+        "type": "number",
+        "minimum": 1,
+        "description": "Default timeout used for session wait/run wait when the caller doesn't provide one."
+      },
+      "preferEphemeralServerSelection": {
+        "type": "boolean",
+        "default": true,
+        "description": "If true, prefer --server-url/--webapp-url over persisting server use."
+      }
+    }
+  }
+}
+

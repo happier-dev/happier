@@ -1,0 +1,25 @@
+{
+  "v": 1,
+  "ok": true,
+  "kind": "session_list",
+  "data": {
+    "sessions": [
+      {
+        "id": "sess_1234567890abcdef",
+        "createdAt": 1700000000000,
+        "updatedAt": 1700000001000,
+        "active": true,
+        "activeAt": 1700000001000,
+        "pendingCount": 0,
+        "tag": "demo",
+        "path": "/workspace/demo",
+        "host": "example-host",
+        "share": null,
+        "encryption": { "type": "dataKey" }
+      }
+    ],
+    "hasNext": false,
+    "nextCursor": null
+  }
+}
+

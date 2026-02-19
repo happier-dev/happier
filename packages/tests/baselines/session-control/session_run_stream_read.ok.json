@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "ok": true,
+  "kind": "session_run_stream_read",
+  "data": {
+    "sessionId": "sess_1234567890abcdef",
+    "runId": "run_1",
+    "streamId": "stream_1",
+    "events": [{ "t": "delta", "textDelta": "hello" }],
+    "nextCursor": 1,
+    "done": false
+  }
+}
+

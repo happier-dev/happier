@@ -9,6 +9,7 @@ import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
 import { resolveSessionEncryptionContextFromCredentials } from '@/sessionControl/sessionEncryptionContext';
 import { callSessionRpc } from '@/sessionControl/sessionRpc';
 import { readIntFlagValue } from '@/sessionControl/argvFlags';
+import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
 
 function sleep(ms: number): Promise<void> {
   if (ms <= 0) return Promise.resolve();
@@ -24,10 +25,10 @@ export async function cmdSessionRunWait(
   deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const sessionId = String(argv[2] ?? '').trim();
+  const idOrPrefix = String(argv[2] ?? '').trim();
   const runId = String(argv[3] ?? '').trim();
-  if (!sessionId || !runId) {
-    throw new Error('Usage: happier session run wait <session-id> <run-id> [--timeout <seconds>] [--json]');
+  if (!idOrPrefix || !runId) {
+    throw new Error('Usage: happier session run wait <session-id-or-prefix> <run-id> [--timeout <seconds>] [--json]');
   }
 
   const timeoutSecondsRaw = readIntFlagValue(argv, '--timeout');
@@ -49,6 +50,20 @@ export async function cmdSessionRunWait(
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
     process.exit(1);
   }
+
+  const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
+  if (!resolved.ok) {
+    if (json) {
+      printJsonEnvelope({
+        ok: false,
+        kind: 'session_run_wait',
+        error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
+      });
+      return;
+    }
+    throw new Error(resolved.code);
+  }
+  const sessionId = resolved.sessionId;
 
   const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
   if (!rawSession) {
@@ -85,4 +100,3 @@ export async function cmdSessionRunWait(
   }
   throw new Error('timeout');
 }
-

@@ -39,7 +39,7 @@ export async function handleAuthCommand(args: string[]): Promise<void> {
       await handleAuthLogout(args.slice(1));
       return;
     case 'status':
-      await handleAuthStatus();
+      await handleAuthStatus(args.slice(1));
       return;
     default:
       console.error(chalk.red(`Unknown auth subcommand: ${subcommand}`));

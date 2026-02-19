@@ -6,7 +6,8 @@ import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
 import { fetchSessionById, commitSessionEncryptedMessage } from '@/sessionControl/sessionsHttp';
 import { resolveSessionEncryptionContextFromCredentials, encryptSessionPayload } from '@/sessionControl/sessionEncryptionContext';
 import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
-import { hasFlag } from '@/sessionControl/argvFlags';
+import { hasFlag, readIntFlagValue } from '@/sessionControl/argvFlags';
+import { waitForIdleViaSocket } from '@/sessionControl/sessionSocketAgentState';
 
 export async function cmdSessionSend(
   argv: string[],
@@ -16,9 +17,14 @@ export async function cmdSessionSend(
   const idOrPrefix = String(argv[1] ?? '').trim();
   const message = String(argv[2] ?? '').trim();
   const wait = hasFlag(argv, '--wait');
+  const timeoutSecondsRaw = readIntFlagValue(argv, '--timeout');
+  const timeoutSeconds =
+    typeof timeoutSecondsRaw === 'number' && Number.isFinite(timeoutSecondsRaw) && timeoutSecondsRaw > 0
+      ? Math.min(3600, timeoutSecondsRaw)
+      : 300;
 
   if (!idOrPrefix || !message) {
-    throw new Error('Usage: happier session send <session-id-or-prefix> <message> [--wait] [--json]');
+    throw new Error('Usage: happier session send <session-id-or-prefix> <message> [--wait] [--timeout <seconds>] [--json]');
   }
 
   const credentials = await deps.readCredentialsFn();
@@ -73,17 +79,33 @@ export async function cmdSessionSend(
     localId,
   });
 
+  let waited = false;
   if (wait) {
-    // The full implementation waits for idle via socket updates. That is implemented in `session wait`.
-    // For `send --wait` we intentionally route through the same command logic once available.
+    const agentStateCiphertext =
+      typeof (rawSession as any).agentState === 'string' ? String((rawSession as any).agentState).trim() : null;
+    try {
+      await waitForIdleViaSocket({
+        token: credentials.token,
+        sessionId,
+        ctx,
+        timeoutMs: timeoutSeconds * 1000,
+        initialAgentStateCiphertextBase64: agentStateCiphertext && agentStateCiphertext.length > 0 ? agentStateCiphertext : null,
+      });
+      waited = true;
+    } catch (error) {
+      if (json) {
+        printJsonEnvelope({ ok: false, kind: 'session_send', error: { code: 'timeout' } });
+        return;
+      }
+      throw error;
+    }
   }
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_send', data: { sessionId, localId, waited: false } });
+    printJsonEnvelope({ ok: true, kind: 'session_send', data: { sessionId, localId, waited } });
     return;
   }
 
   console.log(chalk.green('✓'), 'message sent');
   console.log(JSON.stringify({ sessionId, localId }, null, 2));
 }
-

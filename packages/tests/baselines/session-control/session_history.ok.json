@@ -1,0 +1,20 @@
+{
+  "v": 1,
+  "ok": true,
+  "kind": "session_history",
+  "data": {
+    "sessionId": "sess_1234567890abcdef",
+    "format": "compact",
+    "messages": [
+      {
+        "id": "msg_1",
+        "createdAt": 1700000000000,
+        "role": "user",
+        "kind": "text",
+        "text": "hello",
+        "structuredKind": "review_findings.v1"
+      }
+    ]
+  }
+}
+

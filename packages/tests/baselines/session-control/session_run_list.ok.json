@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "ok": true,
+  "kind": "session_run_list",
+  "data": {
+    "sessionId": "sess_1234567890abcdef",
+    "runs": [
+      {
+        "runId": "run_1",
+        "callId": "call_1",
+        "sidechainId": "side_1",
+        "intent": "review",
+        "backendId": "claude",
+        "permissionMode": "ask",
+        "retentionPolicy": "resumable",
+        "runClass": "bounded",
+        "ioMode": "request_response",
+        "status": "running",
+        "startedAtMs": 1700000000000
+      }
+    ]
+  }
+}
+

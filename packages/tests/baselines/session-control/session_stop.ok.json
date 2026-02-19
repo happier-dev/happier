@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "ok": true,
+  "kind": "session_stop",
+  "data": {
+    "sessionId": "sess_1234567890abcdef",
+    "stopped": true
+  }
+}
+

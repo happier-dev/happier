@@ -6,6 +6,14 @@ import { join } from 'node:path';
 
 import { deriveBoxPublicKeyFromSeed, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
 
+const { mockIo } = vi.hoisted(() => ({
+  mockIo: vi.fn(),
+}));
+
+vi.mock('socket.io-client', () => ({
+  io: mockIo,
+}));
+
 describe('happier session send (integration)', () => {
   const originalServerUrl = process.env.HAPPIER_SERVER_URL;
   const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
@@ -32,6 +40,14 @@ describe('happier session send (integration)', () => {
       'base64',
     );
     const dataEncryptionKeyBase64 = encodeBase64Session(envelope, 'base64');
+    const busyAgentStateCiphertext = encodeBase64Session(
+      encryptWithDataKey({ controlledByUser: false, requests: { r1: { createdAt: 1 } } }, dek),
+      'base64',
+    );
+    const idleAgentStateCiphertext = encodeBase64Session(
+      encryptWithDataKey({ controlledByUser: false, requests: {} }, dek),
+      'base64',
+    );
 
     server = createServer(async (req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
@@ -50,7 +66,7 @@ describe('happier session send (integration)', () => {
               activeAt: 0,
               metadata: metadataCiphertext,
               metadataVersion: 0,
-              agentState: null,
+              agentState: busyAgentStateCiphertext,
               agentStateVersion: 0,
               pendingCount: 0,
               pendingVersion: 0,
@@ -97,6 +113,44 @@ describe('happier session send (integration)', () => {
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
+
+    mockIo.mockReset();
+    mockIo.mockImplementation(() => {
+      const handlers = new Map<string, Array<(...args: any[]) => void>>();
+      const on = vi.fn((event: string, cb: (...args: any[]) => void) => {
+        const list = handlers.get(event) ?? [];
+        list.push(cb);
+        handlers.set(event, list);
+      });
+      const off = vi.fn((event: string, cb: (...args: any[]) => void) => {
+        const list = handlers.get(event) ?? [];
+        handlers.set(event, list.filter((v) => v !== cb));
+      });
+      const connect = vi.fn(() => {
+        setTimeout(() => {
+          const list = handlers.get('update') ?? [];
+          for (const cb of list) {
+            cb({
+              id: 'u1',
+              seq: 2,
+              createdAt: Date.now(),
+              body: {
+                t: 'update-session',
+                id: sessionId,
+                agentState: { value: idleAgentStateCiphertext, version: 1 },
+              },
+            });
+          }
+        }, 10);
+      });
+      return {
+        on,
+        off,
+        connect,
+        disconnect: vi.fn(),
+        close: vi.fn(),
+      };
+    });
   });
 
   afterEach(async () => {
@@ -146,5 +200,37 @@ describe('happier session send (integration)', () => {
       logSpy.mockRestore();
     }
   });
-});
 
+  it('supports --wait and returns waited=true in JSON mode', async () => {
+    const { handleSessionCommand } = await import('./index');
+
+    const stdout: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => stdout.push(args.join(' ')));
+
+    const prevExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      const machineKeySeed = new Uint8Array(32).fill(8);
+      await handleSessionCommand(['send', 'sess_integration_send_123', 'Hello from controller', '--wait', '--timeout', '1', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+            machineKey: machineKeySeed,
+          },
+        }),
+      });
+
+      const parsed = JSON.parse(stdout.join('\n').trim());
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_send');
+      expect(parsed.data?.sessionId).toBe('sess_integration_send_123');
+      expect(parsed.data?.waited).toBe(true);
+      expect(process.exitCode).toBe(0);
+    } finally {
+      logSpy.mockRestore();
+      process.exitCode = prevExitCode;
+    }
+  });
+});

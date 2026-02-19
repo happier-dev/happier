@@ -7,6 +7,7 @@ import { fetchSessionById } from '@/sessionControl/sessionsHttp';
 import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
 import { resolveSessionEncryptionContextFromCredentials } from '@/sessionControl/sessionEncryptionContext';
 import { readFlagValue } from '@/sessionControl/argvFlags';
+import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
 
 function splitCsv(value: string | null): string[] {
   if (!value) return [];
@@ -21,9 +22,9 @@ export async function cmdSessionPlanStart(
   deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const sessionId = String(argv[2] ?? '').trim();
-  if (!sessionId) {
-    throw new Error('Usage: happier session plan start <session-id> --backends <id1,id2> --instructions <text> [--json]');
+  const idOrPrefix = String(argv[2] ?? '').trim();
+  if (!idOrPrefix) {
+    throw new Error('Usage: happier session plan start <session-id-or-prefix> --backends <id1,id2> --instructions <text> [--json]');
   }
 
   const backendsRaw = readFlagValue(argv, '--backends') ?? readFlagValue(argv, '--backend');
@@ -57,6 +58,20 @@ export async function cmdSessionPlanStart(
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
     process.exit(1);
   }
+
+  const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
+  if (!resolved.ok) {
+    if (json) {
+      printJsonEnvelope({
+        ok: false,
+        kind: 'session_plan_start',
+        error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
+      });
+      return;
+    }
+    throw new Error(resolved.code);
+  }
+  const sessionId = resolved.sessionId;
 
   const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
   if (!rawSession) {

@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "ok": true,
+  "kind": "session_wait",
+  "data": {
+    "sessionId": "sess_1234567890abcdef",
+    "idle": true,
+    "observedAt": 1700000002000
+  }
+}
+

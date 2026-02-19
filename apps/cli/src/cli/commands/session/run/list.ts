@@ -8,15 +8,16 @@ import { fetchSessionById } from '@/sessionControl/sessionsHttp';
 import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
 import { resolveSessionEncryptionContextFromCredentials } from '@/sessionControl/sessionEncryptionContext';
 import { callSessionRpc } from '@/sessionControl/sessionRpc';
+import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
 
 export async function cmdSessionRunList(
   argv: string[],
   deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const sessionId = String(argv[2] ?? '').trim();
-  if (!sessionId) {
-    throw new Error('Usage: happier session run list <session-id> [--json]');
+  const idOrPrefix = String(argv[2] ?? '').trim();
+  if (!idOrPrefix) {
+    throw new Error('Usage: happier session run list <session-id-or-prefix> [--json]');
   }
 
   const credentials = await deps.readCredentialsFn();
@@ -28,6 +29,20 @@ export async function cmdSessionRunList(
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
     process.exit(1);
   }
+
+  const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
+  if (!resolved.ok) {
+    if (json) {
+      printJsonEnvelope({
+        ok: false,
+        kind: 'session_run_list',
+        error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
+      });
+      return;
+    }
+    throw new Error(resolved.code);
+  }
+  const sessionId = resolved.sessionId;
 
   const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
   if (!rawSession) {
@@ -58,4 +73,3 @@ export async function cmdSessionRunList(
   console.log(chalk.green('✓'), 'execution runs listed');
   console.log(JSON.stringify(result, null, 2));
 }
-

@@ -5,17 +5,19 @@ import { fetchSessionById } from '@/sessionControl/sessionsHttp';
 import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
 import { summarizeSessionRecord } from '@/sessionControl/sessionSummary';
 import { resolveSessionEncryptionContextFromCredentials, decryptSessionPayload } from '@/sessionControl/sessionEncryptionContext';
-import { summarizeAgentState } from '@/sessionControl/sessionSocketAgentState';
+import { summarizeAgentState, readLatestAgentStateSummaryViaSocket } from '@/sessionControl/sessionSocketAgentState';
 import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
+import { hasFlag } from '@/sessionControl/argvFlags';
 
 export async function cmdSessionStatus(
   argv: string[],
   deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
+  const live = hasFlag(argv, '--live');
   const idOrPrefix = String(argv[1] ?? '').trim();
   if (!idOrPrefix) {
-    throw new Error('Usage: happier session status <session-id-or-prefix> [--json]');
+    throw new Error('Usage: happier session status <session-id-or-prefix> [--live] [--json]');
   }
 
   const credentials = await deps.readCredentialsFn();
@@ -55,7 +57,7 @@ export async function cmdSessionStatus(
   const summary = summarizeSessionRecord({ credentials, session: rawSession });
 
   const agentStateCiphertext = typeof (rawSession as any).agentState === 'string' ? String((rawSession as any).agentState).trim() : '';
-  const agentStateSummary = (() => {
+  let agentStateSummary = (() => {
     if (!agentStateCiphertext) return null;
     const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
     try {
@@ -65,6 +67,26 @@ export async function cmdSessionStatus(
       return null;
     }
   })();
+
+  if (live) {
+    const liveWaitRaw = String(process.env.HAPPIER_SESSION_STATUS_LIVE_WAIT_MS ?? '').trim();
+    const liveWaitParsed = liveWaitRaw ? Number.parseInt(liveWaitRaw, 10) : NaN;
+    const liveWaitMs = Number.isFinite(liveWaitParsed) && liveWaitParsed > 0 ? Math.min(30_000, liveWaitParsed) : 3_000;
+    const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
+    try {
+      const liveSummary = await readLatestAgentStateSummaryViaSocket({
+        token: credentials.token,
+        sessionId,
+        ctx,
+        timeoutMs: liveWaitMs,
+      });
+      if (liveSummary) {
+        agentStateSummary = liveSummary;
+      }
+    } catch {
+      // Best-effort only; fall back to snapshot state.
+    }
+  }
 
   if (json) {
     printJsonEnvelope({
@@ -78,4 +100,3 @@ export async function cmdSessionStatus(
   console.log(chalk.green('✓'), 'status fetched');
   console.log(JSON.stringify({ session: summary, agentState: agentStateSummary }, null, 2));
 }
-

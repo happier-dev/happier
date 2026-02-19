@@ -9,6 +9,7 @@ import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
 import { resolveSessionEncryptionContextFromCredentials } from '@/sessionControl/sessionEncryptionContext';
 import { callSessionRpc } from '@/sessionControl/sessionRpc';
 import { hasFlag } from '@/sessionControl/argvFlags';
+import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
 
 export async function cmdSessionRunGet(
   argv: string[],
@@ -16,11 +17,11 @@ export async function cmdSessionRunGet(
 ): Promise<void> {
   const json = wantsJson(argv);
   const includeStructured = hasFlag(argv, '--include-structured') || hasFlag(argv, '--includeStructured');
-  const sessionId = String(argv[2] ?? '').trim();
+  const idOrPrefix = String(argv[2] ?? '').trim();
   const runId = String(argv[3] ?? '').trim();
 
-  if (!sessionId || !runId) {
-    throw new Error('Usage: happier session run get <session-id> <run-id> [--include-structured] [--json]');
+  if (!idOrPrefix || !runId) {
+    throw new Error('Usage: happier session run get <session-id-or-prefix> <run-id> [--include-structured] [--json]');
   }
 
   const credentials = await deps.readCredentialsFn();
@@ -32,6 +33,20 @@ export async function cmdSessionRunGet(
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
     process.exit(1);
   }
+
+  const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
+  if (!resolved.ok) {
+    if (json) {
+      printJsonEnvelope({
+        ok: false,
+        kind: 'session_run_get',
+        error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
+      });
+      return;
+    }
+    throw new Error(resolved.code);
+  }
+  const sessionId = resolved.sessionId;
 
   const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
   if (!rawSession) {
@@ -66,4 +81,3 @@ export async function cmdSessionRunGet(
   console.log(chalk.green('✓'), 'execution run fetched');
   console.log(JSON.stringify(result, null, 2));
 }
-

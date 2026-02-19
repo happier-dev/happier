@@ -12,6 +12,7 @@ import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
 import { resolveSessionEncryptionContextFromCredentials } from '@/sessionControl/sessionEncryptionContext';
 import { callSessionRpc } from '@/sessionControl/sessionRpc';
 import { readFlagValue } from '@/sessionControl/argvFlags';
+import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
 
 function defaultPermissionModeForIntent(intent: ExecutionRunIntent): string {
   if (intent === 'delegate') return 'workspace_write';
@@ -33,9 +34,9 @@ export async function cmdSessionRunStart(
   deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const sessionId = String(argv[2] ?? '').trim();
-  if (!sessionId) {
-    throw new Error('Usage: happier session run start <session-id> --intent <intent> --backend <backendId> [--json]');
+  const idOrPrefix = String(argv[2] ?? '').trim();
+  if (!idOrPrefix) {
+    throw new Error('Usage: happier session run start <session-id-or-prefix> --intent <intent> --backend <backendId> [--json]');
   }
 
   const intent = (readFlagValue(argv, '--intent') ?? '').trim() as ExecutionRunIntent;
@@ -55,6 +56,20 @@ export async function cmdSessionRunStart(
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
     process.exit(1);
   }
+
+  const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
+  if (!resolved.ok) {
+    if (json) {
+      printJsonEnvelope({
+        ok: false,
+        kind: 'session_run_start',
+        error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
+      });
+      return;
+    }
+    throw new Error(resolved.code);
+  }
+  const sessionId = resolved.sessionId;
 
   const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
   if (!rawSession) {
@@ -104,4 +119,3 @@ export async function cmdSessionRunStart(
   console.log(chalk.green('✓'), 'execution run started');
   console.log(JSON.stringify(result, null, 2));
 }
-

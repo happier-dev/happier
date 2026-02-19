@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "ok": true,
+  "kind": "session_send",
+  "data": {
+    "sessionId": "sess_1234567890abcdef",
+    "localId": "local_1",
+    "waited": false
+  }
+}
+

@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "ok": true,
+  "kind": "session_run_action",
+  "data": {
+    "sessionId": "sess_1234567890abcdef",
+    "runId": "run_1",
+    "actionId": "review.triage"
+  }
+}
+

@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "ok": true,
+  "kind": "server_current",
+  "data": {
+    "active": {
+      "id": "cloud",
+      "name": "Happier Cloud",
+      "serverUrl": "https://api.happier.dev",
+      "webappUrl": "https://app.happier.dev",
+      "lastUsedAt": 1700000000000
+    }
+  }
+}
+

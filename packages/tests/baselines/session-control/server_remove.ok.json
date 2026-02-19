@@ -1,0 +1,22 @@
+{
+  "v": 1,
+  "ok": true,
+  "kind": "server_remove",
+  "data": {
+    "removed": {
+      "id": "local",
+      "name": "Local",
+      "serverUrl": "http://127.0.0.1:3000",
+      "webappUrl": "http://127.0.0.1:3000",
+      "lastUsedAt": 1700000000001
+    },
+    "active": {
+      "id": "cloud",
+      "name": "Happier Cloud",
+      "serverUrl": "https://api.happier.dev",
+      "webappUrl": "https://app.happier.dev",
+      "lastUsedAt": 1700000000000
+    }
+  }
+}
+

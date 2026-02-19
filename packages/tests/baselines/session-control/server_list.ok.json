@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "ok": true,
+  "kind": "server_list",
+  "data": {
+    "activeServerId": "cloud",
+    "profiles": [
+      {
+        "id": "cloud",
+        "name": "Happier Cloud",
+        "serverUrl": "https://api.happier.dev",
+        "webappUrl": "https://app.happier.dev",
+        "lastUsedAt": 1700000000000
+      }
+    ]
+  }
+}
+

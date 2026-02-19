@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "ok": true,
+  "kind": "server_test",
+  "data": {
+    "ok": true,
+    "url": "https://api.happier.dev/v1/version",
+    "version": "0.0.0"
+  }
+}
+

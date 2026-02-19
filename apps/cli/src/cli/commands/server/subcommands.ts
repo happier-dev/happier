@@ -21,6 +21,7 @@ import {
   promptInput,
   runCliAction,
 } from './commandUtilities';
+import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
 
 export async function runServerSubcommand(subcommand: string, args: string[]): Promise<boolean> {
   switch (subcommand) {
@@ -48,14 +49,6 @@ export async function runServerSubcommand(subcommand: string, args: string[]): P
     default:
       return false;
   }
-}
-
-function wantsJson(args: readonly string[]): boolean {
-  return args.includes('--json');
-}
-
-function printJsonEnvelope(payload: Readonly<{ kind: string } & ({ ok: true; data: unknown } | { ok: false; error: unknown })>): void {
-  console.log(JSON.stringify({ v: 1, ...payload }));
 }
 
 type ServerProfileSummary = Readonly<{
@@ -122,7 +115,8 @@ async function cmdCurrent(args: string[]): Promise<void> {
 }
 
 async function cmdAdd(args: string[]): Promise<void> {
-  const interactive = isInteractiveTerminal();
+  const json = wantsJson(args);
+  const interactive = isInteractiveTerminal() && !json;
   let name = argvValue(args, '--name');
   let serverUrlRaw = argvValue(args, '--server-url');
   let webappUrlRaw = argvValue(args, '--webapp-url');
@@ -131,6 +125,12 @@ async function cmdAdd(args: string[]): Promise<void> {
   let shouldUse = hasUse;
   let startDaemon = args.includes('--start-daemon');
   let installService = args.includes('--install-service');
+
+  if (json && (startDaemon || installService)) {
+    const err: any = new Error('Unsupported in --json mode: --start-daemon/--install-service');
+    err.code = 'unsupported';
+    throw err;
+  }
 
   if (hasUse && hasNoUse) {
     throw new Error('Cannot combine --use and --no-use');
@@ -151,11 +151,6 @@ async function cmdAdd(args: string[]): Promise<void> {
       serverUrlRaw = (await promptInput('Server URL (https://...): ')).trim();
     }
     const serverUrlForDefaults = normalizeUrlOrThrow(serverUrlRaw, '--server-url');
-    if (!webappUrlRaw) {
-      const defaultWebappUrl = defaultWebappUrlFromServerUrl(serverUrlForDefaults);
-      const answer = await promptInput(`Web app URL [${defaultWebappUrl}]: `);
-      webappUrlRaw = answer.trim() || defaultWebappUrl;
-    }
     if (!name) {
       const defaultName = defaultNameFromUrl(serverUrlForDefaults);
       const answer = await promptInput(`Server profile name [${defaultName}]: `);
@@ -167,14 +162,6 @@ async function cmdAdd(args: string[]): Promise<void> {
     } else if (hasNoUse) {
       shouldUse = false;
     }
-    if (!startDaemon && !installService) {
-      const answer = await promptInput('Start daemon now for this server? [y/N]: ');
-      startDaemon = parseYesNoWithDefault(answer, false);
-      if (startDaemon) {
-        const serviceAnswer = await promptInput('Install daemon as background service too? [y/N]: ');
-        installService = parseYesNoWithDefault(serviceAnswer, false);
-      }
-    }
   }
 
   if (!name) throw new Error('Missing --name');
@@ -184,6 +171,17 @@ async function cmdAdd(args: string[]): Promise<void> {
     : defaultWebappUrlFromServerUrl(serverUrl);
 
   const created = await addServerProfile({ name, serverUrl, webappUrl, use: shouldUse });
+  const active = shouldUse ? created : await getActiveServerProfile();
+
+  if (json) {
+    printJsonEnvelope({
+      ok: true,
+      kind: 'server_add',
+      data: { created: summarizeProfile(created), active: summarizeProfile(active), used: shouldUse },
+    });
+    return;
+  }
+
   if (shouldUse) reloadConfiguration();
   console.log(chalk.green(`✓ Saved server profile: ${created.name} (${created.id})`));
   const prefix = `happier --server ${created.id}`;
@@ -207,28 +205,55 @@ async function cmdAdd(args: string[]): Promise<void> {
 }
 
 async function cmdUse(args: string[]): Promise<void> {
+  const json = wantsJson(args);
   const identifier = String(args[0] ?? '').trim();
   if (!identifier) throw new Error('Missing server id/name');
   const active = await useServerProfile(identifier);
   reloadConfiguration();
+  if (json) {
+    printJsonEnvelope({ ok: true, kind: 'server_use', data: { active: summarizeProfile(active) } });
+    return;
+  }
   console.log(chalk.green(`✓ Active server: ${active.name} (${active.id})`));
   console.log(chalk.gray(`  ${active.serverUrl}`));
 }
 
 async function cmdRemove(args: string[]): Promise<void> {
+  const json = wantsJson(args);
   const identifier = String(args[0] ?? '').trim();
   if (!identifier) throw new Error('Missing server id/name');
   const force = args.includes('--force');
   const out = await removeServerProfile(identifier, { force });
   reloadConfiguration();
+  if (json) {
+    printJsonEnvelope({
+      ok: true,
+      kind: 'server_remove',
+      data: { removed: summarizeProfile(out.removed), active: summarizeProfile(out.active) },
+    });
+    return;
+  }
   console.log(chalk.green(`✓ Removed server profile: ${out.removed.name} (${out.removed.id})`));
   console.log(chalk.gray(`  Active server: ${out.active.name} (${out.active.id})`));
 }
 
 async function cmdTest(args: string[]): Promise<void> {
-  const identifier = String(args[0] ?? '').trim();
+  const json = wantsJson(args);
+  const nonFlagArgs = args.filter((a) => !String(a).startsWith('-'));
+  const identifier = String(nonFlagArgs[0] ?? '').trim();
   const profile = identifier ? await getServerProfile(identifier) : await getActiveServerProfile();
   const result = await probeServerVersion(profile.serverUrl);
+  if (json) {
+    printJsonEnvelope(
+      {
+        ok: true,
+        kind: 'server_test',
+        data: result,
+      },
+      { exitCode: result.ok ? 0 : 1 },
+    );
+    return;
+  }
   if (!result.ok) {
     console.error(chalk.red(`✗ Server test failed: ${profile.serverUrl}`));
     console.error(chalk.gray(`  url: ${result.url}`));
@@ -242,6 +267,7 @@ async function cmdTest(args: string[]): Promise<void> {
 }
 
 async function cmdSet(args: string[]): Promise<void> {
+  const json = wantsJson(args);
   const serverUrlRaw = argvValue(args, '--server-url');
   const webappUrlRaw = argvValue(args, '--webapp-url');
   const serverUrl = normalizeUrlOrThrow(serverUrlRaw, '--server-url');
@@ -250,6 +276,10 @@ async function cmdSet(args: string[]): Promise<void> {
     : configuration.webappUrl;
   const created = await addServerProfile({ name: 'custom', serverUrl, webappUrl, use: true });
   reloadConfiguration();
+  if (json) {
+    printJsonEnvelope({ ok: true, kind: 'server_set', data: { active: summarizeProfile(created) } });
+    return;
+  }
   console.log(chalk.green(`✓ Active server: ${created.name} (${created.id})`));
   console.log(chalk.gray(`  ${created.serverUrl}`));
 }

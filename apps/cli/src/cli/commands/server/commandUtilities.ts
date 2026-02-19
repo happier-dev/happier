@@ -43,6 +43,10 @@ export function defaultNameFromUrl(serverUrl: string): string {
 
 export function defaultWebappUrlFromServerUrl(serverUrl: string): string {
   try {
+    const normalized = new URL(serverUrl).toString().replace(/\/+$/, '');
+    if (normalized === 'https://api.happier.dev') {
+      return 'https://app.happier.dev';
+    }
     return new URL(serverUrl).origin.replace(/\/+$/, '');
   } catch {
     return configuration.webappUrl;

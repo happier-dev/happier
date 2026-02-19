@@ -1,6 +1,12 @@
 import { z } from 'zod';
 
-import { ExecutionRunPublicStateSchema } from '../executionRuns.js';
+import {
+  ExecutionRunPublicStateSchema,
+  ExecutionRunTurnStreamReadResponseSchema,
+  ExecutionRunTurnStreamStartResponseSchema,
+} from '../executionRuns.js';
+import { ActionIdSchema, ActionInputHintsSchema, ActionSafetySchema, ActionSurfaceSchema } from '../actions/index.js';
+import { ActionUiPlacementSchema } from '../actions/actionUiPlacements.js';
 import { SubAgentRunResultV2Schema } from '../tools/v2/index.js';
 
 export const SessionControlErrorCodeSchema = z.enum([
@@ -50,6 +56,19 @@ export const SessionControlEnvelopeBaseSchema = z.discriminatedUnion('ok', [
   SessionControlEnvelopeErrorSchema,
 ]);
 export type SessionControlEnvelopeBase = z.infer<typeof SessionControlEnvelopeBaseSchema>;
+
+export const AuthStatusResultSchema = z.object({
+  authenticated: z.literal(true),
+  encryption: z.object({
+    type: z.enum(['legacy', 'dataKey']),
+  }).passthrough(),
+  machineRegistered: z.boolean(),
+  machineId: z.string().min(1).optional(),
+  host: z.string().min(1),
+  happyHomeDir: z.string().min(1),
+  daemonRunning: z.boolean(),
+}).passthrough();
+export type AuthStatusResult = z.infer<typeof AuthStatusResultSchema>;
 
 export const SessionSummarySchema = z.object({
   id: z.string().min(1),
@@ -199,6 +218,34 @@ export const SessionRunWaitResultSchema = z.object({
 }).passthrough();
 export type SessionRunWaitResult = z.infer<typeof SessionRunWaitResultSchema>;
 
+export const SessionRunStreamStartResultSchema = z
+  .object({
+    sessionId: z.string().min(1),
+    runId: z.string().min(1),
+  })
+  .merge(ExecutionRunTurnStreamStartResponseSchema)
+  .passthrough();
+export type SessionRunStreamStartResult = z.infer<typeof SessionRunStreamStartResultSchema>;
+
+export const SessionRunStreamReadResultSchema = z
+  .object({
+    sessionId: z.string().min(1),
+    runId: z.string().min(1),
+  })
+  .merge(ExecutionRunTurnStreamReadResponseSchema)
+  .passthrough();
+export type SessionRunStreamReadResult = z.infer<typeof SessionRunStreamReadResultSchema>;
+
+export const SessionRunStreamCancelResultSchema = z
+  .object({
+    sessionId: z.string().min(1),
+    runId: z.string().min(1),
+    streamId: z.string().min(1),
+    cancelled: z.literal(true),
+  })
+  .passthrough();
+export type SessionRunStreamCancelResult = z.infer<typeof SessionRunStreamCancelResultSchema>;
+
 export const SessionListEnvelopeSchema = SessionControlEnvelopeSuccessSchema.extend({
   kind: z.literal('session_list'),
   data: SessionListResultSchema,
@@ -267,4 +314,93 @@ export const SessionRunActionEnvelopeSchema = SessionControlEnvelopeSuccessSchem
 export const SessionRunWaitEnvelopeSchema = SessionControlEnvelopeSuccessSchema.extend({
   kind: z.literal('session_run_wait'),
   data: SessionRunWaitResultSchema,
+});
+
+export const SessionRunStreamStartEnvelopeSchema = SessionControlEnvelopeSuccessSchema.extend({
+  kind: z.literal('session_run_stream_start'),
+  data: SessionRunStreamStartResultSchema,
+});
+
+export const SessionRunStreamReadEnvelopeSchema = SessionControlEnvelopeSuccessSchema.extend({
+  kind: z.literal('session_run_stream_read'),
+  data: SessionRunStreamReadResultSchema,
+});
+
+export const SessionRunStreamCancelEnvelopeSchema = SessionControlEnvelopeSuccessSchema.extend({
+  kind: z.literal('session_run_stream_cancel'),
+  data: SessionRunStreamCancelResultSchema,
+});
+
+export const AuthStatusEnvelopeSchema = SessionControlEnvelopeSuccessSchema.extend({
+  kind: z.literal('auth_status'),
+  data: AuthStatusResultSchema,
+});
+
+export const SessionControlActionSpecSummarySchema = z
+  .object({
+    id: ActionIdSchema,
+    title: z.string().min(1),
+    description: z.string().min(1).nullable(),
+    safety: ActionSafetySchema,
+    placements: z.array(ActionUiPlacementSchema),
+    slash: z
+      .object({
+        tokens: z.array(z.string().min(1)),
+      })
+      .passthrough()
+      .nullable(),
+    bindings: z
+      .object({
+        voiceClientToolName: z.string().min(1).optional(),
+        mcpToolName: z.string().min(1).optional(),
+      })
+      .passthrough()
+      .nullable(),
+    examples: z
+      .object({
+        voice: z
+          .object({
+            argsExample: z.string().min(1).optional(),
+          })
+          .passthrough()
+          .nullable()
+          .optional(),
+        mcp: z
+          .object({
+            argsExample: z.string().min(1).optional(),
+          })
+          .passthrough()
+          .nullable()
+          .optional(),
+      })
+      .passthrough()
+      .nullable(),
+    surfaces: ActionSurfaceSchema,
+    inputHints: ActionInputHintsSchema.nullable(),
+  })
+  .passthrough();
+export type SessionControlActionSpecSummary = z.infer<typeof SessionControlActionSpecSummarySchema>;
+
+export const SessionActionsListResultSchema = z
+  .object({
+    actionSpecs: z.array(SessionControlActionSpecSummarySchema),
+  })
+  .passthrough();
+export type SessionActionsListResult = z.infer<typeof SessionActionsListResultSchema>;
+
+export const SessionActionsDescribeResultSchema = z
+  .object({
+    actionSpec: SessionControlActionSpecSummarySchema,
+  })
+  .passthrough();
+export type SessionActionsDescribeResult = z.infer<typeof SessionActionsDescribeResultSchema>;
+
+export const SessionActionsListEnvelopeSchema = SessionControlEnvelopeSuccessSchema.extend({
+  kind: z.literal('session_actions_list'),
+  data: SessionActionsListResultSchema,
+});
+
+export const SessionActionsDescribeEnvelopeSchema = SessionControlEnvelopeSuccessSchema.extend({
+  kind: z.literal('session_actions_describe'),
+  data: SessionActionsDescribeResultSchema,
 });

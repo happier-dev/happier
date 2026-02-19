@@ -4,12 +4,21 @@ import os from 'node:os';
 import { readCredentials, readSettings } from '@/persistence';
 import { configuration } from '@/configuration';
 import { checkIfDaemonRunningAndCleanupStaleState } from '@/daemon/controlClient';
+import { printJsonEnvelope, wantsJson } from '@/sessionControl/jsonOutput';
 
-export async function handleAuthStatus(): Promise<void> {
+export async function handleAuthStatus(argv: string[] = []): Promise<void> {
+  const json = wantsJson(argv);
   const credentials = await readCredentials();
   const settings = await readSettings();
 
-  console.log(chalk.bold('\nAuthentication Status\n'));
+  if (json && !credentials) {
+    printJsonEnvelope({ ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } });
+    return;
+  }
+
+  if (!json) {
+    console.log(chalk.bold('\nAuthentication Status\n'));
+  }
 
   if (!credentials) {
     console.log(chalk.red('✗ Not authenticated'));
@@ -17,13 +26,38 @@ export async function handleAuthStatus(): Promise<void> {
     return;
   }
 
-  console.log(chalk.green('✓ Authenticated'));
-  const tokenPreview = credentials.token.substring(0, 30) + '...';
-  console.log(chalk.gray(`  Token: ${tokenPreview}`));
+  const machineId = settings?.machineId;
+  const machineRegistered = typeof machineId === 'string' && machineId.trim().length > 0;
 
-  if (settings?.machineId) {
+  let daemonRunning = false;
+  try {
+    daemonRunning = await checkIfDaemonRunningAndCleanupStaleState();
+  } catch {
+    daemonRunning = false;
+  }
+
+  if (json) {
+    printJsonEnvelope({
+      ok: true,
+      kind: 'auth_status',
+      data: {
+        authenticated: true,
+        encryption: { type: credentials.encryption.type },
+        machineRegistered,
+        ...(machineRegistered ? { machineId: machineId!.trim() } : {}),
+        host: os.hostname(),
+        happyHomeDir: configuration.happyHomeDir,
+        daemonRunning,
+      },
+    });
+    return;
+  }
+
+  console.log(chalk.green('✓ Authenticated'));
+
+  if (machineRegistered) {
     console.log(chalk.green('✓ Machine registered'));
-    console.log(chalk.gray(`  Machine ID: ${settings.machineId}`));
+    console.log(chalk.gray(`  Machine ID: ${machineId!.trim()}`));
     console.log(chalk.gray(`  Host: ${os.hostname()}`));
   } else {
     console.log(chalk.yellow('⚠️  Machine not registered'));
@@ -32,14 +66,9 @@ export async function handleAuthStatus(): Promise<void> {
 
   console.log(chalk.gray(`\n  Data directory: ${configuration.happyHomeDir}`));
 
-  try {
-    const running = await checkIfDaemonRunningAndCleanupStaleState();
-    if (running) {
-      console.log(chalk.green('✓ Daemon running'));
-    } else {
-      console.log(chalk.gray('✗ Daemon not running'));
-    }
-  } catch {
+  if (daemonRunning) {
+    console.log(chalk.green('✓ Daemon running'));
+  } else {
     console.log(chalk.gray('✗ Daemon not running'));
   }
 }

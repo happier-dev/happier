@@ -7,6 +7,7 @@ import { readIntFlagValue, readFlagValue, hasFlag } from '@/sessionControl/argvF
 import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
 import { fetchSessionById } from '@/sessionControl/sessionsHttp';
 import { resolveSessionEncryptionContextFromCredentials } from '@/sessionControl/sessionEncryptionContext';
+import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
 
 type CompactHistoryRow = Readonly<{
   id: string;
@@ -91,9 +92,9 @@ export async function cmdSessionHistory(
 ): Promise<void> {
   const json = wantsJson(argv);
 
-  const sessionId = String(argv[1] ?? '').trim();
-  if (!sessionId) {
-    throw new Error('Usage: happier session history <session-id> [--limit <n>] [--format <compact|raw>] [--json]');
+  const idOrPrefix = String(argv[1] ?? '').trim();
+  if (!idOrPrefix) {
+    throw new Error('Usage: happier session history <session-id-or-prefix> [--limit <n>] [--format <compact|raw>] [--json]');
   }
 
   const limitRaw = readIntFlagValue(argv, '--limit');
@@ -111,6 +112,20 @@ export async function cmdSessionHistory(
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
     process.exit(1);
   }
+
+  const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
+  if (!resolved.ok) {
+    if (json) {
+      printJsonEnvelope({
+        ok: false,
+        kind: 'session_history',
+        error: { code: resolved.code, ...(resolved.candidates ? { candidates: resolved.candidates } : {}) },
+      });
+      return;
+    }
+    throw new Error(resolved.code);
+  }
+  const sessionId = resolved.sessionId;
 
   const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
   if (!rawSession) {
@@ -196,4 +211,3 @@ export async function cmdSessionHistory(
   console.log(chalk.green('✓'), `history fetched (${messages.length} messages)`);
   console.log(JSON.stringify({ sessionId, messages }, null, 2));
 }
-

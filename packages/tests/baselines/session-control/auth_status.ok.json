@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "ok": true,
+  "kind": "auth_status",
+  "data": {
+    "authenticated": true,
+    "encryption": { "type": "dataKey" },
+    "machineRegistered": true,
+    "machineId": "mid_123",
+    "host": "example-host",
+    "happyHomeDir": "/home/example/.happier",
+    "daemonRunning": false
+  }
+}
+

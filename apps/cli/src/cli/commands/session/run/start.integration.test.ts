@@ -47,6 +47,35 @@ describe('happier session run start (integration)', () => {
 
     server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      if (req.method === 'GET' && url.pathname === `/v2/sessions`) {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(
+          JSON.stringify({
+            sessions: [
+              {
+                id: sessionId,
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 2,
+                active: false,
+                activeAt: 0,
+                metadata: metadataCiphertext,
+                metadataVersion: 0,
+                agentState: null,
+                agentStateVersion: 0,
+                pendingCount: 0,
+                pendingVersion: 0,
+                dataEncryptionKey: dataEncryptionKeyBase64,
+                share: null,
+              },
+            ],
+            nextCursor: null,
+            hasNext: false,
+          }),
+        );
+        return;
+      }
       if (req.method === 'GET' && url.pathname === `/v2/sessions/${sessionId}`) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
@@ -162,6 +191,37 @@ describe('happier session run start (integration)', () => {
       expect(parsed.data?.sessionId).toBe('sess_integration_run_start_123');
       expect(parsed.data?.runId).toBe('run_1');
       expect(parsed.data?.callId).toBe('call_1');
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('accepts <session-id-or-prefix>', async () => {
+    const { handleSessionCommand } = await import('../index');
+
+    const stdout: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => stdout.push(args.join(' ')));
+
+    try {
+      const machineKeySeed = new Uint8Array(32).fill(8);
+      await handleSessionCommand(
+        ['run', 'start', 'sess_inte', '--intent', 'review', '--backend', 'claude', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: {
+              type: 'dataKey',
+              publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+              machineKey: machineKeySeed,
+            },
+          }),
+        },
+      );
+
+      const parsed = JSON.parse(stdout.join('\n').trim());
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_run_start');
+      expect(parsed.data?.sessionId).toBe('sess_integration_run_start_123');
     } finally {
       logSpy.mockRestore();
     }

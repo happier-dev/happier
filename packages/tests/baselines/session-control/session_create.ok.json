@@ -1,0 +1,21 @@
+{
+  "v": 1,
+  "ok": true,
+  "kind": "session_create",
+  "data": {
+    "created": true,
+    "session": {
+      "id": "sess_1234567890abcdef",
+      "createdAt": 1700000000000,
+      "updatedAt": 1700000000000,
+      "active": false,
+      "activeAt": 0,
+      "tag": "demo",
+      "path": "/workspace/demo",
+      "host": "example-host",
+      "share": null,
+      "encryption": { "type": "dataKey" }
+    }
+  }
+}
+

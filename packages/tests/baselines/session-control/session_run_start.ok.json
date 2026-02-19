@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "ok": true,
+  "kind": "session_run_start",
+  "data": {
+    "sessionId": "sess_1234567890abcdef",
+    "runId": "run_1",
+    "callId": "call_1",
+    "intent": "review",
+    "backendId": "claude"
+  }
+}
+

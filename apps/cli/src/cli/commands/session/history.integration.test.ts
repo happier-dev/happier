@@ -61,6 +61,35 @@ describe('happier session history (integration)', () => {
 
     server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      if (req.method === 'GET' && url.pathname === `/v2/sessions`) {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(
+          JSON.stringify({
+            sessions: [
+              {
+                id: sessionId,
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 2,
+                active: false,
+                activeAt: 0,
+                metadata: metadataCiphertext,
+                metadataVersion: 0,
+                agentState: null,
+                agentStateVersion: 0,
+                pendingCount: 0,
+                pendingVersion: 0,
+                dataEncryptionKey: dataEncryptionKeyBase64,
+                share: null,
+              },
+            ],
+            nextCursor: null,
+            hasNext: false,
+          }),
+        );
+        return;
+      }
       if (req.method === 'GET' && url.pathname === `/v2/sessions/${sessionId}`) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
@@ -166,6 +195,37 @@ describe('happier session history (integration)', () => {
       expect(parsedDefault.data?.format).toBe('compact');
       expect(parsedDefault.data?.sessionId).toBe('sess_integration_history_123');
       expect(parsedDefault.data?.messages?.[0]?.structuredKind).toBe('review_findings.v1');
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('accepts <session-id-or-prefix>', async () => {
+    const { handleSessionCommand } = await import('./index');
+
+    const stdout: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
+      stdout.push(args.join(' '));
+    });
+
+    try {
+      await handleSessionCommand(
+        ['history', 'sess_inte', '--limit', '10', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: {
+              type: 'dataKey',
+              publicKey: deriveBoxPublicKeyFromSeed(new Uint8Array(32).fill(8)),
+              machineKey: new Uint8Array(32).fill(8),
+            },
+          }),
+        },
+      );
+      const parsed = JSON.parse(stdout.join('\n').trim());
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_history');
+      expect(parsed.data?.sessionId).toBe('sess_integration_history_123');
     } finally {
       logSpy.mockRestore();
     }

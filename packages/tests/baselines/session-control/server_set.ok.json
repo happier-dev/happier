@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "ok": true,
+  "kind": "server_set",
+  "data": {
+    "active": {
+      "id": "custom",
+      "name": "custom",
+      "serverUrl": "https://example.com",
+      "webappUrl": "https://example.com",
+      "lastUsedAt": 1700000000002
+    }
+  }
+}
+

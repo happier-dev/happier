@@ -1,0 +1,41 @@
+{
+  "v": 1,
+  "ok": true,
+  "kind": "session_actions_describe",
+  "data": {
+    "actionSpec": {
+      "id": "review.start",
+      "title": "Start review",
+      "description": null,
+      "safety": "safe",
+      "placements": [
+        "agent_input_chips",
+        "session_action_menu",
+        "command_palette",
+        "slash_command",
+        "voice_panel"
+      ],
+      "slash": { "tokens": ["/h.review"] },
+      "bindings": { "voiceClientToolName": "startReview", "mcpToolName": "review_start" },
+      "examples": {
+        "voice": {
+          "argsExample": "{\"sessionId\":\"{{sessionId}}\",\"engineIds\":[\"codex\"],\"instructions\":\"Review this.\",\"changeType\":\"committed\",\"base\":{\"kind\":\"none\"}}"
+        }
+      },
+      "surfaces": {
+        "ui_button": true,
+        "ui_slash_command": true,
+        "voice_tool": true,
+        "voice_action_block": true,
+        "mcp": true,
+        "session_control_cli": true
+      },
+      "inputHints": {
+        "title": "Start a code review",
+        "description": "Start one or more parallel review runs against the current worktree.",
+        "fields": []
+      }
+    }
+  }
+}
+

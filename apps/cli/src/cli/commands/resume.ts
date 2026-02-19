@@ -1,59 +1,17 @@
 import chalk from 'chalk';
-import axios from 'axios';
 
 import { configuration } from '@/configuration';
 import { readCredentials, type Credentials } from '@/persistence';
 import { decodeBase64, decrypt, encodeBase64 } from '@/api/encryption';
 import { openSessionDataEncryptionKey } from '@/api/client/openSessionDataEncryptionKey';
-import { resolveLoopbackHttpUrl } from '@/api/client/loopbackUrl';
 import { createSessionAttachFile } from '@/daemon/sessionAttachFile';
 import { AGENTS } from '@/backends/catalog';
 import type { CatalogAgentId } from '@/backends/types';
+import { fetchSessionById, type RawSessionRecord } from '@/sessionControl/sessionsHttp';
 
 import type { CommandContext, CommandHandler } from '@/cli/commandRegistry';
 
-type RawSessionRecord = Readonly<{
-  id?: unknown;
-  metadata?: unknown;
-  metadataVersion?: unknown;
-  agentState?: unknown;
-  agentStateVersion?: unknown;
-  dataEncryptionKey?: unknown;
-}>;
-
 type FetchSessionByIdFn = (params: { token: string; sessionId: string }) => Promise<RawSessionRecord | null>;
-
-function resolveServerHttpBaseUrl(): string {
-  return resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
-}
-
-async function fetchSessionById(params: { token: string; sessionId: string }): Promise<RawSessionRecord | null> {
-  const serverUrl = resolveServerHttpBaseUrl();
-  const response = await axios.get(`${serverUrl}/v2/sessions/${params.sessionId}`, {
-    headers: {
-      Authorization: `Bearer ${params.token}`,
-      'Content-Type': 'application/json',
-    },
-    timeout: 10_000,
-    validateStatus: () => true,
-  });
-
-  if (response.status === 404) {
-    return null;
-  }
-  if (response.status === 401 || response.status === 403) {
-    throw new Error(`Unauthorized (${response.status})`);
-  }
-  if (response.status !== 200) {
-    throw new Error(`Unexpected status from /v2/sessions/${params.sessionId}: ${response.status}`);
-  }
-
-  const session = (response.data as any)?.session;
-  if (!session || typeof session !== 'object') {
-    throw new Error('Unexpected /v2/sessions response shape');
-  }
-  return session as RawSessionRecord;
-}
 
 function resolveCatalogAgentIdFromMetadata(metadata: Record<string, unknown>): CatalogAgentId {
   const rawFlavor = typeof (metadata as any).flavor === 'string' ? String((metadata as any).flavor).trim() : '';
@@ -204,4 +162,3 @@ export async function handleResumeCliCommand(context: CommandContext): Promise<v
     process.exit(1);
   }
 }
-
