@@ -206,6 +206,36 @@ describe('AcpBackend.waitForResponseComplete', () => {
     }
   }, 20_000);
 
+  it('resolves when prompt completes without emitting any session/update events', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-prompt-complete-no-updates-'));
+    const scriptPath = writeFakeAcpAgentScript({ dir, emitMessageChunkAfterPrompt: false });
+    let backendForCleanup: AcpBackend | undefined;
+
+    try {
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: {
+          agentName: 'test',
+          getInitTimeout: () => 5_000,
+          getToolPatterns: () => [] as ToolPattern[],
+          getIdleTimeout: () => 1,
+        } satisfies TransportHandler,
+      });
+      backendForCleanup = backend;
+
+      const started = await backend.startSession();
+      await backend.sendPrompt(started.sessionId, 'hi');
+
+      await expect(backend.waitForResponseComplete(50)).resolves.toBeUndefined();
+    } finally {
+      await backendForCleanup?.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
   it('resolves when idle status is emitted before waitForResponseComplete starts waiting', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-acp-idle-'));
     const scriptPath = writeFakeAcpAgentScript({ dir });

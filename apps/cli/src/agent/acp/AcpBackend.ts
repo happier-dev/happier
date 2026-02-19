@@ -1759,6 +1759,7 @@ export class AcpBackend implements AgentBackend {
   private idleRejecter: ((error: Error) => void) | null = null;
   private waitingForResponse = false;
   private responseCompletionError: Error | null = null;
+  private postPromptCompletionIdleTimeout: NodeJS.Timeout | null = null;
 
   private failPendingResponseWait(error: Error): void {
     // Multiple sources can surface the same underlying failure (stderr parsing, transport errors, process exit).
@@ -1769,6 +1770,10 @@ export class AcpBackend implements AgentBackend {
     }
     this.responseCompletionError = error;
     this.waitingForResponse = false;
+    if (this.postPromptCompletionIdleTimeout) {
+      clearTimeout(this.postPromptCompletionIdleTimeout);
+      this.postPromptCompletionIdleTimeout = null;
+    }
     if (this.idleRejecter) {
       this.idleRejecter(error);
     }
@@ -1860,6 +1865,29 @@ export class AcpBackend implements AgentBackend {
       
       // Don't emit 'idle' here - it will be emitted after all message chunks are received
       // The idle timeout in handleSessionUpdate will emit 'idle' after the last chunk
+      //
+      // However, some ACP agents complete the prompt turn without emitting any session/update
+      // events (no message chunks, no tool calls). In that case, we must still unblock
+      // `waitForResponseComplete()` so callers don't degrade into a generic timeout.
+      //
+      // Guard: only emit when we are still waiting (i.e. no idle was already observed) and
+      // there are no active tool calls left to wait on.
+      if (this.waitingForResponse && this.activeToolCalls.size === 0) {
+        // Don't resolve immediately: give stderr/process-exit handlers a chance to surface errors
+        // before we declare the turn complete (prevents swallowing "exit non-zero" or auth errors).
+        const transportIdleTimeoutMs = this.transport.getIdleTimeout?.() ?? DEFAULT_IDLE_TIMEOUT_MS;
+        const graceMs = Math.max(25, transportIdleTimeoutMs);
+        if (this.postPromptCompletionIdleTimeout) {
+          clearTimeout(this.postPromptCompletionIdleTimeout);
+        }
+        this.postPromptCompletionIdleTimeout = setTimeout(() => {
+          this.postPromptCompletionIdleTimeout = null;
+          if (this.responseCompletionError) return;
+          if (!this.waitingForResponse) return;
+          if (this.activeToolCalls.size > 0) return;
+          this.emitIdleStatus();
+        }, graceMs);
+      }
 
     } catch (error) {
       logger.debug('[AcpBackend] Error sending prompt:', error);
@@ -2092,6 +2120,11 @@ export class AcpBackend implements AgentBackend {
   async cancel(sessionId: SessionId): Promise<void> {
     if (this.waitingForResponse) {
       this.failPendingResponseWait(makeAbortError('Cancelled by user'));
+    }
+
+    if (this.postPromptCompletionIdleTimeout) {
+      clearTimeout(this.postPromptCompletionIdleTimeout);
+      this.postPromptCompletionIdleTimeout = null;
     }
 
     if (this.idleTimeout) {
