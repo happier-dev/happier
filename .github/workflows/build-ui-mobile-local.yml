@@ -81,6 +81,8 @@ on:
     secrets:
       EXPO_TOKEN:
         required: false
+      APPLE_API_PRIVATE_KEY:
+        required: false
 
 permissions:
   contents: read
@@ -116,6 +118,20 @@ jobs:
           if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
             echo "EXPO_TOKEN is required for BUILD — UI Mobile (local runner) workflow_dispatch runs." >&2
             echo "Set the repository secret EXPO_TOKEN, or run via workflow_call from a trusted workflow that provides it." >&2
+            exit 1
+          fi
+
+  validate_apple_api_private_key:
+    name: Validate APPLE_API_PRIVATE_KEY (iOS submit)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'build_and_submit' && (inputs.platform == 'all' || inputs.platform == 'ios') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail when APPLE_API_PRIVATE_KEY is missing
+        run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.APPLE_API_PRIVATE_KEY }}" ]; then
+            echo "APPLE_API_PRIVATE_KEY is required for iOS submit in non-interactive mode." >&2
+            echo "Set the repository secret APPLE_API_PRIVATE_KEY, or run via workflow_call from a trusted workflow that provides it." >&2
             exit 1
           fi
 
@@ -389,6 +405,7 @@ jobs:
       EAS_CLI_VERSION: 18.0.1
       APP_ENV: ${{ inputs.environment }}
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
       EAS_PLATFORM: ios
     steps:
       - name: Checkout

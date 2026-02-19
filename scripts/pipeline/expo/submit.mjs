@@ -1,8 +1,11 @@
 // @ts-check
 
 import path from 'node:path';
+import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
+
+import { ensureAscApiKeyFile } from './ensure-asc-api-key-file.mjs';
 
 function fail(message) {
   console.error(message);
@@ -36,6 +39,70 @@ function run(opts, cmd, args, extra) {
   } catch (err) {
     if (extra?.allowFailure) return { ok: false, output: '' };
     throw err;
+  }
+}
+
+/**
+ * Ensures EAS submit can run non-interactively for iOS by creating the ASC API key file referenced by `apps/ui/eas.json`.
+ *
+ * @param {{ repoRoot: string; uiDir: string; submitProfile: string; dryRun: boolean }} opts
+ */
+function ensureIosSubmitAscApiKeyFile(opts) {
+  const easPath = path.join(opts.uiDir, 'eas.json');
+  if (!fs.existsSync(easPath)) {
+    fail(`Missing apps/ui/eas.json at: ${easPath}`);
+  }
+
+  /** @type {any} */
+  const easJson = JSON.parse(fs.readFileSync(easPath, 'utf8'));
+  const iosSubmit = easJson?.submit?.[opts.submitProfile]?.ios ?? null;
+  const ascApiKeyPath = String(iosSubmit?.ascApiKeyPath ?? '').trim();
+  const ascApiKeyId = String(iosSubmit?.ascApiKeyId ?? '').trim();
+
+  if (!ascApiKeyPath || !ascApiKeyId) {
+    fail(
+      [
+        `apps/ui/eas.json is missing submit.${opts.submitProfile}.ios.ascApiKeyPath / ascApiKeyId.`,
+        'EAS cannot set up App Store Connect API keys in --non-interactive mode.',
+        'Fix: add ascApiKeyId, ascApiKeyIssuerId, and ascApiKeyPath in apps/ui/eas.json, and provide APPLE_API_PRIVATE_KEY to the pipeline.',
+      ].join('\n'),
+    );
+  }
+
+  const expectedRel = `./.eas/keys/AuthKey_${ascApiKeyId}.p8`;
+  if (ascApiKeyPath !== expectedRel) {
+    fail(
+      [
+        `Unsupported submit.${opts.submitProfile}.ios.ascApiKeyPath in apps/ui/eas.json (got: ${JSON.stringify(ascApiKeyPath)}).`,
+        `Expected: ${JSON.stringify(expectedRel)}`,
+      ].join('\n'),
+    );
+  }
+
+  const privateKey = String(process.env.APPLE_API_PRIVATE_KEY ?? '').trim();
+  if (!privateKey) {
+    fail(
+      [
+        'APPLE_API_PRIVATE_KEY is required for non-interactive iOS submit.',
+        `It must contain the App Store Connect API key .p8 contents (PEM or base64-encoded PEM).`,
+        '',
+        `Expected to write: ${expectedRel}`,
+      ].join('\n'),
+    );
+  }
+
+  const outPath = ensureAscApiKeyFile({
+    uiDir: opts.uiDir,
+    keyId: ascApiKeyId,
+    privateKey,
+    dryRun: opts.dryRun,
+  });
+
+  const printable = path.relative(opts.repoRoot, outPath) || outPath;
+  if (opts.dryRun) {
+    console.log(`[dry-run] ensure ASC API key file at: ${printable}`);
+  } else {
+    console.log(`[pipeline] ensured ASC API key file at: ${printable}`);
   }
 }
 
@@ -85,9 +152,14 @@ function main() {
   const platforms = platformRaw === 'all' ? ['ios', 'android'] : [platformRaw];
   console.log(`[pipeline] expo submit: environment=${environment} platform=${platformRaw}`);
 
+  const uiDir = path.join(repoRoot, 'apps', 'ui');
   const submitPathAbs = submitPathRaw ? path.resolve(repoRoot, submitPathRaw) : '';
   if (submitPathAbs && !dryRun) {
     // Avoid importing fs for this script; let EAS fail with a clear message if the path is invalid.
+  }
+
+  if (platforms.includes('ios')) {
+    ensureIosSubmitAscApiKeyFile({ repoRoot, uiDir, submitProfile, dryRun });
   }
 
   let hadFailure = false;
@@ -99,7 +171,7 @@ function main() {
 
     const appEnv = String(process.env.APP_ENV ?? '').trim() || environment;
     const result = run(opts, 'npx', submitArgs, {
-      cwd: path.join(repoRoot, 'apps', 'ui'),
+      cwd: uiDir,
       env: {
         // apps/ui/app.config.js selects bundle ids by APP_ENV; ensure submit uses the same variant
         // as the intended pipeline environment unless the operator overrides it explicitly.
