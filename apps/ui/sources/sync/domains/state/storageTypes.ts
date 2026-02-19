@@ -311,6 +311,7 @@ export interface Machine {
     updatedAt: number;
     active: boolean;
     activeAt: number;  // Changed from lastActiveAt to activeAt for consistency
+    revokedAt?: number | null;
     metadata: MachineMetadata | null;
     metadataVersion: number;
     daemonState: any | null;  // Dynamic daemon state (runtime info)

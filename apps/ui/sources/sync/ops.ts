@@ -3,8 +3,10 @@
  */
 
 export * from './ops/machines';
+export * from './ops/machineAccount';
 export * from './ops/capabilities';
 export * from './ops/sessions';
+export * from './ops/sessionAttachmentsUpload';
 export * from './ops/machineExecutionRuns';
 
 

@@ -15,12 +15,14 @@ import {
     machineStopSession,
     machineUpdateMetadata,
     machineExecutionRunsList,
+    machineRevokeFromAccount,
 } from '@/sync/ops';
 import { sessionExecutionRunStop } from '@/sync/ops/sessionExecutionRuns';
 import { Modal } from '@/modal';
 import { formatPathRelativeToHome, getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { sync } from '@/sync/sync';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 import { t } from '@/text';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
@@ -126,6 +128,7 @@ export default function MachineDetailScreen() {
     const [isStoppingDaemon, setIsStoppingDaemon] = useState(false);
     const [isRenamingMachine, setIsRenamingMachine] = useState(false);
     const [isUpdatingWindowsConsoleMode, setIsUpdatingWindowsConsoleMode] = useState(false);
+    const [isRevokingMachine, setIsRevokingMachine] = useState(false);
     const [customPath, setCustomPath] = useState('');
     const [isSpawning, setIsSpawning] = useState(false);
     const inputRef = useRef<MultiTextInputHandle>(null);
@@ -159,7 +162,7 @@ export default function MachineDetailScreen() {
 
         let cancelled = false;
         setIsServerSwitching(true);
-        void (async () => {
+        fireAndForget((async () => {
             try {
                 await setActiveServerAndSwitch({ serverId: requestedServerId, scope: 'device' });
                 await sync.refreshMachinesThrottled({ staleMs: 0, force: true });
@@ -168,7 +171,7 @@ export default function MachineDetailScreen() {
                     setIsServerSwitching(false);
                 }
             }
-        })();
+        })(), { tag: 'MachineDetailScreen.switchServer' });
 
         return () => {
             cancelled = true;
@@ -246,6 +249,33 @@ export default function MachineDetailScreen() {
         }
         updateTmuxOverride({ useTmux: next });
     }, [tmuxAvailable, updateTmuxOverride]);
+
+    const handleRevokeMachine = useCallback(() => {
+        if (!machineId || isRevokingMachine) return;
+        if (machine?.revokedAt) return;
+
+        fireAndForget((async () => {
+            const confirmed = await Modal.confirm(
+                t('machine.actions.removeMachine'),
+                t('machine.actions.removeMachineConfirmBody'),
+                { confirmText: t('common.remove'), destructive: true },
+            );
+            if (!confirmed) return;
+
+            setIsRevokingMachine(true);
+            try {
+                const result = await machineRevokeFromAccount(machineId);
+                if (!result.ok) {
+                    await Modal.alert(t('common.error'), t('errors.operationFailed'));
+                    return;
+                }
+                await sync.refreshMachinesThrottled({ staleMs: 0, force: true });
+                router.back();
+            } finally {
+                setIsRevokingMachine(false);
+            }
+        })(), { tag: 'MachineDetailScreen.revokeMachine' });
+    }, [isRevokingMachine, machine?.revokedAt, machineId, router]);
 
     const machineSessions = useMemo(() => {
         if (!sessions || !machineId) return [];
@@ -349,7 +379,7 @@ export default function MachineDetailScreen() {
 
         let cancelled = false;
         setExecutionRunsState((prev) => ({ status: 'loading', runs: prev.runs }));
-        void (async () => {
+        fireAndForget((async () => {
             const res = await machineExecutionRunsList(machineId, { serverId: activeServerId });
             if (cancelled) return;
             if (res.ok) {
@@ -357,7 +387,7 @@ export default function MachineDetailScreen() {
             } else {
                 setExecutionRunsState((prev) => ({ status: 'error', runs: prev.runs, error: res.error }));
             }
-        })();
+        })(), { tag: 'MachineDetailScreen.fetchExecutionRuns' });
 
         return () => {
             cancelled = true;
@@ -1201,6 +1231,19 @@ export default function MachineDetailScreen() {
                             title={t('machine.metadataVersion')}
                             subtitle={String(machine.metadataVersion)}
                         />
+                </ItemGroup>
+
+                <ItemGroup title={t('common.actions')}>
+                    <Item
+                        title={t('machine.actions.removeMachine')}
+                        subtitle={machine.revokedAt ? t('machine.actions.removeMachineAlreadyRemoved') : t('machine.actions.removeMachineSubtitle')}
+                        subtitleLines={0}
+                        destructive
+                        showChevron={false}
+                        disabled={isRevokingMachine || Boolean(machine.revokedAt)}
+                        loading={isRevokingMachine}
+                        onPress={handleRevokeMachine}
+                    />
                 </ItemGroup>
             </ItemList>
         </>

@@ -108,14 +108,27 @@ describe('MachineDetailScreen (serverId param switching)', () => {
         switchSpy.mockClear();
         refreshMachinesThrottledSpy.mockClear();
 
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const unhandledSpy = vi.fn();
+        process.on('unhandledRejection', unhandledSpy);
+
         const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
 
-        await act(async () => {
-            renderer.create(React.createElement(MachineDetailScreen));
+        refreshMachinesThrottledSpy.mockRejectedValueOnce(new Error('network down'));
+
+        try {
+            await act(async () => {
+                renderer.create(React.createElement(MachineDetailScreen));
+                await Promise.resolve();
+            });
             await Promise.resolve();
-        });
+        } finally {
+            process.removeListener('unhandledRejection', unhandledSpy);
+            consoleError.mockRestore();
+        }
 
         expect(switchSpy).toHaveBeenCalledWith({ serverId: 'server-b', scope: 'device' });
         expect(refreshMachinesThrottledSpy).toHaveBeenCalled();
+        expect(unhandledSpy).not.toHaveBeenCalled();
     });
 });
