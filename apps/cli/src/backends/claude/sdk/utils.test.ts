@@ -168,14 +168,12 @@ describe('Claude SDK utils - getDefaultClaudeCodePathForAgentSdk', () => {
         expect(() => getDefaultClaudeCodePathForAgentSdk()).toThrow(/unsupported/i);
     });
 
-    it('skips shell wrapper scripts and prefers the versioned native binary when available', () => {
+    it('accepts shell wrapper scripts on PATH even when a versioned native binary is available', () => {
         if (process.platform === 'win32') {
             return;
         }
 
-        const localBin = join(homeDir, '.local', 'bin');
-        mkdirSync(localBin, { recursive: true });
-        makeUnixExecutable({ dir: localBin, name: 'claude', stdout: 'echo \"wrapper\"' });
+        const wrapperPath = makeUnixExecutable({ dir: binDir, name: 'claude', stdout: 'echo \"wrapper\"' });
 
         const versionsDir = join(homeDir, '.local', 'share', 'claude', 'versions', '2.0.0');
         mkdirSync(versionsDir, { recursive: true });
@@ -183,7 +181,7 @@ describe('Claude SDK utils - getDefaultClaudeCodePathForAgentSdk', () => {
         writeFileSync(nativeClaudePath, Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00]));
         chmodSync(nativeClaudePath, 0o755);
 
-        expect(getDefaultClaudeCodePathForAgentSdk()).toBe(nativeClaudePath);
+        expect(getDefaultClaudeCodePathForAgentSdk()).toBe(wrapperPath);
     });
 
     it('prefers a PATH entrypoint when both PATH and a versioned install are present', () => {

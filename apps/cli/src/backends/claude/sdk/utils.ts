@@ -4,7 +4,7 @@
  */
 
 import { join } from 'node:path'
-import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readdirSync, readSync, realpathSync, statSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { logger } from '@/ui/logger'
@@ -302,31 +302,6 @@ function isProbablyNativeBinary(filePath: string): boolean {
     }
 }
 
-function readShebang(filePath: string): string | null {
-    try {
-        const head = readFileSync(filePath, { encoding: 'utf8' }).slice(0, 128);
-        if (!head.startsWith('#!')) return null;
-        const end = head.indexOf('\n');
-        const line = (end === -1 ? head : head.slice(0, end)).trim();
-        return line;
-    } catch {
-        return null;
-    }
-}
-
-function isNodeOrBunShebang(shebang: string | null): boolean {
-    if (!shebang) return false;
-    const lowered = shebang.toLowerCase();
-    return lowered.includes('node') || lowered.includes('bun') || lowered.includes('deno');
-}
-
-function isShellShebang(shebang: string | null): boolean {
-    if (!shebang) return false;
-    const lowered = shebang.toLowerCase();
-    if (isNodeOrBunShebang(shebang)) return false;
-    return lowered.includes('sh') || lowered.includes('bash') || lowered.includes('zsh') || lowered.includes('fish');
-}
-
 function isAgentSdkCompatibleClaudeEntrypoint(filePath: string): boolean {
     if (!existsSync(filePath)) return false;
     const resolved = (() => {
@@ -342,11 +317,13 @@ function isAgentSdkCompatibleClaudeEntrypoint(filePath: string): boolean {
     const lower = resolved.toLowerCase();
     if (lower.endsWith('.js') || lower.endsWith('.mjs')) return true;
 
-    const shebang = readShebang(resolved);
-    if (isNodeOrBunShebang(shebang)) return true;
-    if (isShellShebang(shebang)) return false;
-
-    return false;
+    if (process.platform === 'win32') return true;
+    try {
+        const stat = statSync(resolved);
+        return (stat.mode & 0o111) !== 0;
+    } catch {
+        return false;
+    }
 }
 
 function findClaudeInPathForAgentSdk(): string | null {
