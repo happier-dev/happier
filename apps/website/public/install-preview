@@ -120,42 +120,54 @@ detect_arch() {
 json_lookup_asset_url() {
   local json="$1"
   local name_regex="$2"
-  # GitHub API JSON is typically pretty-printed (newlines + spaces). Minify and then parse using a
-  # tiny jq-free state machine that pairs `"name":"..."` with the next `"browser_download_url":"..."`.
-  # We intentionally return the *last* match to support rolling tags that may contain multiple
-  # versions: newest assets are appended later in the release JSON.
-  printf '%s' "$json" | tr -d '[:space:]' | awk -v re="$name_regex" '
-    {
-      s = $0
-      assets_key = "\"assets\":["
-      a = index(s, assets_key)
-      if (a > 0) {
-        s = substr(s, a + length(assets_key))
-      }
-      name_key = "\"name\":\""
-      url_key = "\"browser_download_url\":\""
+  # GitHub API JSON is typically pretty-printed (newlines + spaces). Avoid "minifying" into one
+  # giant line (which can overflow awk line-length limits on some platforms) and instead parse
+  # line-by-line within the assets array. We intentionally return the *last* match to support
+  # rolling tags that may contain multiple versions: newest assets are appended later in the JSON.
+  printf '%s' "$json" | awk -v re="$name_regex" '
+    BEGIN {
+      in_assets = 0
+      name = ""
       last = ""
-      while (1) {
-        p = index(s, name_key)
-        if (p == 0) break
-        s = substr(s, p + length(name_key))
-        q = index(s, "\"")
-        if (q == 0) break
-        name = substr(s, 1, q - 1)
-        s = substr(s, q + 1)
+    }
+    {
+      raw = $0
+      if (in_assets == 0) {
+        if (raw ~ /"assets"[[:space:]]*:[[:space:]]*\[/) {
+          in_assets = 1
+        }
+        next
+      }
 
-        u = index(s, url_key)
-        if (u == 0) continue
-        s = substr(s, u + length(url_key))
-        v = index(s, "\"")
-        if (v == 0) break
-        url = substr(s, 1, v - 1)
-        s = substr(s, v + 1)
+      # End of the assets array. The GitHub API pretty-prints `],` on its own line.
+      if (raw ~ /^[[:space:]]*][[:space:]]*,?[[:space:]]*$/) {
+        in_assets = 0
+        next
+      }
 
+      if (raw ~ /"name"[[:space:]]*:[[:space:]]*"/) {
+        v = raw
+        sub(/^.*"name"[[:space:]]*:[[:space:]]*"/, "", v)
+        q = index(v, "\"")
+        if (q > 0) {
+          name = substr(v, 1, q - 1)
+        }
+      }
+
+      if (raw ~ /"browser_download_url"[[:space:]]*:[[:space:]]*"/) {
+        v = raw
+        sub(/^.*"browser_download_url"[[:space:]]*:[[:space:]]*"/, "", v)
+        q = index(v, "\"")
+        url = ""
+        if (q > 0) {
+          url = substr(v, 1, q - 1)
+        }
         if (name ~ re && url != "") {
           last = url
         }
       }
+    }
+    END {
       if (last != "") {
         print last
       }
