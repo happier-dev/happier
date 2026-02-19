@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { resetDynamicModelProbeCacheForTests } from '@/sync/domains/models/dynamicModelProbeCache';
 
 const machineCapabilitiesInvoke = vi.fn();
 
@@ -28,6 +29,7 @@ describe('agent catalog voice tools', () => {
   beforeEach(() => {
     machineCapabilitiesInvoke.mockReset();
     state.settings.backendEnabledById = { gemini: false };
+    resetDynamicModelProbeCacheForTests();
   });
 
   it('filters disabled backends by default (includeDisabled=false)', async () => {
@@ -67,5 +69,26 @@ describe('agent catalog voice tools', () => {
     expect(res.supportsFreeform).toBe(true);
     expect(res.source).toBe('preflight');
   });
-});
 
+  it('caches dynamic model probes per machine/agent so repeated calls do not re-invoke the probe', async () => {
+    machineCapabilitiesInvoke.mockResolvedValue({
+      supported: true,
+      response: {
+        ok: true,
+        result: {
+          availableModels: [
+            { id: 'default', name: 'Default' },
+            { id: 'claude-opus', name: 'Claude Opus' },
+          ],
+          supportsFreeform: false,
+        },
+      },
+    });
+
+    const { listAgentModelsForVoiceTool } = await import('./agentCatalogList');
+    await listAgentModelsForVoiceTool({ agentId: 'claude', machineId: 'm1' });
+    await listAgentModelsForVoiceTool({ agentId: 'claude', machineId: 'm1' });
+
+    expect(machineCapabilitiesInvoke).toHaveBeenCalledTimes(1);
+  });
+});

@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 
 vi.mock('@/voice/kokoro/runtime/synthesizeKokoroWav', () => ({
-  synthesizeKokoroWav: vi.fn(async () => new Uint8Array([1, 2, 3]).buffer),
+  streamKokoroWavSentences: () => ({
+    async *[Symbol.asyncIterator]() {
+      yield { wavBytes: new Uint8Array([1, 2, 3]).buffer, sentenceText: 'hello' };
+    },
+  }),
   prepareKokoroTts: vi.fn(async () => {}),
 }));
 

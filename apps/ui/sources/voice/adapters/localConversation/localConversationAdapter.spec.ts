@@ -10,6 +10,9 @@ const getLocalVoiceState = vi.fn(() => ({
   error: null as Error | null,
 }));
 
+const ensureVoiceCarrierSessionForVoiceHome = vi.fn(async () => 'sys_voice');
+const ensureVoiceCarrierSessionForSessionRoot = vi.fn(async (_args: any) => 'sys_voice_repo');
+
 const state: any = {
   settings: {
     voice: {
@@ -23,6 +26,11 @@ const state: any = {
 
 vi.mock('@/sync/domains/state/storage', () => ({
   storage: { getState: () => state },
+}));
+
+vi.mock('@/voice/agent/voiceCarrierSession', () => ({
+  ensureVoiceCarrierSessionForVoiceHome: () => ensureVoiceCarrierSessionForVoiceHome(),
+  ensureVoiceCarrierSessionForSessionRoot: (args: any) => ensureVoiceCarrierSessionForSessionRoot(args),
 }));
 
 vi.mock('@/voice/local/localVoiceEngine', () => ({
@@ -39,6 +47,22 @@ describe('local conversation voice adapter', () => {
 
     await adapter.toggle({ sessionId: 's1' });
     expect(toggleLocalVoiceTurn).toHaveBeenCalledWith(VOICE_AGENT_GLOBAL_SESSION_ID);
+  });
+
+  it('prepares a session-root carrier when starting from a session in agent mode', async () => {
+    const { createLocalConversationVoiceAdapter } = await import('./localConversationAdapter');
+    const adapter = createLocalConversationVoiceAdapter();
+
+    await adapter.toggle({ sessionId: 's1' });
+    expect(ensureVoiceCarrierSessionForSessionRoot).toHaveBeenCalledWith({ sessionId: 's1' });
+  });
+
+  it('prepares a voice-home carrier when starting from the sidebar in agent mode', async () => {
+    const { createLocalConversationVoiceAdapter } = await import('./localConversationAdapter');
+    const adapter = createLocalConversationVoiceAdapter();
+
+    await adapter.toggle({ sessionId: '' });
+    expect(ensureVoiceCarrierSessionForVoiceHome).toHaveBeenCalled();
   });
 
   it('sends context updates to the local agent buffer', async () => {

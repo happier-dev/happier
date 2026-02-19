@@ -435,6 +435,9 @@ vi.mock('@/sync/domains/state/storage', () => {
 export function registerLocalVoiceEngineHarnessHooks() {
     const originalFetch = globalThis.fetch;
     const originalConsoleError = console.error;
+    const originalCreateObjectURL = (globalThis as any)?.URL?.createObjectURL;
+    const originalRevokeObjectURL = (globalThis as any)?.URL?.revokeObjectURL;
+    const originalAudioCtor = (globalThis as any)?.Audio;
 
     beforeEach(async () => {
         vi.resetModules();
@@ -496,6 +499,38 @@ export function registerLocalVoiceEngineHarnessHooks() {
             requestPermissionsImpl: (...args: any[]) => (speechRecRequestPermissionsAsync as any)(...args),
         });
         globalThis.fetch = vi.fn() as any;
+        // Node's URL implementation does not always provide these (browser-only) APIs.
+        // The web voice runtime uses them for in-memory audio playback.
+        (globalThis as any).URL.createObjectURL = vi.fn(() => 'blob:happier-test');
+        (globalThis as any).URL.revokeObjectURL = vi.fn(() => {});
+        // Provide a minimal `Audio` implementation so web playback fallback code paths
+        // are testable under node/Vitest.
+        (globalThis as any).Audio = class FakeAudio {
+            src: string;
+            onended: (() => void) | null = null;
+            onerror: (() => void) | null = null;
+            constructor(src: string) {
+                this.src = src;
+                createdAudioPlayers.push(this);
+            }
+            play() {
+                return Promise.resolve();
+            }
+            pause() {}
+            __emit(eventName: string, payload?: any) {
+                if (eventName === 'playbackStatusUpdate' && payload?.didJustFinish) {
+                    this.onended?.();
+                    return;
+                }
+                if (eventName === 'ended') {
+                    this.onended?.();
+                    return;
+                }
+                if (eventName === 'error') {
+                    this.onerror?.();
+                }
+            }
+        };
         daemonVoiceAgentSendTurn.mockResolvedValue({ assistantText: 'Daemon reply' });
         daemonVoiceAgentStartTurnStream.mockResolvedValue({ streamId: 'stream-1' });
         daemonVoiceAgentReadTurnStream.mockResolvedValue({
@@ -522,5 +557,23 @@ export function registerLocalVoiceEngineHarnessHooks() {
     afterEach(() => {
         globalThis.fetch = originalFetch;
         console.error = originalConsoleError;
+        const urlAny = (globalThis as any).URL as any;
+        if (typeof originalCreateObjectURL === 'function') {
+            urlAny.createObjectURL = originalCreateObjectURL;
+        } else {
+            Reflect.deleteProperty(urlAny, 'createObjectURL');
+        }
+        if (typeof originalRevokeObjectURL === 'function') {
+            urlAny.revokeObjectURL = originalRevokeObjectURL;
+        } else {
+            Reflect.deleteProperty(urlAny, 'revokeObjectURL');
+        }
+
+        const audioAny = globalThis as any;
+        if (typeof originalAudioCtor === 'function') {
+            audioAny.Audio = originalAudioCtor;
+        } else {
+            Reflect.deleteProperty(audioAny, 'Audio');
+        }
     });
 }

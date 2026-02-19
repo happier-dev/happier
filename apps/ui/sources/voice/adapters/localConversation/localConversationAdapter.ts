@@ -8,6 +8,7 @@ import {
 import { storage } from '@/sync/domains/state/storage';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import type { VoiceAdapterController, VoiceSessionMode, VoiceSessionSnapshot, VoiceSessionStatus } from '@/voice/session/types';
+import { ensureVoiceCarrierSessionForSessionRoot, ensureVoiceCarrierSessionForVoiceHome } from '@/voice/agent/voiceCarrierSession';
 
 function mapLocalStatus(status: any): { status: VoiceSessionStatus; mode: VoiceSessionMode } {
   switch (status) {
@@ -56,7 +57,21 @@ export function createLocalConversationVoiceAdapter(): VoiceAdapterController {
   };
 
   const toggle = async (opts: Readonly<{ sessionId: string }>) => {
-    const resolvedSessionId = resolveConversationSessionId(opts.sessionId);
+    const settings: any = storage.getState().settings;
+    const mode = settings?.voice?.adapters?.local_conversation?.conversationMode ?? 'direct_session';
+    const agentCfg = settings?.voice?.adapters?.local_conversation?.agent ?? {};
+    const startSessionId = String(opts.sessionId ?? '').trim();
+
+    if (mode === 'agent') {
+      const stayInVoiceHome = agentCfg?.stayInVoiceHome === true;
+      if (!stayInVoiceHome && startSessionId) {
+        await ensureVoiceCarrierSessionForSessionRoot({ sessionId: startSessionId }).catch(() => {});
+      } else {
+        await ensureVoiceCarrierSessionForVoiceHome().catch(() => {});
+      }
+    }
+
+    const resolvedSessionId = mode === 'agent' ? VOICE_AGENT_GLOBAL_SESSION_ID : opts.sessionId;
     const snap = getSnapshot();
     if (snap.sessionId && snap.sessionId !== resolvedSessionId && snap.status !== 'disconnected') {
       await stopLocalVoiceSession();

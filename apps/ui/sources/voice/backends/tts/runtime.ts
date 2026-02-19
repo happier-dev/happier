@@ -5,6 +5,7 @@ import { speakKokoroText } from '@/voice/output/KokoroTtsController';
 import { speakOpenAiCompatText } from '@/voice/output/TtsController';
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/VoicePlaybackController';
+import { resolveKokoroOperationTimeoutMs } from '@/voice/kokoro/config/kokoroConfig';
 
 export async function speakWithLocalTtsProvider(ctx: {
   text: string;
@@ -42,7 +43,7 @@ export async function speakWithLocalTtsProvider(ctx: {
       assetSetId,
       voiceId,
       speed,
-      timeoutMs: ctx.networkTimeoutMs,
+      timeoutMs: resolveKokoroOperationTimeoutMs(ctx.networkTimeoutMs),
       registerPlaybackStopper: ctx.registerPlaybackStopper,
     })
       .then(() => true)
@@ -113,4 +114,3 @@ export async function speakWithLocalTtsProvider(ctx: {
     registerPlaybackStopper: ctx.registerPlaybackStopper,
   }).catch(() => {});
 }
-

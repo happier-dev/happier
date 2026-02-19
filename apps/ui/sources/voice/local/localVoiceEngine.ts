@@ -1,6 +1,7 @@
 import { AudioModule, RecordingPresets } from 'expo-audio';
 
 import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/platform/microphonePermissions';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { storage } from '@/sync/domains/state/storage';
 import { createDeviceSttController } from '@/voice/input/DeviceSttController';
 import { createSherpaStreamingSttController } from '@/voice/input/SherpaStreamingSttController';
@@ -230,15 +231,15 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
 
   const current = getLocalVoiceState();
 
-  const prewarmLocalVoiceAgentOnConnect = (params: Readonly<{ settings: any; config: any }>): void => {
-    const { config } = params;
-    if (config?.conversationMode !== 'agent' || config?.agent?.prewarmOnConnect !== true) return;
+	  const prewarmLocalVoiceAgentOnConnect = (params: Readonly<{ settings: any; config: any }>): void => {
+	    const { config } = params;
+	    if (config?.conversationMode !== 'agent' || config?.agent?.prewarmOnConnect !== true) return;
 
-    void (async () => {
-      const networkTimeoutMs = resolveVoiceNetworkTimeoutMs(config?.networkTimeoutMs, 15_000);
-      const welcomeMode = config?.agent?.welcome?.mode === 'on_first_turn' ? 'on_first_turn' : 'immediate';
-      const welcomeEnabled = config?.agent?.welcome?.enabled === true;
-      const canSpeakWelcome = config?.tts?.autoSpeakReplies !== false;
+	    fireAndForget((async () => {
+	      const networkTimeoutMs = resolveVoiceNetworkTimeoutMs(config?.networkTimeoutMs, 15_000);
+	      const welcomeMode = config?.agent?.welcome?.mode === 'on_first_turn' ? 'on_first_turn' : 'immediate';
+	      const welcomeEnabled = config?.agent?.welcome?.enabled === true;
+	      const canSpeakWelcome = config?.tts?.autoSpeakReplies !== false;
 
       if (welcomeEnabled && welcomeMode === 'immediate' && canSpeakWelcome) {
         const assistantText = await voiceAgentSessions.ensureRunningAndMaybeWelcome(sessionId).catch(() => null);
@@ -256,9 +257,9 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
         return;
       }
 
-      await voiceAgentSessions.ensureRunning(sessionId);
-    })().catch(() => {});
-  };
+	      await voiceAgentSessions.ensureRunning(sessionId);
+	    })(), { tag: 'localVoiceEngine.prewarmLocalVoiceAgentOnConnect' });
+	  };
 
   if (current.status === 'speaking') {
     if (current.sessionId !== sessionId) {

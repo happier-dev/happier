@@ -2,6 +2,13 @@ import { AGENT_IDS, getAgentCore, isAgentId, type AgentId } from '@/agents/catal
 import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
+import {
+  readDynamicModelProbeCache,
+  runDynamicModelProbeDedupe,
+  writeDynamicModelProbeCacheError,
+  writeDynamicModelProbeCacheSuccess,
+} from '@/sync/domains/models/dynamicModelProbeCache';
+import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
 
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -52,28 +59,84 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{ agentId: st
   const machineId = normalizeId(params.machineId);
   if (machineId) {
     const serverId = normalizeId(getActiveServerSnapshot()?.serverId) || null;
-    const res = await machineCapabilitiesInvoke(
+    const cacheKey = buildDynamicModelProbeCacheKey({
       machineId,
-      {
-        id: `cli.${agentId}` as any,
-        method: 'probeModels',
-        params: { timeoutMs: 3500 },
-      },
-      { timeoutMs: 3500, ...(serverId ? { serverId } : {}) },
-    );
+      agentType: agentId,
+      serverId,
+      cwd: null,
+    });
 
-    if (res.supported && res.response.ok) {
-      const raw = res.response.result as any;
-      const modelsRaw = raw?.availableModels;
-      const supportsFreeformRaw = raw?.supportsFreeform;
-      if (Array.isArray(modelsRaw) && modelsRaw.length > 0) {
-        const dynamic = modelsRaw
-          .filter((m: any) => m && typeof m.id === 'string' && typeof m.name === 'string')
-          .map((m: any) => ({
-            modelId: String(m.id),
-            label: String(m.name),
-            ...(typeof m.description === 'string' ? { description: m.description } : {}),
-          }));
+    const nowMs = Date.now();
+    const cacheEntry = cacheKey ? readDynamicModelProbeCache(cacheKey) : null;
+    const cached = cacheEntry?.kind === 'success' ? cacheEntry.value : null;
+    if (cached && nowMs >= 0 && nowMs < cacheEntry!.expiresAt) {
+      const dynamic = cached.availableModels.map((m) => ({
+        modelId: String(m.id),
+        label: String(m.name),
+        ...(typeof m.description === 'string' ? { description: m.description } : {}),
+      }));
+
+      const withDefault = [{ modelId: 'default', label: 'default' }, ...dynamic.filter((m) => m.modelId !== 'default')];
+      const seen = new Set<string>();
+      const items = withDefault.filter((m) => {
+        const id = String(m.modelId ?? '').trim();
+        if (!id) return false;
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      });
+
+      return {
+        agentId,
+        machineId,
+        items,
+        supportsFreeform: cached.supportsFreeform === true,
+        source: 'preflight' as const,
+      };
+    }
+
+    if (cacheKey) {
+      const list = await runDynamicModelProbeDedupe(cacheKey, async () => {
+        const res = await machineCapabilitiesInvoke(
+          machineId,
+          {
+            id: `cli.${agentId}` as any,
+            method: 'probeModels',
+            params: { timeoutMs: 15_000 },
+          },
+          { ...(serverId ? { serverId } : {}) },
+        );
+
+        if (!res.supported) return null;
+        if (!res.response.ok) return null;
+
+        const raw = res.response.result as any;
+        const modelsRaw = raw?.availableModels;
+        const supportsFreeformRaw = raw?.supportsFreeform;
+        if (!Array.isArray(modelsRaw) || modelsRaw.length === 0) return null;
+
+        const parsed = {
+          availableModels: modelsRaw
+            .filter((m: any) => m && typeof m.id === 'string' && typeof m.name === 'string')
+            .map((m: any) => ({
+              id: String(m.id),
+              name: String(m.name),
+              ...(typeof m.description === 'string' ? { description: m.description } : {}),
+            })),
+          supportsFreeform: Boolean(supportsFreeformRaw),
+        };
+        if (parsed.availableModels.length === 0) return null;
+        return parsed;
+      });
+
+      const commitNowMs = Date.now();
+      if (list) {
+        writeDynamicModelProbeCacheSuccess(cacheKey, list, commitNowMs);
+        const dynamic = list.availableModels.map((m) => ({
+          modelId: String(m.id),
+          label: String(m.name),
+          ...(typeof m.description === 'string' ? { description: m.description } : {}),
+        }));
 
         const withDefault = [{ modelId: 'default', label: 'default' }, ...dynamic.filter((m) => m.modelId !== 'default')];
         const seen = new Set<string>();
@@ -89,10 +152,38 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{ agentId: st
           agentId,
           machineId,
           items,
-          supportsFreeform: Boolean(supportsFreeformRaw),
+          supportsFreeform: list.supportsFreeform === true,
           source: 'preflight' as const,
         };
       }
+
+      if (cached) {
+        writeDynamicModelProbeCacheSuccess(cacheKey, cached, commitNowMs);
+        const dynamic = cached.availableModels.map((m) => ({
+          modelId: String(m.id),
+          label: String(m.name),
+          ...(typeof m.description === 'string' ? { description: m.description } : {}),
+        }));
+        const withDefault = [{ modelId: 'default', label: 'default' }, ...dynamic.filter((m) => m.modelId !== 'default')];
+        const seen = new Set<string>();
+        const items = withDefault.filter((m) => {
+          const id = String(m.modelId ?? '').trim();
+          if (!id) return false;
+          if (seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        });
+
+        return {
+          agentId,
+          machineId,
+          items,
+          supportsFreeform: cached.supportsFreeform === true,
+          source: 'preflight' as const,
+        };
+      }
+
+      writeDynamicModelProbeCacheError(cacheKey, commitNowMs);
     }
   }
 
