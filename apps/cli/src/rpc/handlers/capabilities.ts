@@ -16,6 +16,7 @@ import type {
 } from '@/capabilities/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { probeAgentModelsBestEffort } from '@/capabilities/probes/agentModelsProbe';
+import { probeAgentModesBestEffort } from '@/capabilities/probes/agentModesProbe';
 import type { AgentId, ProviderCliInstallPlatform } from '@happier-dev/agents';
 import { installProviderCli, resolvePlatformFromNodePlatform } from '@happier-dev/cli-common/providers';
 
@@ -66,6 +67,7 @@ function createGenericCliCapability(agentId: AgentCatalogEntry['id']): Capabilit
             methods: {
                 install: { title: 'Install' },
                 probeModels: { title: 'Probe models' },
+                probeModes: { title: 'Probe modes' },
             },
         },
         detect: async ({ request, context }) => {
@@ -76,15 +78,23 @@ function createGenericCliCapability(agentId: AgentCatalogEntry['id']): Capabilit
             if (method === 'install') {
                 return invokeProviderCliInstall(agentId, params);
             }
-            if (method !== 'probeModels') {
-                return { ok: false, error: { message: `Unsupported method: ${method}`, code: 'unsupported-method' } };
+            if (method === 'probeModels') {
+                const timeoutMsRaw = (params ?? {}).timeoutMs;
+                const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
+                const cwdRaw = (params ?? {}).cwd;
+                const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
+                const result = await probeAgentModelsBestEffort({ agentId, cwd, timeoutMs });
+                return { ok: true, result };
             }
-            const timeoutMsRaw = (params ?? {}).timeoutMs;
-            const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
-            const cwdRaw = (params ?? {}).cwd;
-            const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
-            const result = await probeAgentModelsBestEffort({ agentId, cwd, timeoutMs });
-            return { ok: true, result };
+            if (method === 'probeModes') {
+                const timeoutMsRaw = (params ?? {}).timeoutMs;
+                const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
+                const cwdRaw = (params ?? {}).cwd;
+                const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
+                const result = await probeAgentModesBestEffort({ agentId, cwd, timeoutMs });
+                return { ok: true, result };
+            }
+            return { ok: false, error: { message: `Unsupported method: ${method}`, code: 'unsupported-method' } };
         },
     };
 }
@@ -96,6 +106,7 @@ function augmentCliCapabilityWithProbeModels(cap: Capability, agentId: AgentCata
     const methods = {
         ...existingMethods,
         ...(existingMethods.probeModels ? {} : { probeModels: { title: 'Probe models' } }),
+        ...(existingMethods.probeModes ? {} : { probeModes: { title: 'Probe modes' } }),
         ...(existingMethods.install ? {} : { install: { title: 'Install' } }),
     };
 
@@ -111,6 +122,14 @@ function augmentCliCapabilityWithProbeModels(cap: Capability, agentId: AgentCata
             const cwdRaw = (params ?? {}).cwd;
             const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
             const result = await probeAgentModelsBestEffort({ agentId, cwd, timeoutMs });
+            return { ok: true, result };
+        }
+        if (method === 'probeModes') {
+            const timeoutMsRaw = (params ?? {}).timeoutMs;
+            const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
+            const cwdRaw = (params ?? {}).cwd;
+            const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
+            const result = await probeAgentModesBestEffort({ agentId, cwd, timeoutMs });
             return { ok: true, result };
         }
         if (baseInvoke) return await baseInvoke({ method, params });
