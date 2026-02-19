@@ -17,6 +17,10 @@ export type SessionGroupRowModel = Readonly<{
     showServerBadge: boolean;
     pinned: boolean;
     onTogglePinned?: (() => void) | null;
+    tags?: string[];
+    allKnownTags?: string[];
+    onSetTags?: ((newTags: string[]) => void) | null;
+    tagsEnabled?: boolean;
     selected?: boolean;
     variant?: 'default' | 'no-path';
 }>;
@@ -165,6 +169,10 @@ const ReorderableRow = React.memo<ReorderableRowProps>((props) => {
                     showServerBadge={props.row.showServerBadge}
                     pinned={props.row.pinned}
                     onTogglePinned={props.row.onTogglePinned}
+                    tags={props.row.tags}
+                    allKnownTags={props.row.allKnownTags}
+                    onSetTags={props.row.onSetTags}
+                    tagsEnabled={props.row.tagsEnabled}
                     selected={props.row.selected}
                     variant={props.row.variant}
                     compact={props.compact}
@@ -177,7 +185,11 @@ const ReorderableRow = React.memo<ReorderableRowProps>((props) => {
 
 export const SessionGroupDragList = React.memo<SessionGroupDragListProps>((props) => {
     const styles = stylesheet;
-    const rowHeight = props.compactMinimal ? ROW_HEIGHT_MINIMAL : props.compact ? ROW_HEIGHT_COMPACT : ROW_HEIGHT_DEFAULT;
+    const rowHeight = props.compactMinimal
+        ? ROW_HEIGHT_MINIMAL
+        : props.compact
+            ? ROW_HEIGHT_COMPACT
+            : ROW_HEIGHT_DEFAULT;
     const positions = useSharedValue<Record<string, number>>({});
 
     React.useEffect(() => {

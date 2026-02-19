@@ -4,6 +4,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+vi.mock('react-native-reanimated', () => ({}));
+
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
+}));
+
 vi.mock('react-native-gesture-handler', () => ({
     Swipeable: (props: any) => React.createElement('Swipeable', props),
 }));

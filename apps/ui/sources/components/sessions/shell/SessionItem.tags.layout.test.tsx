@@ -6,26 +6,24 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-native-reanimated', () => ({}));
 
-const navigateSpy = vi.fn();
-
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
-}));
-
 vi.mock('react-native-gesture-handler', () => ({
-    Swipeable: 'Swipeable',
+    Swipeable: (props: any) => React.createElement('Swipeable', props),
 }));
 
 vi.mock('react-native', async () => {
     const stub = await import('@/dev/reactNativeStub');
     return {
         ...stub,
-        Platform: { ...stub.Platform, OS: 'web' },
+        Platform: { ...stub.Platform, OS: 'ios' },
     };
 });
 
 vi.mock('@/components/ui/text/StyledText', () => ({
     Text: 'Text',
+}));
+
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
 }));
 
 vi.mock('@/utils/sessions/sessionUtils', () => ({
@@ -50,7 +48,7 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
 }));
 
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
-    useNavigateToSession: () => navigateSpy,
+    useNavigateToSession: () => vi.fn(),
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -58,12 +56,7 @@ vi.mock('@/utils/platform/responsive', () => ({
 }));
 
 vi.mock('@/hooks/ui/useHappyAction', () => ({
-    useHappyAction: (_fn: unknown) => [false, vi.fn()],
-}));
-
-vi.mock('@/sync/ops', () => ({
-    sessionStopWithServerScope: vi.fn(async () => ({ success: true })),
-    sessionArchiveWithServerScope: vi.fn(async () => ({ success: true })),
+    useHappyAction: (fn: any) => [false, fn],
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
@@ -71,41 +64,41 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useProfile: () => ({ id: 'u1' }),
 }));
 
+vi.mock('@/modal', () => ({
+    Modal: { prompt: vi.fn(), alert: vi.fn() },
+}));
+
 vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
+function createSession(): any {
+    return {
+        id: 'sess_1',
+        seq: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        active: true,
+        activeAt: 1,
+        metadata: null,
+        metadataVersion: 1,
+        agentState: null,
+        agentStateVersion: 1,
+        thinking: false,
+        thinkingAt: 0,
+        presence: 'online',
+    };
+}
 
-describe('SessionItem navigation', () => {
-    it('passes serverId when navigating to a session', async () => {
-        navigateSpy.mockClear();
-
+describe('SessionItem tags (layout)', () => {
+    it('does not remove the fixed row height when tags are visible', async () => {
         const { SessionItem } = await import('./SessionItem');
-
-        const session = {
-            id: 'sess_1',
-            seq: 1,
-            createdAt: 1,
-            updatedAt: 1,
-            active: true,
-            activeAt: 1,
-            metadata: null,
-            metadataVersion: 1,
-            agentState: null,
-            agentStateVersion: 1,
-            thinking: false,
-            thinkingAt: 0,
-            presence: 'online',
-        } as any;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
             tree = renderer.create(
                 <SessionItem
-                    session={session}
+                    session={createSession()}
                     serverId="server_a"
                     serverName="Server A"
                     showServerBadge={true}
@@ -115,44 +108,30 @@ describe('SessionItem navigation', () => {
                     isSingle={true}
                     variant="default"
                     compact={false}
+                    tagsEnabled={true}
+                    tags={['tag-a']}
+                    allKnownTags={['tag-a']}
+                    onSetTags={vi.fn()}
                 />,
             );
         });
 
-        expect(tree).not.toBeNull();
-        const pressable = (tree as any).root.findByType('Pressable');
-        await act(async () => {
-            pressable.props.onPress();
-        });
+        const pressables = (tree as any).root.findAllByType('Pressable');
+        const rowPressable = pressables.find((node: any) => typeof node.props?.onPress === 'function' && typeof node.props?.onPressIn === 'function');
+        expect(rowPressable).toBeTruthy();
 
-        expect(navigateSpy).toHaveBeenCalledTimes(1);
-        expect(navigateSpy).toHaveBeenCalledWith('sess_1', { serverId: 'server_a' });
+        const styleArray = Array.isArray(rowPressable.props.style) ? rowPressable.props.style.filter(Boolean) : [rowPressable.props.style].filter(Boolean);
+        expect(styleArray.some((s: any) => typeof s === 'object' && s?.paddingVertical === 10)).toBe(false);
     });
 
-    it('hides avatars in minimal compact mode', async () => {
+    it('renders tags in very compact mode (compact + minimal)', async () => {
         const { SessionItem } = await import('./SessionItem');
-
-        const session = {
-            id: 'sess_min',
-            seq: 1,
-            createdAt: 1,
-            updatedAt: 1,
-            active: true,
-            activeAt: 1,
-            metadata: null,
-            metadataVersion: 1,
-            agentState: null,
-            agentStateVersion: 1,
-            thinking: false,
-            thinkingAt: 0,
-            presence: 'online',
-        } as any;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
             tree = renderer.create(
                 <SessionItem
-                    session={session}
+                    session={createSession()}
                     serverId="server_a"
                     serverName="Server A"
                     showServerBadge={true}
@@ -163,11 +142,16 @@ describe('SessionItem navigation', () => {
                     variant="default"
                     compact={true}
                     compactMinimal={true}
+                    tagsEnabled={true}
+                    tags={['tag-a']}
+                    allKnownTags={['tag-a']}
+                    onSetTags={vi.fn()}
                 />,
             );
         });
 
-        const avatars = (tree as any).root.findAllByType('Avatar');
-        expect(avatars).toHaveLength(0);
+        const texts = (tree as any).root.findAllByType('Text').map((n: any) => n.props?.children);
+        expect(texts).toContain('tag-a');
     });
 });
+

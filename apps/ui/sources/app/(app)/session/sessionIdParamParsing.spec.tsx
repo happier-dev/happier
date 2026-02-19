@@ -37,6 +37,20 @@ describe('session/[id] param parsing', () => {
     expect(sessionView.props.id).toBe('session-123');
   });
 
+  it('does not pass jumpToSeq when jumpSeq is missing', async () => {
+    vi.resetModules();
+    searchParams = { id: 'session-123' };
+
+    const Screen = (await import('./[id]')).default;
+    let tree: renderer.ReactTestRenderer | null = null;
+    await act(async () => {
+      tree = renderer.create(React.createElement(Screen));
+    });
+
+    const sessionView = tree!.root.findByType('SessionView');
+    expect(sessionView.props.jumpToSeq ?? null).toBeNull();
+  });
+
   it('passes jumpSeq through to SessionView as jumpToSeq', async () => {
     vi.resetModules();
     searchParams = { id: 'session-123', jumpSeq: '42' } as any;

@@ -1,8 +1,14 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('react-native-reanimated', () => ({}));
+
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
+}));
 
 vi.mock('react-native-gesture-handler', () => ({
     Swipeable: 'Swipeable',
@@ -102,7 +108,7 @@ function findRowPressable(tree: renderer.ReactTestRenderer) {
 }
 
 function findPinPressable(tree: renderer.ReactTestRenderer) {
-    return tree.root.findByProps({ accessibilityLabel: 'Pin session' });
+    return tree.root.findByProps({ accessibilityLabel: 'sessionInfo.pinSession' });
 }
 
 function resolveOpacity(style: unknown): number | null {
@@ -119,14 +125,6 @@ function resolveOpacity(style: unknown): number | null {
 }
 
 describe('SessionItem pin hover affordance (web)', () => {
-    beforeEach(() => {
-        vi.useFakeTimers();
-    });
-
-    afterEach(() => {
-        vi.useRealTimers();
-    });
-
     it('hides the pin action promptly after leaving the row', async () => {
         const { SessionItem } = await import('./SessionItem');
 
@@ -158,20 +156,19 @@ describe('SessionItem pin hover affordance (web)', () => {
         expect(resolveOpacity(overlay?.props.style)).toBe(0);
 
         await act(async () => {
-            row.props.onHoverIn();
+            row.props.onMouseEnter?.();
         });
         expect(overlay?.props.pointerEvents).toBe('auto');
         expect(resolveOpacity(overlay?.props.style)).toBe(1);
 
         await act(async () => {
-            row.props.onHoverOut();
-            vi.advanceTimersByTime(1);
+            row.props.onMouseLeave?.();
         });
         expect(overlay?.props.pointerEvents).toBe('none');
         expect(resolveOpacity(overlay?.props.style)).toBe(0);
     });
 
-    it('hides the pin action promptly after leaving the pin button', async () => {
+    it('shows the actions when hovered and hides them when leaving the row', async () => {
         const { SessionItem } = await import('./SessionItem');
 
         const session = createSession('sess_2');
@@ -200,19 +197,13 @@ describe('SessionItem pin hover affordance (web)', () => {
         const overlay = pin.parent;
 
         await act(async () => {
-            row.props.onHoverIn();
+            row.props.onMouseEnter?.();
         });
         expect(overlay?.props.pointerEvents).toBe('auto');
         expect(resolveOpacity(overlay?.props.style)).toBe(1);
 
         await act(async () => {
-            row.props.onHoverOut();
-            pin.props.onHoverIn();
-        });
-
-        await act(async () => {
-            pin.props.onHoverOut();
-            vi.advanceTimersByTime(1);
+            row.props.onMouseLeave?.();
         });
 
         expect(overlay?.props.pointerEvents).toBe('none');

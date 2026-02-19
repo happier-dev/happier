@@ -10,6 +10,9 @@ const setPinnedSessionKeysV1 = vi.fn();
 let sessionListGroupOrderV1: Record<string, string[]> = {};
 const setSessionListGroupOrderV1 = vi.fn();
 
+let sessionTagsV1: Record<string, string[]> = {};
+const setSessionTagsV1 = vi.fn();
+
 const groupKey = 'server:server_a:day:2026-02-17';
 
 const sessionA = {
@@ -177,12 +180,14 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: (key: string) => {
         if (key === 'compactSessionView') return false;
         if (key === 'compactSessionViewMinimal') return false;
+        if (key === 'sessionTagsEnabled') return true;
         return null;
     },
     useHasUnreadMessages: () => false,
     useSettingMutable: (key: string) => {
         if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
         if (key === 'sessionListGroupOrderV1') return [sessionListGroupOrderV1, setSessionListGroupOrderV1];
+        if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
         return [null, vi.fn()];
     },
 }));
@@ -214,8 +219,58 @@ vi.mock('./SessionGroupDragList', () => ({
 }));
 
 describe('SessionsList pinning + per-group ordering', () => {
+    it('passes session tags from settings into group row models when enabled', async () => {
+        pinnedSessionKeysV1 = [];
+        sessionListGroupOrderV1 = {};
+        sessionTagsV1 = { 'server_a:sess_a': ['important'] };
+        setPinnedSessionKeysV1.mockClear();
+        setSessionListGroupOrderV1.mockClear();
+        setSessionTagsV1.mockClear();
+
+        const { SessionsList } = await import('./SessionsList');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<SessionsList />);
+        });
+
+        const group = (tree as any).root.findByType('SessionGroupDragList');
+        const row = group.props.rows.find((r: any) => r.key === 'server_a:sess_a');
+        expect(row.tags).toEqual(['important']);
+        expect(row.allKnownTags).toContain('important');
+        expect(row.tagsEnabled).toBe(true);
+    });
+
+    it('writes updated session tags back to settings as a value (not an updater function)', async () => {
+        pinnedSessionKeysV1 = [];
+        sessionListGroupOrderV1 = {};
+        sessionTagsV1 = { 'server_a:sess_a': ['important'] };
+        setPinnedSessionKeysV1.mockClear();
+        setSessionListGroupOrderV1.mockClear();
+        setSessionTagsV1.mockClear();
+
+        const { SessionsList } = await import('./SessionsList');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<SessionsList />);
+        });
+
+        const group = (tree as any).root.findByType('SessionGroupDragList');
+        const row = group.props.rows.find((r: any) => r.key === 'server_a:sess_a');
+
+        expect(typeof row.onSetTags).toBe('function');
+        row.onSetTags(['urgent']);
+
+        expect(setSessionTagsV1).toHaveBeenCalledTimes(1);
+        expect(setSessionTagsV1.mock.calls[0]?.[0]).toEqual({
+            'server_a:sess_a': ['urgent'],
+        });
+    });
+
     it('shows pinned server badges only when multiple servers are selected', async () => {
         pinnedSessionKeysV1 = ['server_a:sess_a'];
+        sessionTagsV1 = {};
         setPinnedSessionKeysV1.mockClear();
         mockAllowedServerIds = ['server_a'];
 

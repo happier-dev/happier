@@ -1,5 +1,5 @@
 import React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, Pressable, View, Text as RNText } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet } from 'react-native-unistyles';
@@ -20,6 +20,8 @@ import { useHasUnreadMessages, useProfile } from '@/sync/domains/state/storage';
 import { Session } from '@/sync/domains/state/storageTypes';
 import { getSessionAvatarId, getSessionName, getSessionSubtitle, useSessionStatus } from '@/utils/sessions/sessionUtils';
 import { PinIcon, PinSlashIcon } from './sessionPinIcons';
+import { TagIcon } from './sessionTagIcons';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 
 const stylesheet = StyleSheet.create((theme) => ({
     sessionItemContainer: {
@@ -141,7 +143,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'center',
     },
     sessionContentWithActions: {
-        paddingRight: 36,
+        paddingRight: 62,
     },
     sessionContentCompact: {
         marginLeft: 12,
@@ -194,6 +196,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
+        gap: 2,
         zIndex: 10,
     },
     rowActionButton: {
@@ -205,6 +208,62 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     rowActionIcon: {
         color: theme.colors.textSecondary,
+    },
+    tagsRow: {
+        flexDirection: 'row',
+        flexWrap: 'nowrap',
+        overflow: 'hidden',
+        gap: 4,
+        marginTop: 4,
+    },
+    tagsRowCompact: {
+        marginTop: 3,
+    },
+    tagsRowMinimal: {
+        marginTop: 3,
+    },
+    tagChip: {
+        borderRadius: 999,
+        paddingHorizontal: 7,
+        paddingVertical: 2,
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        backgroundColor: theme.colors.groupped.background,
+        maxWidth: 120,
+    },
+    tagChipCompact: {
+        paddingHorizontal: 6,
+        paddingVertical: 1,
+        maxWidth: 110,
+    },
+    tagChipMinimal: {
+        paddingHorizontal: 6,
+        paddingVertical: 1,
+        maxWidth: 96,
+    },
+    tagChipText: {
+        fontSize: 10,
+        color: theme.colors.textSecondary,
+        ...Typography.default('semiBold'),
+    },
+    tagChipTextCompact: {
+        fontSize: 9,
+    },
+    tagChipTextMinimal: {
+        fontSize: 9,
+    },
+    tagChipInlineText: {
+        borderRadius: 999,
+        paddingHorizontal: 7,
+        paddingVertical: 2,
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        backgroundColor: theme.colors.groupped.background,
+        color: theme.colors.textSecondary,
+        fontSize: 13,
+        lineHeight: 18,
+        marginLeft: 8,
+        overflow: 'hidden',
     },
     sessionSubtitle: {
         fontSize: 13,
@@ -267,6 +326,10 @@ export const SessionItem = React.memo(
         showServerBadge,
         pinned,
         onTogglePinned,
+        tags,
+        allKnownTags,
+        onSetTags,
+        tagsEnabled,
         selected,
         isFirst,
         isLast,
@@ -284,6 +347,10 @@ export const SessionItem = React.memo(
         showServerBadge?: boolean;
         pinned?: boolean;
         onTogglePinned?: (() => void) | null;
+        tags?: string[];
+        allKnownTags?: string[];
+        onSetTags?: ((newTags: string[]) => void) | null;
+        tagsEnabled?: boolean;
         selected?: boolean;
         isFirst?: boolean;
         isLast?: boolean;
@@ -309,61 +376,47 @@ export const SessionItem = React.memo(
         const canStopSession = isOwnedByCurrentUser;
         const canArchiveSession = hasAdminAccess && !isActiveSession;
         const swipeEnabled = Platform.OS !== 'web' && (isActiveSession ? canStopSession : canArchiveSession);
-        const [isHoveringRow, setIsHoveringRow] = React.useState(false);
-        const [isHoveringPin, setIsHoveringPin] = React.useState(false);
-        const showRowActions = Platform.OS !== 'web' || isHoveringRow || isHoveringPin;
+        const [isHovered, setIsHovered] = React.useState(false);
+        const [tagMenuOpen, setTagMenuOpen] = React.useState(false);
+        const showRowActions = Platform.OS !== 'web' || isHovered || tagMenuOpen;
         const rowActionIconColor = String((styles.rowActionIcon as any)?.color ?? '#666');
         const supportsPin = typeof onTogglePinned === 'function';
-        const showPinAction = supportsPin && showRowActions;
-        const hoverOutTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-        const isHoveringPinRef = React.useRef(false);
-
-        React.useEffect(() => {
-            isHoveringPinRef.current = isHoveringPin;
-        }, [isHoveringPin]);
-
-        const clearHoverOutTimeout = React.useCallback(() => {
-            if (hoverOutTimeoutRef.current) {
-                clearTimeout(hoverOutTimeoutRef.current);
-                hoverOutTimeoutRef.current = null;
-            }
+        const supportsTag = tagsEnabled === true && typeof onSetTags === 'function';
+        const showTagAction = supportsTag && (Platform.OS !== 'web' || showRowActions);
+        const activeTags = tags ?? [];
+        const knownTags = allKnownTags ?? [];
+        const handleMouseEnter = React.useCallback(() => {
+            setIsHovered(true);
         }, []);
 
-        React.useEffect(() => {
-            return () => {
-                clearHoverOutTimeout();
-            };
-        }, [clearHoverOutTimeout]);
+        const handleMouseLeave = React.useCallback(() => {
+            setIsHovered(false);
+        }, []);
 
-        const handleRowHoverIn = React.useCallback(() => {
-            clearHoverOutTimeout();
-            setIsHoveringRow(true);
-        }, [clearHoverOutTimeout]);
+        const tagMenuItems = React.useMemo((): DropdownMenuItem[] => {
+            return knownTags.map((tag) => ({
+                id: tag,
+                title: tag,
+                rightElement: activeTags.includes(tag) ? (
+                    <Ionicons name="checkmark" size={16} color={rowActionIconColor} />
+                ) : undefined,
+            }));
+        }, [knownTags, activeTags, rowActionIconColor]);
 
-        const handleRowHoverOut = React.useCallback(() => {
-            clearHoverOutTimeout();
-            // Web hover can flicker when moving between nested pressables.
-            // Keep this delay effectively immediate; any lingering feels like a bug when leaving the row.
-            hoverOutTimeoutRef.current = setTimeout(() => {
-                if (!isHoveringPinRef.current) {
-                    setIsHoveringRow(false);
-                }
-            }, 0);
-        }, [clearHoverOutTimeout]);
+        const handleTagMenuSelect = React.useCallback((tagId: string) => {
+            if (!onSetTags) return;
+            const next = activeTags.includes(tagId)
+                ? activeTags.filter((t) => t !== tagId)
+                : [...activeTags, tagId];
+            onSetTags(next);
+        }, [onSetTags, activeTags]);
 
-        const handlePinHoverIn = React.useCallback(() => {
-            clearHoverOutTimeout();
-            setIsHoveringPin(true);
-        }, [clearHoverOutTimeout]);
-
-        const handlePinHoverOut = React.useCallback(() => {
-            clearHoverOutTimeout();
-            // Hide promptly when leaving the pin button.
-            hoverOutTimeoutRef.current = setTimeout(() => {
-                setIsHoveringPin(false);
-                setIsHoveringRow(false);
-            }, 0);
-        }, [clearHoverOutTimeout]);
+        const handleTagMenuCreate = React.useCallback((query: string) => {
+            if (!onSetTags) return;
+            const newTag = query.trim();
+            if (!newTag || activeTags.includes(newTag)) return;
+            onSetTags([...activeTags, newTag]);
+        }, [onSetTags, activeTags]);
 
         const [mutatingSession, performMutation] = useHappyAction(async () => {
             const result = isActiveSession
@@ -407,6 +460,19 @@ export const SessionItem = React.memo(
         const pendingCount = session.pendingCount ?? 0;
         const pendingBadge = formatPendingCountBadge(pendingCount);
 
+        const tagChipDensity: 'default' | 'compact' | 'minimal' = isMinimal ? 'minimal' : compact ? 'compact' : 'default';
+        const tagLimit = isMinimal ? 1 : compact ? 2 : 3;
+        const tagChips = React.useMemo(() => {
+            if (!tagsEnabled || activeTags.length === 0) return [];
+            const slice = activeTags.slice(0, tagLimit);
+            const remaining = activeTags.length - slice.length;
+            if (remaining <= 0) return slice.map((tag) => ({ key: tag, label: tag, isOverflow: false }));
+            return [
+                ...slice.map((tag) => ({ key: tag, label: tag, isOverflow: false })),
+                { key: '__more__', label: `+${remaining}`, isOverflow: true },
+            ];
+        }, [activeTags, tagLimit, tagsEnabled]);
+
         const itemContent = (
             <Pressable
                 style={[
@@ -416,8 +482,8 @@ export const SessionItem = React.memo(
                     selected ? styles.sessionItemSelected : null,
                     embedded && !embeddedIsLast ? styles.embeddedSeparator : null,
                 ]}
-                onHoverIn={Platform.OS === 'web' ? handleRowHoverIn : undefined}
-                onHoverOut={Platform.OS === 'web' ? handleRowHoverOut : undefined}
+                onMouseEnter={Platform.OS === 'web' ? handleMouseEnter : undefined}
+                onMouseLeave={Platform.OS === 'web' ? handleMouseLeave : undefined}
                 onPressIn={() => {
                     if (isTablet) {
                         navigateToSession(session.id, serverId ? { serverId } : undefined);
@@ -467,7 +533,7 @@ export const SessionItem = React.memo(
                         styles.sessionContent,
                         compact ? styles.sessionContentCompact : null,
                         isMinimal ? styles.sessionContentMinimal : null,
-                        supportsPin ? styles.sessionContentWithActions : null,
+                        (supportsPin || showTagAction) ? styles.sessionContentWithActions : null,
                     ]}
                 >
                     <View style={styles.sessionTitleRow}>
@@ -507,33 +573,111 @@ export const SessionItem = React.memo(
                             </Text>
                         </View>
                     ) : null}
+
+                    {tagChips.length > 0 ? (
+                        <View
+                            style={[
+                                styles.tagsRow,
+                                compact ? styles.tagsRowCompact : null,
+                                isMinimal ? styles.tagsRowMinimal : null,
+                            ]}
+                        >
+                            {tagChips.map((tag) => (
+                                <View
+                                    key={tag.key}
+                                    style={[
+                                        styles.tagChip,
+                                        tagChipDensity === 'compact' ? styles.tagChipCompact : null,
+                                        tagChipDensity === 'minimal' ? styles.tagChipMinimal : null,
+                                    ]}
+                                >
+                                    <Text
+                                        style={[
+                                            styles.tagChipText,
+                                            tagChipDensity === 'compact' ? styles.tagChipTextCompact : null,
+                                            tagChipDensity === 'minimal' ? styles.tagChipTextMinimal : null,
+                                        ]}
+                                        numberOfLines={1}
+                                    >
+                                        {tag.label}
+                                    </Text>
+                                </View>
+                            ))}
+                        </View>
+                    ) : null}
                 </View>
-                {supportsPin ? (
+                {supportsPin || showTagAction ? (
                     <View
                         style={[
                             styles.rowActionsOverlay,
                             {
                                 top: isMinimal ? 6 : compact ? 8 : 10,
-                                opacity: showPinAction ? 1 : 0,
+                                opacity: showRowActions ? 1 : 0,
                             },
                         ]}
-                        pointerEvents={showPinAction ? 'auto' : 'none'}
+                        pointerEvents={showRowActions ? 'auto' : 'none'}
                     >
-                        <Pressable
-                            style={styles.rowActionButton}
-                            onPress={onTogglePinned}
-                            onHoverIn={Platform.OS === 'web' ? handlePinHoverIn : undefined}
-                            onHoverOut={Platform.OS === 'web' ? handlePinHoverOut : undefined}
-                            accessibilityRole="button"
-                            accessibilityLabel={pinned ? 'Unpin session' : 'Pin session'}
-                            hitSlop={8}
-                        >
-                            {pinned ? (
-                                <PinSlashIcon size={14} color={rowActionIconColor} />
-                            ) : (
-                                <PinIcon size={14} color={rowActionIconColor} />
-                            )}
-                        </Pressable>
+                        {showTagAction ? (
+                            <DropdownMenu
+                                open={tagMenuOpen}
+                                onOpenChange={(next) => {
+                                    setTagMenuOpen(next);
+                                }}
+                                items={tagMenuItems}
+                                onSelect={handleTagMenuSelect}
+                                onCreateItem={handleTagMenuCreate}
+                                createItemDisplay={(query) => ({
+                                    title: `${t('dropdown.createItem.prefix')} ${query}`,
+                                    leftGap: 8,
+                                    rowContainerStyle: { paddingVertical: 6 },
+                                    titleStyle: { fontSize: 14, lineHeight: 20 },
+                                    titleNode: (
+                                        <>
+                                            {t('dropdown.createItem.prefix')}
+                                            <RNText style={styles.tagChipInlineText} numberOfLines={1}>
+                                                {query}
+                                            </RNText>
+                                        </>
+                                    ),
+                                    icon: <Ionicons name="add" size={16} color={rowActionIconColor} />,
+                                })}
+                                placement="left"
+                                variant="slim"
+                                search={true}
+                                searchPlaceholder={t('sessionTags.searchOrAddPlaceholder')}
+                                emptyLabel={null}
+                                showCategoryTitles={false}
+                                matchTriggerWidth={false}
+                                maxWidthCap={220}
+                                popoverPortalWebTarget="body"
+                                trigger={({ toggle }) => (
+                                    <Pressable
+                                        style={styles.rowActionButton}
+                                        onPress={toggle}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={t('sessionTags.editTagsLabel')}
+                                        hitSlop={8}
+                                    >
+                                        <TagIcon size={14} color={rowActionIconColor} />
+                                    </Pressable>
+                                )}
+                            />
+                        ) : null}
+                        {supportsPin ? (
+                            <Pressable
+                                style={styles.rowActionButton}
+                                onPress={onTogglePinned}
+                                accessibilityRole="button"
+                                accessibilityLabel={pinned ? t('sessionInfo.unpinSession') : t('sessionInfo.pinSession')}
+                                hitSlop={8}
+                            >
+                                {pinned ? (
+                                    <PinSlashIcon size={14} color={rowActionIconColor} />
+                                ) : (
+                                    <PinIcon size={14} color={rowActionIconColor} />
+                                )}
+                            </Pressable>
+                        ) : null}
                     </View>
                 ) : null}
             </Pressable>

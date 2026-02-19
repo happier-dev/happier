@@ -1,6 +1,6 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -93,6 +93,18 @@ vi.mock('@expo/vector-icons', () => ({
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
 }));
+
+let thinkingDisplayMode: 'inline' | 'tool' | 'hidden' = 'inline';
+vi.mock('@/sync/domains/state/storage', () => ({
+    useSetting: (key: string) => {
+        if (key === 'sessionThinkingDisplayMode') return thinkingDisplayMode;
+        return null;
+    },
+}));
+
+afterEach(() => {
+    thinkingDisplayMode = 'inline';
+});
 
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({
     isCommittedMessageDiscarded: () => false,
@@ -577,5 +589,101 @@ describe('MessageView (structured meta)', () => {
         expect(sessionId).toBe('s1');
         expect(String(text)).toContain('@happier/review.apply_accepted_findings');
         expect(String(text)).toContain('"acceptedFindingIds":["f1"]');
+    });
+
+    it('renders a thinking label for agent thinking messages and passes markdown through unchanged', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'agent-text',
+            localId: null,
+            text: '**Title**\n\n- first\n- second',
+            isThinking: true,
+            meta: {},
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+        });
+
+        const markdownViews = tree!.root.findAllByType('MarkdownView' as any);
+        expect(markdownViews).toHaveLength(1);
+        expect((markdownViews[0] as any).props.markdown).toBe('**Title**\n\n- first\n- second');
+
+        const thinkingLabels = tree!.root.findAll((node) => {
+            if ((node as any).type !== 'Text') return false;
+            const children = (node as any).props?.children;
+            return children === 'sessionInfo.thinking';
+        });
+        expect(thinkingLabels).toHaveLength(1);
+    });
+
+    it('unwraps legacy "*Thinking...*" markdown wrapper when rendering thinking messages', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'agent-text',
+            localId: null,
+            text: '*Thinking...*\n\n*Hello*',
+            isThinking: true,
+            meta: {},
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+        });
+
+        const markdownViews = tree!.root.findAllByType('MarkdownView' as any);
+        expect(markdownViews).toHaveLength(1);
+        expect((markdownViews[0] as any).props.markdown).toBe('Hello');
+    });
+
+    it('can render thinking messages as a Reasoning tool card when sessionThinkingDisplayMode=tool', async () => {
+        thinkingDisplayMode = 'tool';
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'agent-text',
+            localId: null,
+            text: '**Title**\n\nHello',
+            isThinking: true,
+            meta: {},
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+        });
+
+        const markdownViews = tree!.root.findAllByType('MarkdownView' as any);
+        expect(markdownViews).toHaveLength(0);
+
+        const toolViews = tree!.root.findAllByType('ToolView' as any);
+        expect(toolViews).toHaveLength(1);
+        expect((toolViews[0] as any).props.tool?.name).toBe('Reasoning');
+        expect((toolViews[0] as any).props.tool?.result?.content).toBe('**Title**\n\nHello');
+    });
+
+    it('can hide thinking messages when sessionThinkingDisplayMode=hidden', async () => {
+        thinkingDisplayMode = 'hidden';
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'agent-text',
+            localId: null,
+            text: 'Hello',
+            isThinking: true,
+            meta: {},
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+        });
+
+        expect(tree!.root.findAllByType('MarkdownView' as any)).toHaveLength(0);
+        expect(tree!.root.findAllByType('ToolView' as any)).toHaveLength(0);
     });
 });

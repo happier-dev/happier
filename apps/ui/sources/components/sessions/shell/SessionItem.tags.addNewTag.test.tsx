@@ -6,26 +6,24 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-native-reanimated', () => ({}));
 
-const navigateSpy = vi.fn();
-
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
-}));
-
 vi.mock('react-native-gesture-handler', () => ({
-    Swipeable: 'Swipeable',
+    Swipeable: (props: any) => React.createElement('Swipeable', props),
 }));
 
 vi.mock('react-native', async () => {
     const stub = await import('@/dev/reactNativeStub');
     return {
         ...stub,
-        Platform: { ...stub.Platform, OS: 'web' },
+        Platform: { ...stub.Platform, OS: 'ios' },
     };
 });
 
 vi.mock('@/components/ui/text/StyledText', () => ({
     Text: 'Text',
+}));
+
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
 }));
 
 vi.mock('@/utils/sessions/sessionUtils', () => ({
@@ -50,7 +48,7 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
 }));
 
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
-    useNavigateToSession: () => navigateSpy,
+    useNavigateToSession: () => vi.fn(),
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -58,12 +56,7 @@ vi.mock('@/utils/platform/responsive', () => ({
 }));
 
 vi.mock('@/hooks/ui/useHappyAction', () => ({
-    useHappyAction: (_fn: unknown) => [false, vi.fn()],
-}));
-
-vi.mock('@/sync/ops', () => ({
-    sessionStopWithServerScope: vi.fn(async () => ({ success: true })),
-    sessionArchiveWithServerScope: vi.fn(async () => ({ success: true })),
+    useHappyAction: (fn: any) => [false, fn],
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
@@ -71,17 +64,19 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useProfile: () => ({ id: 'u1' }),
 }));
 
+const promptSpy = vi.fn(async () => 'new-tag');
+vi.mock('@/modal', () => ({
+    Modal: { prompt: promptSpy, alert: vi.fn() },
+}));
+
 vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
-}));
-
-describe('SessionItem navigation', () => {
-    it('passes serverId when navigating to a session', async () => {
-        navigateSpy.mockClear();
+describe('SessionItem tags (new tag)', () => {
+    it('creates a new tag via the tag dropdown create action and adds it to active tags', async () => {
+        promptSpy.mockClear();
+        const onSetTags = vi.fn();
 
         const { SessionItem } = await import('./SessionItem');
 
@@ -115,59 +110,31 @@ describe('SessionItem navigation', () => {
                     isSingle={true}
                     variant="default"
                     compact={false}
+                    tagsEnabled={true}
+                    tags={[]}
+                    allKnownTags={[]}
+                    onSetTags={onSetTags}
                 />,
             );
         });
 
-        expect(tree).not.toBeNull();
-        const pressable = (tree as any).root.findByType('Pressable');
+        const dropdown = (tree as any).root.findByType('DropdownMenu');
+        expect(dropdown.props.emptyLabel).toBe(null);
+        expect(dropdown.props.showCategoryTitles).toBe(false);
+        expect(typeof dropdown.props.createItemDisplay).toBe('function');
+
+        const createDisplay = dropdown.props.createItemDisplay('ddd');
+        expect(createDisplay.leftGap).toBe(8);
+        expect(createDisplay.titleStyle).toMatchObject({ fontSize: 14 });
+        expect(createDisplay.rowContainerStyle).toMatchObject({ paddingVertical: 6 });
+
         await act(async () => {
-            pressable.props.onPress();
+            dropdown.props.onCreateItem('new-tag');
         });
 
-        expect(navigateSpy).toHaveBeenCalledTimes(1);
-        expect(navigateSpy).toHaveBeenCalledWith('sess_1', { serverId: 'server_a' });
-    });
+        expect(promptSpy).not.toHaveBeenCalled();
+        await act(async () => {});
 
-    it('hides avatars in minimal compact mode', async () => {
-        const { SessionItem } = await import('./SessionItem');
-
-        const session = {
-            id: 'sess_min',
-            seq: 1,
-            createdAt: 1,
-            updatedAt: 1,
-            active: true,
-            activeAt: 1,
-            metadata: null,
-            metadataVersion: 1,
-            agentState: null,
-            agentStateVersion: 1,
-            thinking: false,
-            thinkingAt: 0,
-            presence: 'online',
-        } as any;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionItem
-                    session={session}
-                    serverId="server_a"
-                    serverName="Server A"
-                    showServerBadge={true}
-                    selected={false}
-                    isFirst={true}
-                    isLast={true}
-                    isSingle={true}
-                    variant="default"
-                    compact={true}
-                    compactMinimal={true}
-                />,
-            );
-        });
-
-        const avatars = (tree as any).root.findAllByType('Avatar');
-        expect(avatars).toHaveLength(0);
+        expect(onSetTags).toHaveBeenCalledWith(['new-tag']);
     });
 });

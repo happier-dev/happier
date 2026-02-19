@@ -19,6 +19,8 @@ import { shouldShowMessageCopyButton } from '@/components/sessions/transcript/me
 import { renderStructuredMessage, StructuredMessageBlock } from '@/components/sessions/transcript/structured/StructuredMessageBlock';
 import { useRouter } from 'expo-router';
 import { buildSessionFileDeepLink } from '@/utils/url/sessionFileDeepLink';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import { useSetting } from '@/sync/domains/state/storage';
 
 export const MessageView = (props: {
   message: Message;
@@ -65,7 +67,7 @@ function RenderBlock(props: {
       return <UserTextBlock message={props.message} metadata={props.metadata} sessionId={props.sessionId} canSendMessages={props.interaction?.canSendMessages ?? true} />;
 
     case 'agent-text':
-      return <AgentTextBlock message={props.message} sessionId={props.sessionId} canSendMessages={props.interaction?.canSendMessages ?? true} />;
+      return <AgentTextBlock message={props.message} metadata={props.metadata} sessionId={props.sessionId} canSendMessages={props.interaction?.canSendMessages ?? true} />;
 
     case 'tool-call':
       return <ToolCallBlock
@@ -114,7 +116,7 @@ function UserTextBlock(props: {
   const isStructuredOnly = structuredNode != null;
 
   const handleOptionPress = React.useCallback((option: Option) => {
-    void (async () => {
+    fireAndForget((async () => {
       try {
         if (!props.canSendMessages) {
           Modal.alert(t('session.sharing.viewOnly'), t('session.sharing.noEditPermission'));
@@ -124,7 +126,7 @@ function UserTextBlock(props: {
       } catch (e) {
         Modal.alert(t('common.error'), e instanceof Error ? e.message : 'Failed to send message');
       }
-    })();
+    })(), { tag: 'MessageView.handleOptionPress.userMessage' });
   }, [props.canSendMessages, props.sessionId]);
 
   const showCopyButton = shouldShowMessageCopyButton({ platformOS: Platform.OS, isMessageHovered, isCopyButtonHovered });
@@ -210,6 +212,7 @@ function UserTextBlock(props: {
 
 function AgentTextBlock(props: {
   message: AgentTextMessage;
+  metadata: Metadata | null;
   sessionId: string;
   canSendMessages: boolean;
 }) {
@@ -218,6 +221,7 @@ function AgentTextBlock(props: {
   const isWeb = Platform.OS === 'web';
   const router = useRouter();
   const showThinkingMessages = useFeatureEnabled('messages.thinkingVisibility');
+  const sessionThinkingDisplayMode = useSetting('sessionThinkingDisplayMode');
 
   const structuredNode = renderStructuredMessage({
     message: props.message,
@@ -232,10 +236,15 @@ function AgentTextBlock(props: {
     },
   });
   const isStructuredOnly = structuredNode != null;
-  const copyText = isStructuredOnly ? props.message.text : props.message.text;
+  const unwrapLegacyThinkingWrapper = (text: string) => {
+    const match = text.match(/^\*Thinking\.\.\.\*\n\n\*([\s\S]*)\*$/);
+    return match ? match[1] : text;
+  };
+  const markdown = props.message.isThinking ? unwrapLegacyThinkingWrapper(props.message.text) : props.message.text;
+  const copyText = isStructuredOnly ? props.message.text : markdown;
 
   const handleOptionPress = React.useCallback((option: Option) => {
-    void (async () => {
+    fireAndForget((async () => {
       try {
         if (!props.canSendMessages) {
           Modal.alert(t('session.sharing.viewOnly'), t('session.sharing.noEditPermission'));
@@ -245,15 +254,19 @@ function AgentTextBlock(props: {
       } catch (e) {
         Modal.alert(t('common.error'), e instanceof Error ? e.message : 'Failed to send message');
       }
-    })();
+    })(), { tag: 'MessageView.handleOptionPress.agentMessage' });
   }, [props.canSendMessages, props.sessionId]);
 
   // Hide thinking messages unless the feature flag is enabled.
   if (props.message.isThinking && !showThinkingMessages) {
     return null;
   }
+  if (props.message.isThinking && sessionThinkingDisplayMode === 'hidden') {
+    return null;
+  }
 
   const showCopyButton = shouldShowMessageCopyButton({ platformOS: Platform.OS, isMessageHovered, isCopyButtonHovered });
+  const renderThinkingAsToolCard = props.message.isThinking && sessionThinkingDisplayMode === 'tool';
 
   return (
     <Pressable
@@ -261,8 +274,31 @@ function AgentTextBlock(props: {
       onHoverIn={isWeb ? () => setIsMessageHovered(true) : undefined}
       onHoverOut={isWeb ? () => setIsMessageHovered(false) : undefined}
     >
+      {props.message.isThinking && !renderThinkingAsToolCard ? (
+        <Text style={styles.thinkingLabel}>{t('sessionInfo.thinking')}</Text>
+      ) : null}
       {structuredNode}
-      {isStructuredOnly ? null : <MarkdownView markdown={props.message.text} onOptionPress={handleOptionPress} />}
+      {isStructuredOnly ? null : (
+        renderThinkingAsToolCard ? (
+          <ToolView
+            metadata={props.metadata}
+            tool={{
+              id: `thinking:${props.message.id}`,
+              name: 'Reasoning',
+              state: 'completed',
+              input: {},
+              createdAt: props.message.createdAt,
+              startedAt: null,
+              completedAt: props.message.createdAt,
+              description: null,
+              result: { content: markdown },
+            }}
+            messages={[]}
+          />
+        ) : (
+          <MarkdownView markdown={markdown} onOptionPress={handleOptionPress} />
+        )
+      )}
       <View
         pointerEvents={showCopyButton ? 'auto' : 'none'}
         accessibilityElementsHidden={!showCopyButton}
@@ -524,5 +560,12 @@ const styles = StyleSheet.create((theme) => ({
   debugText: {
     color: theme.colors.agentEventText,
     fontSize: 12,
+  },
+  thinkingLabel: {
+    marginBottom: 6,
+    marginLeft: 2,
+    color: theme.colors.agentEventText,
+    fontSize: 12,
+    fontStyle: 'italic',
   },
 }));

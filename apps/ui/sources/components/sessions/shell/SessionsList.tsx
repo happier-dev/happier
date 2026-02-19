@@ -16,6 +16,7 @@ import { useResolvedActiveServerSelection } from '@/hooks/server/useEffectiveSer
 import { SessionGroupDragList, type SessionGroupRowModel } from './SessionGroupDragList';
 import { SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
 import { formatPathRelativeToHome } from '@/utils/sessions/sessionUtils';
+import { getAllKnownTags, getTagsForSession } from './sessionTagUtils';
 import { t } from '@/text';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -124,6 +125,8 @@ export function SessionsList() {
     const isTablet = useIsTablet();
     const [pinnedSessionKeysV1, setPinnedSessionKeysV1] = useSettingMutable('pinnedSessionKeysV1');
     const [sessionListGroupOrderV1, setSessionListGroupOrderV1] = useSettingMutable('sessionListGroupOrderV1');
+    const [sessionTagsV1, setSessionTagsV1] = useSettingMutable('sessionTagsV1');
+    const sessionTagsEnabled = useSetting('sessionTagsEnabled');
     const compactSessionView = useSetting('compactSessionView');
     const compactSessionViewMinimal = useSetting('compactSessionViewMinimal');
     const selection = useResolvedActiveServerSelection();
@@ -146,6 +149,8 @@ export function SessionsList() {
 
     const pinnedKeyList = Array.isArray(pinnedSessionKeysV1) ? pinnedSessionKeysV1 : [];
     const currentGroupOrderMap = sessionListGroupOrderV1 ?? {};
+
+    const allKnownTags = React.useMemo(() => getAllKnownTags(sessionTagsV1), [sessionTagsV1]);
 
     const hasMultipleMachines = React.useMemo(() => {
         if (!dataWithSelected) return false;
@@ -250,6 +255,7 @@ export function SessionsList() {
                 const isGroupedByPath = item.groupKind === 'project' && item.variant === 'no-path';
                 const subtitle = isGroupedByPath ? null : computedSubtitle;
 
+                const rowTags = sessionKey ? getTagsForSession(sessionTagsV1, sessionKey) : [];
                 currentGroupRows.push({
                     key: sessionKey ?? item.session.id,
                     session: item.session,
@@ -268,6 +274,20 @@ export function SessionsList() {
                                   }
                               }
                             : null,
+                    tags: rowTags,
+                    allKnownTags,
+                    onSetTags: sessionKey
+                        ? (newTags: string[]) => {
+                              const next = { ...sessionTagsV1 };
+                              if (newTags.length === 0) {
+                                  delete next[sessionKey];
+                              } else {
+                                  next[sessionKey] = newTags;
+                              }
+                              setSessionTagsV1(next);
+                          }
+                        : null,
+                    tagsEnabled: sessionTagsEnabled === true,
                     selected: (item as SessionListSessionItem).selected,
                     variant: item.variant,
                 });
@@ -284,6 +304,10 @@ export function SessionsList() {
         setPinnedSessionKeysV1,
         showPinnedServerBadge,
         showServerBadge,
+        sessionTagsV1,
+        sessionTagsEnabled,
+        allKnownTags,
+        setSessionTagsV1,
     ]);
 
     const keyExtractor = React.useCallback((item: SessionListBlock) => item.key, []);
