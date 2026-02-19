@@ -11,11 +11,11 @@ import { AgentLogShell } from '@/ui/ink/AgentLogShell';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { buildReadOnlyFooterLines } from '@/ui/ink/readOnlyFooterLines';
 
-export type CopilotTerminalDisplayProps = {
+export interface CopilotTerminalDisplayProps {
   messageBuffer: MessageBuffer;
   logPath?: string;
   onExit?: () => void | Promise<void>;
-};
+}
 
 export const CopilotTerminalDisplay: React.FC<CopilotTerminalDisplayProps> = ({ messageBuffer, logPath, onExit }) => {
   return (
