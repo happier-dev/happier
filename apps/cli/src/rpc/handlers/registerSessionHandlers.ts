@@ -9,6 +9,7 @@ import { registerCapabilitiesHandlers } from './capabilities';
 import { registerPreviewEnvHandler } from './previewEnv';
 import { registerBashHandler } from './bash';
 import { registerFileSystemHandlers } from './fileSystem';
+import { registerAttachmentsUploadHandlers } from './attachmentsUpload';
 import { registerRipgrepHandler } from './ripgrep';
 import { registerDifftasticHandler } from './difftastic';
 import { registerScmHandlers } from './scm';
@@ -126,11 +127,20 @@ export function registerSessionHandlers(
     rpcHandlerManager: RpcHandlerRegistrar,
     workingDirectory: string,
 ) {
+    let additionalAllowedReadDirs: string[] = [];
+    const getAdditionalAllowedReadDirs = () => additionalAllowedReadDirs;
+    const setAdditionalAllowedReadDirs = (dirs: string[]) => {
+        additionalAllowedReadDirs = Array.isArray(dirs)
+            ? dirs.filter((v) => typeof v === 'string' && v.trim().length > 0)
+            : [];
+    };
+
     registerBashHandler(rpcHandlerManager, workingDirectory);
     // Checklist-based machine capability registry (replaces legacy detect-cli / detect-capabilities / dep-status).
     registerCapabilitiesHandlers(rpcHandlerManager);
     registerPreviewEnvHandler(rpcHandlerManager);
-    registerFileSystemHandlers(rpcHandlerManager, workingDirectory);
+    registerFileSystemHandlers(rpcHandlerManager, workingDirectory, { getAdditionalAllowedReadDirs });
+    registerAttachmentsUploadHandlers(rpcHandlerManager, { workingDirectory, setAdditionalAllowedReadDirs });
     registerRipgrepHandler(rpcHandlerManager, workingDirectory);
     registerDifftasticHandler(rpcHandlerManager, workingDirectory);
     registerScmHandlers(rpcHandlerManager, workingDirectory);

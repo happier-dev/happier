@@ -45,7 +45,7 @@ describe('registerFileSystemHandlers', () => {
     expect(readResult).toMatchObject({
       success: false,
     });
-    expect(String((readResult as { error?: string }).error ?? '')).toContain('outside the working directory');
+    expect(String((readResult as { error?: string }).error ?? '')).toContain('outside the allowed directories');
 
     const writeResult = await write({
       path: '../../outside.bin',
@@ -55,8 +55,28 @@ describe('registerFileSystemHandlers', () => {
     expect(writeResult).toMatchObject({
       success: false,
     });
-    expect(String((writeResult as { error?: string }).error ?? '')).toContain('outside the working directory');
+    expect(String((writeResult as { error?: string }).error ?? '')).toContain('outside the allowed directories');
     expect(readFile).not.toHaveBeenCalled();
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it('does not allow writing outside working directory even when additional read roots are configured', async () => {
+    vi.clearAllMocks();
+    const mgr = createRpcHandlerManager();
+    registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, '/work/dir', {
+      getAdditionalAllowedReadDirs: () => ['/tmp/allowed'],
+    });
+
+    const write = mgr.handlers.get(RPC_METHODS.WRITE_FILE);
+    if (!write) throw new Error('expected write handler');
+
+    const writeResult = await write({
+      path: '/tmp/allowed/file.bin',
+      content: Buffer.from('x').toString('base64'),
+      expectedHash: null,
+    });
+    expect(writeResult).toMatchObject({ success: false });
+    expect(String((writeResult as { error?: string }).error ?? '')).toContain('outside the allowed directories');
     expect(writeFile).not.toHaveBeenCalled();
   });
 

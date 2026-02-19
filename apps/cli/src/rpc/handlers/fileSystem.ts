@@ -65,13 +65,21 @@ interface GetDirectoryTreeResponse {
     error?: string;
 }
 
-export function registerFileSystemHandlers(rpcHandlerManager: RpcHandlerRegistrar, workingDirectory: string): void {
+export function registerFileSystemHandlers(
+    rpcHandlerManager: RpcHandlerRegistrar,
+    workingDirectory: string,
+    opts?: Readonly<{ getAdditionalAllowedReadDirs?: () => ReadonlyArray<string> }>,
+): void {
+    const getAdditionalAllowedReadDirs = (): string[] => {
+        const value = opts?.getAdditionalAllowedReadDirs?.() ?? [];
+        return Array.isArray(value) ? value.filter((v) => typeof v === 'string' && v.trim().length > 0) : [];
+    };
     // Read file handler - returns base64 encoded content
     rpcHandlerManager.registerHandler<ReadFileRequest, ReadFileResponse>(RPC_METHODS.READ_FILE, async (data) => {
         logger.debug('Read file request:', data.path);
 
-        // Validate path is within working directory
-        const validation = validatePath(data.path, workingDirectory);
+        // Validate path is within working directory (or an explicitly-allowed read root)
+        const validation = validatePath(data.path, workingDirectory, getAdditionalAllowedReadDirs());
         if (!validation.valid) {
             return { success: false, error: validation.error };
         }
@@ -90,7 +98,9 @@ export function registerFileSystemHandlers(rpcHandlerManager: RpcHandlerRegistra
     rpcHandlerManager.registerHandler<WriteFileRequest, WriteFileResponse>(RPC_METHODS.WRITE_FILE, async (data) => {
         logger.debug('Write file request:', data.path);
 
-        // Validate path is within working directory
+        // Validate path is within working directory.
+        // Note: additional allowed dirs are read-only roots for tooling like temp uploads and must NOT
+        // expand the write surface area of the session RPC.
         const validation = validatePath(data.path, workingDirectory);
         if (!validation.valid) {
             return { success: false, error: validation.error };
@@ -163,8 +173,8 @@ export function registerFileSystemHandlers(rpcHandlerManager: RpcHandlerRegistra
     rpcHandlerManager.registerHandler<ListDirectoryRequest, ListDirectoryResponse>(RPC_METHODS.LIST_DIRECTORY, async (data) => {
         logger.debug('List directory request:', data.path);
 
-        // Validate path is within working directory
-        const validation = validatePath(data.path, workingDirectory);
+        // Validate path is within working directory (or an explicitly-allowed read root)
+        const validation = validatePath(data.path, workingDirectory, getAdditionalAllowedReadDirs());
         if (!validation.valid) {
             return { success: false, error: validation.error };
         }
