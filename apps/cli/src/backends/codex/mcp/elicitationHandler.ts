@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { RequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 import { logger } from '@/ui/logger';
