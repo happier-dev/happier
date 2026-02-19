@@ -91,17 +91,39 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
                         })
                     : new Uint8Array();
 
-            await authApprove(activeCredentials.token, publicKey, responseV1, responseV2);
+            const approvalResult = await authApprove(activeCredentials.token, publicKey, responseV1, responseV2);
 
             // If we successfully completed a pending connect, clear it.
             clearPendingTerminalConnect();
-            
-            Modal.alert(t('common.success'), t('modals.terminalConnectedSuccessfully'), [
-                { 
-                    text: t('common.ok'), 
-                    onPress: () => options?.onSuccess?.()
-                }
-            ]);
+
+            if (approvalResult === 'approved') {
+                Modal.alert(t('common.success'), t('modals.terminalConnectedSuccessfully'), [
+                    {
+                        text: t('common.ok'),
+                        onPress: () => options?.onSuccess?.()
+                    }
+                ]);
+                return true;
+            }
+
+            if (approvalResult === 'already_authorized') {
+                Modal.alert(
+                    t('modals.terminalAlreadyConnected'),
+                    t('modals.terminalConnectionAlreadyUsedDescription'),
+                    [{ text: t('common.ok') }]
+                );
+                return false;
+            }
+
+            if (approvalResult === 'not_found') {
+                Modal.alert(
+                    t('modals.authRequestExpired'),
+                    t('modals.authRequestExpiredDescription'),
+                    [{ text: t('common.ok') }]
+                );
+                return false;
+            }
+
             return true;
         } catch (e) {
             console.error(e);
