@@ -1956,6 +1956,13 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             phase: modelOptionsProbeState.phase,
             onRefresh: modelOptionsProbeState.refresh,
         },
+        acpSessionModeOptions,
+        acpSessionModeProbe: {
+            phase: acpSessionModeProbeState.phase,
+            onRefresh: acpSessionModeProbeState.refresh,
+        },
+        acpSessionModeId,
+        setAcpSessionModeId,
         modelMode,
         setModelMode,
         selectedIndicatorColor,
