@@ -154,7 +154,7 @@ export function machinesRoutes(app: Fastify) {
 
             return reply.send({
                 machine: {
-                    ...serializeMachineRow(updated),
+                    ...serializeMachineRow(updated as Exclude<typeof updated, { error: string }>),
                 }
             });
         } else {
