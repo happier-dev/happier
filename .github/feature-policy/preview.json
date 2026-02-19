@@ -18,11 +18,11 @@
       "messages.thinkingVisibility",
       "codex.resume.mcp",
       "codex.resume.acp",
-      "voice"
+      "voice",
+      "attachments.uploads"
     ],
     "deny": [
       "automations",
-      "automations.existingSessionTarget",
       "execution.runs",
       "voice.agent",
       "social.friends",

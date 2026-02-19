@@ -35,7 +35,7 @@ test('compute-changed-components emits changed flags and commit_count for a git 
   git(dir, ['commit', '-m', 'head']);
   const head = git(dir, ['rev-parse', 'HEAD']);
 
-  const script = resolve(process.cwd(), 'scripts', 'release', 'compute-changed-components.mjs');
+  const script = resolve(process.cwd(), 'scripts', 'pipeline', 'release', 'compute-changed-components.mjs');
   const res = run(dir, process.execPath, [script, '--base', base, '--head', head]);
   assert.equal(res.status, 0, res.stderr || res.stdout);
 
@@ -43,4 +43,3 @@ test('compute-changed-components emits changed flags and commit_count for a git 
   assert.equal(parsed.changed_cli, 'true');
   assert.equal(parsed.commit_count, '1');
 });
-

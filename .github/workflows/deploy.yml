@@ -1,9 +1,6 @@
 name: DEPLOY — Deploy Branch
 
 on:
-  push:
-    branches:
-      - "deploy/**"
   workflow_call:
     inputs:
       environment:
@@ -55,7 +52,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: deploy-${{ startsWith(github.ref_name, 'deploy/') && github.ref_name || format('{0}/{1}', inputs.environment, inputs.component) }}
+  group: deploy-${{ format('{0}/{1}', inputs.environment, inputs.component) }}
   cancel-in-progress: false
 
 jobs:
@@ -65,26 +62,9 @@ jobs:
       contents: read
     runs-on: ubuntu-latest
     steps:
-      - name: Authorize deploy/* push actor
-        if: github.event_name == 'push'
-        run: |
-          set -euo pipefail
-          actor="${GITHUB_ACTOR:-}"
-          # Deploy branches are promoted by the release GitHub App. We only allow
-          # push-triggered deploys from that bot actor (and the repo owner as an escape hatch).
-          case "$actor" in
-            happier-release-bot[[]bot[]]|happier-releases-bot[[]bot[]]|leeroybrun) ;;
-            *)
-              echo "Refusing push-triggered deploy from unauthorized actor: '${actor}'." >&2
-              exit 1
-              ;;
-          esac
-
       - name: Checkout
-        if: github.event_name != 'push'
         uses: actions/checkout@v4
       - name: Authorize release actor
-        if: github.event_name != 'push'
         uses: ./.github/actions/release-actor-guard
         with:
           team_slug: release-admins
@@ -94,10 +74,8 @@ jobs:
   deploy:
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
-    # Deploy branches are promoted from release workflows. Those pushes may be authored by bots,
-    # and we prefer deploying via explicit workflow_call (to avoid relying on push-trigger semantics).
-    if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || startsWith(github.ref_name, 'deploy/production/') || startsWith(github.ref_name, 'deploy/preview/')) && needs.release_actor_guard.result == 'success' }}
-    environment: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.environment || (startsWith(github.ref_name, 'deploy/production/') && 'production' || 'preview') }}
+    if: ${{ needs.release_actor_guard.result == 'success' }}
+    environment: ${{ inputs.environment }}
     steps:
       - name: Enforce trusted refs for manual dispatch
         run: |
@@ -116,7 +94,6 @@ jobs:
       - name: Resolve target (env + component)
         id: target
         env:
-          REF_NAME: ${{ github.ref_name }}
           EVENT_NAME: ${{ github.event_name }}
           INPUT_ENV: ${{ inputs.environment }}
           INPUT_COMPONENT: ${{ inputs.component }}
@@ -124,23 +101,19 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "$EVENT_NAME" = "workflow_dispatch" ] || [ "$EVENT_NAME" = "workflow_call" ]; then
-            env_name="$INPUT_ENV"
-            component="$INPUT_COMPONENT"
-            expected="deploy ${env_name} ${component}"
-            if [ "$INPUT_CONFIRM" != "$expected" ]; then
-              echo "Confirmation mismatch." >&2
-              echo "Expected: $expected" >&2
-              echo "Got:      $INPUT_CONFIRM" >&2
-              exit 1
-            fi
-          else
-            # Expected: deploy/<env>/<component>
-            IFS='/' read -r pfx env_name component rest <<<"$REF_NAME"
-            if [ "$pfx" != "deploy" ] || [ -z "${env_name:-}" ] || [ -z "${component:-}" ]; then
-              echo "Unexpected ref name: $REF_NAME" >&2
-              exit 1
-            fi
+          if [ "$EVENT_NAME" != "workflow_dispatch" ] && [ "$EVENT_NAME" != "workflow_call" ]; then
+            echo "Unsupported event for deploy workflow: $EVENT_NAME" >&2
+            exit 1
+          fi
+
+          env_name="$INPUT_ENV"
+          component="$INPUT_COMPONENT"
+          expected="deploy ${env_name} ${component}"
+          if [ "$INPUT_CONFIRM" != "$expected" ]; then
+            echo "Confirmation mismatch." >&2
+            echo "Expected: $expected" >&2
+            echo "Got:      $INPUT_CONFIRM" >&2
+            exit 1
           fi
 
           case "$env_name" in
@@ -165,7 +138,7 @@ jobs:
           {
             echo "## Deploy trigger"
             echo ""
-            echo "- ref: \`$REF_NAME\`"
+            echo "- ref: \`${GITHUB_REF_NAME}\`"
             echo "- environment: \`$env_name\`"
             echo "- component: \`$component\`"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -175,209 +148,15 @@ jobs:
           CF_WEBHOOK_DEPLOY_CLIENT_ID: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_ID }}
           CF_WEBHOOK_DEPLOY_CLIENT_SECRET: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_SECRET }}
           DEPLOY_WEBHOOK_URL: ${{ vars.DEPLOY_WEBHOOK_URL != '' && vars.DEPLOY_WEBHOOK_URL || secrets.DEPLOY_WEBHOOK_URL }}
-          GH_TOKEN: ${{ github.token }}
           HAPPIER_UI_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_UI_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_UI_DEPLOY_WEBHOOKS || secrets.HAPPIER_UI_DEPLOY_WEBHOOKS }}
           HAPPIER_WEBSITE_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS || secrets.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS }}
           HAPPIER_DOCS_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_DOCS_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_DOCS_DEPLOY_WEBHOOKS || secrets.HAPPIER_DOCS_DEPLOY_WEBHOOKS }}
           HAPPIER_SERVER_API_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_SERVER_API_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_SERVER_API_DEPLOY_WEBHOOKS || secrets.HAPPIER_SERVER_API_DEPLOY_WEBHOOKS }}
           HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS || secrets.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS }}
-          COMPONENT: ${{ steps.target.outputs.component }}
-          ENVIRONMENT: ${{ steps.target.outputs.environment }}
-          REF_NAME: ${{ github.ref_name }}
-          REPOSITORY: ${{ github.repository }}
-          SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-
-          has_hooks() {
-            local hooks="$1"
-            if [ -z "${hooks:-}" ]; then
-              return 1
-            fi
-            while IFS= read -r line; do
-              line="$(echo "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-              [ -z "${line}" ] && continue
-              [ "${line#\#}" != "${line}" ] && continue
-              return 0
-            done <<< "${hooks}"
-            return 1
-          }
-
-          require_hooks_or_skip() {
-            local label="$1"
-            local hooks="$2"
-            if has_hooks "${hooks}"; then
-              return 0
-            fi
-
-            if [ "${ENVIRONMENT}" = "production" ]; then
-              echo "Missing deploy webhook list for '${label}' in production; refusing to silently skip." >&2
-              exit 1
-            fi
-
-            echo "::notice::No deploy webhook list configured for '${label}' in environment '${ENVIRONMENT}'. Skipping deploy trigger."
-            echo "No deploy webhook list configured for '${label}' in environment '${ENVIRONMENT}'. Skipping." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          }
-
-          # Decide whether this deploy can do anything before requiring secrets.
-          case "$COMPONENT" in
-            ui)
-              require_hooks_or_skip "ui" "${HAPPIER_UI_DEPLOY_WEBHOOKS:-}"
-              ;;
-            website)
-              require_hooks_or_skip "website" "${HAPPIER_WEBSITE_DEPLOY_WEBHOOKS:-}"
-              ;;
-            docs)
-              require_hooks_or_skip "docs" "${HAPPIER_DOCS_DEPLOY_WEBHOOKS:-}"
-              ;;
-            server)
-              if has_hooks "${HAPPIER_SERVER_API_DEPLOY_WEBHOOKS:-}" && has_hooks "${HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS:-}"; then
-                : # ok
-              else
-                if [ "${ENVIRONMENT}" = "production" ]; then
-                  echo "Missing server deploy webhook list(s) in production; refusing to silently skip." >&2
-                  echo "server api configured: $(has_hooks "${HAPPIER_SERVER_API_DEPLOY_WEBHOOKS:-}" && echo yes || echo no)" >&2
-                  echo "server worker configured: $(has_hooks "${HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS:-}" && echo yes || echo no)" >&2
-                  exit 1
-                fi
-                echo "::notice::No server deploy webhook list(s) configured for environment '${ENVIRONMENT}'. Skipping deploy trigger."
-                echo "No server deploy webhook list(s) configured for environment '${ENVIRONMENT}'. Skipping." >> "$GITHUB_STEP_SUMMARY"
-                exit 0
-              fi
-              ;;
-            *)
-              echo "Unsupported component: $COMPONENT" >&2
-              exit 1
-              ;;
-          esac
-
-          if [ -z "${CF_WEBHOOK_DEPLOY_CLIENT_ID:-}" ] || [ -z "${CF_WEBHOOK_DEPLOY_CLIENT_SECRET:-}" ]; then
-            echo "Missing Cloudflare Access service token secrets (CF_WEBHOOK_DEPLOY_CLIENT_ID/CF_WEBHOOK_DEPLOY_CLIENT_SECRET)." >&2
-            exit 1
-          fi
-
-          if [ -z "${DEPLOY_WEBHOOK_URL:-}" ]; then
-            echo "Missing DEPLOY_WEBHOOK_URL (expected a base URL like 'https://ci.example.com/api/deploy/')." >&2
-            exit 1
-          fi
-          DEPLOY_WEBHOOK_URL="${DEPLOY_WEBHOOK_URL%/}"
-          if ! [[ "${DEPLOY_WEBHOOK_URL}" =~ ^https?:// ]]; then
-            echo "DEPLOY_WEBHOOK_URL must start with http:// or https:// (got: ${DEPLOY_WEBHOOK_URL})." >&2
-            exit 1
-          fi
-
-          # Dokploy's deploy webhook is designed to be called by a Git provider webhook.
-          # If we call it directly from CI, we need to include a minimal push payload
-          # and headers so it can extract the branch and validate "Branch Not Match".
-          BRANCH_NAME="${REF_NAME:-}"
-          if [ -z "${BRANCH_NAME:-}" ] || [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ] || [ "${GITHUB_EVENT_NAME:-}" = "workflow_call" ]; then
-            BRANCH_NAME="deploy/${ENVIRONMENT}/${COMPONENT}"
-          fi
-          REF="refs/heads/${BRANCH_NAME}"
-          AFTER_SHA="${SHA}"
-          if [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ] || [ "${GITHUB_EVENT_NAME:-}" = "workflow_call" ]; then
-            echo "Resolving deploy branch SHA for ${GITHUB_EVENT_NAME:-}..."
-            AFTER_SHA="$(gh api "repos/${REPOSITORY}/git/ref/heads/${BRANCH_NAME}" --jq '.object.sha')"
-          fi
-          echo "Dokploy webhook target: ref=${REF} after=${AFTER_SHA}"
-
-          trigger_hooks() {
-            local label="$1"
-            local hooks="$2"
-
-            if [ -z "${hooks:-}" ]; then
-              echo "No webhook URLs configured for '${label}' in environment '${{ steps.target.outputs.environment }}'." >&2
-              return 1
-            fi
-
-            echo "Triggering deploy hook(s) for '${label}'..."
-
-            local triggered=0
-            while IFS= read -r hook; do
-              hook="$(echo "$hook" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-              if [ -z "$hook" ] || [ "${hook#\#}" != "$hook" ]; then
-                continue
-              fi
-
-              local url=""
-              if [[ "$hook" =~ ^https?:// ]]; then
-                url="$hook"
-              else
-                url="${DEPLOY_WEBHOOK_URL}/${hook}"
-              fi
-              local delivery_id=""
-              delivery_id="$(python3 -c 'import uuid; print(str(uuid.uuid4()))')"
-              local payload=""
-              payload="$(REF="$REF" SHA="$AFTER_SHA" REPOSITORY="$REPOSITORY" python3 -c 'import json, os; ref=os.environ.get("REF", ""); sha=os.environ.get("SHA", ""); repo=os.environ.get("REPOSITORY", ""); owner, name = ((repo.split("/", 1) + [""])[:2] if repo else ("", "")); print(json.dumps({"ref": ref, "before": "0"*40, "after": sha, "repository": {"full_name": repo, "name": name, "owner": {"name": owner}, "default_branch": "main"}}))')"
-
-              triggered=$((triggered + 1))
-              # Avoid leaking full hook URLs if operators configure full URLs that may embed secrets.
-              echo "POST deploy hook (${label}) #${triggered}"
-              echo "Request headers: Content-Type, X-GitHub-Event, X-GitHub-Delivery, CF-Access-Client-Id, CF-Access-Client-Secret"
-              echo "Request body: ${payload}"
-              resp_file="$(mktemp)"
-              hdr_file="$(mktemp)"
-              http_code="$(curl -sS -X POST \
-                --retry 3 \
-                --retry-all-errors \
-                --connect-timeout 10 \
-                --max-time 60 \
-                -H "CF-Access-Client-Id: ${CF_WEBHOOK_DEPLOY_CLIENT_ID}" \
-                -H "CF-Access-Client-Secret: ${CF_WEBHOOK_DEPLOY_CLIENT_SECRET}" \
-                -H "Content-Type: application/json" \
-                -H "X-GitHub-Event: push" \
-                -H "X-GitHub-Delivery: ${delivery_id}" \
-                --data "${payload}" \
-                -D "${hdr_file}" \
-                -o "${resp_file}" \
-                -w "%{http_code}" \
-                "${url}")"
-              echo "Response status: ${http_code}"
-              if [ -s "${hdr_file}" ]; then
-                echo "Response headers:"
-                cat "${hdr_file}"
-              else
-                echo "Response headers: <empty>"
-              fi
-              if [ -s "${resp_file}" ]; then
-                echo "Response body:"
-                cat "${resp_file}"
-              else
-                echo "Response body: <empty>"
-              fi
-              rm -f "${hdr_file}" "${resp_file}"
-              if [ "${http_code}" -lt 200 ] || [ "${http_code}" -ge 300 ]; then
-                echo "Non-2xx response from deploy webhook for '${label}'." >&2
-                return 1
-              fi
-            done <<< "$hooks"
-
-            if [ "$triggered" -eq 0 ]; then
-              echo "No valid webhook IDs/URLs found for '${label}' (empty/comment-only list)." >&2
-              return 1
-            fi
-
-            echo "Triggered ${triggered} webhook(s) for '${label}'."
-          }
-
-          case "$COMPONENT" in
-            ui)
-              trigger_hooks "ui" "${HAPPIER_UI_DEPLOY_WEBHOOKS:-}"
-              ;;
-            website)
-              trigger_hooks "website" "${HAPPIER_WEBSITE_DEPLOY_WEBHOOKS:-}"
-              ;;
-            docs)
-              trigger_hooks "docs" "${HAPPIER_DOCS_DEPLOY_WEBHOOKS:-}"
-              ;;
-            server)
-              # Enforce order: API first, then worker.
-              trigger_hooks "server api" "${HAPPIER_SERVER_API_DEPLOY_WEBHOOKS:-}"
-              trigger_hooks "server worker" "${HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS:-}"
-              ;;
-            *)
-              echo "Unsupported component: $COMPONENT" >&2
-              exit 1
-              ;;
-          esac
+          node scripts/pipeline/deploy/trigger-webhooks.mjs \
+            --environment "${{ steps.target.outputs.environment }}" \
+            --component "${{ steps.target.outputs.component }}" \
+            --repository "${{ github.repository }}" \
+            --ref-name "deploy/${{ steps.target.outputs.environment }}/${{ steps.target.outputs.component }}"

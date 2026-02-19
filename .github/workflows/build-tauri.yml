@@ -144,17 +144,7 @@ jobs:
         if: inputs.environment == 'production'
         run: |
           set -euo pipefail
-          node - <<'NODE'
-          const fs = require('node:fs');
-          const conf = JSON.parse(fs.readFileSync('apps/ui/src-tauri/tauri.conf.json', 'utf8'));
-          const pubkey = conf?.plugins?.updater?.pubkey;
-          const placeholder = 'REPLACE_WITH_TAURI_UPDATER_PUBLIC_KEY_PEM';
-          if (typeof pubkey !== 'string' || pubkey.trim().length === 0 || pubkey.includes(placeholder)) {
-            console.error(`Invalid Tauri updater public key in apps/ui/src-tauri/tauri.conf.json (still contains "${placeholder}").`);
-            console.error('Refusing to build production desktop artifacts until a real updater public key is configured.');
-            process.exit(1);
-          }
-          NODE
+          node scripts/pipeline/tauri/validate-updater-pubkey.mjs
 
       - name: Enable Corepack (Yarn)
         run: |
@@ -261,17 +251,29 @@ jobs:
           echo "ui_version=${ui_version}" >> "$GITHUB_OUTPUT"
           echo "build_version=${build_version}" >> "$GITHUB_OUTPUT"
 
+      - name: Materialize Tauri signing key (if configured)
+        if: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        env:
+          TAURI_SIGNING_PRIVATE_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RUNNER_TEMP:-}" ]; then
+            echo "RUNNER_TEMP is required to materialize signing key." >&2
+            exit 1
+          fi
+          key_path="${RUNNER_TEMP}/tauri.signing.key"
+          printf '%s' "${TAURI_SIGNING_PRIVATE_KEY_RAW}" > "${key_path}"
+          chmod 600 "${key_path}" || true
+          echo "TAURI_SIGNING_PRIVATE_KEY=${key_path}" >> "$GITHUB_ENV"
+          echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${TAURI_SIGNING_PRIVATE_KEY_PASSWORD}" >> "$GITHUB_ENV"
+
       - name: Build desktop updater artifacts
         env:
           CI: "true"
           APP_ENV: ${{ inputs.environment }}
           TAURI_TARGET: ${{ matrix.tauri_target }}
           APPLE_SIGNING_IDENTITY: ${{ steps.apple_id.outputs.identity }}
-          # Optional: updater signing. Add secrets to enable signing:
-          # - TAURI_SIGNING_PRIVATE_KEY
-          # - TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           cd apps/ui
@@ -286,6 +288,35 @@ jobs:
           fi
 
           configs=()
+
+          # Updater artifacts are disabled by default in src-tauri/tauri.conf.json so local builds do not require
+          # a signing key. In CI, explicitly enable them only when the signing private key is available.
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            updater_override=""
+            if [ -n "${RUNNER_TEMP:-}" ]; then
+              updater_override="${RUNNER_TEMP}/tauri.updater.override.json"
+            elif updater_override_tmp="$(mktemp 2>/dev/null)"; then
+              updater_override="${updater_override_tmp}"
+            else
+              updater_override="/tmp/tauri.updater.override.json"
+            fi
+            if [ -z "${updater_override:-}" ]; then
+              echo "Unable to allocate a temp file path for Tauri updater override." >&2
+              exit 1
+            fi
+            mkdir -p "$(dirname "${updater_override}")"
+            touch "${updater_override}" || {
+              echo "Updater override file path is not writable: ${updater_override}" >&2
+              exit 1
+            }
+            node -e '
+              const fs = require("node:fs");
+              const out = process.argv[1];
+              const payload = { bundle: { createUpdaterArtifacts: true } };
+              fs.writeFileSync(out, `${JSON.stringify(payload)}\n`, "utf8");
+            ' "${updater_override}"
+            configs+=(--config "${updater_override}")
+          fi
 
           # macOS codesigning (optional). If APPLE_CERTIFICATE is configured, sign the app during the build.
           if [ "${RUNNER_OS}" = "macOS" ] && [ -n "${APPLE_SIGNING_IDENTITY}" ]; then
@@ -337,8 +368,6 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
           APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           TAURI_TARGET: ${{ matrix.tauri_target }}
         run: |
           set -euo pipefail
@@ -539,9 +568,9 @@ jobs:
           esac
 
           if [ "${ENVIRONMENT}" = "preview" ]; then
-            out_base="happier-ui-preview-${PLATFORM_KEY}"
+            out_base="happier-ui-desktop-preview-${PLATFORM_KEY}"
           else
-            out_base="happier-ui-${PLATFORM_KEY}-v${UI_VERSION}"
+            out_base="happier-ui-desktop-${PLATFORM_KEY}-v${UI_VERSION}"
           fi
 
           out_dir="dist/tauri/updates/${PLATFORM_KEY}"
@@ -603,41 +632,12 @@ jobs:
           ENVIRONMENT: ${{ inputs.environment }}
         run: |
           set -euo pipefail
-
-          ui_version="${{ steps.meta.outputs.ui_version }}"
-          if [ "${ENVIRONMENT}" = "preview" ]; then
-            version="${ui_version}-preview.${GITHUB_RUN_NUMBER}"
-            release_tag="ui-preview"
-            notes="Rolling preview build."
-          else
-            version="${ui_version}"
-            release_tag="ui-v${ui_version}"
-            notes="See the UI release notes for details."
-          fi
-
-          pub_date="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-
-          mkdir -p dist/tauri/publish
-          node apps/ui/tools/tauri/make-latest-json.mjs \
-            --channel "${ENVIRONMENT}" \
-            --version "${version}" \
-            --pub-date "${pub_date}" \
-            --notes "${notes}" \
+          node scripts/pipeline/tauri/prepare-publish-assets.mjs \
+            --environment "${ENVIRONMENT}" \
+            --ui-version "${{ steps.meta.outputs.ui_version }}" \
             --repo "${REPO}" \
-            --release-tag "${release_tag}" \
             --artifacts-dir "dist/tauri/updates" \
-            --out "dist/tauri/publish/latest.json"
-
-          # Assemble per-release payloads.
-          if [ "${ENVIRONMENT}" = "preview" ]; then
-            mkdir -p dist/tauri/publish/ui-preview
-            cp dist/tauri/publish/latest.json dist/tauri/publish/ui-preview/latest.json
-            cp -R dist/tauri/updates/* dist/tauri/publish/ui-preview/
-          else
-            mkdir -p dist/tauri/publish/ui-v dist/tauri/publish/ui-stable
-            cp dist/tauri/publish/latest.json dist/tauri/publish/ui-stable/latest.json
-            cp -R dist/tauri/updates/* dist/tauri/publish/ui-v/
-          fi
+            --publish-dir "dist/tauri/publish"
 
       - name: Upload publish assets artifact
         uses: actions/upload-artifact@v4
@@ -652,8 +652,8 @@ jobs:
     uses: ./.github/workflows/publish-ui-release.yml
     secrets: inherit
     with:
-      tag: ui-preview
-      title: Happier UI Preview
+      tag: ui-desktop-preview
+      title: Happier UI Desktop Preview
       target_sha: ${{ needs.prepare_assets.outputs.target_sha }}
       prerelease: true
       rolling_tag: true
@@ -661,7 +661,7 @@ jobs:
       notes: Rolling preview build.
       assets_artifact: ui-desktop-assets
       assets_artifact_path: dist/ui-desktop-assets
-      assets_dir: dist/ui-desktop-assets/ui-preview
+      assets_dir: dist/ui-desktop-assets/ui-desktop-preview
       clobber: true
 
   publish_stable_release:
@@ -670,15 +670,15 @@ jobs:
     uses: ./.github/workflows/publish-ui-release.yml
     secrets: inherit
     with:
-      tag: ui-v${{ needs.prepare_assets.outputs.ui_version }}
-      title: Happier UI v${{ needs.prepare_assets.outputs.ui_version }}
+      tag: ui-desktop-v${{ needs.prepare_assets.outputs.ui_version }}
+      title: Happier UI Desktop v${{ needs.prepare_assets.outputs.ui_version }}
       target_sha: ${{ needs.prepare_assets.outputs.target_sha }}
       prerelease: false
       rolling_tag: false
       generate_notes: true
       assets_artifact: ui-desktop-assets
       assets_artifact_path: dist/ui-desktop-assets
-      assets_dir: dist/ui-desktop-assets/ui-v
+      assets_dir: dist/ui-desktop-assets/ui-desktop-v
       clobber: true
 
   publish_stable_feed:
@@ -687,8 +687,8 @@ jobs:
     uses: ./.github/workflows/publish-ui-release.yml
     secrets: inherit
     with:
-      tag: ui-stable
-      title: Happier UI Stable
+      tag: ui-desktop-stable
+      title: Happier UI Desktop Stable
       target_sha: ${{ needs.prepare_assets.outputs.target_sha }}
       prerelease: false
       rolling_tag: true
@@ -696,5 +696,5 @@ jobs:
       notes: Stable update feed.
       assets_artifact: ui-desktop-assets
       assets_artifact_path: dist/ui-desktop-assets
-      assets_dir: dist/ui-desktop-assets/ui-stable
+      assets_dir: dist/ui-desktop-assets/ui-desktop-stable
       clobber: true

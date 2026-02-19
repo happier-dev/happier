@@ -202,17 +202,9 @@ jobs:
     outputs:
       source_ref: ${{ steps.resolve.outputs.ref }}
       release_sha: ${{ steps.release_sha.outputs.sha }}
-      app_version: ${{ steps.app_version.outputs.version }}
       expo_profile: ${{ steps.expo_profile.outputs.profile }}
       deploy_ref: ${{ steps.deploy_meta.outputs.ref }}
       deploy_sha: ${{ steps.deploy_meta.outputs.sha }}
-      mobile_tag: ${{ steps.mobile_meta.outputs.tag }}
-      mobile_title: ${{ steps.mobile_meta.outputs.title }}
-      mobile_prerelease: ${{ steps.mobile_meta.outputs.prerelease }}
-      mobile_rolling_tag: ${{ steps.mobile_meta.outputs.rolling_tag }}
-      mobile_generate_notes: ${{ steps.mobile_meta.outputs.generate_notes }}
-      mobile_notes: ${{ steps.mobile_meta.outputs.notes }}
-      mobile_publish: ${{ steps.mobile_meta.outputs.publish }}
     steps:
       - name: Resolve source ref
         id: resolve
@@ -297,7 +289,7 @@ jobs:
         id: bump_app
         run: |
           set -euo pipefail
-          out="$(node scripts/release/bump-version.mjs --component app --bump "${{ inputs.bump }}")"
+          out="$(node scripts/pipeline/run.mjs release-bump-version --component app --bump "${{ inputs.bump }}")"
           if [ "$out" = "SKIP" ]; then
             echo "skipped=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -340,42 +332,16 @@ jobs:
           set -euo pipefail
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve app version
-        id: app_version
-        if: inputs.expo_action == 'native' || inputs.expo_action == 'native_submit'
-        run: |
-          set -euo pipefail
-          v="$(node -p 'require("./apps/ui/package.json").version' | tr -d '\n')"
-          if [ -z "${v:-}" ]; then
-            echo "Unable to resolve app version from apps/ui/package.json" >&2
-            exit 1
-          fi
-          echo "version=${v}" >> "$GITHUB_OUTPUT"
-
       - name: Expo OTA update
         if: inputs.expo_action == 'ota'
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          APP_ENV: ${{ inputs.environment }}
-          EXPO_UPDATE_MESSAGE: ${{ inputs.expo_update_message }}
         run: |
           set -euo pipefail
-          if [ -z "${EXPO_TOKEN:-}" ]; then
-            echo "EXPO_TOKEN is required for Expo actions." >&2
-            exit 1
-          fi
-          if [ "${{ inputs.environment }}" = "production" ]; then
-            yarn --cwd apps/ui ota:production
-          else
-            cd apps/ui
-            APP_ENV=preview NODE_ENV=preview yarn tsx sources/scripts/parseChangelog.ts
-            yarn typecheck
-            update_message="${EXPO_UPDATE_MESSAGE:-}"
-            if [ -z "${update_message}" ]; then
-              update_message="Happier OTA preview ${GITHUB_SHA} (run ${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT})"
-            fi
-            npx --yes "eas-cli@${EAS_CLI_VERSION}" update --branch preview --non-interactive --message "${update_message}"
-          fi
+          node scripts/pipeline/expo/ota-update.mjs \
+            --environment "${{ inputs.environment }}" \
+            --message "${{ inputs.expo_update_message }}" \
+            --eas-cli-version "${EAS_CLI_VERSION}"
 
       - name: Resolve Expo build profile
         id: expo_profile
@@ -400,442 +366,53 @@ jobs:
             echo "- build profile: \`${profile}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Expo native build
+      - name: Expo native build + optional APK release + optional submit (pipeline)
         if: ${{ (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') && inputs.expo_builder == 'eas_cloud' }}
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           APP_ENV: ${{ inputs.environment }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          if [ -z "${EXPO_TOKEN:-}" ]; then
-            echo "EXPO_TOKEN is required for Expo actions." >&2
-            exit 1
-          fi
-          cd apps/ui
-          npx --yes "eas-cli@${EAS_CLI_VERSION}" build --platform "${{ inputs.expo_platform }}" --profile "${{ steps.expo_profile.outputs.profile }}" --non-interactive --json > /tmp/eas_build.json
-
-      - name: Dump EAS build details (always)
-        if: ${{ always() && (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') && inputs.expo_builder == 'eas_cloud' }}
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "${EXPO_TOKEN:-}" ]; then
-            echo "EXPO_TOKEN missing; skipping EAS build diagnostics." >&2
-            exit 0
-          fi
-
-          if [ ! -s /tmp/eas_build.json ]; then
-            echo "Missing /tmp/eas_build.json from EAS build step; skipping EAS build diagnostics." >&2
-            exit 0
-          fi
-
-          cd apps/ui
-
-          echo "EAS builds created by this job:"
-          node -e '
-            const fs = require("node:fs");
-            const raw = fs.readFileSync("/tmp/eas_build.json", "utf8").trim();
-            const parsed = JSON.parse(raw);
-            const builds = Array.isArray(parsed) ? parsed : [parsed];
-            for (const build of builds) {
-              const id = build?.id ?? build?.buildId ?? null;
-              const platform = build?.platform ?? null;
-              const status = build?.status ?? null;
-              const detailsUrl =
-                build?.buildDetailsPageUrl ||
-                build?.buildDetailsUrl ||
-                build?.detailsUrl ||
-                build?.url ||
-                null;
-              console.log(`- ${platform ?? "unknown"}: ${status ?? "unknown"}${id ? ` (${id})` : ""}${detailsUrl ? ` ${detailsUrl}` : ""}`);
-            }
-          '
-
-          build_ids="$(node -e '
-            const fs = require("node:fs");
-            const raw = fs.readFileSync("/tmp/eas_build.json", "utf8").trim();
-            const parsed = JSON.parse(raw);
-            const builds = Array.isArray(parsed) ? parsed : [parsed];
-            const ids = builds.map((b) => b?.id ?? b?.buildId ?? null).filter(Boolean);
-            process.stdout.write(ids.join(" "));
-          ')"
-
-          if [ -z "${build_ids:-}" ]; then
-            echo "No build IDs found in /tmp/eas_build.json; skipping EAS build:view diagnostics." >&2
-            exit 0
-          fi
-
-          for build_id in ${build_ids}; do
-            echo "::group::eas build:view ${build_id}"
-            view_path="/tmp/eas_build_view_${build_id}.json"
-            if npx --yes "eas-cli@${EAS_CLI_VERSION}" build:view "${build_id}" --json > "${view_path}"; then
-              VIEW_PATH="${view_path}" node -e '
-                const fs = require("node:fs");
-                const path = process.env.VIEW_PATH;
-                const raw = fs.readFileSync(path, "utf8").trim();
-                const parsed = JSON.parse(raw);
-                const build = Array.isArray(parsed) ? parsed[0] : parsed;
-                const error =
-                  build?.error?.message ||
-                  build?.error?.errors?.[0]?.message ||
-                  (typeof build?.error === "string" ? build.error : null) ||
-                  null;
-                const out = {
-                  id: build?.id ?? null,
-                  platform: build?.platform ?? null,
-                  status: build?.status ?? null,
-                  detailsUrl: build?.buildDetailsPageUrl || build?.buildDetailsUrl || build?.detailsUrl || null,
-                  error,
-                  logs: build?.logs?.url || build?.logUrl || null,
-                  artifacts: build?.artifacts ?? null,
-                };
-                console.log(JSON.stringify(out, null, 2));
-              '
-              echo ""
-              echo "eas build:view (human output):"
-              npx --yes "eas-cli@${EAS_CLI_VERSION}" build:view "${build_id}" || true
-            else
-              echo "eas build:view failed for ${build_id}" >&2
-            fi
-            echo "::endgroup::"
-          done
-
-      - name: Download Android APK (EAS *-apk profiles)
-        id: download_apk
-        if: ${{ (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') && inputs.expo_builder == 'eas_cloud' && (inputs.expo_platform == 'android' || inputs.expo_platform == 'all') && endsWith(steps.expo_profile.outputs.profile, '-apk') }}
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          APP_ENV: ${{ inputs.environment }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "${EXPO_TOKEN:-}" ]; then
-            echo "EXPO_TOKEN is required for Expo actions." >&2
-            exit 1
-          fi
-
-          env_name="${{ inputs.environment }}"
-
-          if [ ! -s /tmp/eas_build.json ]; then
-            echo "Missing /tmp/eas_build.json from EAS build step." >&2
-            exit 1
-          fi
-
-          build_meta="$(node - <<'NODE'
-          const fs = require('node:fs');
-          const raw = fs.readFileSync('/tmp/eas_build.json', 'utf8').trim();
-          if (!raw) process.exit(2);
-          const parsed = JSON.parse(raw);
-          const builds = Array.isArray(parsed) ? parsed : [parsed];
-          const android = builds.find(b => (b?.platform || '').toLowerCase() === 'android') ?? null;
-          if (!android) {
-            console.error('No Android build found in EAS output');
-            process.exit(4);
-          }
-          const id = android?.id || android?.buildId;
-          if (!id) process.exit(3);
-          const artifactUrl =
-            android?.artifacts?.applicationArchiveUrl ||
-            android?.artifacts?.buildUrl ||
-            android?.artifacts?.url ||
-            android?.artifactUrl ||
-            android?.applicationArchiveUrl ||
-            '';
-          process.stdout.write(`${String(id)}\t${String(artifactUrl)}`);
-          NODE
-          )"
-          build_id="${build_meta%%$'\t'*}"
-          artifact_url=""
-          if [ "${build_meta}" != "${build_id}" ]; then
-            artifact_url="${build_meta#*$'\t'}"
-          fi
-
-          mkdir -p /tmp/eas
-          apk_path="/tmp/eas/happier-${env_name}-android.apk"
-
-          if [ -z "${artifact_url:-}" ]; then
-            build_view_json="$(
-              cd apps/ui
-                  npx --yes "eas-cli@${EAS_CLI_VERSION}" build:view "${build_id}" --json
-            )"
-            artifact_url="$(
-              BUILD_VIEW_JSON="${build_view_json}" node - <<'NODE'
-              const raw = (process.env.BUILD_VIEW_JSON ?? '').trim();
-              if (!raw) process.exit(2);
-              const parsed = JSON.parse(raw);
-              const build = Array.isArray(parsed) ? parsed[0] : parsed;
-              const url =
-                build?.artifacts?.applicationArchiveUrl ||
-                build?.artifacts?.buildUrl ||
-                build?.artifacts?.url ||
-                build?.artifactUrl ||
-                build?.applicationArchiveUrl ||
-                '';
-              if (!url) process.exit(3);
-              process.stdout.write(String(url));
-              NODE
-            )" || {
-              echo "Unable to resolve Android artifact URL for EAS build ${build_id}" >&2
-              exit 1
-            }
-          fi
-
-          case "${artifact_url}" in
-            https://*) ;;
-            *)
-              echo "Resolved Android artifact URL is not https: ${artifact_url}" >&2
-              exit 1
-              ;;
-          esac
-
-          curl -fL --retry 3 --retry-all-errors --retry-delay 2 --max-time 300 "${artifact_url}" -o "${apk_path}"
-
-          if [ ! -f "${apk_path}" ]; then
-            echo "APK download failed; expected file at: ${apk_path}" >&2
-            exit 1
-          fi
-          apk_size_bytes="$(wc -c < "${apk_path}" | tr -d '[:space:]')"
-          if [ "${apk_size_bytes}" -lt 1000000 ]; then
-            echo "Downloaded APK is unexpectedly small (${apk_size_bytes} bytes): ${apk_path}" >&2
-            exit 1
-          fi
-          if ! unzip -tq "${apk_path}" >/dev/null 2>&1; then
-            echo "Downloaded APK archive failed ZIP integrity check: ${apk_path}" >&2
-            exit 1
-          fi
-
-          mkdir -p dist/ui-mobile
-
-          app_version="$(node -p 'require(\"./apps/ui/package.json\").version' | tr -d '\n')"
-          if [ -z "${app_version:-}" ]; then
-            echo "Unable to resolve app version from apps/ui/package.json" >&2
-            exit 1
-          fi
-
-          if [ "${env_name}" = "production" ]; then
-            out="dist/ui-mobile/happier-production-android-v${app_version}.apk"
-          else
-            out="dist/ui-mobile/happier-preview-android.apk"
-          fi
-
-          cp "${apk_path}" "${out}"
-          echo "app_version=${app_version}" >> "$GITHUB_OUTPUT"
-          echo "asset_path=${out}" >> "$GITHUB_OUTPUT"
-
-      - name: Warn when *-apk profile excludes Android platform
-        if: ${{ (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') && inputs.expo_builder == 'eas_cloud' && endsWith(steps.expo_profile.outputs.profile, '-apk') && !(inputs.expo_platform == 'android' || inputs.expo_platform == 'all') }}
-        run: |
-          echo "::warning::expo_profile '${{ steps.expo_profile.outputs.profile }}' targets APK artifacts, but expo_platform='${{ inputs.expo_platform }}' excludes Android. Mobile APK release will be skipped."
-
-      - name: Upload mobile release assets artifact
-        if: steps.download_apk.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ui-mobile-assets
-          path: dist/ui-mobile/**
-          retention-days: 7
-
-      - name: Compute mobile release metadata
-        id: mobile_meta
-        if: ${{ (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') && inputs.expo_builder == 'eas_cloud' }}
-        env:
-          DOWNLOAD_APK_OUTCOME: ${{ steps.download_apk.outcome }}
-        run: |
-          set -euo pipefail
-
-          if [ "${DOWNLOAD_APK_OUTCOME:-}" != "success" ]; then
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            echo "tag=" >> "$GITHUB_OUTPUT"
-            echo "title=" >> "$GITHUB_OUTPUT"
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
-            echo "rolling_tag=false" >> "$GITHUB_OUTPUT"
-            echo "generate_notes=false" >> "$GITHUB_OUTPUT"
-            echo "notes=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          env_name="${{ inputs.environment }}"
-          app_version="${{ steps.download_apk.outputs.app_version }}"
-          echo "publish=true" >> "$GITHUB_OUTPUT"
-
-          if [ "${env_name}" = "production" ]; then
-            echo "tag=ui-v${app_version}" >> "$GITHUB_OUTPUT"
-            echo "title=Happier UI v${app_version}" >> "$GITHUB_OUTPUT"
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
-            echo "rolling_tag=false" >> "$GITHUB_OUTPUT"
-            echo "generate_notes=true" >> "$GITHUB_OUTPUT"
-            echo "notes=" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=ui-preview" >> "$GITHUB_OUTPUT"
-            echo "title=Happier UI Preview" >> "$GITHUB_OUTPUT"
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
-            echo "rolling_tag=true" >> "$GITHUB_OUTPUT"
-            echo "generate_notes=false" >> "$GITHUB_OUTPUT"
-            echo "notes=Rolling preview build." >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Expo submit
-        if: ${{ inputs.expo_action == 'native_submit' && inputs.expo_builder == 'eas_cloud' }}
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -z "${EXPO_TOKEN:-}" ]; then
-            echo "EXPO_TOKEN is required for Expo actions." >&2
-            exit 1
-          fi
-          cd apps/ui
-          submit_platform() {
-            local platform="$1"
-            npx --yes "eas-cli@${EAS_CLI_VERSION}" submit --platform "${platform}" --latest --non-interactive
-          }
-
-          if [ "${{ inputs.expo_platform }}" = "all" ]; then
-            submit_failures=0
-            for submit_platform_name in ios android; do
-              if ! submit_platform "${submit_platform_name}"; then
-                if [ "${{ inputs.environment }}" = "preview" ]; then
-                  echo "::warning::Expo submit failed for \${submit_platform_name} in preview; continuing so successful platform submissions are preserved."
-                  submit_failures=1
-                  continue
-                fi
-                echo "Expo submit failed for platform '\${submit_platform_name}' in production." >&2
-                exit 1
-              fi
-            done
-
-            if [ "${submit_failures}" -eq 1 ]; then
-              echo "Preview submission completed with one or more platform failures." >> "$GITHUB_STEP_SUMMARY"
-            fi
-            exit 0
-          fi
-
-          submit_platform "${{ inputs.expo_platform }}"
+          node scripts/pipeline/run.mjs ui-mobile-release \
+            --environment "${{ inputs.environment }}" \
+            --action "${{ inputs.expo_action }}" \
+            --platform "${{ inputs.expo_platform }}" \
+            --profile "${{ steps.expo_profile.outputs.profile }}" \
+            --build-json "/tmp/eas_build.json" \
+            --out-dir "dist/ui-mobile" \
+            --eas-cli-version "${EAS_CLI_VERSION}" \
+            --release-message "${{ inputs.expo_update_message }}" \
+            --secrets-source env
 
       - name: Promote source ref to deploy branch (web)
         if: inputs.deploy_web
         env:
-          DEPLOY_REF: deploy/${{ inputs.environment }}/ui
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          remote_sha="$(git ls-remote --heads origin "$DEPLOY_REF" | awk '{print $1}')"
-          if [ -n "$remote_sha" ]; then
-            git push origin HEAD:"$DEPLOY_REF" --force-with-lease="refs/heads/$DEPLOY_REF:$remote_sha"
-          else
-            git push origin HEAD:"$DEPLOY_REF"
-          fi
+          node scripts/pipeline/github/promote-deploy-branch.mjs \
+            --deploy-environment "${{ inputs.environment }}" \
+            --component ui \
+            --sha "$(git rev-parse HEAD)" \
+            --summary-file "${GITHUB_STEP_SUMMARY}"
 
-      - name: Capture deploy metadata
+      - name: Trigger deploy webhook(s) (web)
         if: inputs.deploy_web
-        id: deploy_meta
         env:
-          DEPLOY_REF: deploy/${{ inputs.environment }}/ui
+          CF_WEBHOOK_DEPLOY_CLIENT_ID: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_ID }}
+          CF_WEBHOOK_DEPLOY_CLIENT_SECRET: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_SECRET }}
+          DEPLOY_WEBHOOK_URL: ${{ vars.DEPLOY_WEBHOOK_URL != '' && vars.DEPLOY_WEBHOOK_URL || secrets.DEPLOY_WEBHOOK_URL }}
+          HAPPIER_UI_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_UI_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_UI_DEPLOY_WEBHOOKS || secrets.HAPPIER_UI_DEPLOY_WEBHOOKS }}
         run: |
           set -euo pipefail
-          echo "ref=${DEPLOY_REF}" >> "$GITHUB_OUTPUT"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-  deploy_wait:
-    name: Wait for deploy workflow (push)
-    if: ${{ inputs.deploy_web == true && needs.promote.result == 'success' }}
-    needs: [promote]
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - name: Wait for deploy run to complete
-        env:
-          REPO: ${{ github.repository }}
-          BRANCH: ${{ needs.promote.outputs.deploy_ref }}
-          SHA: ${{ needs.promote.outputs.deploy_sha }}
-          TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "${BRANCH:-}" ] || [ -z "${SHA:-}" ]; then
-            echo "Missing deploy metadata (branch/sha)." >&2
-            exit 1
-          fi
-
-          branch_enc="$(node -p 'encodeURIComponent(process.env.BRANCH)')"
-          list_url="https://api.github.com/repos/${REPO}/actions/workflows/deploy.yml/runs?branch=${branch_enc}&event=push&per_page=20"
-
-          echo "Waiting for deploy workflow run on branch '${BRANCH}' (sha=${SHA})."
-
-          deadline="$((SECONDS + 1800))"
-          run_id=""
-          while [ "${SECONDS}" -lt "${deadline}" ]; do
-            json="$(curl -sS \
-              --connect-timeout 10 \
-              --max-time 30 \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer ${TOKEN}" \
-              "${list_url}")"
-
-            run_id="$(printf '%s' "${json}" | jq -r --arg sha "${SHA}" '.workflow_runs[] | select(.head_sha == $sha) | .id' | head -n 1)"
-            if [ -n "${run_id:-}" ] && [ "${run_id}" != "null" ]; then
-              break
-            fi
-            sleep 5
-          done
-
-          if [ -z "${run_id:-}" ] || [ "${run_id}" = "null" ]; then
-            echo "Timed out waiting for deploy workflow run to start (branch='${BRANCH}', sha='${SHA}')." >&2
-            exit 1
-          fi
-
-          echo "Found deploy run id=${run_id}; waiting for completion."
-          deadline="$((SECONDS + 3600))"
-          while [ "${SECONDS}" -lt "${deadline}" ]; do
-            run_json="$(curl -sS \
-              --connect-timeout 10 \
-              --max-time 30 \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer ${TOKEN}" \
-              "https://api.github.com/repos/${REPO}/actions/runs/${run_id}")"
-
-            status="$(printf '%s' "${run_json}" | jq -r '.status // ""')"
-            conclusion="$(printf '%s' "${run_json}" | jq -r '.conclusion // ""')"
-            html_url="$(printf '%s' "${run_json}" | jq -r '.html_url // ""')"
-
-            if [ "${status}" = "completed" ]; then
-              if [ "${conclusion}" = "success" ]; then
-                echo "Deploy succeeded: ${html_url}"
-                exit 0
-              fi
-              echo "Deploy failed (conclusion='${conclusion}'): ${html_url}" >&2
-              exit 1
-            fi
-
-            sleep 10
-          done
-
-          echo "Timed out waiting for deploy workflow run to complete: ${run_id}" >&2
-          exit 1
-
-  publish_mobile:
-    name: Publish mobile assets (GitHub Release)
-    if: ${{ needs.promote.outputs.mobile_publish == 'true' }}
-    needs: [promote]
-    permissions:
-      contents: write
-    uses: ./.github/workflows/publish-ui-release.yml
-    secrets: inherit
-    with:
-      tag: ${{ needs.promote.outputs.mobile_tag }}
-      title: ${{ needs.promote.outputs.mobile_title }}
-      target_sha: ${{ needs.promote.outputs.release_sha }}
-      prerelease: ${{ needs.promote.outputs.mobile_prerelease == 'true' }}
-      rolling_tag: ${{ needs.promote.outputs.mobile_rolling_tag == 'true' }}
-      generate_notes: ${{ needs.promote.outputs.mobile_generate_notes == 'true' }}
-      notes: ${{ needs.promote.outputs.mobile_notes }}
-      assets_artifact: ui-mobile-assets
-      assets_artifact_path: dist/ui-mobile
-      assets_dir: dist/ui-mobile
-      clobber: true
+          node scripts/pipeline/deploy/trigger-webhooks.mjs \
+            --environment "${{ inputs.environment }}" \
+            --component "ui" \
+            --repository "${{ github.repository }}" \
+            --ref-name "deploy/${{ inputs.environment }}/ui"
 
   expo_local_build:
     name: Expo native build (local runners)
@@ -851,27 +428,7 @@ jobs:
       platform: ${{ inputs.expo_platform }}
       profile: ${{ needs.promote.outputs.expo_profile }}
       action: ${{ inputs.expo_action == 'native_submit' && 'build_and_submit' || 'build_only' }}
-
-  publish_mobile_local:
-    name: Publish mobile assets (GitHub Release)
-    if: ${{ (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') && inputs.expo_builder == 'eas_local' && (inputs.expo_platform == 'android' || inputs.expo_platform == 'all') && endsWith(needs.promote.outputs.expo_profile, '-apk') }}
-    needs: [promote, expo_local_build]
-    permissions:
-      contents: write
-    uses: ./.github/workflows/publish-ui-release.yml
-    secrets: inherit
-    with:
-      tag: ${{ inputs.environment == 'production' && format('ui-v{0}', needs.promote.outputs.app_version) || 'ui-preview' }}
-      title: ${{ inputs.environment == 'production' && format('Happier UI v{0}', needs.promote.outputs.app_version) || 'Happier UI Preview' }}
-      target_sha: ${{ needs.promote.outputs.release_sha }}
-      prerelease: ${{ inputs.environment != 'production' }}
-      rolling_tag: ${{ inputs.environment != 'production' }}
-      generate_notes: ${{ inputs.environment == 'production' }}
-      notes: ${{ inputs.environment == 'production' && '' || 'Rolling preview build.' }}
-      assets_artifact: ui-mobile-${{ inputs.environment }}-android
-      assets_artifact_path: dist/ui-mobile
-      assets_dir: dist/ui-mobile
-      clobber: true
+      publish_apk_release: ${{ ((inputs.expo_platform == 'android' || inputs.expo_platform == 'all') && endsWith(needs.promote.outputs.expo_profile, '-apk')) && 'auto' || 'false' }}
 
   desktop:
     name: Desktop bundles (Tauri)

@@ -1,0 +1,145 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: happier
+      POSTGRES_PASSWORD: happier
+      POSTGRES_DB: happier_smoke
+      POSTGRES_APP_NAME: ${POSTGRES_APP_NAME:-happier_npm_e2e_smoke}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U happier -d happier_smoke -h 127.0.0.1 -p 5432"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  remote1:
+    build:
+      context: .
+      dockerfile: Dockerfile.remote-host
+    working_dir: /work
+    environment:
+      REMOTE_USER: happy
+      REMOTE_AUTHORIZED_KEYS_PATH: /ssh/authorized_keys
+      REMOTE_SHIM_HAPPIER_INSTALLER: ${REMOTE_SHIM_HAPPIER_INSTALLER:-1}
+    volumes:
+      - ${SSH_PUBLIC_KEY_PATH}:/ssh/authorized_keys:ro
+      - ${PACKS_DIR:-./_packs}:/packs:ro
+    command: ["bash", "/opt/happier-npm-e2e/bin/remote-host-entrypoint.sh"]
+
+  remote-server1:
+    build:
+      context: .
+      dockerfile: Dockerfile.remote-host-systemd
+    working_dir: /work
+    privileged: true
+    environment:
+      REMOTE_USER: happy
+      REMOTE_AUTHORIZED_KEYS_PATH: /ssh/authorized_keys
+      REMOTE_SHIM_HAPPIER_INSTALLER: ${REMOTE_SHIM_HAPPIER_INSTALLER:-1}
+    volumes:
+      - ${SSH_PUBLIC_KEY_PATH}:/ssh/authorized_keys:ro
+      - ${PACKS_DIR:-./_packs}:/packs:ro
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    tmpfs:
+      - /run
+      - /run/lock
+    command: ["bash", "/opt/happier-npm-e2e/bin/remote-host-systemd-entrypoint.sh"]
+
+  remote-daemon-smoke:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /work
+    depends_on:
+      - stack
+      - remote1
+    environment:
+      HSTACK_NPM_SPEC: ${HSTACK_NPM_SPEC:-@happier-dev/stack@next}
+      HSTACK_TGZ: ${HSTACK_TGZ:-}
+      HAPPIER_NPM_SPEC: ${HAPPIER_NPM_SPEC:-@happier-dev/cli@next}
+      HAPPIER_TGZ: ${HAPPIER_TGZ:-}
+      HAPPIER_CLI_INSTALL_MODE: ${HAPPIER_CLI_INSTALL_MODE:-global}
+
+      HAPPIER_SERVER_URL: ${HAPPIER_SERVER_URL:-http://stack:3005}
+      HAPPIER_PUBLIC_SERVER_URL: ${HAPPIER_PUBLIC_SERVER_URL:-http://stack:3005}
+      HAPPIER_WEBAPP_URL: ${HAPPIER_WEBAPP_URL:-http://stack:3005}
+      HAPPIER_ACTIVE_SERVER_ID: ${HAPPIER_ACTIVE_SERVER_ID:-remote-smoke}
+
+      REMOTE_SSH_TARGET: ${REMOTE_SSH_TARGET:-happy@remote1}
+      REMOTE_SSH_HOST: ${REMOTE_SSH_HOST:-remote1}
+      HSTACK_REMOTE_CHANNEL: ${HSTACK_REMOTE_CHANNEL:-preview}
+    volumes:
+      - ${PACKS_DIR:-./_packs}:/packs:ro
+      - ${SSH_PRIVATE_KEY_PATH}:/work/ssh/id_ed25519:ro
+      - remote-controller-home:/work/happier-home-remote
+      - remote-approver-home:/work/happier-approver-home-remote
+    command: ["bash", "/opt/happier-npm-e2e/bin/remote-daemon-smoke.sh"]
+
+  remote-server-smoke:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /work
+    depends_on:
+      - remote-server1
+      - postgres
+    environment:
+      HSTACK_NPM_SPEC: ${HSTACK_NPM_SPEC:-@happier-dev/stack@next}
+      HSTACK_TGZ: ${HSTACK_TGZ:-}
+      HAPPIER_NPM_SPEC: ${HAPPIER_NPM_SPEC:-@happier-dev/cli@next}
+      HAPPIER_TGZ: ${HAPPIER_TGZ:-}
+      HAPPIER_CLI_INSTALL_MODE: ${HAPPIER_CLI_INSTALL_MODE:-global}
+
+      REMOTE_SSH_TARGET: ${REMOTE_SSH_TARGET_SERVER:-happy@remote-server1}
+      REMOTE_SSH_HOST: ${REMOTE_SSH_HOST_SERVER:-remote-server1}
+      HSTACK_REMOTE_CHANNEL: ${HSTACK_REMOTE_CHANNEL:-preview}
+
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:-happier}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-happier}
+      POSTGRES_DB: ${POSTGRES_DB:-happier_smoke}
+      POSTGRES_APP_NAME: ${POSTGRES_APP_NAME:-happier_npm_e2e_smoke}
+      REMOTE_SERVER_DB: ${REMOTE_SERVER_DB:-postgres}
+      REMOTE_SERVER_PORT: ${REMOTE_SERVER_PORT:-3999}
+    volumes:
+      - ${PACKS_DIR:-./_packs}:/packs:ro
+      - ${SSH_PRIVATE_KEY_PATH}:/work/ssh/id_ed25519:ro
+    command: ["bash", "/opt/happier-npm-e2e/bin/remote-server-smoke.sh"]
+
+  remote-daemon-authenticated-cli-smoke:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /work
+    depends_on:
+      - stack
+      - remote1
+    environment:
+      HSTACK_NPM_SPEC: ${HSTACK_NPM_SPEC:-@happier-dev/stack@next}
+      HSTACK_TGZ: ${HSTACK_TGZ:-}
+      HAPPIER_NPM_SPEC: ${HAPPIER_NPM_SPEC:-@happier-dev/cli@next}
+      HAPPIER_TGZ: ${HAPPIER_TGZ:-}
+      HAPPIER_CLI_INSTALL_MODE: ${HAPPIER_CLI_INSTALL_MODE:-global}
+
+      HAPPIER_SERVER_URL: ${HAPPIER_SERVER_URL:-http://stack:3005}
+      HAPPIER_PUBLIC_SERVER_URL: ${HAPPIER_PUBLIC_SERVER_URL:-http://stack:3005}
+      HAPPIER_WEBAPP_URL: ${HAPPIER_WEBAPP_URL:-http://stack:3005}
+      # Must match the `cli` smoke container, since we reuse its home volume as the already-authenticated machine.
+      HAPPIER_ACTIVE_SERVER_ID: ${HAPPIER_ACTIVE_SERVER_ID:-smoke}
+      PRIMARY_CLI_HOME_DIR: /work/primary-cli-home
+
+      REMOTE_SSH_TARGET: ${REMOTE_SSH_TARGET:-happy@remote1}
+      REMOTE_SSH_HOST: ${REMOTE_SSH_HOST:-remote1}
+      HSTACK_REMOTE_CHANNEL: ${HSTACK_REMOTE_CHANNEL:-preview}
+    volumes:
+      - ${PACKS_DIR:-./_packs}:/packs:ro
+      - ${SSH_PRIVATE_KEY_PATH}:/work/ssh/id_ed25519:ro
+      - cli-home:/work/primary-cli-home:rw
+    command: ["bash", "/opt/happier-npm-e2e/bin/remote-daemon-authenticated-cli-smoke.sh"]
+
+volumes:
+  remote-controller-home:
+    driver: local
+  remote-approver-home:
+    driver: local

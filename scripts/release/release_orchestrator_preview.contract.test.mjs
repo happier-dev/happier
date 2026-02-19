@@ -11,6 +11,10 @@ async function loadWorkflow(name) {
   return readFile(join(repoRoot, '.github', 'workflows', name), 'utf8');
 }
 
+async function loadFile(rel) {
+  return readFile(join(repoRoot, rel), 'utf8');
+}
+
 test('release workflow only promotes/bumps on production and routes source_ref by environment', async () => {
   const raw = await loadWorkflow('release.yml');
 
@@ -39,18 +43,10 @@ test('release workflow only promotes/bumps on production and routes source_ref b
 test('release workflow publishes server runner only when explicitly requested', async () => {
   const raw = await loadWorkflow('release.yml');
 
-  // Production deploys should not be blocked on npm publishing the server runner by default.
-  // Publishing must be an explicit target so server deploy remains independent.
-  assert.doesNotMatch(
-    raw,
-    /if\s+\[\s*"\$p"\s*=\s*"server"\s*\];\s+then\s+publish_server="true";\s+fi/,
-    'server deploy target must not imply server runner npm publishing',
-  );
-  assert.match(
-    raw,
-    /if\s+\[\s*"\$p"\s*=\s*"server_runner"\s*\];\s+then\s+publish_server="true";\s+fi/,
-    'server runner npm publishing should be controlled via server_runner deploy target',
-  );
+  // Server runner publishing must be an explicit target so server deploy remains independent.
+  // The logic lives in the shared pipeline script (not inline bash).
+  assert.match(raw, /node scripts\/pipeline\/run\.mjs release-resolve-bump-plan/);
+  assert.match(raw, /--deploy-targets "\$\{DEPLOY_TARGETS\}"/);
 
   assert.match(
     raw,
@@ -71,6 +67,22 @@ test('release workflow can publish self-host UI web bundle via a dedicated workf
     raw,
     /publish_ui_web:[\s\S]*?uses:\s*\.\/\.github\/workflows\/publish-ui-web\.yml/,
     'self-host UI web bundle publishing should be handled by a dedicated workflow',
+  );
+});
+
+test('release workflow delegates deploy plan computation to pipeline script', async () => {
+  const raw = await loadWorkflow('release.yml');
+
+  assert.match(
+    raw,
+    /- name: Compute deploy plan[\s\S]*?node scripts\/pipeline\/run\.mjs release-compute-deploy-plan/,
+    'release.yml should delegate deploy plan computation to compute-deploy-plan.mjs',
+  );
+  assert.doesNotMatch(raw, /plan_one\(\)/, 'release.yml should not embed deploy plan logic in inline bash');
+  assert.doesNotMatch(
+    raw,
+    /\/tmp\/changed_deploy_/,
+    'release.yml should not write deploy plan path lists to /tmp (logic belongs in compute-deploy-plan.mjs)',
   );
 });
 
@@ -108,7 +120,10 @@ test('release-npm embeds build feature policy defaults by channel', async () => 
 test('release-npm is compatible with npm trusted publishing (OIDC)', async () => {
   const raw = await loadWorkflow('release-npm.yml');
 
-  assert.match(raw, /npm install --global npm@11/);
+  assert.match(raw, /node scripts\/pipeline\/npm\/publish-tarball\.mjs/, 'release-npm should delegate npm publishing to the pipeline script');
+  assert.match(raw, /node scripts\/pipeline\/npm\/release-packages\.mjs/, 'release-npm should delegate npm pack preparation to the pipeline script');
+  assert.doesNotMatch(raw, /npm pack --ignore-scripts --json/, 'release-npm should not embed npm pack json parsing boilerplate (use release-packages.mjs)');
+  assert.doesNotMatch(raw, /npm install --global npm@11/, 'release-npm should avoid global npm installs (use pinned npm via npx inside the pipeline)');
   assert.doesNotMatch(raw, /NPM_TOKEN is required for npm publish\./);
 });
 
@@ -144,25 +159,30 @@ test('release-npm derives unique preview prerelease versions from base versions'
   assert.doesNotMatch(raw, /version_bump_cli/);
   assert.doesNotMatch(raw, /version_bump_stack/);
   assert.doesNotMatch(raw, /function bumpBase\(base, bump\)/);
-  assert.match(raw, /function setPreviewVersion\(pkgPath\)/);
-  assert.match(raw, /\$\{base\}-preview\.\$\{run\}\.\$\{attempt\}/);
+  assert.match(raw, /node scripts\/pipeline\/npm\/set-preview-versions\.mjs/);
+  assert.doesNotMatch(raw, /function setPreviewVersion\(pkgPath\)/);
+  assert.doesNotMatch(raw, /\$\{base\}-preview\.\$\{run\}\.\$\{attempt\}/);
   assert.match(raw, /publish_server/, 'release-npm should expose publish_server for server runner publishing');
-  assert.match(raw, /PUBLISH_SERVER/, 'release-npm preview versioning should gate server runner via env');
 
   // Server runner package is canonicalized under packages/relay-server.
   assert.doesNotMatch(raw, /packages\/server\//, 'release-npm must not reference removed packages/server');
   assert.match(raw, /dir="packages\/relay-server"/);
   assert.match(raw, /SERVER_RUNNER_DIR:\s*\$\{\{ steps\.server_runner\.outputs\.dir \}\}/);
-  assert.match(raw, /versions\.server = setPreviewVersion\(join\(runnerDir,\s*'package\.json'\)\);/);
   assert.match(raw, /yarn --cwd [^\n]*steps\.server_runner\.outputs\.dir[^\n]* test/);
-  assert.match(raw, /cd "\$\{SERVER_RUNNER_DIR\}"/);
+  assert.match(raw, /node scripts\/pipeline\/npm\/release-packages\.mjs[\s\S]*?--server-runner-dir "\$\{SERVER_RUNNER_DIR\}"/);
+
+  const script = await loadFile('scripts/pipeline/npm/set-preview-versions.mjs');
+  assert.match(script, /GITHUB_RUN_NUMBER/);
+  assert.match(script, /-preview\./);
 });
 
 test('stack version bumps use shared bump-version script across release workflows', async () => {
   const orchestrator = await loadWorkflow('release.yml');
   const releaseNpm = await loadWorkflow('release-npm.yml');
 
-  assert.match(orchestrator, /node scripts\/release\/bump-version\.mjs --component stack --bump "\$\{\{ needs\.plan\.outputs\.bump_stack \}\}"/);
+  assert.match(orchestrator, /node scripts\/pipeline\/run\.mjs release-bump-versions-dev/);
+  assert.match(orchestrator, /--bump-stack "\$\{\{ needs\.plan\.outputs\.bump_stack \}\}"/);
+  assert.doesNotMatch(orchestrator, /node scripts\/release\/bump-version\.mjs --component stack/, 'release.yml should delegate version bumps to the pipeline script');
   assert.doesNotMatch(orchestrator, /BUMP="\$\{\{ needs\.plan\.outputs\.bump_stack \}\}" node - <<'NODE'/);
 
   // Version bumps are centralized in the release orchestrator (dev commit),
@@ -179,29 +199,41 @@ test('release-npm does not manage deploy/* branches (deploy is for server/web ap
   assert.doesNotMatch(raw, /deploy\/\$\{\{\s*inputs\.channel\s*\}\}\/stack/, 'release-npm should not promote deploy/<channel>/stack');
 });
 
-test('publish-github-release skips asset upload when rolling tag move is blocked', async () => {
+test('publish-github-release delegates release creation + asset upload to the pipeline script', async () => {
   const raw = await loadWorkflow('publish-github-release.yml');
-  assert.match(
-    raw,
-    /- name: Upload assets[\s\S]*?if:\s*\$\{\{\s*\(!inputs\.rolling_tag \|\| steps\.move_rolling_tag\.outputs\.pushed == 'true'\)\s*&&\s*\(inputs\.assets != '' \|\| inputs\.assets_dir != ''\)\s*\}\}/,
-    'asset upload must be gated by rolling tag success when using rolling releases',
-  );
+  assert.match(raw, /node scripts\/pipeline\/github\/publish-release\.mjs/);
+  assert.doesNotMatch(raw, /gh release upload/, 'publish-github-release should not embed gh release upload logic');
+  assert.doesNotMatch(raw, /gh api -X DELETE/, 'publish-github-release should not embed release asset pruning logic');
 });
 
-test('promote-ui native_submit handles preview platform credential gaps without aborting all submissions', async () => {
-  const raw = await loadWorkflow('promote-ui.yml');
-  assert.match(raw, /- name: Expo submit[\s\S]*?submit_platform\(\) \{/);
-  assert.match(raw, /for submit_platform_name in ios android; do/);
-  assert.match(raw, /if \[ "\$\{\{ inputs\.environment \}\}" = "preview" \]; then/);
-  assert.match(raw, /::warning::Expo submit failed for/);
+test('promote-ui native_submit uses the shared Expo submit script (handles preview credential gaps)', async () => {
+  const promoteUi = await loadWorkflow('promote-ui.yml');
+  assert.match(promoteUi, /node scripts\/pipeline\/run\.mjs ui-mobile-release/);
+  assert.match(promoteUi, /--action "\$\{\{ inputs\.expo_action \}\}"/);
+
+  const buildUiMobileLocal = await loadWorkflow('build-ui-mobile-local.yml');
+  assert.match(buildUiMobileLocal, /node scripts\/pipeline\/run\.mjs expo-submit/);
+
+  const run = await loadFile('scripts/pipeline/run.mjs');
+  assert.match(run, /path\.join\(repoRoot,\s*'scripts',\s*'pipeline',\s*'expo',\s*'submit\.mjs'\)/);
+
+  const script = await loadFile('scripts/pipeline/expo/submit.mjs');
+  assert.match(script, /\['ios', 'android'\]/);
+  assert.match(script, /for \(const platform of platforms\)/);
+  assert.match(script, /environment === 'preview'/);
+  assert.match(script, /::warning::Expo submit failed for/);
 });
 
 test('promote-ui preview OTA updates are non-interactive and provide an update message', async () => {
   const raw = await loadWorkflow('promote-ui.yml');
   assert.match(raw, /- name: Expo OTA update/);
-  assert.match(raw, /eas-cli@\$\{EAS_CLI_VERSION\}\"\s+update\s+--branch\s+preview/);
-  assert.match(raw, /--non-interactive/);
-  assert.match(raw, /--message/);
+  assert.match(raw, /node scripts\/pipeline\/expo\/ota-update\.mjs/);
+
+  const script = await loadFile('scripts/pipeline/expo/ota-update.mjs');
+  assert.match(script, /eas-cli@\$\{easCliVersion\}/);
+  assert.match(script, /update[\s\S]*?--branch[\s\S]*?preview/);
+  assert.match(script, /--non-interactive/);
+  assert.match(script, /--message/);
 });
 
 test('release workflow can pass a top-level release message down to promote-ui for Expo updates', async () => {

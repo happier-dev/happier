@@ -45,6 +45,20 @@ jobs:
           corepack enable
           corepack prepare yarn@1.22.22 --activate
 
+      - name: Install system dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tmux
+          tmux -V
+
+      - name: Install Sapling
+        run: |
+          bash scripts/ci/install_sapling_ubuntu22.sh
+
+      - name: Verify Sapling CLI
+        run: sl --version
+
       - name: Install dependencies
         env:
           YARN_PRODUCTION: "false"
@@ -98,6 +112,20 @@ jobs:
         run: |
           corepack enable
           corepack prepare yarn@1.22.22 --activate
+
+      - name: Install system dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tmux
+          tmux -V
+
+      - name: Install Sapling
+        run: |
+          bash scripts/ci/install_sapling_ubuntu22.sh
+
+      - name: Verify Sapling CLI
+        run: sl --version
 
       - name: Install dependencies
         env:

@@ -217,12 +217,6 @@ jobs:
           cache: yarn
           cache-dependency-path: yarn.lock
 
-      - name: Upgrade npm for trusted publishing (OIDC)
-        run: |
-          set -euo pipefail
-          npm install --global npm@11.5.1
-          npm --version
-
       - name: Setup Corepack (Yarn 1.22.22)
         run: |
           set -euo pipefail
@@ -247,7 +241,7 @@ jobs:
         run: yarn -s test:release:contracts
 
       - name: Verify installer assets are synced
-        run: node scripts/release/sync-installers.mjs --check
+        run: node scripts/pipeline/run.mjs release-sync-installers --check
 
       - name: Resolve server runner package
         id: server_runner
@@ -264,43 +258,12 @@ jobs:
         if: inputs.channel == 'preview'
         run: |
           set -euo pipefail
-          node - <<'NODE'
-          const { readFileSync, writeFileSync } = require('node:fs');
-          const { join } = require('node:path');
-          function normalizeBase(version) {
-            const m = String(version ?? '').trim().match(/^(\d+)\.(\d+)\.(\d+)/);
-            if (!m) throw new Error(`Invalid version: ${version}`);
-            return `${m[1]}.${m[2]}.${m[3]}`;
-          }
-          function setPreviewVersion(pkgPath) {
-            const raw = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-            const base = normalizeBase(raw.version);
-            const runNumberRaw = Number(process.env.GITHUB_RUN_NUMBER ?? '0');
-            const run = Number.isFinite(runNumberRaw) ? Math.max(0, Math.floor(runNumberRaw)) : 0;
-            const runAttemptRaw = Number(process.env.GITHUB_RUN_ATTEMPT ?? '1');
-            const attempt = Number.isFinite(runAttemptRaw) ? Math.max(1, Math.floor(runAttemptRaw)) : 1;
-            raw.version = `${base}-preview.${run}.${attempt}`;
-            writeFileSync(pkgPath, JSON.stringify(raw, null, 2) + '\n', 'utf-8');
-            return raw.version;
-          }
-          const versions = {};
-          if (process.env.PUBLISH_CLI === 'true') {
-            versions.cli = setPreviewVersion(join('apps', 'cli', 'package.json'));
-          }
-          if (process.env.PUBLISH_STACK === 'true') {
-            versions.stack = setPreviewVersion(join('apps', 'stack', 'package.json'));
-          }
-          if (process.env.PUBLISH_SERVER === 'true') {
-            const runnerDir = String(process.env.SERVER_RUNNER_DIR ?? '').trim();
-            if (!runnerDir) throw new Error('SERVER_RUNNER_DIR is required when PUBLISH_SERVER=true');
-            versions.server = setPreviewVersion(join(runnerDir, 'package.json'));
-          }
-          console.log(JSON.stringify(versions));
-          NODE
+          node scripts/pipeline/npm/set-preview-versions.mjs \
+            --publish-cli "${{ inputs.publish_cli }}" \
+            --publish-stack "${{ inputs.publish_stack }}" \
+            --publish-server "${{ inputs.publish_server }}" \
+            --server-runner-dir "${SERVER_RUNNER_DIR}"
         env:
-          PUBLISH_CLI: ${{ inputs.publish_cli }}
-          PUBLISH_STACK: ${{ inputs.publish_stack }}
-          PUBLISH_SERVER: ${{ inputs.publish_server }}
           SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
 
       - name: Install Sapling
@@ -376,7 +339,7 @@ jobs:
           MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
         run: |
           set -euo pipefail
-          node scripts/release/build-cli-binaries.mjs \
+          node scripts/pipeline/run.mjs release-build-cli-binaries \
             --channel="${{ steps.meta.outputs.channel == 'production' && 'stable' || 'preview' }}" \
             --version="${{ steps.meta.outputs.cli_version }}"
 
@@ -387,7 +350,7 @@ jobs:
           MANIFEST_CHANNEL: ${{ steps.meta.outputs.channel == 'production' && 'stable' || 'preview' }}
         run: |
           set -euo pipefail
-          node scripts/release/publish-manifests.mjs \
+          node scripts/pipeline/run.mjs release-publish-manifests \
             --product=happier \
             --channel="${MANIFEST_CHANNEL}" \
             --version="${{ steps.meta.outputs.cli_version }}" \
@@ -413,49 +376,26 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ steps.meta.outputs.cli_version }}"
-          node scripts/release/verify-artifacts.mjs \
+          node scripts/pipeline/run.mjs release-verify-artifacts \
             --artifacts-dir="dist/release-assets/cli" \
             --checksums="dist/release-assets/cli/checksums-happier-v${version}.txt" \
             --public-key="scripts/release/installers/happier-release.pub" \
             --skip-smoke
 
-      - name: Prepare CLI package tarball (prepublishOnly + prepack)
-        if: inputs.publish_cli
+      - name: npm pack (pipeline)
+        if: inputs.publish_cli || inputs.publish_stack || inputs.publish_server
+        env:
+          SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
         run: |
           set -euo pipefail
-          cd apps/cli
-          yarn prepublishOnly
-          node scripts/bundleWorkspaceDeps.mjs
-
-      - name: npm pack (cli)
-        if: inputs.publish_cli
-        run: |
-          set -euo pipefail
-          mkdir -p dist/release-assets/cli
-          cd apps/cli
-          # npm lifecycle scripts can exceed Linux argv/env limits for large workspaces.
-          # Pack from the already-prepacked working tree to avoid re-running lifecycle scripts.
-          pack_json_path="$(mktemp)"
-          # Suppress npm "notice" output so JSON parsing is reliable.
-          npm pack --ignore-scripts --json --loglevel=error > "${pack_json_path}"
-          tgz="$(node -e '
-            const fs = require("node:fs");
-            const path = process.argv[1];
-            const raw = fs.readFileSync(path, "utf8").trim();
-            const parsed = raw ? JSON.parse(raw) : [];
-            const entry = Array.isArray(parsed) ? parsed[0] : parsed;
-            const filename = typeof entry?.filename === "string" ? entry.filename.trim() : "";
-            if (!filename) process.exit(1);
-            process.stdout.write(filename);
-          ' "${pack_json_path}")" || {
-            echo "npm pack --json did not return a valid filename" >&2
-            exit 1
-          }
-          if [ -z "${tgz:-}" ] || [ ! -f "$tgz" ] || [ "${tgz##*.}" != "tgz" ]; then
-            echo "npm pack did not produce an expected .tgz file: '$tgz'" >&2
-            exit 1
-          fi
-          mv "$tgz" "../../dist/release-assets/cli/cli-${{ steps.meta.outputs.cli_version }}.tgz"
+          node scripts/pipeline/npm/release-packages.mjs \
+            --channel "${{ inputs.channel }}" \
+            --publish-cli "${{ inputs.publish_cli }}" \
+            --publish-stack "${{ inputs.publish_stack }}" \
+            --publish-server "${{ inputs.publish_server }}" \
+            --server-runner-dir "${SERVER_RUNNER_DIR}" \
+            --run-tests "${{ inputs.run_tests }}" \
+            --mode pack
 
       - name: Upload npm pack artifact (cli)
         if: inputs.publish_cli
@@ -465,83 +405,6 @@ jobs:
           path: dist/release-assets/cli
           if-no-files-found: error
 
-      - name: Prepare stack package tarball (prepack)
-        if: inputs.publish_stack
-        run: |
-          set -euo pipefail
-          cd apps/stack
-          node scripts/bundleWorkspaceDeps.mjs
-
-      - name: npm pack (stack)
-        if: inputs.publish_stack
-        run: |
-          set -euo pipefail
-          mkdir -p dist/release-assets/stack
-          cd apps/stack
-          # npm lifecycle scripts can exceed Linux argv/env limits for large workspaces.
-          # Pack from the already-prepacked working tree to avoid re-running lifecycle scripts.
-          pack_json_path="$(mktemp)"
-          # Suppress npm "notice" output so JSON parsing is reliable.
-          npm pack --ignore-scripts --json --loglevel=error > "${pack_json_path}"
-          tgz="$(node -e '
-            const fs = require("node:fs");
-            const path = process.argv[1];
-            const raw = fs.readFileSync(path, "utf8").trim();
-            const parsed = raw ? JSON.parse(raw) : [];
-            const entry = Array.isArray(parsed) ? parsed[0] : parsed;
-            const filename = typeof entry?.filename === "string" ? entry.filename.trim() : "";
-            if (!filename) process.exit(1);
-            process.stdout.write(filename);
-          ' "${pack_json_path}")" || {
-            echo "npm pack --json did not return a valid filename" >&2
-            exit 1
-          }
-          if [ -z "${tgz:-}" ] || [ ! -f "$tgz" ] || [ "${tgz##*.}" != "tgz" ]; then
-            echo "npm pack did not produce an expected .tgz file: '$tgz'" >&2
-            exit 1
-          fi
-          mv "$tgz" "../../dist/release-assets/stack/stack-${{ steps.meta.outputs.stack_version }}.tgz"
-
-      - name: Prepare server runner package tarball (prepack)
-        if: inputs.publish_server
-        env:
-          SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
-        run: |
-          set -euo pipefail
-          cd "${SERVER_RUNNER_DIR}"
-          node scripts/bundleWorkspaceDeps.mjs
-
-      - name: npm pack (server runner)
-        if: inputs.publish_server
-        env:
-          SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist/release-assets/server
-          cd "${SERVER_RUNNER_DIR}"
-          # Pack from the already-prepacked working tree to avoid re-running lifecycle scripts.
-          pack_json_path="$(mktemp)"
-          # Suppress npm "notice" output so JSON parsing is reliable.
-          npm pack --ignore-scripts --json --loglevel=error > "${pack_json_path}"
-          tgz="$(node -e '
-            const fs = require("node:fs");
-            const path = process.argv[1];
-            const raw = fs.readFileSync(path, "utf8").trim();
-            const parsed = raw ? JSON.parse(raw) : [];
-            const entry = Array.isArray(parsed) ? parsed[0] : parsed;
-            const filename = typeof entry?.filename === "string" ? entry.filename.trim() : "";
-            if (!filename) process.exit(1);
-            process.stdout.write(filename);
-          ' "${pack_json_path}")" || {
-            echo "npm pack --json did not return a valid filename" >&2
-            exit 1
-          }
-          if [ -z "${tgz:-}" ] || [ ! -f "$tgz" ] || [ "${tgz##*.}" != "tgz" ]; then
-            echo "npm pack did not produce an expected .tgz file: '$tgz'" >&2
-            exit 1
-          fi
-          mv "$tgz" "../../dist/release-assets/server/server-${{ steps.meta.outputs.server_version }}.tgz"
-
       - name: Build hstack binaries
         if: inputs.publish_stack
         env:
@@ -549,7 +412,7 @@ jobs:
           MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
         run: |
           set -euo pipefail
-          node scripts/release/build-hstack-binaries.mjs \
+          node scripts/pipeline/run.mjs release-build-hstack-binaries \
             --channel="${{ steps.meta.outputs.channel == 'production' && 'stable' || 'preview' }}" \
             --version="${{ steps.meta.outputs.stack_version }}"
 
@@ -560,7 +423,7 @@ jobs:
           MANIFEST_CHANNEL: ${{ steps.meta.outputs.channel == 'production' && 'stable' || 'preview' }}
         run: |
           set -euo pipefail
-          node scripts/release/publish-manifests.mjs \
+          node scripts/pipeline/run.mjs release-publish-manifests \
             --product=hstack \
             --channel="${MANIFEST_CHANNEL}" \
             --version="${{ steps.meta.outputs.stack_version }}" \
@@ -586,7 +449,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ steps.meta.outputs.stack_version }}"
-          node scripts/release/verify-artifacts.mjs \
+          node scripts/pipeline/run.mjs release-verify-artifacts \
             --artifacts-dir="dist/release-assets/stack" \
             --checksums="dist/release-assets/stack/checksums-hstack-v${version}.txt" \
             --public-key="scripts/release/installers/happier-release.pub" \
@@ -662,6 +525,9 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download npm pack artifact (cli)
         uses: actions/download-artifact@v4
         with:
@@ -674,39 +540,14 @@ jobs:
           node-version: 22.x
           registry-url: https://registry.npmjs.org
 
-      - name: Upgrade npm for trusted publishing (OIDC)
-        run: |
-          set -euo pipefail
-          npm install --global npm@11.5.1
-          npm --version
-
-      - name: npm publish (cli tarball)
+      - name: npm publish (cli tarball) (pipeline)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-
-          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "Using NPM_TOKEN authentication."
-          else
-            echo "NPM_TOKEN not set; relying on npm trusted publishing (OIDC)."
-          fi
-
-          npm_tag="latest"
-          if [ "${{ inputs.channel }}" = "preview" ]; then
-            npm_tag="next"
-          fi
-
-          tgz="$(ls -1 dist/release-assets/cli/*.tgz | head -n 1 || true)"
-          if [ -z "${tgz:-}" ] || [ ! -f "${tgz}" ]; then
-            echo "Missing CLI tarball under dist/release-assets/cli" >&2
-            exit 1
-          fi
-
-          npm publish "${tgz}" --provenance --access public --tag "${npm_tag}" || {
-            echo "npm publish failed. Configure npm trusted publishing for this workflow or provide NPM_TOKEN." >&2
-            exit 1
-          }
+          node scripts/pipeline/npm/publish-tarball.mjs \
+            --channel "${{ inputs.channel }}" \
+            --tarball-dir "dist/release-assets/cli"
 
   publish-stack:
     name: npm publish (stack)
@@ -718,6 +559,9 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download npm pack artifact (stack)
         uses: actions/download-artifact@v4
         with:
@@ -730,39 +574,14 @@ jobs:
           node-version: 22.x
           registry-url: https://registry.npmjs.org
 
-      - name: Upgrade npm for trusted publishing (OIDC)
-        run: |
-          set -euo pipefail
-          npm install --global npm@11.5.1
-          npm --version
-
-      - name: npm publish (stack tarball)
+      - name: npm publish (stack tarball) (pipeline)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-
-          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "Using NPM_TOKEN authentication."
-          else
-            echo "NPM_TOKEN not set; relying on npm trusted publishing (OIDC)."
-          fi
-
-          npm_tag="latest"
-          if [ "${{ inputs.channel }}" = "preview" ]; then
-            npm_tag="next"
-          fi
-
-          tgz="$(ls -1 dist/release-assets/stack/*.tgz | head -n 1 || true)"
-          if [ -z "${tgz:-}" ] || [ ! -f "${tgz}" ]; then
-            echo "Missing Stack tarball under dist/release-assets/stack" >&2
-            exit 1
-          fi
-
-          npm publish "${tgz}" --provenance --access public --tag "${npm_tag}" || {
-            echo "npm publish failed. Configure npm trusted publishing for this workflow or provide NPM_TOKEN." >&2
-            exit 1
-          }
+          node scripts/pipeline/npm/publish-tarball.mjs \
+            --channel "${{ inputs.channel }}" \
+            --tarball-dir "dist/release-assets/stack"
 
   publish-server-runner:
     name: npm publish (server runner)
@@ -774,6 +593,9 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download npm pack artifact (server runner)
         uses: actions/download-artifact@v4
         with:
@@ -786,39 +608,14 @@ jobs:
           node-version: 22.x
           registry-url: https://registry.npmjs.org
 
-      - name: Upgrade npm for trusted publishing (OIDC)
-        run: |
-          set -euo pipefail
-          npm install --global npm@11.5.1
-          npm --version
-
-      - name: npm publish (server runner tarball)
+      - name: npm publish (server runner tarball) (pipeline)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-
-          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "Using NPM_TOKEN authentication."
-          else
-            echo "NPM_TOKEN not set; relying on npm trusted publishing (OIDC)."
-          fi
-
-          npm_tag="latest"
-          if [ "${{ inputs.channel }}" = "preview" ]; then
-            npm_tag="next"
-          fi
-
-          tgz="$(ls -1 dist/release-assets/server/*.tgz | head -n 1 || true)"
-          if [ -z "${tgz:-}" ] || [ ! -f "${tgz}" ]; then
-            echo "Missing server runner tarball under dist/release-assets/server" >&2
-            exit 1
-          fi
-
-          npm publish "${tgz}" --provenance --access public --tag "${npm_tag}" || {
-            echo "npm publish failed. Configure npm trusted publishing for this workflow or provide NPM_TOKEN." >&2
-            exit 1
-          }
+          node scripts/pipeline/npm/publish-tarball.mjs \
+            --channel "${{ inputs.channel }}" \
+            --tarball-dir "dist/release-assets/server"
 
   mirror-cli-stable:
     if: ${{ needs.release.outputs.channel == 'production' && needs.release.outputs.cli_version != 'SKIP' }}

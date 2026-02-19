@@ -1,0 +1,4 @@
+services:
+  stack:
+    volumes:
+      - ${LOCAL_MONOREPO_MOUNT:?missing LOCAL_MONOREPO_MOUNT}:/repo:ro

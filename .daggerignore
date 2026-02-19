@@ -1,0 +1,11 @@
+**/node_modules/
+.env*
+**/.env*
+dist/
+output/
+test-results/
+.git/
+.DS_Store
+.turbo/
+.cache/
+.yarn/cache/

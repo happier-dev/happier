@@ -4,7 +4,7 @@ import { chmod, mkdtemp, mkdir, readFile, stat, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { INSTALLER_PUBLISH_SPECS, syncInstallers } from './sync-installers.mjs';
+import { INSTALLER_PUBLISH_SPECS, syncInstallers } from '../pipeline/release/sync-installers.mjs';
 
 function publishedTargets() {
   return INSTALLER_PUBLISH_SPECS.flatMap((spec) => spec.targets);

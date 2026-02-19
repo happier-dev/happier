@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-import { packageTargetBinary } from './lib/binary_release.mjs';
+import { packageTargetBinary } from '../pipeline/release/lib/binary-release.mjs';
 
 test('packageTargetBinary includes additional stage entries in archive', async () => {
   const workspace = await mkdtemp(join(tmpdir(), 'binary-release-package-'));

@@ -1,0 +1,73 @@
+services:
+  stack:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /work
+    environment:
+      # NPM mode
+      HSTACK_NPM_SPEC: ${HSTACK_NPM_SPEC:-@happier-dev/stack@next}
+      HAPPIER_NPM_SPEC: ${HAPPIER_NPM_SPEC:-@happier-dev/cli@next}
+      HAPPIER_CLI_INSTALL_MODE: ${HAPPIER_CLI_INSTALL_MODE:-global}
+
+      # Local-tarball mode (set by run.sh when --mode=local)
+      HSTACK_TGZ: ${HSTACK_TGZ:-}
+      HAPPIER_TGZ: ${HAPPIER_TGZ:-}
+
+      # Optional: override monorepo clone source (URL or local path) instead of GitHub.
+      HSTACK_HAPPIER_REPO: ${HSTACK_HAPPIER_REPO:-}
+
+      # Keep the smoke fast and headless.
+      HAPPIER_STACK_SERVE_UI: ${HAPPIER_STACK_SERVE_UI:-1}
+      HAPPIER_STACK_NO_BROWSER: "1"
+    volumes:
+      - ${PACKS_DIR:-./_packs}:/packs:ro
+      - stack-home:/root/.happier-stack
+    command: ["bash", "/opt/happier-npm-e2e/bin/stack-entrypoint.sh"]
+
+  cli:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /work
+    depends_on:
+      - stack
+    environment:
+      HAPPIER_NPM_SPEC: ${HAPPIER_NPM_SPEC:-@happier-dev/cli@next}
+      HAPPIER_TGZ: ${HAPPIER_TGZ:-}
+      HAPPIER_SERVER_URL: ${HAPPIER_SERVER_URL:-http://stack:3005}
+    volumes:
+      - ${PACKS_DIR:-./_packs}:/packs:ro
+      - cli-home:/work/happier-home
+      - cli-approver-home:/work/happier-approver-home
+    command: ["bash", "/opt/happier-npm-e2e/bin/cli-smoke.sh"]
+
+  cli2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /work
+    depends_on:
+      - stack
+    environment:
+      HAPPIER_NPM_SPEC: ${HAPPIER_NPM_SPEC:-@happier-dev/cli@next}
+      HAPPIER_TGZ: ${HAPPIER_TGZ:-}
+      HAPPIER_SERVER_URL: ${HAPPIER_SERVER_URL:-http://stack:3005}
+      HAPPIER_ACTIVE_SERVER_ID: ${HAPPIER_ACTIVE_SERVER_ID:-smoke}
+      CLIENT_HOME_DIR: /work/happier-home-2
+      APPROVER_HOME_DIR: /work/primary-home
+    volumes:
+      - ${PACKS_DIR:-./_packs}:/packs:ro
+      - cli2-home:/work/happier-home-2
+      - cli-home:/work/primary-home:ro
+    command: ["bash", "/opt/happier-npm-e2e/bin/cli2-smoke.sh"]
+
+volumes:
+  stack-home:
+    driver: local
+  cli-home:
+    driver: local
+  cli-approver-home:
+    driver: local
+  cli2-home:
+    driver: local

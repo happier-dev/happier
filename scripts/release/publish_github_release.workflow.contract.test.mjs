@@ -28,9 +28,8 @@ test('publish-github-release uses release bot GitHub App token for rolling tag u
     'publish job must expose RELEASE_BOT_PRIVATE_KEY via env for conditional app token creation',
   );
 
-  assert.match(raw, /Create GitHub App token \(release bot\)/, 'publish-github-release must mint release-bot token');
   assert.match(raw, /actions\/create-github-app-token@v1/, 'publish-github-release must use actions/create-github-app-token@v1');
-  assert.match(raw, /Move rolling tag/, 'publish-github-release must include a rolling tag move step');
+  assert.match(raw, /node scripts\/pipeline\/github\/publish-release\.mjs/, 'publish-github-release must delegate to pipeline script');
   assert.match(
     raw,
     /persist-credentials:\s*false/,
@@ -43,15 +42,9 @@ test('publish-github-release uses release bot GitHub App token for rolling tag u
   );
 });
 
-test('publish-github-release updates rolling releases with commit summaries and a compare link', async () => {
+test('publish-github-release passes release note inputs through to the pipeline script', async () => {
   const { raw } = await loadWorkflow('publish-github-release.yml');
 
-  assert.match(raw, /old_sha=/, 'rolling tag move should capture previous tag SHA for notes');
-  assert.match(raw, /rev-list --count/, 'rolling release notes should count commits between old and new tag targets');
-  assert.match(raw, /git log/, 'rolling release notes should include a commit list');
-  assert.match(raw, /compare\/\$\{OLD_SHA\}\.\.\.\$\{SHA\}/, 'rolling release notes should include a GitHub compare link');
-  assert.match(raw, /gh release edit/, 'rolling release notes should edit the existing release');
   assert.match(raw, /release_message:/, 'publish-github-release should accept a release_message input');
-  assert.match(raw, /RELEASE_MESSAGE:/, 'publish-github-release should thread release_message into the publish job env');
-  assert.match(raw, /\$\{\s*RELEASE_MESSAGE\s*\}/, 'rolling release notes should include the release message when provided');
+  assert.match(raw, /release_message:\s*\$\{\{\s*inputs\.release_message\s*\}\}/, 'workflow should pass release_message input');
 });

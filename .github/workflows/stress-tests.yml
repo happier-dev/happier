@@ -25,8 +25,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  stress-scheduled:
-    if: github.event_name == 'schedule'
+  stress:
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     uses: ./.github/workflows/tests.yml
     with:
       run_ui: false
@@ -40,21 +40,4 @@ jobs:
       providers_preset: all
       providers_tier: smoke
       run_stress: true
-      stress_config: '{"repeat":"10","seed":""}'
-
-  stress-manual:
-    if: github.event_name == 'workflow_dispatch'
-    uses: ./.github/workflows/tests.yml
-    with:
-      run_ui: false
-      run_server: false
-      run_cli: false
-      run_stack: false
-      run_typecheck: false
-      run_cli_daemon_e2e: false
-      run_e2e_core: false
-      run_providers: false
-      providers_preset: all
-      providers_tier: smoke
-      run_stress: true
-      stress_config: ${{ format('{{\"repeat\":{0},\"seed\":{1}}}', toJson(inputs.repeat), toJson(inputs.seed)) }}
+      stress_config: ${{ (github.event_name == 'workflow_dispatch' && format('{{\"repeat\":{0},\"seed\":{1}}}', toJson(inputs.repeat), toJson(inputs.seed))) || '{"repeat":"10","seed":""}' }}

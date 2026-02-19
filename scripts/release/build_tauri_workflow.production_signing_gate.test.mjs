@@ -107,6 +107,17 @@ test('build-tauri workflow avoids escaped quote JS snippets and captures Apple i
     'desktop build should ensure TAURI_TARGET is installed before invoking tauri build'
   );
 
+  assert.match(
+    buildScript,
+    /createUpdaterArtifacts/,
+    'desktop build should explicitly enable updater artifacts in CI (base config defaults to disabled for local builds)'
+  );
+  assert.match(
+    buildScript,
+    /TAURI_SIGNING_PRIVATE_KEY/,
+    'desktop build should gate updater artifact generation on the presence of TAURI_SIGNING_PRIVATE_KEY'
+  );
+
   const collectStep = buildSteps.find(
     (step) => step?.name === 'Collect updater artifact + signature'
   );
@@ -127,5 +138,27 @@ test('build-tauri workflow avoids escaped quote JS snippets and captures Apple i
     notarizeScript,
     /replaceAll\("\\\\n", "\\n"\)|replaceAll\('\\\\n', '\\n'\)/,
     'notarization should normalize escaped newline private key secrets before writing the key file'
+  );
+});
+
+test('build-tauri workflow validates updater pubkey via pipeline script', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const parsed = parse(workflow);
+  const buildSteps = parsed?.jobs?.build?.steps;
+  assert.ok(Array.isArray(buildSteps), 'build-tauri workflow should define jobs.build.steps');
+
+  const step = buildSteps.find((s) => s?.name === 'Validate updater public key (production)');
+  assert.ok(step, 'workflow should contain updater pubkey validation step');
+
+  const runScript = String(step.run ?? '');
+  assert.match(
+    runScript,
+    /node scripts\/pipeline\/tauri\/validate-updater-pubkey\.mjs/,
+    'workflow should delegate updater pubkey validation to pipeline script (no inline heredoc)',
+  );
+  assert.doesNotMatch(
+    runScript,
+    /<<'NODE'|node - <<'NODE'|node --input-type=module - <<'NODE'/,
+    'workflow should not embed updater pubkey validation as an inline heredoc',
   );
 });

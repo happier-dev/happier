@@ -11,14 +11,18 @@ async function loadWorkflow(name) {
   return readFile(join(repoRoot, '.github', 'workflows', name), 'utf8');
 }
 
-test('GitHub release titles are prefixed with Happier', async () => {
-  const publishUiWeb = await loadWorkflow('publish-ui-web.yml');
-  assert.match(publishUiWeb, /echo "title=Happier UI Web Bundle Preview"/);
-  assert.match(publishUiWeb, /echo "title=Happier UI Web Bundle Stable"/);
+async function loadFile(rel) {
+  return readFile(join(repoRoot, rel), 'utf8');
+}
 
-  const publishServerRuntime = await loadWorkflow('publish-server-runtime.yml');
-  assert.match(publishServerRuntime, /echo "title=Happier Server Preview"/);
-  assert.match(publishServerRuntime, /echo "title=Happier Server Stable"/);
+test('GitHub release titles are prefixed with Happier', async () => {
+  const publishUiWeb = await loadFile('scripts/pipeline/release/publish-ui-web.mjs');
+  assert.match(publishUiWeb, /Happier UI Web Bundle Preview/);
+  assert.match(publishUiWeb, /Happier UI Web Bundle Stable/);
+
+  const publishServerRuntime = await loadFile('scripts/pipeline/release/publish-server-runtime.mjs');
+  assert.match(publishServerRuntime, /Happier Server Preview/);
+  assert.match(publishServerRuntime, /Happier Server Stable/);
 
   const releaseNpm = await loadWorkflow('release-npm.yml');
   assert.match(releaseNpm, /title: Happier CLI v/);
@@ -29,8 +33,7 @@ test('GitHub release titles are prefixed with Happier', async () => {
   assert.match(releaseNpm, /title: Happier Stack Preview/);
 
   const buildTauri = await loadWorkflow('build-tauri.yml');
-  assert.match(buildTauri, /title: Happier UI Preview/);
-  assert.match(buildTauri, /title: Happier UI v/);
-  assert.match(buildTauri, /title: Happier UI Stable/);
+  assert.match(buildTauri, /title: Happier UI Desktop Preview/);
+  assert.match(buildTauri, /title: Happier UI Desktop v/);
+  assert.match(buildTauri, /title: Happier UI Desktop Stable/);
 });
-

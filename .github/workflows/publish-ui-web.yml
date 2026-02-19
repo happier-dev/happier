@@ -67,7 +67,7 @@ jobs:
           app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
-  build:
+  publish:
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
     environment: release-shared
@@ -75,14 +75,6 @@ jobs:
       APP_ENV: ${{ inputs.channel == 'stable' && 'production' || 'preview' }}
       EXPO_UPDATES_CHANNEL: ${{ inputs.channel == 'stable' && 'production' || 'preview' }}
       HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.channel == 'stable' && 'production' || 'preview' }}
-    outputs:
-      target_sha: ${{ steps.meta.outputs.target_sha }}
-      ui_version: ${{ steps.meta.outputs.ui_version }}
-      tag: ${{ steps.meta.outputs.tag }}
-      title: ${{ steps.meta.outputs.title }}
-      prerelease: ${{ steps.meta.outputs.prerelease }}
-      rolling_tag: ${{ steps.meta.outputs.rolling_tag }}
-      notes: ${{ steps.meta.outputs.notes }}
     steps:
       - name: Enforce stable publishing gate
         if: ${{ inputs.channel == 'stable' && inputs.allow_stable != true }}
@@ -118,6 +110,7 @@ jobs:
           ref: ${{ steps.resolve_source.outputs.ref }}
           fetch-depth: 0
           token: ${{ steps.app_token.outputs.token }}
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -141,106 +134,20 @@ jobs:
           npm_config_production: "false"
         run: yarn install --frozen-lockfile --ignore-engines
 
-      - name: Run release contract tests
-        run: yarn -s test:release:contracts
-
-      - name: Verify installer assets are synced
-        run: node scripts/release/sync-installers.mjs --check
-
-      - name: Compute publish metadata
-        id: meta
-        run: |
-          set -euo pipefail
-
-          node - <<'NODE' >> "$GITHUB_OUTPUT"
-          const { readFileSync } = require('node:fs');
-          function normalizeBase(version) {
-            const m = String(version ?? '').trim().match(/^(\d+)\.(\d+)\.(\d+)/);
-            if (!m) throw new Error(`Invalid ui version: ${version}`);
-            return `${m[1]}.${m[2]}.${m[3]}`;
-          }
-          const pkg = JSON.parse(readFileSync('apps/ui/package.json', 'utf-8'));
-          const base = normalizeBase(pkg.version);
-          const channel = String(process.env.INPUT_CHANNEL ?? '').trim() || 'preview';
-          const runNumberRaw = Number(process.env.GITHUB_RUN_NUMBER ?? '0');
-          const run = Number.isFinite(runNumberRaw) ? Math.max(0, Math.floor(runNumberRaw)) : 0;
-          const runAttemptRaw = Number(process.env.GITHUB_RUN_ATTEMPT ?? '1');
-          const attempt = Number.isFinite(runAttemptRaw) ? Math.max(1, Math.floor(runAttemptRaw)) : 1;
-          const version = channel === 'preview' ? `${base}-preview.${run}.${attempt}` : pkg.version;
-          console.log(`ui_version=${version}`);
-          NODE
-
-          channel="${{ inputs.channel }}"
-          if [ "$channel" = "preview" ]; then
-            echo "tag=ui-web-preview" >> "$GITHUB_OUTPUT"
-            echo "title=Happier UI Web Bundle Preview" >> "$GITHUB_OUTPUT"
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
-            echo "rolling_tag=true" >> "$GITHUB_OUTPUT"
-            echo "notes=Rolling preview UI web bundle release." >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=ui-web-stable" >> "$GITHUB_OUTPUT"
-            echo "title=Happier UI Web Bundle Stable" >> "$GITHUB_OUTPUT"
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
-            echo "rolling_tag=true" >> "$GITHUB_OUTPUT"
-            echo "notes=Stable UI web bundle release." >> "$GITHUB_OUTPUT"
-          fi
-
-          echo "target_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Publish UI web bundle (pipeline)
         env:
-          INPUT_CHANNEL: ${{ inputs.channel }}
-
-      - name: Build UI web bundle assets
-        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
           MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
         run: |
           set -euo pipefail
-          node scripts/release/build-ui-web-bundle.mjs \
-            --channel="${{ inputs.channel }}" \
-            --version="${{ steps.meta.outputs.ui_version }}"
+          node scripts/pipeline/run.mjs publish-ui-web \
+            --channel "${{ inputs.channel }}" \
+            --allow-stable "${{ inputs.allow_stable }}" \
+            --release-message "${{ inputs.release_message }}" \
+            --run-contracts "true" \
+            --check-installers "true"
 
-      - name: Verify UI web bundle release artifacts
-        run: |
-          set -euo pipefail
-          version="${{ steps.meta.outputs.ui_version }}"
-          test -f "dist/release-assets/ui-web/happier-ui-web-v${version}-web-any.tar.gz"
-          test -f "dist/release-assets/ui-web/checksums-happier-ui-web-v${version}.txt"
-          test -f "dist/release-assets/ui-web/checksums-happier-ui-web-v${version}.txt.minisig"
-
-      - name: Cryptographic verify UI web bundle release artifacts
-        run: |
-          set -euo pipefail
-          version="${{ steps.meta.outputs.ui_version }}"
-          node scripts/release/verify-artifacts.mjs \
-            --artifacts-dir="dist/release-assets/ui-web" \
-            --checksums="dist/release-assets/ui-web/checksums-happier-ui-web-v${version}.txt" \
-            --public-key="scripts/release/installers/happier-release.pub" \
-            --skip-smoke
-
-      - name: Upload UI web bundle assets artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ui-web-assets
-          path: dist/release-assets/ui-web
-          retention-days: 7
-
-  publish:
-    needs: [build]
     permissions:
       contents: write
-    uses: ./.github/workflows/publish-github-release.yml
-    secrets: inherit
-    with:
-      tag: ${{ needs.build.outputs.tag }}
-      title: ${{ needs.build.outputs.title }}
-      target_sha: ${{ needs.build.outputs.target_sha }}
-      prerelease: ${{ needs.build.outputs.prerelease == 'true' }}
-      rolling_tag: ${{ needs.build.outputs.rolling_tag == 'true' }}
-      generate_notes: false
-      notes: ${{ needs.build.outputs.notes }}
-      assets_artifact: ui-web-assets
-      assets_artifact_path: dist/release-assets/ui-web
-      assets_dir: dist/release-assets/ui-web
-      clobber: true
-      prune_assets: ${{ needs.build.outputs.rolling_tag == 'true' }}
-      release_message: ${{ inputs.release_message }}

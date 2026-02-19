@@ -7,7 +7,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
-const publishManifestsPath = join(repoRoot, 'scripts', 'release', 'publish-manifests.mjs');
+const publishManifestsPath = join(repoRoot, 'scripts', 'pipeline', 'release', 'publish-manifests.mjs');
 
 async function withTempDir(run) {
   const dir = await mkdtemp(join(tmpdir(), 'publish-manifests-signature-test-'));

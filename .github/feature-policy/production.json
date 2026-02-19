@@ -12,6 +12,7 @@
       "app.ui.storeReviewPrompts",
       "app.ui.sessionGettingStartedGuidance",
       "bugReports",
+      "attachments.uploads",
       "session.typeSelector",
       "zen.navigation",
       "usage.reporting",
@@ -21,7 +22,6 @@
     ],
     "deny": [
       "automations",
-      "automations.existingSessionTarget",
       "execution.runs",
       "voice",
       "voice.agent",

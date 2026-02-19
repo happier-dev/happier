@@ -29,7 +29,7 @@ test('bump-version bumps server app and server runner versions in sync', async (
     version: '0.1.0',
   });
 
-  const script = resolve(process.cwd(), 'scripts', 'release', 'bump-version.mjs');
+  const script = resolve(process.cwd(), 'scripts', 'pipeline', 'release', 'bump-version.mjs');
   const res = spawnSync(process.execPath, [script, '--component', 'server', '--bump', 'patch'], {
     cwd: dir,
     encoding: 'utf8',
@@ -53,7 +53,7 @@ test('bump-version rejects server version bumps when app and server runner versi
     version: '0.2.0',
   });
 
-  const script = resolve(process.cwd(), 'scripts', 'release', 'bump-version.mjs');
+  const script = resolve(process.cwd(), 'scripts', 'pipeline', 'release', 'bump-version.mjs');
   const res = spawnSync(process.execPath, [script, '--component', 'server', '--bump', 'patch'], {
     cwd: dir,
     encoding: 'utf8',

@@ -8,7 +8,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 const sourceRoot = join(repoRoot, 'scripts', 'release', 'installers');
 const websiteRoot = join(repoRoot, 'apps', 'website', 'public');
-const { INSTALLER_PUBLISH_SPECS } = await import('./sync-installers.mjs');
+const { INSTALLER_PUBLISH_SPECS } = await import('../pipeline/release/sync-installers.mjs');
 
 function applyTransform({ source, transform }) {
   if (transform === 'preview-default-channel') {

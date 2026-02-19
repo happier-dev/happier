@@ -1,0 +1,7 @@
+{
+  "name": "happier-pipeline",
+  "engineVersion": "v0.19.11",
+  "sdk": {
+    "source": "typescript"
+  }
+}

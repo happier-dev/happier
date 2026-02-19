@@ -416,7 +416,7 @@ jobs:
         run: |
           set -euo pipefail
           yarn -s test:release:contracts
-          node scripts/release/sync-installers.mjs --check
+          node scripts/pipeline/run.mjs release-sync-installers --check
 
   installers-smoke-linux:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_installers_smoke }}
@@ -432,7 +432,7 @@ jobs:
       - name: Verify published installers are synced
         run: |
           set -euo pipefail
-          node scripts/release/sync-installers.mjs --check
+          node scripts/pipeline/run.mjs release-sync-installers --check
 
       # Bootstrap-friendly: this repo can be green before the first GitHub release exists.
       # Once cli-stable is published, we enforce that the published installer can install it.
@@ -494,7 +494,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Verify published installers are synced
-        run: node scripts/release/sync-installers.mjs --check
+        run: node scripts/pipeline/run.mjs release-sync-installers --check
 
       - name: Detect CLI release tag
         id: cli_tag
@@ -555,7 +555,7 @@ jobs:
 
       - name: Verify published installers are synced
         shell: pwsh
-        run: node scripts/release/sync-installers.mjs --check
+        run: node scripts/pipeline/run.mjs release-sync-installers --check
 
       - name: Detect CLI release tag
         id: cli_tag
@@ -997,73 +997,7 @@ jobs:
 
           # Create a real account + token via the normal `/v1/auth` flow (ed25519 signature),
           # then write the credentials file expected by `.env.integration-test`.
-          (cd apps/server && node --input-type=module - <<'NODE'
-          import fs from "node:fs";
-          import os from "node:os";
-          import path from "node:path";
-          import nacl from "tweetnacl";
-
-          const keyPair = nacl.sign.keyPair();
-          const challenge = nacl.randomBytes(32);
-          const signature = nacl.sign.detached(challenge, keyPair.secretKey);
-          const encode64 = (bytes) => Buffer.from(bytes).toString("base64");
-
-          const serverUrl = process.env.HAPPIER_SERVER_URL || "http://127.0.0.1:3005";
-          const url = new URL("/v1/auth", serverUrl);
-          if (url.hostname === "localhost") url.hostname = "127.0.0.1";
-
-          const res = await fetch(url.toString(), {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              publicKey: encode64(keyPair.publicKey),
-              challenge: encode64(challenge),
-              signature: encode64(signature),
-            }),
-          });
-          if (!res.ok) {
-            const text = await res.text().catch(() => "");
-            console.error("Failed to create CI auth token:", res.status, res.statusText, text);
-            process.exit(1);
-          }
-          const data = await res.json();
-          if (!data?.token) {
-            console.error("Auth response missing token:", data);
-            process.exit(1);
-          }
-
-          const deriveServerIdFromUrl = (rawUrl) => {
-            const normalized = String(rawUrl || "").trim().replace(/\/+$/, "");
-            let h = 2166136261;
-            for (let i = 0; i < normalized.length; i += 1) {
-              h ^= normalized.charCodeAt(i);
-              h = Math.imul(h, 16777619);
-            }
-            return `env_${(h >>> 0).toString(16)}`;
-          };
-          const sanitizeServerId = (rawId) => {
-            const safe = String(rawId || "").trim().replace(/[^a-zA-Z0-9._-]/g, "_");
-            return safe || "cloud";
-          };
-
-          const happierHomeDir = process.env.HAPPIER_HOME_DIR || path.join(os.homedir(), ".happier-dev-test");
-          fs.mkdirSync(happierHomeDir, { recursive: true });
-          const secret = Buffer.alloc(32, 7).toString("base64");
-          const payload = JSON.stringify({ token: data.token, secret }, null, 2);
-          const activeServerId = sanitizeServerId(
-            process.env.HAPPIER_ACTIVE_SERVER_ID || deriveServerIdFromUrl(serverUrl),
-          );
-          const scopedCredentialsDir = path.join(happierHomeDir, "servers", activeServerId);
-          fs.mkdirSync(scopedCredentialsDir, { recursive: true });
-
-          for (const credentialsPath of [
-            path.join(happierHomeDir, "access.key"),
-            path.join(scopedCredentialsDir, "access.key"),
-          ]) {
-            fs.writeFileSync(credentialsPath, payload, { mode: 0o600 });
-          }
-          NODE
-          )
+          node scripts/pipeline/testing/create-auth-credentials.mjs
 
           yarn --cwd apps/cli -s vitest run --config vitest.integration.config.ts src/daemon/daemon.integration.test.ts
 

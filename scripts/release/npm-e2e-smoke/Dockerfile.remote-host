@@ -1,0 +1,30 @@
+FROM node:22-bookworm
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    curl \
+    git \
+    openssh-server \
+    procps \
+    sudo \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -s /bin/bash happy \
+  && passwd -d happy >/dev/null 2>&1 || true \
+  && usermod -U happy >/dev/null 2>&1 || true \
+  && mkdir -p /home/happy/.ssh \
+  && chmod 700 /home/happy/.ssh \
+  && chown -R happy:happy /home/happy/.ssh \
+  && printf '%s\n' 'happy ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/happy \
+  && chmod 440 /etc/sudoers.d/happy \
+  && mkdir -p /run/sshd
+
+WORKDIR /work
+
+COPY bin/ /opt/happier-npm-e2e/bin/
+
+EXPOSE 22
+
+CMD ["bash", "/opt/happier-npm-e2e/bin/remote-host-entrypoint.sh"]

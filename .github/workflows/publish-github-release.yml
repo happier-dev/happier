@@ -116,225 +116,26 @@ jobs:
           name: ${{ inputs.assets_artifact }}
           path: ${{ inputs.assets_artifact_path }}
 
-      - name: Move rolling tag (best-effort)
-        if: ${{ inputs.rolling_tag }}
-        id: move_rolling_tag
+      - name: Publish GitHub release (pipeline)
         env:
-          TAG: ${{ inputs.tag }}
-          SHA: ${{ inputs.target_sha }}
-        run: |
-          set -euo pipefail
-
-          old_sha="$(git rev-parse -q --verify "refs/tags/${TAG}^{commit}" 2>/dev/null || true)"
-          pushed="false"
-          git tag -f "${TAG}" "${SHA}"
-
-          set +e
-          git push origin "refs/tags/${TAG}" --force
-          status="$?"
-          set -e
-
-          if [ "${status}" -eq 0 ]; then
-            pushed="true"
-          else
-            echo "::warning::Rolling tag push failed (tag protections or permissions). Skipping asset upload for ${TAG}."
-          fi
-
-          echo "old_sha=${old_sha}" >> "${GITHUB_OUTPUT}"
-          echo "pushed=${pushed}" >> "${GITHUB_OUTPUT}"
-
-      - name: Ensure release exists
-        env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ (steps.app_token.outputs.token != '' && steps.app_token.outputs.token) || github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ inputs.tag }}
-          TITLE: ${{ inputs.title }}
-          SHA: ${{ inputs.target_sha }}
-          PRERELEASE: ${{ inputs.prerelease }}
-          GENERATE_NOTES: ${{ inputs.generate_notes }}
           NOTES: ${{ inputs.notes }}
-          RELEASE_MESSAGE: ${{ inputs.release_message }}
-        run: |
-          set -euo pipefail
-
-          if gh release view "${TAG}" >/dev/null 2>&1; then
-            exit 0
-          fi
-
-          prerelease_flag=""
-          if [ "${PRERELEASE}" = "true" ]; then
-            prerelease_flag="--prerelease"
-          fi
-
-          if [ "${GENERATE_NOTES}" = "true" ]; then
-            # shellcheck disable=SC2086
-            gh release create "${TAG}" ${prerelease_flag} --title "${TITLE}" --target "${SHA}" --generate-notes
-            exit 0
-          fi
-
-          if [ -z "${NOTES:-}" ] && [ -z "${RELEASE_MESSAGE:-}" ]; then
-            echo "notes or release_message is required when generate_notes=false" >&2
-            exit 1
-          fi
-
-          release_prefix="${RELEASE_MESSAGE:-}"
-          if [ -n "${release_prefix}" ] && [ -n "${NOTES:-}" ]; then
-            release_prefix="${release_prefix}"$'\n\n'"${NOTES}"
-          elif [ -z "${release_prefix}" ]; then
-            release_prefix="${NOTES}"
-          fi
-
-          # shellcheck disable=SC2086
-          gh release create "${TAG}" ${prerelease_flag} --title "${TITLE}" --target "${SHA}" --notes "${release_prefix}"
-
-      - name: Update rolling release notes (commit summary)
-        if: ${{ inputs.rolling_tag && steps.move_rolling_tag.outputs.pushed == 'true' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ inputs.tag }}
-          TITLE: ${{ inputs.title }}
-          SHA: ${{ inputs.target_sha }}
-          OLD_SHA: ${{ steps.move_rolling_tag.outputs.old_sha }}
-          NOTES: ${{ inputs.notes }}
-          RELEASE_MESSAGE: ${{ inputs.release_message }}
-          MAX_COMMITS: "200"
-        run: |
-          set -euo pipefail
-
-          max="${MAX_COMMITS}"
-          compare_url=""
-          commit_count=""
-          commits=""
-
-          if [ -n "${OLD_SHA:-}" ] && [ "${OLD_SHA}" != "${SHA}" ]; then
-            compare_url="https://github.com/${GITHUB_REPOSITORY}/compare/${OLD_SHA}...${SHA}"
-            commit_count="$(git rev-list --count "${OLD_SHA}..${SHA}")"
-            commits="$(git log --max-count="${max}" --pretty=format:'- %h %s' "${OLD_SHA}..${SHA}")"
-          fi
-
-          notes_prefix="${NOTES:-}"
-          if [ -z "${notes_prefix}" ]; then
-            notes_prefix="Rolling release."
-          fi
-
-          body=""
-          if [ -n "${RELEASE_MESSAGE:-}" ]; then
-            body="${body}$(cat <<EOF
-          ${RELEASE_MESSAGE}
-
-          EOF
-          )"
-          fi
-
-          body="${body}$(cat <<EOF
-          ${notes_prefix}
-
-          EOF
-          )"
-
-          if [ -n "${commit_count:-}" ]; then
-            body="${body}$(cat <<EOF
-
-          ### Commits (${commit_count})
-
-          ${commits}
-
-          Full diff: ${compare_url}
-          EOF
-          )"
-
-            if [ "${commit_count}" -gt "${max}" ]; then
-              body="${body}"$'\n'"(Showing first ${max} commits; see Full diff for the complete list.)"
-            fi
-          fi
-
-          gh release edit "${TAG}" --title "${TITLE}" --notes "${body}"
-
-      - name: Prune rolling release assets
-        if: ${{ inputs.prune_assets && (!inputs.rolling_tag || steps.move_rolling_tag.outputs.pushed == 'true') }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
-
-          echo "Pruning existing assets for release '${TAG}'..."
-          release_api="repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}"
-
-          gh_err_file="$(mktemp)"
-          if ! asset_ids="$(gh api "${release_api}" --jq '.assets[].id' 2>"${gh_err_file}")"; then
-            if grep -q "HTTP 404" "${gh_err_file}"; then
-              echo "Release '${TAG}' not found yet; skipping pruning."
-              exit 0
-            fi
-            echo "::error::Failed to fetch release assets for '${TAG}'."
-            cat "${gh_err_file}"
-            exit 1
-          fi
-
-          if [ -z "${asset_ids}" ]; then
-            echo "No existing assets to prune."
-            exit 0
-          fi
-
-          while IFS= read -r asset_id; do
-            if [ -z "${asset_id}" ]; then
-              continue
-            fi
-            echo "Deleting release asset id ${asset_id}..."
-            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" >/dev/null
-          done <<< "${asset_ids}"
-
-      - name: Upload assets
-        if: ${{ (!inputs.rolling_tag || steps.move_rolling_tag.outputs.pushed == 'true') && (inputs.assets != '' || inputs.assets_dir != '') }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ inputs.tag }}
           ASSETS: ${{ inputs.assets }}
-          ASSETS_DIR: ${{ inputs.assets_dir }}
-          CLOBBER: ${{ inputs.clobber }}
+          assets_dir: ${{ inputs.assets_dir }}
+          release_message: ${{ inputs.release_message }}
         run: |
           set -euo pipefail
-
-          clobber_flag=""
-          if [ "${CLOBBER}" = "true" ]; then
-            clobber_flag="--clobber"
-          fi
-
-          upload_one() {
-            local spec="$1"
-            if [ -z "${spec}" ]; then
-              return 0
-            fi
-            # shellcheck disable=SC2086
-            gh release upload "${TAG}" "${spec}" ${clobber_flag}
-          }
-
-          if [ -n "${ASSETS_DIR:-}" ]; then
-            if [ ! -d "${ASSETS_DIR}" ]; then
-              echo "assets_dir does not exist: ${ASSETS_DIR}" >&2
-              exit 1
-            fi
-            shopt -s nullglob
-            mapfile -t files < <(find "${ASSETS_DIR}" -maxdepth 10 -type f)
-            if [ "${#files[@]}" -eq 0 ]; then
-              echo "No files found in assets_dir: ${ASSETS_DIR}" >&2
-              exit 1
-            fi
-            for f in "${files[@]}"; do
-              upload_one "${f}"
-            done
-          fi
-
-          if [ -n "${ASSETS:-}" ]; then
-            while IFS= read -r line; do
-              spec="$(echo "${line}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-              if [ -z "${spec}" ]; then
-                continue
-              fi
-              upload_one "${spec}"
-            done <<< "${ASSETS}"
-          fi
+          node scripts/pipeline/github/publish-release.mjs \
+            --tag "${{ inputs.tag }}" \
+            --title "${{ inputs.title }}" \
+            --target-sha "${{ inputs.target_sha }}" \
+            --prerelease "${{ inputs.prerelease }}" \
+            --rolling-tag "${{ inputs.rolling_tag }}" \
+            --generate-notes "${{ inputs.generate_notes }}" \
+            --notes "${NOTES}" \
+            --assets "${ASSETS}" \
+            --assets-dir "${assets_dir}" \
+            --clobber "${{ inputs.clobber }}" \
+            --prune-assets "${{ inputs.prune_assets }}" \
+            --release-message "${release_message}"

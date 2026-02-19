@@ -17,6 +17,11 @@ test('publish-docker supports workflow_call and is wired from release workflow',
   assert.match(publishDocker, /\n\s*source_ref:\n/);
   assert.match(publishDocker, /\n\s*build_relay:\n/);
   assert.match(publishDocker, /\n\s*build_devcontainer:\n/);
+  assert.match(
+    publishDocker,
+    /node scripts\/pipeline\/docker\/publish-images\.mjs/,
+    'publish-docker should delegate docker build+push to the pipeline script',
+  );
 
   const release = await loadWorkflow('release.yml');
   assert.match(release, /publish_docker:/);
@@ -24,4 +29,3 @@ test('publish-docker supports workflow_call and is wired from release workflow',
   assert.match(release, /build_relay:/);
   assert.match(release, /build_devcontainer:/);
 });
-

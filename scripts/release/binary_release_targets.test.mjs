@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CLI_STACK_TARGETS, SERVER_TARGETS, resolveTargets } from './lib/binary_release.mjs';
+import { CLI_STACK_TARGETS, SERVER_TARGETS, resolveTargets } from '../pipeline/release/lib/binary-release.mjs';
 
 test('resolveTargets returns all targets when filter is empty', () => {
   const targets = resolveTargets({ availableTargets: CLI_STACK_TARGETS, requested: '' });

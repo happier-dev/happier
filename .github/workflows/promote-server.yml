@@ -109,9 +109,6 @@ jobs:
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
     environment: release-shared
-    outputs:
-      deploy_ref: ${{ steps.deploy_meta.outputs.ref }}
-      deploy_sha: ${{ steps.deploy_meta.outputs.sha }}
     steps:
       - name: Resolve source ref
         id: resolve
@@ -193,7 +190,7 @@ jobs:
         run: yarn -s test:release:contracts
 
       - name: Verify installer assets are synced
-        run: node scripts/release/sync-installers.mjs --check
+        run: node scripts/pipeline/run.mjs release-sync-installers --check
 
       - name: Setup Bun
         if: inputs.publish_runtime_release == true
@@ -213,7 +210,7 @@ jobs:
         id: bump_server
         run: |
           set -euo pipefail
-          out="$(node scripts/release/bump-version.mjs --component server --bump "${{ inputs.bump }}")"
+          out="$(node scripts/pipeline/run.mjs release-bump-version --component server --bump "${{ inputs.bump }}")"
           if [ "$out" = "SKIP" ]; then
             echo "skipped=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -254,7 +251,7 @@ jobs:
         run: |
           set -euo pipefail
           version="$(node -p 'require("./apps/server/package.json").version' | tr -d '\n')"
-          node scripts/release/build-server-binaries.mjs \
+          node scripts/pipeline/run.mjs release-build-server-binaries \
             --channel="${CHANNEL}" \
             --version="${version}"
 
@@ -266,7 +263,7 @@ jobs:
         run: |
           set -euo pipefail
           version="$(node -p 'require("./apps/server/package.json").version' | tr -d '\n')"
-          node scripts/release/publish-manifests.mjs \
+          node scripts/pipeline/run.mjs release-publish-manifests \
             --product=happier-server \
             --channel="${CHANNEL}" \
             --version="${version}" \
@@ -292,7 +289,7 @@ jobs:
         run: |
           set -euo pipefail
           version="$(node -p 'require("./apps/server/package.json").version' | tr -d '\n')"
-          node scripts/release/verify-artifacts.mjs \
+          node scripts/pipeline/run.mjs release-verify-artifacts \
             --artifacts-dir="dist/release-assets/server" \
             --checksums="dist/release-assets/server/checksums-happier-server-v${version}.txt" \
             --public-key="scripts/release/installers/happier-release.pub" \
@@ -301,148 +298,75 @@ jobs:
       - name: Publish rolling server release assets
         if: inputs.publish_runtime_release == true
         env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
           CHANNEL: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           version="$(node -p 'require("./apps/server/package.json").version' | tr -d '\n')"
           tag="server-preview"
-          title="Server Preview"
-          prerelease="--prerelease"
+          title="Happier Server Preview"
+          prerelease="true"
           if [ "${CHANNEL}" = "stable" ]; then
             tag="server-stable"
-            title="Server Stable"
-            prerelease=""
+            title="Happier Server Stable"
+            prerelease="false"
           fi
-          if gh release view "${tag}" >/dev/null 2>&1; then
-            gh release edit "${tag}" --title "${title}" ${prerelease} --target "$(git rev-parse HEAD)"
-          else
-            gh release create "${tag}" --title "${title}" ${prerelease} --target "$(git rev-parse HEAD)" --notes "Rolling ${CHANNEL} server runtime release."
-          fi
-          mapfile -t assets < <(find dist/release-assets/server -maxdepth 10 -type f | sort)
-          if [ "${#assets[@]}" -eq 0 ]; then
-            echo "No server release assets found to upload." >&2
-            exit 1
-          fi
-          gh release upload "${tag}" "${assets[@]}" --clobber
+          node scripts/pipeline/github/publish-release.mjs \
+            --tag "${tag}" \
+            --title "${title}" \
+            --target-sha "$(git rev-parse HEAD)" \
+            --prerelease "${prerelease}" \
+            --rolling-tag "true" \
+            --generate-notes "false" \
+            --notes "Rolling ${CHANNEL} server runtime release." \
+            --assets-dir "dist/release-assets/server" \
+            --clobber "true" \
+            --prune-assets "true"
 
       - name: Publish versioned stable server release assets
         if: inputs.publish_runtime_release == true && inputs.environment == 'production'
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           version="$(node -p 'require("./apps/server/package.json").version' | tr -d '\n')"
           tag="server-v${version}"
-          title="Server v${version}"
-          if gh release view "${tag}" >/dev/null 2>&1; then
-            gh release edit "${tag}" --title "${title}" --target "$(git rev-parse HEAD)"
-          else
-            gh release create "${tag}" --title "${title}" --target "$(git rev-parse HEAD)" --generate-notes
-          fi
-          mapfile -t assets < <(find dist/release-assets/server -maxdepth 10 -type f | sort)
-          if [ "${#assets[@]}" -eq 0 ]; then
-            echo "No server release assets found to upload." >&2
-            exit 1
-          fi
-          gh release upload "${tag}" "${assets[@]}" --clobber
+          title="Happier Server v${version}"
+          node scripts/pipeline/github/publish-release.mjs \
+            --tag "${tag}" \
+            --title "${title}" \
+            --target-sha "$(git rev-parse HEAD)" \
+            --prerelease "false" \
+            --rolling-tag "false" \
+            --generate-notes "true" \
+            --assets-dir "dist/release-assets/server" \
+            --clobber "true"
 
       - name: Promote source ref to deploy branch
         env:
-          DEPLOY_REF: deploy/${{ inputs.environment }}/server
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          remote_sha="$(git ls-remote --heads origin "$DEPLOY_REF" | awk '{print $1}')"
-          if [ -n "$remote_sha" ]; then
-            git push origin HEAD:"$DEPLOY_REF" --force-with-lease="refs/heads/$DEPLOY_REF:$remote_sha"
-          else
-            git push origin HEAD:"$DEPLOY_REF"
-          fi
+          node scripts/pipeline/github/promote-deploy-branch.mjs \
+            --deploy-environment "${{ inputs.environment }}" \
+            --component server \
+            --sha "$(git rev-parse HEAD)" \
+            --summary-file "${GITHUB_STEP_SUMMARY}"
 
-      - name: Capture deploy metadata
-        id: deploy_meta
+      - name: Trigger deploy webhook(s)
         env:
-          DEPLOY_REF: deploy/${{ inputs.environment }}/server
+          CF_WEBHOOK_DEPLOY_CLIENT_ID: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_ID }}
+          CF_WEBHOOK_DEPLOY_CLIENT_SECRET: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_SECRET }}
+          DEPLOY_WEBHOOK_URL: ${{ vars.DEPLOY_WEBHOOK_URL != '' && vars.DEPLOY_WEBHOOK_URL || secrets.DEPLOY_WEBHOOK_URL }}
+          HAPPIER_SERVER_API_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_SERVER_API_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_SERVER_API_DEPLOY_WEBHOOKS || secrets.HAPPIER_SERVER_API_DEPLOY_WEBHOOKS }}
+          HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS || secrets.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS }}
         run: |
           set -euo pipefail
-          echo "ref=${DEPLOY_REF}" >> "$GITHUB_OUTPUT"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-  deploy_wait:
-    name: Wait for deploy workflow (push)
-    if: needs.promote.result == 'success'
-    needs: [promote]
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - name: Wait for deploy run to complete
-        env:
-          REPO: ${{ github.repository }}
-          BRANCH: ${{ needs.promote.outputs.deploy_ref }}
-          SHA: ${{ needs.promote.outputs.deploy_sha }}
-          TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "${BRANCH:-}" ] || [ -z "${SHA:-}" ]; then
-            echo "Missing deploy metadata (branch/sha)." >&2
-            exit 1
-          fi
-
-          branch_enc="$(node -p 'encodeURIComponent(process.env.BRANCH)')"
-          list_url="https://api.github.com/repos/${REPO}/actions/workflows/deploy.yml/runs?branch=${branch_enc}&event=push&per_page=20"
-
-          echo "Waiting for deploy workflow run on branch '${BRANCH}' (sha=${SHA})."
-
-          deadline="$((SECONDS + 1800))"
-          run_id=""
-          while [ "${SECONDS}" -lt "${deadline}" ]; do
-            json="$(curl -sS \
-              --connect-timeout 10 \
-              --max-time 30 \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer ${TOKEN}" \
-              "${list_url}")"
-
-            run_id="$(printf '%s' "${json}" | jq -r --arg sha "${SHA}" '.workflow_runs[] | select(.head_sha == $sha) | .id' | head -n 1)"
-            if [ -n "${run_id:-}" ] && [ "${run_id}" != "null" ]; then
-              break
-            fi
-            sleep 5
-          done
-
-          if [ -z "${run_id:-}" ] || [ "${run_id}" = "null" ]; then
-            echo "Timed out waiting for deploy workflow run to start (branch='${BRANCH}', sha='${SHA}')." >&2
-            exit 1
-          fi
-
-          echo "Found deploy run id=${run_id}; waiting for completion."
-          deadline="$((SECONDS + 3600))"
-          while [ "${SECONDS}" -lt "${deadline}" ]; do
-            run_json="$(curl -sS \
-              --connect-timeout 10 \
-              --max-time 30 \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer ${TOKEN}" \
-              "https://api.github.com/repos/${REPO}/actions/runs/${run_id}")"
-
-            status="$(printf '%s' "${run_json}" | jq -r '.status // ""')"
-            conclusion="$(printf '%s' "${run_json}" | jq -r '.conclusion // ""')"
-            html_url="$(printf '%s' "${run_json}" | jq -r '.html_url // ""')"
-
-            if [ "${status}" = "completed" ]; then
-              if [ "${conclusion}" = "success" ]; then
-                echo "Deploy succeeded: ${html_url}"
-                exit 0
-              fi
-              echo "Deploy failed (conclusion='${conclusion}'): ${html_url}" >&2
-              exit 1
-            fi
-
-            sleep 10
-          done
-
-          echo "Timed out waiting for deploy workflow run to complete: ${run_id}" >&2
-          exit 1
+          node scripts/pipeline/deploy/trigger-webhooks.mjs \
+            --environment "${{ inputs.environment }}" \
+            --component "server" \
+            --repository "${{ github.repository }}" \
+            --ref-name "deploy/${{ inputs.environment }}/server"

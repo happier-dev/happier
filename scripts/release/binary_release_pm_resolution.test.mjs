@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { resolve } from 'node:path';
 
-import { resolveYarnCommand } from './lib/binary_release.mjs';
+import { resolveRepoRoot, resolveYarnCommand } from '../pipeline/release/lib/binary-release.mjs';
 
 test('resolveYarnCommand prefers yarn when both yarn and corepack are available', () => {
   const result = resolveYarnCommand({
@@ -22,4 +23,8 @@ test('resolveYarnCommand throws when yarn and corepack are unavailable', () => {
     () => resolveYarnCommand({ commandProbe: () => false }),
     /requires yarn .* corepack/i
   );
+});
+
+test('resolveRepoRoot resolves the repo root from the module location', () => {
+  assert.equal(resolve(resolveRepoRoot()), resolve(process.cwd()));
 });

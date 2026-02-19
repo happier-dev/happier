@@ -18,9 +18,7 @@ test('publish-ui-web workflow exists and is a dedicated rolling release publishe
   assert.match(raw, /workflow_dispatch:/);
   assert.match(raw, /workflow_call:/);
 
-  assert.match(raw, /ui-web-preview/);
-  assert.match(raw, /rolling_tag/);
-  assert.match(raw, /uses:\s*\.\/\.github\/workflows\/publish-github-release\.yml/);
+  assert.match(raw, /node scripts\/pipeline\/run\.mjs publish-ui-web/);
 
   assert.doesNotMatch(raw, /deploy\//, 'ui web bundle publishing must not manage deploy/* branches');
 });

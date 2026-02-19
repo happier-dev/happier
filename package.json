@@ -59,14 +59,14 @@
     "docs": "yarn workspace docs dev",
     "docs:build": "yarn workspace docs build",
     "docs:types": "yarn workspace docs types:check",
-    "release:build:binaries:cli": "node scripts/release/build-cli-binaries.mjs",
-    "release:build:binaries:hstack": "node scripts/release/build-hstack-binaries.mjs",
-    "release:build:binaries:server": "node scripts/release/build-server-binaries.mjs",
-    "release:verify:artifacts": "node scripts/release/verify-artifacts.mjs",
-    "release:publish:manifests": "node scripts/release/publish-manifests.mjs",
+    "release:build:binaries:cli": "node scripts/pipeline/release/build-cli-binaries.mjs",
+    "release:build:binaries:hstack": "node scripts/pipeline/release/build-hstack-binaries.mjs",
+    "release:build:binaries:server": "node scripts/pipeline/release/build-server-binaries.mjs",
+    "release:verify:artifacts": "node scripts/pipeline/release/verify-artifacts.mjs",
+    "release:publish:manifests": "node scripts/pipeline/release/publish-manifests.mjs",
     "test:release:contracts": "HAPPIER_FEATURE_POLICY_ENV= node --test scripts/release/*.test.mjs",
-    "release:sync:installers": "node scripts/release/sync-installers.mjs",
-    "release:check:installers": "node scripts/release/sync-installers.mjs --check"
+    "release:sync:installers": "node scripts/pipeline/release/sync-installers.mjs",
+    "release:check:installers": "node scripts/pipeline/release/sync-installers.mjs --check"
   },
   "workspaces": {
     "packages": [

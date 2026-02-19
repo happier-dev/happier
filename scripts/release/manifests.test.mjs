@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildManifestRecord, parseArtifactFilename } from './lib/manifests.mjs';
+import { buildManifestRecord, parseArtifactFilename } from '../pipeline/release/lib/manifests.mjs';
 
 test('parseArtifactFilename parses expected artifact format', () => {
   const parsed = parseArtifactFilename('happier-v1.2.3-linux-x64.tar.gz');

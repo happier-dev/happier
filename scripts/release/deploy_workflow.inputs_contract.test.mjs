@@ -15,6 +15,7 @@ async function loadWorkflow(name) {
 
 test('deploy workflow does not include cli/stack targets (npm publish is handled by release workflows)', async () => {
   const { parsed, raw } = await loadWorkflow('deploy.yml');
+  assert.equal(parsed?.on?.push, undefined, 'deploy.yml should not deploy on push (promote workflows trigger webhooks directly)');
   const inputs = parsed?.on?.workflow_dispatch?.inputs ?? {};
 
   const component = inputs?.component;
@@ -33,4 +34,3 @@ test('deploy workflow does not include cli/stack targets (npm publish is handled
   assert.doesNotMatch(raw, /deploy production cli/);
   assert.doesNotMatch(raw, /deploy preview cli/);
 });
-

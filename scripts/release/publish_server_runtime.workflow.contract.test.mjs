@@ -29,9 +29,7 @@ test('publish-server-runtime workflow publishes rolling server-preview tag via r
   assert.match(raw, /RELEASE_BOT_APP_ID/);
   assert.match(raw, /RELEASE_BOT_PRIVATE_KEY/);
 
-  assert.match(raw, /server-preview/);
-  assert.match(raw, /rolling_tag/);
-  assert.match(raw, /uses:\s*\.\/\.github\/workflows\/publish-github-release\.yml/);
+  assert.match(raw, /node scripts\/pipeline\/run\.mjs publish-server-runtime/);
 });
 
 test('publish-server-runtime embeds build feature policy defaults by channel', async () => {
