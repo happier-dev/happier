@@ -179,6 +179,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
 
     it('uses the content private key in the v2 response bundle for dataKey credentials', async () => {
         authApproveSpy.mockClear();
+        authApproveSpy.mockResolvedValue('approved');
         modalAlertSpy.mockClear();
 
         authCredentials = {
@@ -219,6 +220,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
 
     it('uses the content private key in the v2 response bundle for legacy credentials by default', async () => {
         authApproveSpy.mockClear();
+        authApproveSpy.mockResolvedValue('approved');
         modalAlertSpy.mockClear();
 
         authCredentials = {
@@ -256,5 +258,133 @@ describe('useConnectTerminal unauthenticated flow', () => {
         const opened = openTerminalProvisioningV2Payload({ payload: responseV2!, recipientSecretKeyOrSeed: terminalSecretKey });
         expect(opened).not.toBeNull();
         expect(Array.from(opened!)).toEqual(Array.from(contentPrivateKey));
+    });
+});
+
+describe('useConnectTerminal approval outcome messaging', () => {
+    function createTerminalKeyPair(): { terminalSecretKey: Uint8Array; terminalPublicKey: Uint8Array } {
+        const terminalSecretKey = new Uint8Array(32).fill(5);
+        const terminalPublicKey = tweetnacl.box.keyPair.fromSecretKey(terminalSecretKey).publicKey;
+        return { terminalSecretKey, terminalPublicKey };
+    }
+
+    it("returns true and shows success modal when authApprove returns 'approved'", async () => {
+        authApproveSpy.mockClear();
+        modalAlertSpy.mockClear();
+
+        authCredentials = {
+            token: 'token-approve',
+            encryption: { type: 'dataKey' },
+        };
+        contentPrivateKey = new Uint8Array(32).fill(7);
+        contentPublicKey = new Uint8Array([9, 9, 9]);
+        authApproveSpy.mockResolvedValue('approved');
+
+        const onSuccessSpy = vi.fn();
+
+        const { useConnectTerminal } = await import('./useConnectTerminal');
+
+        let hookApi: ReturnType<typeof useConnectTerminal> | null = null;
+        function Probe() {
+            hookApi = useConnectTerminal({ onSuccess: onSuccessSpy });
+            return null;
+        }
+
+        await act(async () => {
+            renderer.create(React.createElement(Probe));
+        });
+
+        const { terminalPublicKey } = createTerminalKeyPair();
+        let result = false;
+        await act(async () => {
+            result = await hookApi!.processAuthUrl(buildTerminalConnectUrl({ terminalPublicKey }));
+        });
+
+        expect(result).toBe(true);
+        expect(modalAlertSpy).toHaveBeenCalledWith('common.success', 'modals.terminalConnectedSuccessfully', [
+            expect.objectContaining({ text: 'common.ok', onPress: expect.any(Function) }),
+        ]);
+
+        const buttons = (modalAlertSpy.mock.calls[0]?.[2] as Array<{ onPress?: () => void }> | undefined) ?? [];
+        buttons[0]?.onPress?.();
+        expect(onSuccessSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns false and shows 'already used' modal when authApprove returns 'already_authorized'", async () => {
+        authApproveSpy.mockClear();
+        modalAlertSpy.mockClear();
+
+        authCredentials = {
+            token: 'token-already',
+            encryption: { type: 'dataKey' },
+        };
+        contentPrivateKey = new Uint8Array(32).fill(7);
+        contentPublicKey = new Uint8Array([9, 9, 9]);
+        authApproveSpy.mockResolvedValue('already_authorized');
+
+        const onSuccessSpy = vi.fn();
+
+        const { useConnectTerminal } = await import('./useConnectTerminal');
+
+        let hookApi: ReturnType<typeof useConnectTerminal> | null = null;
+        function Probe() {
+            hookApi = useConnectTerminal({ onSuccess: onSuccessSpy });
+            return null;
+        }
+
+        await act(async () => {
+            renderer.create(React.createElement(Probe));
+        });
+
+        const { terminalPublicKey } = createTerminalKeyPair();
+        let result = true;
+        await act(async () => {
+            result = await hookApi!.processAuthUrl(buildTerminalConnectUrl({ terminalPublicKey }));
+        });
+
+        expect(result).toBe(false);
+        expect(modalAlertSpy).toHaveBeenCalledWith('modals.terminalAlreadyConnected', 'modals.terminalConnectionAlreadyUsedDescription', [
+            { text: 'common.ok' },
+        ]);
+        expect(onSuccessSpy).not.toHaveBeenCalled();
+    });
+
+    it("returns false and shows 'expired' modal when authApprove returns 'not_found'", async () => {
+        authApproveSpy.mockClear();
+        modalAlertSpy.mockClear();
+
+        authCredentials = {
+            token: 'token-expired',
+            encryption: { type: 'dataKey' },
+        };
+        contentPrivateKey = new Uint8Array(32).fill(7);
+        contentPublicKey = new Uint8Array([9, 9, 9]);
+        authApproveSpy.mockResolvedValue('not_found');
+
+        const onSuccessSpy = vi.fn();
+
+        const { useConnectTerminal } = await import('./useConnectTerminal');
+
+        let hookApi: ReturnType<typeof useConnectTerminal> | null = null;
+        function Probe() {
+            hookApi = useConnectTerminal({ onSuccess: onSuccessSpy });
+            return null;
+        }
+
+        await act(async () => {
+            renderer.create(React.createElement(Probe));
+        });
+
+        const { terminalPublicKey } = createTerminalKeyPair();
+        let result = true;
+        await act(async () => {
+            result = await hookApi!.processAuthUrl(buildTerminalConnectUrl({ terminalPublicKey }));
+        });
+
+        expect(result).toBe(false);
+        expect(modalAlertSpy).toHaveBeenCalledWith('modals.authRequestExpired', 'modals.authRequestExpiredDescription', [
+            { text: 'common.ok' },
+        ]);
+        expect(onSuccessSpy).not.toHaveBeenCalled();
     });
 });
