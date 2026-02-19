@@ -3,7 +3,7 @@ import * as React from 'react';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
 import {
-    getSessionModeOptionsForPreflightModelList,
+    getSessionModeOptionsForPreflightModeList,
     type PreflightSessionModeList,
     type SessionModeOption,
 } from '@/sync/domains/sessionModes/sessionModeOptions';
@@ -48,6 +48,11 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
         });
     }, [params.agentType, params.capabilityServerId, params.cwd, params.selectedMachineId]);
 
+    const supportsPreflightModeProbe = React.useMemo(() => {
+        const core = getAgentCore(params.agentType);
+        return core.sessionModes.kind === 'acpAgentModes';
+    }, [params.agentType]);
+
     React.useEffect(() => {
         if (!preflightModesKey) {
             setPreflightModes(null);
@@ -74,8 +79,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
 
         let cancelled = false;
         const run = async () => {
-            const core = getAgentCore(params.agentType);
-            if (core.sessionModes.kind !== 'acpAgentModes') return;
+            if (!supportsPreflightModeProbe) return;
             if (!params.selectedMachineId) return;
             const cwd = typeof params.cwd === 'string' ? params.cwd.trim() : '';
 
@@ -143,15 +147,18 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
         return () => {
             cancelled = true;
         };
-    }, [preflightModesKey, params.agentType, params.selectedMachineId, params.capabilityServerId, params.cwd, refreshNonce]);
+    }, [preflightModesKey, params.agentType, params.selectedMachineId, params.capabilityServerId, params.cwd, refreshNonce, supportsPreflightModeProbe]);
 
     const modeOptions = React.useMemo(() => {
         if (preflightModes && Array.isArray(preflightModes.availableModes) && preflightModes.availableModes.length > 0) {
-            return getSessionModeOptionsForPreflightModelList(preflightModes);
+            return getSessionModeOptionsForPreflightModeList(preflightModes);
         }
-        // New-session: hide the control unless we have a dynamic list.
+        if (supportsPreflightModeProbe && params.selectedMachineId) {
+            // Provide a stable placeholder so the UI can show loading/refreshing states.
+            return [{ id: 'default', name: 'Default' }];
+        }
         return [];
-    }, [preflightModes]);
+    }, [params.selectedMachineId, preflightModes, supportsPreflightModeProbe]);
 
     return {
         preflightModes,
@@ -163,4 +170,3 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
         },
     };
 }
-

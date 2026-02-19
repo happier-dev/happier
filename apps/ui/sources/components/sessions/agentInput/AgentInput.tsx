@@ -258,6 +258,25 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingBottom: 4,
         ...Typography.default('semiBold'),
     },
+    overlayInlineRefreshButton: {
+        position: 'absolute',
+        top: 10,
+        right: 16,
+        minWidth: 30,
+        height: 30,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        backgroundColor: 'transparent',
+    },
+    overlayInlineRefreshButtonPressed: {
+        backgroundColor: theme.colors.surfacePressed,
+    },
+    overlayInlineRefreshButtonDisabled: {
+        opacity: 0.6,
+    },
     overlayDivider: {
         height: 1,
         backgroundColor: theme.colors.divider,
@@ -1227,6 +1246,38 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                 <Text style={styles.overlaySectionTitle}>
                                                     Mode
                                                 </Text>
+                                                {props.acpSessionModeOptionsOverrideProbe &&
+                                                (props.acpSessionModeOptionsOverrideProbe.phase !== 'idle' ||
+                                                    typeof props.acpSessionModeOptionsOverrideProbe.onRefresh === 'function') ? (
+                                                    typeof props.acpSessionModeOptionsOverrideProbe.onRefresh === 'function' ? (
+                                                        <Pressable
+                                                            accessibilityRole="button"
+                                                            accessibilityLabel="Refresh modes"
+                                                            onPress={
+                                                                props.acpSessionModeOptionsOverrideProbe.phase === 'idle'
+                                                                    ? props.acpSessionModeOptionsOverrideProbe.onRefresh
+                                                                    : undefined
+                                                            }
+                                                            style={({ pressed }) => [
+                                                                styles.overlayInlineRefreshButton,
+                                                                pressed ? styles.overlayInlineRefreshButtonPressed : null,
+                                                                props.acpSessionModeOptionsOverrideProbe.phase !== 'idle'
+                                                                    ? styles.overlayInlineRefreshButtonDisabled
+                                                                    : null,
+                                                            ]}
+                                                        >
+                                                            {props.acpSessionModeOptionsOverrideProbe.phase === 'idle' ? (
+                                                                <Ionicons name="refresh-outline" size={18} color={theme.colors.textSecondary} />
+                                                            ) : (
+                                                                <ActivityIndicator size="small" />
+                                                            )}
+                                                        </Pressable>
+                                                    ) : (
+                                                        <View style={styles.overlayInlineRefreshButton}>
+                                                            <ActivityIndicator size="small" />
+                                                        </View>
+                                                    )
+                                                ) : null}
 
                                                 <Text style={styles.overlayOptionDescription}>
                                                     {props.acpSessionModeOptionsOverrideProbe?.phase === 'loading'

@@ -60,6 +60,11 @@ export function useCreateNewSession(params: Readonly<{
     agentType: AgentId;
     permissionMode: PermissionMode;
     modelMode: ModelMode;
+    /**
+     * Optional: seed ACP "agent mode" (e.g. OpenCode plan/build) at session start.
+     * Applied before the first message is sent.
+     */
+    acpSessionModeId?: string | null;
 
     sessionPrompt: string;
     resumeSessionId: string;
@@ -396,6 +401,22 @@ export function useCreateNewSession(params: Readonly<{
                 storage.getState().updateSessionPermissionMode(result.sessionId, params.permissionMode);
                 if (getAgentCore(params.agentType).model.supportsSelection && params.modelMode && params.modelMode !== 'default') {
                     storage.getState().updateSessionModelMode(result.sessionId, params.modelMode);
+                }
+
+                const normalizedAcpModeId = typeof params.acpSessionModeId === 'string' ? params.acpSessionModeId.trim() : '';
+                if (normalizedAcpModeId && normalizedAcpModeId !== 'default') {
+                    const core = getAgentCore(params.agentType);
+                    if (core.sessionModes.kind === 'acpAgentModes') {
+                        try {
+                            await sync.publishSessionAcpSessionModeOverrideToMetadata({
+                                sessionId: result.sessionId,
+                                modeId: normalizedAcpModeId,
+                                updatedAt: nowServerMs(),
+                            });
+                        } catch {
+                            // Non-blocking: session is created and will be opened regardless.
+                        }
+                    }
                 }
 
                 // Send initial message if provided

@@ -31,6 +31,15 @@ function findPressableByLabel(tree: renderer.ReactTestRenderer, label: string): 
     ))[0];
 }
 
+function findPressableByAccessibilityLabel(tree: renderer.ReactTestRenderer, label: string): renderer.ReactTestInstance | undefined {
+    return tree.root.findAll((node) => (
+        typeof node.type === 'string' &&
+        node.type === 'Pressable' &&
+        typeof (node.props as any)?.accessibilityLabel === 'string' &&
+        (node.props as any).accessibilityLabel === label
+    ))[0];
+}
+
 vi.mock('react-native', () => ({
     View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('View', props, props.children),
@@ -676,5 +685,56 @@ describe('AgentInput (modelOptionsOverride)', () => {
         });
 
         expect(onAcpSessionModeChange).toHaveBeenCalledWith('plan');
+    });
+
+    it('calls refresh handler for preflight ACP mode lists when provided', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const onRefresh = vi.fn();
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(AgentInput, {
+                    value: 'hello',
+                    placeholder: 'placeholder',
+                    onChangeText: () => {},
+                    onSend: () => {},
+                    autocompletePrefixes: [],
+                    autocompleteSuggestions: async () => [],
+                    agentType: 'opencode',
+                    permissionMode: 'default',
+                    onPermissionModeChange: () => {},
+                    modelMode: 'default',
+                    onModelModeChange: () => {},
+                    acpSessionModeOptionsOverride: [
+                        { id: 'default', name: 'Default' },
+                        { id: 'plan', name: 'Plan' },
+                    ],
+                    acpSessionModeSelectedIdOverride: null,
+                    acpSessionModeOptionsOverrideProbe: { phase: 'idle', onRefresh },
+                    onAcpSessionModeChange: () => {},
+                } as any),
+            );
+        });
+
+        const pressables = tree!.root.findAllByType('Pressable');
+        const settings = pressables.find((p) => {
+            const octicons = p.findAllByType('Octicons');
+            return octicons.some((o) => (o.props as any).name === 'gear');
+        });
+        expect(settings).toBeTruthy();
+
+        await act(async () => {
+            settings!.props.onPress();
+        });
+
+        const refresh = findPressableByAccessibilityLabel(tree!, 'Refresh modes');
+        expect(refresh).toBeTruthy();
+
+        await act(async () => {
+            refresh!.props.onPress();
+        });
+
+        expect(onRefresh).toHaveBeenCalledTimes(1);
     });
 });

@@ -8,7 +8,7 @@ export type PreflightSessionModeList = Readonly<{
     availableModes: ReadonlyArray<SessionModeOption>;
 }>;
 
-export function getSessionModeOptionsForPreflightModelList(list: PreflightSessionModeList): readonly SessionModeOption[] {
+export function getSessionModeOptionsForPreflightModeList(list: PreflightSessionModeList): readonly SessionModeOption[] {
     const dynamic = (list.availableModes ?? [])
         .filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string')
         .map((m) => ({
@@ -29,4 +29,3 @@ export function getSessionModeOptionsForPreflightModelList(list: PreflightSessio
         return true;
     });
 }
-
