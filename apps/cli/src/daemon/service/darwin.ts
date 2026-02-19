@@ -1,6 +1,4 @@
-import { dirname } from 'node:path';
-
-import { buildServicePath } from './path';
+import { buildServicePath } from './servicePath';
 
 function xmlEscape(s: string): string {
   return String(s ?? '')
