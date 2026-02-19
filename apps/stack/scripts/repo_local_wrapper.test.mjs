@@ -43,8 +43,9 @@ test('repo-local wrapper dry-run prints hstack invocation with repo-local env', 
   assert.equal(data.args[1], 'dev');
 
   assert.equal(data.env.HAPPIER_STACK_CLI_ROOT_DISABLE, '1');
-  assert.equal(data.env.HAPPIER_STACK_REPO_DIR, '');
+  assert.equal(data.env.HAPPIER_STACK_REPO_DIR, repoRoot);
   assert.equal(data.env.HAPPIER_STACK_STACK, '');
+  assert.equal(data.env.HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD, '1');
   assert.ok(String(data.env.HAPPIER_STACK_INVOKED_CWD ?? '').trim() !== '');
 });
 

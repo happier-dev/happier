@@ -73,6 +73,9 @@ if (hasHomeConfig) {
 // If no explicit env file is set, and we're on the default "main" stack, prefer the stack-scoped env file
 // if it exists: ~/.happier/stacks/main/env
 (() => {
+  if ((process.env.HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD ?? '').toString().trim() === '1') {
+    return;
+  }
   const stacksEnv = (process.env.HAPPIER_STACK_ENV_FILE ?? '').trim();
   if (stacksEnv) {
     return;
