@@ -18,9 +18,10 @@ describe("replaceAutomationAssignmentsTx", () => {
         });
 
         // Test fixture only needs the Tx subset touched by the service under test.
+        const machineFindMany = vi.fn(async () => [{ id: "machine-1" }]);
         const tx = {
             machine: {
-                findMany: vi.fn(async () => [{ id: "machine-1" }]),
+                findMany: machineFindMany,
             },
             automationAssignment: {
                 deleteMany: vi.fn(async () => undefined),
@@ -51,5 +52,12 @@ describe("replaceAutomationAssignmentsTx", () => {
                 updatedAt,
             },
         ]);
+
+        expect(machineFindMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({
+                accountId: "acct-1",
+                revokedAt: null,
+            }),
+        }));
     });
 });

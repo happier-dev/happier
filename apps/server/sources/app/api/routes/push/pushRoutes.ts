@@ -2,13 +2,28 @@ import { z } from "zod";
 import { type Fastify } from "../../types";
 import { db } from "@/storage/db";
 
+function normalizeClientServerUrl(raw: unknown): string | null {
+    const value = typeof raw === "string" ? raw.trim() : "";
+    if (!value) return null;
+    try {
+        const parsed = new URL(value);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+        parsed.search = "";
+        parsed.hash = "";
+        return parsed.toString().replace(/\/+$/, "");
+    } catch {
+        return null;
+    }
+}
+
 export function pushRoutes(app: Fastify) {
     
     // Push Token Registration API
     app.post('/v1/push-tokens', {
         schema: {
             body: z.object({
-                token: z.string()
+                token: z.string(),
+                clientServerUrl: z.string().optional(),
             }),
             response: {
                 200: z.object({
@@ -23,8 +38,18 @@ export function pushRoutes(app: Fastify) {
     }, async (request, reply) => {
         const userId = request.userId;
         const { token } = request.body;
+        const rawClientServerUrl = (request.body as any)?.clientServerUrl;
+        const clientServerUrl =
+            rawClientServerUrl === undefined ? undefined : normalizeClientServerUrl(rawClientServerUrl);
 
         try {
+            const update: Record<string, unknown> = {
+                updatedAt: new Date(),
+            };
+            if (clientServerUrl !== undefined) {
+                update.clientServerUrl = clientServerUrl;
+            }
+
             await db.accountPushToken.upsert({
                 where: {
                     accountId_token: {
@@ -32,12 +57,11 @@ export function pushRoutes(app: Fastify) {
                         token: token
                     }
                 },
-                update: {
-                    updatedAt: new Date()
-                },
+                update,
                 create: {
                     accountId: userId,
-                    token: token
+                    token: token,
+                    clientServerUrl: clientServerUrl ?? null,
                 }
             });
 
@@ -102,7 +126,8 @@ export function pushRoutes(app: Fastify) {
                     id: t.id,
                     token: t.token,
                     createdAt: t.createdAt.getTime(),
-                    updatedAt: t.updatedAt.getTime()
+                    updatedAt: t.updatedAt.getTime(),
+                    clientServerUrl: t.clientServerUrl ?? null,
                 }))
             });
         } catch (error) {

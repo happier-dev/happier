@@ -17,13 +17,15 @@ vi.mock("@/app/share/accessControl", () => ({
 }));
 
 let machineLastActiveAtMs = 0;
+let machineRevokedAt: Date | null = null;
 const machineFindUnique = vi.fn(async () => ({
     id: "m1",
     accountId: "u1",
     lastActiveAt: new Date(machineLastActiveAtMs),
     active: false,
+    revokedAt: machineRevokedAt,
 }));
-const machineUpdate = vi.fn(async () => ({ id: "m1" }));
+const machineUpdateMany = vi.fn(async () => ({ count: 1 }));
 
 vi.mock("@/storage/db", () => ({
     db: {
@@ -32,7 +34,7 @@ vi.mock("@/storage/db", () => ({
         },
         machine: {
             findUnique: machineFindUnique,
-            update: machineUpdate,
+            updateMany: machineUpdateMany,
         },
     },
 }));
@@ -45,6 +47,7 @@ describe("ActivityCache machine presence", () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
         machineLastActiveAtMs = Date.now();
+        machineRevokedAt = null;
     });
 
     afterEach(() => {
@@ -65,15 +68,24 @@ describe("ActivityCache machine presence", () => {
 
         await (activityCache as any).flushPendingUpdates();
 
-        expect(machineUpdate).toHaveBeenCalledTimes(1);
-        expect(machineUpdate).toHaveBeenCalledWith(
+        expect(machineUpdateMany).toHaveBeenCalledTimes(1);
+        expect(machineUpdateMany).toHaveBeenCalledWith(
             expect.objectContaining({
-                where: expect.anything(),
+                where: expect.objectContaining({ accountId: "u1", id: "m1", revokedAt: null }),
                 data: expect.objectContaining({ active: true, lastActiveAt: expect.any(Date) }),
             }),
         );
 
         const queuedAgain = activityCache.queueMachineUpdate("m1", Date.now());
         expect(queuedAgain).toBe(false);
+    });
+
+    it("treats revoked machines as invalid", async () => {
+        machineRevokedAt = new Date("2026-01-01T00:00:00.000Z");
+
+        ({ activityCache } = await import("./sessionCache"));
+
+        const ok = await activityCache.isMachineValid("m1", "u1");
+        expect(ok).toBe(false);
     });
 });

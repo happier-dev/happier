@@ -8,6 +8,21 @@ const TEST_TEMPLATE_ENVELOPE = JSON.stringify({
 });
 
 describe("parseAutomationUpsertInput", () => {
+    it("accepts existing_session target for encrypted templates", () => {
+        expect(() =>
+            parseAutomationUpsertInput({
+                name: "Existing-session automation",
+                enabled: true,
+                schedule: { kind: "interval", everyMs: 60_000 },
+                targetType: "existing_session",
+                templateCiphertext: JSON.stringify({
+                    kind: "happier_automation_template_encrypted_v1",
+                    payloadCiphertext: "ciphertext-base64",
+                }),
+            }),
+        ).not.toThrow();
+    });
+
     it("accepts interval schedules with an execution template", () => {
         const parsed = parseAutomationUpsertInput({
             name: "Daily workspace sweep",

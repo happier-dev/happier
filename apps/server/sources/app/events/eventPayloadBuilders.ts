@@ -259,7 +259,18 @@ export function buildNewMachineUpdate(machine: {
     };
 }
 
-export function buildUpdateMachineUpdate(machineId: string, updateSeq: number, updateId: string, metadata?: { value: string; version: number }, daemonState?: { value: string; version: number }): UpdatePayload {
+export function buildUpdateMachineUpdate(
+    machineId: string,
+    updateSeq: number,
+    updateId: string,
+    metadata?: { value: string; version: number },
+    daemonState?: { value: string; version: number },
+    extra?: {
+        active?: boolean;
+        activeAt?: number;
+        revokedAt?: number | null;
+    },
+): UpdatePayload {
     return {
         id: updateId,
         seq: updateSeq,
@@ -267,7 +278,8 @@ export function buildUpdateMachineUpdate(machineId: string, updateSeq: number, u
             t: 'update-machine',
             machineId,
             metadata,
-            daemonState
+            daemonState,
+            ...(extra ?? {}),
         },
         createdAt: Date.now()
     };

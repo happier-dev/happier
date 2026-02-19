@@ -37,19 +37,22 @@ vi.mock("@/app/presence/sessionCache", () => ({
 
 vi.mock("@/storage/db", () => ({ db: {} }));
 
+let machineRevokedAt: Date | null = null;
+const txMachineUpdateMany = vi.fn(async () => ({ count: 1 }));
+
 vi.mock("@/storage/inTx", () => {
     const { inTx, afterTx } = createInTxHarness(() => ({
             machine: {
                 findFirst: async (args: any) => {
                     if (args?.select?.metadataVersion) {
-                        return { metadataVersion: 1, metadata: "old-meta" };
+                        return { metadataVersion: 1, metadata: "old-meta", revokedAt: machineRevokedAt };
                     }
                     if (args?.select?.daemonStateVersion) {
-                        return { daemonStateVersion: 2, daemonState: "old-state" };
+                        return { daemonStateVersion: 2, daemonState: "old-state", revokedAt: machineRevokedAt };
                     }
                     return null;
                 },
-                updateMany: async () => ({ count: 1 }),
+                updateMany: txMachineUpdateMany,
             },
     }));
 
@@ -59,6 +62,7 @@ vi.mock("@/storage/inTx", () => {
 describe("machineUpdateHandler (AccountChange integration)", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        machineRevokedAt = null;
     });
 
     it("marks machine metadata changes and emits updates using the returned cursor", async () => {
@@ -113,5 +117,23 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
         );
         expect(emitUpdate).toHaveBeenCalledTimes(1);
         expect(callback).toHaveBeenCalledWith({ result: "success", version: 3, daemonState: "new-state" });
+    });
+
+    it("rejects metadata updates for revoked machines", async () => {
+        machineRevokedAt = new Date("2026-02-19T00:00:00.000Z");
+
+        const { machineUpdateHandler } = await import("./machineUpdateHandler");
+
+        const socket = createFakeSocket();
+        machineUpdateHandler("u1", socket as any);
+        const handler = getSocketHandler(socket, "machine-update-metadata");
+
+        const callback = vi.fn();
+        await handler({ machineId: "m1", metadata: "new-meta", expectedVersion: 1 }, callback);
+
+        expect(txMachineUpdateMany).not.toHaveBeenCalled();
+        expect(markAccountChanged).not.toHaveBeenCalled();
+        expect(emitUpdate).not.toHaveBeenCalled();
+        expect(callback).toHaveBeenCalledWith(expect.objectContaining({ result: "error" }));
     });
 });

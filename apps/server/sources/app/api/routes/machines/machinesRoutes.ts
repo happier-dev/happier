@@ -5,6 +5,7 @@ import { db, isPrismaErrorCode } from "@/storage/db";
 import { log } from "@/utils/logging/log";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { buildNewMachineUpdate, buildUpdateMachineUpdate } from "@/app/events/eventRouter";
+import { activityCache } from "@/app/presence/sessionCache";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { timingSafeEqual } from "node:crypto";
@@ -26,6 +27,7 @@ function serializeMachineRow(row: {
     seq: number;
     active: boolean;
     lastActiveAt: Date;
+    revokedAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
 }) {
@@ -39,6 +41,7 @@ function serializeMachineRow(row: {
         seq: row.seq,
         active: row.active,
         activeAt: row.lastActiveAt.getTime(),  // Return as activeAt for API consistency
+        revokedAt: row.revokedAt ? row.revokedAt.getTime() : null,
         createdAt: row.createdAt.getTime(),
         updatedAt: row.updatedAt.getTime(),
     };
@@ -68,6 +71,10 @@ export function machinesRoutes(app: Fastify) {
         });
 
         if (machine) {
+            if (machine.revokedAt) {
+                return reply.code(410).send({ error: 'machine_revoked' });
+            }
+
             const nextDataEncryptionKey =
                 dataEncryptionKey === null
                     ? null
@@ -103,6 +110,7 @@ export function machinesRoutes(app: Fastify) {
                     },
                 });
                 if (!current) return null;
+                if (current.revokedAt) return { error: 'machine_revoked' as const };
 
                 const currentWantsMetadataUpdate = metadata !== current.metadata;
                 const currentWantsDaemonStateUpdate =
@@ -138,6 +146,10 @@ export function machinesRoutes(app: Fastify) {
             if (!updated) {
                 // Machine disappeared between the initial lookup and the transaction.
                 return reply.code(404).send({ error: "machine_not_found" });
+            }
+
+            if ('error' in updated && updated.error === 'machine_revoked') {
+                return reply.code(410).send({ error: 'machine_revoked' });
             }
 
             return reply.send({
@@ -196,6 +208,9 @@ export function machinesRoutes(app: Fastify) {
                 if (isPrismaErrorCode(e, 'P2002')) {
                     const existingSameAccount = await db.machine.findFirst({ where: { accountId: userId, id } });
                     if (existingSameAccount) {
+                        if (existingSameAccount.revokedAt) {
+                            return reply.code(410).send({ error: 'machine_revoked' });
+                        }
                         log({ module: 'machines', machineId: id, userId }, 'Machine created concurrently; returning existing machine');
                         return reply.send({
                             machine: {
@@ -219,6 +234,80 @@ export function machinesRoutes(app: Fastify) {
                 }
             });
         }
+    });
+
+    // POST /v1/machines/:id/revoke - revoke/forget a machine and invalidate its access.
+    app.post('/v1/machines/:id/revoke', {
+        preHandler: app.authenticate,
+        schema: {
+            params: z.object({
+                id: z.string(),
+            }),
+        },
+    }, async (request, reply) => {
+        const userId = request.userId;
+        const { id } = request.params;
+
+        const result = await inTx(async (tx) => {
+            const machine = await tx.machine.findFirst({
+                where: {
+                    accountId: userId,
+                    id,
+                },
+            });
+            if (!machine) return { kind: 'not_found' as const };
+
+            const now = new Date();
+            const revokedAt = machine.revokedAt ?? now;
+
+            const updated = await tx.machine.update({
+                where: { accountId_id: { accountId: userId, id } },
+                data: {
+                    active: false,
+                    revokedAt,
+                },
+            });
+
+            await tx.accessKey.deleteMany({
+                where: {
+                    accountId: userId,
+                    machineId: id,
+                },
+            });
+
+            await tx.automationAssignment.deleteMany({
+                where: {
+                    machineId: id,
+                },
+            });
+
+            const cursor = await markAccountChanged(tx, { accountId: userId, kind: 'machine', entityId: updated.id });
+
+            afterTx(tx, () => {
+                const updatePayload = buildUpdateMachineUpdate(
+                    updated.id,
+                    cursor,
+                    randomKeyNaked(12),
+                    undefined,
+                    undefined,
+                    { active: false, revokedAt: revokedAt.getTime() },
+                );
+                eventRouter.emitUpdate({
+                    userId,
+                    payload: updatePayload,
+                    recipientFilter: { type: 'user-scoped-only' },
+                });
+                activityCache.invalidateMachine(updated.id);
+            });
+
+            return { kind: 'ok' as const, machine: updated };
+        });
+
+        if (result.kind === 'not_found') {
+            return reply.code(404).send({ error: 'machine_not_found' });
+        }
+
+        return reply.send({ machine: serializeMachineRow(result.machine) });
     });
 
 

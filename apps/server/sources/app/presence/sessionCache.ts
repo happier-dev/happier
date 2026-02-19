@@ -56,6 +56,10 @@ class ActivityCache {
         this.startBatchTimer();
     }
 
+    invalidateMachine(machineId: string): void {
+        this.machineCache.delete(machineId);
+    }
+
     private maybeCleanup(now: number): void {
         if (this.nextCleanupAt && now < this.nextCleanupAt) return;
         this.cleanup();
@@ -124,6 +128,12 @@ class ActivityCache {
             });
             
             if (machine) {
+                if (machine.revokedAt) {
+                    // Fail closed: a revoked/forgotten machine is treated as invalid for presence.
+                    this.machineCache.delete(machineId);
+                    return false;
+                }
+
                 // Cache the result
                 this.machineCache.set(machineId, {
                     validUntil: now + this.CACHE_TTL,
@@ -250,12 +260,11 @@ class ActivityCache {
         if (machineUpdates.length > 0) {
             try {
                 await Promise.all(machineUpdates.map(update =>
-                    db.machine.update({
+                    db.machine.updateMany({
                         where: {
-                            accountId_id: {
-                                accountId: update.userId,
-                                id: update.id
-                            }
+                            accountId: update.userId,
+                            id: update.id,
+                            revokedAt: null,
                         },
                         data: { lastActiveAt: new Date(update.timestamp), active: true }
                     })
@@ -297,6 +306,11 @@ class ActivityCache {
                 log({ module: 'session-cache', level: 'error' }, `Error flushing final updates: ${error}`);
             });
         }
+
+        // Ensure shutdown is a hard stop: cache entries must not leak across lifetimes
+        // (and tests should not share state through the singleton).
+        this.sessionCache.clear();
+        this.machineCache.clear();
     }
 }
 

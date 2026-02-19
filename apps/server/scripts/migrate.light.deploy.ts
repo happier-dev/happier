@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { applyLightDefaultEnv } from '@/flavors/light/env';
 import { requireLightDataDir } from './migrate.light.deployPlan';
 import { PGlite } from '@electric-sql/pglite';
@@ -56,7 +57,9 @@ async function main() {
         url.searchParams.set('connection_limit', '1');
         env.DATABASE_URL = url.toString();
 
-        await run('yarn', ['-s', 'prisma', 'migrate', 'deploy', '--schema', 'prisma/schema.prisma'], env);
+        const require = createRequire(import.meta.url);
+        const prismaCliPath = require.resolve('prisma/build/index.js');
+        await run(process.execPath, [prismaCliPath, 'migrate', 'deploy', '--schema', 'prisma/schema.prisma'], env);
     } finally {
         await server?.stop().catch(() => {});
         await pglite?.close().catch(() => {});

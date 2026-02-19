@@ -68,10 +68,14 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
             await inTx(async (tx) => {
                 const machine = await tx.machine.findFirst({
                     where: { accountId: userId, id: machineId },
-                    select: { metadataVersion: true, metadata: true },
+                    select: { metadataVersion: true, metadata: true, revokedAt: true },
                 });
                 if (!machine) {
                     afterTx(tx, () => callback?.({ result: 'error', message: 'Machine not found' }));
+                    return null;
+                }
+                if (machine.revokedAt) {
+                    afterTx(tx, () => callback?.({ result: 'error', message: 'Machine revoked' }));
                     return null;
                 }
 
@@ -81,15 +85,19 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                 }
 
                 const { count } = await tx.machine.updateMany({
-                    where: { accountId: userId, id: machineId, metadataVersion: expectedVersion },
+                    where: { accountId: userId, id: machineId, metadataVersion: expectedVersion, revokedAt: null },
                     data: { metadata, metadataVersion: expectedVersion + 1 },
                 });
 
                 if (count === 0) {
                     const fresh = await tx.machine.findFirst({
                         where: { accountId: userId, id: machineId },
-                        select: { metadataVersion: true, metadata: true },
+                        select: { metadataVersion: true, metadata: true, revokedAt: true },
                     });
+                    if (fresh?.revokedAt) {
+                        afterTx(tx, () => callback?.({ result: 'error', message: 'Machine revoked' }));
+                        return null;
+                    }
                     afterTx(tx, () => callback?.({ result: 'version-mismatch', version: fresh?.metadataVersion ?? expectedVersion, metadata: fresh?.metadata }));
                     return null;
                 }
@@ -131,10 +139,14 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
             await inTx(async (tx) => {
                 const machine = await tx.machine.findFirst({
                     where: { accountId: userId, id: machineId },
-                    select: { daemonStateVersion: true, daemonState: true },
+                    select: { daemonStateVersion: true, daemonState: true, revokedAt: true },
                 });
                 if (!machine) {
                     afterTx(tx, () => callback?.({ result: 'error', message: 'Machine not found' }));
+                    return null;
+                }
+                if (machine.revokedAt) {
+                    afterTx(tx, () => callback?.({ result: 'error', message: 'Machine revoked' }));
                     return null;
                 }
 
@@ -144,7 +156,7 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                 }
 
                 const { count } = await tx.machine.updateMany({
-                    where: { accountId: userId, id: machineId, daemonStateVersion: expectedVersion },
+                    where: { accountId: userId, id: machineId, daemonStateVersion: expectedVersion, revokedAt: null },
                     data: {
                         daemonState,
                         daemonStateVersion: expectedVersion + 1,
@@ -156,8 +168,12 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                 if (count === 0) {
                     const fresh = await tx.machine.findFirst({
                         where: { accountId: userId, id: machineId },
-                        select: { daemonStateVersion: true, daemonState: true },
+                        select: { daemonStateVersion: true, daemonState: true, revokedAt: true },
                     });
+                    if (fresh?.revokedAt) {
+                        afterTx(tx, () => callback?.({ result: 'error', message: 'Machine revoked' }));
+                        return null;
+                    }
                     afterTx(tx, () => callback?.({ result: 'version-mismatch', version: fresh?.daemonStateVersion ?? expectedVersion, daemonState: fresh?.daemonState }));
                     return null;
                 }

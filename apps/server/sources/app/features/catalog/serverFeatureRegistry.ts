@@ -9,6 +9,7 @@ import { resolveOAuthFeature } from '@/app/features/oauthFeature';
 import { resolveAuthFeature } from '@/app/features/authFeature';
 import { resolveConnectedServicesFeature } from '@/app/features/connectedServicesFeature';
 import { resolveUpdatesFeature } from '@/app/features/updatesFeature';
+import { resolveAttachmentsUploadsFeature } from '@/app/features/attachmentsUploadsFeature';
 
 export type ServerFeatureResolver = (env: NodeJS.ProcessEnv) => FeaturesPayloadDelta;
 
@@ -19,6 +20,7 @@ export const serverFeatureRegistry: readonly ServerFeatureResolver[] = Object.fr
     (env) => resolveVoiceFeature(env),
     (env) => resolveConnectedServicesFeature(env),
     (env) => resolveUpdatesFeature(env),
+    (env) => resolveAttachmentsUploadsFeature(env),
     (env) => resolveFriendsFeature(env),
     (env) => resolveOAuthFeature(env),
     (env) => resolveAuthFeature(env),

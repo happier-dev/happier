@@ -281,22 +281,11 @@ describe("featuresRoutes", () => {
     });
 
     describe("automations", () => {
-        it("returns automations enabled by default and existing-session target disabled", async () => {
+        it("returns automations enabled by default", async () => {
             delete process.env.HAPPIER_FEATURE_AUTOMATIONS__ENABLED;
-            delete process.env.HAPPIER_FEATURE_AUTOMATIONS__EXISTING_SESSION_TARGET;
 
             const payload = await getFeaturesPayload();
             expect(payload.features.automations.enabled).toBe(true);
-            expect(payload.features.automations.existingSessionTarget.enabled).toBe(false);
-        });
-
-        it("disables existing-session target when automations are disabled (dependency enforcement)", async () => {
-            process.env.HAPPIER_FEATURE_AUTOMATIONS__ENABLED = "0";
-            process.env.HAPPIER_FEATURE_AUTOMATIONS__EXISTING_SESSION_TARGET = "1";
-
-            const payload = await getFeaturesPayload();
-            expect(payload.features.automations.enabled).toBe(false);
-            expect(payload.features.automations.existingSessionTarget.enabled).toBe(false);
         });
     });
 

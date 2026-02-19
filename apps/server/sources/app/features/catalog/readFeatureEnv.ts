@@ -3,7 +3,6 @@ import { FEATURE_ENV_KEYS } from './featureEnvSchema';
 
 export type AutomationsFeatureEnv = Readonly<{
   enabled: boolean;
-  existingSessionTarget: boolean;
 }>;
 
 export type BugReportsFeatureEnv = Readonly<{
@@ -30,6 +29,10 @@ export type UpdatesFeatureEnv = Readonly<{
   otaEnabled: boolean;
 }>;
 
+export type AttachmentsUploadsFeatureEnv = Readonly<{
+  enabled: boolean;
+}>;
+
 export type SocialFriendsFeatureEnv = Readonly<{
   enabled: boolean;
   allowUsername: boolean;
@@ -46,7 +49,6 @@ export type AuthFeatureEnv = Readonly<{
 export function readAutomationsFeatureEnv(env: NodeJS.ProcessEnv): AutomationsFeatureEnv {
   return {
     enabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.automationsEnabled], true),
-    existingSessionTarget: parseBooleanEnv(env[FEATURE_ENV_KEYS.automationsExistingSessionTarget], false),
   };
 }
 
@@ -86,6 +88,12 @@ export function readConnectedServicesFeatureEnv(env: NodeJS.ProcessEnv): Connect
 export function readUpdatesFeatureEnv(env: NodeJS.ProcessEnv): UpdatesFeatureEnv {
   return {
     otaEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.updatesOtaEnabled], true),
+  };
+}
+
+export function readAttachmentsUploadsFeatureEnv(env: NodeJS.ProcessEnv): AttachmentsUploadsFeatureEnv {
+  return {
+    enabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.attachmentsUploadsEnabled], true),
   };
 }
 

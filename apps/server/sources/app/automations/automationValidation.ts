@@ -115,12 +115,6 @@ export function parseAutomationUpsertInput(raw: unknown): AutomationUpsertInput 
         throw new AutomationValidationError(toMessage(parsed.error));
     }
 
-    if (
-        parsed.data.targetType === "existing_session"
-        && !isServerFeatureEnabledForRequest("automations.existingSessionTarget", process.env)
-    ) {
-        throw new AutomationValidationError("targetType existing_session is disabled by server configuration");
-    }
     assertEncryptedTemplateEnvelope(parsed.data.templateCiphertext);
     assertScheduleIsComputable(parsed.data.schedule);
 
@@ -136,12 +130,6 @@ export function parseAutomationPatchInput(raw: unknown): AutomationPatchInput {
         throw new AutomationValidationError(toMessage(parsed.error));
     }
 
-    if (
-        parsed.data.targetType === "existing_session"
-        && !isServerFeatureEnabledForRequest("automations.existingSessionTarget", process.env)
-    ) {
-        throw new AutomationValidationError("targetType existing_session is disabled by server configuration");
-    }
     if (typeof parsed.data.templateCiphertext === "string") {
         assertEncryptedTemplateEnvelope(parsed.data.templateCiphertext);
     }

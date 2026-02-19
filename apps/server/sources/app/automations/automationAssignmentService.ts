@@ -15,6 +15,7 @@ async function assertMachinesBelongToAccount(params: {
         where: {
             accountId: params.accountId,
             id: { in: params.machineIds },
+            revokedAt: null,
         },
         select: { id: true },
     });

@@ -216,6 +216,7 @@ model AccountPushToken {
     accountId String
     account   Account  @relation(fields: [accountId], references: [id])
     token     String
+    clientServerUrl String?
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 
@@ -374,6 +375,7 @@ model Machine {
     seq                Int         @default(0)
     active             Boolean     @default(true)
     lastActiveAt       DateTime    @default(now())
+    revokedAt          DateTime?
     createdAt          DateTime    @default(now())
     updatedAt          DateTime    @updatedAt
     accessKeys         AccessKey[]
@@ -383,6 +385,7 @@ model Machine {
 
     @@unique([accountId, id])
     @@index([accountId])
+    @@index([accountId, revokedAt(sort: Desc)])
 }
 
 enum AutomationScheduleKind {

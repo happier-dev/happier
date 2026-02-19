@@ -1,6 +1,5 @@
 export const FEATURE_ENV_KEYS = Object.freeze({
   automationsEnabled: 'HAPPIER_FEATURE_AUTOMATIONS__ENABLED',
-  automationsExistingSessionTarget: 'HAPPIER_FEATURE_AUTOMATIONS__EXISTING_SESSION_TARGET',
 
   bugReportsEnabled: 'HAPPIER_FEATURE_BUG_REPORTS__ENABLED',
   bugReportsProviderUrl: 'HAPPIER_FEATURE_BUG_REPORTS__PROVIDER_URL',
@@ -17,6 +16,8 @@ export const FEATURE_ENV_KEYS = Object.freeze({
   connectedServicesQuotasEnabled: 'HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED',
 
   updatesOtaEnabled: 'HAPPIER_FEATURE_UPDATES_OTA__ENABLED',
+
+  attachmentsUploadsEnabled: 'HAPPIER_FEATURE_ATTACHMENTS_UPLOADS__ENABLED',
 
   socialFriendsEnabled: 'HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED',
   socialFriendsAllowUsername: 'HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME',

@@ -137,6 +137,8 @@ export type UpdateEvent = {
         version: number;
     };
     activeAt?: number;
+    active?: boolean;
+    revokedAt?: number | null;
 } | {
     type: 'new-artifact';
     artifactId: string;

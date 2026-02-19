@@ -288,77 +288,69 @@ describe("automation daemon routes (integration)", () => {
     });
 
     it("rejects existing_session automation creation when target session is missing or inactive", async () => {
-        const previousGate = process.env.HAPPIER_FEATURE_AUTOMATIONS__EXISTING_SESSION_TARGET;
-        process.env.HAPPIER_FEATURE_AUTOMATIONS__EXISTING_SESSION_TARGET = "1";
+        const account = await db.account.create({
+            data: { publicKey: "pk-automation-existing-session-create-validation" },
+            select: { id: true },
+        });
+        await db.machine.create({
+            data: {
+                id: "machine-1",
+                accountId: account.id,
+                metadata: "{}",
+            },
+            select: { id: true },
+        });
+        const inactiveSession = await db.session.create({
+            data: {
+                tag: "inactive-target",
+                accountId: account.id,
+                metadata: "{}",
+                active: false,
+            },
+            select: { id: true },
+        });
 
-        try {
-            const account = await db.account.create({
-                data: { publicKey: "pk-automation-existing-session-create-validation" },
-                select: { id: true },
-            });
-            await db.machine.create({
-                data: {
-                    id: "machine-1",
-                    accountId: account.id,
-                    metadata: "{}",
-                },
-                select: { id: true },
-            });
-            const inactiveSession = await db.session.create({
-                data: {
-                    tag: "inactive-target",
-                    accountId: account.id,
-                    metadata: "{}",
-                    active: false,
-                },
-                select: { id: true },
-            });
+        await withAuthenticatedTestApp(
+            (app) => automationRoutes(app as any),
+            async (app) => {
+                const missingResponse = await app.inject({
+                    method: "POST",
+                    url: "/v2/automations",
+                    headers: {
+                        "content-type": "application/json",
+                        "x-test-user-id": account.id,
+                    },
+                    payload: {
+                        name: "Existing missing",
+                        enabled: true,
+                        schedule: { kind: "interval", everyMs: 60_000 },
+                        targetType: "existing_session",
+                        templateCiphertext: buildTemplateEnvelope("missing-session"),
+                        assignments: [{ machineId: "machine-1", enabled: true, priority: 0 }],
+                    },
+                });
+                expect(missingResponse.statusCode).toBe(400);
+                expect(String((missingResponse.json() as any).error ?? "")).toMatch(/existing session/i);
 
-            await withAuthenticatedTestApp(
-                (app) => automationRoutes(app as any),
-                async (app) => {
-                    const missingResponse = await app.inject({
-                        method: "POST",
-                        url: "/v2/automations",
-                        headers: {
-                            "content-type": "application/json",
-                            "x-test-user-id": account.id,
-                        },
-                        payload: {
-                            name: "Existing missing",
-                            enabled: true,
-                            schedule: { kind: "interval", everyMs: 60_000 },
-                            targetType: "existing_session",
-                            templateCiphertext: buildTemplateEnvelope("missing-session"),
-                            assignments: [{ machineId: "machine-1", enabled: true, priority: 0 }],
-                        },
-                    });
-                    expect(missingResponse.statusCode).toBe(400);
-                    expect(String((missingResponse.json() as any).error ?? "")).toMatch(/existing session/i);
-
-                    const inactiveResponse = await app.inject({
-                        method: "POST",
-                        url: "/v2/automations",
-                        headers: {
-                            "content-type": "application/json",
-                            "x-test-user-id": account.id,
-                        },
-                        payload: {
-                            name: "Existing inactive",
-                            enabled: true,
-                            schedule: { kind: "interval", everyMs: 60_000 },
-                            targetType: "existing_session",
-                            templateCiphertext: buildTemplateEnvelope(inactiveSession.id),
-                            assignments: [{ machineId: "machine-1", enabled: true, priority: 0 }],
-                        },
-                    });
-                    expect(inactiveResponse.statusCode).toBe(400);
-                    expect(String((inactiveResponse.json() as any).error ?? "")).toMatch(/inactive/i);
-                },
-            );
-        } finally {
-            if (previousGate === undefined) delete process.env.HAPPIER_FEATURE_AUTOMATIONS__EXISTING_SESSION_TARGET;
-            else process.env.HAPPIER_FEATURE_AUTOMATIONS__EXISTING_SESSION_TARGET = previousGate;
-        }
+                const inactiveResponse = await app.inject({
+                    method: "POST",
+                    url: "/v2/automations",
+                    headers: {
+                        "content-type": "application/json",
+                        "x-test-user-id": account.id,
+                    },
+                    payload: {
+                        name: "Existing inactive",
+                        enabled: true,
+                        schedule: { kind: "interval", everyMs: 60_000 },
+                        targetType: "existing_session",
+                        templateCiphertext: buildTemplateEnvelope(inactiveSession.id),
+                        assignments: [{ machineId: "machine-1", enabled: true, priority: 0 }],
+                    },
+                });
+                expect(inactiveResponse.statusCode).toBe(400);
+                expect(String((inactiveResponse.json() as any).error ?? "")).toMatch(/inactive/i);
+            },
+        );
     });
 });
