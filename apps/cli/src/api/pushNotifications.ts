@@ -9,8 +9,23 @@ import { isPushDebugEnabled, readPushFetchTokensTimeoutMs } from './pushNotifica
 export interface PushToken {
     id: string
     token: string
+    clientServerUrl?: string | null
     createdAt: number
     updatedAt: number
+}
+
+function normalizeClientServerUrl(raw: unknown): string | null {
+    const value = typeof raw === 'string' ? raw.trim() : ''
+    if (!value) return null
+    try {
+        const parsed = new URL(value)
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+        parsed.search = ''
+        parsed.hash = ''
+        return parsed.toString().replace(/\/+$/, '')
+    } catch {
+        return null
+    }
 }
 
 
@@ -160,11 +175,12 @@ export class PushNotificationClient {
             // Create messages for all tokens
             const messages: ExpoPushMessage[] = tokens.map((token, index) => {
                 if (debugPush) logger.debug(`[PUSH] Creating message ${index + 1} for token`)
+                const baseUrl = normalizeClientServerUrl(token.clientServerUrl) ?? this.baseUrl
                 return {
                     to: token.token,
                     title,
                     body,
-                    data: withServerUrlInPushData({ baseUrl: this.baseUrl, data }),
+                    data: withServerUrlInPushData({ baseUrl, data }),
                     sound: 'default',
                     priority: 'high'
                 }
