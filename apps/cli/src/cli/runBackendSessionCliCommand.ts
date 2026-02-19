@@ -68,12 +68,16 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
     const run = await runPromise;
 
     if (params.agentIdForAccountSettings) {
-      await bootstrapAccountSettingsContext({
+      const snapshot = await bootstrapAccountSettingsContext({
         agentId: params.agentIdForAccountSettings,
         credentials,
         mode: resolved.startedBy === 'daemon' ? 'blocking' : 'fast',
         refresh: refreshSettings ? 'force' : 'auto',
       });
+
+      if (params.agentIdForAccountSettings === 'codex' && resolved.startedBy !== 'daemon' && snapshot.whenRefreshed) {
+        await snapshot.whenRefreshed;
+      }
     }
 
     await run({
