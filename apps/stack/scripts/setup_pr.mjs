@@ -19,6 +19,7 @@ import { isSandboxed, sandboxAllowsGlobalSideEffects } from './utils/env/sandbox
 import { sanitizeStackName } from './utils/stack/names.mjs';
 import { getStackRuntimeStatePath, readStackRuntimeStateFile } from './utils/stack/runtime_state.mjs';
 import { readEnvObjectFromFile } from './utils/env/read.mjs';
+import { buildSetupChildEnv } from './utils/setup/child_env.mjs';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -352,18 +353,19 @@ async function main() {
 
   // Sandbox default: no cross-stack auth reuse unless explicitly allowed.
   const sandboxEffectiveSeedAuth = sandboxNoGlobal ? false : effectiveSeedAuth;
+  const setupChildEnv = buildSetupChildEnv({ baseEnv: process.env });
 
   // If we're going to guide the user through login, start in background first (even in verbose mode)
   // so auth prompts aren't buried in runner logs.
   const needsAuthFlow = interactive && !stackAlreadyAuthed && !sandboxEffectiveSeedAuth && plan.mode === 'login' && plan.loginNow;
   let stackStartEnv = needsAuthFlow
     ? {
-        ...process.env,
+        ...setupChildEnv,
         // Hint to the dev runner that it should start the Expo web UI early (before daemon auth),
         // so guided login can open the correct UI origin (not the server port).
         HAPPIER_STACK_AUTH_FLOW: '1',
       }
-    : process.env;
+    : setupChildEnv;
   if (wantsMobile) {
     stackStartEnv = pickReviewerMobileSchemeEnv(stackStartEnv);
   }
@@ -382,7 +384,7 @@ async function main() {
         cmd: process.execPath,
         args: [join(rootDir, 'scripts', 'init.mjs'), '--no-bootstrap'],
         cwd: rootDir,
-        env: process.env,
+        env: setupChildEnv,
         logPath: initLog,
         quiet: true,
         showSteps: true,
@@ -400,7 +402,7 @@ async function main() {
           ...(isSandboxed() && wantsDev ? ['--no-ui-deps'] : []),
         ],
         cwd: rootDir,
-        env: process.env,
+        env: setupChildEnv,
         logPath: installLog,
         quiet: true,
         showSteps: true,
@@ -421,7 +423,7 @@ async function main() {
       process.exit(1);
     }
   } else {
-    await runNodeScript({ rootDir, rel: 'scripts/init.mjs', args: ['--no-bootstrap'] });
+    await runNodeScript({ rootDir, rel: 'scripts/init.mjs', args: ['--no-bootstrap'], env: setupChildEnv });
     await runNodeScript({
       rootDir,
       rel: 'scripts/install.mjs',
@@ -432,6 +434,7 @@ async function main() {
         ...(wantsDev ? ['--no-ui-build'] : []),
         ...(isSandboxed() && wantsDev ? ['--no-ui-deps'] : []),
       ],
+      env: setupChildEnv,
     });
   }
 
@@ -560,7 +563,7 @@ async function main() {
     ];
     // If the user explicitly asked for verbose, reattach; otherwise keep things quiet.
     if (verbosity > 0) {
-      await runNodeScript({ rootDir, rel: 'scripts/stack.mjs', args: restartArgs });
+      await runNodeScript({ rootDir, rel: 'scripts/stack.mjs', args: restartArgs, env: stackStartEnv });
     }
     // Mobile is started up-front (in the initial stack pr start) so we don't need to restart here.
   }

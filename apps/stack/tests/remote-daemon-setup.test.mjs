@@ -24,6 +24,27 @@ test('hstack remote daemon setup (service=user) installs, pairs, and installs se
   assert.equal(res.status, 0, res.stderr);
 
   const log = h.readInvocationsLog();
+  const invocations = log
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
+  const sshCalls = invocations.filter((i) => i?.bin === 'ssh' && Array.isArray(i.argv));
+  assert.ok(sshCalls.length >= 1, `expected ssh invocations\n${log}`);
+  // Remote commands are executed via `ssh <target> bash -lc '<command>'`. Without quoting, ssh will
+  // concatenate args and the remote bash will treat only the first word as the `-c` command string.
+  for (const call of sshCalls) {
+    const cmd = String(call.argv[3] ?? '');
+    assert.ok(cmd.startsWith("'") && cmd.endsWith("'"), `expected quoted bash -lc command arg\n${log}`);
+  }
+  const serverSetIndex = sshCalls.findIndex((c) => String(c.argv?.[3] ?? '').includes(' server set '));
+  const authRequestIndex = sshCalls.findIndex((c) => String(c.argv?.[3] ?? '').includes('auth request'));
+  assert.ok(serverSetIndex >= 0, `expected remote server set before auth request\n${log}`);
+  assert.ok(authRequestIndex >= 0, `expected remote auth request\n${log}`);
+  assert.ok(serverSetIndex < authRequestIndex, `expected server set to run before auth request\n${log}`);
+
+  const serverSetCmd = String(sshCalls[serverSetIndex]?.argv?.[3] ?? '');
+  assert.ok(serverSetCmd.includes('https://example.invalid'), `expected remote server set to include --server-url value\n${log}`);
   assert.ok(log.includes('"bin":"ssh"'), `expected ssh invocations\n${log}`);
   assert.ok(log.includes('HAPPIER_CHANNEL=preview'), `expected preview channel in remote installer\n${log}`);
   assert.ok(log.includes('HAPPIER_WITH_DAEMON=0'), `expected remote installer to skip auto-service install\n${log}`);
@@ -46,4 +67,3 @@ test('hstack remote daemon setup --service none skips service install/start', (t
   assert.ok(!log.includes('daemon service install'), `expected no service install\n${log}`);
   assert.ok(!log.includes('daemon service start'), `expected no service start\n${log}`);
 });
-

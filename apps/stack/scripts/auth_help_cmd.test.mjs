@@ -19,6 +19,11 @@ test('hstack auth --help surfaces dev-auth seed stack command', async () => {
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
   assert.match(res.stdout, /\bhstack auth seed\b/, `expected help to include seed command\nstdout:\n${res.stdout}`);
   assert.match(res.stdout, /\bdev-auth\b/, `expected help to mention dev-auth\nstdout:\n${res.stdout}`);
+  assert.match(
+    res.stdout,
+    /\bhstack auth seed\b[^\n]*--force(?:\b|\])/,
+    `expected seed help to include --force for re-auth\nstdout:\n${res.stdout}`
+  );
 
   // Auth login targeting flags (local-first UX)
   assert.match(res.stdout, /--webapp(?:=|\b)/, `expected help to mention --webapp\nstdout:\n${res.stdout}`);

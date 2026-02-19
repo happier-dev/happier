@@ -16,10 +16,8 @@ async function writeStubHappyCli({ cliDir }) {
   await mkdir(join(cliDir, 'dist'), { recursive: true });
 
   // Dist entrypoint exists, but package.json intentionally has no build script.
-  await writeFile(join(cliDir, 'dist', 'index.mjs'), 'export {};\n', 'utf-8');
-  await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
-
-  const script = `
+  // startLocalDaemonWithAuth should launch the daemon via dist (not via bin/happier.mjs).
+  const distScript = `
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -68,8 +66,11 @@ if (sub === 'status') {
 
 process.exit(0);
 `;
+  await writeFile(join(cliDir, 'dist', 'index.mjs'), distScript.trimStart(), 'utf-8');
+  await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
 
-  await writeFile(join(cliDir, 'bin', 'happier.mjs'), script.trimStart(), 'utf-8');
+  // If the implementation accidentally invokes bin/happier.mjs instead of dist/index.mjs, fail loudly.
+  await writeFile(join(cliDir, 'bin', 'happier.mjs'), 'process.exit(42);\n', 'utf-8');
   return join(cliDir, 'bin', 'happier.mjs');
 }
 

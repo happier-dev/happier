@@ -16,6 +16,17 @@ test('hstack remote server setup installs hstack and runs self-host install', (t
   assert.equal(res.status, 0, res.stderr);
 
   const log = h.readInvocationsLog();
+  const invocations = log
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
+  const sshCalls = invocations.filter((i) => i?.bin === 'ssh' && Array.isArray(i.argv));
+  assert.ok(sshCalls.length >= 1, `expected ssh invocations\n${log}`);
+  for (const call of sshCalls) {
+    const cmd = String(call.argv[3] ?? '');
+    assert.ok(cmd.startsWith("'") && cmd.endsWith("'"), `expected quoted bash -lc command arg\n${log}`);
+  }
   assert.ok(log.includes('"bin":"ssh"'), `expected ssh invocations\n${log}`);
   assert.ok(log.includes('happier.dev/install'), `expected remote install script\n${log}`);
   assert.ok(log.includes('self-host'), `expected self-host install invocation\n${log}`);
@@ -44,4 +55,3 @@ test('hstack remote server setup forwards env overrides to self-host install', (
   assert.ok(log.includes('HAPPIER_SERVER_PORT=3999'), `expected forwarded port override\n${log}`);
   assert.ok(log.includes('HAPPIER_DB_PROVIDER=sqlite'), `expected forwarded db provider override\n${log}`);
 });
-

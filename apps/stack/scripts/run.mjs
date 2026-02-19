@@ -9,7 +9,7 @@ import { ensureCliBuilt, ensureDepsInstalled, pmExecBin, pmSpawnScript, requireD
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { maybeResetTailscaleServe } from './tailscale.mjs';
-import { isDaemonRunning, startLocalDaemonWithAuth, stopLocalDaemon } from './daemon.mjs';
+import { checkDaemonState, getDaemonEnv, isDaemonRunning, startLocalDaemonWithAuth, stopLocalDaemon } from './daemon.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { assertServerComponentDirMatches, assertServerPrismaProviderMatches } from './utils/server/validate.mjs';
 import { resolveServerStartScript } from './utils/server/flavor_scripts.mjs';
@@ -214,12 +214,13 @@ async function main() {
     }
   }
 
-  const children = [];
-  let shuttingDown = false;
-  installExitCleanup({ label: 'local', children });
-  const baseEnv = { ...process.env };
-  const stackCtx = resolveStackContext({ env: baseEnv, autostart });
-  const { stackMode, runtimeStatePath, stackName, envPath, ephemeral } = stackCtx;
+	  const children = [];
+	  let shuttingDown = false;
+	  let ownedDaemonPid = null;
+	  installExitCleanup({ label: 'local', children });
+	  const baseEnv = { ...process.env };
+	  const stackCtx = resolveStackContext({ env: baseEnv, autostart });
+	  const { stackMode, runtimeStatePath, stackName, envPath, ephemeral } = stackCtx;
 
   // Ensure happier-cli is install+build ready before starting the daemon.
   const buildCli = (baseEnv.HAPPIER_STACK_CLI_BUILD ?? '1').toString().trim() !== '0';
@@ -486,18 +487,28 @@ async function main() {
       accountCount,
       quiet: false,
     });
-    await startLocalDaemonWithAuth({
-      cliBin,
-      cliHomeDir,
-      internalServerUrl: effectiveInternalServerUrl,
-      publicServerUrl,
-      isShuttingDown: () => shuttingDown,
-      forceRestart: restart,
-        env: baseEnv,
-        stackName: autostart.stackName,
-    });
-    }
-  }
+	    await startLocalDaemonWithAuth({
+	      cliBin,
+	      cliHomeDir,
+	      internalServerUrl: effectiveInternalServerUrl,
+	      publicServerUrl,
+	      isShuttingDown: () => shuttingDown,
+	      forceRestart: restart,
+	        env: baseEnv,
+	        stackName: autostart.stackName,
+	    });
+	      const daemonEnvForState = getDaemonEnv({
+	        baseEnv,
+	        cliHomeDir,
+	        internalServerUrl: effectiveInternalServerUrl,
+	        publicServerUrl: publicServerUrl || effectiveInternalServerUrl,
+	        stackName,
+	        cliIdentity: 'default',
+	      });
+	      const daemonState = checkDaemonState(cliHomeDir, { serverUrl: effectiveInternalServerUrl, env: daemonEnvForState });
+	      ownedDaemonPid = typeof daemonState?.pid === 'number' ? daemonState.pid : null;
+	    }
+	  }
 
   // Optional: start Expo dev-client Metro for mobile reviewers.
   if (startMobile) {
@@ -528,9 +539,28 @@ async function main() {
     shuttingDown = true;
     console.log('\n[local] shutting down...');
 
-    if (startDaemon) {
-        await stopLocalDaemon({ cliBin, internalServerUrl: effectiveInternalServerUrl, cliHomeDir });
-    }
+	    if (startDaemon) {
+	      if (ownedDaemonPid && Number.isFinite(ownedDaemonPid) && ownedDaemonPid > 0) {
+	        await stopLocalDaemon({
+	          cliBin,
+	          internalServerUrl: effectiveInternalServerUrl,
+	          cliHomeDir,
+	          expectedPid: ownedDaemonPid,
+	          env: baseEnv,
+	          stackName,
+	          cliIdentity: 'default',
+	        });
+	      } else {
+	        await stopLocalDaemon({
+	          cliBin,
+	          internalServerUrl: effectiveInternalServerUrl,
+	          cliHomeDir,
+	          env: baseEnv,
+	          stackName,
+	          cliIdentity: 'default',
+	        });
+	      }
+	    }
 
     for (const child of children) {
       if (child.exitCode == null) {

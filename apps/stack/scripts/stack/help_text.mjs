@@ -7,7 +7,7 @@ const STACK_HELP_USAGE_LINES = [
   'hstack stack duplicate <from> <to> [--duplicate-worktrees] [--deps=none|link|install|link-or-install] [--json]',
   'hstack stack info <name> [--json]',
   'hstack stack pr <name> --repo=<pr-url|number> [--server-flavor=light|full] [--dev|--start] [--reuse] [--update] [--force] [--background] [--mobile] [--expo-tailscale] [--json] [-- ...]',
-  'hstack stack create-dev-auth-seed [name] [--server=happier-server|happier-server-light] [--login|--no-login] [--skip-default-seed] [--non-interactive] [--json]',
+  'hstack stack create-dev-auth-seed [name] [--server=happier-server|happier-server-light] [--login|--no-login] [--force] [--skip-default-seed] [--non-interactive] [--json]',
   'hstack stack daemon <name> start|stop|restart|status [--json]',
   'hstack stack happier <name> [-- ...]',
   'hstack stack bug-report <name> [-- ...]',

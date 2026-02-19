@@ -37,7 +37,18 @@ test('setup_pr guided-login path delegates to orchestrated auth flow helpers at 
 export async function assertCliPrereqs() {}
 `),
       './utils/proc/proc.mjs': toDataUrl(`
-export async function run() {}
+import { appendFileSync } from 'node:fs';
+
+const markerPath = process.env.HSTACK_SETUP_PR_MARKER;
+function mark(line) {
+  if (!markerPath) return;
+  appendFileSync(markerPath, String(line) + '\\n', 'utf-8');
+}
+export async function run(_cmd, args, { env } = {}) {
+  const script = String(args?.[0] ?? '').split(/[\\/]/).pop();
+  mark('run:' + script + '|setupChild=' + String(env?.HAPPIER_STACK_SETUP_CHILD ?? '') + '|workspace=' + String(env?.HAPPIER_STACK_WORKSPACE_DIR ?? ''));
+  return { status: 0 };
+}
 `),
       './utils/auth/guided_pr_auth.mjs': toDataUrl(`
 export async function decidePrAuthPlan() {
@@ -111,6 +122,17 @@ export async function resolve(specifier, context, defaultResolve) {
     const markerLog = await readFile(markerPath, 'utf-8');
     assert.match(markerLog, /\brunOrchestratedGuidedAuthFlow\b/, `expected setup_pr to call runOrchestratedGuidedAuthFlow\n${markerLog}`);
     assert.match(markerLog, /\bstartDaemonPostAuth\b/, `expected setup_pr to call startDaemonPostAuth\n${markerLog}`);
+    assert.match(markerLog, /run:init\.mjs\|setupChild=1\|workspace=/, `expected setup pr to propagate setup child env to init\n${markerLog}`);
+    assert.match(
+      markerLog,
+      /run:install\.mjs\|setupChild=1\|workspace=/,
+      `expected setup pr to propagate setup child env to install\n${markerLog}`
+    );
+    assert.match(
+      markerLog,
+      /run:stack\.mjs\|setupChild=1\|workspace=/,
+      `expected setup pr to propagate setup child env to initial stack creation\n${markerLog}`
+    );
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }

@@ -33,8 +33,8 @@ export async function listAllStackNames() {
   return Array.from(names).sort();
 }
 
-export function stackExistsSync(stackName) {
+export function stackExistsSync(stackName, env = process.env) {
   const name = String(stackName ?? '').trim() || 'main';
   if (name === 'main') return true;
-  return existsSync(resolveStackEnvPath(name).envPath);
+  return existsSync(resolveStackEnvPath(name, env).envPath);
 }

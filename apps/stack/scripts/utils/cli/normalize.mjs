@@ -3,6 +3,7 @@ export function normalizeProfile(raw) {
   if (!v) return '';
   if (v === 'selfhost' || v === 'self-host' || v === 'self_host' || v === 'host') return 'selfhost';
   if (v === 'dev' || v === 'developer' || v === 'develop' || v === 'development') return 'dev';
+  if (v === 'local-repo' || v === 'localrepo' || v === 'local' || v === 'repo') return 'local-repo';
   return '';
 }
 

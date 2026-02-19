@@ -19,6 +19,21 @@ async function readJson(path) {
   return JSON.parse(await readFile(path, 'utf-8'));
 }
 
+function isServiceMode(env = process.env) {
+  const raw = String(env?.HAPPIER_STACK_SERVICE_MODE ?? '').trim();
+  if (raw) return raw !== '0';
+
+  // In CI, we prefer deterministic builds and want failures to surface.
+  const isCi = Boolean(String(env?.CI ?? '').trim());
+  if (isCi) return false;
+
+  const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  if (isInteractive) return false;
+
+  // launchd (macOS) and systemd (Linux) typically run as pid 1.
+  return process.ppid === 1;
+}
+
 function resolveBuildStatePath({ label, dir }) {
   const homeDir = getHappyStacksHomeDir();
   const key = sha256Hex(resolve(dir));
@@ -109,6 +124,32 @@ function resolveStackCacheBaseDirFromEnv(env) {
 
 export async function applyStackCacheEnv(baseEnv) {
   const env = { ...(baseEnv && typeof baseEnv === 'object' ? baseEnv : process.env) };
+  // IMPORTANT:
+  // Stack setup/bootstrap frequently runs `yarn install` inside the Happier monorepo.
+  // Many workspace lifecycle scripts depend on devDependencies (e.g. TypeScript for `tsc`).
+  //
+  // If a user (or CI) has NODE_ENV=production / *production* npm/Yarn flags set globally,
+  // Yarn can skip devDependencies and the install fails in confusing ways.
+  //
+  // Default: scrub production-mode flags for stack-invoked package-manager commands.
+  // Opt-out via: HAPPIER_STACK_PM_ALLOW_PRODUCTION=1
+  const allowProduction = String(env.HAPPIER_STACK_PM_ALLOW_PRODUCTION ?? '').trim() === '1';
+  const isTruthy = (v) => {
+    const s = String(v ?? '').trim().toLowerCase();
+    return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+  };
+  const wantsProduction =
+    String(env.NODE_ENV ?? '').trim().toLowerCase() === 'production'
+    || isTruthy(env.YARN_PRODUCTION)
+    || isTruthy(env.npm_config_production)
+    || isTruthy(env.NPM_CONFIG_PRODUCTION);
+  if (!allowProduction && wantsProduction) {
+    env.NODE_ENV = 'development';
+    env.YARN_PRODUCTION = '0';
+    env.npm_config_production = 'false';
+    env.NPM_CONFIG_PRODUCTION = 'false';
+  }
+
   const envFile = (env.HAPPIER_STACK_ENV_FILE ?? '').toString().trim();
   const stackCacheBase = resolveStackCacheBaseDirFromEnv(env);
   if (!stackCacheBase) return env;
@@ -183,8 +224,19 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
   if (pm.name === 'yarn') {
     await ensureYarnReady({ dir: installDir, env, quiet });
   }
+  const installArgs = pm.name === 'yarn' ? ['install', '--production=false'] : ['install'];
 
   if (await pathExists(nodeModules)) {
+    // In service contexts (launchd/systemd), avoid doing surprise dependency refreshes just because
+    // files changed on disk. This keeps long-running stacks resilient even if the checkout becomes
+    // temporarily un-buildable (e.g. mid-rebase / failing typecheck).
+    const allowRefresh =
+      String(env?.HAPPIER_STACK_SERVICE_ALLOW_REFRESH_DEPS ?? '').trim() === '1' ||
+      String(env?.HAPPIER_STACK_ALLOW_REFRESH_DEPS ?? '').trim() === '1';
+    if (isServiceMode(env) && !allowRefresh) {
+      return;
+    }
+
     // Yarn workspaces keep yarn.lock at the monorepo root. If invoked from a workspace directory,
     // we must read lock/integrity from the root; otherwise "deps changed" detection silently breaks
     // (because apps/* typically has no yarn.lock, and node_modules is often nohoisted).
@@ -239,7 +291,7 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
           // eslint-disable-next-line no-console
           console.log(`[local] refreshing ${label} dependencies (yarn.lock/package.json/patches changed)...`);
         }
-        await run(pm.cmd, ['install'], { cwd: installDir, stdio, env });
+        await run(pm.cmd, installArgs, { cwd: installDir, stdio, env });
       }
     }
 
@@ -250,7 +302,7 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
     // eslint-disable-next-line no-console
     console.log(`[local] installing ${label} dependencies (first run)...`);
   }
-  await run(pm.cmd, ['install'], { cwd: installDir, stdio, env });
+  await run(pm.cmd, installArgs, { cwd: installDir, stdio, env });
 }
 
 function collectExpectedExportFileTargets(exportsField) {
@@ -376,7 +428,8 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
   // - HAPPIER_STACK_CLI_BUILD_MODE=always
   // Or disable via:
   // - HAPPIER_STACK_CLI_BUILD=0
-  const modeRaw = (process.env.HAPPIER_STACK_CLI_BUILD_MODE ?? 'auto').trim().toLowerCase();
+  const serviceDefaultMode = isServiceMode(envIn) ? 'never' : 'auto';
+  const modeRaw = (envIn.HAPPIER_STACK_CLI_BUILD_MODE ?? serviceDefaultMode).trim().toLowerCase();
   const mode = modeRaw === 'always' || modeRaw === 'auto' || modeRaw === 'never' ? modeRaw : 'auto';
   const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
   const distDir = join(cliDir, 'dist');

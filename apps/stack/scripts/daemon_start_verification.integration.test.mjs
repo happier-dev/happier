@@ -23,10 +23,7 @@ function runNode(args, { cwd, env }) {
 async function writeStubHappyCli({ cliDir }) {
   await mkdir(join(cliDir, 'bin'), { recursive: true });
   await mkdir(join(cliDir, 'dist'), { recursive: true });
-  await writeFile(join(cliDir, 'dist', 'index.mjs'), 'export {};\n', 'utf-8');
-  await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
-
-  const script = `
+  const distScript = `
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -55,9 +52,12 @@ if (sub === 'start') {
 
 process.exit(0);
 `;
+  await writeFile(join(cliDir, 'dist', 'index.mjs'), distScript.trimStart(), 'utf-8');
+  await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
 
   const cliBin = join(cliDir, 'bin', 'happier.mjs');
-  await writeFile(cliBin, script.trimStart(), 'utf-8');
+  // If daemon.mjs accidentally invokes bin/happier.mjs, fail loudly.
+  await writeFile(cliBin, 'process.exit(42);\n', 'utf-8');
   return cliBin;
 }
 
@@ -109,15 +109,15 @@ test('startLocalDaemonWithAuth streams daemon start output in TUI mode', async (
     // Overwrite the stub to print a deterministic line on daemon start.
     const cliBin = join(cliDir, 'bin', 'happier.mjs');
     await writeFile(
-      cliBin,
+      join(cliDir, 'dist', 'index.mjs'),
       `
-const args = process.argv.slice(2);
-if (args[0] === 'daemon' && args[1] === 'start') {
-  console.log('stub daemon start');
-  process.exit(1);
-}
-process.exit(0);
-`.trimStart(),
+	const args = process.argv.slice(2);
+	if (args[0] === 'daemon' && args[1] === 'start') {
+	  console.log('stub daemon start');
+	  process.exit(1);
+	}
+	process.exit(0);
+	`.trimStart(),
       'utf-8'
     );
 

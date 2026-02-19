@@ -50,7 +50,7 @@ test('compiled hstack binary runs self-host help outside repo checkout', async (
   const build = spawnSync(
     process.execPath,
     [
-      'scripts/release/build-hstack-binaries.mjs',
+      'scripts/pipeline/release/build-hstack-binaries.mjs',
       '--channel=preview',
       `--version=${version}`,
       `--targets=${target}`,

@@ -153,7 +153,7 @@ test('hstack stack auth copy-from prefers source server-scoped credential over u
     HAPPIER_STACK_ENV_FILE: join(storageDir, targetStack, 'env'),
   };
 
-  const res = await runNodeCapture([authScriptPath(rootDir), 'copy-from', sourceStack], { cwd: rootDir, env });
+  const res = await runNodeCapture([authScriptPath(rootDir), 'copy-from', sourceStack, '--offline-ok'], { cwd: rootDir, env });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
 
   const expectedTargetId = buildStackStableScopeId({ stackName: targetStack, cliIdentity: 'default' });
@@ -247,7 +247,7 @@ test('hstack stack auth copy-from prefers source stable-scope credential when so
     HAPPIER_STACK_ENV_FILE: join(storageDir, targetStack, 'env'),
   };
 
-  const res = await runNodeCapture([authScriptPath(rootDir), 'copy-from', sourceStack], { cwd: rootDir, env });
+  const res = await runNodeCapture([authScriptPath(rootDir), 'copy-from', sourceStack, '--offline-ok'], { cwd: rootDir, env });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
 
   const expectedTargetId = buildStackStableScopeId({ stackName: targetStack, cliIdentity: 'default' });
@@ -336,7 +336,7 @@ test('hstack stack auth copy-from fails closed when source token subject is miss
     HAPPIER_STACK_ENV_FILE: join(storageDir, targetStack, 'env'),
   };
 
-  const res = await runNodeCapture([authScriptPath(rootDir), 'copy-from', sourceStack], { cwd: rootDir, env });
+  const res = await runNodeCapture([authScriptPath(rootDir), 'copy-from', sourceStack, '--offline-ok'], { cwd: rootDir, env });
   assert.notEqual(res.code, 0, `expected non-zero exit for stale source auth\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   assert.match(
     `${res.stdout}\n${res.stderr}`,
@@ -451,4 +451,166 @@ test('hstack stack auth copy-from accepts source auth when source server validat
   const targetStableId = buildStackStableScopeId({ stackName: targetStack, cliIdentity: 'default' });
   const copied = await readFile(join(targetCliHome, 'servers', targetStableId, 'access.key'), 'utf-8');
   assert.ok(copied.includes(sourceToken), `expected copied credential to include source token\ncopied:\n${copied}`);
+});
+
+test('hstack stack auth copy-from fails closed when source stack is not running (unless explicitly opted into offline)', async (t) => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-auth-copy-from-require-running-source-'));
+  t.after(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+  const homeDir = join(tmp, 'home');
+  const storageDir = join(tmp, 'storage');
+  const workspaceDir = join(tmp, 'workspace');
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(storageDir, { recursive: true });
+  await mkdir(workspaceDir, { recursive: true });
+
+  const binDir = join(tmp, 'bin');
+  await mkdir(binDir, { recursive: true });
+  const yarnPath = join(binDir, 'yarn');
+  await writeFile(yarnPath, '#!/bin/bash\nexit 0\n', 'utf-8');
+  await chmod(yarnPath, 0o755);
+
+  const repoRoot = dirname(rootDir);
+  const sourceStack = 'dev-auth';
+  const targetStack = 'dev';
+  const serverPort = 4311;
+  const serverUrl = `http://127.0.0.1:${serverPort}`;
+  const sourceCliHome = join(storageDir, sourceStack, 'cli');
+  const targetCliHome = join(storageDir, targetStack, 'cli');
+
+  const mkStackEnv = async (name, cliHomeDir) => {
+    const baseDir = join(storageDir, name);
+    const dataDir = join(baseDir, 'server-light');
+    await mkdir(dataDir, { recursive: true });
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(
+      join(baseDir, 'env'),
+      [
+        `HAPPIER_STACK_STACK=${name}`,
+        `HAPPIER_STACK_SERVER_COMPONENT=happier-server-light`,
+        `HAPPIER_STACK_REPO_DIR=${repoRoot}`,
+        `HAPPIER_STACK_CLI_HOME_DIR=${cliHomeDir}`,
+        `HAPPIER_STACK_SERVER_PORT=${serverPort}`,
+        `HAPPIER_SERVER_LIGHT_DATA_DIR=${dataDir}`,
+        `HAPPIER_SERVER_LIGHT_FILES_DIR=${join(dataDir, 'files')}`,
+        `HAPPIER_SERVER_LIGHT_DB_DIR=${join(dataDir, 'pglite')}`,
+        '',
+      ].join('\n'),
+      'utf-8'
+    );
+  };
+
+  await mkStackEnv(sourceStack, sourceCliHome);
+  await mkStackEnv(targetStack, targetCliHome);
+
+  // Write a source credential that copy-from can find via the source stack's pinned port.
+  const sourceCred = resolveStackCredentialPaths({ cliHomeDir: sourceCliHome, serverUrl });
+  await mkdir(dirname(sourceCred.serverScopedPath), { recursive: true });
+  await writeFile(sourceCred.serverScopedPath, 'server-scoped-token\n', 'utf-8');
+
+  const env = {
+    ...process.env,
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
+    HAPPIER_STACK_STACK: targetStack,
+    HAPPIER_STACK_ENV_FILE: join(storageDir, targetStack, 'env'),
+  };
+
+  const res = await runNodeCapture([authScriptPath(rootDir), 'copy-from', sourceStack], { cwd: rootDir, env });
+  assert.notEqual(
+    res.code,
+    0,
+    `expected copy-from to fail closed when source stack is not running\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
+  );
+});
+
+test('hstack stack auth copy-from --no-secret does not overwrite target master secret (even with --force)', async (t) => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-auth-copy-from-no-secret-'));
+  t.after(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+  const homeDir = join(tmp, 'home');
+  const storageDir = join(tmp, 'storage');
+  const workspaceDir = join(tmp, 'workspace');
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(storageDir, { recursive: true });
+  await mkdir(workspaceDir, { recursive: true });
+
+  const binDir = join(tmp, 'bin');
+  await mkdir(binDir, { recursive: true });
+  const yarnPath = join(binDir, 'yarn');
+  await writeFile(yarnPath, '#!/bin/bash\nexit 0\n', 'utf-8');
+  await chmod(yarnPath, 0o755);
+
+  const repoRoot = dirname(rootDir);
+  const sourceStack = 'dev-auth';
+  const targetStack = 'dev';
+  const serverPort = 4331;
+  const serverUrl = `http://127.0.0.1:${serverPort}`;
+  const sourceCliHome = join(storageDir, sourceStack, 'cli');
+  const targetCliHome = join(storageDir, targetStack, 'cli');
+
+  const mkStackEnv = async (name, cliHomeDir) => {
+    const baseDir = join(storageDir, name);
+    const dataDir = join(baseDir, 'server-light');
+    await mkdir(dataDir, { recursive: true });
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(
+      join(baseDir, 'env'),
+      [
+        `HAPPIER_STACK_STACK=${name}`,
+        `HAPPIER_STACK_SERVER_COMPONENT=happier-server-light`,
+        `HAPPIER_STACK_REPO_DIR=${repoRoot}`,
+        `HAPPIER_STACK_CLI_HOME_DIR=${cliHomeDir}`,
+        `HAPPIER_STACK_SERVER_PORT=${serverPort}`,
+        `HAPPIER_SERVER_LIGHT_DATA_DIR=${dataDir}`,
+        `HAPPIER_SERVER_LIGHT_FILES_DIR=${join(dataDir, 'files')}`,
+        `HAPPIER_SERVER_LIGHT_DB_DIR=${join(dataDir, 'pglite')}`,
+        '',
+      ].join('\n'),
+      'utf-8'
+    );
+    return { baseDir, dataDir };
+  };
+
+  const sourceDirs = await mkStackEnv(sourceStack, sourceCliHome);
+  const targetDirs = await mkStackEnv(targetStack, targetCliHome);
+
+  await writeFile(join(sourceDirs.dataDir, 'handy-master-secret.txt'), 'source-secret\n', 'utf-8');
+  await writeFile(join(targetDirs.dataDir, 'handy-master-secret.txt'), 'target-secret\n', 'utf-8');
+
+  const sourceCred = resolveStackCredentialPaths({ cliHomeDir: sourceCliHome, serverUrl });
+  const targetCred = resolveStackCredentialPaths({ cliHomeDir: targetCliHome, serverUrl });
+  await mkdir(dirname(sourceCred.serverScopedPath), { recursive: true });
+  await mkdir(dirname(targetCred.serverScopedPath), { recursive: true });
+  await writeFile(sourceCred.serverScopedPath, 'source-token\n', 'utf-8');
+  await writeFile(targetCred.serverScopedPath, 'target-token\n', 'utf-8');
+
+  const env = {
+    ...process.env,
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
+    HAPPIER_STACK_STACK: targetStack,
+    HAPPIER_STACK_ENV_FILE: join(storageDir, targetStack, 'env'),
+  };
+
+  const res = await runNodeCapture(
+    [authScriptPath(rootDir), 'copy-from', sourceStack, '--force', '--offline-ok', '--no-secret'],
+    { cwd: rootDir, env }
+  );
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const targetSecret = await readFile(join(targetDirs.dataDir, 'handy-master-secret.txt'), 'utf-8');
+  assert.equal(targetSecret.trim(), 'target-secret');
 });

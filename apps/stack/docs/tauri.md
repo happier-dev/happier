@@ -58,3 +58,4 @@ Requirements:
 - `HAPPIER_STACK_TAURI_DEBUG=0` (build release-like without devtools)
 - `HAPPIER_STACK_TAURI_SERVER_URL` (force the embedded API URL)
 - `HAPPIER_STACK_TAURI_PREFER_TAILSCALE=0` (disable Tailscale detection; always embed `127.0.0.1`)
+- `HAPPIER_STACK_TAURI_CREATE_UPDATER_ARTIFACTS=1` (force generating updater artifacts; requires `TAURI_SIGNING_PRIVATE_KEY` — otherwise it defaults to off)

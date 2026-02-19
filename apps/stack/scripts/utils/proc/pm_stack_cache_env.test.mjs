@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { spawn } from 'node:child_process';
 
 import { ensureCliBuilt, ensureDepsInstalled, pmExecBin } from './pm.mjs';
 
@@ -18,6 +19,10 @@ async function writeYarnEnvDumpStub({ binDir, outputPath }) {
       '  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME ?? null,',
       '  YARN_CACHE_FOLDER: process.env.YARN_CACHE_FOLDER ?? null,',
       '  npm_config_cache: process.env.npm_config_cache ?? null,',
+      '  NODE_ENV: process.env.NODE_ENV ?? null,',
+      '  YARN_PRODUCTION: process.env.YARN_PRODUCTION ?? null,',
+      '  npm_config_production: process.env.npm_config_production ?? null,',
+      '  NPM_CONFIG_PRODUCTION: process.env.NPM_CONFIG_PRODUCTION ?? null,',
       '};',
       "writeFileSync(process.env.OUTPUT_PATH, JSON.stringify(out, null, 2) + '\\n');",
       'process.exit(0);',
@@ -84,6 +89,47 @@ async function writeYarnBuildFailAfterDeletingDistStub({ binDir, outputPath }) {
   );
   await chmod(yarnPath, 0o755);
   await writeFile(outputPath, '', 'utf-8');
+}
+
+async function writeYarnBuildCreatesDistStub({ binDir, outputPath, cliDir }) {
+  await mkdir(binDir, { recursive: true });
+  const yarnPath = join(binDir, 'yarn');
+  await writeFile(
+    yarnPath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'echo "$*" >> "${OUTPUT_PATH:?}"',
+      'if [ "${1:-}" = "--version" ]; then',
+      '  echo "1.22.22"',
+      '  exit 0',
+      'fi',
+      'if [ "${1:-}" = "build" ]; then',
+      `  mkdir -p ${JSON.stringify(join(cliDir, 'dist'))}`,
+      `  echo "export const built = true;" > ${JSON.stringify(join(cliDir, 'dist', 'index.mjs'))}`,
+      '  exit 0',
+      'fi',
+      'exit 0',
+    ].join('\n') + '\n',
+    'utf-8'
+  );
+  await chmod(yarnPath, 0o755);
+  await writeFile(outputPath, '', 'utf-8');
+}
+
+async function runCapture(cmd, args, { cwd, env } = {}) {
+  return await new Promise((resolve, reject) => {
+    const proc = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let err = '';
+    proc.stdout.on('data', (c) => (out += String(c)));
+    proc.stderr.on('data', (c) => (err += String(c)));
+    proc.on('error', reject);
+    proc.on('close', (code) => {
+      if (code === 0) resolve(out);
+      else reject(new Error(`command failed: ${cmd} ${args.join(' ')} (code=${code})\n${err}`));
+    });
+  });
 }
 
 function expectedCacheEnv({ envPath }) {
@@ -155,6 +201,78 @@ test('ensureDepsInstalled sets stack-scoped cache env vars for yarn installs', a
   assert.equal(parsed.npm_config_cache, exp.npm);
 });
 
+test('ensureDepsInstalled skips dependency refresh in service mode when node_modules already exists', async (t) => {
+  const fixture = await createStackCacheFixture(t, 'hs-pm-stack-cache-service-install-skip-');
+  const { root, envPath, componentDir, binDir } = fixture;
+  const outputPath = join(root, 'argv.txt');
+
+  await writeYarnArgDumpStub({ binDir, outputPath });
+
+  // Simulate existing node_modules + stale integrity so refresh would normally run.
+  await mkdir(join(componentDir, 'node_modules'), { recursive: true });
+  await writeFile(join(componentDir, 'node_modules', '.yarn-integrity'), 'old\n', 'utf-8');
+  await writeFile(join(componentDir, 'yarn.lock'), '# new lock\n', 'utf-8');
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_ENV_FILE: envPath,
+    HAPPIER_STACK_SERVICE_MODE: '1',
+  });
+
+  await ensureDepsInstalled(componentDir, 'test-component', { quiet: true, env: process.env });
+  const out = await readFile(outputPath, 'utf-8');
+  assert.ok(!out.includes('install'), `expected no yarn install in service mode, got:\n${out}`);
+});
+
+test('ensureDepsInstalled scrubs production-mode env for yarn installs', async (t) => {
+  const fixture = await createStackCacheFixture(t, 'hs-pm-stack-cache-prod-scrub-');
+  const { root, envPath, componentDir, binDir } = fixture;
+  const outputPath = join(root, 'env.json');
+  await writeYarnEnvDumpStub({ binDir, outputPath });
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_ENV_FILE: envPath,
+    NODE_ENV: 'production',
+    YARN_PRODUCTION: '1',
+    npm_config_production: 'true',
+    NPM_CONFIG_PRODUCTION: 'true',
+  });
+
+  await ensureDepsInstalled(componentDir, 'test-component', { quiet: true });
+  const parsed = JSON.parse(await readFile(outputPath, 'utf-8'));
+  assert.notEqual(parsed.NODE_ENV, 'production');
+  assert.notEqual(parsed.YARN_PRODUCTION, '1');
+  assert.notEqual(parsed.npm_config_production, 'true');
+  assert.notEqual(parsed.NPM_CONFIG_PRODUCTION, 'true');
+});
+
+test('ensureDepsInstalled scrubs production-mode env even without a stack env file', async (t) => {
+  const fixture = await createStackCacheFixture(t, 'hs-pm-prod-scrub-no-env-file-');
+  const { root, componentDir, binDir } = fixture;
+  const outputPath = join(root, 'env.json');
+  await writeYarnEnvDumpStub({ binDir, outputPath });
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_ENV_FILE: null,
+    NODE_ENV: 'production',
+    YARN_PRODUCTION: '1',
+    npm_config_production: 'true',
+    NPM_CONFIG_PRODUCTION: 'true',
+  });
+
+  await ensureDepsInstalled(componentDir, 'test-component', { quiet: true });
+  const parsed = JSON.parse(await readFile(outputPath, 'utf-8'));
+  assert.notEqual(parsed.NODE_ENV, 'production');
+  assert.notEqual(parsed.YARN_PRODUCTION, '1');
+  assert.notEqual(parsed.npm_config_production, 'true');
+  assert.notEqual(parsed.NPM_CONFIG_PRODUCTION, 'true');
+});
+
 test('ensureDepsInstalled prefers yarn when component is inside the Happy monorepo (packages/ layout)', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-pm-happy-monorepo-yarn-'));
   t.after(async () => {
@@ -187,6 +305,40 @@ test('ensureDepsInstalled prefers yarn when component is inside the Happy monore
   await ensureDepsInstalled(componentDir, 'happier-server', { quiet: true });
   const out = await readFile(outputPath, 'utf-8');
   assert.ok(out.includes('install') || out.includes('--version'));
+});
+
+test('ensureDepsInstalled forces non-production yarn installs', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-pm-yarn-production-flag-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await mkdir(join(root, 'apps', 'ui'), { recursive: true });
+  await mkdir(join(root, 'apps', 'cli'), { recursive: true });
+  await mkdir(join(root, 'apps', 'server'), { recursive: true });
+  await writeFile(join(root, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(root, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(root, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(root, 'package.json'), '{ "name": "monorepo", "private": true }\n', 'utf-8');
+  await writeFile(join(root, 'yarn.lock'), '# yarn\n', 'utf-8');
+
+  const componentDir = join(root, 'apps', 'server');
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  await writeYarnArgDumpStub({ binDir, outputPath });
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_ENV_FILE: null,
+  });
+
+  await ensureDepsInstalled(componentDir, 'happier-server', { quiet: true });
+  const out = await readFile(outputPath, 'utf-8');
+  const lines = out.split('\n').map((l) => l.trim()).filter(Boolean);
+  const installLine = lines.find((l) => l.startsWith('install'));
+  assert.ok(installLine, `expected yarn install to be invoked, got:\n${out}`);
+  assert.match(installLine, /--production=false\b/);
 });
 
 test('ensureDepsInstalled refreshes monorepo dependencies when root yarn.lock changes', async (t) => {
@@ -349,4 +501,56 @@ test('ensureCliBuilt restores dist from .dist.hstack-backup when previous build 
   assert.equal(recovered, 'export const stable = true;\n');
   const argv = await readFile(outputPath, 'utf-8');
   assert.ok(!argv.includes('build'), `expected no build invocation, got: ${argv}`);
+});
+
+test('ensureCliBuilt defaults to no rebuild in service mode even when git signature changed', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-pm-cli-build-service-skip-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const cliDir = join(root, 'apps', 'cli');
+  await mkdir(cliDir, { recursive: true });
+  await writeFile(join(cliDir, 'package.json'), '{ "name": "cli-test" }\n', 'utf-8');
+  await writeFile(join(cliDir, 'yarn.lock'), '# yarn\n', 'utf-8');
+  await mkdir(join(cliDir, 'node_modules'), { recursive: true });
+  await writeFile(join(cliDir, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
+  const distIndex = join(cliDir, 'dist', 'index.mjs');
+  await mkdir(dirname(distIndex), { recursive: true });
+  await writeFile(distIndex, 'export const stable = true;\n', 'utf-8');
+
+  // Real git repo so computeGitWorktreeSignature() returns a signature.
+  await runCapture('git', ['init'], { cwd: cliDir });
+  await runCapture('git', ['config', 'user.email', 'hstack-test@example.test'], { cwd: cliDir });
+  await runCapture('git', ['config', 'user.name', 'hstack-test'], { cwd: cliDir });
+  await runCapture('git', ['add', '.'], { cwd: cliDir });
+  await runCapture('git', ['commit', '-m', 'init'], { cwd: cliDir });
+
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  await writeYarnBuildCreatesDistStub({ binDir, outputPath, cliDir });
+
+  // 1) Force an initial build so a build state is written.
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_HOME_DIR: join(root, 'home'),
+    HAPPIER_STACK_CLI_BUILD_MODE: 'always',
+    HAPPIER_STACK_SERVICE_MODE: null,
+    HAPPIER_STACK_ENV_FILE: null,
+  });
+  await ensureCliBuilt(cliDir, { buildCli: true, quiet: true, env: process.env });
+  const out1 = await readFile(outputPath, 'utf-8');
+  assert.match(out1, /\bbuild\b/, `expected initial build, got:\n${out1}`);
+
+  // 2) Dirty the worktree so git signature changes (auto mode would rebuild).
+  await writeFile(join(cliDir, 'dirty.txt'), 'x\n', 'utf-8');
+  await writeFile(outputPath, '', 'utf-8');
+  applyEnvOverrides(t, {
+    HAPPIER_STACK_CLI_BUILD_MODE: null,
+    HAPPIER_STACK_SERVICE_MODE: '1',
+  });
+  await ensureCliBuilt(cliDir, { buildCli: true, quiet: true, env: process.env });
+  const out2 = await readFile(outputPath, 'utf-8');
+  assert.ok(!out2.includes('build'), `expected no rebuild in service mode, got:\n${out2}`);
 });

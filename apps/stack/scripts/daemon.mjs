@@ -252,6 +252,17 @@ function resolveHappierCliDistEntrypoint(cliBin) {
   }
 }
 
+function resolveDaemonNodeArgsPrefix({ cliBin }) {
+  const distEntrypoint = resolveHappierCliDistEntrypoint(cliBin);
+  if (distEntrypoint && existsSync(distEntrypoint)) {
+    // Prefer launching the daemon via dist entrypoint directly.
+    // This avoids coupling stack daemon lifecycle to the dev-only bin wrapper (which may perform
+    // extra preflight checks or rely on package.json subpath resolution).
+    return ['--no-warnings', '--no-deprecation', distEntrypoint];
+  }
+  return [cliBin];
+}
+
 function extractRelativeMjsImportSpecifiers(source) {
   const specs = new Set();
   const patterns = [
@@ -421,16 +432,36 @@ async function maybeAutoReseedInvalidAuth({
   if (guard.skip && !allowAccountSwitch) {
     return { ok: false, skipped: true, reason: guard.reason, seed };
   }
+
+  const seedCliHomeDir = resolveStackCliHomeDirFromStackEnv({ stackName: seed, env });
+  const seedScopedEnv = applyStackActiveServerScopeEnv({
+    env: { ...env },
+    stackName: seed,
+    cliIdentity: 'default',
+  });
+  const seedCredentialPath =
+    findExistingStackCredentialPath({ cliHomeDir: seedCliHomeDir, serverUrl: internalServerUrl, env: seedScopedEnv }) ??
+    findAnyCredentialPathInCliHome({ cliHomeDir: seedCliHomeDir });
+  const seedToken = seedCredentialPath ? readAuthTokenFromCredentialFile(seedCredentialPath) : null;
+  const seedValidation = await validateBearerTokenAgainstServer({ internalServerUrl, token: seedToken });
+  if (!seedValidation.checked || seedValidation.valid !== true) {
+    return { ok: false, skipped: true, reason: seedValidation.code, seed };
+  }
+
   if (!quiet) {
     console.log(`[local] auth: invalid token detected; re-seeding ${stackName} from ${seed}...`);
   }
   const rootDir = getRootDir(import.meta.url);
 
   // Use stack-scoped auth copy so env/database resolution is correct for the target stack.
-  await run(process.execPath, [join(rootDir, 'scripts', 'stack.mjs'), 'auth', stackName, '--', 'copy-from', seed, '--force'], {
-    cwd: rootDir,
-    env,
-  });
+  await run(
+    process.execPath,
+    [join(rootDir, 'scripts', 'stack.mjs'), 'auth', stackName, '--', 'copy-from', seed, '--force', '--offline-ok', '--no-secret'],
+    {
+      cwd: rootDir,
+      env,
+    }
+  );
   return { ok: true, skipped: false, seed };
 }
 
@@ -450,6 +481,32 @@ function readAuthTokenFromCredentialFile(path) {
     return raw;
   } catch {
     return null;
+  }
+}
+
+async function validateBearerTokenAgainstServer({ internalServerUrl, token }) {
+  const baseUrl = String(internalServerUrl ?? '').trim().replace(/\/+$/, '');
+  if (!baseUrl) return { checked: false, valid: null, status: null, code: 'missing-server-url', error: null };
+
+  const t = String(token ?? '').trim();
+  if (!t) return { checked: false, valid: null, status: null, code: 'missing-token', error: null };
+
+  try {
+    const res = await fetch(`${baseUrl}/v1/account/profile`, {
+      method: 'GET',
+      headers: { authorization: `Bearer ${t}` },
+    });
+    if (res.status === 200) return { checked: true, valid: true, status: 200, code: 'ok', error: null };
+    if (res.status === 401) return { checked: true, valid: false, status: 401, code: 'invalid-token', error: null };
+    return { checked: true, valid: false, status: res.status, code: 'unexpected-status', error: null };
+  } catch (e) {
+    return {
+      checked: false,
+      valid: null,
+      status: null,
+      code: 'server-unreachable',
+      error: e instanceof Error ? e.message : String(e),
+    };
   }
 }
 
@@ -710,6 +767,7 @@ export async function stopLocalDaemon({
   env = process.env,
   stackName = null,
   cliIdentity = null,
+  expectedPid = null,
 }) {
   const daemonEnv = getDaemonEnv({
     baseEnv: env,
@@ -720,9 +778,27 @@ export async function stopLocalDaemon({
     cliIdentity,
   });
 
+  // When we're shutting down due to a service manager restart (launchd/systemd),
+  // a previous `hstack start` instance can race the new instance and accidentally stop the
+  // newly-started daemon. Guard against that by only stopping when the caller believes it owns
+  // the currently-running daemon PID.
+  if (expectedPid != null) {
+    const expected = Number(expectedPid);
+    if (Number.isFinite(expected) && expected > 0) {
+      const state = checkDaemonState(cliHomeDir, { serverUrl: internalServerUrl, env: daemonEnv });
+      const current = typeof state?.pid === 'number' ? state.pid : null;
+      if (!current || current !== expected) {
+        return;
+      }
+    }
+  }
+
+  const nodeArgsPrefix = resolveDaemonNodeArgsPrefix({ cliBin });
   try {
     await new Promise((resolve) => {
-      const proc = spawnProc('daemon', process.execPath, [cliBin, 'daemon', 'stop'], daemonEnv, { stdio: ['ignore', 'pipe', 'pipe'] });
+      const proc = spawnProc('daemon', process.execPath, [...nodeArgsPrefix, 'daemon', 'stop'], daemonEnv, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
       proc.on('exit', () => resolve());
     });
   } catch {
@@ -785,8 +861,9 @@ export async function startLocalDaemonWithAuth({
         detail +
         `[local] Fix: rebuild happier-cli in the active checkout/worktree.\n` +
         (distCheck.reason ? `[local] Detail: ${distCheck.reason}\n` : '')
-    );
+      );
   }
+  const nodeArgsPrefix = resolveDaemonNodeArgsPrefix({ cliBin });
 
   // If this is a migrated/new stack home dir, seed credentials from the user's existing login (best-effort)
   // to avoid requiring an interactive auth flow under launchd.
@@ -852,7 +929,9 @@ export async function startLocalDaemonWithAuth({
   // Stop any existing daemon for THIS stack home dir.
   try {
     await new Promise((resolve) => {
-      const proc = spawnProc('daemon', process.execPath, [cliBin, 'daemon', 'stop'], daemonEnv, { stdio: ['ignore', 'pipe', 'pipe'] });
+      const proc = spawnProc('daemon', process.execPath, [...nodeArgsPrefix, 'daemon', 'stop'], daemonEnv, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
       proc.on('exit', () => resolve());
     });
   } catch {
@@ -882,7 +961,7 @@ export async function startLocalDaemonWithAuth({
     };
 
     const exitCode = await new Promise((resolve) => {
-      const proc = spawnProc('daemon', process.execPath, [cliBin, 'daemon', 'start'], daemonEnv, {
+      const proc = spawnProc('daemon', process.execPath, [...nodeArgsPrefix, 'daemon', 'start'], daemonEnv, {
         stdio: ['ignore', 'pipe', 'pipe'],
         // In TUI mode, stream the daemon-start output so it routes to the daemon pane.
         // (The background daemon itself still logs to files.)
@@ -1041,7 +1120,7 @@ export async function startLocalDaemonWithAuth({
 
   // Confirm daemon status (best-effort)
   try {
-    await run(process.execPath, [cliBin, 'daemon', 'status'], { env: daemonEnv, stdio: 'ignore' });
+    await run(process.execPath, [...nodeArgsPrefix, 'daemon', 'status'], { env: daemonEnv, stdio: 'ignore' });
   } catch {
     // ignore
   }
@@ -1065,8 +1144,9 @@ export async function daemonStatusSummary({
     cliIdentity,
   });
   const distEntrypoint = resolveHappierCliDistEntrypoint(cliBin);
+  const nodeArgsPrefix = resolveDaemonNodeArgsPrefix({ cliBin });
   try {
-    return await runCapture(process.execPath, [cliBin, 'daemon', 'status'], { env: daemonEnv });
+    return await runCapture(process.execPath, [...nodeArgsPrefix, 'daemon', 'status'], { env: daemonEnv });
   } catch (error) {
     if (isMissingDistStatusError({ error, distEntrypoint })) {
       return buildDistMissingStatusFallback({

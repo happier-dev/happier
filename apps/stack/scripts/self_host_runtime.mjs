@@ -123,6 +123,11 @@ export function resolveSelfHostHealthTimeoutMs(env = process.env) {
     : DEFAULTS.healthCheckTimeoutMs;
 }
 
+export function resolveSelfHostEffectiveServerPort({ config, env } = {}) {
+  const fallback = parsePort(config?.serverPort, DEFAULTS.serverPort);
+  return parsePort(env?.PORT, fallback);
+}
+
 export function resolveSelfHostAutoUpdateDefault(env = process.env) {
   return parseBoolean(env?.HAPPIER_SELF_HOST_AUTO_UPDATE, false);
 }
@@ -1252,12 +1257,12 @@ async function uninstallAutoUpdateJob({ config }) {
   return { uninstalled: true, backend, label: updaterLabel };
 }
 
-async function restartAndCheckHealth({ config, serviceSpec }) {
+async function restartAndCheckHealth({ config, serviceSpec, port }) {
   await restartManagedService({ platform: config.platform, mode: config.mode, spec: serviceSpec }).catch(() => {});
   const timeoutMs = resolveSelfHostHealthTimeoutMs();
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    const ok = await checkHealth({ port: config.serverPort });
+    const ok = await checkHealth({ port: parsePort(port, config.serverPort) });
     if (ok) return true;
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
@@ -1375,18 +1380,17 @@ export async function installSelfHostBinaryFromBundle({
     }
 
     const version = downloaded.version || String(resolvedBundle?.version ?? '').trim() || `${Date.now()}`;
-    await installBinaryAtomically({
-      sourceBinaryPath: extractedBinary,
-      targetBinaryPath: config.serverBinaryPath,
-      previousBinaryPath: config.serverPreviousBinaryPath,
-      versionedTargetPath: join(config.versionsDir, `${name}-${version}`),
-    });
-    const roots = await readdir(extractDir).catch(() => []);
-    const artifactRootDir = roots.length > 0 ? join(extractDir, roots[0]) : extractDir;
-    await syncSelfHostSqliteMigrations({
-      artifactRootDir,
-      targetDir: join(config.dataDir, 'migrations', 'sqlite'),
-    }).catch(() => {});
+	    await installBinaryAtomically({
+	      sourceBinaryPath: extractedBinary,
+	      targetBinaryPath: config.serverBinaryPath,
+	      previousBinaryPath: config.serverPreviousBinaryPath,
+	      versionedTargetPath: join(config.versionsDir, `${name}-${version}`),
+	    });
+	    const artifactRootDir = dirname(extractedBinary);
+	    await syncSelfHostSqliteMigrations({
+	      artifactRootDir,
+	      targetDir: join(config.dataDir, 'migrations', 'sqlite'),
+	    }).catch(() => {});
     const generated = await syncSelfHostGeneratedClients({
       artifactRootDir,
       targetDir: join(dirname(config.serverBinaryPath), 'generated'),
@@ -1459,6 +1463,38 @@ async function assertUiWebBundleIsValid(rootDir) {
   }
 }
 
+export async function resolveExtractedUiWebBundleRootDir({ extractDir } = {}) {
+  const root = String(extractDir ?? '').trim();
+  if (!root) {
+    throw new Error('[self-host] missing ui web bundle extractDir');
+  }
+
+  // Some archives extract index.html directly into extractDir.
+  try {
+    await assertUiWebBundleIsValid(root);
+    return root;
+  } catch {
+    // continue
+  }
+
+  const roots = await readdir(root).catch(() => []);
+  for (const entry of roots) {
+    const candidate = join(root, entry);
+    const info = await stat(candidate).catch(() => null);
+    if (!info?.isDirectory()) continue;
+    try {
+      await assertUiWebBundleIsValid(candidate);
+      return candidate;
+    } catch {
+      // continue
+    }
+  }
+
+  // Preserve the existing missing-index.html error shape, but anchor it to the extraction root
+  // instead of whatever random entry came first (e.g. AppleDouble `._*` files).
+  throw new Error(`[self-host] UI web bundle is missing index.html: ${join(root, 'index.html')}`);
+}
+
 async function installUiWebFromRelease({ config }) {
   const tags = config.channel === 'preview'
     ? ['ui-web-preview', 'ui-web-stable']
@@ -1515,15 +1551,14 @@ async function installUiWebFromRelease({ config }) {
     }
     runCommand(plan.command.cmd, plan.command.args, { stdio: 'ignore' });
 
-    const roots = await readdir(extractDir).catch(() => []);
-    if (roots.length === 0) {
-      throw new Error('[self-host] extracted ui web bundle is empty');
-    }
-    const artifactRootDir = join(extractDir, roots[0]);
-    await assertUiWebBundleIsValid(artifactRootDir);
+	    const roots = await readdir(extractDir).catch(() => []);
+	    if (roots.length === 0) {
+	      throw new Error('[self-host] extracted ui web bundle is empty');
+	    }
+	    const artifactRootDir = await resolveExtractedUiWebBundleRootDir({ extractDir });
 
-    const version = resolved.version || String(release?.tag_name ?? '').replace(/^ui-web-v/, '') || `${Date.now()}`;
-    const versionedTargetDir = join(config.uiWebVersionsDir, `${config.uiWebProduct}-${version}`);
+	    const version = resolved.version || String(release?.tag_name ?? '').replace(/^ui-web-v/, '') || `${Date.now()}`;
+	    const versionedTargetDir = join(config.uiWebVersionsDir, `${config.uiWebProduct}-${version}`);
     await rm(versionedTargetDir, { recursive: true, force: true });
     await mkdir(dirname(versionedTargetDir), { recursive: true });
     await cp(artifactRootDir, versionedTargetDir, { recursive: true });
@@ -1652,10 +1687,10 @@ async function cmdInstall({ channel, mode, argv, json }) {
     : { installed: false, version: null, source: null, reason: 'disabled' };
   const uiInstalled = Boolean(uiResult?.installed);
 
-  const envText = renderServerEnvFile({
-    port: config.serverPort,
-    host: config.serverHost,
-    dataDir: config.dataDir,
+	  const envText = renderServerEnvFile({
+	    port: config.serverPort,
+	    host: config.serverHost,
+	    dataDir: config.dataDir,
     filesDir: config.filesDir,
     dbDir: config.dbDir,
     uiDir: uiInstalled ? config.uiWebCurrentDir : '',
@@ -1663,14 +1698,15 @@ async function cmdInstall({ channel, mode, argv, json }) {
     arch: process.arch,
     platform: config.platform,
   });
-  const envTextWithOverrides = envOverrides.length ? applyEnvOverridesToEnvText(envText, envOverrides) : envText;
-  await writeFile(config.configEnvPath, envTextWithOverrides, 'utf-8');
-  const installEnv = parseEnvText(envTextWithOverrides);
-  if (!parseBoolean(installEnv.HAPPIER_SQLITE_AUTO_MIGRATE ?? installEnv.HAPPY_SQLITE_AUTO_MIGRATE, true)) {
-    await applySelfHostSqliteMigrationsAtInstallTime({ env: installEnv }).catch((e) => {
-      throw new Error(`[self-host] failed to apply sqlite migrations at install time: ${String(e?.message ?? e)}`);
-    });
-  }
+	  const envTextWithOverrides = envOverrides.length ? applyEnvOverridesToEnvText(envText, envOverrides) : envText;
+	  await writeFile(config.configEnvPath, envTextWithOverrides, 'utf-8');
+	  const installEnv = parseEnvText(envTextWithOverrides);
+	  const healthPort = resolveSelfHostEffectiveServerPort({ config, env: installEnv });
+	  if (!parseBoolean(installEnv.HAPPIER_SQLITE_AUTO_MIGRATE ?? installEnv.HAPPY_SQLITE_AUTO_MIGRATE, true)) {
+	    await applySelfHostSqliteMigrationsAtInstallTime({ env: installEnv }).catch((e) => {
+	      throw new Error(`[self-host] failed to apply sqlite migrations at install time: ${String(e?.message ?? e)}`);
+	    });
+	  }
 
   const serverShimPath = join(config.binDir, config.serverBinaryName);
   await mkdir(config.binDir, { recursive: true });
@@ -1681,18 +1717,18 @@ async function cmdInstall({ channel, mode, argv, json }) {
   });
 
   const serviceSpec = buildSelfHostServerServiceSpec({ config, envText: envTextWithOverrides });
-  await installManagedService({
-    platform: config.platform,
-    mode: config.mode,
-    homeDir: homedir(),
-    spec: serviceSpec,
-    persistent: true,
-  });
+	  await installManagedService({
+	    platform: config.platform,
+	    mode: config.mode,
+	    homeDir: homedir(),
+	    spec: serviceSpec,
+	    persistent: true,
+	  });
 
-  const healthy = await restartAndCheckHealth({ config, serviceSpec });
-  if (!healthy) {
-    throw new Error('[self-host] service failed health checks after install');
-  }
+	  const healthy = await restartAndCheckHealth({ config, serviceSpec, port: healthPort });
+	  if (!healthy) {
+	    throw new Error('[self-host] service failed health checks after install');
+	  }
 
   const autoUpdateResult = await installAutoUpdateJob({
     config: { ...config, autoUpdateAt },

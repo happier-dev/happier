@@ -74,3 +74,50 @@ test('applyStackTauriOverrides handles missing windows array and missing product
   assert.equal(out.productName, 'Happier');
   assert.deepEqual(out.app, {});
 });
+
+test('applyStackTauriOverrides disables updater artifacts when signing key is missing', () => {
+  const base = {
+    productName: 'Happier',
+    identifier: 'dev.happier.app',
+    bundle: { createUpdaterArtifacts: true },
+  };
+
+  const out = applyStackTauriOverrides({ tauriConfig: structuredClone(base), env: {} });
+
+  assert.equal(out.bundle.createUpdaterArtifacts, false);
+});
+
+test('applyStackTauriOverrides keeps updater artifacts enabled when signing key is present', () => {
+  const base = {
+    productName: 'Happier',
+    identifier: 'dev.happier.app',
+    bundle: { createUpdaterArtifacts: true },
+  };
+
+  const out = applyStackTauriOverrides({
+    tauriConfig: structuredClone(base),
+    env: { TAURI_SIGNING_PRIVATE_KEY: 'fake-key-for-test' },
+  });
+
+  assert.equal(out.bundle.createUpdaterArtifacts, true);
+});
+
+test('applyStackTauriOverrides allows explicit updater-artifacts override via env', () => {
+  const base = {
+    productName: 'Happier',
+    identifier: 'dev.happier.app',
+    bundle: { createUpdaterArtifacts: true },
+  };
+
+  const outDisabled = applyStackTauriOverrides({
+    tauriConfig: structuredClone(base),
+    env: { TAURI_SIGNING_PRIVATE_KEY: 'fake-key-for-test', HAPPIER_STACK_TAURI_CREATE_UPDATER_ARTIFACTS: '0' },
+  });
+  assert.equal(outDisabled.bundle.createUpdaterArtifacts, false);
+
+  const outEnabled = applyStackTauriOverrides({
+    tauriConfig: structuredClone(base),
+    env: { HAPPIER_STACK_TAURI_CREATE_UPDATER_ARTIFACTS: '1' },
+  });
+  assert.equal(outEnabled.bundle.createUpdaterArtifacts, true);
+});

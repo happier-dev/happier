@@ -55,11 +55,11 @@ function parseJsonLinesBestEffort(stdout) {
 }
 
 async function runSsh({ target, command }) {
-  await run('ssh', [target, 'bash', '-lc', command], { env: process.env });
+  await run('ssh', [target, 'bash', '-lc', safeBashSingleQuote(command)], { env: process.env });
 }
 
 async function runSshJson({ target, command }) {
-  const out = await runCapture('ssh', [target, 'bash', '-lc', command], { env: process.env });
+  const out = await runCapture('ssh', [target, 'bash', '-lc', safeBashSingleQuote(command)], { env: process.env });
   const parsed = parseJsonLinesBestEffort(out);
   if (!parsed) {
     throw new Error('Remote command did not return valid JSON');
@@ -210,6 +210,16 @@ async function runRemoteDaemonSetup(argvRaw) {
   ].join(' ');
 
   await runSsh({ target: ssh.value, command: installCmd });
+
+  if (serverFlags.serverUrl) {
+    const serverUrl = safeBashSingleQuote(serverFlags.serverUrl);
+    const webappUrl = safeBashSingleQuote(serverFlags.webappUrl || serverFlags.serverUrl);
+    // Persist server targeting on the remote host so future `happier daemon start` uses the same server.
+    await runSsh({
+      target: ssh.value,
+      command: `${remoteBin} server set --server-url ${serverUrl} --webapp-url ${webappUrl} --json`,
+    });
+  }
 
   const request = await runSshJson({ target: ssh.value, command: `${remoteBin} auth request --json` });
   const publicKey = typeof request?.publicKey === 'string' ? request.publicKey : '';

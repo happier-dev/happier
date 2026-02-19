@@ -3,7 +3,7 @@ import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import {
@@ -173,6 +173,127 @@ test('self-host release installer reports archive source url', async (t) => {
 
   assert.equal(result.version, '1.2.3-preview.1');
   assert.equal(result.source, archiveUrl);
+});
+
+test('self-host release installer ignores extra root entries when extracting bundles', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('tar-based bundle test does not run on windows');
+    return;
+  }
+  if (spawnSync('bash', ['-lc', 'command -v tar >/dev/null 2>&1'], { stdio: 'ignore' }).status !== 0) {
+    t.skip('tar is required for bundle installation test');
+    return;
+  }
+
+  const tmp = await mkdtemp(join(tmpdir(), 'happier-self-host-bundle-appledouble-test-'));
+  t.after(async () => {
+    await spawnSync('bash', ['-lc', `rm -rf "${tmp.replaceAll('"', '\\"')}"`], { stdio: 'ignore' });
+  });
+
+  const staging = join(tmp, 'staging');
+  const rootName = 'happier-server-v1.2.3-preview.1-linux-x64';
+  const rootDir = join(staging, rootName);
+  await mkdir(join(rootDir, 'generated'), { recursive: true });
+  await writeFile(join(rootDir, 'generated', 'dummy.txt'), 'ok', 'utf-8');
+
+  // Simulate archives that include extra top-level entries (e.g. AppleDouble `._*` files, stray metadata files).
+  await mkdir(staging, { recursive: true });
+  const extraRootEntry = '000-root-metadata';
+  await writeFile(join(staging, extraRootEntry), 'metadata', 'utf-8');
+
+  const binaryName = 'happier-server';
+  const binaryPath = join(rootDir, binaryName);
+  await writeFile(binaryPath, '#!/bin/sh\necho ok\n', 'utf-8');
+  spawnSync('bash', ['-lc', `chmod +x "${binaryPath.replaceAll('"', '\\"')}"`], { stdio: 'ignore' });
+
+  const archiveName = `${rootName}.tar.gz`;
+  const archivePath = join(tmp, archiveName);
+  const tar = spawnSync('tar', ['-czf', archivePath, '-C', staging, extraRootEntry, rootName], { encoding: 'utf-8' });
+  assert.equal(tar.status, 0, tar.stderr || tar.stdout);
+
+  const archiveBytes = await (await import('node:fs/promises')).readFile(archivePath);
+  const archiveSha = sha256Hex(archiveBytes);
+  const checksumsText = `${archiveSha} ${archiveName}\n`;
+  const { pubkeyFile, keyId, privateKey } = createMinisignKeyPair();
+  const sigFile = signMinisignMessage({
+    message: Buffer.from(checksumsText, 'utf-8'),
+    keyId,
+    privateKey,
+  });
+
+  const archiveUrl = `data:application/octet-stream;base64,${archiveBytes.toString('base64')}`;
+  const checksumsUrl = `data:text/plain,${encodeURIComponent(checksumsText)}`;
+  const sigUrl = `data:text/plain,${encodeURIComponent(sigFile)}`;
+
+  const bundle = {
+    version: '1.2.3-preview.1',
+    archive: { name: archiveName, url: archiveUrl },
+    checksums: { name: `checksums-happier-server-v1.2.3-preview.1.txt`, url: checksumsUrl },
+    checksumsSig: { name: `checksums-happier-server-v1.2.3-preview.1.txt.minisig`, url: sigUrl },
+  };
+
+  const installRoot = join(tmp, 'install');
+  const config = {
+    platform: process.platform,
+    dataDir: join(installRoot, 'data'),
+    versionsDir: join(installRoot, 'versions'),
+    serverBinaryPath: join(installRoot, 'bin', binaryName),
+    serverPreviousBinaryPath: join(installRoot, 'bin', `${binaryName}.previous`),
+  };
+
+  const mod = await import('./self_host_runtime.mjs');
+  assert.equal(typeof mod.installSelfHostBinaryFromBundle, 'function');
+
+  await mod.installSelfHostBinaryFromBundle({
+    bundle,
+    binaryName,
+    config,
+    pubkeyFile,
+  });
+
+  const installedDummy = join(dirname(config.serverBinaryPath), 'generated', 'dummy.txt');
+  const raw = spawnSync('bash', ['-lc', `test -f "${installedDummy.replaceAll('"', '\\"')}" && cat "${installedDummy.replaceAll('"', '\\"')}"`], {
+    encoding: 'utf-8',
+  });
+  assert.equal(raw.status, 0, raw.stderr || raw.stdout);
+  assert.equal(String(raw.stdout ?? '').trim(), 'ok');
+});
+
+test('resolveExtractedUiWebBundleRootDir picks the directory that contains index.html', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happier-self-host-ui-root-test-'));
+  t.after(async () => {
+    await spawnSync('bash', ['-lc', `rm -rf "${tmp.replaceAll('"', '\\"')}"`], { stdio: 'ignore' });
+  });
+
+  const extractDir = join(tmp, 'extract');
+  await mkdir(extractDir, { recursive: true });
+
+  // Extra top-level entry that should be ignored (e.g. AppleDouble metadata files).
+  await writeFile(join(extractDir, '000-root-metadata'), 'metadata', 'utf-8');
+
+  const bundleRootName = 'happier-ui-web-v1.2.3-web-any';
+  const bundleRootDir = join(extractDir, bundleRootName);
+  await mkdir(bundleRootDir, { recursive: true });
+  await writeFile(join(bundleRootDir, 'index.html'), '<!doctype html>', 'utf-8');
+
+  const mod = await import('./self_host_runtime.mjs');
+  assert.equal(typeof mod.resolveExtractedUiWebBundleRootDir, 'function');
+
+  const resolved = await mod.resolveExtractedUiWebBundleRootDir({ extractDir });
+  assert.equal(resolved, bundleRootDir);
+});
+
+test('resolveSelfHostEffectiveServerPort prefers PORT override', async () => {
+  const mod = await import('./self_host_runtime.mjs');
+  assert.equal(typeof mod.resolveSelfHostEffectiveServerPort, 'function');
+
+  assert.equal(
+    mod.resolveSelfHostEffectiveServerPort({
+      config: { serverPort: 3005 },
+      env: { PORT: '3999' },
+    }),
+    3999,
+  );
 });
 
 test('pickReleaseAsset rejects releases missing minisign signature assets', () => {

@@ -84,6 +84,7 @@ import { interactiveEdit, interactiveNew } from './utils/stack/interactive_stack
 import { normalizeStackNameOrNull } from './utils/stack/names.mjs';
 import { runOrchestratedGuidedAuthFlow } from './utils/auth/orchestrated_stack_auth_flow.mjs';
 import { assertExpoWebappBundlesOrThrow } from './utils/auth/stack_guided_login.mjs';
+import { applyAuthForceEnv, resolveAuthForceFlag } from './utils/auth/auth_force_flag.mjs';
 import { createStepPrinter } from './utils/cli/progress.mjs';
 import { getVerbosityLevel } from './utils/cli/verbosity.mjs';
 import { applyBindModeToEnv, resolveBindModeFromArgs } from './utils/net/bind_mode.mjs';
@@ -977,6 +978,7 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
     flags.has('--skip-default-seed') || flags.has('--no-default-seed') || flags.has('--no-configure-default-seed');
   const forceLogin =
     flags.has('--login') ? true : flags.has('--no-login') || flags.has('--skip-login') ? false : null;
+  const forceAuth = resolveAuthForceFlag({ flags, kv });
 
   if (json) {
     // Keep JSON mode non-interactive and stable by using the existing stack command output.
@@ -1223,7 +1225,7 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
               await runOrchestratedGuidedAuthFlow({
                 rootDir,
                 stackName: name,
-                env,
+                env: applyAuthForceEnv(env, forceAuth),
                 verbosity,
                 json: false,
               });

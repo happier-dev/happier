@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -24,6 +25,38 @@ function credentialFileContents(token) {
   }) + '\n';
 }
 
+async function startProfileAuthServer({ port, allowToken }) {
+  const server = createServer((req, res) => {
+    if (req.method === 'GET' && req.url === '/v1/account/profile') {
+      const auth = String(req.headers.authorization ?? '');
+      const ok = allowToken ? auth === `Bearer ${allowToken}` : true;
+      if (!ok) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'invalid-token' }));
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ id: 'any-account' }));
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
+  return {
+    close: async () => {
+      await new Promise((resolve) => server.close(resolve));
+    },
+  };
+}
+
+async function writeStubYarn({ binDir }) {
+  const yarnPath = join(binDir, 'yarn');
+  await writeFile(yarnPath, '#!/bin/bash\nexit 0\n', 'utf-8');
+  await chmod(yarnPath, 0o755);
+  return yarnPath;
+}
+
 async function writeStackEnv({ storageDir, stackName, env }) {
   const baseDir = join(storageDir, stackName);
   await mkdir(baseDir, { recursive: true });
@@ -37,7 +70,6 @@ async function writeStackEnv({ storageDir, stackName, env }) {
 async function writeStubHappyCli({ cliDir }) {
   await mkdir(join(cliDir, 'bin'), { recursive: true });
   await mkdir(join(cliDir, 'dist'), { recursive: true });
-  await writeFile(join(cliDir, 'dist', 'index.mjs'), 'export {};\n', 'utf-8');
   await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
 
   const script = `
@@ -99,29 +131,37 @@ if (sub === 'start') {
   process.exit(0);
 }
 
-process.exit(0);
-`;
+	process.exit(0);
+	`;
+
+  await writeFile(join(cliDir, 'dist', 'index.mjs'), script.trimStart(), 'utf-8');
 
   const cliBin = join(cliDir, 'bin', 'happier.mjs');
-  await writeFile(cliBin, script.trimStart(), 'utf-8');
+  // If daemon.mjs accidentally invokes bin/happier.mjs, fail loudly.
+  await writeFile(cliBin, 'process.exit(42);\n', 'utf-8');
   return cliBin;
 }
 
 test('invalid-auth auto-reseed uses resolved stack name instead of null placeholder', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-reseed-stack-name-'));
+  let profileServer = null;
   try {
     const storageDir = join(tmp, 'storage');
     const cliDir = join(tmp, 'apps', 'cli');
     const cliBin = await writeStubHappyCli({ cliDir });
+    const binDir = join(tmp, 'bin');
+    await mkdir(binDir, { recursive: true });
+    await writeStubYarn({ binDir });
 
     const targetCliHome = join(storageDir, 'dev', 'cli');
     const sourceCliHome = join(storageDir, 'dev-auth', 'cli');
     await mkdir(targetCliHome, { recursive: true });
     await mkdir(sourceCliHome, { recursive: true });
 
+    const seedToken = makeToken({ sub: 'user-1', nonce: 'seed' });
     await writeFile(
       join(sourceCliHome, 'access.key'),
-      credentialFileContents(makeToken({ sub: 'user-1', nonce: 'seed' })),
+      credentialFileContents(seedToken),
       'utf-8'
     );
     await writeFile(join(sourceCliHome, 'settings.json'), JSON.stringify({ machineId: 'source-machine' }) + '\n', 'utf-8');
@@ -149,6 +189,7 @@ test('invalid-auth auto-reseed uses resolved stack name instead of null placehol
 
     const env = {
       ...process.env,
+      PATH: `${binDir}:${process.env.PATH ?? ''}`,
       HAPPIER_STACK_STORAGE_DIR: storageDir,
       HAPPIER_STACK_STACK: 'dev',
       HAPPIER_STACK_AUTH_SEED_FROM: 'dev-auth',
@@ -156,6 +197,8 @@ test('invalid-auth auto-reseed uses resolved stack name instead of null placehol
       HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
       HAPPIER_STACK_CLI_BUILD: '0',
     };
+
+    profileServer = await startProfileAuthServer({ port: 4101, allowToken: seedToken });
 
     await assert.doesNotReject(async () => {
       await startLocalDaemonWithAuth({
@@ -174,7 +217,7 @@ test('invalid-auth auto-reseed uses resolved stack name instead of null placehol
     const copiedAccessKey = await readFile(join(targetCliHome, 'access.key'), 'utf-8');
     assert.equal(
       copiedAccessKey,
-      credentialFileContents(makeToken({ sub: 'user-1', nonce: 'seed' }))
+      credentialFileContents(seedToken)
     );
 
     await stopLocalDaemon({
@@ -183,16 +226,23 @@ test('invalid-auth auto-reseed uses resolved stack name instead of null placehol
       cliHomeDir: targetCliHome,
     });
   } finally {
+    if (profileServer) {
+      await profileServer.close();
+    }
     await rm(tmp, { recursive: true, force: true });
   }
 });
 
 test('invalid-auth auto-reseed overwrites stale target credentials', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-reseed-force-'));
+  let profileServer = null;
   try {
     const storageDir = join(tmp, 'storage');
     const cliDir = join(tmp, 'apps', 'cli');
     const cliBin = await writeStubHappyCli({ cliDir });
+    const binDir = join(tmp, 'bin');
+    await mkdir(binDir, { recursive: true });
+    await writeStubYarn({ binDir });
 
     const targetCliHome = join(storageDir, 'dev', 'cli');
     const sourceCliHome = join(storageDir, 'dev-auth', 'cli');
@@ -205,9 +255,10 @@ test('invalid-auth auto-reseed overwrites stale target credentials', async () =>
       'utf-8'
     );
     await writeFile(join(targetCliHome, 'settings.json'), JSON.stringify({ machineId: 'target-machine' }) + '\n', 'utf-8');
+    const seedToken = makeToken({ sub: 'user-1', nonce: 'seed' });
     await writeFile(
       join(sourceCliHome, 'access.key'),
-      credentialFileContents(makeToken({ sub: 'user-1', nonce: 'seed' })),
+      credentialFileContents(seedToken),
       'utf-8'
     );
     await writeFile(join(sourceCliHome, 'settings.json'), JSON.stringify({ machineId: 'source-machine' }) + '\n', 'utf-8');
@@ -235,6 +286,7 @@ test('invalid-auth auto-reseed overwrites stale target credentials', async () =>
 
     const env = {
       ...process.env,
+      PATH: `${binDir}:${process.env.PATH ?? ''}`,
       HAPPIER_STACK_STORAGE_DIR: storageDir,
       HAPPIER_STACK_STACK: 'dev',
       HAPPIER_STACK_AUTH_SEED_FROM: 'dev-auth',
@@ -242,6 +294,8 @@ test('invalid-auth auto-reseed overwrites stale target credentials', async () =>
       HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
       HAPPIER_STACK_CLI_BUILD: '0',
     };
+
+    profileServer = await startProfileAuthServer({ port: 4201, allowToken: seedToken });
 
     await assert.doesNotReject(async () => {
       await startLocalDaemonWithAuth({
@@ -258,7 +312,7 @@ test('invalid-auth auto-reseed overwrites stale target credentials', async () =>
     const copiedAccessKey = await readFile(join(targetCliHome, 'access.key'), 'utf-8');
     assert.equal(
       copiedAccessKey,
-      credentialFileContents(makeToken({ sub: 'user-1', nonce: 'seed' }))
+      credentialFileContents(seedToken)
     );
 
     await stopLocalDaemon({
@@ -267,19 +321,22 @@ test('invalid-auth auto-reseed overwrites stale target credentials', async () =>
       cliHomeDir: targetCliHome,
     });
   } finally {
+    if (profileServer) {
+      await profileServer.close();
+    }
     await rm(tmp, { recursive: true, force: true });
   }
 });
 
 test('invalid-auth reseed does not fall back to main when configured seed credentials are stale', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-reseed-fallback-'));
+  let profileServer = null;
   try {
     const storageDir = join(tmp, 'storage');
     const cliDir = join(tmp, 'apps', 'cli');
 
     await mkdir(join(cliDir, 'bin'), { recursive: true });
     await mkdir(join(cliDir, 'dist'), { recursive: true });
-    await writeFile(join(cliDir, 'dist', 'index.mjs'), 'export {};\n', 'utf-8');
     await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
 
     const stub = `
@@ -359,10 +416,12 @@ if (sub === 'start') {
   process.exit(0);
 }
 
-process.exit(0);
-`;
+	process.exit(0);
+	`;
     const cliBin = join(cliDir, 'bin', 'happier.mjs');
-    await writeFile(cliBin, stub.trimStart(), 'utf-8');
+    await writeFile(join(cliDir, 'dist', 'index.mjs'), stub.trimStart(), 'utf-8');
+    // If daemon.mjs accidentally invokes bin/happier.mjs, fail loudly.
+    await writeFile(cliBin, 'process.exit(42);\n', 'utf-8');
 
     const targetCliHome = join(storageDir, 'dev', 'cli');
     const devAuthCliHome = join(storageDir, 'dev-auth', 'cli');
@@ -371,19 +430,22 @@ process.exit(0);
     await mkdir(devAuthCliHome, { recursive: true });
     await mkdir(mainCliHome, { recursive: true });
 
+    const targetToken = makeToken({ sub: 'user-shared', nonce: 'target-stale' });
+    const devAuthToken = makeToken({ sub: 'user-shared', nonce: 'seed-stale' });
+    const mainToken = makeToken({ sub: 'user-main', nonce: 'seed-main' });
     await writeFile(
       join(targetCliHome, 'access.key'),
-      credentialFileContents(makeToken({ sub: 'user-shared', nonce: 'target-stale' })),
+      credentialFileContents(targetToken),
       'utf-8'
     );
     await writeFile(
       join(devAuthCliHome, 'access.key'),
-      credentialFileContents(makeToken({ sub: 'user-shared', nonce: 'seed-stale' })),
+      credentialFileContents(devAuthToken),
       'utf-8'
     );
     await writeFile(
       join(mainCliHome, 'access.key'),
-      credentialFileContents(makeToken({ sub: 'user-main', nonce: 'seed-main' })),
+      credentialFileContents(mainToken),
       'utf-8'
     );
     await writeFile(join(devAuthCliHome, 'settings.json'), JSON.stringify({ machineId: 'dev-auth-machine' }) + '\n', 'utf-8');
@@ -430,6 +492,9 @@ process.exit(0);
       HAPPIER_STACK_CLI_BUILD: '0',
     };
 
+    // Server is reachable but rejects the configured seed token. This should fail closed and must not fall back to main.
+    profileServer = await startProfileAuthServer({ port: 4301, allowToken: mainToken });
+
     await assert.rejects(
       async () => {
         await startLocalDaemonWithAuth({
@@ -442,14 +507,25 @@ process.exit(0);
           env,
         });
       },
-      /after auth re-seed/i
+      /Failed to auto re-seed daemon credentials|invalid-token/i
     );
 
-    const copiedAccessKey = await readFile(join(targetCliHome, 'access.key'), 'utf-8');
-    assert.equal(
-      copiedAccessKey,
-      credentialFileContents(makeToken({ sub: 'user-shared', nonce: 'seed-stale' }))
-    );
+    const candidatePaths = [
+      join(targetCliHome, 'access.key'),
+      ...(() => {
+        try {
+          return (existsSync(join(targetCliHome, 'servers')) ? readdirSync(join(targetCliHome, 'servers')) : [])
+            .map((id) => join(targetCliHome, 'servers', id, 'access.key'));
+        } catch {
+          return [];
+        }
+      })(),
+    ];
+    const existing = candidatePaths.find((p) => existsSync(p));
+    assert.ok(existing, 'expected target credential file to exist');
+    const copiedAccessKey = await readFile(existing, 'utf-8');
+    assert.equal(copiedAccessKey, credentialFileContents(targetToken));
+    assert.notEqual(copiedAccessKey, credentialFileContents(mainToken));
 
     await stopLocalDaemon({
       cliBin,
@@ -457,6 +533,9 @@ process.exit(0);
       cliHomeDir: targetCliHome,
     });
   } finally {
+    if (profileServer) {
+      await profileServer.close();
+    }
     await rm(tmp, { recursive: true, force: true });
   }
 });
@@ -469,7 +548,6 @@ test('invalid-auth auto-reseed does not overwrite manually-authenticated credent
 
     await mkdir(join(cliDir, 'bin'), { recursive: true });
     await mkdir(join(cliDir, 'dist'), { recursive: true });
-    await writeFile(join(cliDir, 'dist', 'index.mjs'), 'export {};\n', 'utf-8');
     await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
 
     const stub = `
@@ -530,10 +608,12 @@ if (sub === 'start') {
   process.exit(1);
 }
 
-process.exit(0);
-`;
+	process.exit(0);
+	`;
     const cliBin = join(cliDir, 'bin', 'happier.mjs');
-    await writeFile(cliBin, stub.trimStart(), 'utf-8');
+    await writeFile(join(cliDir, 'dist', 'index.mjs'), stub.trimStart(), 'utf-8');
+    // If daemon.mjs accidentally invokes bin/happier.mjs, fail loudly.
+    await writeFile(cliBin, 'process.exit(42);\n', 'utf-8');
 
     const targetCliHome = join(storageDir, 'dev', 'cli');
     const seedCliHome = join(storageDir, 'dev-auth', 'cli');

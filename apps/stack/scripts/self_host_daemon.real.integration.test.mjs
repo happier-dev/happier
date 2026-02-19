@@ -127,7 +127,7 @@ test(
     run(
       process.execPath,
       [
-        'scripts/release/build-hstack-binaries.mjs',
+        'scripts/pipeline/release/build-hstack-binaries.mjs',
         '--channel=preview',
         `--version=${version}`,
         `--targets=${target}`,
@@ -142,7 +142,7 @@ test(
     run(
       process.execPath,
       [
-        'scripts/release/build-server-binaries.mjs',
+        'scripts/pipeline/release/build-server-binaries.mjs',
         '--channel=preview',
         `--version=${version}`,
         `--targets=${target}`,

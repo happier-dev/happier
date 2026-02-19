@@ -87,7 +87,10 @@ test('compiled happier and server binaries execute from isolated cwd', async (t)
   const buildCli = runWithHardTimeout(
     process.execPath,
     [
-      'scripts/release/build-cli-binaries.mjs',
+      'scripts/pipeline/release/build-cli-binaries.mjs',
+      // Keep integration tests aligned with the centralized pipeline release scripts.
+      // (This repo no longer uses scripts/release/* build entrypoints.)
+      // NOTE: path is repo-root relative.
       '--channel=preview',
       `--version=${version}`,
       `--targets=${target}`,
@@ -129,7 +132,7 @@ test('compiled happier and server binaries execute from isolated cwd', async (t)
     const buildServer = runWithHardTimeout(
       process.execPath,
       [
-        'scripts/release/build-server-binaries.mjs',
+        'scripts/pipeline/release/build-server-binaries.mjs',
         '--channel=preview',
         `--version=${version}`,
         `--targets=${target}`,

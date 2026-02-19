@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
-import { getDefaultAutostartPaths, getHappyStacksHomeDir, getRepoDir, getRootDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
+import { coerceHappyMonorepoRootFromPath, getDefaultAutostartPaths, getHappyStacksHomeDir, getRepoDir, getRootDir, isHappyMonorepoRoot, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { isTty, prompt, promptSelect, withRl } from './utils/cli/wizard.mjs';
 import { getCanonicalHomeDir } from './utils/env/config.mjs';
 import { ensureEnvLocalUpdated } from './utils/env/env_local.mjs';
@@ -22,17 +22,20 @@ import { openUrlInBrowser } from './utils/ui/browser.mjs';
 import { commandExists } from './utils/proc/commands.mjs';
 import { readServerPortFromEnvFile, resolveServerPortFromEnv } from './utils/server/port.mjs';
 import { runOrchestratedGuidedAuthFlow } from './utils/auth/orchestrated_stack_auth_flow.mjs';
+import { buildSetupChildEnv } from './utils/setup/child_env.mjs';
 import { getVerbosityLevel } from './utils/cli/verbosity.mjs';
 import { runCommandLogged } from './utils/cli/progress.mjs';
 import { bold, cyan, dim, green, yellow } from './utils/ui/ansi.mjs';
 import { expandHome } from './utils/paths/canonical_home.mjs';
-import { listAllStackNames } from './utils/stack/stacks.mjs';
+import { listAllStackNames, stackExistsSync } from './utils/stack/stacks.mjs';
 import { detectSwiftbarPluginInstalled } from './utils/menubar/swiftbar.mjs';
 import { banner, bullets, cmd as cmdFmt, kv, sectionTitle } from './utils/ui/layout.mjs';
 import { applyBindModeToEnv, resolveBindModeFromArgs } from './utils/net/bind_mode.mjs';
 import { ensureDevCheckout } from './utils/git/dev_checkout.mjs';
 import { parseGithubOwnerRepo } from './utils/git/worktrees.mjs';
 import { findAnyCredentialPathInCliHome, findExistingStackCredentialPath } from './utils/auth/credentials_paths.mjs';
+import { normalizeStackNameOrNull } from './utils/stack/names.mjs';
+import { parseEnvToObject } from './utils/env/dotenv.mjs';
 
 function resolveWorkspaceDirDefault() {
   const explicit = (process.env.HAPPIER_STACK_WORKSPACE_DIR ?? '').toString().trim();
@@ -46,6 +49,15 @@ function normalizeWorkspaceDirInput(raw, { homeDir }) {
   if (!expanded) return '';
   // If relative, treat it as relative to the home dir (same rule as init.mjs).
   return expanded.startsWith('/') ? expanded : join(homeDir, expanded);
+}
+
+function normalizeRepoDirInput(raw, { invokedCwd }) {
+  const trimmed = String(raw ?? '').trim();
+  const expanded = expandHome(trimmed);
+  if (!expanded) return '';
+  if (expanded.startsWith('/')) return expanded;
+  const base = String(invokedCwd ?? '').trim() || process.cwd();
+  return join(base, expanded);
 }
 
 async function resolveMainServerPort() {
@@ -100,8 +112,8 @@ async function canPushToRemote({ repoDir, remoteName }) {
   }
 }
 
-async function maybeConfigureForkRemoteForDevProfile({ rootDir, interactive }) {
-  const repoDir = getRepoDir(rootDir, process.env);
+async function maybeConfigureForkRemoteForDevProfile({ rootDir, interactive, env = process.env }) {
+  const repoDir = getRepoDir(rootDir, env);
   if (!existsSync(join(repoDir, '.git'))) return;
 
   const upstream = await parseRemoteOwnerRepo({ repoDir, remoteName: 'upstream' });
@@ -121,7 +133,7 @@ async function maybeConfigureForkRemoteForDevProfile({ rootDir, interactive }) {
     return;
   }
 
-  const forkUrlFromEnv = String(process.env.HAPPIER_STACK_FORK_URL ?? '').trim();
+  const forkUrlFromEnv = String(env.HAPPIER_STACK_FORK_URL ?? '').trim();
   if (!interactive) {
     if (forkUrlFromEnv) {
       await run('git', ['remote', 'set-url', 'origin', forkUrlFromEnv], { cwd: repoDir });
@@ -162,7 +174,7 @@ async function maybeConfigureForkRemoteForDevProfile({ rootDir, interactive }) {
   await run('git', ['remote', 'set-url', 'origin', forkUrl], { cwd: repoDir });
 
   // Optional: ensure the fork has a dev branch matching upstream/dev (best-effort).
-  const devBranch = String(process.env.HAPPIER_STACK_DEV_BRANCH ?? '').trim() || 'dev';
+  const devBranch = String(env.HAPPIER_STACK_DEV_BRANCH ?? '').trim() || 'dev';
   let forkHasDev = true;
   try {
     await runCapture('git', ['ls-remote', '--exit-code', '--heads', 'origin', devBranch], { cwd: repoDir });
@@ -177,6 +189,115 @@ async function maybeConfigureForkRemoteForDevProfile({ rootDir, interactive }) {
       // ignore: user can still contribute via feature branches
     }
   }
+}
+
+async function ensureDevStack({ rootDir, serverComponent, env }) {
+  if (stackExistsSync('dev', env)) {
+    // eslint-disable-next-line no-console
+    console.log(`${green('✓')} Development stack already exists (reused): ${cyan('dev')}`);
+    return;
+  }
+
+  await runNodeScript({
+    rootDir,
+    rel: 'scripts/stack.mjs',
+    args: [
+      'new',
+      'dev',
+      '--repo=dev',
+      `--server=${serverComponent}`,
+      '--no-copy-auth',
+      '--non-interactive',
+    ],
+    env,
+  });
+}
+
+function readStackRepoDir({ stackName, env }) {
+  try {
+    const { envPath } = resolveStackEnvPath(stackName, env);
+    if (!existsSync(envPath)) return '';
+    const raw = readFileSync(envPath, 'utf-8');
+    const parsed = parseEnvToObject(raw);
+    return String(parsed?.HAPPIER_STACK_REPO_DIR ?? '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function pickAvailableStackName({ base, env, repoDir, explicit }) {
+  const normalizedBase = normalizeStackNameOrNull(base);
+  if (!normalizedBase) {
+    throw new Error(`[setup] invalid --stack=${JSON.stringify(base)} (must be a DNS-safe label)`);
+  }
+  if (normalizedBase === 'main') {
+    throw new Error('[setup] local-repo profile cannot target stack name "main" (reserved). Pick another name.');
+  }
+
+  const tryName = (name) => {
+    if (!stackExistsSync(name, env)) return { name, ok: true };
+    const existingRepoDir = readStackRepoDir({ stackName: name, env });
+    const existingRoot = existingRepoDir ? coerceHappyMonorepoRootFromPath(existingRepoDir) : null;
+    if (existingRoot && existingRoot === repoDir) {
+      return { name, ok: true, reused: true };
+    }
+    return { name, ok: false };
+  };
+
+  const first = tryName(normalizedBase);
+  if (first.ok) return { stackName: first.name, reused: Boolean(first.reused) };
+  if (explicit) {
+    throw new Error(`[setup] stack already exists: ${normalizedBase}\nFix: pick a different --stack name.`);
+  }
+
+  for (let i = 2; i <= 50; i += 1) {
+    const candidate = `${normalizedBase}-${i}`;
+    const res = tryName(candidate);
+    if (res.ok) return { stackName: res.name, reused: Boolean(res.reused) };
+  }
+  throw new Error(`[setup] could not find an available stack name for base=${normalizedBase}`);
+}
+
+async function ensureLocalRepoStack({ rootDir, repoDir, serverComponent, env, stackNameArg }) {
+  if (!repoDir) {
+    throw new Error('[setup] local-repo profile requires --repo-dir=/abs/path/to/happier (or run from inside the repo in a TTY).');
+  }
+  if (!isHappyMonorepoRoot(repoDir)) {
+    throw new Error(
+      `[setup] --repo-dir does not look like a Happier monorepo root: ${repoDir}\n` +
+        `Expected markers like: apps/ui/package.json, apps/cli/package.json, apps/server/package.json`
+    );
+  }
+
+  const base = stackNameArg?.trim() ? stackNameArg.trim() : 'local';
+  const { stackName, reused } = pickAvailableStackName({
+    base,
+    env,
+    repoDir,
+    explicit: Boolean(stackNameArg?.trim()),
+  });
+
+  if (reused) {
+    // eslint-disable-next-line no-console
+    console.log(`${green('✓')} Local-repo stack already exists (reused): ${cyan(stackName)}`);
+    return stackName;
+  }
+
+  await runNodeScript({
+    rootDir,
+    rel: 'scripts/stack.mjs',
+    args: [
+      'new',
+      stackName,
+      `--repo=${repoDir}`,
+      `--server=${serverComponent}`,
+      '--no-copy-auth',
+      '--non-interactive',
+    ],
+    env,
+  });
+
+  return stackName;
 }
 
 async function ensureSetupConfigPersisted({ rootDir, profile, serverComponent, tailscaleWanted, menubarMode, happierRepoUrl }) {
@@ -332,17 +453,16 @@ function detectAuthSources() {
   };
 }
 
-async function maybeConfigureAuthDefaults({ rootDir, profile, interactive }) {
+async function maybeConfigureAuthDefaults({ rootDir, profile, interactive, env = process.env }) {
   if (!interactive) return;
   if (profile !== 'dev') return;
 
   const sources = detectAuthSources();
-  const autoSeedEnabled =
-    (process.env.HAPPIER_STACK_AUTO_AUTH_SEED ?? '').toString().trim() === '1';
-  const seedFrom = (process.env.HAPPIER_STACK_AUTH_SEED_FROM ?? '').toString().trim();
+  const autoSeedEnabled = (env.HAPPIER_STACK_AUTO_AUTH_SEED ?? '').toString().trim() === '1';
+  const seedFrom = (env.HAPPIER_STACK_AUTH_SEED_FROM ?? '').toString().trim();
   const linkMode =
-    (process.env.HAPPIER_STACK_AUTH_LINK ?? '').toString().trim() === '1' ||
-    (process.env.HAPPIER_STACK_AUTH_MODE ?? '').toString().trim().toLowerCase() === 'link';
+    (env.HAPPIER_STACK_AUTH_LINK ?? '').toString().trim() === '1' ||
+    (env.HAPPIER_STACK_AUTH_MODE ?? '').toString().trim().toLowerCase() === 'link';
 
   // If we already have dev-auth seeded and configured, don't ask redundant questions.
   // (User can always re-run setup or use stack/auth commands to change this.)
@@ -407,6 +527,7 @@ async function maybeConfigureAuthDefaults({ rootDir, profile, interactive }) {
       rootDir,
       rel: 'scripts/stack.mjs',
       args: ['create-dev-auth-seed', 'dev-auth', '--login', '--skip-default-seed'],
+      env,
     });
   } else {
     // eslint-disable-next-line no-console
@@ -465,7 +586,7 @@ async function maybeConfigureAuthDefaults({ rootDir, profile, interactive }) {
         `--except=${except.join(',')}`,
         ...(linkChoice === 'link' ? ['--link'] : []),
       ];
-      await runNodeScript({ rootDir, rel: 'scripts/auth.mjs', args });
+      await runNodeScript({ rootDir, rel: 'scripts/auth.mjs', args, env });
     }
   } else {
     // eslint-disable-next-line no-console
@@ -516,12 +637,14 @@ async function cmdSetup({ rootDir, argv }) {
 	    printResult({
 	      json,
 	      data: {
-	        profiles: ['selfhost', 'dev'],
+	        profiles: ['selfhost', 'dev', 'local-repo'],
 	        flags: [
 	          '--profile=selfhost|dev',
 	          '--server=happier-server-light|happier-server',
 	          '--server-flavor=light|full',
             '--non-interactive',
+            '--repo-dir=/abs/path/to/happier   # local-repo profile only',
+            '--stack=<name>                   # local-repo profile only (default: local)',
 	          '--happier-repo=<owner/repo|url>     # override the monorepo clone source',
 	          '--workspace-dir=/absolute/path   # dev profile only',
             '--no-ui-deps                  # bootstrap: skip UI deps',
@@ -544,6 +667,7 @@ async function cmdSetup({ rootDir, argv }) {
 	        '  hstack setup --profile=selfhost',
 	        '  hstack setup --profile=dev',
 	        '  hstack setup --profile=dev --workspace-dir=~/Development/happier',
+          '  hstack setup --profile=local-repo --repo-dir=~/Development/happier',
 	        '  hstack setup --happier-repo=happier-dev/happier',
 	        '  hstack tools setup-pr --repo=<pr-url|number>',
 	        '  hstack setup --auth',
@@ -561,18 +685,19 @@ async function cmdSetup({ rootDir, argv }) {
 
   const interactive = isTty() && !flags.has('--non-interactive');
   let profile = normalizeProfile(kv.get('--profile'));
-  if (!profile && interactive) {
-    profile = await withRl(async (rl) => {
-      return await promptSelect(rl, {
-        title: bold(`✨ ${cyan('hstack')} setup ✨\n\nWhat is your goal?`),
-        options: [
-          { label: `${cyan('Self-host')}: use Happier on this machine`, value: 'selfhost' },
-          { label: `${cyan('Development')}: worktrees + stacks + contributor workflows`, value: 'dev' },
-        ],
-        defaultIndex: 0,
-      });
-    });
-  }
+	  if (!profile && interactive) {
+	    profile = await withRl(async (rl) => {
+	      return await promptSelect(rl, {
+	        title: bold(`✨ ${cyan('hstack')} setup ✨\n\nWhat is your goal?`),
+	        options: [
+	          { label: `${cyan('Self-host')}: use Happier on this machine`, value: 'selfhost' },
+	          { label: `${cyan('Development')}: worktrees + stacks + contributor workflows`, value: 'dev' },
+            { label: `${cyan('Local repo')}: use an existing Happier checkout`, value: 'local-repo' },
+	        ],
+	        defaultIndex: 0,
+	      });
+	    });
+	  }
   if (!profile) {
     profile = 'selfhost';
   }
@@ -764,6 +889,32 @@ async function cmdSetup({ rootDir, argv }) {
     // eslint-disable-next-line no-console
     console.log(`${dim('Workspace:')} ${cyan(workspaceDirWanted)}`);
   }
+
+  // Local-repo profile: resolve the existing repo dir to pin a dedicated stack.
+  const invokedCwd = String(process.env.HAPPIER_STACK_INVOKED_CWD ?? '').trim() || process.cwd();
+  const repoDirFlagRaw = (kv.get('--repo-dir') ?? kv.get('--repo') ?? '').toString().trim();
+  let localRepoDir = repoDirFlagRaw ? normalizeRepoDirInput(repoDirFlagRaw, { invokedCwd }) : '';
+  if (profile === 'local-repo' && !localRepoDir) {
+    const inferred = coerceHappyMonorepoRootFromPath(invokedCwd);
+    localRepoDir = inferred || '';
+  }
+  if (profile === 'local-repo' && interactive && !localRepoDir) {
+    const raw = await withRl(async (rl) => {
+      return await prompt(rl, 'Path to existing Happier repo (monorepo root): ', { defaultValue: '' });
+    });
+    localRepoDir = normalizeRepoDirInput(raw, { invokedCwd });
+  }
+  if (profile === 'local-repo' && localRepoDir) {
+    const root = coerceHappyMonorepoRootFromPath(localRepoDir);
+    localRepoDir = root || localRepoDir;
+    // eslint-disable-next-line no-console
+    console.log(`${dim('Repo:')} ${cyan(localRepoDir)}`);
+  }
+
+  const setupChildEnv = buildSetupChildEnv({
+    baseEnv: process.env,
+    workspaceDirWanted,
+  });
 
   const defaultTailscale = false;
   const defaultAutostart = false;
@@ -1047,24 +1198,24 @@ async function cmdSetup({ rootDir, argv }) {
       ...(profile === 'dev' && workspaceDirWanted ? [`--workspace-dir=${workspaceDirWanted}`] : []),
       ...(installPath ? ['--install-path'] : []),
     ],
-    env: { ...process.env, HAPPIER_STACK_SETUP_CHILD: '1' },
+    env: setupChildEnv,
   });
 
   // 2) Persist profile defaults to stack env (server flavor, repo source, tailscale preference, menubar mode).
-	  await ensureSetupConfigPersisted({
-	    rootDir,
-	    profile,
-	    serverComponent,
-	    tailscaleWanted,
-	    menubarMode,
-	    happierRepoUrl,
-	  });
+  await ensureSetupConfigPersisted({
+    rootDir,
+    profile,
+    serverComponent,
+    tailscaleWanted,
+    menubarMode,
+    happierRepoUrl,
+  });
 
   // Apply repo override to this process too (so the immediately-following install step sees it),
   // even if env.local was already loaded earlier in this process.
-	  if (happierRepoUrl) {
-	    process.env.HAPPIER_STACK_REPO_URL = happierRepoUrl;
-	  }
+  if (happierRepoUrl) {
+    process.env.HAPPIER_STACK_REPO_URL = happierRepoUrl;
+  }
 
   // 3) Bootstrap the monorepo.
   if (profile === 'dev') {
@@ -1076,12 +1227,13 @@ async function cmdSetup({ rootDir, argv }) {
       // Dev setup: use Expo dev server, so exporting a production web bundle is wasted work.
       // Users can always run `hstack build` later if they want `hstack start` to serve a prebuilt UI.
       args: [...(interactive ? ['--interactive'] : []), '--clone', '--no-ui-build'],
+      env: setupChildEnv,
       interactiveChild: interactive,
     });
 
     if (interactive) {
       // Recommended: dev-auth seed stack setup (login once, reuse across stacks).
-      await maybeConfigureAuthDefaults({ rootDir, profile, interactive });
+      await maybeConfigureAuthDefaults({ rootDir, profile, interactive, env: setupChildEnv });
 
       // Optional: mobile dev-client install (macOS only).
       if (process.platform === 'darwin') {
@@ -1113,11 +1265,40 @@ async function cmdSetup({ rootDir, argv }) {
 
     // Contributor UX: if the user can't push to upstream, offer to configure a fork as origin
     // (so later `hstack contrib extract --push` defaults to pushing feature branches to origin).
-    await maybeConfigureForkRemoteForDevProfile({ rootDir, interactive });
+    await maybeConfigureForkRemoteForDevProfile({ rootDir, interactive, env: setupChildEnv });
 
     // Ensure the dedicated dev checkout exists (workspace/dev on branch "dev").
     // This is the recommended place for contributors to make changes (main stays stable).
-    await ensureDevCheckout({ rootDir, env: process.env });
+    await ensureDevCheckout({ rootDir, env: setupChildEnv });
+
+    // Provision the dedicated dev stack so day-to-day contributors can run
+    // `hstack stack dev dev` without an additional manual setup step.
+    await ensureDevStack({
+      rootDir,
+      serverComponent,
+      env: setupChildEnv,
+    });
+  } else if (profile === 'local-repo') {
+    const stackNameArg = (kv.get('--stack') ?? '').toString().trim();
+    const stackName = await ensureLocalRepoStack({
+      rootDir,
+      repoDir: localRepoDir,
+      serverComponent,
+      env: setupChildEnv,
+      stackNameArg,
+    });
+
+    // eslint-disable-next-line no-console
+    console.log('');
+    // eslint-disable-next-line no-console
+    console.log(green('✓ Setup complete'));
+    // eslint-disable-next-line no-console
+    console.log(dim('Next steps (local repo):'));
+    // eslint-disable-next-line no-console
+    console.log(`  ${yellow(`hstack stack dev ${stackName}`)} ${dim('# run the stack pinned to your existing repo')}`);
+    // eslint-disable-next-line no-console
+    console.log(dim('Note: setup did not install deps or modify git state in your repo.'));
+    return;
   } else {
     // Selfhost setup: run non-interactively and keep it simple.
     await runNodeScriptMaybeQuiet({
@@ -1300,9 +1481,7 @@ async function cmdSetup({ rootDir, argv }) {
     // eslint-disable-next-line no-console
     console.log(dim('Next steps (development):'));
     // eslint-disable-next-line no-console
-    console.log(`  ${yellow('hstack stack new dev --interactive')} ${dim('# create a dedicated dev stack (recommended)')}`);
-    // eslint-disable-next-line no-console
-    console.log(`  ${yellow('hstack stack dev dev')}              ${dim('# run that stack (server + daemon + Expo web)')}`);
+    console.log(`  ${yellow('hstack stack dev dev')}              ${dim('# run the dedicated dev stack (already provisioned)')}`);
     // eslint-disable-next-line no-console
     console.log(`  ${yellow('hstack wt new ...')}   ${dim('# create a worktree for a branch/PR')}`);
     // eslint-disable-next-line no-console

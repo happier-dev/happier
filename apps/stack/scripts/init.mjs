@@ -313,11 +313,15 @@ async function main() {
     'set -euo pipefail',
     `CANONICAL_ENV="${canonicalEnvPath}"`,
     '',
+    // Preserve the caller's original working directory so the Node CLI can infer
+    // repo/worktree context even if this shim `cd`s into the workspace root.
+    'export HAPPIER_STACK_INVOKED_CWD="${HAPPIER_STACK_INVOKED_CWD:-$PWD}"',
+    '',
     '# Best-effort: if env vars are not exported (common under launchd/SwiftBar),',
     '# read the stable pointer file at CANONICAL_ENV to discover the real dirs.',
     'if [[ -f "$CANONICAL_ENV" ]]; then',
     '  if [[ -z "${HAPPIER_STACK_HOME_DIR:-}" ]]; then',
-    '    HAPPIER_STACK_HOME_DIR="$(grep -E \'^HAPPIER_STACK_HOME_DIR=\' "$CANONICAL_ENV" | head -n 1 | sed \'s/^HAPPIER_STACK_HOME_DIR=//\')" || true',
+      '    HAPPIER_STACK_HOME_DIR="$(grep -E \'^HAPPIER_STACK_HOME_DIR=\' "$CANONICAL_ENV" | head -n 1 | sed \'s/^HAPPIER_STACK_HOME_DIR=//\')" || true',
     '    export HAPPIER_STACK_HOME_DIR',
     '  fi',
     '  if [[ -z "${HAPPIER_STACK_WORKSPACE_DIR:-}" ]]; then',

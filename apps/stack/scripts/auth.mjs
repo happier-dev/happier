@@ -56,7 +56,20 @@ function resolveGuidedStartAction({ healthOk = false, runtimeOwnerAlive = false,
   return 'prompt';
 }
 
-function getInternalServerUrlCompat() {
+async function getInternalServerUrlCompat() {
+  const stackName = getStackName();
+  try {
+    const statePath = getStackRuntimeStatePath(stackName);
+    const st = await readStackRuntimeStateFile(statePath);
+    const ownerPid = Number(st?.ownerPid);
+    const runtimeOwnerAlive = Number.isFinite(ownerPid) && ownerPid > 1 ? isRuntimePidAlive(ownerPid) : false;
+    const port = Number(st?.ports?.server);
+    if (runtimeOwnerAlive && Number.isFinite(port) && port > 0) {
+      return { port, url: `http://127.0.0.1:${port}` };
+    }
+  } catch {
+    // ignore; fall back to env/default port
+  }
   const { port, internalServerUrl } = getInternalServerUrl({ env: process.env, defaultPort: 3005 });
   return { port, url: internalServerUrl };
 }
@@ -888,13 +901,13 @@ async function cmdCopyFrom({ argv, json }) {
 
   const positionals = argv.filter((a) => !a.startsWith('--'));
   const fromStackName = (positionals[1] ?? '').trim();
-  if (!fromStackName) {
-    throw new Error(
-      '[auth] usage: hstack stack auth <name> copy-from <sourceStack> [--force] [--with-infra] [--json]  OR  hstack auth copy-from <sourceStack> --all [--except=main,dev-auth] [--force] [--with-infra] [--json]\n' +
-        'notes:\n' +
-        '  - sourceStack can be a stack name (e.g. main, dev-auth)'
-    );
-  }
+	  if (!fromStackName) {
+	    throw new Error(
+	      '[auth] usage: hstack stack auth <name> copy-from <sourceStack> [--force] [--with-infra] [--offline-ok] [--json]  OR  hstack auth copy-from <sourceStack> --all [--except=main,dev-auth] [--force] [--with-infra] [--offline-ok] [--json]\n' +
+	        'notes:\n' +
+	        '  - sourceStack can be a stack name (e.g. main, dev-auth)'
+	    );
+	  }
 
   const { flags, kv } = parseArgs(argv);
   const all = flags.has('--all');
@@ -903,16 +916,26 @@ async function cmdCopyFrom({ argv, json }) {
     flags.has('--overwrite') ||
     (kv.get('--force') ?? '').trim() === '1' ||
     (kv.get('--overwrite') ?? '').trim() === '1';
-  const withInfra =
-    flags.has('--with-infra') ||
-    flags.has('--ensure-infra') ||
-    flags.has('--infra') ||
-    (kv.get('--with-infra') ?? '').trim() === '1' ||
-    (kv.get('--ensure-infra') ?? '').trim() === '1';
-  const linkMode =
-    flags.has('--link') ||
-    flags.has('--symlink') ||
-    flags.has('--link-auth') ||
+	  const withInfra =
+	    flags.has('--with-infra') ||
+	    flags.has('--ensure-infra') ||
+	    flags.has('--infra') ||
+	    (kv.get('--with-infra') ?? '').trim() === '1' ||
+	    (kv.get('--ensure-infra') ?? '').trim() === '1';
+	  const offlineOk =
+	    flags.has('--offline-ok') ||
+	    flags.has('--offline') ||
+	    (kv.get('--offline-ok') ?? '').trim() === '1' ||
+	    (kv.get('--offline') ?? '').trim() === '1';
+	  const noSecret =
+	    flags.has('--no-secret') ||
+	    flags.has('--skip-secret') ||
+	    (kv.get('--no-secret') ?? '').trim() === '1' ||
+	    (kv.get('--skip-secret') ?? '').trim() === '1';
+	  const linkMode =
+	    flags.has('--link') ||
+	    flags.has('--symlink') ||
+	    flags.has('--link-auth') ||
     (kv.get('--link') ?? '').trim() === '1' ||
     (kv.get('--symlink') ?? '').trim() === '1' ||
     (kv.get('--auth-mode') ?? '').trim() === 'link' ||
@@ -1087,7 +1110,7 @@ async function cmdCopyFrom({ argv, json }) {
     stackName,
     cliIdentity: 'default',
   });
-  const { url: targetInternalServerUrl } = getInternalServerUrlCompat();
+  const { url: targetInternalServerUrl } = await getInternalServerUrlCompat();
   const targetCredentialPaths = resolveStackCredentialPaths({
     cliHomeDir: targetCli,
     serverUrl: targetInternalServerUrl,
@@ -1144,15 +1167,21 @@ async function cmdCopyFrom({ argv, json }) {
     return await listAccountsFromPostgres({ cwd: sourceCwd, clientImport: sourceClientImport, databaseUrl: fromDatabaseUrl });
   };
 
-  let sourceAccounts = null;
-  const sourceTokenSubject = resolveJwtSubjectFromCredentialPath(sourceCredentialPath);
-  let sourceTokenValidation = null;
-  const sourceRuntimeOwnerAlive = await isStackRuntimeOwnerAlive(fromStackName);
-  if (sourceCredentialPath && sourceRuntimeOwnerAlive) {
-    sourceTokenValidation = await validateAuthTokenAgainstServer({
-      credentialPath: sourceCredentialPath,
-      internalServerUrl: sourceInternalServerUrl,
-    });
+	  let sourceAccounts = null;
+	  const sourceTokenSubject = resolveJwtSubjectFromCredentialPath(sourceCredentialPath);
+	  let sourceTokenValidation = null;
+	  const sourceRuntimeOwnerAlive = await isStackRuntimeOwnerAlive(fromStackName);
+	  if (sourceCredentialPath && !sourceRuntimeOwnerAlive && !offlineOk) {
+	    throw new Error(
+	      `[auth] source stack "${fromStackName}" does not appear to be running (no live stack.runtime.json). ` +
+	        `Start the source stack and retry, or re-run with --offline-ok to copy credentials without live server validation.`
+	    );
+	  }
+	  if (sourceCredentialPath && sourceRuntimeOwnerAlive) {
+	    sourceTokenValidation = await validateAuthTokenAgainstServer({
+	      credentialPath: sourceCredentialPath,
+	      internalServerUrl: sourceInternalServerUrl,
+	    });
     if (sourceTokenValidation.checked && sourceTokenValidation.valid === false) {
       const status = sourceTokenValidation.status != null ? sourceTokenValidation.status : 'error';
       const code = sourceTokenValidation.code ? `/${sourceTokenValidation.code}` : '';
@@ -1183,12 +1212,12 @@ async function cmdCopyFrom({ argv, json }) {
     }
   }
 
-  if (secret) {
-    if (serverComponent === 'happier-server-light') {
-      const target = join(targetServerLightDataDir, 'handy-master-secret.txt');
-      const sourcePath = source && !String(source).includes('(HANDY_MASTER_SECRET)') ? String(source) : '';
-      if (linkMode && sourcePath && existsSync(sourcePath)) {
-        copied.secret = await linkFileIfMissing({ from: sourcePath, to: target, force });
+	  if (secret && !noSecret) {
+	    if (serverComponent === 'happier-server-light') {
+	      const target = join(targetServerLightDataDir, 'handy-master-secret.txt');
+	      const sourcePath = source && !String(source).includes('(HANDY_MASTER_SECRET)') ? String(source) : '';
+	      if (linkMode && sourcePath && existsSync(sourcePath)) {
+	        copied.secret = await linkFileIfMissing({ from: sourcePath, to: target, force });
       } else {
         copied.secret = await writeSecretFileIfMissing({ path: target, secret, force });
       }
@@ -1279,7 +1308,7 @@ async function cmdCopyFrom({ argv, json }) {
         // so we can seed DB accounts reliably.
         const managed = (targetEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1').toString().trim() !== '0';
 	        if (targetServerComponent === 'happier-server' && targetDbProvider === 'postgres' && withInfra && managed) {
-          const { port } = getInternalServerUrlCompat();
+          const { port } = await getInternalServerUrlCompat();
           const publicServerUrl = await preferStackLocalhostUrl(`http://localhost:${port}`, { stackName });
           const envPath = resolveStackEnvPath(stackName).envPath;
           const infra = await ensureHappyServerManagedInfra({
@@ -1365,7 +1394,7 @@ async function cmdStatus({ json }) {
   const { kv } = parseArgs(argv);
   const identity = parseCliIdentityOrThrow((kv.get('--identity') ?? '').trim());
 
-  const { port, url: internalServerUrl } = getInternalServerUrlCompat();
+  const { port, url: internalServerUrl } = await getInternalServerUrlCompat();
   const { defaultPublicUrl, envPublicUrl } = getPublicServerUrlEnvOverride({ env: process.env, serverPort: port, stackName });
   const { publicServerUrl } = await resolvePublicServerUrl({
     internalServerUrl,
@@ -1500,7 +1529,7 @@ async function cmdLogin({ argv, json }) {
   const { flags, kv } = parseArgs(argv);
 
   const tty = isTty();
-  const { port, url: internalServerUrl } = getInternalServerUrlCompat();
+  const { port, url: internalServerUrl } = await getInternalServerUrlCompat();
   const { defaultPublicUrl, envPublicUrl } = getPublicServerUrlEnvOverride({ env: process.env, serverPort: port, stackName });
   const { publicServerUrl } = await resolvePublicServerUrl({
     internalServerUrl,
@@ -1749,7 +1778,7 @@ async function main() {
   const usageByCmd = new Map([
     ['status', 'hstack auth status [--json]'],
     ['login', 'hstack auth login [--identity=<name>] [--no-open] [--force] [--method=web|mobile] [--print] [--webapp=auto|stack|public|expo|hosted] [--webapp-url=<url>] [--start-if-needed] [--json]'],
-    ['seed', 'hstack auth seed [name=dev-auth] [--login|--no-login] [--server=...] [--skip-default-seed] [--non-interactive] [--json]'],
+    ['seed', 'hstack auth seed [name=dev-auth] [--login|--no-login] [--force] [--server=...] [--skip-default-seed] [--non-interactive] [--json]'],
     ['copy-from', 'hstack auth copy-from <sourceStack|legacy> --all [--except=main,dev-auth] [--force] [--with-infra] [--link] [--json]'],
     ['dev-key', 'hstack auth dev-key [--print] [--format=base64url|backup] [--set=<secret>] [--clear] [--json]'],
   ]);
@@ -1778,7 +1807,7 @@ async function main() {
         bullets([
           `${dim('status:')} ${cmdFmt('hstack auth status')} ${dim('[--json]')}`,
           `${dim('login:')}  ${cmdFmt('hstack auth login')} ${dim('[--identity=<name>] [--no-open] [--force] [--method=web|mobile] [--print] [--webapp=auto|stack|public|expo|hosted] [--webapp-url=<url>] [--start-if-needed] [--json]')}`,
-          `${dim('seed stack:')} ${cmdFmt('hstack auth seed')} ${dim('[name=dev-auth] [--login|--no-login] [--server=...] [--skip-default-seed] [--non-interactive] [--json]')}`,
+          `${dim('seed stack:')} ${cmdFmt('hstack auth seed')} ${dim('[name=dev-auth] [--login|--no-login] [--force] [--server=...] [--skip-default-seed] [--non-interactive] [--json]')}`,
           `${dim('seed:')}   ${cmdFmt('hstack auth copy-from <sourceStack|legacy> --all')} ${dim('[--except=main,dev-auth] [--force] [--with-infra] [--link] [--json]')}`,
           `${dim('dev key:')} ${cmdFmt('hstack auth dev-key')} ${dim('[--print] [--format=base64url|backup] [--set=<secret>] [--clear] [--json]')}`,
         ]),

@@ -169,8 +169,16 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           const n = Number(v);
           return Number.isFinite(n) && n > 0 ? n : null;
         };
+        // Port reuse:
+        // - Hard reuse: `--restart` (fail-closed if ports are occupied unless we can prove stack ownership).
+        // - Soft reuse: if the stack previously recorded ports in stack.runtime.json, prefer reusing them
+        //   on the next start to keep stack endpoints stable (helps auth + server-scoped state).
+        const hasRecordedPorts = hasRecordedRuntimePortsForRestart(runtimeState);
+        const wantsSoftReuse = !wantsRestart && hasRecordedPorts && existingPorts;
+        const wantsHardReuse = isTrueRestart;
+
         const candidatePorts =
-          isTrueRestart && existingPorts
+          (wantsHardReuse || wantsSoftReuse) && existingPorts
             ? {
                 server: parsePortOrNull(existingPorts.server),
                 backend: parsePortOrNull(existingPorts.backend),
@@ -181,11 +189,25 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
               }
             : null;
 
-        const canReuse =
+        let canReuse =
           candidatePorts &&
           candidatePorts.server &&
           (serverComponent !== 'happier-server' || candidatePorts.backend) &&
           (!managedInfra || (candidatePorts.pg && candidatePorts.redis && candidatePorts.minio && candidatePorts.minioConsole));
+
+        // Soft reuse: if previously recorded ports are occupied, fall back to allocating new ports.
+        if (canReuse && wantsSoftReuse && !wantsHardReuse) {
+          const toCheck = Object.values(candidatePorts)
+            .map((n) => Number(n))
+            .filter((n) => Number.isFinite(n) && n > 0);
+          for (const p of toCheck) {
+            // eslint-disable-next-line no-await-in-loop
+            if (!(await isTcpPortFree(p))) {
+              canReuse = false;
+              break;
+            }
+          }
+        }
 
         if (canReuse) {
           ports.server = candidatePorts.server;
