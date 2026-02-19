@@ -15,6 +15,7 @@ test('repo root package.json exposes repo-local hstack scripts', async () => {
 
   // Keep it minimal: assert the stable entrypoints exist and point to the wrapper.
   assert.equal(scripts.dev, 'node ./apps/stack/scripts/repo_local.mjs dev');
+  assert.equal(scripts.stop, 'node ./apps/stack/scripts/repo_local.mjs stop');
   assert.equal(scripts.start, 'node ./apps/stack/scripts/repo_local.mjs start');
   assert.equal(scripts.build, 'node ./apps/stack/scripts/repo_local.mjs build');
   assert.equal(scripts.tui, 'node ./apps/stack/scripts/repo_local.mjs tui');

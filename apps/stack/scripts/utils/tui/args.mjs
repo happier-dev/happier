@@ -21,3 +21,22 @@ export function inferTuiStackName(argv, env = process.env) {
   const envStack = (env.HAPPIER_STACK_STACK ?? '').toString().trim();
   return envStack || null;
 }
+
+export function isTuiStartLikeForwardedArgs(argv) {
+  const args = Array.isArray(argv) ? argv : [];
+  if (!args.length) return false;
+
+  const first = String(args[0] ?? '').trim();
+  if (first === 'dev' || first === 'start') return true;
+
+  const stackIdx = args.indexOf('stack');
+  if (stackIdx < 0) return false;
+  const subcmd = String(args[stackIdx + 1] ?? '').trim();
+  return subcmd === 'dev' || subcmd === 'start';
+}
+
+export function isTuiRestartableForwardedArgs(argv) {
+  // Today we only support restart for long-lived stack processes (dev/start).
+  // Keeping this as a separate predicate avoids expanding restart support by accident.
+  return isTuiStartLikeForwardedArgs(argv);
+}

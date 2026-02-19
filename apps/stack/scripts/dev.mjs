@@ -17,6 +17,7 @@ import { resolveServerPortFromEnv, resolveServerUrls } from './utils/server/urls
 import { ensureDevCliReady, prepareDaemonAuthSeed, startDevDaemon, watchHappyCliAndRestartDaemon } from './utils/dev/daemon.mjs';
 import { startDevServer, watchDevServerAndRestart } from './utils/dev/server.mjs';
 import { resolveDevServerConnection } from './utils/dev/resolveDevServerConnection.mjs';
+import { resolveLocalServerPortForStack } from './utils/server/resolve_stack_server_port.mjs';
 import { ensureDevExpoServer, resolveExpoTailscaleEnabled } from './utils/dev/expo_dev.mjs';
 import { preferStackLocalhostUrl } from './utils/paths/localhost_host.mjs';
 import { openUrlInBrowser } from './utils/ui/browser.mjs';
@@ -145,7 +146,13 @@ async function main() {
   const stackCtx = resolveStackContext({ env: baseEnv, autostart });
   const { stackMode, runtimeStatePath, stackName, envPath, ephemeral } = stackCtx;
 
-  const serverPort = resolveServerPortFromEnv({ env: baseEnv, defaultPort: 3005 });
+  const serverPort = await resolveLocalServerPortForStack({
+    env: baseEnv,
+    stackMode,
+    stackName,
+    runtimeStatePath,
+    defaultPort: 3005,
+  });
   // IMPORTANT:
   // - Only the main stack should ever auto-enable (or prefer) Tailscale Serve by default.
   // - Non-main stacks should default to localhost URLs unless the user explicitly configured a public URL

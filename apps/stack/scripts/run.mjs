@@ -18,7 +18,7 @@ import { applyServerLightEnvDefaults } from './utils/server/apply_server_light_e
 import { getAccountCountForServerComponent, prepareDaemonAuthSeedIfNeeded, resolveAutoCopyFromMainEnabled } from './utils/stack/startup.mjs';
 import { recordStackRuntimeStart, recordStackRuntimeUpdate } from './utils/stack/runtime_state.mjs';
 import { resolveStackContext } from './utils/stack/context.mjs';
-import { getPublicServerUrlEnvOverride, resolveServerPortFromEnv, resolveServerUrls } from './utils/server/urls.mjs';
+import { getPublicServerUrlEnvOverride, resolveServerUrls } from './utils/server/urls.mjs';
 import { preferStackLocalhostUrl } from './utils/paths/localhost_host.mjs';
 import { openUrlInBrowser } from './utils/ui/browser.mjs';
 import { ensureDevExpoServer, resolveExpoTailscaleEnabled } from './utils/dev/expo_dev.mjs';
@@ -33,6 +33,7 @@ import { isSandboxed } from './utils/env/sandbox.mjs';
 import { installExitCleanup } from './utils/proc/exit_cleanup.mjs';
 import { expandHome } from './utils/paths/canonical_home.mjs';
 import { validateUiServingConfig } from './utils/server/ui_build_check.mjs';
+import { resolveLocalServerPortForStack } from './utils/server/resolve_stack_server_port.mjs';
 
 /**
  * Run the local stack in "production-like" mode:
@@ -107,14 +108,9 @@ async function main() {
     }
   }
 
-  const serverPort = resolveServerPortFromEnv({ defaultPort: 3005 });
-
-  // Internal URL used by local processes on this machine.
-  const internalServerUrl = `http://127.0.0.1:${serverPort}`;
-  // Public URL is what you might share/open (e.g. https://<machine>.<tailnet>.ts.net).
-  // We auto-prefer the Tailscale HTTPS URL when available, unless explicitly overridden.
-  const { defaultPublicUrl, envPublicUrl, publicServerUrl: publicServerUrlPreview } = getPublicServerUrlEnvOverride({ serverPort });
-  let publicServerUrl = publicServerUrlPreview;
+  let serverPort = 3005;
+  let internalServerUrl = '';
+  let publicServerUrl = '';
 
   // Convenience alias: allow `--server-flavor=light|full` for parity with `stack pr` and `tools setup-pr`.
   // `--server=...` always wins when both are specified.
@@ -221,6 +217,21 @@ async function main() {
 	  const baseEnv = { ...process.env };
 	  const stackCtx = resolveStackContext({ env: baseEnv, autostart });
 	  const { stackMode, runtimeStatePath, stackName, envPath, ephemeral } = stackCtx;
+
+  serverPort = await resolveLocalServerPortForStack({
+    env: baseEnv,
+    stackMode,
+    stackName,
+    runtimeStatePath,
+    defaultPort: 3005,
+  });
+
+  // Internal URL used by local processes on this machine.
+  internalServerUrl = `http://127.0.0.1:${serverPort}`;
+  // Public URL is what you might share/open (e.g. https://<machine>.<tailnet>.ts.net).
+  // We auto-prefer the Tailscale HTTPS URL when available, unless explicitly overridden.
+  const { publicServerUrl: publicServerUrlPreview } = getPublicServerUrlEnvOverride({ serverPort, env: baseEnv, stackName });
+  publicServerUrl = publicServerUrlPreview;
 
   // Ensure happier-cli is install+build ready before starting the daemon.
   const buildCli = (baseEnv.HAPPIER_STACK_CLI_BUILD ?? '1').toString().trim() !== '0';

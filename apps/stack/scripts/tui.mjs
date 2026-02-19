@@ -9,13 +9,29 @@ import { getComponentDir, getRepoDir, getRootDir, resolveStackEnvPath } from './
 import { getStackRuntimeStatePath, readStackRuntimeStateFile } from './utils/stack/runtime_state.mjs';
 import { getEnvValueAny } from './utils/env/values.mjs';
 import { padRight, parsePrefixedLabel, stripAnsi } from './utils/ui/text.mjs';
+import { formatBoxLine } from './utils/ui/box_line.mjs';
 import { commandExists } from './utils/proc/commands.mjs';
 import { renderQrAscii } from './utils/ui/qr.mjs';
 import { resolveMobileQrPayload } from './utils/mobile/dev_client_links.mjs';
 import { worktreeSpecFromDir } from './utils/git/worktrees.mjs';
 import { stopStackForTuiExit } from './utils/tui/cleanup.mjs';
-import { isTuiHelpRequest, normalizeTuiForwardedArgs } from './utils/tui/args.mjs';
+import {
+  inferTuiStackName,
+  isTuiHelpRequest,
+  isTuiRestartableForwardedArgs,
+  isTuiStartLikeForwardedArgs,
+  normalizeTuiForwardedArgs,
+} from './utils/tui/args.mjs';
 import { terminateProcessGroup } from './utils/proc/terminate.mjs';
+import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs';
+import { mergeEnvForTuiSummary } from './utils/tui/summary_env.mjs';
+import { hasStackCredentials } from './utils/auth/daemon_gate.mjs';
+import { applyTuiStackAuthScopeEnv } from './utils/tui/stack_scope_env.mjs';
+import { buildDaemonAuthNotice, parseStartDaemonFlagFromEnv } from './utils/tui/daemon_auth_notice.mjs';
+import { detachTuiStdinForChild, waitForEnter } from './utils/tui/stdin_handoff.mjs';
+import { waitForHappierHealthOk } from './utils/server/server.mjs';
+import { buildTuiAuthArgs, buildTuiDaemonStartArgs, shouldHoldAfterAuthExit } from './utils/tui/actions.mjs';
+import { shouldAttemptTuiDaemonAutostart } from './utils/tui/daemon_autostart.mjs';
 
 function nowTs() {
   const d = new Date();
@@ -33,8 +49,32 @@ function cyan(s) {
   return supportsAnsi() ? `\x1b[36m${s}\x1b[0m` : String(s);
 }
 
+function redBold(s) {
+  return supportsAnsi() ? `\x1b[1;31m${s}\x1b[0m` : String(s);
+}
+
+function yellowBold(s) {
+  return supportsAnsi() ? `\x1b[1;33m${s}\x1b[0m` : String(s);
+}
+
+function greenBold(s) {
+  return supportsAnsi() ? `\x1b[1;32m${s}\x1b[0m` : String(s);
+}
+
 function clamp(n, lo, hi) {
   return Math.max(lo, Math.min(hi, n));
+}
+
+function styleDaemonNoticeLines(lines) {
+  const raw = Array.isArray(lines) ? lines : [];
+  return raw.map((line) => {
+    const s = String(line ?? '');
+    if (s.toLowerCase().includes('sign-in required')) return yellowBold(s);
+    if (s.startsWith('Without daemon sign-in')) return yellowBold(s);
+    if (s.startsWith('press "a"')) return greenBold(s);
+    if (s.startsWith('action: press "a"')) return greenBold(s);
+    return s;
+  });
 }
 
 function mkPane(id, title, { visible = true, kind = 'log' } = {}) {
@@ -54,7 +94,7 @@ function getPaneHeightForLines(lines, { min = 3, max = 16 } = {}) {
   return clamp(n + 2, min, max);
 }
 
-function drawBox({ x, y, w, h, title, lines, scroll, active = false }) {
+function drawBox({ x, y, w, h, title, lines, scroll, active = false, allowAnsi = false }) {
   const top = y;
   const bottom = y + h - 1;
   const left = x;
@@ -94,29 +134,32 @@ function drawBox({ x, y, w, h, title, lines, scroll, active = false }) {
   const start = Math.max(0, lines.length - innerH - s);
   const slice = lines.slice(start, start + innerH);
   for (let i = 0; i < innerH; i++) {
-    const line = stripAnsi(slice[i] ?? '');
-    out.push({ row: top + 1 + i, col: left + 1, text: padRight(line, innerW) });
+    const raw = slice[i] ?? '';
+    const formatted = formatBoxLine({
+      text: raw,
+      width: innerW,
+      allowAnsi: Boolean(allowAnsi && supportsAnsi()),
+    });
+    out.push({ row: top + 1 + i, col: left + 1, text: formatted });
   }
 
   return { out, maxScroll };
 }
 
-function inferStackNameFromForwardedArgs(args) {
-  // Primary: stack-scoped usage: `hstack tui stack <subcmd> <name> ...`
-  const i = args.indexOf('stack');
-  if (i >= 0) {
-    const name = args[i + 2];
-    if (name && !name.startsWith('-')) return name;
+function resolveStacklessSummaryEnv({ rootDir }) {
+  const invokedCwd = getInvokedCwd(process.env);
+  const inferred = inferComponentFromCwd({
+    rootDir,
+    invokedCwd,
+    components: ['happier-ui', 'happier-cli', 'happier-server-light', 'happier-server'],
+  });
+  if (!inferred?.repoDir) {
+    return { env: process.env, invokedCwd };
   }
-  // Fallback: use current environment stack (or main).
-  return (process.env.HAPPIER_STACK_STACK ?? '').trim() || 'main';
-}
-
-function isStackStartLikeForwardedArgs(args) {
-  const i = args.indexOf('stack');
-  if (i < 0) return false;
-  const subcmd = (args[i + 1] ?? '').toString().trim();
-  return subcmd === 'dev' || subcmd === 'start';
+  return {
+    env: { ...process.env, HAPPIER_STACK_REPO_DIR: inferred.repoDir },
+    invokedCwd,
+  };
 }
 
 const readEnvObject = readEnvObjectFromFile;
@@ -223,8 +266,49 @@ function formatRepoRef({ rootDir, dir }) {
 }
 
 async function buildStackSummaryLines({ rootDir, stackName }) {
+  if (!stackName) {
+    const { env, invokedCwd } = resolveStacklessSummaryEnv({ rootDir });
+    const serverComponent =
+      getEnvValueAny(env, ['HAPPIER_STACK_SERVER_COMPONENT']) || 'happier-server-light';
+
+    const lines = [];
+    lines.push('stack: (stackless)');
+    lines.push(`server: ${serverComponent}`);
+    lines.push(`invokedCwd: ${invokedCwd}`);
+    lines.push('runtime: (stackless)');
+
+    lines.push('');
+    lines.push('ports:');
+    lines.push('  server: (stackless)');
+
+    lines.push('');
+    lines.push('pids:');
+
+    lines.push('');
+    lines.push('dirs:');
+    const repoRoot = getRepoDir(rootDir, env);
+    lines.push(`  ${padRight('repo', 16)} ${formatRepoRef({ rootDir, dir: repoRoot })}`);
+    const uiDir = getComponentDir(rootDir, 'happier-ui', env);
+    const cliDir = getComponentDir(rootDir, 'happier-cli', env);
+    const serverDir = getComponentDir(rootDir, serverComponent, env);
+    const relOrAbs = (absPath) => {
+      const p = resolve(String(absPath ?? '').trim());
+      const repo = resolve(String(repoRoot ?? '').trim());
+      if (!repo) return p;
+      const prefix = repo.endsWith(sep) ? repo : repo + sep;
+      return p === repo ? '.' : p.startsWith(prefix) ? p.slice(prefix.length) : p;
+    };
+    lines.push(`  ${padRight('ui', 16)} ${relOrAbs(uiDir)}`);
+    lines.push(`  ${padRight('cli', 16)} ${relOrAbs(cliDir)}`);
+    lines.push(`  ${padRight('server', 16)} ${relOrAbs(serverDir)}`);
+
+    return lines;
+  }
+
   const { envPath, baseDir } = resolveStackEnvPath(stackName);
-  const env = await readEnvObject(envPath);
+  const envFromFile = await readEnvObject(envPath);
+  const env = mergeEnvForTuiSummary({ stackEnvFromFile: envFromFile, processEnv: process.env });
+  const authScopeEnv = applyTuiStackAuthScopeEnv({ env, stackName });
   const runtimePath = getStackRuntimeStatePath(stackName);
   const runtime = await readStackRuntimeStateFile(runtimePath);
 
@@ -237,6 +321,15 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
   const expoDevClientEnabled = Boolean(expo?.devClientEnabled);
   const processes = runtime?.processes && typeof runtime.processes === 'object' ? runtime.processes : {};
 
+  const serverPort = Number(ports?.server);
+  const internalServerUrl =
+    Number.isFinite(serverPort) && serverPort > 0 ? `http://127.0.0.1:${serverPort}` : '';
+  const cliHomeDir = join(baseDir, 'cli');
+  const authed = internalServerUrl
+    ? hasStackCredentials({ cliHomeDir, serverUrl: internalServerUrl, env: authScopeEnv })
+    : hasStackCredentials({ cliHomeDir, serverUrl: '', env: authScopeEnv });
+  const startDaemon = parseStartDaemonFlagFromEnv(env);
+
   const lines = [];
   lines.push(`stack: ${stackName}`);
   lines.push(`server: ${serverComponent}`);
@@ -246,6 +339,19 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
   if (runtime?.startedAt) lines.push(`startedAt: ${runtime.startedAt}`);
   if (runtime?.updatedAt) lines.push(`updatedAt: ${runtime.updatedAt}`);
   if (runtime?.ownerPid) lines.push(`ownerPid: ${runtime.ownerPid}`);
+
+  // Make daemon auth issues obvious even if the user never focuses the daemon pane.
+  const notice = buildDaemonAuthNotice({
+    stackName,
+    internalServerUrl,
+    daemonPid: processes?.daemonPid ?? null,
+    authed,
+    startDaemon,
+  });
+  if (notice.show) {
+    lines.push('');
+    for (const l of styleDaemonNoticeLines(notice.summaryLines)) lines.push(l);
+  }
 
   lines.push('');
   lines.push('ports:');
@@ -291,6 +397,9 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
 }
 
 async function buildExpoQrPaneLines({ stackName }) {
+  if (!stackName) {
+    return { visible: false, lines: [] };
+  }
   const runtimePath = getStackRuntimeStatePath(stackName);
   const runtime = await readStackRuntimeStateFile(runtimePath);
   const expo = runtime?.expo && typeof runtime.expo === 'object' ? runtime.expo : {};
@@ -347,6 +456,9 @@ async function main() {
         '  p               : pause/resume rendering',
         '  ↑/↓, PgUp/PgDn   : scroll focused pane',
         '  Home/End        : jump bottom/top (focused pane)',
+        '  a               : run stack auth login (when stack context exists)',
+        '  A               : run stack auth login --force',
+        '  r               : restart stack processes (dev/start only)',
         '  q / Ctrl+C      : quit (sends SIGINT to child)',
         '',
         'panes (default):',
@@ -364,12 +476,13 @@ async function main() {
   const happysBin = join(rootDir, 'bin', 'hstack.mjs');
   const forwarded = argv;
 
-  const stackName = inferStackNameFromForwardedArgs(forwarded);
-  const { envPath: stackEnvPath } = resolveStackEnvPath(stackName);
+  const stackName = inferTuiStackName(forwarded, process.env);
+  const stackEnvPath = stackName ? resolveStackEnvPath(stackName).envPath : null;
+  const summaryTitle = stackName ? `stack summary (${stackName})` : 'session summary (stackless)';
 
   const panes = [
     mkPane('orch', 'orchestration', { visible: true, kind: 'log' }),
-    mkPane('summary', `stack summary (${stackName})`, { visible: true, kind: 'summary' }),
+    mkPane('summary', summaryTitle, { visible: true, kind: 'summary' }),
     // Data-only pane: we render QR inside the Expo pane (no separate box).
     mkPane('qr', 'expo QR', { visible: false, kind: 'qr' }),
     mkPane('local', 'local', { visible: true, kind: 'log' }),
@@ -414,6 +527,9 @@ async function main() {
   let focused = paneIndexById.get('local'); // default focus
   let paused = false;
   let renderScheduled = false;
+  let sawDaemonAuthRequired = false;
+  let daemonAutostartInProgress = false;
+  let daemonAutostartLastAttemptAtMs = 0;
 
   const wantsPty = process.platform !== 'win32' && (await commandExists('script', { cwd: rootDir }));
   // In TUI mode, we intentionally do not forward keyboard input to the child process (stdin is ignored),
@@ -425,54 +541,62 @@ async function main() {
     // Avoid Corepack mutating package.json automatically.
     COREPACK_ENABLE_AUTO_PIN: '0',
   };
-  const child = wantsPty
-    ? // Use a pseudo-terminal so tools like Expo print QR/status output that they hide in non-TTY mode.
-      // `script` is available by default on macOS (and common on Linux).
-      spawn('script', ['-q', '/dev/null', process.execPath, happysBin, ...forwarded], {
-        cwd: rootDir,
-        env: childEnv,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        detached: process.platform !== 'win32',
-      })
-    : spawn(process.execPath, [happysBin, ...forwarded], {
-        cwd: rootDir,
-        env: childEnv,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        detached: process.platform !== 'win32',
-      });
+  let child = null;
 
-  logOrch(
-    `spawned: ${wantsPty ? 'script -q /dev/null ' : ''}node ${happysBin} ${forwarded.join(' ')} (pid=${child.pid})`
-  );
+  const spawnForwardedChild = () => {
+    const proc = wantsPty
+      ? // Use a pseudo-terminal so tools like Expo print QR/status output that they hide in non-TTY mode.
+        // `script` is available by default on macOS (and common on Linux).
+        spawn('script', ['-q', '/dev/null', process.execPath, happysBin, ...forwarded], {
+          cwd: rootDir,
+          env: childEnv,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: process.platform !== 'win32',
+        })
+      : spawn(process.execPath, [happysBin, ...forwarded], {
+          cwd: rootDir,
+          env: childEnv,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: process.platform !== 'win32',
+        });
 
-  const buf = { out: '', err: '' };
-  const flush = (kind) => {
-    const key = kind === 'stderr' ? 'err' : 'out';
-    let b = buf[key];
-    while (true) {
-      const idx = nextLineBreakIndex(b);
-      if (idx < 0) break;
-      const line = b.slice(0, idx);
-      b = consumeLineBreak(b.slice(idx));
-      routeLine(line);
-    }
-    buf[key] = b;
+    logOrch(
+      `spawned: ${wantsPty ? 'script -q /dev/null ' : ''}node ${happysBin} ${forwarded.join(' ')} (pid=${proc.pid})`
+    );
+
+    const buf = { out: '', err: '' };
+    const flush = (kind) => {
+      const key = kind === 'stderr' ? 'err' : 'out';
+      let b = buf[key];
+      while (true) {
+        const idx = nextLineBreakIndex(b);
+        if (idx < 0) break;
+        const line = b.slice(0, idx);
+        b = consumeLineBreak(b.slice(idx));
+        routeLine(line);
+      }
+      buf[key] = b;
+    };
+
+    proc.stdout?.on('data', (d) => {
+      buf.out += d.toString();
+      flush('stdout');
+      scheduleRender();
+    });
+    proc.stderr?.on('data', (d) => {
+      buf.err += d.toString();
+      flush('stderr');
+      scheduleRender();
+    });
+    proc.on('exit', (code, sig) => {
+      logOrch(`child exited (code=${code}, sig=${sig ?? 'null'})`);
+      scheduleRender();
+    });
+
+    return proc;
   };
 
-  child.stdout?.on('data', (d) => {
-    buf.out += d.toString();
-    flush('stdout');
-    scheduleRender();
-  });
-  child.stderr?.on('data', (d) => {
-    buf.err += d.toString();
-    flush('stderr');
-    scheduleRender();
-  });
-  child.on('exit', (code, sig) => {
-    logOrch(`child exited (code=${code}, sig=${sig ?? 'null'})`);
-    scheduleRender();
-  });
+  child = spawnForwardedChild();
 
   async function refreshSummary() {
     const idx = paneIndexById.get('summary');
@@ -481,6 +605,115 @@ async function main() {
       panes[idx].lines = lines;
     } catch (e) {
       panes[idx].lines = [`summary error: ${e instanceof Error ? e.message : String(e)}`];
+    }
+
+    // Daemon pane (best-effort): if daemon isn't running because credentials are missing, show guidance.
+    try {
+      const daemonIdx = paneIndexById.get('daemon');
+      if (stackName) {
+        const runtimePath = getStackRuntimeStatePath(stackName);
+        const runtime = await readStackRuntimeStateFile(runtimePath);
+        const daemonPid = Number(runtime?.processes?.daemonPid);
+        if (!Number.isFinite(daemonPid) || daemonPid <= 1) {
+          const { baseDir } = resolveStackEnvPath(stackName);
+          const serverPort = Number(runtime?.ports?.server);
+          const internalServerUrl =
+            Number.isFinite(serverPort) && serverPort > 0 ? `http://127.0.0.1:${serverPort}` : '';
+          const cliHomeDir = join(baseDir, 'cli');
+          const authed = internalServerUrl
+            ? hasStackCredentials({
+                cliHomeDir,
+                serverUrl: internalServerUrl,
+                env: applyTuiStackAuthScopeEnv({ env: process.env, stackName }),
+              })
+            : hasStackCredentials({ cliHomeDir, serverUrl: '', env: applyTuiStackAuthScopeEnv({ env: process.env, stackName }) });
+
+          const startDaemon = parseStartDaemonFlagFromEnv(process.env);
+          const notice = buildDaemonAuthNotice({
+            stackName,
+            internalServerUrl,
+            daemonPid: null,
+            authed,
+            startDaemon,
+          });
+          if (notice.show) {
+            panes[daemonIdx].visible = true;
+            panes[daemonIdx].title = notice.paneTitle || panes[daemonIdx].title;
+            panes[daemonIdx].lines = styleDaemonNoticeLines(notice.paneLines || panes[daemonIdx].lines);
+            if (!sawDaemonAuthRequired && notice.paneTitle === 'daemon (SIGN-IN REQUIRED)') {
+              sawDaemonAuthRequired = true;
+              // One-shot nudge: focus the daemon pane so users see the message before opening the UI.
+              if (focused === paneIndexById.get('local')) {
+                focused = daemonIdx;
+              }
+            }
+          }
+
+          const isStartLike = isTuiStartLikeForwardedArgs(forwarded);
+          const minIntervalRaw = (process.env.HAPPIER_STACK_TUI_DAEMON_AUTOSTART_MIN_INTERVAL_MS ?? '').toString().trim();
+          const minIntervalMs = minIntervalRaw ? Number(minIntervalRaw) : 12_000;
+          const shouldAutostart = shouldAttemptTuiDaemonAutostart({
+            stackName,
+            isStartLike,
+            startDaemon,
+            internalServerUrl,
+            authed,
+            daemonPid: null,
+            inProgress: daemonAutostartInProgress,
+            lastAttemptAtMs: daemonAutostartLastAttemptAtMs,
+            nowMs: Date.now(),
+            minIntervalMs,
+          });
+
+          if (shouldAutostart) {
+            daemonAutostartInProgress = true;
+            daemonAutostartLastAttemptAtMs = Date.now();
+            panes[daemonIdx].visible = true;
+            panes[daemonIdx].title = 'daemon (STARTING)';
+            pushLine(panes[daemonIdx], 'starting daemon...');
+            scheduleRender();
+
+            void (async () => {
+              try {
+                // Best-effort: only start daemon once server is responding.
+                await waitForHappierHealthOk(internalServerUrl, { timeoutMs: 10_000, intervalMs: 250 });
+
+                const daemonArgs = buildTuiDaemonStartArgs({ happysBin, stackName });
+                await new Promise((resolvePromise) => {
+                  const proc = spawn(process.execPath, daemonArgs, {
+                    cwd: rootDir,
+                    env: process.env,
+                    stdio: ['ignore', 'pipe', 'pipe'],
+                  });
+
+                  const write = (chunk) => {
+                    const s = String(chunk ?? '');
+                    for (const line of s.split(/\r?\n/)) {
+                      if (!line.trim()) continue;
+                      pushLine(panes[daemonIdx], line);
+                    }
+                    scheduleRender();
+                  };
+
+                  proc.stdout?.on('data', write);
+                  proc.stderr?.on('data', write);
+                  proc.on('exit', () => resolvePromise());
+                  proc.on('error', () => resolvePromise());
+                });
+              } finally {
+                daemonAutostartInProgress = false;
+                try {
+                  await refreshSummary();
+                } catch {
+                  // ignore
+                }
+              }
+            })();
+          }
+        }
+      }
+    } catch {
+      // ignore
     }
 
     // QR pane: driven by runtime state (expo port) and rendered independently of logs.
@@ -498,11 +731,230 @@ async function main() {
     scheduleRender();
   }
 
-  const summaryTimer = setInterval(() => {
-    if (!paused) {
-      void refreshSummary();
+  let summaryTimer = null;
+  const startSummaryTimer = () => {
+    if (summaryTimer) clearInterval(summaryTimer);
+    summaryTimer = setInterval(() => {
+      if (!paused) {
+        void refreshSummary();
+      }
+    }, 1000);
+  };
+  startSummaryTimer();
+
+  async function runAuthLoginFromTui({ force = false } = {}) {
+    if (!stackName) {
+      logOrch('auth: no stack context; use `hstack stack auth <name> login`');
+      scheduleRender();
+      return;
     }
-  }, 1000);
+
+    const authArgs = buildTuiAuthArgs({ happysBin, stackName, force });
+
+    if (summaryTimer) clearInterval(summaryTimer);
+    paused = true;
+    process.stdout.write('\x1b[2J\x1b[H\x1b[?25h');
+
+    // In TUI-driven dev/start flows, the stack server is usually still starting when users press "a".
+    // Waiting here avoids triggering auth's "start the stack in background" prompt, which would
+    // try to start a second stack instance and confuse users.
+    const runtimePath = getStackRuntimeStatePath(stackName);
+    const waitTimeoutRaw = (process.env.HAPPIER_STACK_TUI_AUTH_WAIT_TIMEOUT_MS ?? '').toString().trim();
+    const waitTimeoutMs = waitTimeoutRaw ? Number(waitTimeoutRaw) : 45_000;
+    const deadline = Date.now() + (Number.isFinite(waitTimeoutMs) && waitTimeoutMs > 0 ? waitTimeoutMs : 45_000);
+    let internalServerUrl = '';
+    while (Date.now() < deadline) {
+      // eslint-disable-next-line no-await-in-loop
+      const runtime = await readStackRuntimeStateFile(runtimePath);
+      const port = Number(runtime?.ports?.server);
+      if (Number.isFinite(port) && port > 0) {
+        internalServerUrl = `http://127.0.0.1:${port}`;
+        break;
+      }
+      process.stdout.write('.');
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    process.stdout.write('\n');
+    if (!internalServerUrl) {
+      process.stdout.write(
+        `[auth] waiting for the stack server timed out (${Math.round((Number.isFinite(waitTimeoutMs) ? waitTimeoutMs : 45_000) / 1000)}s).\n` +
+          `[auth] The stack may still be starting. Check the "local" / "server" panes, then press "a" again.\n\n` +
+          `Press Enter to return to TUI...`
+      );
+      try {
+        process.stdin.setRawMode(false);
+      } catch {
+        // ignore
+      }
+      try {
+        process.stdin.resume();
+      } catch {
+        // ignore
+      }
+      await waitForEnter({ stdin: process.stdin, timeoutMs: 120_000 });
+      paused = false;
+      startSummaryTimer();
+      await refreshSummary();
+      scheduleRender();
+      return;
+    }
+
+    process.stdout.write('[auth] waiting for server health');
+    const healthOk = await waitForHappierHealthOk(internalServerUrl, { timeoutMs: 45_000, intervalMs: 300 });
+    process.stdout.write(healthOk ? ' ✓\n' : ' (timeout)\n');
+    if (!healthOk) {
+      process.stdout.write(
+        `[auth] server did not become healthy in time.\n` +
+          `[auth] Check the "local" / "server" panes, then press "a" again.\n\n` +
+          `Press Enter to return to TUI...`
+      );
+      try {
+        process.stdin.setRawMode(false);
+      } catch {
+        // ignore
+      }
+      try {
+        process.stdin.resume();
+      } catch {
+        // ignore
+      }
+      await waitForEnter({ stdin: process.stdin, timeoutMs: 120_000 });
+      paused = false;
+      startSummaryTimer();
+      await refreshSummary();
+      scheduleRender();
+      return;
+    }
+
+    const handoff = detachTuiStdinForChild({ stdin: process.stdin, onData });
+
+    const authResult = await new Promise((resolvePromise) => {
+      const proc = spawn(process.execPath, authArgs, { cwd: rootDir, env: process.env, stdio: 'inherit' });
+      proc.on('exit', (code, signal) => resolvePromise({ code, signal }));
+      proc.on('error', () => resolvePromise({ code: 1, signal: null }));
+    });
+
+    let hold = shouldHoldAfterAuthExit(authResult);
+
+    // If auth succeeded and daemon is expected, start it automatically so the UI immediately shows a machine.
+    if (!hold) {
+      try {
+        const { envPath } = resolveStackEnvPath(stackName);
+        const envFromFile = await readEnvObject(envPath).catch(() => ({}));
+        const startDaemon = parseStartDaemonFlagFromEnv({ ...process.env, ...envFromFile });
+
+        if (startDaemon) {
+          const runtime = await readStackRuntimeStateFile(runtimePath);
+          const daemonPid = Number(runtime?.processes?.daemonPid);
+          const daemonRunning = Number.isFinite(daemonPid) && daemonPid > 1;
+          if (!daemonRunning) {
+            process.stdout.write(`\n[daemon] starting...\n`);
+            const daemonArgs = buildTuiDaemonStartArgs({ happysBin, stackName });
+            const daemonRes = await new Promise((resolvePromise) => {
+              const proc = spawn(process.execPath, daemonArgs, { cwd: rootDir, env: process.env, stdio: 'inherit' });
+              proc.on('exit', (code, signal) => resolvePromise({ code, signal }));
+              proc.on('error', () => resolvePromise({ code: 1, signal: null }));
+            });
+            hold = hold || shouldHoldAfterAuthExit(daemonRes);
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    if (hold) {
+      try {
+        process.stdout.write(
+          `\n[auth] finished (code=${authResult?.code ?? 'null'}, sig=${authResult?.signal ?? 'null'}). Press Enter to return to TUI...`
+        );
+        // Re-enable stdin reads (in cooked mode) for the one-line prompt.
+        try {
+          process.stdin.setRawMode(false);
+        } catch {
+          // ignore
+        }
+        try {
+          process.stdin.resume();
+        } catch {
+          // ignore
+        }
+        await waitForEnter({ stdin: process.stdin, timeoutMs: 120_000 });
+      } catch {
+        // ignore
+      }
+    }
+
+    paused = false;
+    handoff.restoreForTui();
+
+    // Restart summary refresh.
+    startSummaryTimer();
+
+    await refreshSummary();
+    scheduleRender();
+  }
+
+  async function restartStackFromTui() {
+    if (!stackName || !isTuiRestartableForwardedArgs(forwarded)) {
+      logOrch('restart: only supported for dev/start commands with an active stack context');
+      scheduleRender();
+      return;
+    }
+
+    if (summaryTimer) clearInterval(summaryTimer);
+    paused = true;
+    const handoff = detachTuiStdinForChild({ stdin: process.stdin, onData });
+    process.stdout.write('\x1b[2J\x1b[H\x1b[?25h');
+    process.stdout.write(`[restart] stopping stack processes...\n`);
+
+    const childPid = Number(child?.pid);
+    if (child && child.exitCode == null && Number.isFinite(childPid) && childPid > 1) {
+      await terminateProcessGroup(childPid, { graceMs: 900 });
+    }
+
+    try {
+      await stopStackForTuiExit({ rootDir, stackName, json: false, noDocker: false });
+    } catch (e) {
+      process.stdout.write(`[restart] stop failed: ${e instanceof Error ? e.message : String(e)}\n`);
+      process.stdout.write(`Press Enter to return to TUI...`);
+      try {
+        process.stdin.setRawMode(false);
+      } catch {
+        // ignore
+      }
+      try {
+        process.stdin.resume();
+      } catch {
+        // ignore
+      }
+      await waitForEnter({ stdin: process.stdin, timeoutMs: 120_000 });
+      handoff.restoreForTui();
+      paused = false;
+      startSummaryTimer();
+      await refreshSummary();
+      scheduleRender();
+      return;
+    }
+
+    // Clear log panes so old output doesn't get mixed with the new run.
+    for (const p of panes) {
+      if (p.kind === 'summary') continue;
+      if (p.id === 'orch') continue;
+      p.lines = [];
+      p.scroll = 0;
+    }
+
+    process.stdout.write(`[restart] starting stack...\n\n`);
+    child = spawnForwardedChild();
+
+    paused = false;
+    handoff.restoreForTui();
+    startSummaryTimer();
+    await refreshSummary();
+    scheduleRender();
+  }
 
   function scheduleRender() {
     if (paused) return;
@@ -593,6 +1045,7 @@ async function main() {
         lines: pane.lines,
         scroll: pane.scroll,
         active: true,
+        allowAnsi: pane.id === 'summary' || pane.id === 'daemon',
       });
       pane.scroll = clamp(pane.scroll, 0, box.maxScroll);
       drawWrites.push(...box.out);
@@ -612,6 +1065,7 @@ async function main() {
         lines: leftPane.lines,
         scroll: leftPane.scroll,
         active: focused === paneIndexById.get('orch'),
+        allowAnsi: leftPane.id === 'summary' || leftPane.id === 'daemon',
       });
       leftPane.scroll = clamp(leftPane.scroll, 0, leftBox.maxScroll);
       drawWrites.push(...leftBox.out);
@@ -625,6 +1079,7 @@ async function main() {
         lines: rightPane.lines,
         scroll: rightPane.scroll,
         active: focused === (paneIndexById.get(rightPane.id) ?? focused),
+        allowAnsi: rightPane.id === 'summary' || rightPane.id === 'daemon',
       });
       rightPane.scroll = clamp(rightPane.scroll, 0, rightBox.maxScroll);
       drawWrites.push(...rightBox.out);
@@ -658,6 +1113,7 @@ async function main() {
           lines: pane.lines,
           scroll: pane.scroll,
           active: paneIndexById.get(pane.id) === focused,
+          allowAnsi: pane.id === 'summary' || pane.id === 'daemon',
         });
         pane.scroll = clamp(pane.scroll, 0, box.maxScroll);
         drawWrites.push(...box.out);
@@ -723,6 +1179,7 @@ async function main() {
                   lines: pane.lines,
                   scroll: pane.scroll,
                   active: paneIndexById.get(pane.id) === focused,
+                  allowAnsi: pane.id === 'summary' || pane.id === 'daemon',
                 });
                 pane.scroll = clamp(pane.scroll, 0, logBox.maxScroll);
                 drawWrites.push(...logBox.out);
@@ -736,6 +1193,7 @@ async function main() {
                   lines: qrLines,
                   scroll: 0,
                   active: paneIndexById.get(pane.id) === focused,
+                  allowAnsi: false,
                 });
                 drawWrites.push(...qrBox.out);
               } else {
@@ -749,6 +1207,7 @@ async function main() {
                   lines: pane.lines,
                   scroll: pane.scroll,
                   active: paneIndexById.get(pane.id) === focused,
+                  allowAnsi: pane.id === 'summary' || pane.id === 'daemon',
                 });
                 pane.scroll = clamp(pane.scroll, 0, box.maxScroll);
                 drawWrites.push(...box.out);
@@ -763,6 +1222,7 @@ async function main() {
                 lines: pane.lines,
                 scroll: pane.scroll,
                 active: paneIndexById.get(pane.id) === focused,
+                allowAnsi: pane.id === 'summary' || pane.id === 'daemon',
               });
               pane.scroll = clamp(pane.scroll, 0, box.maxScroll);
               drawWrites.push(...box.out);
@@ -777,6 +1237,7 @@ async function main() {
               lines: pane.lines,
               scroll: pane.scroll,
               active: paneIndexById.get(pane.id) === focused,
+              allowAnsi: pane.id === 'summary' || pane.id === 'daemon',
             });
             pane.scroll = clamp(pane.scroll, 0, box.maxScroll);
             drawWrites.push(...box.out);
@@ -793,8 +1254,20 @@ async function main() {
       process.stdout.write(`\x1b[${w.row + 1};${w.col + 1}H${w.text}`);
     }
 
-    const footer =
-      'tab:next  shift+tab:prev  1..9:jump  v:layout  m:toggle-pane  c:clear  p:pause  arrows:scroll  q/Ctrl+C:quit';
+    const footerParts = [
+      'tab:next',
+      'shift+tab:prev',
+      '1..9:jump',
+      'v:layout',
+      'm:toggle-pane',
+      'c:clear',
+      'p:pause',
+      'arrows:scroll',
+      stackName ? 'a/A:auth' : null,
+      stackName && isTuiRestartableForwardedArgs(forwarded) ? 'r:restart' : null,
+      'q/Ctrl+C:quit',
+    ].filter(Boolean);
+    const footer = footerParts.join('  ');
     process.stdout.write(`\x1b[${footerY + 1};1H` + padRight(footer, cols));
     process.stdout.write('\x1b[?25h');
   }
@@ -804,7 +1277,7 @@ async function main() {
     if (exiting) return;
     exiting = true;
 
-    clearInterval(summaryTimer);
+    if (summaryTimer) clearInterval(summaryTimer);
     try {
       process.stdin.setRawMode(false);
     } catch {
@@ -822,10 +1295,10 @@ async function main() {
       await terminateProcessGroup(childPid, { graceMs: 900 });
     }
 
-    // Best-effort cleanup: when the TUI runs a long-lived `stack dev/start` command, ensure all
+    // Best-effort cleanup: when the TUI runs a long-lived `dev/start` command, ensure all
     // stack-owned infra processes are stopped (server/expo/daemon) even if the child exits early.
     let cleanupError = null;
-    if (isStackStartLikeForwardedArgs(forwarded)) {
+    if (stackName && isTuiStartLikeForwardedArgs(forwarded)) {
       try {
         await stopStackForTuiExit({ rootDir, stackName, json: false, noDocker: false });
       } catch (e) {
@@ -856,10 +1329,22 @@ async function main() {
 
   process.stdin.setRawMode(true);
   process.stdin.resume();
-  process.stdin.on('data', (d) => {
+  const onData = (d) => {
     const s = d.toString('utf-8');
     if (s === '\u0003' || s === 'q') {
       shutdown();
+      return;
+    }
+    if (s === 'a') {
+      void runAuthLoginFromTui({ force: false });
+      return;
+    }
+    if (s === 'A') {
+      void runAuthLoginFromTui({ force: true });
+      return;
+    }
+    if (s === 'r') {
+      void restartStackFromTui();
       return;
     }
     if (s === '\t') return focusNext(+1);
@@ -900,7 +1385,8 @@ async function main() {
       scheduleRender();
       return;
     }
-  });
+  };
+  process.stdin.on('data', onData);
 
   await refreshSummary();
   render();

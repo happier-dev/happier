@@ -44,8 +44,10 @@ test('repo-local wrapper dry-run prints hstack invocation with repo-local env', 
 
   assert.equal(data.env.HAPPIER_STACK_CLI_ROOT_DISABLE, '1');
   assert.equal(data.env.HAPPIER_STACK_REPO_DIR, repoRoot);
-  assert.equal(data.env.HAPPIER_STACK_STACK, '');
-  assert.equal(data.env.HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD, '1');
+  assert.ok(String(data.env.HAPPIER_STACK_STACK ?? '').trim() !== '', 'expected stackless wrapper to scope to a non-main stack name');
+  assert.ok(String(data.env.HAPPIER_STACK_ENV_FILE ?? '').trim() !== '', 'expected wrapper to set a stack env file path for stack-scoped commands');
+  assert.ok(String(data.env.HAPPIER_STACK_CLI_HOME_DIR ?? '').trim() !== '', 'expected wrapper to set a stack-scoped CLI home dir');
+  assert.ok(String(data.env.HAPPIER_ACTIVE_SERVER_ID ?? '').trim() !== '', 'expected wrapper to set a stack-scoped active server id');
   assert.ok(String(data.env.HAPPIER_STACK_INVOKED_CWD ?? '').trim() !== '');
 });
 
@@ -129,4 +131,25 @@ test('repo-local wrapper forwards --help when a subcommand is provided', async (
   assert.equal(data.ok, true);
   assert.equal(data.args[1], 'auth');
   assert.equal(data.args[2], '--help');
+});
+
+test('repo-local wrapper maps `stop` to stack stop for the repo-local stack', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir); // apps/stack
+  const repoRoot = dirname(dirname(packageRoot)); // repo root
+
+  const res = await runNode(
+    [join(packageRoot, 'scripts', 'repo_local.mjs'), 'stop', '--dry-run'],
+    {
+      cwd: repoRoot,
+      env: process.env,
+    }
+  );
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const data = JSON.parse(res.stdout);
+  assert.equal(data.ok, true);
+  assert.equal(data.args[1], 'stack');
+  assert.equal(data.args[2], 'stop');
+  assert.ok(String(data.args[3] ?? '').trim() !== '');
 });

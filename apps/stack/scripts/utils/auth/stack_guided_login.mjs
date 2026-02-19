@@ -5,7 +5,6 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import { run, runCapture } from '../proc/proc.mjs';
 import { preferStackLocalhostUrl } from '../paths/localhost_host.mjs';
-import { guidedStackWebSignupThenLogin } from './guided_stack_web_login.mjs';
 import { getComponentDir, resolveStackEnvPath } from '../paths/paths.mjs';
 import { getExpoStatePaths, isStateProcessRunning, looksLikeExpoMetro } from '../expo/expo.mjs';
 import { resolveLocalhostHost } from '../paths/localhost_host.mjs';
@@ -409,11 +408,6 @@ export async function guidedStackAuthLoginNow({ rootDir, stackName, env = proces
   // Surface common "blank page" issues (Metro resolver errors) even in quiet mode.
   if (!skipBundleCheck) {
     await assertExpoWebappBundlesOrThrow({ rootDir, stackName: name, webappUrl: resolved });
-  }
-
-  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
-  if (interactive) {
-    await guidedStackWebSignupThenLogin({ webappUrl: resolved, stackName: name });
   }
 
   const preparedEnv = await prepareCoreAuthEnv({ stackName: name, webappUrl: resolved, env });

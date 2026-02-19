@@ -3,11 +3,12 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { getComponentDir } from '../paths/paths.mjs';
-import { isPidAlive, readPidState } from '../expo/expo.mjs';
+import { isPidAlive, killPid, readPidState } from '../expo/expo.mjs';
 import { stopLocalDaemon } from '../../daemon.mjs';
 import { stopHappyServerManagedInfra } from '../server/infra/happy_server_infra.mjs';
-import { deleteStackRuntimeStateFile, getStackRuntimeStatePath, readStackRuntimeStateFile } from './runtime_state.mjs';
-import { killPidOwnedByStack, killProcessGroupOwnedByStack, listPidsWithEnvNeedles } from '../proc/ownership.mjs';
+import { deleteStackRuntimeStateFile, readStackRuntimeStateFile } from './runtime_state.mjs';
+import { getProcessGroupId, getPsEnvLine, killPidOwnedByStack, killProcessGroupOwnedByStack, listPidsWithEnvNeedles } from '../proc/ownership.mjs';
+import { terminateProcessGroup } from '../proc/terminate.mjs';
 import { coercePort } from '../server/port.mjs';
 import { resolvePreferredStackDaemonStatePaths } from '../auth/credentials_paths.mjs';
 
@@ -155,7 +156,7 @@ export async function stopStackWithEnv({
 
   // Preferred: stop stack-started processes (by PID) recorded in stack.runtime.json.
   // This is safer than killing whatever happens to listen on a port, and doesn't rely on the runner's shutdown handler.
-  const runtimeStatePath = getStackRuntimeStatePath(stackName);
+  const runtimeStatePath = join(baseDir, 'stack.runtime.json');
   const runtimeState = await readStackRuntimeStateFile(runtimeStatePath);
   const runnerPid = Number(runtimeState?.ownerPid);
   const processes = runtimeState?.processes && typeof runtimeState.processes === 'object' ? runtimeState.processes : {};
@@ -170,6 +171,32 @@ export async function stopStackWithEnv({
     const res = await killProcessGroupOwnedByStack(pid, { stackName, envPath, cliHomeDir, label: key, json });
     if (res.killed) {
       killedProcessPids.push({ key, pid, reason: res.reason, pgid: res.pgid ?? null });
+      continue;
+    }
+
+    // Back-compat for earlier "stackless" runs:
+    // Some repo-local runs started infra without HAPPIER_STACK_ENV_FILE/HAPPIER_HOME_DIR markers.
+    // For ephemeral stacks, allow stopping runtime-recorded PIDs when the process environment still
+    // proves the stack name, to avoid leaving orphaned servers/expo after quitting the TUI.
+    if (runtimeState?.ephemeral && res.reason === 'not_owned') {
+      // eslint-disable-next-line no-await-in-loop
+      const line = await getPsEnvLine(pid);
+      if (line && line.includes(`HAPPIER_STACK_STACK=${stackName}`)) {
+        // eslint-disable-next-line no-await-in-loop
+        const pgid = await getProcessGroupId(pid);
+        if (pgid) {
+          // eslint-disable-next-line no-await-in-loop
+          const terminated = await terminateProcessGroup(pgid, { graceMs: 800, signal: 'SIGTERM' });
+          if (terminated.ok) {
+            killedProcessPids.push({ key, pid, reason: 'killed_ephemeral_runtime_pgid', pgid });
+            continue;
+          }
+        }
+        // Fallback: kill the pid directly.
+        // eslint-disable-next-line no-await-in-loop
+        await killPid(pid);
+        killedProcessPids.push({ key, pid, reason: 'killed_ephemeral_runtime_pid_only', pgid: pgid ?? null });
+      }
     }
   }
   actions.runner = { stopped: false, pid: Number.isFinite(runnerPid) ? runnerPid : null, reason: runtimeState ? 'not_running_or_not_owned' : 'missing_state' };
@@ -185,8 +212,13 @@ export async function stopStackWithEnv({
   }
 
   try {
-    await stopLocalDaemon({ cliBin, internalServerUrl, cliHomeDir });
-    actions.daemonStopped = true;
+    // If happier-cli isn't built yet (common in repo checkouts), running `happier.mjs` can fail noisily.
+    // Stopping stack infra should still work without the daemon stop step.
+    const cliDistIndex = join(cliDir, 'dist', 'index.mjs');
+    if (existsSync(cliDistIndex)) {
+      await stopLocalDaemon({ cliBin, internalServerUrl, cliHomeDir });
+      actions.daemonStopped = true;
+    }
   } catch (e) {
     actions.errors.push({ step: 'daemon', error: e instanceof Error ? e.message : String(e) });
   }
@@ -201,8 +233,15 @@ export async function stopStackWithEnv({
     actions.runner = { stopped: res.killed, pid: runnerPid, reason: res.reason };
   }
 
-  // Only delete runtime state if the runner is confirmed stopped (or not running).
-  if (!isPidAlive(runnerPid)) {
+  // Only delete runtime state if all runtime-tracked pids are confirmed stopped.
+  // This avoids losing the only reliable link between a stack and its infra pids.
+  const runtimeTrackedPids = [
+    runnerPid,
+    ...Object.values(processes).map((p) => Number(p)),
+  ]
+    .filter((p) => Number.isFinite(p) && p > 1);
+  const anyRuntimePidAlive = runtimeTrackedPids.some((p) => isPidAlive(p));
+  if (!anyRuntimePidAlive) {
     await deleteStackRuntimeStateFile(runtimeStatePath);
   }
 
@@ -269,6 +308,20 @@ export async function stopStackWithEnv({
       .filter((pid) => Number.isFinite(pid) && pid > 1);
 
     const swept = [];
+    const sweepPidDirect = async (pid, reason) => {
+      const pgid = await getProcessGroupId(pid);
+      if (pgid) {
+        const terminated = await terminateProcessGroup(pgid, { graceMs: 800, signal: 'SIGTERM' });
+        if (terminated.ok) {
+          swept.push({ pid, reason, pgid });
+          return true;
+        }
+      }
+      await killPid(pid);
+      swept.push({ pid, reason, pgid: pgid ?? null });
+      return true;
+    };
+
     for (const pid of Array.from(new Set(pids))) {
       if (!isPidAlive(pid)) continue;
       // eslint-disable-next-line no-await-in-loop
@@ -277,6 +330,27 @@ export async function stopStackWithEnv({
         swept.push({ pid, reason: res.reason, pgid: res.pgid ?? null });
       }
     }
+
+    // Repo-local fallback: older stackless runs may have omitted HAPPIER_STACK_ENV_FILE/HAPPIER_STACK_PROCESS_KIND markers.
+    // When runtime state is missing/stale, allow sweeping by the (stackName + repoDir) env needles for repo-local stacks.
+    // This is intentionally restricted to repo-local stack names to avoid killing unrelated long-lived processes.
+    const repoDir = String(env.HAPPIER_STACK_REPO_DIR ?? '').trim();
+    const isRepoLocalStack = stackName && stackName !== 'main' && String(stackName).startsWith('repo-');
+    if (autoSweepResolved && shouldAutoSweep && swept.length === 0 && isRepoLocalStack && repoDir) {
+      const repoLocal = await listPidsWithEnvNeedles([
+        `HAPPIER_STACK_STACK=${stackName}`,
+        `HAPPIER_STACK_REPO_DIR=${repoDir}`,
+      ]);
+      const repoLocalPids = repoLocal
+        .filter((pid) => pid !== process.pid)
+        .filter((pid) => Number.isFinite(pid) && pid > 1);
+      for (const pid of Array.from(new Set(repoLocalPids))) {
+        if (!isPidAlive(pid)) continue;
+        // eslint-disable-next-line no-await-in-loop
+        await sweepPidDirect(pid, 'killed_repo_local_stackless_sweep');
+      }
+    }
+
     actions.sweep = { pids: swept, auto: shouldAutoSweep && !sweepOwned };
   }
 
