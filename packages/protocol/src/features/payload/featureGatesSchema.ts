@@ -11,13 +11,18 @@ const VoiceGateSchema = z.object({
 
 export const FeatureGatesSchema = z.object({
   bugReports: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+  attachments: z
+    .object({
+      uploads: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+    })
+    .optional()
+    .default({ uploads: DEFAULT_GATE_DISABLED }),
   automations: z
     .object({
       enabled: z.boolean(),
-      existingSessionTarget: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
     })
     .optional()
-    .default({ enabled: false, existingSessionTarget: DEFAULT_GATE_DISABLED }),
+    .default({ enabled: false }),
   connectedServices: z
     .object({
       enabled: z.boolean(),

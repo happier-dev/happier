@@ -25,6 +25,11 @@ describe('embedded feature build policy', () => {
     expect(evaluateFeatureBuildPolicy(policy, 'updates.ota')).toBe('allow');
   });
 
+  it('allows attachments uploads in the production embedded policy', () => {
+    const policy = resolveEmbeddedFeatureBuildPolicy('production');
+    expect(evaluateFeatureBuildPolicy(policy, 'attachments.uploads')).toBe('allow');
+  });
+
   it('merges env policy by union and preserves deny precedence', () => {
     const base = resolveEmbeddedFeatureBuildPolicy('production');
     const merged = mergeFeatureBuildPolicies(base, { allow: ['voice'], deny: ['voice'] });

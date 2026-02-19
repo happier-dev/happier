@@ -18,6 +18,7 @@ export const RPC_METHODS = {
   GET_DIRECTORY_TREE: 'getDirectoryTree',
   RIPGREP: 'ripgrep',
   DIFFTASTIC: 'difftastic',
+  SESSION_LOG_TAIL: 'session.log.tail',
   SCM_BACKEND_DESCRIBE: 'scm.backend.describe',
   SCM_STATUS_SNAPSHOT: 'scm.status.snapshot',
   SCM_DIFF_FILE: 'scm.diff.file',

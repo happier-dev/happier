@@ -31,6 +31,10 @@ describe('feature catalog', () => {
     expect(isFeatureId('updates.ota')).toBe(true);
   });
 
+  it('includes attachments uploads feature id', () => {
+    expect(isFeatureId('attachments.uploads')).toBe(true);
+  });
+
   it('includes sharing feature ids', () => {
     expect(isFeatureId('sharing.session')).toBe(true);
     expect(isFeatureId('sharing.public')).toBe(true);

@@ -112,6 +112,8 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
     metadata: VersionedStringSchema.optional(),
     daemonState: VersionedStringSchema.optional(),
     activeAt: TimestampMsSchema.optional(),
+    active: z.boolean().optional(),
+    revokedAt: TimestampMsSchema.nullable().optional(),
   }).passthrough(),
   z.object({
     t: z.literal('new-artifact'),

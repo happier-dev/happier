@@ -150,11 +150,18 @@ export {
 
 export { SENT_FROM_VALUES, SentFromSchema, type SentFrom } from './sentFrom.js';
 export {
+  AuthStatusEnvelopeSchema,
+  AuthStatusResultSchema,
   SessionControlEnvelopeBaseSchema,
   SessionControlEnvelopeErrorSchema,
   SessionControlEnvelopeSuccessSchema,
   SessionControlErrorCodeSchema,
   SessionControlErrorSchema,
+  SessionActionsDescribeEnvelopeSchema,
+  SessionActionsDescribeResultSchema,
+  SessionActionsListEnvelopeSchema,
+  SessionActionsListResultSchema,
+  SessionControlActionSpecSummarySchema,
   SessionCreateResultSchema,
   SessionCreateEnvelopeSchema,
   SessionHistoryEnvelopeSchema,
@@ -173,6 +180,12 @@ export {
   SessionRunStartResultSchema,
   SessionRunStopEnvelopeSchema,
   SessionRunStopResultSchema,
+  SessionRunStreamCancelEnvelopeSchema,
+  SessionRunStreamCancelResultSchema,
+  SessionRunStreamReadEnvelopeSchema,
+  SessionRunStreamReadResultSchema,
+  SessionRunStreamStartEnvelopeSchema,
+  SessionRunStreamStartResultSchema,
   SessionRunWaitEnvelopeSchema,
   SessionRunWaitResultSchema,
   SessionSendEnvelopeSchema,
@@ -184,6 +197,10 @@ export {
   SessionSummarySchema,
   SessionWaitEnvelopeSchema,
   SessionWaitResultSchema,
+  type AuthStatusResult,
+  type SessionActionsDescribeResult,
+  type SessionActionsListResult,
+  type SessionControlActionSpecSummary,
   type SessionControlErrorCode,
   type SessionControlError,
   type SessionControlEnvelopeBase,
@@ -198,6 +215,9 @@ export {
   type SessionRunSendResult,
   type SessionRunStartResult,
   type SessionRunStopResult,
+  type SessionRunStreamCancelResult,
+  type SessionRunStreamReadResult,
+  type SessionRunStreamStartResult,
   type SessionRunWaitResult,
   type SessionSendResult,
   type SessionStatusResult,
@@ -206,14 +226,29 @@ export {
   type SessionWaitResult,
 } from './sessionControl/contract.js';
 export {
+  ServerAddEnvelopeSchema,
+  ServerAddResultSchema,
   ServerCurrentEnvelopeSchema,
   ServerCurrentResultSchema,
   ServerListEnvelopeSchema,
   ServerListResultSchema,
   ServerProfileSummarySchema,
+  ServerRemoveEnvelopeSchema,
+  ServerRemoveResultSchema,
+  ServerSetEnvelopeSchema,
+  ServerSetResultSchema,
+  ServerTestEnvelopeSchema,
+  ServerTestResultSchema,
+  ServerUseEnvelopeSchema,
+  ServerUseResultSchema,
+  type ServerAddResult,
   type ServerCurrentResult,
   type ServerListResult,
   type ServerProfileSummary,
+  type ServerRemoveResult,
+  type ServerSetResult,
+  type ServerTestResult,
+  type ServerUseResult,
 } from './serverControl/contract.js';
 export {
   SCM_COMMIT_MESSAGE_MAX_LENGTH,
@@ -647,6 +682,12 @@ export {
 } from './account/settings/index.js';
 
 export { ProfileBadgeSchema, type ProfileBadge } from './common/profileBadge.js';
+export { AsyncTtlCache, type AsyncTtlCacheEntry } from './common/asyncTtlCache.js';
+export {
+  ProbedResourceCache,
+  type ProbedResourcePhase,
+  type ProbedResourceSnapshot,
+} from './common/probedResourceCache.js';
 
 // Auth provider registry + shared auth error codes
 export { AuthProviderIdSchema, type AuthProviderId } from './auth/providers.js';

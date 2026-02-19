@@ -15,12 +15,6 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: [],
     representation: 'server',
   },
-  'automations.existingSessionTarget': {
-    description: 'Automation target support for existing session execution.',
-    defaultFailMode: 'fail_closed',
-    dependencies: ['automations'],
-    representation: 'server',
-  },
   'execution.runs': {
     description: 'Execution runs / sub-agent orchestration surfaces and runtime.',
     defaultFailMode: 'fail_closed',
@@ -59,6 +53,12 @@ const FEATURE_CATALOG_DEFINITION = {
   },
   'updates.ota': {
     description: 'Expo over-the-air update checks and apply flows.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'server',
+  },
+  'attachments.uploads': {
+    description: 'Client attachment uploads (files/images) sent to session runners for LLM access.',
     defaultFailMode: 'fail_closed',
     dependencies: [],
     representation: 'server',

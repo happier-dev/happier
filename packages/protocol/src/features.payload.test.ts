@@ -15,10 +15,11 @@ describe('FeaturesResponseSchema', () => {
 
     expect(parsed.features.bugReports.enabled).toBe(false);
     expect(parsed.features.automations.enabled).toBe(false);
-    expect(parsed.features.automations.existingSessionTarget.enabled).toBe(false);
+    expect('existingSessionTarget' in (parsed.features.automations as any)).toBe(false);
     expect(parsed.features.connectedServices.enabled).toBe(false);
     expect(parsed.features.connectedServices.quotas.enabled).toBe(false);
     expect(parsed.features.updates.ota.enabled).toBe(false);
+    expect(parsed.features.attachments.uploads.enabled).toBe(false);
     expect(parsed.features.sharing.session.enabled).toBe(false);
     expect(parsed.features.voice.enabled).toBe(false);
     expect(parsed.features.voice.happierVoice.enabled).toBe(false);

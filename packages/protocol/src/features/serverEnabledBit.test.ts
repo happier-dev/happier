@@ -9,6 +9,7 @@ describe('server enabled bit helpers', () => {
   it('derives the enabled-bit path from FeatureId', () => {
     expect(resolveServerEnabledBitPath('social.friends')).toEqual(['features', 'social', 'friends', 'enabled']);
     expect(resolveServerEnabledBitPath('updates.ota')).toEqual(['features', 'updates', 'ota', 'enabled']);
+    expect(resolveServerEnabledBitPath('attachments.uploads')).toEqual(['features', 'attachments', 'uploads', 'enabled']);
   });
 
   it('reads enabled bits for server-represented features and returns null for non-represented features', () => {
