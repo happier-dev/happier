@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { cpSync, existsSync, realpathSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -23,13 +23,25 @@ const repoRoot = findRepoRoot(__dirname);
 
 export function resolveTscBin({ exists } = {}) {
   const existsImpl = exists ?? existsSync;
-  const binName = process.platform === 'win32' ? 'tsc.cmd' : 'tsc';
-  const candidates = [
-    // Monorepo: TypeScript is installed at the workspace root.
-    resolve(repoRoot, 'node_modules', '.bin', binName),
-    // Fallback: older layouts installed it under cli/.
-    resolve(repoRoot, 'cli', 'node_modules', '.bin', binName),
-  ];
+  const isWindows = process.platform === 'win32';
+  const binName = isWindows ? 'tsc.cmd' : 'tsc';
+  const candidates = isWindows
+    ? [
+        // Windows: prefer cmd shims when present.
+        resolve(repoRoot, 'node_modules', '.bin', binName),
+        resolve(repoRoot, 'cli', 'node_modules', '.bin', binName),
+        // Fallback: allow executing the JS entry via Node if shims are missing.
+        resolve(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc'),
+        resolve(repoRoot, 'cli', 'node_modules', 'typescript', 'bin', 'tsc'),
+      ]
+    : [
+        // Prefer the real TypeScript entrypoint over node_modules/.bin symlinks.
+        // On macOS, workspace-hoisted `.bin/*` symlinks can intermittently fail with ENOENT.
+        resolve(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc'),
+        resolve(repoRoot, 'cli', 'node_modules', 'typescript', 'bin', 'tsc'),
+        resolve(repoRoot, 'node_modules', '.bin', binName),
+        resolve(repoRoot, 'cli', 'node_modules', '.bin', binName),
+      ];
 
   for (const candidate of candidates) {
     if (existsImpl(candidate)) return candidate;
@@ -49,12 +61,32 @@ export function runTsc(tsconfigPath, opts) {
       const command = `"${tsc}" -p "${tsconfigPath}"`;
       exec('cmd.exe', ['/d', '/s', '/c', command], { stdio: 'inherit' });
     } else {
-      exec(tsc, ['-p', tsconfigPath], { stdio: 'inherit' });
+      // Execute tsc via Node to avoid `.bin/*` symlink spawn issues and shebang portability quirks.
+      exec(process.execPath, [tsc, '-p', tsconfigPath], { stdio: 'inherit' });
     }
   } catch (error) {
     const suffix = tsconfigPath ? ` (${tsconfigPath})` : '';
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to compile shared workspace deps${suffix}: ${message}`);
+  }
+}
+
+export function syncBundledWorkspaceDist(opts = {}) {
+  const repoRootArg = opts.repoRoot;
+  const repoRoot = typeof repoRootArg === 'string' && repoRootArg.trim() ? repoRootArg : findRepoRoot(__dirname);
+  const exists = opts.existsSync ?? existsSync;
+  const cp = opts.cpSync ?? cpSync;
+  const packages = Array.isArray(opts.packages) && opts.packages.length > 0 ? opts.packages : ['agents', 'cli-common', 'protocol'];
+
+  for (const pkg of packages) {
+    const srcDist = resolve(repoRoot, 'packages', pkg, 'dist');
+    const destDist = resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', pkg, 'dist');
+    if (!exists(destDist)) continue;
+    try {
+      cp(srcDist, destDist, { recursive: true, force: true });
+    } catch {
+      // Best-effort: bundled deps may be missing or readonly.
+    }
   }
 }
 
@@ -67,6 +99,10 @@ export function main() {
   if (!existsSync(protocolDist)) {
     throw new Error(`Expected @happier-dev/protocol build output missing: ${protocolDist}`);
   }
+
+  // If the CLI currently has bundled workspace deps under apps/cli/node_modules,
+  // keep their dist outputs in sync so local builds/tests do not consume stale artifacts.
+  syncBundledWorkspaceDist({ repoRoot });
 }
 
 const invokedAsMain = (() => {

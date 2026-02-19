@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { sep } from 'node:path';
 
-import { resolveTscBin, runTsc } from '../buildSharedDeps.mjs';
+import { resolveTscBin, runTsc, syncBundledWorkspaceDist } from '../buildSharedDeps.mjs';
 
 describe('buildSharedDeps', () => {
   it('surfaces which tsconfig failed when compilation throws', () => {
@@ -35,11 +35,43 @@ describe('buildSharedDeps', () => {
   it('prefers the workspace root tsc binary when present', () => {
     const bin = resolveTscBin({
       exists: (candidate: string) =>
-        candidate.includes(`${sep}node_modules${sep}.bin${sep}`) &&
+        candidate.includes(`${sep}node_modules${sep}typescript${sep}bin${sep}`) &&
         !candidate.includes(`${sep}cli${sep}node_modules${sep}`),
     });
 
     expect(bin).toMatch(/node_modules/);
     expect(bin).not.toMatch(/cli[\\/]+node_modules/);
+  });
+
+  it('executes tsc via node to avoid .bin symlink ENOENT issues', () => {
+    const execFileSync = vi.fn(() => undefined);
+
+    runTsc('/repo/packages/protocol/tsconfig.json', {
+      execFileSync,
+      tscBin: '/repo/node_modules/typescript/bin/tsc',
+      platform: 'darwin',
+    });
+
+    const [cmd, args] = execFileSync.mock.calls[0] ?? [];
+    expect(cmd).toBe(process.execPath);
+    expect(args).toEqual(['/repo/node_modules/typescript/bin/tsc', '-p', '/repo/packages/protocol/tsconfig.json']);
+  });
+
+  it('syncs workspace dist outputs into bundled deps when present', () => {
+    const cpSync = vi.fn(() => undefined);
+    const existsSync = vi.fn((p: any) => String(p).includes('/apps/cli/node_modules/@happier-dev/protocol/dist'));
+
+    syncBundledWorkspaceDist({
+      repoRoot: '/repo',
+      cpSync,
+      existsSync,
+      packages: ['protocol'],
+    });
+
+    expect(cpSync).toHaveBeenCalledTimes(1);
+    const [src, dest, opts] = cpSync.mock.calls[0] ?? [];
+    expect(src).toBe('/repo/packages/protocol/dist');
+    expect(dest).toBe('/repo/apps/cli/node_modules/@happier-dev/protocol/dist');
+    expect(opts).toMatchObject({ recursive: true, force: true });
   });
 });
