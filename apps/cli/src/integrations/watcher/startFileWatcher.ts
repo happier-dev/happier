@@ -20,30 +20,39 @@ export function startFileWatcher(file: string, onFileChange: (file: string) => v
                     if (e?.code === 'ENOENT') {
                         logger.debug(`[FILE_WATCHER] Waiting for file to exist: ${file}`);
                         const dirWatcher = watch(parentDir, { persistent: true, signal: abortController.signal });
-                        for await (const event of dirWatcher) {
-                            if (abortController.signal.aborted) {
-                                return;
-                            }
-                            const name = typeof (event as any)?.filename === 'string' ? String((event as any).filename) : null;
-                            if (name && name !== targetName) {
-                                continue;
-                            }
-                            try {
-                                await stat(file);
-                                logger.debug(`[FILE_WATCHER] File appeared: ${file}`);
-                                onFileChange(file);
-                                break;
-                            } catch (err: any) {
-                                if (err?.code === 'ENOENT') {
+                        // Close the race where the file is created between the initial stat() and the directory watcher startup.
+                        try {
+                            await stat(file);
+                        } catch (err: any) {
+                            if (err?.code !== 'ENOENT') throw err;
+                            for await (const event of dirWatcher) {
+                                if (abortController.signal.aborted) {
+                                    return;
+                                }
+                                const name = typeof (event as any)?.filename === 'string' ? String((event as any).filename) : null;
+                                if (name && name !== targetName) {
                                     continue;
                                 }
-                                throw err;
+                                try {
+                                    await stat(file);
+                                    logger.debug(`[FILE_WATCHER] File appeared: ${file}`);
+                                    break;
+                                } catch (nextErr: any) {
+                                    if (nextErr?.code === 'ENOENT') {
+                                        continue;
+                                    }
+                                    throw nextErr;
+                                }
                             }
                         }
                     } else {
                         throw e;
                     }
                 }
+
+                // Emit an initial callback once we know the file exists, even if it existed before we started watching.
+                // This makes "watch + read once" consumers race-free.
+                onFileChange(file);
 
                 logger.debug(`[FILE_WATCHER] Starting watcher for ${file}`);
                 const watcher = watch(file, { persistent: true, signal: abortController.signal });
