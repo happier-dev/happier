@@ -4,6 +4,7 @@
   "scripts": {
     "build:packages": "yarn workspace @happier-dev/protocol build && yarn workspace @happier-dev/agents build",
     "dev": "node ./apps/stack/scripts/repo_local.mjs dev",
+    "stop": "node ./apps/stack/scripts/repo_local.mjs stop",
     "start": "node ./apps/stack/scripts/repo_local.mjs start",
     "build": "node ./apps/stack/scripts/repo_local.mjs build",
     "tui": "node ./apps/stack/scripts/repo_local.mjs tui",
