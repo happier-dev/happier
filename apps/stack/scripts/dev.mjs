@@ -16,6 +16,7 @@ import { resolveStackContext } from './utils/stack/context.mjs';
 import { resolveServerPortFromEnv, resolveServerUrls } from './utils/server/urls.mjs';
 import { ensureDevCliReady, prepareDaemonAuthSeed, startDevDaemon, watchHappyCliAndRestartDaemon } from './utils/dev/daemon.mjs';
 import { startDevServer, watchDevServerAndRestart } from './utils/dev/server.mjs';
+import { resolveDevServerConnection } from './utils/dev/resolveDevServerConnection.mjs';
 import { ensureDevExpoServer, resolveExpoTailscaleEnabled } from './utils/dev/expo_dev.mjs';
 import { preferStackLocalhostUrl } from './utils/paths/localhost_host.mjs';
 import { openUrlInBrowser } from './utils/ui/browser.mjs';
@@ -47,12 +48,14 @@ async function main() {
   if (wantsHelp(argv, { flags })) {
     printResult({
       json,
-      data: {
-	        flags: [
-	          '--server=happier-server|happier-server-light',
-	          '--server-flavor=light|full',
-	          '--no-ui',
-	          '--no-daemon',
+	      data: {
+		        flags: [
+		          '--server=happier-server|happier-server-light',
+		          '--server-flavor=light|full',
+              '--server-url=http(s)://host[:port]',
+              '--no-server',
+		          '--no-ui',
+		          '--no-daemon',
           '--restart',
           '--watch',
           '--no-watch',
@@ -65,16 +68,17 @@ async function main() {
         ],
         json: true,
       },
-	      text: [
-	        '[dev] usage:',
-	        '  hstack dev [--server=happier-server|happier-server-light] [--server-flavor=light|full] [--restart] [--json]',
-	        '  hstack dev --watch         # rebuild/restart happier-cli daemon on file changes (TTY default)',
-	        '  hstack dev --no-watch      # disable watch mode (always disabled in non-interactive mode)',
-	        '  hstack dev --no-browser    # do not open the UI in your browser automatically',
-	        '  hstack dev --mobile        # also start Expo dev-client Metro for mobile',
-        '  hstack dev --expo-tailscale # forward Expo to Tailscale interface for remote access',
-        '  hstack dev --bind=loopback  # prefer localhost-only URLs (not reachable from phones)',
-        '  note: --json prints the resolved config (dry-run) and exits.',
+		      text: [
+		        '[dev] usage:',
+		        '  hstack dev [--server=happier-server|happier-server-light] [--server-flavor=light|full] [--server-url=<http(s)://...>] [--no-server] [--restart] [--json]',
+		        '  hstack dev --watch         # rebuild/restart happier-cli daemon on file changes (TTY default)',
+		        '  hstack dev --no-watch      # disable watch mode (always disabled in non-interactive mode)',
+		        '  hstack dev --no-browser    # do not open the UI in your browser automatically',
+		        '  hstack dev --mobile        # also start Expo dev-client Metro for mobile',
+	        '  hstack dev --expo-tailscale # forward Expo to Tailscale interface for remote access',
+	        '  hstack dev --bind=loopback  # prefer localhost-only URLs (not reachable from phones)',
+	        '  hstack dev --no-server --server-url=https://api.example.com',
+	        '  note: --json prints the resolved config (dry-run) and exits.',
         '',
         'note:',
         '  If run from inside a repo checkout/worktree, that checkout is used for this run (without requiring `hstack wt use`).',
@@ -151,9 +155,17 @@ async function main() {
     stackName === 'main' ||
     (baseEnv.HAPPIER_STACK_TAILSCALE_SERVE ?? '0').toString().trim() === '1';
   const resolvedUrls = await resolveServerUrls({ env: baseEnv, serverPort, allowEnable: allowEnableTailscale });
-  const internalServerUrl = resolvedUrls.internalServerUrl;
-  let publicServerUrl = resolvedUrls.publicServerUrl;
-  if (stackMode && stackName !== 'main' && !resolvedUrls.envPublicUrl) {
+  const serverConnection = resolveDevServerConnection({
+    flags,
+    kv,
+    env: baseEnv,
+    resolvedLocalUrls: resolvedUrls,
+  });
+  const startServer = serverConnection.startServer;
+  const localInternalServerUrl = resolvedUrls.internalServerUrl;
+  const internalServerUrl = serverConnection.internalServerUrl;
+  let publicServerUrl = serverConnection.publicServerUrl;
+  if (startServer && stackMode && stackName !== 'main' && !resolvedUrls.envPublicUrl) {
     const src = String(resolvedUrls.publicServerUrlSource ?? '');
     const hasStackScopedTailscale = src.startsWith('tailscale-');
     if (!hasStackScopedTailscale) {
@@ -162,7 +174,8 @@ async function main() {
   }
   // Expo app config: this is what both web + native app use to reach the Happy server.
   // LAN rewrite (for dev-client) is centralized in ensureDevExpoServer.
-  const uiApiUrl = resolvedUrls.defaultPublicUrl;
+  const uiApiUrl = startServer ? resolvedUrls.defaultPublicUrl : serverConnection.uiApiUrl;
+  const serverConnectionSource = serverConnection.source;
   const restart = flags.has('--restart');
   const cliHomeDir = process.env.HAPPIER_STACK_CLI_HOME_DIR?.trim()
     ? expandHome(process.env.HAPPIER_STACK_CLI_HOME_DIR.trim())
@@ -180,6 +193,8 @@ async function main() {
         serverPort,
         internalServerUrl,
         publicServerUrl,
+        startServer,
+        serverConnectionSource,
         startUi,
         startMobile,
         startDaemon,
@@ -189,10 +204,11 @@ async function main() {
     return;
   }
 
-  assertServerComponentDirMatches({ rootDir, serverComponentName, serverDir });
-  assertServerPrismaProviderMatches({ serverComponentName, serverDir });
-
-  await requireDir(serverComponentName, serverDir);
+  if (startServer) {
+    assertServerComponentDirMatches({ rootDir, serverComponentName, serverDir });
+    assertServerPrismaProviderMatches({ serverComponentName, serverDir });
+    await requireDir(serverComponentName, serverDir);
+  }
   await requireDir('happier-ui', uiDir);
   await requireDir('happier-cli', cliDir);
 
@@ -210,7 +226,9 @@ async function main() {
     flags.has('--watch') || (!flags.has('--no-watch') && Boolean(process.stdin.isTTY && process.stdout.isTTY));
   const watchers = [];
 
-  const serverAlreadyRunning = await isHappierServerRunning(internalServerUrl);
+  const serverAlreadyRunning = startServer
+    ? await isHappierServerRunning(localInternalServerUrl)
+    : false;
   const daemonAlreadyRunning = startDaemon ? isDaemonRunning(cliHomeDir) : false;
 
   // Expo dev server state (worktree-scoped): single Expo process per stack/worktree.
@@ -224,10 +242,10 @@ async function main() {
   const expoRunning = startExpo ? await isStateProcessRunning(expoPaths.statePath) : { running: false, state: null };
   let expoAlreadyRunning = Boolean(expoRunning.running);
 
-  if (!restart && serverAlreadyRunning && (!startDaemon || daemonAlreadyRunning) && (!startExpo || expoAlreadyRunning)) {
+  if (!restart && (!startServer || serverAlreadyRunning) && (!startDaemon || daemonAlreadyRunning) && (!startExpo || expoAlreadyRunning)) {
     console.log(
       `${green('✓')} dev: already running ${dim('(')}` +
-        `${dim('server=')}${cyan(internalServerUrl)}` +
+        `${dim('server=')}${cyan(internalServerUrl)}${startServer ? '' : dim(' (external)')}` +
         `${startDaemon ? ` ${dim('daemon=')}${daemonAlreadyRunning ? green('running') : dim('stopped')}` : ''}` +
         `${startUi ? ` ${dim('ui=')}${expoAlreadyRunning ? green('running') : dim('stopped')}` : ''}` +
         `${startMobile ? ` ${dim('mobile=')}${expoAlreadyRunning ? green('running') : dim('stopped')}` : ''}` +
@@ -242,33 +260,37 @@ async function main() {
       script: 'dev.mjs',
       ephemeral,
       ownerPid: process.pid,
-      ports: { server: serverPort },
+      ports: startServer ? { server: serverPort } : {},
     }).catch(() => {});
   }
 
   // Start server (only if not already healthy)
   // NOTE: In stack mode we avoid killing arbitrary port listeners (fail-closed instead).
-  if ((!serverAlreadyRunning || restart) && !stackMode) {
+  if (startServer && (!serverAlreadyRunning || restart) && !stackMode) {
     await killPortListeners(serverPort, { label: 'server' });
   }
 
-  const { serverEnv, serverScript, serverProc } = await startDevServer({
-    serverComponentName,
-    serverDir,
-    autostart,
-    baseEnv,
-    serverPort,
-    internalServerUrl,
-    publicServerUrl,
-    envPath,
-    stackMode,
-    runtimeStatePath,
-    serverAlreadyRunning,
-    restart,
-    children,
-  });
+  const { serverEnv, serverScript, serverProc } = startServer
+    ? await startDevServer({
+        serverComponentName,
+        serverDir,
+        autostart,
+        baseEnv,
+        serverPort,
+        internalServerUrl: localInternalServerUrl,
+        publicServerUrl,
+        envPath,
+        stackMode,
+        runtimeStatePath,
+        serverAlreadyRunning,
+        restart,
+        children,
+      })
+    : { serverEnv: baseEnv, serverScript: null, serverProc: null };
 
-  if (!serverAlreadyRunning || restart) {
+  if (!startServer) {
+    console.log(`${green('✓')} server: external ${cyan(internalServerUrl)}`);
+  } else if (!serverAlreadyRunning || restart) {
     console.log(`${green('✓')} server: ready at ${cyan(internalServerUrl)}`);
   } else {
     console.log(`${green('✓')} server: already running at ${cyan(internalServerUrl)}`);
@@ -284,13 +306,16 @@ async function main() {
   // - Ensure schema exists (server-light: prisma migrate deploy; happier-server: migrate deploy if tables missing)
   // - Auto-seed from main only when needed (non-main + non-interactive default, and only if missing creds or 0 accounts)
   const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
-  const accountProbe = await getAccountCountForServerComponent({
-    serverComponentName,
-    serverDir,
-    env: serverEnv,
-    bestEffort: true,
-  });
-  const accountCount = typeof accountProbe.accountCount === 'number' ? accountProbe.accountCount : null;
+  const accountProbe = startServer
+    ? await getAccountCountForServerComponent({
+        serverComponentName,
+        serverDir,
+        env: serverEnv,
+        bestEffort: true,
+      })
+    : null;
+  const accountCount =
+    startServer && typeof accountProbe?.accountCount === 'number' ? accountProbe.accountCount : null;
   const autoSeedEnabled = resolveAutoCopyFromMainEnabled({ env: baseEnv, stackName, isInteractive });
 
   let expoResEarly = null;
@@ -298,46 +323,12 @@ async function main() {
     (baseEnv.HAPPIER_STACK_AUTH_FLOW ?? '').toString().trim() === '1' ||
     (baseEnv.HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH ?? '').toString().trim() === '1';
 
-  // CRITICAL (review-pr / setup-pr guided login):
-  // In background/non-interactive runs, the daemon may block on auth. If we wait to start Expo web
-  // until after the daemon is authenticated, guided login will have no UI origin and will fall back
-  // to the server port (wrong). Start Expo web UI early when running an auth flow.
-  if (wantsAuthFlow && startUi && !expoResEarly) {
-    expoResEarly = await ensureDevExpoServer({
-      startUi,
-      startMobile,
-      uiDir,
-      autostart,
-      baseEnv,
-      apiServerUrl: uiApiUrl,
-      restart,
-      stackMode,
-      runtimeStatePath,
-      stackName,
-      envPath,
-      children,
-      spawnOptions: { stdio: ['ignore', 'ignore', 'ignore'] },
-      expoTailscale,
-    });
-  }
-  await maybeRunInteractiveStackAuthSetup({
-    rootDir,
-    // In dev mode, guided login must target the Expo web UI origin (not the server port).
-    // Mark this as an auth-flow so URL resolution fails closed if Expo isn't ready.
-    env: startUi ? { ...baseEnv, HAPPIER_STACK_AUTH_FLOW: '1' } : baseEnv,
-    stackName,
-    cliHomeDir,
-    accountCount,
-    isInteractive,
-    autoSeedEnabled,
-    beforeLogin: async () => {
-      if (!startUi) {
-        throw new Error(
-          `[local] auth: interactive login requires the web UI.\n` +
-            `Re-run without --no-ui, or set HAPPIER_WEBAPP_URL to a reachable Happier UI for this stack.`
-        );
-      }
-      if (expoResEarly) return;
+  if (startServer) {
+    // CRITICAL (review-pr / setup-pr guided login):
+    // In background/non-interactive runs, the daemon may block on auth. If we wait to start Expo web
+    // until after the daemon is authenticated, guided login will have no UI origin and will fall back
+    // to the server port (wrong). Start Expo web UI early when running an auth flow.
+    if (wantsAuthFlow && startUi && !expoResEarly) {
       expoResEarly = await ensureDevExpoServer({
         startUi,
         startMobile,
@@ -351,22 +342,58 @@ async function main() {
         stackName,
         envPath,
         children,
+        spawnOptions: { stdio: ['ignore', 'ignore', 'ignore'] },
         expoTailscale,
       });
-    },
-  });
-  await prepareDaemonAuthSeed({
-    rootDir,
-    env: baseEnv,
-    stackName,
-    cliHomeDir,
-    startDaemon,
-    isInteractive,
-    serverComponentName,
-    serverDir,
-    serverEnv,
-    quiet: false,
-  });
+    }
+    await maybeRunInteractiveStackAuthSetup({
+      rootDir,
+      // In dev mode, guided login must target the Expo web UI origin (not the server port).
+      // Mark this as an auth-flow so URL resolution fails closed if Expo isn't ready.
+      env: startUi ? { ...baseEnv, HAPPIER_STACK_AUTH_FLOW: '1' } : baseEnv,
+      stackName,
+      cliHomeDir,
+      accountCount,
+      isInteractive,
+      autoSeedEnabled,
+      beforeLogin: async () => {
+        if (!startUi) {
+          throw new Error(
+            `[local] auth: interactive login requires the web UI.\n` +
+              `Re-run without --no-ui, or set HAPPIER_WEBAPP_URL to a reachable Happier UI for this stack.`
+          );
+        }
+        if (expoResEarly) return;
+        expoResEarly = await ensureDevExpoServer({
+          startUi,
+          startMobile,
+          uiDir,
+          autostart,
+          baseEnv,
+          apiServerUrl: uiApiUrl,
+          restart,
+          stackMode,
+          runtimeStatePath,
+          stackName,
+          envPath,
+          children,
+          expoTailscale,
+        });
+      },
+    });
+    await prepareDaemonAuthSeed({
+      rootDir,
+      env: baseEnv,
+      stackName,
+      cliHomeDir,
+      startDaemon,
+      isInteractive,
+      serverComponentName,
+      serverDir,
+      serverEnv,
+      quiet: false,
+    });
+  }
 
   if (startDaemon) {
     const gate = daemonStartGate({ env: baseEnv, cliHomeDir, serverUrl: internalServerUrl });
@@ -412,7 +439,7 @@ async function main() {
   if (cliWatcher) watchers.push(cliWatcher);
 
   const serverProcRef = { current: serverProc };
-  if (stackMode && runtimeStatePath && !serverProcRef.current?.pid) {
+  if (startServer && stackMode && runtimeStatePath && !serverProcRef.current?.pid) {
     // If the server was already running when we started dev, `startDevServer` won't spawn a new process
     // (and therefore we don't have a ChildProcess handle). For safe watch/restart we need a PID.
     const state = await readStackRuntimeStateFile(runtimeStatePath);
@@ -422,7 +449,7 @@ async function main() {
     }
   }
   const serverWatcher = watchDevServerAndRestart({
-    enabled: watchEnabled && Boolean(serverProcRef.current?.pid),
+    enabled: startServer && watchEnabled && Boolean(serverProcRef.current?.pid),
     stackMode,
     serverComponentName,
     serverDir,
@@ -438,7 +465,7 @@ async function main() {
     isShuttingDown: () => shuttingDown,
   });
   if (serverWatcher) watchers.push(serverWatcher);
-  if (watchEnabled && stackMode && serverComponentName === 'happier-server' && !serverWatcher) {
+  if (startServer && watchEnabled && stackMode && serverComponentName === 'happier-server' && !serverWatcher) {
     console.warn(
       `[local] watch: server restart is disabled because the running server PID is unknown.\n` +
         `[local] watch: fix: re-run with --restart so hstack can (re)spawn the server and track its PID.`
