@@ -47,7 +47,7 @@ function getGitBranch(cwd: string): string | undefined {
  * Maintains state for parent-child relationships between messages
  */
 export class SDKToLogConverter {
-    private lastUuid: string | null = null
+    private lastMainUuid: string | null = null
     private context: ConversionContext
     private responses?: Map<string, { approved: boolean, mode?: PermissionMode, reason?: string }>
     private sidechainLastUUID = new Map<string, string>();
@@ -76,8 +76,9 @@ export class SDKToLogConverter {
      * Reset parent chain (useful when starting new conversation)
      */
     resetParentChain(): void {
-        this.lastUuid = null
+        this.lastMainUuid = null
         this.context.parentUuid = null
+        this.sidechainLastUUID.clear()
     }
 
     /**
@@ -92,7 +93,7 @@ export class SDKToLogConverter {
         const sdkUuid = typeof sdkUuidRaw === 'string' && sdkUuidRaw.trim().length > 0 ? sdkUuidRaw.trim() : null;
         const uuid = sdkUuid ?? randomUUID()
         const timestamp = new Date().toISOString()
-        let parentUuid = this.lastUuid;
+        let parentUuid = this.lastMainUuid;
         let isSidechain = false;
         let sidechainId: string | undefined;
         if (sdkMessage.parent_tool_use_id) {
@@ -228,8 +229,8 @@ export class SDKToLogConverter {
         }
 
         // Update last UUID for parent tracking
-        if (logMessage && logMessage.type !== 'summary') {
-            this.lastUuid = uuid
+        if (logMessage && logMessage.type !== 'summary' && !isSidechain) {
+            this.lastMainUuid = uuid
         }
 
         return logMessage
@@ -284,7 +285,7 @@ export class SDKToLogConverter {
         
         // Determine if this is a sidechain and get parent UUID
         let isSidechain = false
-        let parentUuid: string | null = this.lastUuid
+        let parentUuid: string | null = this.lastMainUuid
         
         if (parentToolUseId) {
             isSidechain = true
@@ -320,7 +321,9 @@ export class SDKToLogConverter {
         } as any
         
         // Update last UUID for tracking
-        this.lastUuid = uuid
+        if (!isSidechain) {
+            this.lastMainUuid = uuid
+        }
         
         return logMessage
     }

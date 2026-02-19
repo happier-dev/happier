@@ -40,6 +40,35 @@ describe('SDKToLogConverter relationships and helpers', () => {
       expect(log3?.parentUuid).toBe(log2?.uuid);
     });
 
+    it('does not let sidechain messages clobber the main parent chain', () => {
+      const converter = createConverter();
+      const main1: SDKUserMessage = {
+        type: 'user',
+        message: { role: 'user', content: 'Main 1' },
+      };
+      const sidechain: SDKAssistantMessage = {
+        type: 'assistant',
+        parent_tool_use_id: 'tool_task_1',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'Sidechain' }] },
+      };
+      const main2: SDKAssistantMessage = {
+        type: 'assistant',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'Main 2' }] },
+      };
+
+      const logMain1 = converter.convert(main1);
+      const logSidechain = converter.convert(sidechain);
+      const logMain2 = converter.convert(main2);
+
+      expect(logMain1).toBeTruthy();
+      expect(logSidechain).toBeTruthy();
+      expect(logMain2).toBeTruthy();
+
+      // Sidechain messages must not become the parent of subsequent main-timeline messages.
+      // Otherwise the UI tracer can infer main messages into sidechains (order-dependent folding bug).
+      expect(logMain2?.parentUuid).toBe(logMain1?.uuid);
+    });
+
     it('resets parent chain when requested', () => {
       const converter = createConverter();
       const msg1: SDKUserMessage = {
