@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { LocalNeuralTtsSettings } from '@/voice/settings/panels/localTts/LocalNeuralTtsSettings';
 import { speakKokoroText } from '@/voice/output/KokoroTtsController';
+import { resolveKokoroOperationTimeoutMs } from '@/voice/kokoro/config/kokoroConfig';
 
 import type { LocalTtsProviderSpec } from '../_types';
 
@@ -34,7 +35,7 @@ export const localNeuralTtsProviderSpec: LocalTtsProviderSpec = {
       assetSetId: cfgTts.localNeural.assetId,
       voiceId: cfgTts.localNeural.voiceId ?? 'af_heart',
       speed: cfgTts.localNeural.speed ?? 1,
-      timeoutMs: Math.max(60_000, networkTimeoutMs),
+      timeoutMs: resolveKokoroOperationTimeoutMs(networkTimeoutMs),
       registerPlaybackStopper: (_stopper) => () => {},
     });
   },

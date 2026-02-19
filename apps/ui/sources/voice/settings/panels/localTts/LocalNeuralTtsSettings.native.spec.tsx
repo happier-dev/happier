@@ -58,7 +58,8 @@ vi.mock('@/voice/modelPacks/manifests', () => ({
 vi.mock('./useLocalNeuralModelPackState.native', () => ({
   useLocalNeuralModelPackState: () => ({
     modelStatus: 'idle',
-    progressPercent: null,
+    downloadProgress: null,
+    downloadDetail: null,
     installed: false,
     installSummary: null,
     updateCheckedRemote: null,

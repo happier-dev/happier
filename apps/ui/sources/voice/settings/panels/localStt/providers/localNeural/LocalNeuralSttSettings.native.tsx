@@ -9,17 +9,14 @@ import { Item } from '@/components/ui/lists/Item';
 import { Modal } from '@/modal';
 import type { VoiceLocalSttSettings } from '@/sync/domains/settings/voiceLocalSttSettings';
 import { t } from '@/text';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import { formatDownloadProgressDetail } from '@/voice/downloads/downloadProgress';
 import { checkModelPackUpdateAvailable, ensureModelPackInstalled, getModelPackInstallSummary, removeModelPack } from '@/voice/modelPacks/installer.native';
 import { formatModelPackBuildLabel } from '@/voice/modelPacks/formatBuildLabel';
 import { resolveModelPackManifestUrl } from '@/voice/modelPacks/manifests';
 import { getSherpaStreamingSttPackOptions } from '@/voice/sherpa/stt/sherpaStreamingSttPacks';
 
-type Progress = { loaded: number; total: number };
-
-function formatPercent(p: Progress | null): string | null {
-  if (!p || !Number.isFinite(p.loaded) || !Number.isFinite(p.total) || p.total <= 0) return null;
-  return `${Math.max(0, Math.min(100, Math.floor((p.loaded / p.total) * 100)))}%`;
-}
+type Progress = { loaded: number; total: number; file?: string };
 
 export function LocalNeuralSttSettings(props: {
   cfg: VoiceLocalSttSettings;
@@ -92,8 +89,8 @@ export function LocalNeuralSttSettings(props: {
     const manifestUrl = resolveModelPackManifestUrl({ packId: effectivePackId });
     if (!manifestUrl) {
       await Modal.alert(
-        'Manifest not configured',
-        'Set EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS (or legacy Kokoro env vars) to enable model downloads.',
+        'Manifest URL missing',
+        'Unable to resolve the model pack manifest URL. Check EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS (or legacy Kokoro env vars).',
       );
       return;
     }
@@ -110,7 +107,7 @@ export function LocalNeuralSttSettings(props: {
         manifestUrl,
         timeoutMs: 120_000,
         signal: abortController.signal,
-        onProgress: (p) => setProgress({ loaded: p.loaded, total: p.total }),
+        onProgress: (p) => setProgress(p),
       });
       setModelStatus('ready');
       await refreshInstalled();
@@ -147,8 +144,8 @@ export function LocalNeuralSttSettings(props: {
     const manifestUrl = resolveModelPackManifestUrl({ packId: effectivePackId });
     if (!manifestUrl) {
       await Modal.alert(
-        'Manifest not configured',
-        'Set EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS (or legacy Kokoro env vars) to enable model downloads.',
+        'Manifest URL missing',
+        'Unable to resolve the model pack manifest URL. Check EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS (or legacy Kokoro env vars).',
       );
       return;
     }
@@ -192,7 +189,7 @@ export function LocalNeuralSttSettings(props: {
         manifestUrl,
         timeoutMs: 120_000,
         signal: abortController.signal,
-        onProgress: (p) => setProgress({ loaded: p.loaded, total: p.total }),
+        onProgress: (p) => setProgress(p),
       });
 
       setModelStatus('ready');
@@ -224,7 +221,7 @@ export function LocalNeuralSttSettings(props: {
   const installedBuild = formatModelPackBuildLabel((installSummary as any)?.manifest);
   const downloadDetail =
     modelStatus === 'downloading'
-      ? `Downloading${formatPercent(progress) ? ` (${formatPercent(progress)})` : ''}`
+      ? (progress ? formatDownloadProgressDetail(progress, { prefix: 'Downloading' }) : 'Downloading…')
       : installed
         ? installedBuild
           ? `Installed • ${installedBuild}`
@@ -244,17 +241,12 @@ export function LocalNeuralSttSettings(props: {
         connectToTrigger={true}
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
-        trigger={({ open, toggle }) => (
-          <Item
-            title="Model pack"
-            subtitle="Streaming STT model pack id."
-            detail={effectivePackId ?? t('settingsVoice.local.notSet')}
-            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-            onPress={toggle}
-            showChevron={false}
-            selected={false}
-          />
-        )}
+        itemTrigger={{
+          title: 'Model pack',
+          subtitle: 'Streaming STT model pack id.',
+          showSelectedSubtitle: false,
+          detailFormatter: () => (effectivePackId ?? t('settingsVoice.local.notSet')),
+        }}
         items={packOptions.map((p) => ({ id: p.id, title: p.title, subtitle: p.subtitle }))}
         onSelect={(id) => {
           setLocalNeural({ assetId: id || null });
@@ -317,26 +309,21 @@ export function LocalNeuralSttSettings(props: {
         connectToTrigger={true}
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
-        trigger={({ open, toggle }) => (
-          <Item
-            title="Language"
-            subtitle="Optional BCP-47 language tag."
-            detail={effectiveLanguage || t('settingsVoice.language.autoDetect')}
-            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-            onPress={toggle}
-            showChevron={false}
-            selected={false}
-          />
-        )}
+        itemTrigger={{
+          title: 'Language',
+          subtitle: 'Optional BCP-47 language tag.',
+          showSelectedSubtitle: false,
+          detailFormatter: () => (effectiveLanguage || t('settingsVoice.language.autoDetect')),
+        }}
         items={languageOptions}
         onSelect={(id) => {
           if (id === '__custom__') {
-            void (async () => {
+            fireAndForget((async () => {
               const raw = await Modal.prompt('Language', 'Enter a BCP-47 language tag (e.g. en, en-US).', { placeholder: effectiveLanguage });
               if (raw === null) return;
               const next = String(raw).trim();
               setLocalNeural({ language: next ? next : null });
-            })();
+            })(), { tag: 'LocalNeuralSttSettings.prompt.language' });
             setOpenMenu(null);
             return;
           }

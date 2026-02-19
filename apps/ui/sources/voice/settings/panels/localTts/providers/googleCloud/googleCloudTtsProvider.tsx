@@ -14,6 +14,7 @@ import { formatVoiceTestFailureMessage } from '@/voice/local/formatVoiceTestFail
 import { speakGoogleCloudText } from '@/voice/output/GoogleCloudTtsController';
 import { fetchGoogleCloudTtsVoiceCatalog, type GoogleCloudTtsVoice } from '@/voice/output/googleCloudTtsApi';
 import { createVoicePlaybackController } from '@/voice/runtime/VoicePlaybackController';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import type { LocalTtsProviderSpec } from '../_types';
@@ -155,7 +156,7 @@ const GoogleCloudTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
         title="Google Cloud API key"
         detail={googleCloud.apiKey ? t('settingsVoice.local.apiKeySet') : t('settingsVoice.local.apiKeyNotSet')}
         onPress={() => {
-          void (async () => {
+          fireAndForget((async () => {
             const raw = await Modal.prompt(
               'Google Cloud API key',
               'Create an API key with Text-to-Speech API enabled. Optional: restrict the key to this app (iOS bundle id / Android package+SHA1).',
@@ -163,7 +164,7 @@ const GoogleCloudTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
             );
             if (raw === null) return;
             setGoogleCloud({ apiKey: normalizeSecretStringPromptInput(raw) });
-          })();
+          })(), { tag: 'GoogleCloudTtsSettings.prompt.apiKey' });
         }}
       />
       <Item
@@ -171,13 +172,13 @@ const GoogleCloudTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
         subtitle="Only needed if you restrict the API key to your Android app."
         detail={googleCloud.androidCertSha1 ? String(googleCloud.androidCertSha1) : t('settingsVoice.local.notSet')}
         onPress={() => {
-          void (async () => {
+          fireAndForget((async () => {
             const raw = await Modal.prompt('Android cert SHA-1', 'Example: AA:BB:CC:... (from your signing certificate).', {
               placeholder: googleCloud.androidCertSha1 ?? '',
             });
             if (raw === null) return;
             setGoogleCloud({ androidCertSha1: String(raw).trim() || null });
-          })();
+          })(), { tag: 'GoogleCloudTtsSettings.prompt.androidCertSha1' });
         }}
       />
       <DropdownMenu
@@ -192,17 +193,12 @@ const GoogleCloudTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
         connectToTrigger={true}
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
-        trigger={({ open, toggle }) => (
-          <Item
-            title="Language"
-            subtitle="Optional filter for the voice list."
-            detail={googleCloud.languageCode ? String(googleCloud.languageCode) : 'All'}
-            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-            onPress={toggle}
-            showChevron={false}
-            selected={false}
-          />
-        )}
+        itemTrigger={{
+          title: 'Language',
+          subtitle: 'Optional filter for the voice list.',
+          showSelectedSubtitle: false,
+          detailFormatter: () => (googleCloud.languageCode ? String(googleCloud.languageCode) : 'All'),
+        }}
         items={[
           {
             id: '',
@@ -244,7 +240,7 @@ const GoogleCloudTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
         subtitle="0.25–4.0 (default uses voice default)."
         detail={googleCloud.speakingRate == null ? 'Default' : String(googleCloud.speakingRate)}
         onPress={() => {
-          void (async () => {
+          fireAndForget((async () => {
             const raw = await Modal.prompt('Speaking rate', 'Set the speaking rate (0.25–4.0). Leave empty to use default.', {
               inputType: 'numeric',
               placeholder: googleCloud.speakingRate == null ? '' : String(googleCloud.speakingRate),
@@ -258,7 +254,7 @@ const GoogleCloudTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
             const next = Number(trimmed);
             if (!Number.isFinite(next)) return;
             setGoogleCloud({ speakingRate: Math.max(0.25, Math.min(4, next)) });
-          })();
+          })(), { tag: 'GoogleCloudTtsSettings.prompt.speakingRate' });
         }}
       />
 
@@ -267,7 +263,7 @@ const GoogleCloudTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
         subtitle="-20–20 (default uses voice default)."
         detail={googleCloud.pitch == null ? 'Default' : String(googleCloud.pitch)}
         onPress={() => {
-          void (async () => {
+          fireAndForget((async () => {
             const raw = await Modal.prompt('Pitch', 'Set the pitch (-20–20). Leave empty to use default.', {
               inputType: 'numeric',
               placeholder: googleCloud.pitch == null ? '' : String(googleCloud.pitch),
@@ -281,7 +277,7 @@ const GoogleCloudTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
             const next = Number(trimmed);
             if (!Number.isFinite(next)) return;
             setGoogleCloud({ pitch: Math.max(-20, Math.min(20, next)) });
-          })();
+          })(), { tag: 'GoogleCloudTtsSettings.prompt.pitch' });
         }}
       />
 
@@ -297,17 +293,12 @@ const GoogleCloudTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
         connectToTrigger={true}
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
-        trigger={({ open, toggle }) => (
-          <Item
-            title="Voice"
-            subtitle="Select a Google Cloud voice."
-            detail={googleCloud.voiceName ?? (googleApiKey ? 'Select…' : 'Set API key')}
-            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-            onPress={toggle}
-            showChevron={false}
-            selected={false}
-          />
-        )}
+        itemTrigger={{
+          title: 'Voice',
+          subtitle: 'Select a Google Cloud voice.',
+          showSelectedSubtitle: false,
+          detailFormatter: () => (googleCloud.voiceName ?? (googleApiKey ? 'Select…' : 'Set API key')),
+        }}
         items={(
           filteredVoices.length > 0
             ? filteredVoices
@@ -354,17 +345,11 @@ const GoogleCloudTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
         connectToTrigger={true}
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
-        trigger={({ open, toggle }) => (
-          <Item
-            title="Format"
-            subtitle="MP3 is smaller; WAV is uncompressed."
-            detail={googleCloud.format === 'wav' ? 'WAV' : 'MP3'}
-            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-            onPress={toggle}
-            showChevron={false}
-            selected={false}
-          />
-        )}
+        itemTrigger={{
+          title: 'Format',
+          subtitle: 'MP3 is smaller; WAV is uncompressed.',
+          showSelectedSubtitle: false,
+        }}
         items={[
           {
             id: 'mp3',
@@ -398,11 +383,19 @@ export const googleCloudTtsProviderSpec: LocalTtsProviderSpec = {
   test: async ({ cfgTts, networkTimeoutMs, sample }) => {
     const apiKey = cfgTts.googleCloud.apiKey ? (sync.decryptSecretValue(cfgTts.googleCloud.apiKey) ?? null) : null;
     if (!apiKey) {
-      Modal.alert(t('common.error'), 'Missing Google Cloud API key.');
+      fireAndForget((async () => {
+        await Modal.alert(t('common.error'), 'Missing Google Cloud API key.');
+      })(), {
+        tag: 'googleCloudTtsProviderSpec.alert.missingApiKey',
+      });
       return;
     }
     if (!cfgTts.googleCloud.voiceName) {
-      Modal.alert(t('common.error'), 'Select a Google Cloud voice first.');
+      fireAndForget((async () => {
+        await Modal.alert(t('common.error'), 'Select a Google Cloud voice first.');
+      })(), {
+        tag: 'googleCloudTtsProviderSpec.alert.missingVoice',
+      });
       return;
     }
 
@@ -420,7 +413,11 @@ export const googleCloudTtsProviderSpec: LocalTtsProviderSpec = {
         registerPlaybackStopper: (_stopper) => () => {},
       });
     } catch (err) {
-      Modal.alert(t('common.error'), formatVoiceTestFailureMessage(t('settingsVoice.local.testTtsFailed'), err));
+      fireAndForget((async () => {
+        await Modal.alert(t('common.error'), formatVoiceTestFailureMessage(t('settingsVoice.local.testTtsFailed'), err));
+      })(), {
+        tag: 'googleCloudTtsProviderSpec.alert.testFailed',
+      });
     }
   },
 };

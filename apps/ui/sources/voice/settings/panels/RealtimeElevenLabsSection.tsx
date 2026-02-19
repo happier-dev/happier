@@ -9,6 +9,7 @@ import { sync } from '@/sync/sync';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import type { SecretString } from '@/sync/encryption/secretSettings';
 import { t } from '@/text';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 import {
@@ -203,17 +204,12 @@ export function RealtimeElevenLabsSection(props: {
           connectToTrigger={true}
           rowKind="item"
           popoverBoundaryRef={props.popoverBoundaryRef}
-          trigger={({ open, toggle }) => (
-            <Item
-              title="Welcome message"
-              subtitle="Optional greeting at the start of the call."
-              detail={welcome.enabled ? (welcome.mode === 'on_first_turn' ? 'On first turn' : 'Immediate') : 'Off'}
-              rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-              onPress={toggle}
-              showChevron={false}
-              selected={false}
-            />
-          )}
+          itemTrigger={{
+            title: 'Welcome message',
+            subtitle: 'Optional greeting at the start of the call.',
+            showSelectedSubtitle: false,
+            detailFormatter: () => (welcome.enabled ? (welcome.mode === 'on_first_turn' ? 'On first turn' : 'Immediate') : 'Off'),
+          }}
           items={[
             { id: 'off', title: 'Off', subtitle: 'No greeting.' },
             { id: 'immediate', title: 'Immediate', subtitle: 'Greet as soon as the call connects.' },
@@ -238,7 +234,7 @@ export function RealtimeElevenLabsSection(props: {
           subtitle={t('settingsVoice.byo.apiKeyDescription')}
           detail={cfg.byo.apiKey ? t('settingsVoice.byo.apiKeySet') : t('settingsVoice.byo.apiKeyNotSet')}
           onPress={() => {
-            void (async () => {
+            fireAndForget((async () => {
               const raw = await Modal.prompt(
                 t('settingsVoice.byo.apiKeyTitle'),
                 t('settingsVoice.byo.apiKeyDescription'),
@@ -246,7 +242,7 @@ export function RealtimeElevenLabsSection(props: {
               );
               if (raw === null) return;
               setByo({ apiKey: normalizeSecretStringPromptInput(raw) });
-            })();
+            })(), { tag: 'RealtimeElevenLabsSection.prompt.apiKey' });
           }}
         />
         <Item
@@ -254,7 +250,7 @@ export function RealtimeElevenLabsSection(props: {
           subtitle={t('settingsVoice.byo.agentIdDescription')}
           detail={cfg.byo.agentId ? String(cfg.byo.agentId) : t('settingsVoice.byo.agentIdNotSet')}
           onPress={() => {
-            void (async () => {
+            fireAndForget((async () => {
               const value = await Modal.prompt(
                 t('settingsVoice.byo.agentIdTitle'),
                 t('settingsVoice.byo.agentIdDescription'),
@@ -262,7 +258,7 @@ export function RealtimeElevenLabsSection(props: {
               );
               if (value === null) return;
               setByo({ agentId: String(value).trim() || null });
-            })();
+            })(), { tag: 'RealtimeElevenLabsSection.prompt.agentId' });
           }}
         />
       </ItemGroup>
@@ -280,17 +276,12 @@ export function RealtimeElevenLabsSection(props: {
           connectToTrigger={true}
           rowKind="item"
 	          popoverBoundaryRef={props.popoverBoundaryRef}
-	          trigger={({ open, toggle }) => (
-	            <Item
-	              title="Voice"
-	              subtitle="Choose the ElevenLabs voice used for replies."
-	              detail={!apiKey ? t('settingsVoice.byo.apiKeyNotSet') : (selectedVoice?.name ?? String(tts.voiceId))}
-	              rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-	              onPress={toggle}
-	              showChevron={false}
-	              selected={false}
-	            />
-	          )}
+	          itemTrigger={{
+	            title: 'Voice',
+	            subtitle: 'Choose the ElevenLabs voice used for replies.',
+	            showSelectedSubtitle: false,
+	            detailFormatter: () => (!apiKey ? t('settingsVoice.byo.apiKeyNotSet') : (selectedVoice?.name ?? String(tts.voiceId))),
+	          }}
           items={
             !apiKey
               ? [{
@@ -352,17 +343,12 @@ export function RealtimeElevenLabsSection(props: {
           connectToTrigger={true}
           rowKind="item"
           popoverBoundaryRef={props.popoverBoundaryRef}
-          trigger={({ open, toggle }) => (
-            <Item
-              title="Model"
-              subtitle="Optional: override the ElevenLabs TTS model id."
-              detail={tts.modelId ?? 'Auto'}
-              rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-              onPress={toggle}
-              showChevron={false}
-              selected={false}
-            />
-          )}
+          itemTrigger={{
+            title: 'Model',
+            subtitle: 'Optional: override the ElevenLabs TTS model id.',
+            showSelectedSubtitle: false,
+            detailFormatter: () => (tts.modelId ?? 'Auto'),
+          }}
           items={[
             { id: '', title: 'Auto', subtitle: 'Use the ElevenLabs default model.' },
             { id: 'eleven_multilingual_v2', title: 'eleven_multilingual_v2', subtitle: 'Common default (multilingual).' },
@@ -372,7 +358,7 @@ export function RealtimeElevenLabsSection(props: {
           ]}
           onSelect={(id) => {
             if (id === 'custom') {
-              void (async () => {
+              fireAndForget((async () => {
                 const raw = await Modal.prompt(
                   'Model id',
                   'Enter an ElevenLabs model id, or leave blank to use the default.',
@@ -381,7 +367,7 @@ export function RealtimeElevenLabsSection(props: {
                 if (raw === null) return;
                 const trimmed = String(raw).trim();
                 setTts({ modelId: trimmed.length > 0 ? trimmed : null });
-              })();
+              })(), { tag: 'RealtimeElevenLabsSection.prompt.modelId' });
               setOpenMenu(null);
               return;
             }
@@ -401,22 +387,11 @@ export function RealtimeElevenLabsSection(props: {
           connectToTrigger={true}
           rowKind="item"
           popoverBoundaryRef={props.popoverBoundaryRef}
-          trigger={({ open, toggle }) => (
-            <Item
-              title={t('settingsVoice.byo.speakerBoostTitle')}
-              subtitle={t('settingsVoice.byo.speakerBoostSubtitle')}
-              detail={(() => {
-                const v = tts.voiceSettings.useSpeakerBoost;
-                if (v === true) return t('settingsVoice.byo.speakerBoostOn');
-                if (v === false) return t('settingsVoice.byo.speakerBoostOff');
-                return t('settingsVoice.byo.speakerBoostAuto');
-              })()}
-              rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-              onPress={toggle}
-              showChevron={false}
-              selected={false}
-            />
-          )}
+          itemTrigger={{
+            title: t('settingsVoice.byo.speakerBoostTitle'),
+            subtitle: t('settingsVoice.byo.speakerBoostSubtitle'),
+            showSelectedSubtitle: false,
+          }}
           items={[
             {
               id: '',
@@ -451,7 +426,7 @@ export function RealtimeElevenLabsSection(props: {
           subtitle="0–1. Leave blank for default."
           detail={tts.voiceSettings.stability === null ? 'Default' : String(tts.voiceSettings.stability)}
           onPress={() => {
-            void (async () => {
+            fireAndForget((async () => {
               const raw = await Modal.prompt(
                 'Stability (0–1)',
                 'Enter a number between 0 and 1. Leave blank to use the default.',
@@ -469,7 +444,7 @@ export function RealtimeElevenLabsSection(props: {
                 return;
               }
               setTts({ voiceSettings: { ...tts.voiceSettings, stability: n } });
-            })();
+            })(), { tag: 'RealtimeElevenLabsSection.prompt.stability' });
           }}
         />
 
@@ -478,7 +453,7 @@ export function RealtimeElevenLabsSection(props: {
           subtitle="0–1. Leave blank for default."
           detail={tts.voiceSettings.similarityBoost === null ? 'Default' : String(tts.voiceSettings.similarityBoost)}
           onPress={() => {
-            void (async () => {
+            fireAndForget((async () => {
               const raw = await Modal.prompt(
                 'Similarity boost (0–1)',
                 'Enter a number between 0 and 1. Leave blank to use the default.',
@@ -496,7 +471,7 @@ export function RealtimeElevenLabsSection(props: {
                 return;
               }
               setTts({ voiceSettings: { ...tts.voiceSettings, similarityBoost: n } });
-            })();
+            })(), { tag: 'RealtimeElevenLabsSection.prompt.similarityBoost' });
           }}
         />
 
@@ -505,7 +480,7 @@ export function RealtimeElevenLabsSection(props: {
           subtitle="0–1. Leave blank for default."
           detail={tts.voiceSettings.style === null ? 'Default' : String(tts.voiceSettings.style)}
           onPress={() => {
-            void (async () => {
+            fireAndForget((async () => {
               const raw = await Modal.prompt(
                 'Style (0–1)',
                 'Enter a number between 0 and 1. Leave blank to use the default.',
@@ -523,7 +498,7 @@ export function RealtimeElevenLabsSection(props: {
                 return;
               }
               setTts({ voiceSettings: { ...tts.voiceSettings, style: n } });
-            })();
+            })(), { tag: 'RealtimeElevenLabsSection.prompt.style' });
           }}
         />
 
@@ -532,7 +507,7 @@ export function RealtimeElevenLabsSection(props: {
           subtitle="0.5–2. Leave blank for default."
           detail={tts.voiceSettings.speed === null ? 'Default' : String(tts.voiceSettings.speed)}
           onPress={() => {
-            void (async () => {
+            fireAndForget((async () => {
               const raw = await Modal.prompt(
                 'Speed (0.5–2)',
                 'Enter a number between 0.5 and 2. Leave blank to use the default.',
@@ -550,7 +525,7 @@ export function RealtimeElevenLabsSection(props: {
                 return;
               }
               setTts({ voiceSettings: { ...tts.voiceSettings, speed: n } });
-            })();
+            })(), { tag: 'RealtimeElevenLabsSection.prompt.speed' });
           }}
         />
       </ItemGroup>
@@ -562,7 +537,7 @@ export function RealtimeElevenLabsSection(props: {
           detail={busy === 'autoprovCreate' ? t('common.loading') : undefined}
 	          disabled={busy !== null || !apiKey}
 	          onPress={() => {
-	            void (async () => {
+	            fireAndForget((async () => {
 	              if (!apiKey) {
 	                Modal.alert(t('common.error'), t('settingsVoice.byo.notConfigured'));
 	                return;
@@ -608,7 +583,7 @@ export function RealtimeElevenLabsSection(props: {
 	              } finally {
 	                setBusy(null);
 	              }
-            })();
+            })(), { tag: 'RealtimeElevenLabsSection.autoprov.create' });
           }}
         />
 
@@ -618,7 +593,7 @@ export function RealtimeElevenLabsSection(props: {
           detail={busy === 'autoprovUpdate' ? t('common.loading') : undefined}
           disabled={busy !== null || !apiKey || !cfg.byo.agentId}
           onPress={() => {
-            void (async () => {
+            fireAndForget((async () => {
               if (!apiKey || !cfg.byo.agentId) return;
               setBusy('autoprovUpdate');
               try {
@@ -637,7 +612,7 @@ export function RealtimeElevenLabsSection(props: {
               } finally {
                 setBusy(null);
               }
-            })();
+            })(), { tag: 'RealtimeElevenLabsSection.autoprov.update' });
           }}
         />
       </ItemGroup>
@@ -647,14 +622,14 @@ export function RealtimeElevenLabsSection(props: {
           title={t('settingsVoice.byo.createAccount')}
           subtitle={t('settingsVoice.byo.createAccountSubtitle')}
           onPress={() => {
-            void openUrl('https://elevenlabs.io').catch(() => {});
+            fireAndForget(openUrl('https://elevenlabs.io'), { tag: 'RealtimeElevenLabsSection.openUrl.createAccount' });
           }}
         />
         <Item
           title={t('settingsVoice.byo.openApiKeys')}
           subtitle={t('settingsVoice.byo.openApiKeysSubtitle')}
           onPress={() => {
-            void openUrl('https://elevenlabs.io/app/settings/api-keys').catch(() => {});
+            fireAndForget(openUrl('https://elevenlabs.io/app/settings/api-keys'), { tag: 'RealtimeElevenLabsSection.openUrl.apiKeys' });
           }}
         />
         <Item
@@ -671,7 +646,7 @@ export function RealtimeElevenLabsSection(props: {
           title={t('settingsVoice.byo.disconnect')}
           subtitle={t('settingsVoice.byo.disconnectSubtitle')}
           onPress={() => {
-            void (async () => {
+            fireAndForget((async () => {
               const confirmed = await Modal.confirm(
                 t('settingsVoice.byo.disconnectTitle'),
                 t('settingsVoice.byo.disconnectDescription'),
@@ -679,7 +654,7 @@ export function RealtimeElevenLabsSection(props: {
               );
               if (!confirmed) return;
               setByo({ apiKey: null, agentId: null });
-            })();
+            })(), { tag: 'RealtimeElevenLabsSection.confirm.disconnect' });
           }}
         />
       </ItemGroup>

@@ -74,17 +74,11 @@ export function VoiceUiSection(props: {
           connectToTrigger={true}
           rowKind="item"
           popoverBoundaryRef={props.popoverBoundaryRef}
-          trigger={({ open, toggle }) => (
-            <Item
-              title={t('settingsVoice.ui.scopeTitle')}
-              subtitle={t('settingsVoice.ui.scopeSubtitle')}
-              detail={ui.scopeDefault === 'global' ? t('settingsVoice.ui.scopeGlobal') : t('settingsVoice.ui.scopeSession')}
-              rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-              onPress={toggle}
-              showChevron={false}
-              selected={false}
-            />
-          )}
+          itemTrigger={{
+            title: t('settingsVoice.ui.scopeTitle'),
+            subtitle: t('settingsVoice.ui.scopeSubtitle'),
+            showSelectedSubtitle: false,
+          }}
           items={[
             {
               id: 'global',
@@ -124,21 +118,11 @@ export function VoiceUiSection(props: {
           connectToTrigger={true}
           rowKind="item"
           popoverBoundaryRef={props.popoverBoundaryRef}
-          trigger={({ open, toggle }) => (
-            <Item
-              title={t('settingsVoice.ui.surfaceLocationTitle')}
-              subtitle={t('settingsVoice.ui.surfaceLocationSubtitle')}
-              detail={(() => {
-                if (ui.surfaceLocation === 'sidebar') return t('settingsVoice.ui.surfaceLocation.sidebarTitle');
-                if (ui.surfaceLocation === 'session') return t('settingsVoice.ui.surfaceLocation.sessionTitle');
-                return t('settingsVoice.ui.surfaceLocation.autoTitle');
-              })()}
-              rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-              onPress={toggle}
-              showChevron={false}
-              selected={false}
-            />
-          )}
+          itemTrigger={{
+            title: t('settingsVoice.ui.surfaceLocationTitle'),
+            subtitle: t('settingsVoice.ui.surfaceLocationSubtitle'),
+            showSelectedSubtitle: false,
+          }}
           items={[
             {
               id: 'auto',
@@ -190,22 +174,11 @@ export function VoiceUiSection(props: {
           connectToTrigger={true}
           rowKind="item"
           popoverBoundaryRef={props.popoverBoundaryRef}
-          trigger={({ open, toggle }) => (
-            <Item
-              title={t('settingsVoice.ui.updates.activeSessionTitle')}
-              subtitle={t('settingsVoice.ui.updates.activeSessionSubtitle')}
-              detail={(() => {
-                if (updates.activeSession === 'none') return t('settingsVoice.ui.updates.level.noneTitle');
-                if (updates.activeSession === 'activity') return t('settingsVoice.ui.updates.level.activityTitle');
-                if (updates.activeSession === 'snippets') return t('settingsVoice.ui.updates.level.snippetsTitle');
-                return t('settingsVoice.ui.updates.level.summariesTitle');
-              })()}
-              rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-              onPress={toggle}
-              showChevron={false}
-              selected={false}
-            />
-          )}
+          itemTrigger={{
+            title: t('settingsVoice.ui.updates.activeSessionTitle'),
+            subtitle: t('settingsVoice.ui.updates.activeSessionSubtitle'),
+            showSelectedSubtitle: false,
+          }}
           items={[
             {
               id: 'none',
@@ -265,22 +238,11 @@ export function VoiceUiSection(props: {
           connectToTrigger={true}
           rowKind="item"
           popoverBoundaryRef={props.popoverBoundaryRef}
-          trigger={({ open, toggle }) => (
-            <Item
-              title={t('settingsVoice.ui.updates.otherSessionsTitle')}
-              subtitle={t('settingsVoice.ui.updates.otherSessionsSubtitle')}
-              detail={(() => {
-                if (updates.otherSessions === 'none') return t('settingsVoice.ui.updates.level.noneTitle');
-                if (updates.otherSessions === 'activity') return t('settingsVoice.ui.updates.level.activityTitle');
-                if (updates.otherSessions === 'snippets') return t('settingsVoice.ui.updates.level.snippetsTitle');
-                return t('settingsVoice.ui.updates.level.summariesTitle');
-              })()}
-              rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-              onPress={toggle}
-              showChevron={false}
-              selected={false}
-            />
-          )}
+          itemTrigger={{
+            title: t('settingsVoice.ui.updates.otherSessionsTitle'),
+            subtitle: t('settingsVoice.ui.updates.otherSessionsSubtitle'),
+            showSelectedSubtitle: false,
+          }}
           items={[
             {
               id: 'none',
@@ -342,17 +304,11 @@ export function VoiceUiSection(props: {
               connectToTrigger={true}
               rowKind="item"
               popoverBoundaryRef={props.popoverBoundaryRef}
-              trigger={({ open, toggle }) => (
-                <Item
-                  title={t('settingsVoice.ui.updates.snippetsMaxMessagesTitle')}
-                  subtitle={t('settingsVoice.ui.updates.snippetsMaxMessagesSubtitle')}
-                  detail={String(updates.snippetsMaxMessages)}
-                  rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-                  onPress={toggle}
-                  showChevron={false}
-                  selected={false}
-                />
-              )}
+              itemTrigger={{
+                title: t('settingsVoice.ui.updates.snippetsMaxMessagesTitle'),
+                subtitle: t('settingsVoice.ui.updates.snippetsMaxMessagesSubtitle'),
+                showSelectedSubtitle: false,
+              }}
               items={Array.from({ length: 10 }, (_, idx) => {
                 const n = idx + 1;
                 return {
@@ -400,21 +356,11 @@ export function VoiceUiSection(props: {
               connectToTrigger={true}
               rowKind="item"
               popoverBoundaryRef={props.popoverBoundaryRef}
-              trigger={({ open, toggle }) => (
-                <Item
-                  title={t('settingsVoice.ui.updates.otherSessionsSnippetsModeTitle')}
-                  subtitle={t('settingsVoice.ui.updates.otherSessionsSnippetsModeSubtitle')}
-                  detail={(() => {
-                    if (updates.otherSessionsSnippetsMode === 'never') return t('settingsVoice.ui.updates.otherSessionsSnippetsMode.neverTitle');
-                    if (updates.otherSessionsSnippetsMode === 'auto') return t('settingsVoice.ui.updates.otherSessionsSnippetsMode.autoTitle');
-                    return t('settingsVoice.ui.updates.otherSessionsSnippetsMode.onDemandTitle');
-                  })()}
-                  rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-                  onPress={toggle}
-                  showChevron={false}
-                  selected={false}
-                />
-              )}
+              itemTrigger={{
+                title: t('settingsVoice.ui.updates.otherSessionsSnippetsModeTitle'),
+                subtitle: t('settingsVoice.ui.updates.otherSessionsSnippetsModeSubtitle'),
+                showSelectedSubtitle: false,
+              }}
               items={[
                 {
                   id: 'never',

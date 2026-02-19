@@ -12,6 +12,7 @@ import { t } from '@/text';
 import type { VoiceLocalSttSettings } from '@/sync/domains/settings/voiceLocalSttSettings';
 import { LANGUAGES, getLanguageDisplayName } from '@/constants/Languages';
 import { fetchGoogleGeminiModelCatalog, type GoogleGeminiModelSummary } from '@/voice/input/googleGeminiModelsApi';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import type { LocalSttProviderSpec } from '../_types';
 
@@ -65,13 +66,13 @@ const GoogleGeminiSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
         title="Gemini API key"
         detail={cfg.googleGemini.apiKey ? t('settingsVoice.local.apiKeySet') : t('settingsVoice.local.apiKeyNotSet')}
         onPress={() => {
-          void (async () => {
+          fireAndForget((async () => {
             const raw = await Modal.prompt('Gemini API key', 'Create an API key in Google AI Studio (Gemini API).', {
               inputType: 'secure-text',
             });
             if (raw === null) return;
             setGoogleGemini({ apiKey: normalizeSecretStringPromptInput(raw) });
-          })();
+          })(), { tag: 'googleGeminiSttProvider.promptApiKey' });
         }}
       />
       <DropdownMenu
@@ -86,17 +87,12 @@ const GoogleGeminiSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
         connectToTrigger={true}
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
-        trigger={({ open, toggle }) => (
-          <Item
-            title="Gemini model"
-            subtitle="Choose which Gemini model to use for transcription."
-            detail={String(cfg.googleGemini.model)}
-            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-            onPress={toggle}
-            showChevron={false}
-            selected={false}
-          />
-        )}
+        itemTrigger={{
+          title: 'Gemini model',
+          subtitle: 'Choose which Gemini model to use for transcription.',
+          showSelectedSubtitle: false,
+          detailFormatter: () => String(cfg.googleGemini.model),
+        }}
         items={[
           {
             id: '__custom__',
@@ -118,7 +114,7 @@ const GoogleGeminiSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
         ]}
         onSelect={(id) => {
           if (id === '__custom__') {
-            void (async () => {
+            fireAndForget((async () => {
               const raw = await Modal.prompt('Gemini model', 'Example: gemini-2.5-flash', {
                 placeholder: String(cfg.googleGemini.model),
               });
@@ -126,7 +122,7 @@ const GoogleGeminiSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
               const next = String(raw).trim();
               if (!next) return;
               setGoogleGemini({ model: next });
-            })();
+            })(), { tag: 'googleGeminiSttProvider.promptModel' });
             setOpenMenu(null);
             return;
           }
@@ -147,17 +143,12 @@ const GoogleGeminiSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
         connectToTrigger={true}
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
-        trigger={({ open, toggle }) => (
-          <Item
-            title="Language"
-            subtitle="Optional hint to improve transcription accuracy."
-            detail={cfg.googleGemini.language ? String(cfg.googleGemini.language) : 'Auto'}
-            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-            onPress={toggle}
-            showChevron={false}
-            selected={false}
-          />
-        )}
+        itemTrigger={{
+          title: 'Language',
+          subtitle: 'Optional hint to improve transcription accuracy.',
+          showSelectedSubtitle: false,
+          detailFormatter: () => (cfg.googleGemini.language ? String(cfg.googleGemini.language) : 'Auto'),
+        }}
         items={LANGUAGES.flatMap((lang) => {
           const id = typeof lang.code === 'string' ? lang.code : '';
           if (!id) {

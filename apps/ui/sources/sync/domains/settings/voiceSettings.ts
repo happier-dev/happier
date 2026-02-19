@@ -92,15 +92,44 @@ const VoiceLocalConversationSchema = z.object({
         .prefault({}),
     })
     .default({ enabled: false, endpointing: { silenceMs: 450, minSpeechMs: 120 } }),
-	  agent: z
-	    .object({
-	      backend: z.enum(['daemon', 'openai_compat']).default('daemon'),
-	      agentSource: z.enum(['session', 'agent']).default('session'),
-	      agentId: z.string().default('claude'),
-	      permissionPolicy: z.enum(['no_tools', 'read_only']).default('read_only'),
-	      idleTtlSeconds: z.number().int().min(60).max(21600).default(1800),
-	      prewarmOnConnect: z.boolean().default(false),
-	      resumabilityMode: z.enum(['replay', 'provider_resume']).default('replay'),
+		  agent: z
+		    .object({
+		      backend: z.enum(['daemon', 'openai_compat']).default('daemon'),
+		      agentSource: z.enum(['session', 'agent']).default('session'),
+		      agentId: z.string().default('claude'),
+		      /**
+		       * Where the local voice agent daemon run should be hosted.
+		       *
+		       * - auto: resolves a stable machine from recent/active sessions (does not roam automatically)
+		       * - fixed: always use the configured machine id
+		       */
+		      machineTargetMode: z.enum(['auto', 'fixed']).default('auto'),
+		      machineTargetId: z.string().nullable().default(null),
+		      /**
+		       * Directory policy:
+		       * - false: starting voice from a session uses the session root; sidebar uses voice home
+		       * - true: always use voice home (disables session-root starts and teleport)
+		       */
+		      stayInVoiceHome: z.boolean().default(false),
+		      /**
+		       * Allow switching the voice agent's working directory to a session root (via UI/tool).
+		       * When disabled, teleport actions should fail closed.
+		       */
+		      teleportEnabled: z.boolean().default(true),
+		      /**
+		       * Whether to keep per-root voice carriers warm for faster switching / resumability.
+		       */
+		      rootSessionPolicy: z.enum(['single', 'keep_warm']).default('single'),
+		      maxWarmRoots: z.number().int().min(1).max(10).default(3),
+		      /**
+		       * Voice home is a stable, non-project directory for voice agent runs. This subdir name is
+		       * appended under the target machine's `happyHomeDir`.
+		       */
+		      voiceHomeSubdirName: z.string().default('voice-agent'),
+		      permissionPolicy: z.enum(['no_tools', 'read_only']).default('read_only'),
+		      idleTtlSeconds: z.number().int().min(60).max(21600).default(1800),
+		      prewarmOnConnect: z.boolean().default(false),
+		      resumabilityMode: z.enum(['replay', 'provider_resume']).default('replay'),
 	      providerResume: z
 	        .object({
 	          fallbackToReplay: z.boolean().default(true),

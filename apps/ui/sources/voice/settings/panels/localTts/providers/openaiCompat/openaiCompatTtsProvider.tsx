@@ -9,6 +9,7 @@ import { Modal } from '@/modal';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { speakOpenAiCompatText } from '@/voice/output/TtsController';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import type { LocalTtsProviderSpec } from '../_types';
@@ -34,13 +35,13 @@ const OpenAiCompatTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
         title={t('settingsVoice.local.ttsBaseUrl')}
         detail={cfg.openaiCompat.baseUrl ? String(cfg.openaiCompat.baseUrl) : t('settingsVoice.local.notSet')}
         onPress={() => {
-          void (async () => {
+          fireAndForget((async () => {
             const raw = await Modal.prompt(t('settingsVoice.local.ttsBaseUrlTitle'), t('settingsVoice.local.ttsBaseUrlDescription'), {
               placeholder: cfg.openaiCompat.baseUrl ?? '',
             });
             if (raw === null) return;
             setOpenAiCompat({ baseUrl: String(raw).trim() || null });
-          })();
+          })(), { tag: 'OpenAiCompatTtsSettings.prompt.baseUrl' });
         }}
       />
       <Item
@@ -48,7 +49,7 @@ const OpenAiCompatTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
         subtitle={t('settingsVoice.local.ttsModelSubtitle')}
         detail={cfg.openaiCompat.model}
         onPress={() => {
-          void (async () => {
+          fireAndForget((async () => {
             const raw = await Modal.prompt(t('settingsVoice.local.ttsModelTitle'), t('settingsVoice.local.ttsModelDescription'), {
               placeholder: cfg.openaiCompat.model,
             });
@@ -56,7 +57,7 @@ const OpenAiCompatTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
             const next = String(raw).trim();
             if (!next) return;
             setOpenAiCompat({ model: next });
-          })();
+          })(), { tag: 'OpenAiCompatTtsSettings.prompt.model' });
         }}
       />
       <Item
@@ -64,7 +65,7 @@ const OpenAiCompatTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
         subtitle={t('settingsVoice.local.ttsVoiceSubtitle')}
         detail={cfg.openaiCompat.voice}
         onPress={() => {
-          void (async () => {
+          fireAndForget((async () => {
             const raw = await Modal.prompt(t('settingsVoice.local.ttsVoiceTitle'), t('settingsVoice.local.ttsVoiceDescription'), {
               placeholder: cfg.openaiCompat.voice,
             });
@@ -72,7 +73,7 @@ const OpenAiCompatTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
             const next = String(raw).trim();
             if (!next) return;
             setOpenAiCompat({ voice: next });
-          })();
+          })(), { tag: 'OpenAiCompatTtsSettings.prompt.voice' });
         }}
       />
 
@@ -87,17 +88,11 @@ const OpenAiCompatTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
         connectToTrigger={true}
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
-        trigger={({ open, toggle }) => (
-          <Item
-            title={t('settingsVoice.local.ttsFormat')}
-            subtitle={t('settingsVoice.local.ttsFormatSubtitle')}
-            detail={cfg.openaiCompat.format === 'mp3' ? 'MP3' : 'WAV'}
-            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-            onPress={toggle}
-            showChevron={false}
-            selected={false}
-          />
-        )}
+        itemTrigger={{
+          title: t('settingsVoice.local.ttsFormat'),
+          subtitle: t('settingsVoice.local.ttsFormatSubtitle'),
+          showSelectedSubtitle: false,
+        }}
         items={[
           {
             id: 'mp3',
@@ -122,13 +117,13 @@ const OpenAiCompatTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
         title={t('settingsVoice.local.ttsApiKey')}
         detail={cfg.openaiCompat.apiKey ? t('settingsVoice.local.apiKeySet') : t('settingsVoice.local.apiKeyNotSet')}
         onPress={() => {
-          void (async () => {
+          fireAndForget((async () => {
             const raw = await Modal.prompt(t('settingsVoice.local.ttsApiKeyTitle'), t('settingsVoice.local.ttsApiKeyDescription'), {
               inputType: 'secure-text',
             });
             if (raw === null) return;
             setOpenAiCompat({ apiKey: normalizeSecretStringPromptInput(raw) });
-          })();
+          })(), { tag: 'OpenAiCompatTtsSettings.prompt.apiKey' });
         }}
       />
     </>
@@ -145,7 +140,11 @@ export const openaiCompatTtsProviderSpec: LocalTtsProviderSpec = {
   test: async ({ cfgTts, networkTimeoutMs, sample }) => {
     const baseUrl = String(cfgTts.openaiCompat.baseUrl ?? '').trim();
     if (!baseUrl) {
-      Modal.alert(t('common.error'), t('settingsVoice.local.testTtsMissingBaseUrl'));
+      fireAndForget((async () => {
+        await Modal.alert(t('common.error'), t('settingsVoice.local.testTtsMissingBaseUrl'));
+      })(), {
+        tag: 'openaiCompatTtsProviderSpec.alert.missingBaseUrl',
+      });
       return;
     }
 
@@ -162,4 +161,3 @@ export const openaiCompatTtsProviderSpec: LocalTtsProviderSpec = {
     });
   },
 };
-

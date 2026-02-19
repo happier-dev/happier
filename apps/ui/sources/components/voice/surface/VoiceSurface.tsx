@@ -18,7 +18,9 @@ import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSes
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { useVoiceSessionSnapshot, voiceSessionManager } from '@/voice/session/voiceSession';
 import { hydrateVoiceAgentActivityFromCarrierSession } from '@/voice/persistence/hydrateVoiceAgentActivityFromCarrierSession';
+import { teleportVoiceAgentToSessionRoot } from '@/voice/agent/teleportVoiceAgentToSessionRoot';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export type VoiceSurfaceVariant = 'sidebar' | 'session';
 
@@ -59,6 +61,17 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
     providerId === 'local_conversation' ? (voice?.adapters?.local_conversation?.conversationMode ?? 'direct_session') : null;
   const allowsGlobalStart =
     providerId === 'realtime_elevenlabs' || (providerId === 'local_conversation' && localConversationMode === 'agent');
+
+  const localAgentCfg = providerId === 'local_conversation' ? voice?.adapters?.local_conversation?.agent ?? null : null;
+  const canTeleportToSessionRoot =
+    props.variant === 'session'
+    && providerId === 'local_conversation'
+    && localConversationMode === 'agent'
+    && localAgentCfg?.backend === 'daemon'
+    && localAgentCfg?.teleportEnabled !== false
+    && localAgentCfg?.stayInVoiceHome !== true
+    && typeof props.sessionId === 'string'
+    && props.sessionId.trim().length > 0;
 
   const voiceAgentTranscriptCfg = voice?.adapters?.local_conversation?.agent?.transcript ?? null;
   const voiceAgentTranscriptPersistenceMode =
@@ -101,11 +114,11 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
       hydratedVoiceAgentEpochRef.current = null;
       return;
     }
-    if (hydratedVoiceAgentEpochRef.current === voiceAgentTranscriptEpoch) return;
+	    if (hydratedVoiceAgentEpochRef.current === voiceAgentTranscriptEpoch) return;
 
-    hydratedVoiceAgentEpochRef.current = voiceAgentTranscriptEpoch;
-    void hydrateVoiceAgentActivityFromCarrierSession().catch(() => {});
-  }, [activityFeedEnabled, localConversationMode, voiceAgentTranscriptEpoch, voiceAgentTranscriptPersistenceMode, props.variant, providerId]);
+	    hydratedVoiceAgentEpochRef.current = voiceAgentTranscriptEpoch;
+	    fireAndForget(hydrateVoiceAgentActivityFromCarrierSession(), { tag: 'VoiceSurface.hydrateVoiceAgentActivityFromCarrierSession' });
+	  }, [activityFeedEnabled, localConversationMode, voiceAgentTranscriptEpoch, voiceAgentTranscriptPersistenceMode, props.variant, providerId]);
 
   const lastStatusRef = React.useRef(snap.status);
   React.useEffect(() => {
@@ -162,15 +175,18 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
       ? (sessionLabelById.get(primaryActionSessionId) ?? primaryActionSessionId)
       : null;
 
-  const onTogglePress = () => {
-    if (canStop) {
-      void voiceSessionManager.stop('').catch(() => {});
-      return;
-    }
-    const resolvedStartSessionId = allowsGlobalStart ? (startSessionId ?? '') : startSessionId;
-    if (!resolvedStartSessionId && !allowsGlobalStart) return;
-    void voiceSessionManager.toggle(resolvedStartSessionId ?? '').catch(() => {});
-  };
+	  const onTogglePress = () => {
+	    if (canStop) {
+	      fireAndForget(voiceSessionManager.stop(''), { tag: 'VoiceSurface.stop' });
+	      return;
+	    }
+	    const resolvedStartSessionId =
+	      providerId === 'local_conversation' && localConversationMode === 'agent' && props.variant === 'sidebar'
+	        ? ''
+	        : (allowsGlobalStart ? (startSessionId ?? '') : startSessionId);
+	    if (!resolvedStartSessionId && !allowsGlobalStart) return;
+	    fireAndForget(voiceSessionManager.toggle(resolvedStartSessionId ?? ''), { tag: 'VoiceSurface.toggle' });
+	  };
 
   const onClearPress = () => {
     if (props.variant === 'session' && feedSessionId) {
@@ -218,6 +234,21 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
 
         <View style={styles.statusRight}>
           {isSpeaking ? <VoiceBars isActive color={theme.colors.textSecondary} size="small" /> : null}
+
+          {canTeleportToSessionRoot ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="teleport_voice_agent"
+              onPress={() => {
+                const sid = String(props.sessionId ?? '').trim();
+                if (!sid) return;
+                fireAndForget(teleportVoiceAgentToSessionRoot({ sessionId: sid }), { tag: 'VoiceSurface.teleport' });
+              }}
+              style={({ pressed }) => [{ opacity: pressed ? 0.72 : 1 }, styles.iconAction as any]}
+            >
+              <Ionicons name="navigate-outline" size={18} color={theme.colors.textSecondary} />
+            </Pressable>
+          ) : null}
 
           <PrimaryCircleIconButton
             onPress={onTogglePress}
@@ -388,6 +419,13 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+  },
+  iconAction: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   feedContainer: {
     borderTopWidth: StyleSheet.hairlineWidth,

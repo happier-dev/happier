@@ -115,17 +115,8 @@ describe('RealtimeElevenLabsSection', () => {
     const voiceDropdown = dropdowns.find((d: any) => d.props?.search === true && d.props?.searchPlaceholder === 'settingsVoice.byo.voiceSearchPlaceholder');
     expect(voiceDropdown).toBeTruthy();
 
-    const toggle = vi.fn();
-    const itemNode = voiceDropdown!.props.trigger({ open: false, toggle, openMenu: toggle, closeMenu: () => {} });
-    expect(itemNode).toBeTruthy();
-    expect(typeof itemNode.props.onPress).toBe('function');
-    expect(itemNode.props.disabled).not.toBe(true);
-
-    await act(async () => {
-      itemNode.props.onPress?.();
-    });
-
-    expect(toggle).toHaveBeenCalledTimes(1);
+    expect(voiceDropdown!.props.itemTrigger).toBeTruthy();
+    expect(voiceDropdown!.props.itemTrigger.detailFormatter?.(null)).toBe('settingsVoice.byo.apiKeyNotSet');
   });
 
   it('wires welcome message selection into settings', async () => {

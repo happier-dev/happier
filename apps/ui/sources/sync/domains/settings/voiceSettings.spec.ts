@@ -56,6 +56,17 @@ describe('voiceSettings', () => {
     expect(agent?.transcript?.epoch).toBe(0);
   });
 
+  it('defaults include local voice agent machine + directory policies', () => {
+    const agent = (voiceSettingsDefaults as any).adapters?.local_conversation?.agent;
+    expect(agent?.machineTargetMode).toBe('auto');
+    expect(agent?.machineTargetId).toBe(null);
+    expect(agent?.stayInVoiceHome).toBe(false);
+    expect(agent?.teleportEnabled).toBe(true);
+    expect(agent?.rootSessionPolicy).toBe('single');
+    expect(agent?.maxWarmRoots).toBeTypeOf('number');
+    expect(agent?.voiceHomeSubdirName).toBeTypeOf('string');
+  });
+
   it('defaults include local TTS provider selection', () => {
     const tts = (voiceSettingsDefaults as any).adapters?.local_direct?.tts;
     expect(tts?.provider).toBe('openai_compat');

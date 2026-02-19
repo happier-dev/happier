@@ -11,7 +11,9 @@ import { Modal } from '@/modal';
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import { t } from '@/text';
 import { formatVoiceTestFailureMessage } from '@/voice/local/formatVoiceTestFailureMessage';
+import { primeWebAudioPlayback } from '@/voice/output/webAudioContext';
 import { getLocalTtsProviderSpec, localTtsProviderSpecs } from '@/voice/settings/panels/localTts/providers/registry';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export function LocalVoiceTtsGroup(props: {
   cfgTts: VoiceLocalTtsSettings;
@@ -21,6 +23,7 @@ export function LocalVoiceTtsGroup(props: {
 }) {
   const { theme } = useUnistyles();
   const [openMenu, setOpenMenu] = React.useState<null | 'ttsProvider'>(null);
+  const [testStatus, setTestStatus] = React.useState<'idle' | 'speaking'>('idle');
 
   const cfg = props.cfgTts;
   const providerSpec = getLocalTtsProviderSpec(cfg.provider);
@@ -39,17 +42,9 @@ export function LocalVoiceTtsGroup(props: {
         connectToTrigger={true}
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
-        trigger={({ open, toggle }) => (
-          <Item
-            title={t('settingsVoice.local.ttsProvider')}
-            subtitle={t('settingsVoice.local.ttsProviderSubtitle')}
-            detail={providerSpec.detail}
-            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-            onPress={toggle}
-            showChevron={false}
-            selected={false}
-          />
-        )}
+        itemTrigger={{
+          title: t('settingsVoice.local.ttsProvider'),
+        }}
         items={localTtsProviderSpecs.map((spec) => ({
           id: spec.id,
           title: spec.title,
@@ -82,15 +77,23 @@ export function LocalVoiceTtsGroup(props: {
       <Item
         title={t('settingsVoice.local.testTts')}
         subtitle={t('settingsVoice.local.testTtsSubtitle')}
+        detail={testStatus === 'speaking' ? 'Speaking…' : '—'}
         onPress={() => {
-          void (async () => {
+          primeWebAudioPlayback();
+          fireAndForget((async () => {
             try {
+              if (testStatus === 'speaking') return;
+              setTestStatus('speaking');
               const sample = t('settingsVoice.local.testTtsSample');
               await getLocalTtsProviderSpec(cfg.provider).test({ cfgTts: cfg, networkTimeoutMs: props.networkTimeoutMs, sample });
             } catch (err) {
-              Modal.alert(t('common.error'), formatVoiceTestFailureMessage(t('settingsVoice.local.testTtsFailed'), err));
+              fireAndForget(Promise.resolve().then(() => Modal.alert(t('common.error'), formatVoiceTestFailureMessage(t('settingsVoice.local.testTtsFailed'), err))), {
+                tag: 'LocalVoiceTtsGroup.alert.testTtsFailed',
+              });
+            } finally {
+              setTestStatus('idle');
             }
-          })();
+          })(), { tag: 'LocalVoiceTtsGroup.testTts' });
         }}
       />
     </ItemGroup>

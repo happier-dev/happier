@@ -3,6 +3,11 @@ import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
+import { DEFAULT_AGENT_ID, getAgentCore, isAgentId } from '@/agents/catalog/catalog';
+import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
+import { getAgentDropdownMenuItems } from '@/components/settings/pickers/agentDropdownItems';
+import { getModelDropdownMenuItems, REFRESH_MODELS_DROPDOWN_ITEM_ID } from '@/components/settings/pickers/modelDropdownItems';
+import { getMachineDropdownMenuItems } from '@/components/settings/pickers/machineDropdownItems';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -11,10 +16,17 @@ import { Modal } from '@/modal';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import type { SecretString } from '@/sync/encryption/secretSettings';
 import { t } from '@/text';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { LocalVoiceSttGroup } from '@/voice/settings/panels/localStt/LocalVoiceSttGroup';
 import { LocalVoiceTtsGroup } from '@/voice/settings/panels/localTts/LocalVoiceTtsGroup';
 import { resetGlobalVoiceAgentPersistence } from '@/voice/agent/resetGlobalVoiceAgentPersistence';
 import { canAgentResume } from '@/agents/runtime/resumeCapabilities';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { useAllMachines } from '@/sync/store/hooks';
+import { useSetting } from '@/sync/domains/state/storage';
+import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
 
 function normalizeSecretStringPromptInput(value: string | null): SecretString | null {
   if (value === null) return null;
@@ -28,23 +40,151 @@ export function LocalConversationSection(props: {
   popoverBoundaryRef?: React.RefObject<any> | null;
 }) {
   const { theme } = useUnistyles();
+  const voiceAgentEnabled = useFeatureEnabled('voice.agent');
+  const enabledAgentIds = useEnabledAgentIds();
   const [openMenu, setOpenMenu] = React.useState<
     | null
     | 'conversationMode'
     | 'mediatorBackend'
+    | 'mediatorMachineTarget'
+    | 'mediatorRootSessionPolicy'
     | 'mediatorAgentSource'
+    | 'mediatorAgentId'
     | 'mediatorPermissionPolicy'
     | 'mediatorTranscriptPersistence'
     | 'mediatorResumabilityMode'
     | 'mediatorReplayStrategy'
     | 'mediatorWelcomeMode'
     | 'mediatorChatModelSource'
+    | 'mediatorChatModelId'
     | 'mediatorCommitModelSource'
+    | 'mediatorCommitModelId'
     | 'mediatorVerbosity'
   >(null);
 
   const cfg = props.voice.adapters.local_conversation;
   const enabled = props.voice.providerId === 'local_conversation';
+  const machines = useAllMachines();
+  const recentMachinePaths = useSetting('recentMachinePaths') as any[] | undefined;
+
+  const selectedAgentIdForDropdown = React.useMemo(() => {
+    const raw = String(cfg.agent.agentId ?? '').trim();
+    return raw.length > 0 ? raw : null;
+  }, [cfg.agent.agentId]);
+
+  const selectedAgentIdLabel = React.useMemo(() => {
+    const raw = String(cfg.agent.agentId ?? '').trim();
+    if (!raw) return t('settingsVoice.local.notSet');
+    if (isAgentId(raw as any)) return t(getAgentCore(raw as any).displayNameKey);
+    return raw;
+  }, [cfg.agent.agentId]);
+
+  const agentIdMenuItems = React.useMemo(() => {
+    return [
+      ...getAgentDropdownMenuItems({
+        agentIds: enabledAgentIds as any,
+        iconColor: theme.colors.textSecondary,
+      }),
+      {
+        id: '__custom__',
+        title: 'Custom…',
+        subtitle: 'Enter a custom backend id.',
+        icon: <Ionicons name="create-outline" size={22} color={theme.colors.textSecondary} />,
+      },
+    ];
+  }, [enabledAgentIds, theme.colors.textSecondary]);
+
+  const selectedAgentIdForModelOptions = React.useMemo(() => {
+    if (cfg.agent.agentSource !== 'agent') return null;
+    const raw = String(cfg.agent.agentId ?? '').trim();
+    if (!raw) return null;
+    return isAgentId(raw as any) ? (raw as any) : null;
+  }, [cfg.agent.agentId, cfg.agent.agentSource]);
+
+  const preflightMachineId = React.useMemo(() => {
+    if (cfg.agent.machineTargetMode === 'fixed') {
+      const machineId = String(cfg.agent.machineTargetId ?? '').trim();
+      return machineId.length > 0 ? machineId : null;
+    }
+
+    return resolvePreferredMachineId({
+      machines,
+      recentMachinePaths: Array.isArray(recentMachinePaths) ? recentMachinePaths : [],
+    });
+  }, [cfg.agent.machineTargetId, cfg.agent.machineTargetMode, machines, recentMachinePaths]);
+
+  const preflightModels = useNewSessionPreflightModelsState({
+    agentType: (selectedAgentIdForModelOptions ?? DEFAULT_AGENT_ID) as any,
+    selectedMachineId: preflightMachineId,
+    capabilityServerId: String(getActiveServerSnapshot().serverId ?? '').trim(),
+  });
+
+  const selectableModelMenuItems = React.useMemo(() => {
+    if (!selectedAgentIdForModelOptions) return [];
+    return getModelDropdownMenuItems({
+      modelOptions: preflightModels.modelOptions,
+      iconColor: theme.colors.textSecondary,
+      probe: {
+        phase: preflightModels.probe.phase,
+        onRefresh: preflightModels.probe.refresh,
+      },
+    });
+  }, [preflightModels.modelOptions, preflightModels.probe.phase, preflightModels.probe.refresh, selectedAgentIdForModelOptions, theme.colors.textSecondary]);
+
+  const modelIdMenuItems = React.useMemo(() => {
+    return [
+      ...selectableModelMenuItems,
+      {
+        id: '__custom__',
+        title: 'Custom…',
+        subtitle: 'Enter a custom model id.',
+        icon: <Ionicons name="create-outline" size={22} color={theme.colors.textSecondary} />,
+      },
+    ];
+  }, [selectableModelMenuItems, theme.colors.textSecondary]);
+
+  const machineTargetDropdownItems = React.useMemo(() => {
+    return getMachineDropdownMenuItems({
+      machines,
+      iconColor: theme.colors.textSecondary,
+      includeAuto: true,
+      autoSubtitle: 'Automatically choose a stable machine for the voice agent.',
+    });
+  }, [machines, theme.colors.textSecondary]);
+
+  const machineTargetSelectedId = React.useMemo(() => {
+    if (cfg.agent.machineTargetMode === 'fixed') {
+      const machineId = String(cfg.agent.machineTargetId ?? '').trim();
+      if (machineId) return machineId;
+    }
+    return 'auto';
+  }, [cfg.agent.machineTargetId, cfg.agent.machineTargetMode]);
+
+  const machineTargetSelectedItem = React.useMemo(() => {
+    return machineTargetDropdownItems.find((it) => it.id === machineTargetSelectedId) ?? machineTargetDropdownItems[0] ?? null;
+  }, [machineTargetDropdownItems, machineTargetSelectedId]);
+
+  const rootSessionPolicyItems = React.useMemo(() => {
+    return [
+      {
+        id: 'single',
+        title: 'Single root',
+        subtitle: 'Keep only one voice agent working directory at a time.',
+        icon: <Ionicons name="radio-button-on-outline" size={22} color={theme.colors.textSecondary} />,
+      },
+      {
+        id: 'keep_warm',
+        title: 'Keep warm',
+        subtitle: 'Keep recent working directories available for faster switching.',
+        icon: <Ionicons name="flame-outline" size={22} color={theme.colors.textSecondary} />,
+      },
+    ] as const;
+  }, [theme.colors.textSecondary]);
+
+  const rootSessionPolicySelectedItem = React.useMemo(() => {
+    const selectedId = cfg.agent.rootSessionPolicy === 'keep_warm' ? 'keep_warm' : 'single';
+    return rootSessionPolicyItems.find((it) => it.id === selectedId) ?? rootSessionPolicyItems[0];
+  }, [cfg.agent.rootSessionPolicy, rootSessionPolicyItems]);
 
   const providerResumeSupportedByAgent = React.useMemo(() => {
     if (!enabled) return true;
@@ -87,24 +227,16 @@ export function LocalConversationSection(props: {
           selectedId={cfg.conversationMode}
           showCategoryTitles={false}
           matchTriggerWidth={true}
-          connectToTrigger={true}
-          rowKind="item"
-          popoverBoundaryRef={props.popoverBoundaryRef}
-          trigger={({ open, toggle }) => (
-            <Item
-              title={t('settingsVoice.local.conversationMode')}
-              subtitle={t('settingsVoice.local.conversationModeSubtitle')}
-              detail={cfg.conversationMode === 'agent' ? 'Voice agent' : 'Direct to session'}
-              rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-              onPress={toggle}
-              showChevron={false}
-              selected={false}
-            />
-          )}
-          items={[
-            {
-              id: 'agent',
-              title: 'Voice agent',
+        connectToTrigger={true}
+        rowKind="item"
+        popoverBoundaryRef={props.popoverBoundaryRef}
+        itemTrigger={{
+          title: t('settingsVoice.local.conversationMode'),
+        }}
+        items={[
+          {
+            id: 'agent',
+            title: 'Voice agent',
               subtitle: 'Talk to a separate voice agent and commit when ready.',
               icon: <Ionicons name="chatbubble-ellipses-outline" size={22} color={theme.colors.textSecondary} />,
             },
@@ -143,7 +275,7 @@ export function LocalConversationSection(props: {
             title="Silence (ms)"
             detail={String(cfg.handsFree.endpointing.silenceMs)}
             onPress={() => {
-              void (async () => {
+              fireAndForget((async () => {
                 const raw = await Modal.prompt('Silence (ms)', undefined, {
                   inputType: 'numeric',
                   placeholder: String(cfg.handsFree.endpointing.silenceMs),
@@ -160,14 +292,14 @@ export function LocalConversationSection(props: {
                     },
                   },
                 });
-              })();
+              })(), { tag: 'LocalConversationSection.prompt.handsFree.silenceMs' });
             }}
           />
           <Item
             title="Minimum speech (ms)"
             detail={String(cfg.handsFree.endpointing.minSpeechMs)}
             onPress={() => {
-              void (async () => {
+              fireAndForget((async () => {
                 const raw = await Modal.prompt('Minimum speech (ms)', undefined, {
                   inputType: 'numeric',
                   placeholder: String(cfg.handsFree.endpointing.minSpeechMs),
@@ -184,7 +316,7 @@ export function LocalConversationSection(props: {
                     },
                   },
                 });
-              })();
+              })(), { tag: 'LocalConversationSection.prompt.handsFree.minSpeechMs' });
             }}
           />
         </ItemGroup>
@@ -211,17 +343,9 @@ export function LocalConversationSection(props: {
               connectToTrigger={true}
               rowKind="item"
               popoverBoundaryRef={props.popoverBoundaryRef}
-              trigger={({ open, toggle }) => (
-                <Item
-                  title="Persistence"
-                  subtitle="Keep voice agent context across app reloads."
-                  detail={(cfg.agent.transcript?.persistenceMode ?? 'ephemeral') === 'persistent' ? 'Persistent' : 'Ephemeral'}
-                  rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-                  onPress={toggle}
-                  showChevron={false}
-                  selected={false}
-                />
-              )}
+              itemTrigger={{
+                title: 'Persistence',
+              }}
               items={[
                 {
                   id: 'ephemeral',
@@ -255,17 +379,18 @@ export function LocalConversationSection(props: {
                   connectToTrigger={true}
                   rowKind="item"
                   popoverBoundaryRef={props.popoverBoundaryRef}
-                  trigger={({ open, toggle }) => (
-                    <Item
-                      title="Resumability mode"
-                      subtitle="How to restore context when the run is inactive."
-                      detail={(cfg.agent.resumabilityMode ?? 'replay') === 'provider_resume' ? 'Provider resume' : 'Replay'}
-                      rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-                      onPress={toggle}
-                      showChevron={false}
-                      selected={false}
-                    />
-                  )}
+                  itemTrigger={{
+                    title: 'Resumability mode',
+                    subtitleFormatter: () => {
+                      const mode = cfg.agent.resumabilityMode ?? 'replay';
+                      if (mode !== 'provider_resume') return 'Seed a fresh run with a replay prompt from the transcript.';
+                      if (!voiceAgentEnabled) return 'Voice agent is disabled. Enable Voice Agent in Settings → Features (requires Execution runs).';
+                      if (cfg.agent.backend !== 'daemon') return 'Requires the daemon backend.';
+                      if (cfg.agent.agentSource === 'agent' && !providerResumeSupportedByAgent) return 'Selected agent does not support provider resume.';
+                      return 'Resume the provider session when supported; fall back to replay if enabled.';
+                    },
+                    detailFormatter: () => ((cfg.agent.resumabilityMode ?? 'replay') === 'provider_resume' ? 'Provider resume' : 'Replay'),
+                  }}
                   items={[
                     {
                       id: 'replay',
@@ -276,12 +401,14 @@ export function LocalConversationSection(props: {
                     {
                       id: 'provider_resume',
                       title: 'Provider resume',
-                      subtitle: cfg.agent.backend !== 'daemon'
-                        ? 'Requires the daemon backend.'
-                        : cfg.agent.agentSource === 'agent' && !providerResumeSupportedByAgent
-                          ? 'Selected agent does not support provider resume.'
-                          : 'Resume the provider session when supported; fall back to replay if enabled.',
-                      disabled: cfg.agent.backend !== 'daemon' || (cfg.agent.agentSource === 'agent' && !providerResumeSupportedByAgent),
+                      subtitle: !voiceAgentEnabled
+                        ? 'Voice agent is disabled. Enable Voice Agent in Settings → Features (requires Execution runs).'
+                        : cfg.agent.backend !== 'daemon'
+                          ? 'Requires the daemon backend.'
+                          : cfg.agent.agentSource === 'agent' && !providerResumeSupportedByAgent
+                            ? 'Selected agent does not support provider resume.'
+                            : 'Resume the provider session when supported; fall back to replay if enabled.',
+                      disabled: !voiceAgentEnabled || cfg.agent.backend !== 'daemon' || (cfg.agent.agentSource === 'agent' && !providerResumeSupportedByAgent),
                       icon: <Ionicons name="refresh-outline" size={22} color={theme.colors.textSecondary} />,
                     },
                   ]}
@@ -315,17 +442,9 @@ export function LocalConversationSection(props: {
                   connectToTrigger={true}
                   rowKind="item"
                   popoverBoundaryRef={props.popoverBoundaryRef}
-                  trigger={({ open, toggle }) => (
-                    <Item
-                      title="Replay strategy"
-                      subtitle="How to build the replay seed prompt."
-                      detail={(cfg.agent.replay?.strategy ?? 'recent_messages') === 'summary_plus_recent' ? 'Summary + recent' : 'Recent messages'}
-                      rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-                      onPress={toggle}
-                      showChevron={false}
-                      selected={false}
-                    />
-                  )}
+                  itemTrigger={{
+                    title: 'Replay strategy',
+                  }}
                   items={[
                     {
                       id: 'recent_messages',
@@ -350,7 +469,7 @@ export function LocalConversationSection(props: {
                   title="Replay recent messages"
                   detail={String(cfg.agent.replay?.recentMessagesCount ?? 16)}
                   onPress={() => {
-                    void (async () => {
+                    fireAndForget((async () => {
                       const raw = await Modal.prompt('Replay recent messages', 'How many transcript messages to include in the replay seed (1–100).', {
                         inputType: 'numeric',
                         placeholder: String(cfg.agent.replay?.recentMessagesCount ?? 16),
@@ -359,7 +478,7 @@ export function LocalConversationSection(props: {
                       const next = Number(String(raw).trim());
                       if (!Number.isFinite(next)) return;
                       setAgent({ replay: { ...(cfg.agent.replay ?? {}), recentMessagesCount: Math.max(1, Math.min(100, Math.floor(next))) } });
-                    })();
+                    })(), { tag: 'LocalConversationSection.prompt.replay.recentMessagesCount' });
                   }}
                 />
               </>
@@ -381,23 +500,15 @@ export function LocalConversationSection(props: {
               onOpenChange={(next) => setOpenMenu(next ? 'mediatorWelcomeMode' : null)}
               variant="selectable"
               search={false}
-              selectedId={cfg.agent.welcome?.mode ?? 'immediate'}
+              selectedId={cfg.agent.welcome?.enabled ? (cfg.agent.welcome?.mode ?? 'immediate') : 'off'}
               showCategoryTitles={false}
               matchTriggerWidth={true}
               connectToTrigger={true}
               rowKind="item"
               popoverBoundaryRef={props.popoverBoundaryRef}
-              trigger={({ open, toggle }) => (
-                <Item
-                  title="Welcome message"
-                  subtitle="Optional greeting spoken by the agent."
-                  detail={cfg.agent.welcome?.enabled ? ((cfg.agent.welcome?.mode ?? 'immediate') === 'on_first_turn' ? 'On first turn' : 'Immediate') : 'Off'}
-                  rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-                  onPress={toggle}
-                  showChevron={false}
-                  selected={false}
-                />
-              )}
+              itemTrigger={{
+                title: 'Welcome message',
+              }}
               items={[
                 {
                   id: 'off',
@@ -428,13 +539,13 @@ export function LocalConversationSection(props: {
               }}
             />
 
-            {(cfg.agent.transcript?.persistenceMode ?? 'ephemeral') === 'persistent' ? (
-              <Item
-                title="Reset voice agent"
-                subtitle="Clear saved voice agent state and start fresh."
-                destructive
+	            {(cfg.agent.transcript?.persistenceMode ?? 'ephemeral') === 'persistent' ? (
+	              <Item
+	                title="Reset voice agent"
+	                subtitle="Clear saved voice agent state and start fresh."
+	                destructive
                 onPress={() => {
-                  void (async () => {
+                  fireAndForget((async () => {
                     const confirmed = await Modal.confirm(
                       'Reset voice agent',
                       'This clears the saved voice agent run and transcript epoch so the next session starts fresh.',
@@ -445,51 +556,166 @@ export function LocalConversationSection(props: {
                     const epochRaw = Number(cfg.agent.transcript?.epoch ?? 0);
                     const epoch = Number.isFinite(epochRaw) && epochRaw >= 0 ? Math.floor(epochRaw) : 0;
                     setAgent({ transcript: { ...(cfg.agent.transcript ?? {}), epoch: epoch + 1 } });
-                  })();
+                  })(), { tag: 'LocalConversationSection.confirm.resetVoiceAgent' });
+	                }}
+	              />
+	            ) : null}
+	          </ItemGroup>
+
+	          <ItemGroup title="Voice agent settings">
+	            <DropdownMenu
+	              open={openMenu === 'mediatorBackend'}
+	              onOpenChange={(next) => setOpenMenu(next ? 'mediatorBackend' : null)}
+	              variant="selectable"
+	              search={false}
+	              selectedId={cfg.agent.backend}
+	              showCategoryTitles={false}
+              matchTriggerWidth={true}
+              connectToTrigger={true}
+              rowKind="item"
+              popoverBoundaryRef={props.popoverBoundaryRef}
+              itemTrigger={{
+                title: t('settingsVoice.local.mediatorBackend'),
+                subtitleFormatter: () => {
+                  if (cfg.agent.backend !== 'daemon') return 'Use a local OpenAI-compatible chat endpoint as the agent backend.';
+                  return voiceAgentEnabled
+                    ? 'Use your local daemon as the agent backend.'
+                    : 'Voice agent is disabled. Enable Voice Agent in Settings → Features (requires Execution runs).';
+                },
+                detailFormatter: () => (cfg.agent.backend === 'daemon' ? 'Daemon' : 'OpenAI-compatible HTTP'),
+              }}
+              items={[
+                {
+                  id: 'daemon',
+                  title: 'Daemon',
+	                  subtitle: voiceAgentEnabled
+	                    ? 'Use your local daemon as the agent backend.'
+	                    : 'Voice agent is disabled. Enable Voice Agent in Settings → Features (requires Execution runs).',
+	                  icon: <Ionicons name="server-outline" size={22} color={theme.colors.textSecondary} />,
+	                  disabled: !voiceAgentEnabled,
+	                },
+	                {
+	                  id: 'openai_compat',
+	                  title: 'OpenAI-compatible HTTP',
+	                  subtitle: 'Use a local OpenAI-compatible chat endpoint as the agent backend.',
+	                  icon: <Ionicons name="cloud-outline" size={22} color={theme.colors.textSecondary} />,
+	                },
+	              ]}
+	              onSelect={(id) => {
+	                setAgent({ backend: id as any });
+	                setOpenMenu(null);
+	              }}
+	            />
+
+	            <DropdownMenu
+	              open={openMenu === 'mediatorMachineTarget'}
+	              onOpenChange={(next) => setOpenMenu(next ? 'mediatorMachineTarget' : null)}
+	              variant="selectable"
+	              search={false}
+	              selectedId={machineTargetSelectedId}
+	              showCategoryTitles={false}
+	              matchTriggerWidth={true}
+	              connectToTrigger={true}
+	              rowKind="item"
+	              popoverBoundaryRef={props.popoverBoundaryRef}
+	              itemTrigger={{
+	                title: 'Voice agent machine',
+	                subtitleFormatter: () => (machineTargetSelectedItem?.subtitle ?? 'Where to run the voice agent.'),
+	                detailFormatter: () => (machineTargetSelectedItem?.title ?? machineTargetSelectedId),
+	              }}
+	              items={machineTargetDropdownItems}
+	              onSelect={(id) => {
+	                if (id === 'auto') {
+	                  setAgent({ machineTargetMode: 'auto', machineTargetId: null });
+	                  setOpenMenu(null);
+	                  return;
+	                }
+	                const machineId = String(id ?? '').trim();
+	                if (!machineId) return;
+	                setAgent({ machineTargetMode: 'fixed', machineTargetId: machineId });
+	                setOpenMenu(null);
+	              }}
+	            />
+
+              <Item
+                title="Stay in voice home"
+                subtitle={
+                  cfg.agent.stayInVoiceHome
+                    ? 'Always run the voice agent in its home folder (disables session-root start and teleport).'
+                    : 'Starting from a session uses that session’s project root by default.'
+                }
+                rightElement={
+                  <Switch
+                    value={cfg.agent.stayInVoiceHome === true}
+                    onValueChange={(v) => setAgent({ stayInVoiceHome: v })}
+                  />
+                }
+                onPress={() => setAgent({ stayInVoiceHome: cfg.agent.stayInVoiceHome !== true })}
+                showChevron={false}
+                selected={false}
+              />
+
+              <Item
+                title="Allow teleport"
+                subtitle={
+                  cfg.agent.teleportEnabled === false
+                    ? 'Teleport is disabled.'
+                    : 'Allow switching the voice agent working directory to a session project root.'
+                }
+                rightElement={
+                  <Switch
+                    value={cfg.agent.teleportEnabled !== false}
+                    onValueChange={(v) => setAgent({ teleportEnabled: v })}
+                  />
+                }
+                onPress={() => setAgent({ teleportEnabled: cfg.agent.teleportEnabled === false })}
+                showChevron={false}
+                selected={false}
+              />
+
+              <DropdownMenu
+                open={openMenu === 'mediatorRootSessionPolicy'}
+                onOpenChange={(next) => setOpenMenu(next ? 'mediatorRootSessionPolicy' : null)}
+                variant="selectable"
+                search={false}
+                selectedId={cfg.agent.rootSessionPolicy ?? 'single'}
+                showCategoryTitles={false}
+                matchTriggerWidth={true}
+                connectToTrigger={true}
+                rowKind="item"
+                popoverBoundaryRef={props.popoverBoundaryRef}
+                itemTrigger={{
+                  title: 'Root session policy',
+                  subtitleFormatter: () => (rootSessionPolicySelectedItem?.subtitle ?? 'How working directories are managed.'),
+                  detailFormatter: () => (rootSessionPolicySelectedItem?.title ?? (cfg.agent.rootSessionPolicy ?? 'single')),
+                }}
+                items={rootSessionPolicyItems as any}
+                onSelect={(id) => {
+                  setAgent({ rootSessionPolicy: id as any });
+                  setOpenMenu(null);
                 }}
               />
-            ) : null}
-        <DropdownMenu
-          open={openMenu === 'mediatorBackend'}
-          onOpenChange={(next) => setOpenMenu(next ? 'mediatorBackend' : null)}
-          variant="selectable"
-          search={false}
-          selectedId={cfg.agent.backend}
-          showCategoryTitles={false}
-          matchTriggerWidth={true}
-          connectToTrigger={true}
-          rowKind="item"
-          popoverBoundaryRef={props.popoverBoundaryRef}
-          trigger={({ open, toggle }) => (
-            <Item
-              title={t('settingsVoice.local.mediatorBackend')}
-              subtitle={t('settingsVoice.local.mediatorBackendSubtitle')}
-              detail={cfg.agent.backend === 'daemon' ? 'Daemon' : 'OpenAI-compatible HTTP'}
-              rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-              onPress={toggle}
-              showChevron={false}
-              selected={false}
-            />
-          )}
-          items={[
-            {
-              id: 'daemon',
-              title: 'Daemon',
-              subtitle: 'Use your local daemon as the agent backend.',
-              icon: <Ionicons name="server-outline" size={22} color={theme.colors.textSecondary} />,
-            },
-            {
-              id: 'openai_compat',
-              title: 'OpenAI-compatible HTTP',
-              subtitle: 'Use a local OpenAI-compatible chat endpoint as the agent backend.',
-              icon: <Ionicons name="cloud-outline" size={22} color={theme.colors.textSecondary} />,
-            },
-          ]}
-          onSelect={(id) => {
-            setAgent({ backend: id as any });
-            setOpenMenu(null);
-          }}
-        />
+
+              {cfg.agent.rootSessionPolicy === 'keep_warm' ? (
+                <Item
+                  title="Max warm roots"
+                  subtitle="Limit how many working directories are kept available."
+                  detail={String(cfg.agent.maxWarmRoots ?? 3)}
+                  onPress={() => {
+                    fireAndForget((async () => {
+                      const raw = await Modal.prompt('Max warm roots', undefined, {
+                        inputType: 'numeric',
+                        placeholder: String(cfg.agent.maxWarmRoots ?? 3),
+                      });
+                      if (raw === null) return;
+                      const next = Number(String(raw).trim());
+                      if (!Number.isFinite(next)) return;
+                      const clamped = Math.max(1, Math.min(10, Math.floor(next)));
+                      setAgent({ maxWarmRoots: clamped });
+                    })(), { tag: 'LocalConversationSection.prompt.maxWarmRoots' });
+                  }}
+                />
+              ) : null}
         <DropdownMenu
           open={openMenu === 'mediatorAgentSource'}
           onOpenChange={(next) => setOpenMenu(next ? 'mediatorAgentSource' : null)}
@@ -500,18 +726,13 @@ export function LocalConversationSection(props: {
           matchTriggerWidth={true}
           connectToTrigger={true}
           rowKind="item"
-          popoverBoundaryRef={props.popoverBoundaryRef}
-          trigger={({ open, toggle }) => (
-            <Item
-              title={t('settingsVoice.local.mediatorAgentSource')}
-              subtitle={t('settingsVoice.local.mediatorAgentSourceSubtitle')}
-              detail={cfg.agent.agentSource === 'session' ? 'Follow session' : 'Fixed agent'}
-              rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-              onPress={toggle}
-              showChevron={false}
-              selected={false}
-            />
-          )}
+	          popoverBoundaryRef={props.popoverBoundaryRef}
+          itemTrigger={{
+            title: t('settingsVoice.local.mediatorAgentSource'),
+            subtitleFormatter: () => (cfg.agent.agentSource === 'session'
+              ? 'Use the active session agent as the voice agent backend.'
+              : 'Use a specific backend id for the voice agent.'),
+          }}
           items={[
             {
               id: 'session',
@@ -532,19 +753,45 @@ export function LocalConversationSection(props: {
           }}
         />
         {cfg.agent.agentSource === 'agent' ? (
-          <Item
-            title={t('settingsVoice.local.mediatorAgentId')}
-            detail={String(cfg.agent.agentId)}
-            onPress={() => {
-              void (async () => {
-                const raw = await Modal.prompt(t('settingsVoice.local.mediatorAgentId'), t('settingsVoice.local.mediatorAgentIdSubtitle'), {
-                  placeholder: String(cfg.agent.agentId),
-                });
-                if (raw === null) return;
-                const next = String(raw).trim();
-                if (!next) return;
-                setAgent({ agentId: next });
-              })();
+          <DropdownMenu
+            open={openMenu === 'mediatorAgentId'}
+            onOpenChange={(next) => setOpenMenu(next ? 'mediatorAgentId' : null)}
+            variant="selectable"
+            search={true}
+            searchPlaceholder="Search backends"
+            selectedId={selectedAgentIdForDropdown ?? ''}
+            showCategoryTitles={false}
+            matchTriggerWidth={true}
+            connectToTrigger={true}
+            rowKind="item"
+            popoverBoundaryRef={props.popoverBoundaryRef}
+            itemTrigger={{
+              title: t('settingsVoice.local.mediatorAgentId'),
+              subtitleFormatter: () => (agentIdMenuItems.find((it) => it.id === (selectedAgentIdForDropdown ?? ''))?.subtitle ?? t('settingsVoice.local.mediatorAgentIdSubtitle')),
+              detailFormatter: () => selectedAgentIdLabel,
+            }}
+            items={agentIdMenuItems}
+            onSelect={(id) => {
+              if (id === '__custom__') {
+                setOpenMenu(null);
+                fireAndForget((async () => {
+                  const raw = await Modal.prompt(
+                    t('settingsVoice.local.mediatorAgentId'),
+                    t('settingsVoice.local.mediatorAgentIdSubtitle'),
+                    { placeholder: String(cfg.agent.agentId) },
+                  );
+                  if (raw === null) return;
+                  const next = String(raw).trim();
+                  if (!next) return;
+                  setAgent({ agentId: next });
+                })(), { tag: 'LocalConversationSection.prompt.agentId' });
+                return;
+              }
+
+              const next = String(id ?? '').trim();
+              if (!next) return;
+              setAgent({ agentId: next });
+              setOpenMenu(null);
             }}
           />
         ) : null}
@@ -559,17 +806,9 @@ export function LocalConversationSection(props: {
           connectToTrigger={true}
           rowKind="item"
           popoverBoundaryRef={props.popoverBoundaryRef}
-          trigger={({ open, toggle }) => (
-            <Item
-              title={t('settingsVoice.local.mediatorPermissionPolicy')}
-              subtitle={t('settingsVoice.local.mediatorPermissionPolicySubtitle')}
-              detail={cfg.agent.permissionPolicy === 'read_only' ? 'Read-only' : 'No tools'}
-              rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-              onPress={toggle}
-              showChevron={false}
-              selected={false}
-            />
-          )}
+          itemTrigger={{
+            title: t('settingsVoice.local.mediatorPermissionPolicy'),
+          }}
           items={[
             {
               id: 'read_only',
@@ -601,17 +840,9 @@ export function LocalConversationSection(props: {
           connectToTrigger={true}
           rowKind="item"
           popoverBoundaryRef={props.popoverBoundaryRef}
-          trigger={({ open, toggle }) => (
-            <Item
-              title={t('settingsVoice.local.mediatorChatModelSource')}
-              subtitle={t('settingsVoice.local.mediatorChatModelSourceSubtitle')}
-              detail={cfg.agent.chatModelSource === 'session' ? 'Session' : 'Custom model'}
-              rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-              onPress={toggle}
-              showChevron={false}
-              selected={false}
-            />
-          )}
+          itemTrigger={{
+            title: t('settingsVoice.local.mediatorChatModelSource'),
+          }}
           items={[
             {
               id: 'session',
@@ -632,19 +863,56 @@ export function LocalConversationSection(props: {
           }}
         />
         {cfg.agent.chatModelSource === 'custom' ? (
-          <Item
-            title="Voice agent chat model id"
-            detail={String(cfg.agent.chatModelId)}
-            onPress={() => {
-              void (async () => {
-                const raw = await Modal.prompt('Voice agent chat model id', 'Used when "Voice agent chat model source" is set to "Custom model".', {
-                  placeholder: String(cfg.agent.chatModelId),
-                });
-                if (raw === null) return;
-                const next = String(raw).trim();
-                if (!next) return;
-                setAgent({ chatModelId: next });
-              })();
+          <DropdownMenu
+            open={openMenu === 'mediatorChatModelId'}
+            onOpenChange={(next) => setOpenMenu(next ? 'mediatorChatModelId' : null)}
+            variant="selectable"
+            search={true}
+            searchPlaceholder="Search models"
+            selectedId={String(cfg.agent.chatModelId ?? '').trim()}
+            showCategoryTitles={false}
+            matchTriggerWidth={true}
+            connectToTrigger={true}
+            rowKind="item"
+              popoverBoundaryRef={props.popoverBoundaryRef}
+              itemTrigger={{
+                title: 'Voice agent chat model id',
+                subtitleFormatter: () => (
+                  modelIdMenuItems.find((it) => it.id === String(cfg.agent.chatModelId ?? '').trim())?.subtitle
+                  ?? 'Used when "Voice agent chat model source" is set to "Custom model".'
+                ),
+                detailFormatter: () => (
+                  modelIdMenuItems.find((it) => it.id === String(cfg.agent.chatModelId ?? '').trim())?.title
+                  ?? String(cfg.agent.chatModelId)
+                ),
+              }}
+            items={modelIdMenuItems}
+            onSelect={(id) => {
+              if (id === REFRESH_MODELS_DROPDOWN_ITEM_ID) {
+                preflightModels.probe.refresh();
+                setOpenMenu(null);
+                return;
+              }
+              if (id === '__custom__') {
+                setOpenMenu(null);
+                fireAndForget((async () => {
+                  const raw = await Modal.prompt(
+                    'Voice agent chat model id',
+                    'Used when "Voice agent chat model source" is set to "Custom model".',
+                    { placeholder: String(cfg.agent.chatModelId) },
+                  );
+                  if (raw === null) return;
+                  const next = String(raw).trim();
+                  if (!next) return;
+                  setAgent({ chatModelId: next });
+                })(), { tag: 'LocalConversationSection.prompt.chatModelId' });
+                return;
+              }
+
+              const next = String(id ?? '').trim();
+              if (!next) return;
+              setAgent({ chatModelId: next });
+              setOpenMenu(null);
             }}
           />
         ) : null}
@@ -659,23 +927,9 @@ export function LocalConversationSection(props: {
           connectToTrigger={true}
           rowKind="item"
           popoverBoundaryRef={props.popoverBoundaryRef}
-          trigger={({ open, toggle }) => (
-            <Item
-              title={t('settingsVoice.local.mediatorCommitModelSource')}
-              subtitle={t('settingsVoice.local.mediatorCommitModelSourceSubtitle')}
-              detail={
-                cfg.agent.commitModelSource === 'chat'
-                  ? 'Same as chat'
-                  : cfg.agent.commitModelSource === 'session'
-                    ? 'Session'
-                    : 'Custom model'
-              }
-              rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-              onPress={toggle}
-              showChevron={false}
-              selected={false}
-            />
-          )}
+          itemTrigger={{
+            title: t('settingsVoice.local.mediatorCommitModelSource'),
+          }}
           items={[
             {
               id: 'chat',
@@ -702,23 +956,60 @@ export function LocalConversationSection(props: {
           }}
         />
         {cfg.agent.commitModelSource === 'custom' ? (
-          <Item
-            title="Voice agent commit model id"
-            detail={String(cfg.agent.commitModelId)}
-            onPress={() => {
-              void (async () => {
-                const raw = await Modal.prompt('Voice agent commit model id', 'Used when "Voice agent commit model source" is set to "Custom model".', {
-                  placeholder: String(cfg.agent.commitModelId),
-                });
-                if (raw === null) return;
-                const next = String(raw).trim();
-                if (!next) return;
-                setAgent({ commitModelId: next });
-              })();
+          <DropdownMenu
+            open={openMenu === 'mediatorCommitModelId'}
+            onOpenChange={(next) => setOpenMenu(next ? 'mediatorCommitModelId' : null)}
+            variant="selectable"
+            search={true}
+            searchPlaceholder="Search models"
+            selectedId={String(cfg.agent.commitModelId ?? '').trim()}
+            showCategoryTitles={false}
+            matchTriggerWidth={true}
+            connectToTrigger={true}
+            rowKind="item"
+              popoverBoundaryRef={props.popoverBoundaryRef}
+              itemTrigger={{
+                title: 'Voice agent commit model id',
+                subtitleFormatter: () => (
+                  modelIdMenuItems.find((it) => it.id === String(cfg.agent.commitModelId ?? '').trim())?.subtitle
+                  ?? 'Used when "Voice agent commit model source" is set to "Custom model".'
+                ),
+                detailFormatter: () => (
+                  modelIdMenuItems.find((it) => it.id === String(cfg.agent.commitModelId ?? '').trim())?.title
+                  ?? String(cfg.agent.commitModelId)
+                ),
+              }}
+            items={modelIdMenuItems}
+            onSelect={(id) => {
+              if (id === REFRESH_MODELS_DROPDOWN_ITEM_ID) {
+                preflightModels.probe.refresh();
+                setOpenMenu(null);
+                return;
+              }
+              if (id === '__custom__') {
+                setOpenMenu(null);
+                fireAndForget((async () => {
+                  const raw = await Modal.prompt(
+                    'Voice agent commit model id',
+                    'Used when "Voice agent commit model source" is set to "Custom model".',
+                    { placeholder: String(cfg.agent.commitModelId) },
+                  );
+                  if (raw === null) return;
+                  const next = String(raw).trim();
+                  if (!next) return;
+                  setAgent({ commitModelId: next });
+                })(), { tag: 'LocalConversationSection.prompt.commitModelId' });
+                return;
+              }
+
+              const next = String(id ?? '').trim();
+              if (!next) return;
+              setAgent({ commitModelId: next });
+              setOpenMenu(null);
             }}
           />
         ) : null}
-        {cfg.agent.backend === 'daemon' ? (
+        {cfg.agent.backend === 'daemon' && voiceAgentEnabled ? (
           <Item
             title="Commit isolation"
             subtitle="Use a separate vendor session for commit generation (advanced)."
@@ -739,7 +1030,7 @@ export function LocalConversationSection(props: {
           title={t('settingsVoice.local.mediatorIdleTtl')}
           detail={String(cfg.agent.idleTtlSeconds)}
           onPress={() => {
-            void (async () => {
+            fireAndForget((async () => {
               const raw = await Modal.prompt(t('settingsVoice.local.mediatorIdleTtlTitle'), t('settingsVoice.local.mediatorIdleTtlDescription'), {
                 inputType: 'numeric',
                 placeholder: String(cfg.agent.idleTtlSeconds),
@@ -748,7 +1039,7 @@ export function LocalConversationSection(props: {
               const next = Number(String(raw).trim());
               if (!Number.isFinite(next)) return;
               setAgent({ idleTtlSeconds: Math.max(60, Math.min(21600, Math.floor(next))) });
-            })();
+            })(), { tag: 'LocalConversationSection.prompt.idleTtlSeconds' });
           }}
         />
         <DropdownMenu
@@ -762,17 +1053,9 @@ export function LocalConversationSection(props: {
           connectToTrigger={true}
           rowKind="item"
           popoverBoundaryRef={props.popoverBoundaryRef}
-          trigger={({ open, toggle }) => (
-            <Item
-              title={t('settingsVoice.local.mediatorVerbosity')}
-              subtitle={t('settingsVoice.local.mediatorVerbositySubtitle')}
-              detail={cfg.agent.verbosity === 'short' ? 'Short' : 'Balanced'}
-              rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-              onPress={toggle}
-              showChevron={false}
-              selected={false}
-            />
-          )}
+          itemTrigger={{
+            title: t('settingsVoice.local.mediatorVerbosity'),
+          }}
           items={[
             {
               id: 'short',
@@ -800,7 +1083,7 @@ export function LocalConversationSection(props: {
             title={t('settingsVoice.local.chatBaseUrl')}
             detail={cfg.agent.openaiCompat.chatBaseUrl ? String(cfg.agent.openaiCompat.chatBaseUrl) : t('settingsVoice.local.notSet')}
             onPress={() => {
-              void (async () => {
+              fireAndForget((async () => {
                 const raw = await Modal.prompt(
                   t('settingsVoice.local.chatBaseUrlTitle'),
                   t('settingsVoice.local.chatBaseUrlDescription'),
@@ -810,14 +1093,14 @@ export function LocalConversationSection(props: {
                 setAgent({
                   openaiCompat: { ...cfg.agent.openaiCompat, chatBaseUrl: String(raw).trim() || null },
                 });
-              })();
+              })(), { tag: 'LocalConversationSection.prompt.openaiCompat.chatBaseUrl' });
             }}
           />
           <Item
             title={t('settingsVoice.local.chatApiKey')}
             detail={cfg.agent.openaiCompat.chatApiKey ? t('settingsVoice.local.apiKeySet') : t('settingsVoice.local.notSet')}
             onPress={() => {
-              void (async () => {
+              fireAndForget((async () => {
                 const raw = await Modal.prompt(
                   t('settingsVoice.local.chatApiKeyTitle'),
                   t('settingsVoice.local.chatApiKeyDescription'),
@@ -829,14 +1112,14 @@ export function LocalConversationSection(props: {
                 setAgent({
                   openaiCompat: { ...cfg.agent.openaiCompat, chatApiKey: normalizeSecretStringPromptInput(raw) },
                 });
-              })();
+              })(), { tag: 'LocalConversationSection.prompt.openaiCompat.chatApiKey' });
             }}
           />
           <Item
             title={t('settingsVoice.local.chatModel')}
             detail={String(cfg.agent.openaiCompat.chatModel)}
             onPress={() => {
-              void (async () => {
+              fireAndForget((async () => {
                 const raw = await Modal.prompt(t('settingsVoice.local.chatModelTitle'), t('settingsVoice.local.chatModelDescription'), {
                   placeholder: String(cfg.agent.openaiCompat.chatModel),
                 });
@@ -844,14 +1127,14 @@ export function LocalConversationSection(props: {
                 const next = String(raw).trim();
                 if (!next) return;
                 setAgent({ openaiCompat: { ...cfg.agent.openaiCompat, chatModel: next } });
-              })();
+              })(), { tag: 'LocalConversationSection.prompt.openaiCompat.chatModel' });
             }}
           />
           <Item
             title={t('settingsVoice.local.commitModel')}
             detail={String(cfg.agent.openaiCompat.commitModel)}
             onPress={() => {
-              void (async () => {
+              fireAndForget((async () => {
                 const raw = await Modal.prompt(t('settingsVoice.local.commitModelTitle'), t('settingsVoice.local.commitModelDescription'), {
                   placeholder: String(cfg.agent.openaiCompat.commitModel),
                 });
@@ -859,14 +1142,14 @@ export function LocalConversationSection(props: {
                 const next = String(raw).trim();
                 if (!next) return;
                 setAgent({ openaiCompat: { ...cfg.agent.openaiCompat, commitModel: next } });
-              })();
+              })(), { tag: 'LocalConversationSection.prompt.openaiCompat.commitModel' });
             }}
           />
           <Item
             title={t('settingsVoice.local.chatTemperature')}
             detail={String(cfg.agent.openaiCompat.temperature)}
             onPress={() => {
-              void (async () => {
+              fireAndForget((async () => {
                 const raw = await Modal.prompt(t('settingsVoice.local.chatTemperatureTitle'), t('settingsVoice.local.chatTemperatureDescription'), {
                   placeholder: String(cfg.agent.openaiCompat.temperature),
                 });
@@ -874,7 +1157,7 @@ export function LocalConversationSection(props: {
                 const next = Number(String(raw).trim());
                 if (!Number.isFinite(next)) return;
                 setAgent({ openaiCompat: { ...cfg.agent.openaiCompat, temperature: Math.max(0, Math.min(2, next)) } });
-              })();
+              })(), { tag: 'LocalConversationSection.prompt.openaiCompat.temperature' });
             }}
           />
           <Item
@@ -885,7 +1168,7 @@ export function LocalConversationSection(props: {
                 : String(cfg.agent.openaiCompat.maxTokens)
             }
             onPress={() => {
-              void (async () => {
+              fireAndForget((async () => {
                 const raw = await Modal.prompt(t('settingsVoice.local.chatMaxTokensTitle'), t('settingsVoice.local.chatMaxTokensDescription'), {
                   placeholder: cfg.agent.openaiCompat.maxTokens == null ? '' : String(cfg.agent.openaiCompat.maxTokens),
                 });
@@ -898,7 +1181,7 @@ export function LocalConversationSection(props: {
                 const next = Number(trimmed);
                 if (!Number.isFinite(next)) return;
                 setAgent({ openaiCompat: { ...cfg.agent.openaiCompat, maxTokens: Math.max(1, Math.floor(next)) } });
-              })();
+              })(), { tag: 'LocalConversationSection.prompt.openaiCompat.maxTokens' });
             }}
           />
         </ItemGroup>
@@ -917,7 +1200,7 @@ export function LocalConversationSection(props: {
           title="TTS chunk chars"
           detail={String(cfg.streaming.ttsChunkChars)}
           onPress={() => {
-            void (async () => {
+            fireAndForget((async () => {
               const raw = await Modal.prompt(
                 'TTS chunk chars',
                 'How many characters to buffer before requesting the next TTS chunk (32–2000).',
@@ -927,7 +1210,7 @@ export function LocalConversationSection(props: {
               const next = Number(String(raw).trim());
               if (!Number.isFinite(next)) return;
               setStreaming({ ttsChunkChars: Math.max(32, Math.min(2000, Math.floor(next))) });
-            })();
+            })(), { tag: 'LocalConversationSection.prompt.streaming.ttsChunkChars' });
           }}
         />
       </ItemGroup>
@@ -939,7 +1222,7 @@ export function LocalConversationSection(props: {
           title="Network timeout (ms)"
           detail={String(cfg.networkTimeoutMs)}
           onPress={() => {
-            void (async () => {
+            fireAndForget((async () => {
               const raw = await Modal.prompt('Network timeout (ms)', 'Timeout for requests to your endpoints (1000–60000).', {
                 inputType: 'numeric',
                 placeholder: String(cfg.networkTimeoutMs),
@@ -948,7 +1231,7 @@ export function LocalConversationSection(props: {
               const next = Number(String(raw).trim());
               if (!Number.isFinite(next)) return;
               setCfg({ networkTimeoutMs: Math.max(1000, Math.min(60000, Math.floor(next))) });
-            })();
+            })(), { tag: 'LocalConversationSection.prompt.networkTimeoutMs' });
           }}
         />
       </ItemGroup>

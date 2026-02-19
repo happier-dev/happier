@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { getKokoroSherpaVoiceCatalogForSpeakerCount } from '@/voice/kokoro/voices/kokoroSherpaVoiceMapping';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import type { getModelPackInstallSummary } from '@/voice/modelPacks/installer.native';
 
@@ -38,7 +39,7 @@ export function useLocalNeuralKokoroVoiceCatalog(params: {
   React.useEffect(() => {
     let canceled = false;
 
-    void (async () => {
+    fireAndForget((async () => {
       const manifestVoices: unknown[] | null =
         Array.isArray((params.installSummary as any)?.manifest?.voices) ? ((params.installSummary as any).manifest.voices as unknown[]) : null;
 
@@ -79,7 +80,7 @@ export function useLocalNeuralKokoroVoiceCatalog(params: {
       // Fallback: show a stable catalog so the dropdown is never empty.
       const fallback = getKokoroSherpaVoiceCatalogForSpeakerCount(53) ?? [];
       if (!canceled) setVoices(fallback.map((v) => ({ id: v.id, title: v.title, subtitle: v.subtitle })));
-    })();
+    })(), { tag: 'useLocalNeuralKokoroVoiceCatalog.load' });
 
     return () => {
       canceled = true;
@@ -88,4 +89,3 @@ export function useLocalNeuralKokoroVoiceCatalog(params: {
 
   return voices;
 }
-

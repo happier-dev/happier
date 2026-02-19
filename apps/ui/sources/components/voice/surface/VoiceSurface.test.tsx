@@ -73,6 +73,11 @@ vi.mock('@/sync/store/hooks', () => ({
   useAllSessions: () => allSessionsState.current,
 }));
 
+const teleportSpy = vi.fn(async (_args: any) => ({ ok: true }));
+vi.mock('@/voice/agent/teleportVoiceAgentToSessionRoot', () => ({
+  teleportVoiceAgentToSessionRoot: (args: any) => teleportSpy(args),
+}));
+
 describe('VoiceSurface', () => {
   it('hydrates the global agent activity feed from the carrier transcript when persistence is enabled', async () => {
     vi.resetModules();
@@ -131,6 +136,91 @@ describe('VoiceSurface', () => {
 
     // Expect at least one Pressable (start/stop)
     expect(tree.root.findAllByType('Pressable' as any).length).toBeGreaterThan(0);
+  });
+
+  it('starts local voice agent from sidebar using voice home (empty sessionId)', async () => {
+    vi.resetModules();
+    voiceSettingState.current = {
+      providerId: 'local_conversation',
+      ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
+      adapters: {
+        local_conversation: { conversationMode: 'agent' },
+      },
+    };
+
+    useVoiceTargetStore.setState({ scope: 'global', lastFocusedSessionId: 's1', primaryActionSessionId: null, trackedSessionIds: [] } as any);
+
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({
+      adapterId: 'local_conversation',
+      sessionId: null,
+      status: 'disconnected',
+      mode: 'idle',
+      canStop: false,
+    });
+
+    const { voiceSessionManager } = await import('@/voice/session/voiceSession');
+    const toggleSpy = vi.spyOn(voiceSessionManager, 'toggle').mockResolvedValue(undefined as any);
+
+    const { VoiceSurface } = await import('./VoiceSurface');
+
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
+    });
+
+    const pressable = tree.root
+      .findAllByType('Pressable' as any)
+      .find((n: any) => n.props?.accessibilityLabel === 'voiceAssistant.label' && typeof n.props?.onPress === 'function');
+    expect(pressable).toBeTruthy();
+
+    await act(async () => {
+      pressable!.props.onPress?.();
+    });
+
+    expect(toggleSpy).toHaveBeenCalledWith('');
+    expect(toggleSpy).not.toHaveBeenCalledWith('s1');
+    toggleSpy.mockRestore();
+  });
+
+  it('renders a teleport button for local voice agent sessions when enabled', async () => {
+    vi.resetModules();
+    teleportSpy.mockClear();
+    voiceSettingState.current = {
+      providerId: 'local_conversation',
+      ui: { activityFeedEnabled: false, scopeDefault: 'session', surfaceLocation: 'session' },
+      adapters: {
+        local_conversation: {
+          conversationMode: 'agent',
+          agent: { backend: 'daemon', stayInVoiceHome: false, teleportEnabled: true },
+        },
+      },
+    };
+
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({
+      adapterId: 'local_conversation',
+      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      status: 'connected',
+      mode: 'idle',
+      canStop: true,
+    });
+
+    const { VoiceSurface } = await import('./VoiceSurface');
+
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(React.createElement(VoiceSurface, { variant: 'session', sessionId: 's1' }));
+    });
+
+    const teleport = tree.root.findByProps({ accessibilityLabel: 'teleport_voice_agent' });
+    expect(teleport).toBeTruthy();
+
+    await act(async () => {
+      teleport.props.onPress();
+    });
+
+    expect(teleportSpy).toHaveBeenCalledWith({ sessionId: 's1' });
   });
 
   it('does not dispatch redundant voice target scope updates when already aligned', async () => {

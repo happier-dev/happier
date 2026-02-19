@@ -4,13 +4,12 @@ import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { useHappierVoiceSupport } from '@/hooks/server/useHappierVoiceSupport';
 import { t } from '@/text';
-import { findLanguageByCode, LANGUAGES } from '@/constants/Languages';
+import { LANGUAGES } from '@/constants/Languages';
 
 import { useVoiceSettingsMutable } from '@/voice/settings/useVoiceSettingsMutable';
 import { VoiceProviderSection } from '@/voice/settings/panels/VoiceProviderSection';
@@ -39,11 +38,6 @@ export default function VoiceSettingsScreen() {
     ?? voice.assistantLanguage
     ?? null;
 
-  const currentLanguage = React.useMemo(() => {
-    const selected = effectiveAssistantLanguageId ? findLanguageByCode(effectiveAssistantLanguageId) : null;
-    return selected ?? LANGUAGES[0];
-  }, [effectiveAssistantLanguageId]);
-
   return (
     <View style={{ flex: 1 }} ref={popoverBoundaryRef}>
       <ItemList>
@@ -62,17 +56,11 @@ export default function VoiceSettingsScreen() {
             connectToTrigger={true}
             rowKind="item"
             popoverBoundaryRef={popoverBoundaryRef}
-            trigger={({ open, toggle }) => (
-              <Item
-                title={t('settingsVoice.preferredLanguage')}
-                subtitle={t('settingsVoice.preferredLanguageSubtitle')}
-                detail={effectiveAssistantLanguageId ? currentLanguage.name : t('settingsVoice.language.autoDetect')}
-                rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-                onPress={toggle}
-                showChevron={false}
-                selected={false}
-              />
-            )}
+            itemTrigger={{
+              title: t('settingsVoice.preferredLanguage'),
+              subtitle: t('settingsVoice.preferredLanguageSubtitle'),
+              showSelectedSubtitle: false,
+            }}
             items={[
               {
                 id: '',

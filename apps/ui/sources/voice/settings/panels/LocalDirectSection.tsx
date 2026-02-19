@@ -8,6 +8,7 @@ import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
 import { LocalVoiceTtsGroup } from '@/voice/settings/panels/localTts/LocalVoiceTtsGroup';
 import { LocalVoiceSttGroup } from '@/voice/settings/panels/localStt/LocalVoiceSttGroup';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export function LocalDirectSection(props: {
   voice: VoiceSettings;
@@ -55,7 +56,7 @@ export function LocalDirectSection(props: {
             title="Silence (ms)"
             detail={String(cfg.handsFree.endpointing.silenceMs)}
             onPress={() => {
-              void (async () => {
+              fireAndForget((async () => {
                 const raw = await Modal.prompt('Silence (ms)', undefined, {
                   inputType: 'numeric',
                   placeholder: String(cfg.handsFree.endpointing.silenceMs),
@@ -69,14 +70,14 @@ export function LocalDirectSection(props: {
                     endpointing: { ...cfg.handsFree.endpointing, silenceMs: Math.max(0, Math.min(5000, Math.floor(next))) },
                   },
                 });
-              })();
+              })(), { tag: 'LocalDirectSection.prompt.silenceMs' });
             }}
           />
           <Item
             title="Minimum speech (ms)"
             detail={String(cfg.handsFree.endpointing.minSpeechMs)}
             onPress={() => {
-              void (async () => {
+              fireAndForget((async () => {
                 const raw = await Modal.prompt('Minimum speech (ms)', undefined, {
                   inputType: 'numeric',
                   placeholder: String(cfg.handsFree.endpointing.minSpeechMs),
@@ -90,7 +91,7 @@ export function LocalDirectSection(props: {
                     endpointing: { ...cfg.handsFree.endpointing, minSpeechMs: Math.max(0, Math.min(5000, Math.floor(next))) },
                   },
                 });
-              })();
+              })(), { tag: 'LocalDirectSection.prompt.minSpeechMs' });
             }}
           />
         </ItemGroup>
@@ -108,7 +109,7 @@ export function LocalDirectSection(props: {
           title="Network timeout (ms)"
           detail={String(cfg.networkTimeoutMs)}
           onPress={() => {
-            void (async () => {
+            fireAndForget((async () => {
               const raw = await Modal.prompt('Network timeout (ms)', 'Timeout for requests to your STT/TTS endpoints (1000–60000).', {
                 inputType: 'numeric',
                 placeholder: String(cfg.networkTimeoutMs),
@@ -117,7 +118,7 @@ export function LocalDirectSection(props: {
               const next = Number(String(raw).trim());
               if (!Number.isFinite(next)) return;
               setCfg({ networkTimeoutMs: Math.max(1000, Math.min(60000, Math.floor(next))) });
-            })();
+            })(), { tag: 'LocalDirectSection.prompt.networkTimeoutMs' });
           }}
         />
       </ItemGroup>

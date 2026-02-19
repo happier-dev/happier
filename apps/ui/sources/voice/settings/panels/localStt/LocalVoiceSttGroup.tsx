@@ -41,17 +41,9 @@ export function LocalVoiceSttGroup(props: {
         connectToTrigger={true}
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
-        trigger={({ open, toggle }) => (
-          <Item
-            title="STT provider"
-            subtitle="How speech is transcribed into text."
-            detail={providerSpec.detail}
-            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-            onPress={toggle}
-            showChevron={false}
-            selected={false}
-          />
-        )}
+        itemTrigger={{
+          title: 'STT provider',
+        }}
         items={localSttProviderSpecs.map((spec) => ({
           id: spec.id,
           title: spec.title,
@@ -68,4 +60,3 @@ export function LocalVoiceSttGroup(props: {
     </ItemGroup>
   );
 }
-

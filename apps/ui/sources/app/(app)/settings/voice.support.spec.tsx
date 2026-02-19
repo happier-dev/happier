@@ -55,6 +55,10 @@ vi.mock('@/hooks/server/useHappierVoiceSupport', () => ({
     useHappierVoiceSupport: () => false,
 }));
 
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => true,
+}));
+
 vi.mock('@/constants/Languages', () => ({
     LANGUAGES: [{ code: 'en', name: 'English' }],
     findLanguageByCode: () => ({ code: 'en', name: 'English' }),
@@ -77,9 +81,28 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement(
         'DropdownMenu',
         props,
-        (typeof props.trigger === 'function'
-            ? props.trigger({ open: false, toggle: () => {}, openMenu: () => {}, closeMenu: () => {} })
-            : props.trigger) ?? null,
+        (() => {
+            const toggle = () => props.onOpenChange?.(!props.open);
+            const openMenu = () => props.onOpenChange?.(true);
+            const closeMenu = () => props.onOpenChange?.(false);
+            if (props.itemTrigger) {
+                return React.createElement(
+                    'Item',
+                    {
+                        title: props.itemTrigger.title,
+                        subtitle: props.itemTrigger.subtitle,
+                        icon: props.itemTrigger.icon,
+                        detail: undefined,
+                        onPress: toggle,
+                        showChevron: false,
+                        selected: false,
+                    },
+                );
+            }
+            return (typeof props.trigger === 'function'
+                ? props.trigger({ open: false, toggle, openMenu, closeMenu, selectedItem: null })
+                : props.trigger) ?? null;
+        })(),
     ),
 }));
 
@@ -240,8 +263,12 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
 
         const items = tree.root.findAllByType('Item' as any);
         const titles = items.map((i: any) => i.props.title);
+        const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
+        const dropdownTriggerTitles = dropdowns
+            .map((d: any) => d.props?.itemTrigger?.title)
+            .filter((t: any) => typeof t === 'string');
 
-        expect(titles).toContain('settingsVoice.local.ttsProvider');
+        expect([...titles, ...dropdownTriggerTitles]).toContain('settingsVoice.local.ttsProvider');
         expect(titles).toContain('settingsVoice.local.autoSpeak');
     });
 

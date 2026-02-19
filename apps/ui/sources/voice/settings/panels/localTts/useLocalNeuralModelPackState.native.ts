@@ -2,21 +2,12 @@ import * as React from 'react';
 
 import { Modal } from '@/modal';
 import { prepareKokoroTts } from '@/voice/kokoro/runtime/synthesizeKokoroWav';
+import { formatDownloadProgressDetail } from '@/voice/downloads/downloadProgress';
 import { checkModelPackUpdateAvailable, ensureModelPackInstalled, getModelPackInstallSummary, removeModelPack } from '@/voice/modelPacks/installer.native';
 import { formatModelPackBuildLabel } from '@/voice/modelPacks/formatBuildLabel';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 type ModelStatus = 'idle' | 'downloading' | 'ready' | 'error';
-
-type Progress = { loaded: number; total: number };
-
-function formatProgressPercent(progress: unknown): number | null {
-  if (!progress || typeof progress !== 'object') return null;
-  const loaded = (progress as any).loaded;
-  const total = (progress as any).total;
-  if (typeof loaded !== 'number' || !Number.isFinite(loaded)) return null;
-  if (typeof total !== 'number' || !Number.isFinite(total) || total <= 0) return null;
-  return Math.max(0, Math.min(100, Math.floor((loaded / total) * 100)));
-}
 
 export function useLocalNeuralModelPackState(params: {
   packId: string;
@@ -24,7 +15,8 @@ export function useLocalNeuralModelPackState(params: {
   networkTimeoutMs: number;
 }): Readonly<{
   modelStatus: ModelStatus;
-  progressPercent: number | null;
+  downloadProgress: unknown | null;
+  downloadDetail: string | null;
   installed: boolean;
   installSummary: Awaited<ReturnType<typeof getModelPackInstallSummary>> | null;
   updateCheckedRemote: null | { build: string | null; updateAvailable: boolean };
@@ -35,7 +27,7 @@ export function useLocalNeuralModelPackState(params: {
   checkForUpdates: () => void;
 }> {
   const [modelStatus, setModelStatus] = React.useState<ModelStatus>('idle');
-  const [progressPercent, setProgressPercent] = React.useState<number | null>(null);
+  const [downloadProgress, setDownloadProgress] = React.useState<unknown | null>(null);
   const prepareAbortRef = React.useRef<AbortController | null>(null);
   const [installed, setInstalled] = React.useState<boolean>(false);
   const [installSummary, setInstallSummary] = React.useState<null | Awaited<ReturnType<typeof getModelPackInstallSummary>>>(null);
@@ -65,7 +57,7 @@ export function useLocalNeuralModelPackState(params: {
 
     try {
       setModelStatus('downloading');
-      setProgressPercent(null);
+      setDownloadProgress(null);
       const abortController = new AbortController();
       prepareAbortRef.current = abortController;
 
@@ -74,8 +66,7 @@ export function useLocalNeuralModelPackState(params: {
         timeoutMs: Math.max(60000, params.networkTimeoutMs),
         signal: abortController.signal,
         onProgress: (progress) => {
-          const pct = formatProgressPercent(progress);
-          if (pct != null) setProgressPercent(pct);
+          setDownloadProgress(progress);
         },
       });
 
@@ -101,7 +92,7 @@ export function useLocalNeuralModelPackState(params: {
   }, []);
 
   const clearAssets = React.useCallback(() => {
-    void (async () => {
+    fireAndForget((async () => {
       if (modelStatus === 'downloading') return;
       const confirmed = await Modal.confirm(
         'Remove Kokoro assets?',
@@ -111,18 +102,18 @@ export function useLocalNeuralModelPackState(params: {
       if (!confirmed) return;
       await removeModelPack({ packId: params.packId });
       setModelStatus('idle');
-      setProgressPercent(null);
+      setDownloadProgress(null);
       await refreshInstallState();
-    })();
+    })(), { tag: 'useLocalNeuralModelPackState.confirm.clearAssets' });
   }, [modelStatus, params.packId, refreshInstallState]);
 
   const checkForUpdates = React.useCallback(() => {
-    void (async () => {
+    fireAndForget((async () => {
       if (modelStatus === 'downloading') return;
       if (!params.manifestUrl) {
         await Modal.alert(
-          'Manifest not configured',
-          'Set EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS (or legacy Kokoro env vars) to enable downloads.',
+          'Manifest URL missing',
+          'Unable to resolve the model pack manifest URL. Check EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS (or legacy Kokoro env vars).',
         );
         return;
       }
@@ -157,7 +148,7 @@ export function useLocalNeuralModelPackState(params: {
         if (!ok) return;
 
         setModelStatus('downloading');
-        setProgressPercent(null);
+        setDownloadProgress(null);
         prepareAbortRef.current = abortController;
 
         await ensureModelPackInstalled({
@@ -168,10 +159,7 @@ export function useLocalNeuralModelPackState(params: {
           timeoutMs: Math.max(120_000, params.networkTimeoutMs),
           signal: abortController.signal,
           onProgress: (p) => {
-            const loaded = (p as any)?.loaded;
-            const total = (p as any)?.total;
-            const pct = formatProgressPercent({ loaded, total } satisfies Progress);
-            if (pct != null) setProgressPercent(pct);
+            setDownloadProgress(p);
           },
         });
 
@@ -184,14 +172,20 @@ export function useLocalNeuralModelPackState(params: {
         setModelStatus('error');
       } finally {
         prepareAbortRef.current = null;
-        setProgressPercent(null);
+        setDownloadProgress(null);
       }
-    })();
+    })(), { tag: 'useLocalNeuralModelPackState.checkForUpdates' });
   }, [modelStatus, params.manifestUrl, params.networkTimeoutMs, params.packId, refreshInstallState]);
+
+  const downloadDetail = React.useMemo(() => {
+    if (modelStatus !== 'downloading') return null;
+    return downloadProgress ? formatDownloadProgressDetail(downloadProgress, { prefix: 'Downloading' }) : 'Downloading…';
+  }, [downloadProgress, modelStatus]);
 
   return {
     modelStatus,
-    progressPercent,
+    downloadProgress,
+    downloadDetail,
     installed,
     installSummary,
     updateCheckedRemote,

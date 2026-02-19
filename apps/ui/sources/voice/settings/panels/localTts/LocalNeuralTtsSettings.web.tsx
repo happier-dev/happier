@@ -11,11 +11,15 @@ import { t } from '@/text';
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import { getKokoroAssetSetOptions } from '@/voice/kokoro/assets/kokoroAssetSets';
 import { clearKokoroBrowserCaches, getKokoroBrowserCacheSummary } from '@/voice/kokoro/assets/kokoroBrowserCache';
+import { formatDownloadProgressDetail } from '@/voice/downloads/downloadProgress';
+import { resolveKokoroOperationTimeoutMs } from '@/voice/kokoro/config/kokoroConfig';
 import { loadKokoroWebRuntime } from '@/voice/kokoro/runtime/loadKokoroWebRuntime.web';
-import { prepareKokoroTts } from '@/voice/kokoro/runtime/synthesizeKokoroWav';
+import { prepareKokoroTts, synthesizeKokoroWav } from '@/voice/kokoro/runtime/synthesizeKokoroWav';
 import { isKokoroRuntimeSupported } from '@/voice/kokoro/runtime/kokoroSupport';
 import { speakKokoroText } from '@/voice/output/KokoroTtsController';
+import { primeWebAudioPlayback } from '@/voice/output/webAudioContext';
 import { createVoicePlaybackController } from '@/voice/runtime/VoicePlaybackController';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 type KokoroVoiceSummary = {
   id: string;
@@ -40,15 +44,6 @@ async function loadKokoroVoiceCatalog(): Promise<KokoroVoiceSummary[]> {
   }));
 }
 
-function formatKokoroProgress(progress: unknown): number | null {
-  if (!progress || typeof progress !== 'object') return null;
-  const loaded = (progress as any).loaded;
-  const total = (progress as any).total;
-  if (typeof loaded !== 'number' || !Number.isFinite(loaded)) return null;
-  if (typeof total !== 'number' || !Number.isFinite(total) || total <= 0) return null;
-  return Math.max(0, Math.min(100, Math.floor((loaded / total) * 100)));
-}
-
 export function LocalNeuralTtsSettings(props: {
   cfgKokoro: VoiceLocalTtsSettings['localNeural'];
   setKokoro: (next: VoiceLocalTtsSettings['localNeural']) => void;
@@ -59,7 +54,7 @@ export function LocalNeuralTtsSettings(props: {
   const [openMenu, setOpenMenu] = React.useState<null | 'assetSet' | 'voiceId' | 'speed'>(null);
 
   const [modelStatus, setModelStatus] = React.useState<'idle' | 'downloading' | 'ready' | 'error'>('idle');
-  const [progressPercent, setProgressPercent] = React.useState<number | null>(null);
+  const [downloadProgress, setDownloadProgress] = React.useState<unknown | null>(null);
   const prepareAbortRef = React.useRef<AbortController | null>(null);
   const [cacheSummary, setCacheSummary] = React.useState<null | { transformersCacheCount: number; kokoroVoicesCacheCount: number }>(null);
 
@@ -118,18 +113,29 @@ export function LocalNeuralTtsSettings(props: {
 
     try {
       setModelStatus('downloading');
-      setProgressPercent(null);
+      setDownloadProgress(null);
       const abortController = new AbortController();
       prepareAbortRef.current = abortController;
 
       await prepareKokoroTts({
         assetSetId: effectiveAssetSetId,
-        timeoutMs: Math.max(60000, props.networkTimeoutMs),
+        timeoutMs: resolveKokoroOperationTimeoutMs(props.networkTimeoutMs),
         signal: abortController.signal,
         onProgress: (progress) => {
-          const pct = formatKokoroProgress(progress);
-          if (pct != null) setProgressPercent(pct);
+          setDownloadProgress(progress);
         },
+      });
+
+      // Warm up the runtime so "Ready" means "inference works", not just "runtime import succeeded".
+      // This also ensures the first user-visible preview isn't the first time we compile WASM and load model assets.
+      setDownloadProgress({ name: 'Warming up…' });
+      await synthesizeKokoroWav({
+        text: 'Hi',
+        assetSetId: effectiveAssetSetId,
+        voiceId: effectiveVoiceId,
+        speed: effectiveSpeed,
+        timeoutMs: resolveKokoroOperationTimeoutMs(props.networkTimeoutMs),
+        signal: abortController.signal,
       });
 
       setModelStatus('ready');
@@ -137,7 +143,11 @@ export function LocalNeuralTtsSettings(props: {
     } catch (error) {
       if (prepareAbortRef.current?.signal?.aborted) return;
       setModelStatus('error');
-      void Modal.alert(t('common.error'), error instanceof Error ? error.message : String(error));
+      fireAndForget((async () => {
+        await Modal.alert(t('common.error'), error instanceof Error ? error.message : String(error));
+      })(), {
+        tag: 'LocalNeuralTtsSettings.alert.prepareModelFailed',
+      });
     } finally {
       prepareAbortRef.current = null;
     }
@@ -154,7 +164,7 @@ export function LocalNeuralTtsSettings(props: {
   }, []);
 
   const clearCache = React.useCallback(() => {
-    void (async () => {
+    fireAndForget((async () => {
       if (modelStatus === 'downloading') return;
       const confirmed = await Modal.confirm(
         'Clear Kokoro cache?',
@@ -165,7 +175,7 @@ export function LocalNeuralTtsSettings(props: {
       await clearKokoroBrowserCaches();
       setCacheSummary(await getKokoroBrowserCacheSummary());
       setModelStatus('idle');
-    })();
+    })(), { tag: 'LocalNeuralTtsSettings.confirm.clearCache' });
   }, [modelStatus]);
 
   const playPreview = React.useCallback(async (voiceId: string) => {
@@ -183,7 +193,7 @@ export function LocalNeuralTtsSettings(props: {
         assetSetId: effectiveAssetSetId,
         voiceId,
         speed: effectiveSpeed,
-        timeoutMs: Math.max(60000, props.networkTimeoutMs),
+        timeoutMs: resolveKokoroOperationTimeoutMs(props.networkTimeoutMs),
         registerPlaybackStopper: previewController.registerStopper,
       });
       setPreviewingVoiceId(null);
@@ -194,7 +204,7 @@ export function LocalNeuralTtsSettings(props: {
 
   const modelDetail =
     modelStatus === 'downloading'
-      ? (progressPercent != null ? `${progressPercent}%` : 'Downloading…')
+      ? (downloadProgress ? formatDownloadProgressDetail(downloadProgress, { prefix: 'Downloading' }) : 'Downloading…')
       : modelStatus === 'ready'
         ? 'Ready'
         : modelStatus === 'error'
@@ -229,17 +239,12 @@ export function LocalNeuralTtsSettings(props: {
         connectToTrigger={true}
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
-        trigger={({ open, toggle }) => (
-          <Item
-            title="Kokoro model pack"
-            subtitle="Select which runtime configuration to use for Kokoro."
-            detail={effectiveAssetSetId ?? 'Default'}
-            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-            onPress={toggle}
-            showChevron={false}
-            selected={false}
-          />
-        )}
+        itemTrigger={{
+          title: 'Kokoro model pack',
+          subtitle: 'Select which runtime configuration to use for Kokoro.',
+          showSelectedSubtitle: false,
+          detailFormatter: () => (effectiveAssetSetId ?? 'Default'),
+        }}
         items={assetSets.map((s) => ({
           id: s.id,
           title: s.title,
@@ -300,17 +305,12 @@ export function LocalNeuralTtsSettings(props: {
         connectToTrigger={true}
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
-        trigger={({ open, toggle }) => (
-          <Item
-            title="Kokoro voice"
-            subtitle="Choose the on-device voice used for replies."
-            detail={effectiveVoiceId}
-            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-            onPress={toggle}
-            showChevron={false}
-            selected={false}
-          />
-        )}
+        itemTrigger={{
+          title: 'Kokoro voice',
+          subtitle: 'Choose the on-device voice used for replies.',
+          showSelectedSubtitle: false,
+          detailFormatter: () => effectiveVoiceId,
+        }}
         items={(voices.length > 0 ? voices : [{ id: effectiveVoiceId, title: 'Loading voices…', subtitle: undefined, disabled: true }]).map((v) => ({
           id: v.id,
           title: v.title,
@@ -320,6 +320,7 @@ export function LocalNeuralTtsSettings(props: {
               hitSlop={10}
               onPress={(e: any) => {
                 e?.stopPropagation?.();
+                primeWebAudioPlayback();
                 void playPreview(v.id);
               }}
               style={{ paddingHorizontal: 4, paddingVertical: 2 }}
@@ -349,17 +350,11 @@ export function LocalNeuralTtsSettings(props: {
         connectToTrigger={true}
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
-        trigger={({ open, toggle }) => (
-          <Item
-            title="Speed"
-            subtitle="Adjust speaking speed (0.5–2.0)."
-            detail={String(effectiveSpeed)}
-            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-            onPress={toggle}
-            showChevron={false}
-            selected={false}
-          />
-        )}
+        itemTrigger={{
+          title: 'Speed',
+          subtitle: 'Adjust speaking speed (0.5–2.0).',
+          showSelectedSubtitle: false,
+        }}
         items={[0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.7, 2].map((speed) => ({
           id: String(speed),
           title: String(speed),
@@ -376,30 +371,6 @@ export function LocalNeuralTtsSettings(props: {
         }}
       />
 
-      <Item
-        title="Test Kokoro"
-        subtitle={t('settingsVoice.local.testTtsSubtitle')}
-        onPress={() => {
-          void (async () => {
-            try {
-              if (!runtimeSupported) {
-                Modal.alert(t('common.error'), 'Kokoro is not supported on this device/runtime.');
-                return;
-              }
-              await speakKokoroText({
-                text: t('settingsVoice.local.testTtsSample'),
-                assetSetId: effectiveAssetSetId,
-                voiceId: effectiveVoiceId,
-                speed: effectiveSpeed,
-                timeoutMs: Math.max(60000, props.networkTimeoutMs),
-                registerPlaybackStopper: (_stopper) => () => {},
-              });
-            } catch (err) {
-              Modal.alert(t('common.error'), String((err as any)?.message ?? err));
-            }
-          })();
-        }}
-      />
     </>
   );
 }

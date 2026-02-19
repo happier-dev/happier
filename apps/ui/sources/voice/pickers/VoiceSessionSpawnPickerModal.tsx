@@ -15,6 +15,8 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useAllMachines, useSessions, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
 import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
+import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
 
 import type { VoiceSessionSpawnPickerResult } from './openVoiceSessionSpawnPicker';
 
@@ -85,13 +87,6 @@ function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
 }
 
-function resolveInitialMachineId(params: Readonly<{ machines: any[]; recentMachinePaths: any[] }>): string | null {
-  const recent = params.recentMachinePaths?.[0] ?? null;
-  const recentMachineId = normalizeId(recent?.machineId);
-  if (recentMachineId && params.machines.some((m) => m?.id === recentMachineId)) return recentMachineId;
-  return params.machines?.[0]?.id ?? null;
-}
-
 export function VoiceSessionSpawnPickerModal({ onClose, onResolve }: Props) {
   const { theme } = useUnistyles();
   const styles = stylesheet;
@@ -116,7 +111,7 @@ export function VoiceSessionSpawnPickerModal({ onClose, onResolve }: Props) {
 
   const [step, setStep] = React.useState<Step>('machine');
   const [selectedMachineId, setSelectedMachineId] = React.useState<string | null>(() =>
-    resolveInitialMachineId({ machines, recentMachinePaths: Array.isArray(recentMachinePaths) ? recentMachinePaths : [] }),
+    resolvePreferredMachineId({ machines, recentMachinePaths: Array.isArray(recentMachinePaths) ? recentMachinePaths : [] }),
   );
 
   const selectedMachine = React.useMemo(() => {
@@ -151,7 +146,12 @@ export function VoiceSessionSpawnPickerModal({ onClose, onResolve }: Props) {
     onClose();
   }, [onClose, onResolve]);
 
-  const canCreate = Boolean(selectedMachineId && (selectedPath.trim() || selectedMachine?.metadata?.homeDir));
+  const canCreate = Boolean(
+    selectedMachineId
+    && selectedMachine
+    && isMachineOnline(selectedMachine as any)
+    && (selectedPath.trim() || selectedMachine?.metadata?.homeDir),
+  );
 
   const handleCreate = React.useCallback(() => {
     if (!selectedMachineId) return;

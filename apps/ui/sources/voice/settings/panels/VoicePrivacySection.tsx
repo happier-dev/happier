@@ -6,6 +6,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { Modal } from '@/modal';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export function VoicePrivacySection(props: { voice: VoiceSettings; setVoice: (next: VoiceSettings) => void }) {
   const privacy = props.voice.privacy;
@@ -33,7 +34,7 @@ export function VoicePrivacySection(props: { voice: VoiceSettings; setVoice: (ne
           subtitle={t('settingsVoice.privacy.recentMessagesCountSubtitle')}
           detail={String(privacy.recentMessagesCount)}
           onPress={() => {
-            void (async () => {
+            fireAndForget((async () => {
               const raw = await Modal.prompt(
                 t('settingsVoice.privacy.recentMessagesCount'),
                 t('settingsVoice.privacy.recentMessagesCountSubtitle'),
@@ -43,7 +44,7 @@ export function VoicePrivacySection(props: { voice: VoiceSettings; setVoice: (ne
               const next = Number(String(raw).trim());
               if (!Number.isFinite(next)) return;
               setPrivacy({ recentMessagesCount: Math.max(0, Math.min(50, Math.floor(next))) });
-            })();
+            })(), { tag: 'VoicePrivacySection.editRecentMessagesCount' });
           }}
         />
       ) : null}

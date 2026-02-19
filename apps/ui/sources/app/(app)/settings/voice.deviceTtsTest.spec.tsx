@@ -73,6 +73,8 @@ let voiceSetting: any = null;
 vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: (key: string) => {
         if (key === 'voice') return voiceSetting;
+        if (key === 'backendEnabledById') return {};
+        if (key === 'recentMachinePaths') return [];
         throw new Error(`unexpected useSetting(${key})`);
     },
 }));
@@ -86,6 +88,10 @@ vi.mock('@/sync/sync', () => ({
 
 vi.mock('@/hooks/server/useHappierVoiceSupport', () => ({
     useHappierVoiceSupport: () => true,
+}));
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => true,
 }));
 
 vi.mock('@/constants/Languages', () => ({

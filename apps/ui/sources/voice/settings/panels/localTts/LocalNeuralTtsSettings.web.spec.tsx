@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const modalAlertSpy = vi.fn();
 const prepareKokoroTtsSpy = vi.fn();
+const synthesizeKokoroWavSpy = vi.fn();
 
 vi.mock('react-native-unistyles', () => {
   const theme = { colors: { textSecondary: '#999' } };
@@ -58,6 +59,7 @@ vi.mock('@/voice/kokoro/runtime/kokoroSupport', () => ({
 
 vi.mock('@/voice/kokoro/runtime/synthesizeKokoroWav', () => ({
   prepareKokoroTts: (...args: any[]) => prepareKokoroTtsSpy(...args),
+  synthesizeKokoroWav: (...args: any[]) => synthesizeKokoroWavSpy(...args),
 }));
 
 vi.mock('@/voice/output/KokoroTtsController', () => ({
@@ -102,7 +104,9 @@ describe('LocalNeuralTtsSettings (web)', () => {
   beforeEach(async () => {
     modalAlertSpy.mockClear();
     prepareKokoroTtsSpy.mockClear();
+    synthesizeKokoroWavSpy.mockClear();
     process.env.EXPO_PUBLIC_KOKORO_WEB_RUNTIME_URL = await ensureTestKokoroWebRuntimeUrl();
+    process.env.EXPO_PUBLIC_KOKORO_OPERATION_TIMEOUT_MS = '120000';
   });
 
   it('surfaces prepare errors via Modal.alert', async () => {
@@ -138,4 +142,92 @@ describe('LocalNeuralTtsSettings (web)', () => {
     expect(modalAlertSpy).toHaveBeenCalled();
     expect(String(modalAlertSpy.mock.calls[0]?.[1] ?? '')).toContain('kokoro_import_failed');
   });
+
+  it('shows progress details while downloading', async () => {
+    let resolvePrepare!: () => void;
+    prepareKokoroTtsSpy.mockImplementationOnce((opts: any) => {
+      opts?.onProgress?.({ progress: 0.5, name: 'onnx/model_quantized.onnx' });
+      return new Promise<void>((resolve) => {
+        resolvePrepare = resolve;
+      });
+    });
+    synthesizeKokoroWavSpy.mockResolvedValueOnce(new ArrayBuffer(0));
+
+    const { LocalNeuralTtsSettings } = await import('./LocalNeuralTtsSettings.web');
+
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        React.createElement(LocalNeuralTtsSettings, {
+          cfgKokoro: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
+          setKokoro: vi.fn(),
+          networkTimeoutMs: 1000,
+          popoverBoundaryRef: null,
+        }),
+      );
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    const getModelItem = () =>
+      tree.root
+        .findAll((n) => n.props?.title === 'Kokoro model')
+        .find((n) => typeof n.props?.onPress === 'function')!;
+
+    await act(async () => {
+      getModelItem().props.onPress?.();
+    });
+    await act(async () => {});
+
+    expect(getModelItem().props.detail).toBe('Downloading • 50% • model_quantized.onnx');
+
+    await act(async () => {
+      resolvePrepare();
+    });
+    await act(async () => {});
+
+    expect(synthesizeKokoroWavSpy).toHaveBeenCalled();
+    expect(getModelItem().props.detail).toBe('Ready');
+  });
+
+  it('uses Kokoro operation timeout (not the raw network timeout) when preparing', async () => {
+    prepareKokoroTtsSpy.mockResolvedValueOnce(undefined);
+    synthesizeKokoroWavSpy.mockResolvedValueOnce(new ArrayBuffer(0));
+    const { LocalNeuralTtsSettings } = await import('./LocalNeuralTtsSettings.web');
+
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        React.createElement(LocalNeuralTtsSettings, {
+          cfgKokoro: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
+          setKokoro: vi.fn(),
+          networkTimeoutMs: 15_000,
+          popoverBoundaryRef: null,
+        }),
+      );
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    const modelItem = tree.root
+      .findAll((n) => n.props?.title === 'Kokoro model')
+      .find((n) => typeof n.props?.onPress === 'function');
+    expect(modelItem).toBeTruthy();
+
+    await act(async () => {
+      modelItem!.props.onPress?.();
+    });
+    await act(async () => {});
+
+    expect(prepareKokoroTtsSpy).toHaveBeenCalled();
+    const arg = prepareKokoroTtsSpy.mock.calls[0]?.[0];
+    expect(arg?.timeoutMs).toBe(120_000);
+
+    expect(synthesizeKokoroWavSpy).toHaveBeenCalled();
+    const warmupArg = synthesizeKokoroWavSpy.mock.calls[0]?.[0];
+    expect(warmupArg?.timeoutMs).toBe(120_000);
+  });
+
 });

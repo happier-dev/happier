@@ -15,6 +15,7 @@ import { isKokoroRuntimeSupported } from '@/voice/kokoro/runtime/kokoroSupport';
 import { speakKokoroText } from '@/voice/output/KokoroTtsController';
 import { createVoicePlaybackController } from '@/voice/runtime/VoicePlaybackController';
 import { formatModelPackBuildLabel } from '@/voice/modelPacks/formatBuildLabel';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { useLocalNeuralKokoroVoiceCatalog } from './useLocalNeuralKokoroVoiceCatalog.native';
 import { useLocalNeuralModelPackState } from './useLocalNeuralModelPackState.native';
@@ -37,7 +38,7 @@ export function LocalNeuralTtsSettings(props: {
 
   const manifestUrl = React.useMemo(() => resolveModelPackManifestUrl({ packId: effectiveAssetSetId }), [effectiveAssetSetId]);
 
-  const { modelStatus, progressPercent, installed, installSummary, updateCheckedRemote, prepareModel, cancelPrepare, clearAssets, checkForUpdates } =
+  const { modelStatus, downloadDetail, installed, installSummary, updateCheckedRemote, prepareModel, cancelPrepare, clearAssets, checkForUpdates } =
     useLocalNeuralModelPackState({
       packId: effectiveAssetSetId,
       manifestUrl,
@@ -89,9 +90,7 @@ export function LocalNeuralTtsSettings(props: {
 
   const modelDetail =
     modelStatus === 'downloading'
-      ? progressPercent != null
-        ? `${progressPercent}%`
-        : 'Downloading…'
+      ? (downloadDetail ?? 'Downloading…')
       : modelStatus === 'ready'
         ? formatModelPackBuildLabel((installSummary as any)?.manifest)
           ? `Ready • ${formatModelPackBuildLabel((installSummary as any)?.manifest)}`
@@ -118,8 +117,8 @@ export function LocalNeuralTtsSettings(props: {
 
       <Item
         title="Model pack manifest"
-        subtitle="Configured via EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS (packId -> manifestUrl)."
-        detail={manifestUrl ? 'Set' : 'Not set'}
+        subtitle="Defaults to Happier model packs (override via EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS)."
+        detail={manifestUrl ? 'Resolved' : 'Missing'}
         selected={false}
         showChevron={false}
       />
@@ -135,17 +134,12 @@ export function LocalNeuralTtsSettings(props: {
         connectToTrigger={true}
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
-        trigger={({ open, toggle }) => (
-          <Item
-            title="Kokoro model pack"
-            subtitle="Select which asset pack to use for Kokoro."
-            detail={effectiveAssetSetId ?? 'Default'}
-            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-            onPress={toggle}
-            showChevron={false}
-            selected={false}
-          />
-        )}
+        itemTrigger={{
+          title: 'Kokoro model pack',
+          subtitle: 'Select which asset pack to use for Kokoro.',
+          showSelectedSubtitle: false,
+          detailFormatter: () => (effectiveAssetSetId ?? 'Default'),
+        }}
         items={assetSets.map((s) => ({
           id: s.id,
           title: s.title,
@@ -164,17 +158,23 @@ export function LocalNeuralTtsSettings(props: {
         detail={modelDetail}
         onPress={() => {
           if (!runtimeSupported) {
-            void Modal.alert(t('common.error'), 'Kokoro is not supported on this device/runtime.');
+            fireAndForget((async () => {
+              await Modal.alert(t('common.error'), 'Kokoro is not supported on this device/runtime.');
+            })(), {
+              tag: 'LocalNeuralTtsSettings.alert.runtimeUnsupported',
+            });
             return;
           }
           if (!manifestUrl) {
-            void Modal.alert(
-              'Manifest not configured',
-              'Set EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS (or legacy Kokoro env vars) to enable downloads.',
-            );
+            fireAndForget((async () => {
+              await Modal.alert(
+                'Manifest URL missing',
+                'Unable to resolve the model pack manifest URL. Check EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS (or legacy Kokoro env vars).',
+              );
+            })(), { tag: 'LocalNeuralTtsSettings.alert.missingManifestUrl' });
             return;
           }
-          void prepareModel();
+          fireAndForget(prepareModel(), { tag: 'LocalNeuralTtsSettings.prepareModel' });
         }}
         rightElement={
           modelStatus === 'downloading' ? (
@@ -226,17 +226,12 @@ export function LocalNeuralTtsSettings(props: {
         connectToTrigger={true}
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
-        trigger={({ open, toggle }) => (
-          <Item
-            title="Voice"
-            subtitle="Select the Kokoro voice."
-            detail={effectiveVoiceId}
-            rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
-            onPress={toggle}
-            showChevron={false}
-            selected={false}
-          />
-        )}
+        itemTrigger={{
+          title: 'Voice',
+          subtitle: 'Select the Kokoro voice.',
+          showSelectedSubtitle: false,
+          detailFormatter: () => effectiveVoiceId,
+        }}
         items={voices.map((v) => ({
           id: v.id,
           title: v.title,
