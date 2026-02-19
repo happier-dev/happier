@@ -870,6 +870,8 @@ export const ru: TranslationStructure = {
     kiloSessionIdCopied: "ID сессии Kilo скопирован в буфер обмена",
     piSessionId: "ID сессии Pi",
     piSessionIdCopied: "ID сессии Pi скопирован в буфер обмена",
+    copilotSessionId: "Copilot Session ID",
+    copilotSessionIdCopied: "Copilot Session ID copied to clipboard",
     metadataCopied: "Метаданные скопированы в буфер обмена",
     failedToCopyMetadata: "Не удалось скопировать метаданные",
     failedToKillSession: "Не удалось завершить сессию",
@@ -1200,6 +1202,7 @@ export const ru: TranslationStructure = {
       kimi: "Kimi",
       kilo: "Kilo",
       pi: "Pi",
+      copilot: "Copilot",
     },
     auggieIndexingChip: {
       on: "Индексация включена",
@@ -2605,6 +2608,7 @@ export const ru: TranslationStructure = {
       kimiSubtitleExperimental: "Kimi CLI (экспериментально)",
       kiloSubtitleExperimental: "Kilo CLI (экспериментально)",
       piSubtitleExperimental: "Pi CLI (экспериментально)",
+      copilotSubtitleExperimental: "GitHub Copilot CLI (experimental)",
     },
     tmux: {
       title: "Tmux",

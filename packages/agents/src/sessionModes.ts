@@ -19,6 +19,7 @@ export const AGENT_SESSION_MODES: Readonly<Record<AgentId, AgentSessionModesKind
   kimi: 'none',
   kilo: 'acpAgentModes',
   pi: 'none',
+  copilot: 'acpAgentModes',
 });
 
 export function getAgentSessionModesKind(agentId: AgentId): AgentSessionModesKind {

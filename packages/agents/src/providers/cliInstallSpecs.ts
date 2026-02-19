@@ -157,6 +157,17 @@ export const PROVIDER_CLI_INSTALL_SPECS: Readonly<Record<AgentId, ProviderCliIns
       win32: [npmGlobal('@mariozechner/pi-coding-agent')],
     },
   },
+  copilot: {
+    id: 'copilot',
+    title: 'GitHub Copilot CLI',
+    binaries: ['copilot'],
+    docsUrl: 'https://github.com/github/copilot-cli',
+    install: {
+      darwin: [npmGlobal('@github/copilot')],
+      linux: [npmGlobal('@github/copilot')],
+      win32: [npmGlobal('@github/copilot')],
+    },
+  },
 } as const;
 
 export function getProviderCliInstallSpec(id: AgentId): ProviderCliInstallSpec {

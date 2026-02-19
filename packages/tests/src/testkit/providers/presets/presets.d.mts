@@ -1,4 +1,4 @@
-export type ProviderPresetId = 'opencode' | 'claude' | 'codex' | 'kilo' | 'gemini' | 'qwen' | 'kimi' | 'auggie' | 'all';
+export type ProviderPresetId = 'opencode' | 'claude' | 'codex' | 'kilo' | 'gemini' | 'qwen' | 'kimi' | 'auggie' | 'pi' | 'copilot' | 'all';
 export type ProviderConcretePresetId = Exclude<ProviderPresetId, 'all'>;
 export type ProviderAcpPresetId = Exclude<ProviderConcretePresetId, 'claude'>;
 export type ProviderScenarioTier = 'smoke' | 'extended';

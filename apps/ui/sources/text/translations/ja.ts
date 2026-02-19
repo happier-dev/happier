@@ -287,6 +287,7 @@ export const ja: TranslationStructure = {
       kimiSubtitleExperimental: "Kimi CLI（実験）",
       kiloSubtitleExperimental: "Kilo CLI（実験）",
       piSubtitleExperimental: "Pi CLI（実験）",
+      copilotSubtitleExperimental: "GitHub Copilot CLI (experimental)",
     },
     tmux: {
       title: "Tmux",
@@ -1311,6 +1312,8 @@ export const ja: TranslationStructure = {
     kiloSessionIdCopied: "Kilo セッション ID をクリップボードにコピーしました",
     piSessionId: "Pi セッション ID",
     piSessionIdCopied: "Pi セッション ID をクリップボードにコピーしました",
+    copilotSessionId: "Copilot Session ID",
+    copilotSessionIdCopied: "Copilot Session ID copied to clipboard",
     metadataCopied: "メタデータがクリップボードにコピーされました",
     failedToCopyMetadata: "メタデータのコピーに失敗しました",
     failedToKillSession: "セッションの終了に失敗しました",
@@ -1471,6 +1474,7 @@ export const ja: TranslationStructure = {
       kimi: "Kimi",
       kilo: "Kilo",
       pi: "Pi",
+      copilot: "Copilot",
     },
     auggieIndexingChip: {
       on: "Indexing on",
