@@ -97,6 +97,32 @@ describe('serverProfiles', () => {
         expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(false);
     });
 
+    it('seeds a same-origin server profile on web when no preconfigured env exists', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        delete process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
+        delete process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
+        stubWebRuntime('https://selfhost.example.test');
+
+        const profiles = await importFresh();
+        expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://selfhost.example.test')).toBe(true);
+        expect(profiles.getActiveServerUrl()).toBe('https://selfhost.example.test');
+        expect(profiles.getActiveServerId()).toBeTruthy();
+    });
+
+    it('does not seed a same-origin server profile when EXPO_PUBLIC_HAPPY_SERVER_URL is set', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'https://configured.example.test';
+        delete process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
+        stubWebRuntime('https://selfhost.example.test');
+
+        const profiles = await importFresh();
+        const all = profiles.listServerProfiles();
+        expect(all.some((p) => p.serverUrl === 'https://configured.example.test')).toBe(true);
+        expect(all.some((p) => p.serverUrl === 'https://selfhost.example.test')).toBe(false);
+    });
+
     it('derives deterministic filesystem-safe ids from server URLs', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
