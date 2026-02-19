@@ -361,8 +361,64 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
             : null;
 
 
+    // Socket batches are not guaranteed to arrive in chronological order. If we apply streamed
+    // chunks out-of-order, streaming merge can produce fragmented blocks (or reversed text) and
+    // the transcript ordering can temporarily look wrong until a full reload.
+    //
+    // Normalize ordering upfront so all phases (sidechain tracing, streaming merge, tool updates)
+    // see a coherent timeline.
+    const orderedIncomingMessages = (() => {
+        if (messages.length <= 1) return messages;
+
+        const seqValue = (msg: NormalizedMessage): number | null => {
+            const raw = msg.seq;
+            if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
+            return Math.trunc(raw);
+        };
+
+        const createdAtValue = (msg: NormalizedMessage): number | null => {
+            const raw = msg.createdAt;
+            if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
+            return raw;
+        };
+
+        const indexed = messages.map((msg, index) => ({
+            msg,
+            index,
+            seq: seqValue(msg),
+            createdAt: createdAtValue(msg),
+        }));
+
+        indexed.sort((a, b) => {
+            const aSeq = a.seq;
+            const bSeq = b.seq;
+            if (aSeq !== null && bSeq !== null) {
+                if (aSeq !== bSeq) return aSeq - bSeq;
+            } else if (aSeq !== null && bSeq === null) {
+                return -1;
+            } else if (aSeq === null && bSeq !== null) {
+                return 1;
+            }
+
+            const aCreatedAt = a.createdAt;
+            const bCreatedAt = b.createdAt;
+            if (aCreatedAt !== null && bCreatedAt !== null) {
+                if (aCreatedAt !== bCreatedAt) return aCreatedAt - bCreatedAt;
+            } else if (aCreatedAt !== null && bCreatedAt === null) {
+                return -1;
+            } else if (aCreatedAt === null && bCreatedAt !== null) {
+                return 1;
+            }
+
+            // Stable tie-breaker so arrival order doesn't affect merge behavior.
+            return a.index - b.index;
+        });
+
+        return indexed.map((e) => e.msg);
+    })();
+
     // First, trace all messages to identify sidechains
-    const tracedMessages = traceMessages(state.tracerState, messages);
+    const tracedMessages = traceMessages(state.tracerState, orderedIncomingMessages);
 
     // Separate sidechain and non-sidechain messages.
     // Important: sidechain messages must never appear in the main transcript, even if sidechainId
