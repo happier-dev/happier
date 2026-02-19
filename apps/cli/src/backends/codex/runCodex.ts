@@ -758,6 +758,15 @@ export async function runCodex(opts: {
     // Start Context 
     //
 
+    // Codex ACP session resume intentionally skips a separate capabilities probe.
+    // The probe requires spawning an ACP agent and waiting for initialize, which can be slower than
+    // just attempting loadSession directly (and it duplicates work the runtime must do anyway).
+    //
+    // We still fail closed: if a resumeId is provided and Codex ACP cannot load it, the loadSession
+    // call will throw and we will not silently start a new session.
+
+
+
     // Start Happier MCP server (HTTP) and prepare STDIO bridge config for Codex
     const happierBridge = await createHappierMcpBridge(session, { commandMode: 'current-process' });
     happierMcpServer = happierBridge.happierMcpServer;
