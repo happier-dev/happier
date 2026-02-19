@@ -223,6 +223,39 @@ test('hstack stack daemon <name> restart restarts only the daemon', async (t) =>
   assert.ok(logText.includes('status'), `expected stub daemon status to be called\n${logText}`);
 });
 
+test('hstack stack daemon <name> start records daemon pid in stack.runtime.json (so TUI can display correct status)', async (t) => {
+  const fixture = await createDaemonFixture(t, {
+    prefix: 'happier-stack-daemon-runtime-daemonpid-',
+    stackName: 'exp-test',
+    serverPort: 4101,
+  });
+
+  await writeDummyAuth({ cliHomeDir: fixture.stackCliHome });
+  await fixture.writeStackEnv();
+  registerDaemonCleanup(t, { env: fixture.baseEnv, stackName: fixture.stackName });
+
+  const startRes = await runHstack(['stack', 'daemon', fixture.stackName, 'start', '--json'], { env: fixture.baseEnv });
+  assertExitOk(startRes, 'stack daemon start');
+
+  const statePath = join(fixture.stackCliHome, 'daemon.state.json');
+  assert.equal(existsSync(statePath), true, 'expected daemon.state.json to exist after start');
+  const state = JSON.parse(await readFile(statePath, 'utf-8'));
+  const pidFromDaemon = Number(state?.pid);
+  assert.ok(Number.isFinite(pidFromDaemon) && pidFromDaemon > 1, `expected pid in daemon.state.json, got ${pidFromDaemon}`);
+
+  const runtimePath = join(fixture.storageDir, fixture.stackName, 'stack.runtime.json');
+  assert.equal(existsSync(runtimePath), true, 'expected stack.runtime.json to exist after daemon start');
+  const runtime = JSON.parse(await readFile(runtimePath, 'utf-8'));
+  const pidFromRuntime = Number(runtime?.processes?.daemonPid);
+  assert.equal(pidFromRuntime, pidFromDaemon, `expected runtime daemonPid to match daemon.state.json pid`);
+
+  const stopRes = await runHstack(['stack', 'daemon', fixture.stackName, 'stop', '--json'], { env: fixture.baseEnv });
+  assertExitOk(stopRes, 'stack daemon stop');
+
+  const runtimeAfter = JSON.parse(await readFile(runtimePath, 'utf-8'));
+  assert.equal(runtimeAfter?.processes?.daemonPid, null, 'expected runtime processes.daemonPid to be cleared on stop');
+});
+
 test('hstack stack <name> daemon start works (stack name first)', async (t) => {
   const fixture = await createDaemonFixture(t, {
     prefix: 'happy-stacks-stack-daemon-name-first-',

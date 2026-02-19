@@ -19,6 +19,19 @@ test('workflows use Node 22 policy and do not pin Node 20', async () => {
   }
 });
 
+test('workflows that run pipeline scripts set up Node 22', async () => {
+  const files = (await readdir(workflowsDir)).filter((name) => name.endsWith('.yml'));
+
+  for (const file of files) {
+    const raw = await readFile(join(workflowsDir, file), 'utf8');
+    if (!raw.includes('node scripts/pipeline/')) continue;
+    assert.match(raw, /actions\/setup-node@v4/, `${file} must include actions/setup-node@v4 when running pipeline scripts`);
+    const hasDirect22 = /node-version:\s*22(\.x)?\b/.test(raw);
+    const usesEnvNodeVersion = /node-version:\s*\$\{\{\s*env\.NODE_VERSION\s*\}\}/.test(raw) && /NODE_VERSION:\s*"?22\.x"?/.test(raw);
+    assert.ok(hasDirect22 || usesEnvNodeVersion, `${file} must use node-version 22.x when running pipeline scripts`);
+  }
+});
+
 test('release workflows pin Yarn via Corepack (avoid runner drift)', async () => {
   const expected = /corepack prepare yarn@1\.22\.22 --activate/;
   const files = [

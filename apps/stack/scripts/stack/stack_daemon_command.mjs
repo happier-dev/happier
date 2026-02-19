@@ -5,12 +5,12 @@ import { findExistingStackCredentialPath } from '../utils/auth/credentials_paths
 import { parseArgs } from '../utils/cli/args.mjs';
 import { printResult, wantsHelp } from '../utils/cli/cli.mjs';
 import { isTty, promptSelect, withRl } from '../utils/cli/wizard.mjs';
-import { daemonStatusSummary, startLocalDaemonWithAuth, stopLocalDaemon } from '../daemon.mjs';
+import { checkDaemonState, daemonStatusSummary, startLocalDaemonWithAuth, stopLocalDaemon } from '../daemon.mjs';
 import { getComponentDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { run } from '../utils/proc/proc.mjs';
 import { resolveServerPortFromEnv, resolveServerUrls } from '../utils/server/urls.mjs';
 import { parseCliIdentityOrThrow, resolveCliHomeDirForIdentity } from '../utils/stack/cli_identities.mjs';
-import { readStackRuntimeStateFile, isPidAlive } from '../utils/stack/runtime_state.mjs';
+import { readStackRuntimeStateFile, recordStackRuntimeUpdate, isPidAlive } from '../utils/stack/runtime_state.mjs';
 import { withStackEnv } from './stack_environment.mjs';
 import { banner, cmd as cmdFmt, sectionTitle } from '../utils/ui/layout.mjs';
 import { cyan, green } from '../utils/ui/ansi.mjs';
@@ -96,6 +96,18 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
       };
       await mkdir(cliHomeDir, { recursive: true }).catch(() => {});
 
+      const maybeRecordDaemonPid = async ({ pid, clear = false } = {}) => {
+        const path = (runtimePath ?? '').toString().trim();
+        if (!path) return;
+        if (clear) {
+          await recordStackRuntimeUpdate(path, { processes: { daemonPid: null } }).catch(() => {});
+          return;
+        }
+        const n = Number(pid);
+        if (!Number.isFinite(n) || n <= 1) return;
+        await recordStackRuntimeUpdate(path, { processes: { daemonPid: n } }).catch(() => {});
+      };
+
       if (action === 'start' || action === 'restart') {
         // UX: if this identity is not authenticated yet and we're in a real TTY, offer to run the
         // guided login flow inline (instead of failing or asking for a second terminal).
@@ -156,6 +168,14 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
           stackName,
           cliIdentity: identity,
         });
+
+        // Record the daemon PID in stack.runtime.json so `hstack tui` and other tools can
+        // display correct daemon state even when the daemon is started outside `hstack dev`.
+        const state = checkDaemonState(cliHomeDir, { serverUrl: internalServerUrl, env: envForIdentity });
+        if ((state?.status === 'running' || state?.status === 'starting') && typeof state?.pid === 'number') {
+          await maybeRecordDaemonPid({ pid: state.pid });
+        }
+
         const status = await daemonStatusSummary({
           cliBin,
           cliHomeDir,
@@ -178,6 +198,7 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
           stackName,
           cliIdentity: identity,
         });
+        await maybeRecordDaemonPid({ clear: true });
         const status = await daemonStatusSummary({
           cliBin,
           cliHomeDir,
@@ -199,6 +220,14 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
         stackName,
         cliIdentity: identity,
       });
+
+      // Best-effort: when someone runs `status`, persist the observed PID so the TUI can show
+      // "running" even if the daemon was started outside of stack orchestration.
+      const state = checkDaemonState(cliHomeDir, { serverUrl: internalServerUrl, env: envForIdentity });
+      if ((state?.status === 'running' || state?.status === 'starting') && typeof state?.pid === 'number') {
+        await maybeRecordDaemonPid({ pid: state.pid });
+      }
+
       return { ok: true, action, cliIdentity: identity, cliHomeDir, status: status.trim() };
     },
   });

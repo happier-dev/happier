@@ -639,7 +639,12 @@ async function main() {
           if (notice.show) {
             panes[daemonIdx].visible = true;
             panes[daemonIdx].title = notice.paneTitle || panes[daemonIdx].title;
-            panes[daemonIdx].lines = styleDaemonNoticeLines(notice.paneLines || panes[daemonIdx].lines);
+            const preserve =
+              daemonAutostartInProgress ||
+              (daemonAutostartLastAttemptAtMs > 0 && Date.now() - daemonAutostartLastAttemptAtMs < 6_000);
+            if (!preserve || panes[daemonIdx].lines.length === 0) {
+              panes[daemonIdx].lines = styleDaemonNoticeLines(notice.paneLines || panes[daemonIdx].lines);
+            }
             if (!sawDaemonAuthRequired && notice.paneTitle === 'daemon (SIGN-IN REQUIRED)') {
               sawDaemonAuthRequired = true;
               // One-shot nudge: focus the daemon pane so users see the message before opening the UI.
@@ -673,37 +678,49 @@ async function main() {
             pushLine(panes[daemonIdx], 'starting daemon...');
             scheduleRender();
 
-            void (async () => {
-              try {
-                // Best-effort: only start daemon once server is responding.
-                await waitForHappierHealthOk(internalServerUrl, { timeoutMs: 10_000, intervalMs: 250 });
+	            void (async () => {
+	              try {
+	                // Best-effort: only start daemon once server is responding.
+	                await waitForHappierHealthOk(internalServerUrl, { timeoutMs: 10_000, intervalMs: 250 });
 
-                const daemonArgs = buildTuiDaemonStartArgs({ happysBin, stackName });
-                await new Promise((resolvePromise) => {
-                  const proc = spawn(process.execPath, daemonArgs, {
-                    cwd: rootDir,
-                    env: process.env,
-                    stdio: ['ignore', 'pipe', 'pipe'],
-                  });
+	                const daemonArgs = buildTuiDaemonStartArgs({ happysBin, stackName });
+	                const attemptLines = [];
+	                await new Promise((resolvePromise) => {
+	                  const proc = spawn(process.execPath, daemonArgs, {
+	                    cwd: rootDir,
+	                    env: { ...process.env, HAPPIER_STACK_TUI: '1' },
+	                    stdio: ['ignore', 'pipe', 'pipe'],
+	                  });
 
-                  const write = (chunk) => {
-                    const s = String(chunk ?? '');
-                    for (const line of s.split(/\r?\n/)) {
-                      if (!line.trim()) continue;
-                      pushLine(panes[daemonIdx], line);
-                    }
-                    scheduleRender();
-                  };
+	                  const write = (chunk) => {
+	                    const s = String(chunk ?? '');
+	                    for (const line of s.split(/\r?\n/)) {
+	                      if (!line.trim()) continue;
+	                      attemptLines.push(line);
+	                      pushLine(panes[daemonIdx], line);
+	                    }
+	                    scheduleRender();
+	                  };
 
-                  proc.stdout?.on('data', write);
-                  proc.stderr?.on('data', write);
-                  proc.on('exit', () => resolvePromise());
-                  proc.on('error', () => resolvePromise());
-                });
-              } finally {
-                daemonAutostartInProgress = false;
-                try {
-                  await refreshSummary();
+	                  proc.stdout?.on('data', write);
+	                  proc.stderr?.on('data', write);
+	                  proc.on('exit', () => resolvePromise());
+	                  proc.on('error', () => resolvePromise());
+	                });
+
+	                const combined = attemptLines.join('\n').toLowerCase();
+	                if (combined.includes('already running')) {
+	                  panes[daemonIdx].title = 'daemon (ALREADY RUNNING)';
+	                  pushLine(panes[daemonIdx], 'daemon already running; no action needed');
+	                } else {
+	                  panes[daemonIdx].title = 'daemon (STARTED)';
+	                  pushLine(panes[daemonIdx], 'daemon start completed');
+	                }
+	                scheduleRender();
+	              } finally {
+	                daemonAutostartInProgress = false;
+	                try {
+	                  await refreshSummary();
                 } catch {
                   // ignore
                 }
