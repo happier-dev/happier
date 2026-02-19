@@ -300,6 +300,7 @@ export const it: TranslationStructure = {
       kimiSubtitleExperimental: "Kimi CLI (sperimentale)",
       kiloSubtitleExperimental: "Kilo CLI (sperimentale)",
       piSubtitleExperimental: "Pi CLI (sperimentale)",
+      copilotSubtitleExperimental: "GitHub Copilot CLI (experimental)",
     },
     tmux: {
       title: "Tmux",
@@ -1338,6 +1339,8 @@ export const it: TranslationStructure = {
     kiloSessionIdCopied: "ID sessione Kilo copiato negli appunti",
     piSessionId: "ID sessione Pi",
     piSessionIdCopied: "ID sessione Pi copiato negli appunti",
+    copilotSessionId: "Copilot Session ID",
+    copilotSessionIdCopied: "Copilot Session ID copied to clipboard",
     metadataCopied: "Metadati copiati negli appunti",
     failedToCopyMetadata: "Impossibile copiare i metadati",
     failedToKillSession: "Impossibile terminare la sessione",
@@ -1498,6 +1501,7 @@ export const it: TranslationStructure = {
       kimi: "Kimi",
       kilo: "Kilo",
       pi: "Pi",
+      copilot: "Copilot",
     },
     auggieIndexingChip: {
       on: "Indexing on",
