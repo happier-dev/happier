@@ -28,6 +28,9 @@ export default defineConfig({
         pool: 'forks',
         globals: false,
         environment: 'node',
+        // CLI "unit" tests include real filesystem/process work; 5s default is too tight under fork pools.
+        testTimeout: 30_000,
+        hookTimeout: 30_000,
         setupFiles: ['./src/vitestSetup.ts'],
         include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
         exclude: [
