@@ -22,6 +22,7 @@ type FilesToolbarProps = {
     onChangedFilesPresentationChange: (mode: ChangedFilesPresentation) => void;
     scmPanelExpanded: boolean;
     onToggleScmPanel: () => void;
+    onRefresh?: () => void;
 };
 
 export function FilesToolbar(props: FilesToolbarProps) {
@@ -40,6 +41,7 @@ export function FilesToolbar(props: FilesToolbarProps) {
         onChangedFilesPresentationChange,
         scmPanelExpanded,
         onToggleScmPanel,
+        onRefresh,
     } = props;
 
     const chipStyle = (active: boolean) => ({
@@ -181,6 +183,15 @@ export function FilesToolbar(props: FilesToolbarProps) {
                     icon={<Octicons name="git-branch" size={14} color={theme.colors.textSecondary} />}
                     onPress={onToggleScmPanel}
                 />
+
+                {onRefresh ? (
+                    <Chip
+                        active={false}
+                        label={t('common.refresh')}
+                        icon={<Octicons name="sync" size={14} color={theme.colors.textSecondary} />}
+                        onPress={onRefresh}
+                    />
+                ) : null}
             </View>
 
             {!showAllRepositoryFiles && changedFilesCount > 0 && !showSessionViewToggle && (

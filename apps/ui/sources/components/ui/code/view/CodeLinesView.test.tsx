@@ -30,6 +30,37 @@ vi.mock('./CodeLineRow', () => ({
 }));
 
 describe('CodeLinesView', () => {
+    it('does not render FlatList when virtualized=false', async () => {
+        const { CodeLinesView } = await import('./CodeLinesView');
+
+        let tree!: renderer.ReactTestRenderer;
+        renderer.act(() => {
+            tree = renderer.create(
+                <CodeLinesView
+                    virtualized={false}
+                    lines={[
+                        {
+                            id: '1',
+                            sourceIndex: 0,
+                            kind: 'context',
+                            oldLine: 1,
+                            newLine: 1,
+                            renderPrefixText: '',
+                            renderCodeText: 'const x = 1;',
+                            renderIsHeaderLine: false,
+                            selectable: false,
+                        },
+                    ]}
+                />,
+            );
+        });
+
+        expect(() => (tree as renderer.ReactTestRenderer).root.findByType('FlatList' as any)).toThrow();
+
+        const rows = (tree as renderer.ReactTestRenderer).root.findAllByType('CodeLineRow' as any);
+        expect(rows).toHaveLength(1);
+    });
+
     it('passes extraData to FlatList when renderAfterLine is provided', async () => {
         const { CodeLinesView } = await import('./CodeLinesView');
 
@@ -84,9 +115,6 @@ describe('CodeLinesView', () => {
                 />,
             );
         });
-
-        const list = (tree as renderer.ReactTestRenderer).root.findByType('FlatList' as any);
-        expect(list.props.disableVirtualization).toBe(true);
 
         const rows = (tree as renderer.ReactTestRenderer).root.findAllByType('CodeLineRow' as any);
         expect(rows).toHaveLength(1);

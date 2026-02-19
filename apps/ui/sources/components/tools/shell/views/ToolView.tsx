@@ -21,6 +21,7 @@ import { inferToolNameForRendering } from '@/components/tools/normalization/poli
 import { normalizeToolCallForRendering } from '@/components/tools/normalization/core/normalizeToolCallForRendering';
 import { useSetting } from '@/sync/domains/state/storage';
 import { resolveToolViewDetailLevel } from '@/components/tools/normalization/policy/resolveToolViewDetailLevel';
+import { ToolHeaderActionsContext } from '../presentation/ToolHeaderActionsContext';
 
 const KNOWN_TOOL_KEYS = Object.keys(knownTools);
 
@@ -264,6 +265,8 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                 ? handleToggleExpanded
                 : null;
 
+    const [headerActions, setHeaderActions] = React.useState<React.ReactNode | null>(null);
+
     return (
         <View style={styles.container}>
             <View style={styles.header}>
@@ -287,25 +290,33 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                     {statusIcon}
                 </TouchableOpacity>
 
-                {secondaryOnPress ? (
-                    <TouchableOpacity
-                        onPress={secondaryOnPress}
-                        activeOpacity={0.8}
-                        style={styles.secondaryAction}
-                        accessibilityRole="button"
-                        accessibilityLabel={secondaryTapAction === 'open' ? t('toolView.open') : t('toolView.expand')}
-                    >
-                        {secondaryTapAction === 'open' ? (
-                            <Ionicons name="open-outline" size={18} color={theme.colors.textSecondary} />
-                        ) : (
-                            <Ionicons
-                                name={isExpanded ? 'chevron-up-outline' : 'chevron-down-outline'}
-                                size={18}
-                                color={theme.colors.textSecondary}
-                            />
-                        )}
-                    </TouchableOpacity>
-                ) : null}
+                <View style={styles.headerRight}>
+                    {headerActions ? (
+                        <View style={styles.headerActionsContainer}>
+                            {headerActions}
+                        </View>
+                    ) : null}
+
+                    {secondaryOnPress ? (
+                        <TouchableOpacity
+                            onPress={secondaryOnPress}
+                            activeOpacity={0.8}
+                            style={styles.secondaryAction}
+                            accessibilityRole="button"
+                            accessibilityLabel={secondaryTapAction === 'open' ? t('toolView.open') : t('toolView.expand')}
+                        >
+                            {secondaryTapAction === 'open' ? (
+                                <Ionicons name="open-outline" size={18} color={theme.colors.textSecondary} />
+                            ) : (
+                                <Ionicons
+                                    name={isExpanded ? 'chevron-up-outline' : 'chevron-down-outline'}
+                                    size={18}
+                                    color={theme.colors.textSecondary}
+                                />
+                            )}
+                        </TouchableOpacity>
+                    ) : null}
+                </View>
             </View>
 
             {/* Content area - either custom children or tool-specific view */}
@@ -344,14 +355,16 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                 if (SpecificToolView) {
                     return (
                         <View style={styles.content}>
-                            <SpecificToolView
-                                tool={toolForRendering}
-                                metadata={props.metadata}
-                                messages={props.messages ?? []}
-                                sessionId={sessionId}
-                                detailLevel={inlineDetailLevel}
-                                interaction={props.interaction}
-                            />
+                            <ToolHeaderActionsContext.Provider value={{ setHeaderActions }}>
+                                <SpecificToolView
+                                    tool={toolForRendering}
+                                    metadata={props.metadata}
+                                    messages={props.messages ?? []}
+                                    sessionId={sessionId}
+                                    detailLevel={inlineDetailLevel}
+                                    interaction={props.interaction}
+                                />
+                            </ToolHeaderActionsContext.Provider>
                             {toolForRendering.state === 'error' && toolForRendering.result &&
                                 !(toolForRendering.permission && (toolForRendering.permission.status === 'denied' || toolForRendering.permission.status === 'canceled')) &&
                                 !hideDefaultError && (
@@ -464,8 +477,17 @@ const styles = StyleSheet.create((theme) => ({
         gap: 8,
         flex: 1,
     },
+    headerRight: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    headerActionsContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
     secondaryAction: {
-        marginLeft: 8,
+        marginLeft: 0,
     },
     iconContainer: {
         width: 24,

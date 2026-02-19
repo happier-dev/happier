@@ -5,10 +5,16 @@ import { t } from '@/text';
 import { ICON_EDIT } from '../icons';
 import type { KnownToolDefinition } from '../_types';
 import { DiffInputV2Schema } from '@happier-dev/protocol';
+import { parseUnifiedDiffFilePaths } from '../parseUnifiedDiffFilePaths';
 
 export const coreDiffTools = {
     Diff: {
-        title: t('tools.names.viewDiff'),
+        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
+            const diff = opts.tool.input?.unified_diff;
+            if (typeof diff !== 'string' || !diff) return t('tools.names.viewDiff');
+            const paths = parseUnifiedDiffFilePaths(diff);
+            return paths.length > 1 ? t('tools.names.turnDiff') : t('tools.names.viewDiff');
+        },
         icon: ICON_EDIT,
         minimal: false,
         hideDefaultError: true,
@@ -20,15 +26,13 @@ export const coreDiffTools = {
         extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             const diff = opts.tool.input?.unified_diff;
             if (typeof diff !== 'string' || !diff) return null;
-            const lines = diff.split('\n');
-            for (const line of lines) {
-                if (line.startsWith('+++ b/') || line.startsWith('+++ ')) {
-                    const fileName = line.replace(/^\+\+\+ (b\/)?/, '');
-                    const basename = fileName.split('/').pop() || fileName;
-                    return basename;
-                }
-            }
-            return null;
+
+            const paths = parseUnifiedDiffFilePaths(diff);
+            if (paths.length !== 1) return null;
+
+            const filePath = paths[0]!;
+            const basename = filePath.split('/').pop() || filePath;
+            return basename;
         },
         extractDescription: () => t('tools.desc.showingDiff'),
     },

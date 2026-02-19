@@ -260,4 +260,37 @@ describe('CodeLineRow', () => {
         const rootView = tree!.root.findAllByType('View' as any)[0]!;
         expect(rootView.props.nativeID).toBe('f:120');
     });
+
+    it('preserves indentation on web by using pre-wrap whitespace', async () => {
+        const { CodeLineRow } = await import('./CodeLineRow');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <CodeLineRow
+                    line={{
+                        id: '1',
+                        sourceIndex: 0,
+                        kind: 'context',
+                        oldLine: 1,
+                        newLine: 1,
+                        renderPrefixText: '',
+                        renderCodeText: '    if (x) {',
+                        renderIsHeaderLine: false,
+                        selectable: false,
+                    }}
+                    selected={false}
+                />,
+            );
+        });
+
+        const codeNode = tree!.root.findAll((node) => {
+            if ((node as any).type !== 'Text') return false;
+            return (node.children || []).join('') === '    if (x) {';
+        })[0]!;
+
+        const style = codeNode.props.style;
+        const flattened = Array.isArray(style) ? style.flat() : [style];
+        expect(flattened.some((s: any) => s?.whiteSpace === 'pre-wrap')).toBe(true);
+    });
 });

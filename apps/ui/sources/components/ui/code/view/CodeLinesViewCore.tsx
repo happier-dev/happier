@@ -205,6 +205,19 @@ export function CodeLinesViewCore(
         wrapLines,
     ]);
 
+    if (!virtualized) {
+        return (
+            <View style={{ paddingHorizontal, paddingVertical }}>
+                {props.lines.map((line, index) => (
+                    <React.Fragment key={line.id}>
+                        {renderLine(line, index)}
+                    </React.Fragment>
+                ))}
+                <View style={{ height: 16 }} />
+            </View>
+        );
+    }
+
     return (
         <FlatList
             ref={(node) => {
@@ -217,7 +230,7 @@ export function CodeLinesViewCore(
             extraData={listExtraData}
             disableVirtualization={!virtualized}
             initialScrollIndex={scrollIndex >= 0 ? scrollIndex : undefined}
-            getItemLayout={getItemLayout}
+            getItemLayout={wrapLines ? undefined : getItemLayout}
             contentContainerStyle={{
                 paddingHorizontal,
                 paddingVertical,
@@ -244,4 +257,3 @@ export function CodeLinesViewCore(
         />
     );
 }
-

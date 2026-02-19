@@ -8,6 +8,7 @@ import { createHighlighter } from 'shiki';
 
 import { CodeLinesViewCore, type CodeLinesViewProps } from './CodeLinesViewCore';
 import { resolveEffectiveSyntaxHighlighting } from './resolveEffectiveSyntaxHighlighting';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 type ShikiInlineToken = Readonly<{ text: string; color: string }>;
 type ShikiToken = Readonly<{ content: string; color?: string }>;
@@ -92,7 +93,7 @@ export function CodeLinesView(props: CodeLinesViewProps) {
 
         let cancelled = false;
 
-        void (async () => {
+        fireAndForget((async () => {
             try {
                 const highlighter = await getShikiHighlighter({
                     theme: shikiTheme,
@@ -133,7 +134,7 @@ export function CodeLinesView(props: CodeLinesViewProps) {
                 if (cancelled) return;
                 setAdvancedTokensByIndex(null);
             }
-        })();
+        })(), { tag: 'CodeLinesView.loadShikiTokens' });
 
         return () => {
             cancelled = true;

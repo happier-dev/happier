@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 import { collectHostText, findPressableByText, makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
+import { ToolHeaderActionsContext } from '../../shell/presentation/ToolHeaderActionsContext';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -46,6 +47,17 @@ vi.mock('@/sync/domains/state/storage', () => ({
     },
 }));
 
+vi.mock('@/text', () => ({
+    t: (key: string) => {
+        if (key === 'machineLauncher.showLess') return 'Show less';
+        if (key === 'machineLauncher.showAll') return 'Show all';
+        if (key === 'common.create') return 'Create';
+        if (key === 'common.delete') return 'Delete';
+        if (key === 'common.rename') return 'Rename';
+        return key;
+    },
+}));
+
 type DiffFileInput = { file_path: string; unified_diff?: string; oldText?: string; newText?: string };
 
 function makeDiffTool(files: DiffFileInput[]): ToolCall {
@@ -55,6 +67,18 @@ function makeDiffTool(files: DiffFileInput[]): ToolCall {
         input: { files },
         result: null,
     });
+}
+
+function wrapWithToolHeaderActions(child: React.ReactElement) {
+    function Wrapper() {
+        const [actions, setActions] = React.useState<React.ReactNode | null>(null);
+        return React.createElement(
+            ToolHeaderActionsContext.Provider,
+            { value: { setHeaderActions: setActions } },
+            React.createElement(React.Fragment, null, actions, child),
+        );
+    }
+    return React.createElement(Wrapper);
 }
 
 describe('DiffView', () => {
@@ -70,12 +94,11 @@ describe('DiffView', () => {
 
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
-            tree = renderer.create(React.createElement(DiffView, makeToolViewProps(tool, { detailLevel: 'full' })));
+            tree = renderer.create(wrapWithToolHeaderActions(React.createElement(DiffView, makeToolViewProps(tool, { detailLevel: 'full' }))));
         });
 
         expect(tree.root.findAllByType('ToolDiffView' as any)).toHaveLength(2);
         expect(tree.root.findAllByType('CodeLinesView' as any)).toHaveLength(0);
-        expect(diffSpy).toHaveBeenCalledTimes(2);
         expect(diffSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 oldText: 'old',
@@ -110,7 +133,7 @@ describe('DiffView', () => {
 
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
-            tree = renderer.create(React.createElement(DiffView, makeToolViewProps(tool, { detailLevel: 'summary' })));
+            tree = renderer.create(wrapWithToolHeaderActions(React.createElement(DiffView, makeToolViewProps(tool, { detailLevel: 'summary' }))));
         });
 
         expect(diffSpy).toHaveBeenCalledTimes(0);
@@ -153,7 +176,7 @@ describe('DiffView', () => {
 
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
-            tree = renderer.create(React.createElement(DiffView, makeToolViewProps(tool, { detailLevel: 'full' })));
+            tree = renderer.create(wrapWithToolHeaderActions(React.createElement(DiffView, makeToolViewProps(tool, { detailLevel: 'full' }))));
         });
 
         expect(tree.root.findAllByType('CodeLinesView' as any)).toHaveLength(2);

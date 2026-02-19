@@ -40,6 +40,8 @@ type ChangedFilesReviewProps = {
     renderFileActions?: (file: ScmFileStatus) => React.ReactNode;
     focusPath?: string | null;
     rowDensity?: 'comfortable' | 'compact';
+    diffAutoRefreshIntervalMs?: number;
+    diffRefreshToken?: number;
     reviewCommentsEnabled?: boolean;
     reviewCommentDrafts?: readonly ReviewCommentDraft[];
     onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
@@ -219,6 +221,14 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
     const diffConfig = plugin.diffModeConfig(snapshot);
     const reviewCommentsEnabled = props.reviewCommentsEnabled === true;
     const reviewCommentDrafts = props.reviewCommentDrafts ?? [];
+    const diffAutoRefreshIntervalMs =
+        typeof props.diffAutoRefreshIntervalMs === 'number' && Number.isFinite(props.diffAutoRefreshIntervalMs)
+            ? Math.max(0, props.diffAutoRefreshIntervalMs)
+            : 60_000;
+    const diffRefreshToken =
+        typeof props.diffRefreshToken === 'number' && Number.isFinite(props.diffRefreshToken)
+            ? props.diffRefreshToken
+            : 0;
 
     const [diffArea, setDiffArea] = React.useState<ScmDiffArea>(diffConfig.defaultMode);
     React.useEffect(() => {
@@ -339,6 +349,8 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
         diffArea,
         tooLarge,
         selectedPath,
+        minRefetchMs: diffAutoRefreshIntervalMs,
+        refreshToken: diffRefreshToken,
         normalizeError: plugin.errorNormalizer,
         fallbackError: t('files.reviewDiffRequestFailed'),
     });

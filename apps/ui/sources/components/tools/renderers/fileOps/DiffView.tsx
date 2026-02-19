@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ScrollView, View, Text, Pressable } from 'react-native';
+import { ScrollView, View, Text, Pressable, Platform } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
@@ -9,6 +9,7 @@ import { CodeLinesView } from '@/components/ui/code/view/CodeLinesView';
 import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
 import { buildDiffBlocks, buildDiffFileEntries, type DiffFileEntry } from '@/components/ui/code/model/diff/diffViewModel';
 import { t } from '@/text';
+import { useToolHeaderActions } from '../../shell/presentation/ToolHeaderActionsContext';
 
 function UnifiedDiffInlineView(props: Readonly<{
     unifiedDiff: string;
@@ -54,6 +55,7 @@ export const DiffView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
     const files: DiffFileEntry[] = React.useMemo(() => buildDiffFileEntries(blocks), [blocks]);
 
     const [expandedKeys, setExpandedKeys] = React.useState<Set<string>>(() => new Set());
+    const [focusedFileKey, setFocusedFileKey] = React.useState<string | null>(null);
     const keysFingerprint = React.useMemo(() => files.map((f) => f.key).join('|'), [files]);
 
     React.useEffect(() => {
@@ -98,6 +100,25 @@ export const DiffView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
         });
     }, []);
 
+    const headerActionsNode = React.useMemo(() => {
+        if (!showFileList) return null;
+        if (files.length <= 1) return null;
+
+        return (
+            <Pressable
+                onPress={() => setAllExpanded(!allExpanded)}
+                style={styles.headerControlButton}
+                accessibilityRole="button"
+            >
+                <Text style={styles.headerControlButtonText}>
+                    {allExpanded ? t('machineLauncher.showLess') : t('machineLauncher.showAll', { count: files.length })}
+                </Text>
+            </Pressable>
+        );
+    }, [allExpanded, files.length, setAllExpanded, showFileList]);
+
+    useToolHeaderActions(headerActionsNode);
+
     if (files.length === 0) {
         return null;
     }
@@ -118,18 +139,6 @@ export const DiffView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
 
     return (
         <>
-            {files.length > 1 ? (
-                <View style={styles.controlsRow}>
-                    <Pressable
-                        onPress={() => setAllExpanded(!allExpanded)}
-                        style={styles.controlButton}
-                        accessibilityRole="button"
-                    >
-                        <Text style={styles.controlButtonText}>{allExpanded ? t('machineLauncher.showLess') : t('machineLauncher.showAll', { count: files.length })}</Text>
-                    </Pressable>
-                </View>
-            ) : null}
-
             {files.map((file) => {
                 const expanded = expandedKeys.has(file.key);
 
@@ -137,7 +146,14 @@ export const DiffView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
                     <React.Fragment key={file.key}>
                         <Pressable
                             onPress={() => toggleExpanded(file.key)}
-                            style={styles.fileRow}
+                            onFocus={() => setFocusedFileKey(file.key)}
+                            onBlur={() => setFocusedFileKey((prev) => (prev === file.key ? null : prev))}
+                            style={({ hovered, pressed }) => ([
+                                styles.fileRow,
+                                hovered ? styles.fileRowHovered : null,
+                                pressed ? styles.fileRowPressed : null,
+                                focusedFileKey === file.key ? styles.fileRowFocused : null,
+                            ])}
                             accessibilityRole="button"
                         >
                             <Text style={styles.disclosure}>{expanded ? '▾' : '▸'}</Text>
@@ -214,14 +230,7 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.textSecondary,
         fontFamily: 'monospace',
     },
-    controlsRow: {
-        paddingHorizontal: 16,
-        paddingTop: 6,
-        paddingBottom: 4,
-        flexDirection: 'row',
-        justifyContent: 'flex-end',
-    },
-    controlButton: {
+    headerControlButton: {
         paddingHorizontal: 10,
         paddingVertical: 6,
         borderRadius: 8,
@@ -229,20 +238,47 @@ const styles = StyleSheet.create((theme) => ({
         borderWidth: 1,
         borderColor: theme.colors.divider,
     },
-    controlButtonText: {
+    headerControlButtonText: {
         fontSize: 12,
         color: theme.colors.textSecondary,
         fontWeight: '600',
     },
     fileRow: {
-        paddingHorizontal: 16,
+        paddingHorizontal: 12,
         paddingVertical: 10,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
-        borderBottomWidth: 1,
-        borderBottomColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        backgroundColor: theme.colors.surfaceHigh,
+        marginBottom: 8,
+        overflow: 'hidden',
+        ...Platform.select({
+            web: {
+                outlineStyle: 'none',
+            } as any,
+            default: {},
+        }),
+    },
+    fileRowHovered: {
+        backgroundColor: theme.colors.surfaceHighest,
+    },
+    fileRowPressed: {
+        backgroundColor: theme.colors.surfaceHighest,
+    },
+    fileRowFocused: {
+        borderColor: theme.colors.textLink,
+        ...(Platform.OS === 'web'
+            ? ({ boxShadow: `0 0 0 2px ${theme.colors.textLink}33` } as any)
+            : {
+                shadowColor: theme.colors.textLink,
+                shadowOpacity: 0.25,
+                shadowRadius: 6,
+                shadowOffset: { width: 0, height: 0 },
+                elevation: 2,
+            }),
     },
     disclosure: {
         width: 16,

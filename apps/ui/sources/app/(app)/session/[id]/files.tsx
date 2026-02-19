@@ -15,6 +15,7 @@ import { SearchResultsList } from '@/components/sessions/files/content/SearchRes
 import { ChangedFilesList } from '@/components/sessions/files/content/ChangedFilesList';
 import { ChangedFilesReview } from '@/components/sessions/files/content/ChangedFilesReview';
 import { RepositoryTreeList } from '@/components/sessions/files/content/RepositoryTreeList';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
     storage,
     useSession,
@@ -78,6 +79,7 @@ export default function FilesScreen() {
     const [reviewFocusPath, setReviewFocusPath] = React.useState<string | null>(null);
     const [scmPanelExpanded, setScmPanelExpanded] = React.useState(false);
     const [stageBusyPath, setStageBusyPath] = React.useState<string | null>(null);
+    const [diffRefreshToken, setDiffRefreshToken] = React.useState(0);
 
     const deepLinkPresentation = React.useMemo(() => {
         const raw = (localSearchParams as any)?.presentation;
@@ -113,6 +115,11 @@ export default function FilesScreen() {
     const scmPushRejectPolicy = useSetting('scmPushRejectPolicy');
     const scmReviewMaxFiles = useSetting('scmReviewMaxFiles');
     const scmReviewMaxChangedLines = useSetting('scmReviewMaxChangedLines');
+    const scmFilesAutoRefreshIntervalMsSetting = useSetting('scmFilesAutoRefreshIntervalMs' as any);
+    const scmFilesAutoRefreshIntervalMs =
+        typeof scmFilesAutoRefreshIntervalMsSetting === 'number' && Number.isFinite(scmFilesAutoRefreshIntervalMsSetting) && scmFilesAutoRefreshIntervalMsSetting >= 5_000
+            ? scmFilesAutoRefreshIntervalMsSetting
+            : 60_000;
     const filesChangedFilesRowDensity = useSetting('filesChangedFilesRowDensity');
     const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
     const sessionPath = session?.metadata?.path ?? null;
@@ -189,9 +196,10 @@ export default function FilesScreen() {
         }
         setIsRefreshing(true);
         try {
-            await scmStatusSync.getSync(sessionId).invalidateAndAwait();
+            await scmStatusSync.invalidateFromUserAndAwait(sessionId);
             await loadCommitHistoryRef.current({ reset: true });
         } finally {
+            setDiffRefreshToken((prev) => prev + 1);
             setIsRefreshing(false);
         }
     }, [sessionId, sessionPath]);
@@ -209,8 +217,14 @@ export default function FilesScreen() {
 
             refresh();
 
-            return () => {};
-        }, [refreshScmData, sessionPath])
+            const interval = setInterval(() => {
+                scmStatusSync.invalidateFromAutoRefresh(sessionId);
+            }, scmFilesAutoRefreshIntervalMs);
+
+            return () => {
+                clearInterval(interval);
+            };
+        }, [refreshScmData, scmFilesAutoRefreshIntervalMs, sessionId, sessionPath])
     );
 
     React.useEffect(() => {
@@ -345,7 +359,7 @@ export default function FilesScreen() {
                 disabled={busy || !scmWriteEnabled}
                 onPress={(e: any) => {
                     e?.stopPropagation?.();
-                    void (async () => {
+                    fireAndForget((async () => {
                         setStageBusyPath(file.fullPath);
                         try {
                             await applyFileStageAction({
@@ -361,7 +375,7 @@ export default function FilesScreen() {
                         } finally {
                             setStageBusyPath((prev) => (prev === file.fullPath ? null : prev));
                         }
-                    })();
+                    })(), { tag: 'SessionFilesScreen.applyFileStageAction' });
                 }}
                 style={{
                     width: 28,
@@ -412,6 +426,9 @@ export default function FilesScreen() {
                 onChangedFilesPresentationChange={setChangedFilesPresentation}
                 scmPanelExpanded={scmPanelExpanded}
                 onToggleScmPanel={() => setScmPanelExpanded((prev) => !prev)}
+                onRefresh={() => {
+                    void refreshScmData();
+                }}
             />
 
             <ItemList style={{ flex: 1 }}>
@@ -555,6 +572,8 @@ export default function FilesScreen() {
                             focusPath={reviewFocusPath}
                             rowDensity={changedFilesRowDensity}
                             renderFileActions={renderFileActions}
+                            diffAutoRefreshIntervalMs={scmFilesAutoRefreshIntervalMs}
+                            diffRefreshToken={diffRefreshToken}
                         />
                     ) : (
                         <ChangedFilesList

@@ -238,6 +238,227 @@ describe('ChangedFilesReview', () => {
         }
     });
 
+    it('keeps loaded diffs visible while refreshing due to snapshot churn', async () => {
+        sessionScmDiffFileSpy.mockClear();
+        let pendingRefreshResolve: ((value: any) => void) | null = null;
+        sessionScmDiffFileSpy
+            .mockImplementationOnce(async (_sessionId: string, req: any) => ({
+                success: true,
+                diff: `diff:${req.path}:${req.area}`,
+                error: null,
+            }))
+            // Second call simulates a slow refresh so we can assert there is no "loading" flicker.
+            .mockImplementationOnce((_sessionId: string, req: any) => new Promise((resolve) => {
+                pendingRefreshResolve = resolve;
+            }));
+
+        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={snapshot}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[fileA]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                    diffAutoRefreshIntervalMs={0}
+                />
+            );
+        });
+
+        for (let i = 0; i < 20; i++) {
+            await act(async () => {
+                await Promise.resolve();
+            });
+            const views = tree!.root.findAllByType('CodeLinesView' as any);
+            if (views.length > 0) break;
+        }
+
+        expect(tree!.root.findAllByType('CodeLinesView' as any).length).toBeGreaterThan(0);
+        expect(tree!.root.findAllByType('ActivityIndicator' as any).length).toBe(0);
+
+        await act(async () => {
+            tree!.update(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={{ ...snapshot, fetchedAt: snapshot.fetchedAt + 1 }}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[{ ...fileA }]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                    diffAutoRefreshIntervalMs={0}
+                />
+            );
+        });
+
+        // Effect starts a refresh but keeps previous diff visible (no loading spinner).
+        expect(tree!.root.findAllByType('CodeLinesView' as any).length).toBeGreaterThan(0);
+        expect(tree!.root.findAllByType('ActivityIndicator' as any).length).toBe(0);
+
+        await act(async () => {
+            pendingRefreshResolve?.({ success: true, diff: 'diff:refreshed', error: null });
+            await Promise.resolve();
+        });
+    });
+
+    it('does not re-fetch diffs again when within the refresh interval', async () => {
+        sessionScmDiffFileSpy.mockClear();
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: `diff:${req.path}:${req.area}`,
+            error: null,
+        }));
+
+        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={snapshot}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[fileA]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                    diffAutoRefreshIntervalMs={60_000}
+                />
+            );
+        });
+
+        for (let i = 0; i < 20; i++) {
+            await act(async () => {
+                await Promise.resolve();
+            });
+            const views = tree!.root.findAllByType('CodeLinesView' as any);
+            if (views.length > 0) break;
+        }
+
+        expect(sessionScmDiffFileSpy).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            tree!.update(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={{ ...snapshot, fetchedAt: snapshot.fetchedAt + 1 }}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[{ ...fileA }]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                    diffAutoRefreshIntervalMs={60_000}
+                />
+            );
+            await Promise.resolve();
+        });
+
+        expect(sessionScmDiffFileSpy).toHaveBeenCalledTimes(1);
+
+        vi.useRealTimers();
+    });
+
+    it('re-fetches diffs when the refresh token changes even within the refresh interval', async () => {
+        sessionScmDiffFileSpy.mockClear();
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: `diff:${req.path}:${req.area}`,
+            error: null,
+        }));
+
+        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={snapshot}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[fileA]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                    diffAutoRefreshIntervalMs={60_000}
+                    diffRefreshToken={0}
+                />
+            );
+        });
+
+        for (let i = 0; i < 20; i++) {
+            await act(async () => {
+                await Promise.resolve();
+            });
+            const views = tree!.root.findAllByType('CodeLinesView' as any);
+            if (views.length > 0) break;
+        }
+
+        expect(sessionScmDiffFileSpy).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            tree!.update(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={{ ...snapshot, fetchedAt: snapshot.fetchedAt + 1 }}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[{ ...fileA }]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                    diffAutoRefreshIntervalMs={60_000}
+                    diffRefreshToken={1}
+                />
+            );
+            await Promise.resolve();
+        });
+
+        expect(sessionScmDiffFileSpy).toHaveBeenCalledTimes(2);
+        expect(tree!.root.findAllByType('ActivityIndicator' as any).length).toBe(0);
+
+        vi.useRealTimers();
+    });
+
     it('falls back to single-file loading when thresholds are exceeded', async () => {
         sessionScmDiffFileSpy.mockClear();
 

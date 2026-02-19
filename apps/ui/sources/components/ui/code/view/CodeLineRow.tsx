@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, Text, View, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import type { TextStyle } from 'react-native';
 
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
 import { Typography } from '@/constants/Typography';
@@ -80,6 +81,15 @@ export function CodeLineRow(props: {
         return textColor;
     }, [theme.colors, textColor]);
 
+    const webWhitespaceStyle: TextStyle | null = React.useMemo(() => {
+        if (!isWeb) return null;
+        // React Native Web supports CSS `white-space` and `word-break`, but React Native's `TextStyle` typing does not.
+        return ({
+            whiteSpace: wrapLines ? 'pre-wrap' : 'pre',
+            wordBreak: 'break-word',
+        } as unknown as TextStyle);
+    }, [isWeb, wrapLines]);
+
     return (
         <View
             nativeID={line.id}
@@ -102,7 +112,7 @@ export function CodeLineRow(props: {
                         <Text
                             numberOfLines={wrapLines ? undefined : 1}
                             ellipsizeMode={wrapLines ? undefined : 'clip'}
-                            style={[styles(theme).codeText, { color: textColor }, !wrapLines ? styles(theme).noWrap : null]}
+                            style={[styles(theme).codeText, webWhitespaceStyle, { color: textColor }, !wrapLines ? styles(theme).noWrap : null]}
                         >
                             {line.renderPrefixText}
                         </Text>
@@ -110,7 +120,7 @@ export function CodeLineRow(props: {
                     <Text
                         numberOfLines={wrapLines ? undefined : 1}
                         ellipsizeMode={wrapLines ? undefined : 'clip'}
-                        style={[styles(theme).codeText, { color: textColor }, !wrapLines ? styles(theme).noWrap : null]}
+                        style={[styles(theme).codeText, webWhitespaceStyle, { color: textColor }, !wrapLines ? styles(theme).noWrap : null]}
                     >
                         {(props.syntaxHighlighting?.mode === 'advanced' && props.advancedTokens && !line.renderIsHeaderLine)
                             ? props.advancedTokens.map((token, idx) => (

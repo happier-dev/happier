@@ -20,7 +20,7 @@ let mockScmSnapshotError: any = null;
 let mockSessionPath: string | null = '/repo';
 let mockSessionActive = true;
 let mockShouldShowAllFiles = false;
-const invalidateAndAwaitSpy = vi.fn(async () => {});
+const invalidateFromUserAndAwaitSpy = vi.fn(async () => {});
 let sourceControlUnavailableStateProps: any = null;
 
 vi.mock('react-native', () => {
@@ -136,9 +136,8 @@ vi.mock('@/scm/scmAttribution', () => ({
 
 vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: {
-        getSync: () => ({
-            invalidateAndAwait: invalidateAndAwaitSpy,
-        }),
+        invalidateFromUserAndAwait: invalidateFromUserAndAwaitSpy,
+        invalidateFromAutoRefresh: vi.fn(),
     },
 }));
 
@@ -294,7 +293,7 @@ describe('FilesScreen', () => {
         focusEffectHasRun = false;
         mockSessionPath = '/repo';
         mockSessionActive = true;
-        invalidateAndAwaitSpy.mockClear();
+        invalidateFromUserAndAwaitSpy.mockClear();
         mockScmSnapshot = {
             repo: { isRepo: true, rootPath: '/repo' },
             branch: { head: 'main', detached: false },
@@ -522,7 +521,7 @@ describe('FilesScreen', () => {
         });
         await act(async () => {});
 
-        expect(invalidateAndAwaitSpy).toHaveBeenCalledTimes(0);
+        expect(invalidateFromUserAndAwaitSpy).toHaveBeenCalledTimes(0);
 
         mockSessionPath = '/repo';
         await act(async () => {
@@ -530,7 +529,7 @@ describe('FilesScreen', () => {
         });
         await act(async () => {});
 
-        expect(invalidateAndAwaitSpy).toHaveBeenCalledTimes(1);
+        expect(invalidateFromUserAndAwaitSpy).toHaveBeenCalledTimes(1);
     });
 
     it('renders repository tree in all-files view when search query is empty', async () => {
