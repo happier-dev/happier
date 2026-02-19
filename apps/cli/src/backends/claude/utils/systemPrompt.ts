@@ -9,6 +9,13 @@ const BASE_SYSTEM_PROMPT = (() => trimIdent(`
 
 	    RELIABILITY RULES (IMPORTANT):
 	    - Tool-use sequencing is strict. If you use "AskUserQuestion", do NOT include any other tool_use in the same assistant turn. Wait for the user's answer before calling other tools.
+
+	    ATTACHMENTS:
+	    - If a user message includes an attachments block like:
+	      [attachments]
+	      - /path/to/file
+	      [/attachments]
+	      then read each referenced path with the Read tool before answering.
 `))();
 
 /**
