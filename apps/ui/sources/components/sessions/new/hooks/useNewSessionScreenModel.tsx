@@ -1537,6 +1537,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         agentType,
         permissionMode,
         modelMode,
+        acpSessionModeId,
         sessionPrompt,
         automationDraft: effectiveAutomationDraft,
         resumeSessionId,
