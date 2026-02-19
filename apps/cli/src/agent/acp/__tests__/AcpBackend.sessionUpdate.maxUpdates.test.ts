@@ -15,6 +15,7 @@ describe('AcpBackend session/update max updates guard', () => {
         transport: defaultTransport,
         replayCapture: null,
         activeToolCalls: new Set<string>(),
+        finalizedToolCalls: new Set<string>(),
         toolCallStartTimes: new Map<string, number>(),
         toolCallTimeouts: new Map<string, any>(),
         toolCallIdToNameMap: new Map<string, string>(),

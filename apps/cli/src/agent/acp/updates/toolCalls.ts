@@ -35,6 +35,89 @@ export function formatDurationMinutes(startTime: number | undefined): string {
   return (duration / 1000 / 60).toFixed(2);
 }
 
+function emitTimeoutToolResult(params: Readonly<{
+  toolCallId: string;
+  toolKind: string | unknown;
+  toolKindStr: string;
+  timeoutMs: number;
+  ctx: HandlerContext;
+  source: 'tool_call' | 'tool_call_update';
+}>): void {
+  const { toolCallId, toolKind, toolKindStr, timeoutMs, ctx, source } = params;
+  const resolvedToolName =
+    ctx.toolCallIdToNameMap.get(toolCallId) ?? (typeof toolKind === 'string' ? toolKind : toolKindStr);
+  const durationStr = formatDuration(ctx.toolCallStartTimes.get(toolCallId));
+
+  ctx.emit({
+    type: 'tool-result',
+    toolName: resolvedToolName,
+    callId: toolCallId,
+    isError: true,
+    result: {
+      error: `Tool call timed out after ${(timeoutMs / 1000).toFixed(0)}s`,
+      status: 'timeout',
+      duration: durationStr,
+      _acp: {
+        kind: toolKindStr,
+        timeoutMs,
+        source,
+      },
+    },
+  });
+}
+
+function armToolCallExecutionTimeout(params: Readonly<{
+  toolCallId: string;
+  toolKind: string | unknown;
+  toolKindStr: string;
+  ctx: HandlerContext;
+  source: 'tool_call' | 'tool_call_update';
+  suffix?: string;
+}>): void {
+  const { toolCallId, toolKind, toolKindStr, ctx, source, suffix } = params;
+  if (ctx.finalizedToolCalls.has(toolCallId)) return;
+
+  const timeoutMs =
+    ctx.transport.getToolCallTimeout?.(toolCallId, toolKindStr) ?? DEFAULT_TOOL_CALL_TIMEOUT_MS;
+
+  // "Inactivity watchdog": bump/reset the timeout on every meaningful tool_call_update while
+  // the tool is running. This prevents false timeouts for long-running tools that keep emitting
+  // progress updates, while still providing a safety net for tools that truly stall.
+  const existingTimeout = ctx.toolCallTimeouts.get(toolCallId);
+  if (existingTimeout) {
+    clearTimeout(existingTimeout);
+    ctx.toolCallTimeouts.delete(toolCallId);
+  }
+
+  const timeout = setTimeout(() => {
+    if (ctx.finalizedToolCalls.has(toolCallId)) return;
+
+    const duration = formatDuration(ctx.toolCallStartTimes.get(toolCallId));
+    logger.debug(
+      `[AcpBackend] ⏱️ Tool call TIMEOUT${suffix ? ` (${suffix})` : ''} (from ${source}): ${toolCallId} (${toolKind}) after ${(timeoutMs / 1000).toFixed(0)}s - Duration: ${duration}, emitting terminal error and removing from active set`,
+    );
+
+    ctx.finalizedToolCalls.add(toolCallId);
+    emitTimeoutToolResult({ toolCallId, toolKind, toolKindStr, timeoutMs, ctx, source });
+
+    ctx.activeToolCalls.delete(toolCallId);
+    ctx.toolCallStartTimes.delete(toolCallId);
+    ctx.toolCallTimeouts.delete(toolCallId);
+    ctx.toolCallIdToNameMap.delete(toolCallId);
+    ctx.toolCallIdToInputMap.delete(toolCallId);
+
+    if (ctx.activeToolCalls.size === 0) {
+      logger.debug('[AcpBackend] No more active tool calls after timeout, emitting idle status');
+      ctx.emitIdleStatus();
+    }
+  }, timeoutMs);
+
+  ctx.toolCallTimeouts.set(toolCallId, timeout);
+  logger.debug(
+    `[AcpBackend] ⏱️ Set timeout for ${toolCallId}: ${(timeoutMs / 1000).toFixed(0)}s${existingTimeout ? ' (bumped)' : ''}`,
+  );
+}
+
 function extractTextFromContentBlocks(value: unknown): string | null {
   if (!Array.isArray(value) || value.length === 0) return null;
 
@@ -196,6 +279,10 @@ export function startToolCall(
   ctx: HandlerContext,
   source: 'tool_call' | 'tool_call_update',
 ): void {
+  if (ctx.finalizedToolCalls.has(toolCallId)) {
+    logger.debug(`[AcpBackend] Ignoring tool call START for already-finalized toolCallId=${toolCallId}`);
+    return;
+  }
   const startTime = Date.now();
   const toolKindStr = typeof toolKind === 'string' ? toolKind : undefined;
   const isInvestigation = ctx.transport.isInvestigationTool?.(toolCallId, toolKindStr) ?? false;
@@ -241,35 +328,14 @@ export function startToolCall(
   // the execution timeout until the tool is actually in progress, otherwise long permission waits can
   // cause spurious timeouts and confusing UI state.
   if (update.status !== 'pending') {
-    const timeoutMs =
-      ctx.transport.getToolCallTimeout?.(toolCallId, toolKindStr) ?? DEFAULT_TOOL_CALL_TIMEOUT_MS;
-
-    if (!ctx.toolCallTimeouts.has(toolCallId)) {
-      const timeout = setTimeout(() => {
-        const duration = formatDuration(ctx.toolCallStartTimes.get(toolCallId));
-        logger.debug(
-          `[AcpBackend] ⏱️ Tool call TIMEOUT (from ${source}): ${toolCallId} (${toolKind}) after ${(timeoutMs / 1000).toFixed(0)}s - Duration: ${duration}, removing from active set`,
-        );
-
-        ctx.activeToolCalls.delete(toolCallId);
-        ctx.toolCallStartTimes.delete(toolCallId);
-        ctx.toolCallTimeouts.delete(toolCallId);
-        ctx.toolCallIdToNameMap.delete(toolCallId);
-        ctx.toolCallIdToInputMap.delete(toolCallId);
-
-        if (ctx.activeToolCalls.size === 0) {
-          logger.debug('[AcpBackend] No more active tool calls after timeout, emitting idle status');
-          ctx.emitIdleStatus();
-        }
-      }, timeoutMs);
-
-      ctx.toolCallTimeouts.set(toolCallId, timeout);
-      logger.debug(
-        `[AcpBackend] ⏱️ Set timeout for ${toolCallId}: ${(timeoutMs / 1000).toFixed(0)}s${isInvestigation ? ' (investigation tool)' : ''}`,
-      );
-    } else {
-      logger.debug(`[AcpBackend] Timeout already set for ${toolCallId}, skipping`);
-    }
+    armToolCallExecutionTimeout({
+      toolCallId,
+      toolKind,
+      toolKindStr: toolKindStr ?? 'unknown',
+      ctx,
+      source,
+      suffix: isInvestigation ? 'investigation tool' : undefined,
+    });
   } else {
     logger.debug(
       `[AcpBackend] Tool call ${toolCallId} is pending permission; skipping execution timeout setup`,
@@ -320,11 +386,13 @@ export function completeToolCall(
   update: SessionUpdate,
   ctx: HandlerContext,
 ): void {
+  if (ctx.finalizedToolCalls.has(toolCallId)) return;
   const startTime = ctx.toolCallStartTimes.get(toolCallId);
   const duration = formatDuration(startTime);
   const toolKindStr = typeof toolKind === 'string' ? toolKind : 'unknown';
   const resolvedToolName = ctx.toolCallIdToNameMap.get(toolCallId) ?? toolKindStr;
 
+  ctx.finalizedToolCalls.add(toolCallId);
   ctx.activeToolCalls.delete(toolCallId);
   ctx.toolCallStartTimes.delete(toolCallId);
   ctx.toolCallIdToNameMap.delete(toolCallId);
@@ -376,6 +444,7 @@ export function failToolCall(
   update: SessionUpdate,
   ctx: HandlerContext,
 ): void {
+  if (ctx.finalizedToolCalls.has(toolCallId)) return;
   const startTime = ctx.toolCallStartTimes.get(toolCallId);
   const duration = startTime ? Date.now() - startTime : null;
   const toolKindStr = typeof toolKind === 'string' ? toolKind : 'unknown';
@@ -415,6 +484,7 @@ export function failToolCall(
   }
 
   // Cleanup.
+  ctx.finalizedToolCalls.add(toolCallId);
   ctx.activeToolCalls.delete(toolCallId);
   ctx.toolCallStartTimes.delete(toolCallId);
   ctx.toolCallIdToNameMap.delete(toolCallId);
@@ -458,6 +528,7 @@ export function failToolCall(
       return { ...base, _acp: acp };
     })(),
     callId: toolCallId,
+    isError: true,
   });
 
   // If no more active tool calls, emit idle.
@@ -490,6 +561,11 @@ export function handleToolCallUpdate(
       : (ctx.transport.extractToolNameFromId?.(toolCallId) ?? inferredToolKind ?? 'unknown');
   let toolCallCountSincePrompt = ctx.toolCallCountSincePrompt;
 
+  if (ctx.finalizedToolCalls.has(toolCallId)) {
+    logger.debug(`[AcpBackend] Ignoring tool_call_update for finalized toolCallId=${toolCallId} (status=${status})`);
+    return { handled: true, toolCallCountSincePrompt };
+  }
+
   // Some ACP providers stream terminal output via tool_call_update.meta.
   emitTerminalOutputFromMeta(update, ctx);
 
@@ -509,31 +585,16 @@ export function handleToolCallUpdate(
     } else {
       // If the tool call was previously pending permission, it may not have an execution timeout yet.
       // Arm the timeout as soon as it transitions to in_progress.
-      if (status === 'in_progress' && !ctx.toolCallTimeouts.has(toolCallId)) {
-        const toolKindStr = typeof toolKind === 'string' ? toolKind : undefined;
-        const timeoutMs =
-          ctx.transport.getToolCallTimeout?.(toolCallId, toolKindStr) ?? DEFAULT_TOOL_CALL_TIMEOUT_MS;
-        const timeout = setTimeout(() => {
-          const duration = formatDuration(ctx.toolCallStartTimes.get(toolCallId));
-          logger.debug(
-            `[AcpBackend] ⏱️ Tool call TIMEOUT (from tool_call_update): ${toolCallId} (${toolKind}) after ${(timeoutMs / 1000).toFixed(0)}s - Duration: ${duration}, removing from active set`,
-          );
-
-          ctx.activeToolCalls.delete(toolCallId);
-          ctx.toolCallStartTimes.delete(toolCallId);
-          ctx.toolCallTimeouts.delete(toolCallId);
-          ctx.toolCallIdToNameMap.delete(toolCallId);
-          ctx.toolCallIdToInputMap.delete(toolCallId);
-
-          if (ctx.activeToolCalls.size === 0) {
-            logger.debug('[AcpBackend] No more active tool calls after timeout, emitting idle status');
-            ctx.emitIdleStatus();
-          }
-        }, timeoutMs);
-        ctx.toolCallTimeouts.set(toolCallId, timeout);
-        logger.debug(
-          `[AcpBackend] ⏱️ Set timeout for ${toolCallId}: ${(timeoutMs / 1000).toFixed(0)}s (armed on in_progress)`,
-        );
+      if (status === 'in_progress') {
+        const toolKindStr = typeof toolKind === 'string' ? toolKind : 'unknown';
+        armToolCallExecutionTimeout({
+          toolCallId,
+          toolKind,
+          toolKindStr,
+          ctx,
+          source: 'tool_call_update',
+          suffix: 'armed on in_progress',
+        });
       }
 
       if (hasMeaningfulToolUpdate(update)) {
@@ -573,6 +634,11 @@ export function handleToolCall(
   if (!toolCallId || !isInProgress) {
     logger.debug(`[AcpBackend] Tool call ${toolCallId} not in progress (status: ${status}), skipping`);
     return { handled: false };
+  }
+
+  if (ctx.finalizedToolCalls.has(toolCallId)) {
+    logger.debug(`[AcpBackend] Ignoring tool_call for finalized toolCallId=${toolCallId} (status=${status})`);
+    return { handled: true };
   }
 
   if (ctx.activeToolCalls.has(toolCallId)) {

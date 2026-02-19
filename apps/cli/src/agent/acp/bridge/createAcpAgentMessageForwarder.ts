@@ -8,6 +8,7 @@ import {
   type AcpSendFn,
 } from '@/agent/acp/bridge/acpSessionForwarding';
 import { normalizePermissionRequestOptionsForAcp } from '@/agent/acp/bridge/acpCommonHandlers';
+import { extractThinkingTextFromThinkToolInput, isThinkingToolName } from '@/agent/acp/bridge/thinkingToolCall';
 
 type SendAcpLike = AcpSendFn;
 
@@ -27,6 +28,7 @@ export function createAcpAgentMessageForwarder(params: {
   // the tool-results are always renderable (no orphan tool results).
   const terminalToolCallId = ns('happier:terminal-output');
   let terminalToolCallSent = false;
+  const suppressedThinkToolCallIds = new Set<string>();
 
   const send = (body: ACPMessageData): void => {
     params.sendAcp(params.provider, body);
@@ -59,6 +61,15 @@ export function createAcpAgentMessageForwarder(params: {
         return;
 
       case 'tool-call':
+        if (isThinkingToolName(msg.toolName)) {
+          const callId = ns(msg.callId);
+          suppressedThinkToolCallIds.add(callId);
+          const text = extractThinkingTextFromThinkToolInput(msg.args);
+          if (text) {
+            send(withSidechain({ type: 'thinking', text }));
+          }
+          return;
+        }
         forwardAcpToolCall({
           sendAcp: params.sendAcp,
           provider: params.provider,
@@ -71,6 +82,10 @@ export function createAcpAgentMessageForwarder(params: {
         return;
 
       case 'tool-result':
+        if (suppressedThinkToolCallIds.has(ns(msg.callId))) {
+          suppressedThinkToolCallIds.delete(ns(msg.callId));
+          return;
+        }
         forwardAcpToolResult({
           sendAcp: params.sendAcp,
           provider: params.provider,

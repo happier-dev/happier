@@ -56,6 +56,8 @@ export interface HandlerContext {
   transport: TransportHandler;
   /** Set of active tool call IDs */
   activeToolCalls: Set<string>;
+  /** Set of tool call IDs that have already emitted a terminal tool-result (prevents duplicate terminalization) */
+  finalizedToolCalls: Set<string>;
   /** Map of tool call ID to start time */
   toolCallStartTimes: Map<string, number>;
   /** Map of tool call ID to timeout handle */

@@ -173,4 +173,41 @@ describe('importAcpReplayHistoryV1', () => {
     const toolCall = calls.agentCommitted.find((body) => body?.type === 'tool-call');
     expect(toolCall).toBeTruthy();
   });
+
+  it('imports think tool_call events as thinking messages (skips tool_result)', async () => {
+    let resolveThinking: (() => void) | null = null;
+    const thinkingCommitted = new Promise<void>((resolve) => {
+      resolveThinking = resolve;
+    });
+
+    const { session, calls } = createFakeSession({
+      existing: [{ role: 'user', text: 'local message' }],
+      onAgentCommitted: (body) => {
+        if ((body as { type?: unknown })?.type === 'thinking') {
+          resolveThinking?.();
+        }
+      },
+    });
+
+    await importAcpReplayHistoryV1({
+      session,
+      provider: 'opencode',
+      remoteSessionId: 'session-123',
+      replay: [
+        { type: 'message', role: 'agent', text: 'hello' },
+        { type: 'tool_call', toolCallId: 't1', kind: 'think', rawInput: { thinking: 'Hello' } },
+        { type: 'tool_result', toolCallId: 't1', status: 'success', rawOutput: { ok: true } },
+      ] as any,
+      permissionHandler: {
+        handleToolCall: async () => ({ decision: 'approved' }),
+      } as any,
+    });
+
+    await thinkingCommitted;
+    expect(calls.sendAgent).toBe(2);
+    expect(calls.agentCommitted).toEqual([
+      { type: 'message', message: 'hello' },
+      { type: 'thinking', text: 'Hello' },
+    ]);
+  });
 });

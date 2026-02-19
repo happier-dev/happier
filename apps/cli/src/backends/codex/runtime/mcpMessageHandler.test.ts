@@ -66,11 +66,6 @@ describe('createCodexMcpMessageHandler', () => {
     };
     const messageBuffer = { addMessage: vi.fn() };
     const logger = { debug: vi.fn() };
-    const reasoningProcessor = {
-      handleSectionBreak: vi.fn(),
-      processDelta: vi.fn(),
-      complete: vi.fn(),
-    };
     const diffProcessor = { processDiff: vi.fn() };
 
     const handler = createCodexMcpMessageHandler({
@@ -79,7 +74,6 @@ describe('createCodexMcpMessageHandler', () => {
       messageBuffer,
       sendReady,
       publishCodexThreadIdToMetadata: vi.fn(),
-      reasoningProcessor,
       diffProcessor,
       getCurrentTaskId: () => currentTaskId,
       setCurrentTaskId: (next: string | null) => {
@@ -100,5 +94,45 @@ describe('createCodexMcpMessageHandler', () => {
     expect(thinking).toBe(false);
     expect(keepAlive).toHaveBeenCalledWith(false, 'remote');
     expect(sendReady).toHaveBeenCalledTimes(1);
+  });
+
+  it('streams agent_reasoning deltas as ACP thinking messages (not tool calls)', () => {
+    let thinking = false;
+    let currentTaskId: string | null = null;
+    const keepAlive = vi.fn();
+    const sendReady = vi.fn();
+    const session = {
+      sendAgentMessage: vi.fn(),
+      sendCodexMessage: vi.fn(),
+      sendSessionEvent: vi.fn(),
+      keepAlive,
+    };
+    const messageBuffer = { addMessage: vi.fn() };
+    const logger = { debug: vi.fn() };
+    const diffProcessor = { processDiff: vi.fn() };
+
+    const handler = createCodexMcpMessageHandler({
+      logger,
+      session,
+      messageBuffer,
+      sendReady,
+      publishCodexThreadIdToMetadata: vi.fn(),
+      diffProcessor,
+      getCurrentTaskId: () => currentTaskId,
+      setCurrentTaskId: (next: string | null) => {
+        currentTaskId = next;
+      },
+      getThinking: () => thinking,
+      setThinking: (next: boolean) => {
+        thinking = next;
+      },
+    });
+
+    handler({ type: 'agent_reasoning_delta', delta: '**Title**\n\nHello' });
+    expect(session.sendAgentMessage).toHaveBeenCalledWith('codex', {
+      type: 'thinking',
+      text: '**Title**\n\nHello',
+    });
+    expect(session.sendCodexMessage).not.toHaveBeenCalled();
   });
 });

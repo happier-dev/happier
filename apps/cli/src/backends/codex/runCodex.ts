@@ -1,7 +1,6 @@
 import { CodexMcpClient } from './codexMcpClient';
 import { applyPermissionModeToCodexPermissionHandler } from './utils/applyPermissionModeToHandler';
 import { createCodexPermissionHandler, type CodexRuntimePermissionHandler } from './utils/createCodexPermissionHandler';
-import { ReasoningProcessor } from './utils/reasoningProcessor';
 import { DiffProcessor } from './utils/diffProcessor';
 import { randomUUID } from 'node:crypto';
 import { logger } from '@/ui/logger';
@@ -627,7 +626,6 @@ export async function runCodex(opts: {
             }
 
             abortController.abort();
-            reasoningProcessor.abort();
             logger.debug('[Codex] Abort completed - session remains active');
         } catch (error) {
             logger.debug('[Codex] Error during abort:', error);
@@ -813,10 +811,6 @@ export async function runCodex(opts: {
                 permissionMode: currentPermissionMode ?? initialPermissionMode,
                 permissionModeUpdatedAt: currentPermissionModeUpdatedAt,
             });
-        const reasoningProcessor = new ReasoningProcessor((message) => {
-            // Callback to send messages directly from the processor
-            session.sendCodexMessage(message);
-        });
     const diffProcessor = new DiffProcessor((message) => {
         // Callback to send messages directly from the processor
         session.sendCodexMessage(message);
@@ -875,7 +869,6 @@ export async function runCodex(opts: {
             messageBuffer,
             sendReady,
             publishCodexThreadIdToMetadata,
-            reasoningProcessor,
             diffProcessor,
             getCurrentTaskId: () => currentTaskId,
             setCurrentTaskId: (next) => {
@@ -1079,7 +1072,6 @@ export async function runCodex(opts: {
 
                 // Reset processors/permissions
                 permissionHandler.reset();
-                reasoningProcessor.abort();
                 diffProcessor.reset();
                 thinking = false;
                 session.keepAlive(thinking, 'remote');
@@ -1273,7 +1265,6 @@ export async function runCodex(opts: {
 
                 // Reset permission handler, reasoning processor, and diff processor
                 permissionHandler.reset();
-                reasoningProcessor.abort();  // Use abort to properly finish any in-progress tool calls
                 diffProcessor.flushTurn();
                 diffProcessor.reset();
                 thinking = false;

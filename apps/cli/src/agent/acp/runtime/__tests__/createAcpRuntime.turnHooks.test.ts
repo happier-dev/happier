@@ -104,6 +104,54 @@ describe('createAcpRuntime (turn hooks)', () => {
     expect(diffToolResultIdx).toBeLessThan(taskCompleteIdx);
   });
 
+  it('treats think tool calls as thinking (does not invoke onToolResult)', async () => {
+    const backend = createFakeBackend();
+    const sent: any[] = [];
+
+    const session: AcpRuntimeSessionClient = {
+      keepAlive: () => {},
+      sendAgentMessage: (_provider, body) => {
+        sent.push(body);
+      },
+      sendAgentMessageCommitted: async (_provider, _body, _opts) => {},
+      sendUserTextMessageCommitted: async (_text, _opts) => {},
+      fetchRecentTranscriptTextItemsForAcpImport: async () => [],
+      updateMetadata: (_handler) => {},
+    };
+
+    const permissionHandler: AcpPermissionHandler = {
+      handleToolCall: async () => ({ decision: 'approved' }),
+    };
+
+    const runtime = createAcpRuntime({
+      provider: 'opencode',
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler,
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+      hooks: {
+        onToolResult: ({ toolName }: any) => {
+          sent.push({ type: 'hook', name: 'tool-result', toolName });
+        },
+      },
+    });
+
+    await runtime.startOrLoad({ resumeId: null });
+
+    runtime.beginTurn();
+    backend.emit({ type: 'tool-call', toolName: 'think', args: { thinking: 'Hello' }, callId: 't1' });
+    backend.emit({ type: 'tool-result', toolName: 'think', callId: 't1', result: { ok: true } });
+    runtime.flushTurn();
+
+    expect(sent.some((m) => m?.type === 'tool-call' && String(m?.name ?? '').toLowerCase() === 'think')).toBe(false);
+    expect(sent.some((m) => m?.type === 'tool-result' && m?.callId === 't1')).toBe(false);
+    expect(sent).toContainEqual({ type: 'thinking', text: 'Hello' });
+    expect(sent.some((m) => m?.type === 'hook' && m?.name === 'tool-result' && m?.toolName === 'think')).toBe(false);
+  });
+
   it('clears in-flight turn state on cancel', async () => {
     const backend = createFakeBackend();
 

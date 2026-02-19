@@ -102,4 +102,22 @@ describe('createAcpAgentMessageForwarder', () => {
       isError: true,
     });
   });
+
+  it('converts think tool calls into ACP thinking messages (suppressing tool-call + tool-result)', () => {
+    const sent: ACPMessageData[] = [];
+    const sendAcp = vi.fn((_provider: any, body: ACPMessageData) => {
+      sent.push(body);
+    });
+
+    const forwarder = createAcpAgentMessageForwarder({
+      sendAcp,
+      provider: 'opencode' as any,
+      makeId: () => 'id_1',
+    });
+
+    forwarder.forward({ type: 'tool-call', callId: 't1', toolName: 'think', args: { thinking: 'Hello world' } } as any);
+    forwarder.forward({ type: 'tool-result', callId: 't1', toolName: 'think', result: { ok: true } } as any);
+
+    expect(sent).toEqual([{ type: 'thinking', text: 'Hello world' }]);
+  });
 });

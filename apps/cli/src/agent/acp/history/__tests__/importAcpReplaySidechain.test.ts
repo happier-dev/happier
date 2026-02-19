@@ -48,6 +48,24 @@ describe('importAcpReplaySidechainV1', () => {
     expect(committed[2].body.callId).toBe('sc:tool_task_1:t1');
   });
 
+  it('imports think tool calls as thinking messages and skips their tool results', async () => {
+    const { session, committed } = createFakeSession();
+
+    await importAcpReplaySidechainV1({
+      session,
+      provider: 'opencode',
+      remoteSessionId: 'ses_123',
+      sidechainId: 'tool_task_1',
+      replay: [
+        { type: 'tool_call', toolCallId: 't1', kind: 'think', rawInput: { thought: 'Hello' } },
+        { type: 'tool_result', toolCallId: 't1', status: 'success', rawOutput: { ok: true } },
+      ],
+    });
+
+    expect(committed).toHaveLength(1);
+    expect(committed[0].body).toEqual({ type: 'thinking', text: 'Hello', sidechainId: 'tool_task_1' });
+  });
+
   it('generates MySQL-safe localIds (<= 191 chars) even when sidechainId is long', async () => {
     const { session, committed } = createFakeSession();
 

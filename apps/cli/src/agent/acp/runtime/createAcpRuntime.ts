@@ -11,6 +11,7 @@ import {
 } from '@/agent/acp/bridge/acpCommonHandlers';
 import { forwardAcpMessageDelta } from '@/agent/acp/bridge/acpSessionForwarding';
 import { createAcpAgentMessageForwarder } from '@/agent/acp/bridge/createAcpAgentMessageForwarder';
+import { isThinkingToolName } from '@/agent/acp/bridge/thinkingToolCall';
 import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
 import { normalizeAvailableCommands, publishSlashCommandsToMetadata } from '@/agent/acp/commands/publishSlashCommands';
 import { importAcpReplayHistoryV1 } from '@/agent/acp/history/importAcpReplayHistory';
@@ -461,12 +462,23 @@ export function createAcpRuntime(params: {
           if (msg.status === 'error') {
             turnAborted = true;
             clearToolCallCache();
+            params.onThinkingChange(false);
+            params.session.keepAlive(false, 'remote');
             params.session.sendAgentMessage(params.provider, { type: 'turn_aborted', id: randomUUID() });
+          }
+          if (msg.status === 'idle') {
+            params.onThinkingChange(false);
+            params.session.keepAlive(false, 'remote');
           }
           break;
         }
 
         case 'tool-call': {
+          if (isThinkingToolName(msg.toolName)) {
+            forwarder.forward(msg);
+            break;
+          }
+
           params.messageBuffer.addMessage(`Executing: ${msg.toolName}`, 'tool');
           recordToolCall(msg.callId, msg.toolName);
           forwarder.forward(msg);
@@ -477,6 +489,10 @@ export function createAcpRuntime(params: {
           const callId = msg.callId;
           evictToolCallCache(Date.now());
           const originToolName = toolNameByCallId.get(callId)?.toolName ?? msg.toolName;
+          if (typeof originToolName === 'string' && isThinkingToolName(originToolName)) {
+            forwarder.forward(msg);
+            break;
+          }
           const resultRecord =
             msg.result && typeof msg.result === 'object' && !Array.isArray(msg.result)
               ? (msg.result as Record<string, unknown>)
@@ -888,6 +904,8 @@ export function createAcpRuntime(params: {
       } finally {
         // Cancel should behave like a turn boundary: don't keep steering/pending state alive.
         turnInFlight = false;
+        params.onThinkingChange(false);
+        params.session.keepAlive(false, 'remote');
         stopPendingPump();
         clearToolCallCache();
       }
@@ -900,6 +918,8 @@ export function createAcpRuntime(params: {
       loadingSession = false;
       clearToolCallCache();
       stopPendingPump();
+      params.onThinkingChange(false);
+      params.session.keepAlive(false, 'remote');
       publishSessionId();
 
       if (backend) {
@@ -1092,6 +1112,8 @@ export function createAcpRuntime(params: {
     flushTurn(): void {
       turnInFlight = false;
       stopPendingPump();
+      params.onThinkingChange(false);
+      params.session.keepAlive(false, 'remote');
       if (!turnAborted) {
         try {
           params.hooks?.onBeforeFlushTurn?.({

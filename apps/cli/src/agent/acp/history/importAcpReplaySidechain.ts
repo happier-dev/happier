@@ -4,6 +4,7 @@ import { inspect } from 'node:util';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import { logger } from '@/utils/logger';
 import type { AcpReplaySidechainSessionClient } from '@/agent/acp/sessionClient';
+import { extractThinkingTextFromThinkToolInput, isThinkingToolName } from '@/agent/acp/bridge/thinkingToolCall';
 
 const MAX_REPLAY_EVENTS = 1_000;
 
@@ -120,6 +121,7 @@ export async function importAcpReplaySidechainV1(params: {
 
   const pendingSyntheticToolCallIds: string[] = [];
   let syntheticToolCallCounter = 0;
+  const suppressedThinkToolCallIds = new Set<string>();
 
   for (let i = 0; i < replay.length; i++) {
     const event = asRecord(replay[i]);
@@ -166,6 +168,25 @@ export async function importAcpReplaySidechainV1(params: {
       const callId = makeSidechainCallId({ sidechainId, toolCallId });
       const name = (getString(event, 'kind') ?? getString(event, 'title') ?? 'tool').trim() || 'tool';
       const rawInput = event.rawInput ?? {};
+      if (isThinkingToolName(name)) {
+        suppressedThinkToolCallIds.add(toolCallId);
+        const text = extractThinkingTextFromThinkToolInput(rawInput);
+        if (text) {
+          const localId = makeLocalId({
+            provider: params.provider,
+            remoteSessionId: params.remoteSessionId,
+            sidechainId,
+            index: i,
+            key: `thinking:${toolCallId}:${safeStringifyForKey(text)}`,
+          });
+          await params.session.sendAgentMessageCommitted(
+            params.provider,
+            { type: 'thinking', text, sidechainId } satisfies ACPMessageData,
+            { localId, meta: { importedFrom: 'acp-sidechain', remoteSessionId: params.remoteSessionId, sidechainId } },
+          );
+        }
+        continue;
+      }
       const localId = makeLocalId({
         provider: params.provider,
         remoteSessionId: params.remoteSessionId,
@@ -205,6 +226,10 @@ export async function importAcpReplaySidechainV1(params: {
         }
       }
       const callId = makeSidechainCallId({ sidechainId, toolCallId });
+      if (suppressedThinkToolCallIds.has(toolCallId)) {
+        suppressedThinkToolCallIds.delete(toolCallId);
+        continue;
+      }
       const rawOutput = event.rawOutput ?? event.content ?? null;
       const status = getString(event, 'status');
       const isError = status === 'error' || status === 'failed' || status === 'cancelled';

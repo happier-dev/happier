@@ -25,8 +25,8 @@ import {
   type ContentBlock,
 } from '@agentclientprotocol/sdk';
 import { randomUUID } from 'node:crypto';
-import { promises as fs } from 'node:fs';
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { createWriteStream, promises as fs } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type {
   AgentBackend,
   AgentMessage,
@@ -75,6 +75,7 @@ import {
   type PermissionRequestLike,
 } from './permissions/permissionRequest';
 import { AcpReplayCapture, type AcpReplayEvent } from './history/acpReplayCapture';
+import { createAcpFilteredStdoutReadable, type DroppedStdoutLine } from './createAcpFilteredStdoutReadable';
 
 function makeAbortError(message: string): Error {
   const err = new Error(message);
@@ -491,6 +492,8 @@ export class AcpBackend implements AgentBackend {
   private replayCapture: AcpReplayCapture | null = null;
   /** Track active tool calls to prevent duplicate events */
   private activeToolCalls = new Set<string>();
+  /** Track tool calls that have already emitted a terminal tool-result (guards against late updates after timeouts) */
+  private finalizedToolCalls = new Set<string>();
   private toolCallTimeouts = new Map<string, NodeJS.Timeout>();
   /** Track tool call start times for performance monitoring */
   private toolCallStartTimes = new Map<string, number>();
@@ -682,72 +685,75 @@ export class AcpBackend implements AgentBackend {
     const writable = streams.writable;
     const readable = streams.readable;
 
-    // Filter stdout via transport handler before ACP parsing
-    // Some agents output debug info that breaks JSON-RPC parsing
     const transport = this.transport;
-    const filteredReadable = new ReadableStream<Uint8Array>({
-      async start(controller) {
-        const reader = readable.getReader();
-        const decoder = new TextDecoder();
-        const encoder = new TextEncoder();
-        let buffer = '';
-        let filteredCount = 0;
 
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              // Flush any remaining buffer
-              if (buffer.trim()) {
-                const filtered = transport.filterStdoutLine?.(buffer);
-                if (filtered === undefined) {
-                  controller.enqueue(encoder.encode(buffer));
-                } else if (filtered !== null) {
-                  controller.enqueue(encoder.encode(filtered));
-                } else {
-                  filteredCount++;
-                }
-              }
-              if (filteredCount > 0) {
-                logger.debug(`[AcpBackend] Filtered out ${filteredCount} non-JSON lines from ${transport.agentName} stdout`);
-              }
-              controller.close();
-              break;
+    const droppedStdoutCapture = (() => {
+      if (!isTruthyEnv(process.env.HAPPIER_ACP_CAPTURE_IO)) return null;
+      const traceFile = (process.env.HAPPIER_STACK_TOOL_TRACE_FILE ?? '').toString().trim();
+      const baseDir = traceFile ? dirname(traceFile) : null;
+      if (!baseDir) return null;
+
+      const maxBytesRaw = (process.env.HAPPIER_ACP_CAPTURE_DROPPED_MAX_BYTES ?? '').toString().trim();
+      const maxBytes = (() => {
+        const n = Number(maxBytesRaw);
+        return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 2_000_000;
+      })();
+
+      try {
+        const stream = createWriteStream(join(baseDir, 'acp.stdout.dropped.jsonl'), { flags: 'a' });
+        let written = 0;
+        stream.on('error', (error) => {
+          logger.debug('[AcpBackend] Ignoring dropped-stdout capture stream error', error);
+        });
+        return {
+          write: (entry: DroppedStdoutLine) => {
+            if (written >= maxBytes) return;
+            const payload = JSON.stringify({ ts: Date.now(), ...entry });
+            const next = payload + '\n';
+            written += Buffer.byteLength(next, 'utf8');
+            try {
+              stream.write(next);
+            } catch {
+              // ignore capture failures
             }
-
-            // Decode and accumulate data
-            buffer += decoder.decode(value, { stream: true });
-
-            // Process line by line (ndJSON is line-delimited)
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || ''; // Keep last incomplete line in buffer
-
-            for (const line of lines) {
-              if (!line.trim()) continue;
-
-              // Use transport handler to filter lines
-              // Note: filterStdoutLine returns null to filter out, string to keep
-              // If method not implemented (undefined), pass through original line
-              const filtered = transport.filterStdoutLine?.(line);
-              if (filtered === undefined) {
-                // Method not implemented, pass through
-                controller.enqueue(encoder.encode(line + '\n'));
-              } else if (filtered !== null) {
-                // Method returned transformed line
-                controller.enqueue(encoder.encode(filtered + '\n'));
-              } else {
-                // Method returned null, filter out
-                filteredCount++;
-              }
+          },
+          close: () => {
+            try {
+              stream.end();
+            } catch {
+              // ignore
             }
-          }
-        } catch (error) {
-          logger.debug(`[AcpBackend] Error filtering stdout stream:`, error);
-          controller.error(error);
-        } finally {
-          reader.releaseLock();
-        }
+          },
+        } as const;
+      } catch (error) {
+        logger.debug('[AcpBackend] Failed to set up dropped-stdout capture', error);
+        return null;
       }
+    })();
+
+    const maxMultilineBytesRaw = (process.env.HAPPIER_ACP_MULTILINE_JSON_MAX_BYTES ?? '').toString().trim();
+    const maxMultilineBytes = (() => {
+      const n = Number(maxMultilineBytesRaw);
+      return Number.isFinite(n) && n > 0 ? Math.trunc(n) : undefined;
+    })();
+
+    let filteredCount = 0;
+    const filteredReadable = createAcpFilteredStdoutReadable({
+      readable,
+      transport,
+      onDroppedLine: (entry) => {
+        filteredCount++;
+        droppedStdoutCapture?.write(entry);
+      },
+      onDone: () => {
+        if (filteredCount > 0) {
+          logger.debug(
+            `[AcpBackend] Filtered out ${filteredCount} non-JSON/malformed lines from ${transport.agentName} stdout`,
+          );
+        }
+        droppedStdoutCapture?.close();
+      },
+      maxMultilineBytes,
     });
 
     // Create ndJSON stream for ACP
@@ -1235,6 +1241,7 @@ export class AcpBackend implements AgentBackend {
     return {
       transport: this.transport,
       activeToolCalls: this.activeToolCalls,
+      finalizedToolCalls: this.finalizedToolCalls,
       toolCallStartTimes: this.toolCallStartTimes,
       toolCallTimeouts: this.toolCallTimeouts,
       toolCallIdToNameMap: this.toolCallIdToNameMap,

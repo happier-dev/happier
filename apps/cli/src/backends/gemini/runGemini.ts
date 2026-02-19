@@ -40,7 +40,6 @@ import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/act
 import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
 
 import type { AgentBackend } from '@/agent';
-import { GeminiReasoningProcessor } from '@/backends/gemini/utils/reasoningProcessor';
 import { GeminiDiffProcessor } from '@/backends/gemini/utils/diffProcessor';
 import type { GeminiMode, CodexMessagePayload } from '@/backends/gemini/types';
 import type { PermissionMode } from '@/api/types';
@@ -386,8 +385,7 @@ export async function runGemini(opts: {
       id: randomUUID(),
     });
     
-    // Abort reasoning processor and reset diff processor
-    reasoningProcessor.abort();
+    // Reset diff processor
     diffProcessor.reset();
     
     try {
@@ -509,13 +507,7 @@ export async function runGemini(opts: {
     onAbortRequested: handleAbort,
     alwaysAutoApproveToolNameIncludes: ['geminireasoning', 'codexreasoning'],
   });
-  
-  // Create reasoning processor for handling thinking/reasoning chunks
-  const reasoningProcessor = new GeminiReasoningProcessor((message) => {
-    // Callback to send messages directly from the processor
-    session.sendAgentMessage('gemini', message);
-  });
-  
+
   // Create diff processor for handling file edit events and diff tracking
   const diffProcessor = new GeminiDiffProcessor((message) => {
     // Callback to send messages directly from the processor
@@ -537,7 +529,6 @@ export async function runGemini(opts: {
         session,
         messageBuffer,
         state: turnMessageState,
-        reasoningProcessor,
         diffProcessor,
       }),
     );
@@ -652,9 +643,8 @@ export async function runGemini(opts: {
           messageBuffer.addMessage('Starting new Gemini session (mode changed)...', 'status');
         }
         
-        // Reset permission handler and reasoning processor on mode change (like Codex)
+        // Reset permission handler on mode change (like Codex)
         permissionHandler.reset();
-        reasoningProcessor.abort();
         
         // Dispose old backend and create new one with new model
         if (geminiBackend) {
@@ -819,9 +809,8 @@ export async function runGemini(opts: {
         // next turn observes the latest session-scoped control overrides.
         syncControlsFromMetadata();
 
-        // Reset permission handler, reasoning processor, and diff processor after turn (like Codex)
+        // Reset permission handler and diff processor after turn (like Codex)
         permissionHandler.reset();
-        reasoningProcessor.abort(); // Use abort to properly finish any in-progress tool calls
         diffProcessor.completeTurn(); // Emit per-turn diffs (if any), then reset
         
         // Send accumulated response to mobile app ONLY when turn is complete

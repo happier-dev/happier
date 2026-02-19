@@ -5,6 +5,7 @@ import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import { logger } from '@/ui/logger';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import type { AcpReplayHistorySessionClient } from '@/agent/acp/sessionClient';
+import { extractThinkingTextFromThinkToolInput, isThinkingToolName } from '@/agent/acp/bridge/thinkingToolCall';
 
 type TranscriptTextItem = { role: 'user' | 'agent'; text: string };
 
@@ -271,6 +272,7 @@ async function importFullReplay(
   },
   replay: ReadonlyArray<unknown>,
 ): Promise<void> {
+  const suppressedThinkToolCallIds = new Set<string>();
   for (let i = 0; i < replay.length; i++) {
     const record = asRecord(replay[i]);
     if (!record) continue;
@@ -303,6 +305,25 @@ async function importFullReplay(
       const kind = typeof record.kind === 'string' ? record.kind : null;
       const title = typeof record.title === 'string' ? record.title : null;
       const rawInput = record.rawInput ?? {};
+      const name = (kind ?? title ?? 'tool').trim() || 'tool';
+      if (isThinkingToolName(name)) {
+        suppressedThinkToolCallIds.add(toolCallId);
+        const text = extractThinkingTextFromThinkToolInput(rawInput);
+        if (text) {
+          const localId = makeImportEventLocalId({
+            provider: params.provider,
+            remoteSessionId: params.remoteSessionId,
+            index: i,
+            key: `thinking:${toolCallId}:${safeStringifyForKey(text)}`,
+          });
+          await params.session.sendAgentMessageCommitted(
+            params.provider,
+            { type: 'thinking', text },
+            { localId, meta: { importedFrom: 'acp-history', remoteSessionId: params.remoteSessionId } },
+          );
+        }
+        continue;
+      }
       const localId = makeImportEventLocalId({
         provider: params.provider,
         remoteSessionId: params.remoteSessionId,
@@ -314,7 +335,7 @@ async function importFullReplay(
         {
           type: 'tool-call',
           callId: toolCallId,
-          name: kind ?? title ?? 'tool',
+          name,
           input: rawInput ?? {},
           id: `import-${toolCallId}`,
         },
@@ -326,6 +347,10 @@ async function importFullReplay(
     if (type === 'tool_result') {
       const toolCallId = record.toolCallId;
       if (typeof toolCallId !== 'string' || toolCallId.trim().length === 0) continue;
+      if (suppressedThinkToolCallIds.has(toolCallId)) {
+        suppressedThinkToolCallIds.delete(toolCallId);
+        continue;
+      }
       const status = typeof record.status === 'string' ? record.status : '';
       const rawOutput = record.rawOutput ?? record.content ?? null;
       const localId = makeImportEventLocalId({

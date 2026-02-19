@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { HandlerContext, SessionUpdate } from '../sessionUpdateHandlers';
 import { handleToolCall, handleToolCallUpdate } from '../sessionUpdateHandlers';
-import { defaultTransport } from '../../transport';
+import { DefaultTransport, defaultTransport } from '../../transport';
 import { GeminiTransport } from '@/backends/gemini/acp/transport';
 import { KimiTransport } from '@/backends/kimi/acp/transport';
 
@@ -11,6 +11,7 @@ function createCtx(opts?: { transport?: HandlerContext['transport'] }): HandlerC
   return {
     transport: opts?.transport ?? defaultTransport,
     activeToolCalls: new Set(),
+    finalizedToolCalls: new Set(),
     toolCallStartTimes: new Map(),
     toolCallTimeouts: new Map(),
     toolCallIdToNameMap: new Map(),
@@ -102,9 +103,157 @@ describe('sessionUpdateHandlers tool call tracking', () => {
     const toolResult = ctx.emitted.find((m) => m.type === 'tool-result' && m.callId === 'read_file-1');
     expect(toolResult).toBeTruthy();
     expect(toolResult.toolName).toBe('read');
+    expect(toolResult.isError).toBe(true);
     expect(toolResult.result?._acp?.kind).toBe('read');
 
     expect(ctx.toolCallTimeouts.size).toBe(0);
+    vi.useRealTimers();
+  });
+
+  it('emits a terminal tool-result error when an in-progress tool call times out', () => {
+    vi.useFakeTimers();
+    class ShortTimeoutTransport extends DefaultTransport {
+      getToolCallTimeout(): number {
+        return 10;
+      }
+    }
+    const ctx = createCtx({
+      transport: new ShortTimeoutTransport(defaultTransport.agentName),
+    });
+
+    const update: SessionUpdate = {
+      sessionUpdate: 'tool_call',
+      toolCallId: 'call_timeout_1',
+      status: 'in_progress',
+      kind: 'write',
+      title: 'Write file',
+      content: { filePath: '/tmp/a.txt', content: 'hi' },
+    };
+
+    handleToolCall(update, ctx);
+
+    const toolCall = ctx.emitted.find((m) => m.type === 'tool-call' && m.callId === 'call_timeout_1');
+    expect(toolCall).toBeTruthy();
+    expect(toolCall.toolName).toBe('write');
+
+    vi.advanceTimersByTime(11);
+
+    const toolResult = ctx.emitted.find((m) => m.type === 'tool-result' && m.callId === 'call_timeout_1');
+    expect(toolResult).toBeTruthy();
+    expect(toolResult.toolName).toBe('write');
+    expect(toolResult.isError).toBe(true);
+    expect(toolResult.result).toMatchObject({ status: 'timeout' });
+
+    vi.useRealTimers();
+  });
+
+  it('does not emit duplicate tool results if a terminal tool_call_update arrives after a timeout', () => {
+    vi.useFakeTimers();
+    class ShortTimeoutTransport extends DefaultTransport {
+      getToolCallTimeout(): number {
+        return 10;
+      }
+    }
+    const ctx = createCtx({
+      transport: new ShortTimeoutTransport(defaultTransport.agentName),
+    });
+
+    handleToolCall(
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'call_timeout_2',
+        status: 'in_progress',
+        kind: 'read',
+        title: 'Read /etc/hosts',
+        content: { filePath: '/etc/hosts' },
+      },
+      ctx,
+    );
+
+    vi.advanceTimersByTime(11);
+
+    const toolResultsAfterTimeout = ctx.emitted.filter(
+      (m) => m.type === 'tool-result' && m.callId === 'call_timeout_2',
+    );
+    expect(toolResultsAfterTimeout).toHaveLength(1);
+    expect(toolResultsAfterTimeout[0].isError).toBe(true);
+
+    handleToolCallUpdate(
+      {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'call_timeout_2',
+        status: 'completed',
+        kind: 'read',
+        title: 'Read /etc/hosts',
+        content: { ok: true },
+        meta: {},
+      },
+      ctx,
+    );
+
+    const toolResultsAfterLateTerminal = ctx.emitted.filter(
+      (m) => m.type === 'tool-result' && m.callId === 'call_timeout_2',
+    );
+    expect(toolResultsAfterLateTerminal).toHaveLength(1);
+
+    vi.useRealTimers();
+  });
+
+  it('resets tool-call timeout on subsequent in_progress updates (inactivity watchdog)', () => {
+    vi.useFakeTimers();
+    class ShortTimeoutTransport extends DefaultTransport {
+      getToolCallTimeout(): number {
+        return 10;
+      }
+    }
+    const ctx = createCtx({
+      transport: new ShortTimeoutTransport(defaultTransport.agentName),
+    });
+
+    handleToolCall(
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'call_timeout_bump_1',
+        status: 'in_progress',
+        kind: 'write',
+        title: 'Write file',
+        content: { filePath: '/tmp/a.txt', content: 'hi' },
+      },
+      ctx,
+    );
+
+    vi.advanceTimersByTime(6);
+
+    // Provider emits another in_progress update while the tool is still running.
+    handleToolCallUpdate(
+      {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'call_timeout_bump_1',
+        status: 'in_progress',
+        kind: 'write',
+        title: 'Write file',
+        content: { filePath: '/tmp/a.txt', content: 'hi' },
+        meta: {},
+      },
+      ctx,
+    );
+
+    // If we treat the timeout as "inactivity since last update", we should not have timed out yet.
+    vi.advanceTimersByTime(6);
+    const toolResultsBeforeInactivity = ctx.emitted.filter(
+      (m) => m.type === 'tool-result' && m.callId === 'call_timeout_bump_1',
+    );
+    expect(toolResultsBeforeInactivity).toHaveLength(0);
+
+    // Now exceed inactivity budget after the last in_progress update.
+    vi.advanceTimersByTime(5);
+    const toolResultsAfterInactivity = ctx.emitted.filter(
+      (m) => m.type === 'tool-result' && m.callId === 'call_timeout_bump_1',
+    );
+    expect(toolResultsAfterInactivity).toHaveLength(1);
+    expect(toolResultsAfterInactivity[0].isError).toBe(true);
+    expect(toolResultsAfterInactivity[0].result).toMatchObject({ status: 'timeout' });
+
     vi.useRealTimers();
   });
 

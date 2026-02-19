@@ -13,12 +13,6 @@ type SessionSubset = Pick<
   'sendAgentMessage' | 'sendCodexMessage' | 'sendSessionEvent' | 'keepAlive'
 >;
 
-type ReasoningProcessorSubset = {
-  handleSectionBreak: () => void;
-  processDelta: (delta: string) => void;
-  complete: (text: string) => void;
-};
-
 type DiffProcessorSubset = {
   processDiff: (diffText: string) => void;
 };
@@ -52,13 +46,15 @@ export function createCodexMcpMessageHandler(opts: {
   messageBuffer: Pick<MessageBuffer, 'addMessage'>;
   sendReady: () => void;
   publishCodexThreadIdToMetadata: () => void;
-  reasoningProcessor: ReasoningProcessorSubset;
   diffProcessor: DiffProcessorSubset;
   getCurrentTaskId: () => string | null;
   setCurrentTaskId: (next: string | null) => void;
   getThinking: () => boolean;
   setThinking: (next: boolean) => void;
 }): (msg: unknown) => void {
+  let accumulatedReasoning = '';
+  let sawReasoningDelta = false;
+
   return (msg: unknown): void => {
     opts.logger.debug(`[Codex] MCP message: ${JSON.stringify(msg)}`);
 
@@ -122,13 +118,38 @@ export function createCodexMcpMessageHandler(opts: {
     }
 
     if (message?.type === 'agent_reasoning_section_break') {
-      opts.reasoningProcessor.handleSectionBreak();
+      if (accumulatedReasoning) {
+        opts.session.sendAgentMessage('codex', { type: 'thinking', text: '\n\n' });
+      }
+      accumulatedReasoning = '';
+      sawReasoningDelta = false;
     }
     if (message?.type === 'agent_reasoning_delta') {
-      opts.reasoningProcessor.processDelta(message.delta);
+      const delta = typeof message.delta === 'string' ? message.delta : '';
+      // Preserve whitespace-only deltas for correct transcript rendering.
+      opts.session.sendAgentMessage('codex', { type: 'thinking', text: delta });
+      accumulatedReasoning += delta;
+      if (delta.length > 0) sawReasoningDelta = true;
     }
     if (message?.type === 'agent_reasoning') {
-      opts.reasoningProcessor.complete(message.text);
+      const full = typeof message.text === 'string' ? message.text : '';
+      if (full) {
+        if (!sawReasoningDelta) {
+          opts.session.sendAgentMessage('codex', { type: 'thinking', text: full });
+        } else if (accumulatedReasoning && full.startsWith(accumulatedReasoning)) {
+          const suffix = full.slice(accumulatedReasoning.length);
+          if (suffix) {
+            opts.session.sendAgentMessage('codex', { type: 'thinking', text: suffix });
+          }
+        } else if (accumulatedReasoning && full !== accumulatedReasoning) {
+          // Defensive fallback: if deltas don't match the final payload, surface the final text
+          // rather than losing reasoning content.
+          opts.session.sendAgentMessage('codex', { type: 'thinking', text: '\n\n' });
+          opts.session.sendAgentMessage('codex', { type: 'thinking', text: full });
+        }
+      }
+      accumulatedReasoning = '';
+      sawReasoningDelta = false;
     }
     if (message?.type === 'agent_message') {
       opts.session.sendCodexMessage({

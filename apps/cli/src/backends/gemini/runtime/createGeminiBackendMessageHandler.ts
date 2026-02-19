@@ -12,14 +12,12 @@ import { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 import { normalizeAvailableCommands, publishSlashCommandsToMetadata } from '@/agent/acp/commands/publishSlashCommands';
 import { GeminiDiffProcessor } from '../utils/diffProcessor';
-import { GeminiReasoningProcessor } from '../utils/reasoningProcessor';
 import { GeminiTurnMessageState } from './geminiTurnMessageState';
 
 export function createGeminiBackendMessageHandler(params: {
   session: ApiSessionClient;
   messageBuffer: MessageBuffer;
   state: GeminiTurnMessageState;
-  reasoningProcessor: GeminiReasoningProcessor;
   diffProcessor: GeminiDiffProcessor;
 }): (msg: AgentMessage) => void {
   const forwarder = createAcpAgentMessageForwarder({
@@ -73,8 +71,6 @@ export function createGeminiBackendMessageHandler(params: {
             setTaskStartedSent: (value) => { params.state.taskStartedSent = value; },
             makeId: () => randomUUID(),
           });
-        } else if (msg.status === 'idle' || msg.status === 'stopped') {
-          params.reasoningProcessor.complete();
         } else if (msg.status === 'error') {
           params.state.thinking = false;
           params.session.keepAlive(params.state.thinking, 'remote');
@@ -256,7 +252,6 @@ export function createGeminiBackendMessageHandler(params: {
               ? String(thinkingPayload.text || '')
               : '';
           if (thinkingText) {
-            params.reasoningProcessor.processChunk(thinkingText);
             logger.debug(`[gemini] 💭 Thinking chunk received: ${thinkingText.length} chars - Preview: ${thinkingText.substring(0, 100)}...`);
             if (!thinkingText.startsWith('**')) {
               const thinkingPreview = thinkingText.substring(0, 100);
