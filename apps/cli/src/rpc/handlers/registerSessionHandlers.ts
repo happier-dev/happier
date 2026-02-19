@@ -2,6 +2,7 @@ import type { TerminalSpawnOptions } from '@/terminal/runtime/terminalConfig';
 import type { PermissionMode } from '@/api/types';
 import type { CatalogAgentId } from '@/backends/types';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { Metadata } from '@/api/types';
 import type { SpawnSessionErrorCode } from '@happier-dev/protocol';
 export { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 export type { SpawnSessionErrorCode } from '@happier-dev/protocol';
@@ -9,6 +10,7 @@ import { registerCapabilitiesHandlers } from './capabilities';
 import { registerPreviewEnvHandler } from './previewEnv';
 import { registerBashHandler } from './bash';
 import { registerFileSystemHandlers } from './fileSystem';
+import { registerSessionLogTailHandler } from './sessionLogTail';
 import { registerAttachmentsUploadHandlers } from './attachmentsUpload';
 import { registerRipgrepHandler } from './ripgrep';
 import { registerDifftasticHandler } from './difftastic';
@@ -126,6 +128,9 @@ export type SpawnSessionResult =
 export function registerSessionHandlers(
     rpcHandlerManager: RpcHandlerRegistrar,
     workingDirectory: string,
+    opts?: Readonly<{
+        getSessionMetadata?: () => Metadata | null;
+    }>,
 ) {
     let additionalAllowedReadDirs: string[] = [];
     const getAdditionalAllowedReadDirs = () => additionalAllowedReadDirs;
@@ -140,6 +145,7 @@ export function registerSessionHandlers(
     registerCapabilitiesHandlers(rpcHandlerManager);
     registerPreviewEnvHandler(rpcHandlerManager);
     registerFileSystemHandlers(rpcHandlerManager, workingDirectory, { getAdditionalAllowedReadDirs });
+    registerSessionLogTailHandler(rpcHandlerManager, { getSessionMetadata: opts?.getSessionMetadata });
     registerAttachmentsUploadHandlers(rpcHandlerManager, { workingDirectory, setAdditionalAllowedReadDirs });
     registerRipgrepHandler(rpcHandlerManager, workingDirectory);
     registerDifftasticHandler(rpcHandlerManager, workingDirectory);

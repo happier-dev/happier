@@ -15,6 +15,7 @@ import type { AgentId } from '@happier-dev/agents';
 import type { AgentState, Metadata, PermissionMode } from '@/api/types';
 import { configuration } from '@/configuration';
 import { projectPath } from '@/projectPath';
+import { logger } from '@/ui/logger';
 import packageJson from '../../../package.json';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import { buildTerminalMetadataFromRuntimeFlags } from '@/terminal/runtime/terminalMetadata';
@@ -104,6 +105,7 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
         happyToolsDir: resolve(projectPath(), 'tools', 'unpacked'),
         startedFromDaemon: opts.startedBy === 'daemon',
         hostPid: process.pid,
+        sessionLogPath: logger.getLogPath(),
         startedBy: opts.startedBy || 'terminal',
         lifecycleState: 'running',
         lifecycleStateSince: Date.now(),

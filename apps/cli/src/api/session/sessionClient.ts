@@ -132,7 +132,9 @@ export class ApiSessionClient extends EventEmitter {
         const parentProvider: CatalogAgentId =
             (CATALOG_AGENT_IDS as readonly string[]).includes(resolvedFlavor) ? (resolvedFlavor as CatalogAgentId) : 'claude';
 
-        registerSessionHandlers(this.rpcHandlerManager, this.metadata.path);
+        registerSessionHandlers(this.rpcHandlerManager, this.metadata.path, {
+            getSessionMetadata: () => this.getMetadataSnapshot(),
+        });
 
         const transcriptWriter = {
             appendUserText: (text: string, meta: Record<string, unknown>) => {

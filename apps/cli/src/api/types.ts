@@ -454,6 +454,7 @@ export type Metadata = {
   happyToolsDir: string,
   startedFromDaemon?: boolean,
   hostPid?: number,
+  sessionLogPath?: string,
   startedBy?: 'daemon' | 'terminal',
   // Lifecycle state management
   lifecycleState?: 'running' | 'archiveRequested' | 'archived' | string,
