@@ -111,6 +111,7 @@ async function main() {
   let serverPort = 3005;
   let internalServerUrl = '';
   let publicServerUrl = '';
+  let defaultPublicUrl = '';
 
   // Convenience alias: allow `--server-flavor=light|full` for parity with `stack pr` and `tools setup-pr`.
   // `--server=...` always wins when both are specified.
@@ -252,6 +253,7 @@ async function main() {
     stackName === 'main' ||
     (baseEnv.HAPPIER_STACK_TAILSCALE_SERVE ?? '0').toString().trim() === '1';
   const resolvedUrls = await resolveServerUrls({ env: baseEnv, serverPort, allowEnable: allowEnableTailscale });
+  defaultPublicUrl = resolvedUrls.defaultPublicUrl;
   if (stackMode && stackName !== 'main' && !resolvedUrls.envPublicUrl) {
     const src = String(resolvedUrls.publicServerUrlSource ?? '');
     const hasStackScopedTailscale = src.startsWith('tailscale-');
