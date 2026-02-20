@@ -10,7 +10,7 @@ This page explains how to run Happier inside a container (for example: a remote 
 We publish a preview devcontainer image on Docker Hub:
 
 ```bash
-docker pull happierdev/dev-container:preview
+docker pull happierdev/dev-box:preview
 ```
 
 The image includes:
@@ -25,7 +25,7 @@ Set `HAPPIER_PROVIDER_CLIS` to install provider CLIs into the container user’s
 ```bash
 docker run --rm -it \
   -e HAPPIER_PROVIDER_CLIS=claude,codex \
-  happierdev/dev-container:preview
+  happierdev/dev-box:preview
 ```
 
 Supported values today: `claude`, `codex`.
@@ -37,7 +37,7 @@ Persist `~/.happier` so credentials, machine IDs, logs, etc. survive container r
 ```bash
 docker run --rm -it \
   -v happier-home:/home/happier/.happier \
-  happierdev/dev-container:preview
+  happierdev/dev-box:preview
 ```
 
 ## Pair a remote container/host from your local CLI (no web UI)

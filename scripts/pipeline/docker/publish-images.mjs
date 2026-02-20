@@ -351,7 +351,7 @@ async function main() {
   const shortSha = sha.slice(0, 12);
 
   const relayBase = 'happierdev/relay-server';
-  const devBase = 'happierdev/dev-container';
+  const devBase = 'happierdev/dev-box';
 
   dockerPreflight({ dryRun });
   dockerLogin({ dryRun });

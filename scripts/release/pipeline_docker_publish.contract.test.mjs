@@ -44,7 +44,7 @@ test('pipeline docker publish script supports dry-run and computes stable tags',
   assert.match(out, /--tag happierdev\/relay-server:latest/);
 
   assert.match(out, /--file docker\/devcontainer\/Dockerfile/);
-  assert.match(out, /--tag happierdev\/dev-container:stable/);
-  assert.match(out, /--tag happierdev\/dev-container:stable-0123456789ab/);
-  assert.match(out, /--tag happierdev\/dev-container:latest/);
+  assert.match(out, /--tag happierdev\/dev-box:stable/);
+  assert.match(out, /--tag happierdev\/dev-box:stable-0123456789ab/);
+  assert.match(out, /--tag happierdev\/dev-box:latest/);
 });
