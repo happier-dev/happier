@@ -323,6 +323,13 @@ export function gethstackRegistry() {
       description: 'LaunchAgent service management',
     },
     {
+      name: 'logs',
+      kind: 'node',
+      scriptRelPath: 'scripts/logs.mjs',
+      rootUsage: 'hstack logs [--component=auto|all|runner|server|expo|ui|daemon|service] [--lines N] [--follow]',
+      description: 'View stack logs (runner/server/expo/daemon/service)',
+    },
+    {
       name: 'menubar',
       kind: 'node',
       scriptRelPath: 'scripts/menubar.mjs',
@@ -342,8 +349,7 @@ export function gethstackRegistry() {
     { name: 'stack:fix', kind: 'node', scriptRelPath: 'scripts/doctor.mjs', argsFromRest: (rest) => ['--fix', ...rest], hidden: true },
 
     { name: 'cli:link', kind: 'node', scriptRelPath: 'scripts/cli-link.mjs', hidden: true },
-    { name: 'logs', kind: 'node', scriptRelPath: 'scripts/service.mjs', argsFromRest: (rest) => ['logs', ...rest], hidden: true },
-    { name: 'logs:tail', kind: 'node', scriptRelPath: 'scripts/service.mjs', argsFromRest: (rest) => ['tail', ...rest], hidden: true },
+    { name: 'logs:tail', kind: 'node', scriptRelPath: 'scripts/logs.mjs', argsFromRest: (rest) => ['tail', ...rest], hidden: true },
 
     {
       name: 'service:status',

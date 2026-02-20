@@ -25,6 +25,23 @@ async function listenHealthServer() {
   return { server, port };
 }
 
+async function listenNonHealthServer() {
+  const server = createServer((req, res) => {
+    if (req.url === '/health') {
+      res.statusCode = 404;
+      res.end('not happier');
+      return;
+    }
+    res.statusCode = 200;
+    res.end('ok');
+  });
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const addr = server.address();
+  const port = typeof addr === 'object' && addr ? addr.port : null;
+  if (!port) throw new Error('failed to bind non-health server');
+  return { server, port };
+}
+
 test('non-main stack prefers runtime port when server is already running there', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-port-'));
   const runtimeStatePath = join(tmp, 'stack.runtime.json');
@@ -39,6 +56,25 @@ test('non-main stack prefers runtime port when server is already running there',
       defaultPort: 3005,
     });
     assert.equal(out, port);
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+  }
+});
+
+test('non-main stack errors when pinned server port is occupied by a non-happier process', async () => {
+  const { server, port } = await listenNonHealthServer();
+  try {
+    await assert.rejects(
+      () =>
+        resolveLocalServerPortForStack({
+          env: { HAPPIER_STACK_SERVER_PORT: String(port) },
+          stackMode: true,
+          stackName: 'repo-test-abc',
+          runtimeStatePath: null,
+          defaultPort: 3005,
+        }),
+      /HAPPIER_STACK_SERVER_PORT/
+    );
   } finally {
     await new Promise((resolvePromise) => server.close(resolvePromise));
   }

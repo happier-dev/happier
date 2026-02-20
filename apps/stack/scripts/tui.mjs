@@ -32,6 +32,7 @@ import { detachTuiStdinForChild, waitForEnter } from './utils/tui/stdin_handoff.
 import { waitForHappierHealthOk } from './utils/server/server.mjs';
 import { buildTuiAuthArgs, buildTuiDaemonStartArgs, shouldHoldAfterAuthExit } from './utils/tui/actions.mjs';
 import { shouldAttemptTuiDaemonAutostart } from './utils/tui/daemon_autostart.mjs';
+import { buildScriptPtyArgs } from './utils/tui/script_pty_command.mjs';
 
 function nowTs() {
   const d = new Date();
@@ -544,10 +545,17 @@ async function main() {
   let child = null;
 
   const spawnForwardedChild = () => {
+    const pty = wantsPty
+      ? buildScriptPtyArgs({
+          platform: process.platform,
+          file: '/dev/null',
+          command: [process.execPath, happysBin, ...forwarded],
+        })
+      : null;
     const proc = wantsPty
       ? // Use a pseudo-terminal so tools like Expo print QR/status output that they hide in non-TTY mode.
         // `script` is available by default on macOS (and common on Linux).
-        spawn('script', ['-q', '/dev/null', process.execPath, happysBin, ...forwarded], {
+        spawn(pty.cmd, pty.args, {
           cwd: rootDir,
           env: childEnv,
           stdio: ['ignore', 'pipe', 'pipe'],
@@ -561,7 +569,7 @@ async function main() {
         });
 
     logOrch(
-      `spawned: ${wantsPty ? 'script -q /dev/null ' : ''}node ${happysBin} ${forwarded.join(' ')} (pid=${proc.pid})`
+      `spawned: ${wantsPty ? `${pty.cmd} ${pty.args.join(' ')} ` : ''}node ${happysBin} ${forwarded.join(' ')} (pid=${proc.pid})`
     );
 
     const buf = { out: '', err: '' };

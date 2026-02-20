@@ -21,6 +21,24 @@ export async function resolveLocalServerPortForStack({
 
   const explicitPort = coercePort(env.HAPPIER_STACK_SERVER_PORT);
   if (explicitPort) {
+    // For non-main stacks, treat an explicit server port as a pin, but fail closed if it's
+    // occupied by a non-happier process. (Otherwise we can accidentally connect/auth against
+    // an unrelated process and get confusing behavior.)
+    if (inStackMode && name !== 'main') {
+      const url = `http://127.0.0.1:${explicitPort}`;
+      if (await isHappierServerRunning(url)) {
+        return explicitPort;
+      }
+      const free = await isTcpPortFree(explicitPort, { host: '127.0.0.1' }).catch(() => false);
+      if (!free) {
+        throw new Error(
+          `[stack] ${name}: pinned server port ${explicitPort} is not available (in use by another process).\n` +
+            `[stack] Fix: stop the process using it, or reallocate by unsetting the pin:\n` +
+            `  yarn env unset HAPPIER_STACK_SERVER_PORT\n` +
+            `  # (or) hstack env unset HAPPIER_STACK_SERVER_PORT`
+        );
+      }
+    }
     return explicitPort;
   }
 
@@ -58,4 +76,3 @@ export async function resolveLocalServerPortForStack({
 
   return await pickNextFreeTcpPort(startPort, { host: '127.0.0.1' });
 }
-

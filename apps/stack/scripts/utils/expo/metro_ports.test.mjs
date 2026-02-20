@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
+import { createServer } from 'node:http';
 
 import { pickMetroPort } from './metro_ports.mjs';
 
@@ -32,4 +33,58 @@ test('pickMetroPort does not reuse forced port when it is reserved', async () =>
     host: '127.0.0.1',
   });
   assert.notEqual(picked, forced);
+});
+
+test('pickMetroPort does not reuse forced port when it is occupied by a non-metro process', async () => {
+  const srv = createServer((req, res) => {
+    if (req.url === '/status') {
+      res.statusCode = 200;
+      res.end('nope');
+      return;
+    }
+    res.statusCode = 404;
+    res.end('not found');
+  });
+  await new Promise((resolvePromise) => srv.listen(0, '127.0.0.1', resolvePromise));
+  const addr = srv.address();
+  const port = typeof addr === 'object' && addr ? addr.port : null;
+  if (!port) throw new Error('failed to bind test server');
+  try {
+    const picked = await pickMetroPort({
+      startPort: port,
+      forcedPort: String(port),
+      reservedPorts: new Set(),
+      host: '127.0.0.1',
+    });
+    assert.notEqual(picked, port);
+  } finally {
+    await new Promise((resolvePromise) => srv.close(resolvePromise));
+  }
+});
+
+test('pickMetroPort does not reuse forced port when it is occupied by a Metro-like /status responder', async () => {
+  const srv = createServer((req, res) => {
+    if (req.url === '/status') {
+      res.statusCode = 200;
+      res.end('packager-status:running');
+      return;
+    }
+    res.statusCode = 404;
+    res.end('not found');
+  });
+  await new Promise((resolvePromise) => srv.listen(0, '127.0.0.1', resolvePromise));
+  const addr = srv.address();
+  const port = typeof addr === 'object' && addr ? addr.port : null;
+  if (!port) throw new Error('failed to bind test server');
+  try {
+    const picked = await pickMetroPort({
+      startPort: port,
+      forcedPort: String(port),
+      reservedPorts: new Set(),
+      host: '127.0.0.1',
+    });
+    assert.notEqual(picked, port);
+  } finally {
+    await new Promise((resolvePromise) => srv.close(resolvePromise));
+  }
 });

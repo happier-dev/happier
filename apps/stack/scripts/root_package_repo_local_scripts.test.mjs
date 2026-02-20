@@ -31,5 +31,7 @@ test('repo root package.json exposes repo-local hstack scripts', async () => {
   assert.equal(scripts.remote, 'node ./apps/stack/scripts/repo_local.mjs remote');
   assert.equal(scripts.setup, 'node ./apps/stack/scripts/repo_local.mjs setup');
   assert.equal(scripts.service, 'node ./apps/stack/scripts/repo_local.mjs service');
+  assert.equal(scripts.logs, 'node ./apps/stack/scripts/repo_local.mjs logs --follow');
   assert.equal(scripts.tailscale, 'node ./apps/stack/scripts/repo_local.mjs tailscale');
+  assert.equal(scripts.env, 'node ./apps/stack/scripts/repo_local.mjs env');
 });

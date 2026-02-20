@@ -10,6 +10,7 @@ import {
   writePidState,
 } from '../expo/expo.mjs';
 import { pickExpoDevMetroPort } from '../expo/metro_ports.mjs';
+import { ensureEnvFileUpdated } from '../env/env_file.mjs';
 import { isPidAlive, recordStackRuntimeUpdate } from '../stack/runtime_state.mjs';
 import { killProcessGroupOwnedByStack } from '../proc/ownership.mjs';
 import { expoSpawn } from '../expo/command.mjs';
@@ -428,7 +429,30 @@ export async function ensureDevExpoServer({
     stackName,
     reservedPorts: reservedMetroPorts,
   });
+  const forcedPortRaw = (baseEnv?.HAPPIER_STACK_EXPO_DEV_PORT ?? '').toString().trim();
+  const forcedPortNum = Number(forcedPortRaw);
+  if (
+    stackMode &&
+    envPath &&
+    forcedPortRaw &&
+    Number.isFinite(forcedPortNum) &&
+    forcedPortNum > 0 &&
+    forcedPortNum !== metroPort
+  ) {
+    if (!quiet) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[local] expo: requested metro port ${forcedPortNum} is not available; using ${metroPort}.\n` +
+          `[local] expo: updating ${envPath} so future runs keep stable ports.`
+      );
+    }
+    await ensureEnvFileUpdated({
+      envPath,
+      updates: [{ key: 'HAPPIER_STACK_EXPO_DEV_PORT', value: String(metroPort) }],
+    }).catch(() => {});
+  }
   env.RCT_METRO_PORT = String(metroPort);
+  env.HAPPIER_STACK_EXPO_DEV_PORT = String(metroPort);
   const host = resolveExpoDevHost({ env });
   const args = buildExpoStartArgs({
     port: metroPort,

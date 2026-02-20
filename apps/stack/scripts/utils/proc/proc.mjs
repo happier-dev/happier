@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 
 function nextLineBreakIndex(s) {
   const n = s.indexOf('\n');
@@ -33,6 +34,12 @@ function flushPrefixed(stream, prefix, bufState) {
   bufState.buf = '';
 }
 
+function sanitizeLogFileToken(raw) {
+  const s = String(raw ?? '').trim().toLowerCase();
+  const cleaned = s.replace(/[^a-z0-9._-]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+  return cleaned || 'proc';
+}
+
 export function spawnProc(label, cmd, args, env, options = {}) {
   const { silent = false, teeFile, teeLabel, ...spawnOptions } = options ?? {};
   const child = spawn(cmd, args, {
@@ -49,7 +56,18 @@ export function spawnProc(label, cmd, args, env, options = {}) {
   const outPrefix = `[${label}] `;
   const errPrefix = `[${label}] `;
 
-  const teePath = typeof teeFile === 'string' && teeFile.trim() ? teeFile.trim() : '';
+  let teePath = typeof teeFile === 'string' && teeFile.trim() ? teeFile.trim() : '';
+  if (!teePath) {
+    const teeDir = String(env?.HAPPIER_STACK_LOG_TEE_DIR ?? '').trim();
+    if (teeDir) {
+      try {
+        mkdirSync(teeDir, { recursive: true });
+      } catch {
+        // ignore
+      }
+      teePath = join(teeDir, `${sanitizeLogFileToken(label)}.log`);
+    }
+  }
   const teeStream = teePath ? createWriteStream(teePath, { flags: 'a' }) : null;
   const teeOutState = { buf: '' };
   const teeErrState = { buf: '' };
