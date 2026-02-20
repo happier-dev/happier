@@ -165,6 +165,7 @@ export const PROVIDER_CLI_INSTALL_SPECS: Readonly<Record<AgentId, ProviderCliIns
     install: {
       darwin: [npmGlobal('@github/copilot')],
       linux: [npmGlobal('@github/copilot')],
+      win32: [npmGlobal('@github/copilot')],
     },
   },
 } as const;
@@ -172,4 +173,3 @@ export const PROVIDER_CLI_INSTALL_SPECS: Readonly<Record<AgentId, ProviderCliIns
 export function getProviderCliInstallSpec(id: AgentId): ProviderCliInstallSpec {
   return PROVIDER_CLI_INSTALL_SPECS[id];
 }
-

@@ -39,9 +39,9 @@ export function createCopilotBackend(options: CopilotBackendOptions): AgentBacke
     command: resolveCliPathOverride({ agentId: 'copilot' }) ?? 'copilot',
     args: ['--acp', ...buildCopilotPermissionArgs(options.permissionMode)],
     env: {
-      ...options.env,
       NODE_ENV: 'production',
       DEBUG: '',
+      ...options.env,
     },
     mcpServers: options.mcpServers,
     permissionHandler: options.permissionHandler,
