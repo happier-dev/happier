@@ -3,6 +3,8 @@
   "pages": [
     "index",
     "auth",
+    "auth-github",
+    "auth-oidc",
     "auth-mtls"
   ]
 }

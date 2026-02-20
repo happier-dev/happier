@@ -1,0 +1,188 @@
+---
+title: GitHub auth
+description: Configure GitHub OAuth (signup + connect) and optional GitHub allowlists for a self-hosted server.
+---
+
+This guide covers GitHub auth on the Happier server:
+- GitHub OAuth (signup + connect)
+- Enforcing GitHub as a required login provider
+- Optional allowlists (users/orgs) and offboarding behavior
+
+## Quick start: GitHub login (recommended for self-hosting)
+
+Use this when you want users to **sign up and sign in with GitHub**, and you want to **disable anonymous signup**.
+
+### 1) Create a GitHub OAuth App
+
+Happier uses a **GitHub OAuth App** (not a GitHub App) for the OAuth redirect flow.
+
+1. In GitHub, go to **Settings → Developer settings → OAuth Apps → New OAuth App**.
+2. Set **Authorization callback URL** to:
+   - `https://YOUR_SERVER/v1/oauth/github/callback`
+3. Create the app and copy:
+   - **Client ID**
+   - **Client secret**
+
+Notes:
+- The Happier server currently talks to `github.com` / `api.github.com` directly, so this setup is for **GitHub.com** (not GitHub Enterprise Server).
+- The callback URL must match exactly (scheme/host/path) what you put in `GITHUB_REDIRECT_URL`.
+
+### 2) Configure the server
+
+Set these environment variables on `apps/server` (see `apps/server/.env.example`):
+
+```bash
+# GitHub OAuth (OAuth App)
+GITHUB_CLIENT_ID=...
+GITHUB_CLIENT_SECRET=...
+GITHUB_REDIRECT_URL=https://YOUR_SERVER/v1/oauth/github/callback
+
+# Auth policy
+AUTH_ANONYMOUS_SIGNUP_ENABLED=false
+AUTH_SIGNUP_PROVIDERS=github
+AUTH_REQUIRED_LOGIN_PROVIDERS=github
+```
+
+Optional (only if you are self-hosting the client web app / need custom deep links):
+- `HAPPIER_WEBAPP_URL` (default `https://app.happier.dev`)
+- `HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE`
+- `HAPPIER_OAUTH_RETURN_ALLOWED_SCHEMES` (for mobile deep links, e.g. `myapp`)
+
+### 3) Validate it works
+
+1. Restart the server.
+2. Check `GET /v1/features` and confirm:
+   - `capabilities.oauth.providers.github.configured` is `true`
+3. Open the Happier app and confirm “Continue with GitHub” is available.
+
+## Server env (GitHub OAuth)
+
+Required:
+- `GITHUB_CLIENT_ID`
+- `GITHUB_CLIENT_SECRET`
+- `GITHUB_REDIRECT_URL` (preferred) or legacy `GITHUB_REDIRECT_URI`
+  - Must be: `https://YOUR_SERVER/v1/oauth/github/callback`
+
+Optional:
+- `HAPPIER_WEBAPP_URL` (default `https://app.happier.dev`)
+- `HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE`
+- `HAPPIER_OAUTH_RETURN_ALLOWED_SCHEMES`
+- `OAUTH_STATE_TTL_SECONDS` (default `600`, clamp 60–3600)
+- `OAUTH_PENDING_TTL_SECONDS` (default `600`, clamp 60–3600; legacy fallback: `GITHUB_OAUTH_PENDING_TTL_SECONDS`)
+- `GITHUB_HTTP_TIMEOUT_SECONDS` (default `10`, clamp 1–120)
+
+Notes:
+- `GITHUB_REDIRECT_URL` must be reachable by GitHub (it’s where GitHub redirects the browser after the user approves OAuth).
+- If your server is behind a reverse proxy, `GITHUB_REDIRECT_URL` should be the **public** URL (not an internal container hostname).
+
+## OAuth return URL to the client (advanced)
+
+After the server handles the GitHub callback, it redirects the browser back to the client so the client can finish the flow.
+
+- Default return base: `HAPPIER_WEBAPP_URL` (`https://app.happier.dev`)
+  - The server redirects to `${HAPPIER_WEBAPP_URL}/oauth/github?...` unless you override it.
+- Override return base (without provider suffix): `HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE`
+  - Example: `https://app.example.com/custom-oauth` → redirects to `https://app.example.com/custom-oauth/github?...`
+- Allow additional URL schemes for the return redirect: `HAPPIER_OAUTH_RETURN_ALLOWED_SCHEMES`
+  - Use this for mobile deep links (e.g. `myapp`)
+  - `http://` is only allowed for loopback (like `http://localhost`) and is not allowed for non-loopback hosts.
+
+## OAuth scopes
+
+OAuth scopes requested by the server:
+- Default: `read:user`
+- Adds `read:org` only when you enable org allowlists **and** set `AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE=oauth_user_token`
+
+## GitHub allowlists (eligibility)
+
+Important:
+- All values are normalized to lowercase.
+- Allowlists affect access only when GitHub is included in `AUTH_REQUIRED_LOGIN_PROVIDERS`.
+
+### User allowlist
+- `AUTH_GITHUB_ALLOWED_USERS` (CSV of GitHub logins)
+
+If set and GitHub is required for login, the user must match this list or they get `403 not-eligible`.
+
+### Org allowlist
+- `AUTH_GITHUB_ALLOWED_ORGS` (CSV of org slugs)
+- `AUTH_GITHUB_ORG_MATCH` (`any`/`all`, default `any`)
+
+If set and GitHub is required for login, the user must be in the allowed org(s). Membership is re-checked using the offboarding interval.
+
+### Org membership source (important)
+
+`AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE` controls how the server verifies org membership:
+- `github_app` (recommended)
+- `oauth_user_token` (uses the user’s OAuth token and requires `read:org`)
+
+Default behavior:
+- If `AUTH_GITHUB_ALLOWED_ORGS` is empty → `oauth_user_token` (no org checks happen)
+- If `AUTH_GITHUB_ALLOWED_ORGS` is set → defaults to `github_app`
+
+This means: if you set `AUTH_GITHUB_ALLOWED_ORGS` but you do **not** configure GitHub App mode, users will be treated as **ineligible**.
+
+## GitHub App mode (recommended for org enforcement)
+
+GitHub App mode avoids relying on user OAuth tokens and keeps org enforcement working even if a user revokes OAuth consent.
+
+### Server environment variables (GitHub App mode)
+- `AUTH_GITHUB_APP_ID`
+- `AUTH_GITHUB_APP_PRIVATE_KEY` (PEM)
+- `AUTH_GITHUB_APP_INSTALLATION_ID_BY_ORG` (CSV mapping like `acme=123,other=456`)
+
+### GitHub setup steps (GitHub App)
+1. Create a **GitHub App**: **Settings → Developer settings → GitHub Apps → New GitHub App**.
+2. Generate a **private key** and copy the PEM into `AUTH_GITHUB_APP_PRIVATE_KEY`.
+3. Set the minimal permission needed for membership checks:
+   - **Organization permissions → Members: Read**
+4. Install the app into each org you plan to allow.
+5. Capture the **installation id** for each org and set `AUTH_GITHUB_APP_INSTALLATION_ID_BY_ORG`.
+
+Installation id tips:
+- After installing the app, click **Configure** on the installation; the URL usually contains `installations/<id>`.
+
+## Org enforcement via user OAuth tokens (alternative)
+
+If you can’t use GitHub App mode, you can verify org membership using the user’s OAuth token:
+
+```bash
+AUTH_GITHUB_ALLOWED_ORGS=acme
+AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE=oauth_user_token
+GITHUB_STORE_ACCESS_TOKEN=true
+```
+
+Notes:
+- Users will be prompted for `read:org` during OAuth.
+- Token storage is required for periodic org re-checks; if you disable token storage, org checks will fail and users can become ineligible.
+- If you switch to this mode after users already connected GitHub, they may need to disconnect/reconnect so the server can store a token for membership checks.
+
+## Token storage (advanced)
+
+`GITHUB_STORE_ACCESS_TOKEN` controls whether the server persists GitHub access tokens (encrypted-at-rest).
+
+- Default: `false` for typical setups (Friends / basic GitHub connect)
+- Default: effectively `true` when you enable org checks via `oauth_user_token` (token required for offboarding)
+
+## Example configurations
+
+### GitHub-only signup + GitHub required for login
+```bash
+AUTH_ANONYMOUS_SIGNUP_ENABLED=false
+AUTH_SIGNUP_PROVIDERS=github
+AUTH_REQUIRED_LOGIN_PROVIDERS=github
+```
+
+### GitHub-only + restrict to an org (GitHub App mode)
+```bash
+AUTH_ANONYMOUS_SIGNUP_ENABLED=false
+AUTH_SIGNUP_PROVIDERS=github
+AUTH_REQUIRED_LOGIN_PROVIDERS=github
+
+AUTH_GITHUB_ALLOWED_ORGS=acme
+AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE=github_app
+AUTH_GITHUB_APP_ID=...
+AUTH_GITHUB_APP_PRIVATE_KEY=...
+AUTH_GITHUB_APP_INSTALLATION_ID_BY_ORG=acme=123
+```
+
