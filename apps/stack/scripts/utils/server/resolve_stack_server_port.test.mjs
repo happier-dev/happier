@@ -61,6 +61,26 @@ test('non-main stack prefers runtime port when server is already running there',
   }
 });
 
+test('non-main stack ignores runtime port when it falls outside the configured stable port range', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-port-'));
+  const runtimeStatePath = join(tmp, 'stack.runtime.json');
+  await writeFile(runtimeStatePath, JSON.stringify({ ports: { server: 3009 } }), 'utf-8');
+
+  const out = await resolveLocalServerPortForStack({
+    env: {
+      HAPPIER_STACK_SERVER_PORT_BASE: '52005',
+      HAPPIER_STACK_SERVER_PORT_RANGE: '2000',
+    },
+    stackMode: true,
+    stackName: 'repo-test-abc',
+    runtimeStatePath,
+    defaultPort: 3005,
+  });
+
+  assert.ok(out >= 52005 && out < 52005 + 2000, `expected stable-range port, got ${out}`);
+  assert.notEqual(out, 3009);
+});
+
 test('non-main stack errors when pinned server port is occupied by a non-happier process', async () => {
   const { server, port } = await listenNonHealthServer();
   try {

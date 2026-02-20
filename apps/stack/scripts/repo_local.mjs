@@ -9,6 +9,7 @@ import { scrubHappierStackEnv, STACK_WRAPPER_PRESERVE_KEYS } from './utils/env/s
 import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import { ensureDepsInstalled } from './utils/proc/pm.mjs';
 import { ensureEnvFilePruned, ensureEnvFileUpdated } from './utils/env/env_file.mjs';
+import { parseEnvToObject } from './utils/env/dotenv.mjs';
 
 function shouldAutoInstallDepsForRepoLocalCommand(cmd) {
   const c = String(cmd ?? '').trim();
@@ -64,6 +65,19 @@ function stringifyEnvFile(env) {
   return lines.join('\n') + '\n';
 }
 
+function coercePositiveInt(v) {
+  const n = Number(String(v ?? '').trim());
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}
+
+function isPortWithinRange(port, base, range) {
+  const p = coercePositiveInt(port);
+  const b = coercePositiveInt(base);
+  const r = coercePositiveInt(range);
+  if (!p || !b || !r) return false;
+  return p >= b && p < b + r;
+}
+
 function sanitizeStackNameToken(s) {
   const raw = String(s ?? '').trim().toLowerCase();
   const cleaned = raw.replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
@@ -107,6 +121,16 @@ function readTextFile(path) {
     return readFileSync(path, 'utf-8').toString().trim();
   } catch {
     return '';
+  }
+}
+
+function readEnvFileObject(path) {
+  const raw = readTextFile(path);
+  if (!raw.trim()) return {};
+  try {
+    return parseEnvToObject(raw);
+  } catch {
+    return {};
   }
 }
 
@@ -279,6 +303,9 @@ async function main() {
   const stacklessEnvPath = join(stacklessBaseDir, 'env');
   const stacklessCliHomeDir = join(stacklessBaseDir, 'cli');
   const stacklessLogsDir = join(stacklessBaseDir, 'logs');
+  const existingStacklessEnv = readEnvFileObject(stacklessEnvPath);
+  const existingPinnedServerPort = coercePositiveInt(existingStacklessEnv.HAPPIER_STACK_SERVER_PORT);
+  const existingPinnedExpoPort = coercePositiveInt(existingStacklessEnv.HAPPIER_STACK_EXPO_DEV_PORT);
 
   // Convenience:
   // `yarn stop` should stop the repo-local stack without requiring users to know its generated name.
@@ -348,8 +375,24 @@ async function main() {
           HAPPIER_STACK_EXPO_DEV_PORT_RANGE: (process.env.HAPPIER_STACK_EXPO_DEV_PORT_RANGE ?? '2000').toString(),
           // Make Expo's Metro use stable (stack-scoped) port strategy.
           HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: (process.env.HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY ?? 'stable').toString(),
-          ...(runtimeServerPort ? { HAPPIER_STACK_SERVER_PORT: String(runtimeServerPort) } : {}),
-          ...(runtimeExpoPort ? { HAPPIER_STACK_EXPO_DEV_PORT: String(runtimeExpoPort) } : {}),
+          ...(runtimeServerPort &&
+          !existingPinnedServerPort &&
+          isPortWithinRange(
+            runtimeServerPort,
+            process.env.HAPPIER_STACK_SERVER_PORT_BASE ?? '52005',
+            process.env.HAPPIER_STACK_SERVER_PORT_RANGE ?? '2000'
+          )
+            ? { HAPPIER_STACK_SERVER_PORT: String(runtimeServerPort) }
+            : {}),
+          ...(runtimeExpoPort &&
+          !existingPinnedExpoPort &&
+          isPortWithinRange(
+            runtimeExpoPort,
+            process.env.HAPPIER_STACK_EXPO_DEV_PORT_BASE ?? '18081',
+            process.env.HAPPIER_STACK_EXPO_DEV_PORT_RANGE ?? '2000'
+          )
+            ? { HAPPIER_STACK_EXPO_DEV_PORT: String(runtimeExpoPort) }
+            : {}),
         }),
     HAPPIER_STACK_INVOKED_CWD: invokedCwd,
   };
@@ -370,6 +413,22 @@ async function main() {
     }
 
     const serverComponent = (effectiveEnv.HAPPIER_STACK_SERVER_COMPONENT ?? 'happier-server-light').toString().trim() || 'happier-server-light';
+    const serverBase = effectiveEnv.HAPPIER_STACK_SERVER_PORT_BASE;
+    const serverRange = effectiveEnv.HAPPIER_STACK_SERVER_PORT_RANGE;
+    const expoBase = effectiveEnv.HAPPIER_STACK_EXPO_DEV_PORT_BASE;
+    const expoRange = effectiveEnv.HAPPIER_STACK_EXPO_DEV_PORT_RANGE;
+
+    // Auto-heal:
+    // If a stale pinned port exists in the stackless env file but it doesn't match the configured stable range,
+    // prune it so dev/start can pick a stable high port again.
+    const pruneKeys = [];
+    if (
+      existingPinnedServerPort &&
+      existingPinnedServerPort < 5000 &&
+      !isPortWithinRange(existingPinnedServerPort, serverBase, serverRange)
+    ) {
+      pruneKeys.push('HAPPIER_STACK_SERVER_PORT');
+    }
 
     // Treat the repo-local stack as managed by the wrapper: keep a small set of stack-owned keys in sync,
     // but preserve any user-defined keys they set via `hstack env` / `yarn env`.
@@ -385,10 +444,18 @@ async function main() {
       HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: effectiveEnv.HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY,
       // Keep the stable active server id explicit so daemons/CLI always scope state/credentials per stack.
       ...(effectiveEnv.HAPPIER_ACTIVE_SERVER_ID ? { HAPPIER_ACTIVE_SERVER_ID: effectiveEnv.HAPPIER_ACTIVE_SERVER_ID } : {}),
-      ...(runtimeServerPort ? { HAPPIER_STACK_SERVER_PORT: String(runtimeServerPort) } : {}),
-      ...(runtimeExpoPort ? { HAPPIER_STACK_EXPO_DEV_PORT: String(runtimeExpoPort) } : {}),
+      ...(runtimeServerPort &&
+      !existingPinnedServerPort &&
+      isPortWithinRange(runtimeServerPort, serverBase, serverRange)
+        ? { HAPPIER_STACK_SERVER_PORT: String(runtimeServerPort) }
+        : {}),
+      ...(runtimeExpoPort &&
+      !existingPinnedExpoPort &&
+      isPortWithinRange(runtimeExpoPort, expoBase, expoRange)
+        ? { HAPPIER_STACK_EXPO_DEV_PORT: String(runtimeExpoPort) }
+        : {}),
     };
-    await syncRepoLocalEnvFile({ envPath: stacklessEnvPath, managedEnv, pruneKeys: [] });
+    await syncRepoLocalEnvFile({ envPath: stacklessEnvPath, managedEnv, pruneKeys });
   }
 
   const cmd = process.execPath;

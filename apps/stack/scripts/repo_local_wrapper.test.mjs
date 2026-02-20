@@ -289,3 +289,62 @@ test('repo-local wrapper preserves user-defined env keys while managing stack-ow
     rmSync(stacksRoot, { recursive: true, force: true });
   }
 });
+
+test('repo-local wrapper prunes pinned server port when it falls outside the configured stackless port range', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir); // apps/stack
+  const repoRoot = dirname(dirname(packageRoot)); // repo root
+
+  const stacksRoot = mkdtempSync(join(tmpdir(), 'happier-repo-local-stacks-'));
+  try {
+    const dry = await runNode(
+      [join(packageRoot, 'scripts', 'repo_local.mjs'), 'dev', '--dry-run'],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          HAPPIER_STACK_STORAGE_DIR: stacksRoot,
+        },
+      }
+    );
+    assert.equal(dry.code, 0, `expected exit 0, got ${dry.code}\nstdout:\n${dry.stdout}\nstderr:\n${dry.stderr}`);
+    const dryData = JSON.parse(dry.stdout);
+    const envPath = String(dryData?.env?.HAPPIER_STACK_ENV_FILE ?? '').trim();
+    assert.ok(envPath, 'expected dry-run to include HAPPIER_STACK_ENV_FILE');
+
+    // Seed env with a stale pinned port in the legacy range. Stackless is expected to use the
+    // high stable range (default base/range managed by the wrapper).
+    mkdirSync(dirname(envPath), { recursive: true });
+    writeFileSync(
+      envPath,
+      [
+        'CUSTOM_KEY=1',
+        'HAPPIER_STACK_SERVER_PORT_BASE=52005',
+        'HAPPIER_STACK_SERVER_PORT_RANGE=2000',
+        'HAPPIER_STACK_SERVER_PORT=3009',
+        '',
+      ].join('\n')
+    );
+
+    const res = await runNode(
+      [join(packageRoot, 'scripts', 'repo_local.mjs'), 'stop'],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          HAPPIER_STACK_STORAGE_DIR: stacksRoot,
+          HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ONLY: '1',
+        },
+      }
+    );
+    assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+    const updated = readFileSync(envPath, 'utf-8');
+    assert.match(updated, /\bCUSTOM_KEY=1\b/, `expected user key to be preserved:\n${updated}`);
+    assert.match(updated, /\bHAPPIER_STACK_SERVER_PORT_BASE=52005\b/, `expected base to be preserved:\n${updated}`);
+    assert.match(updated, /\bHAPPIER_STACK_SERVER_PORT_RANGE=2000\b/, `expected range to be preserved:\n${updated}`);
+    assert.doesNotMatch(updated, /\bHAPPIER_STACK_SERVER_PORT=3009\b/, `expected stale pinned port to be pruned:\n${updated}`);
+  } finally {
+    rmSync(stacksRoot, { recursive: true, force: true });
+  }
+});

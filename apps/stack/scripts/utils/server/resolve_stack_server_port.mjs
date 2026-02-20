@@ -9,6 +9,19 @@ function coercePort(v) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+function coercePositiveInt(v) {
+  const n = Number(String(v ?? '').trim());
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}
+
+function isWithinRange(port, base, range) {
+  const p = coercePositiveInt(port);
+  const b = coercePositiveInt(base);
+  const r = coercePositiveInt(range);
+  if (!p || !b || !r) return false;
+  return p >= b && p < b + r;
+}
+
 export async function resolveLocalServerPortForStack({
   env = process.env,
   stackMode,
@@ -51,7 +64,17 @@ export async function resolveLocalServerPortForStack({
   // Prefer runtime state, else pick a stable per-stack port range.
   const runtime = runtimeStatePath ? await readStackRuntimeStateFile(runtimeStatePath) : null;
   const runtimePort = coercePort(runtime?.ports?.server);
-  if (runtimePort) {
+
+  // If the caller configured a stable range explicitly (base/range), ignore runtime ports
+  // that don't fall within that range. This prevents stale low ports (e.g. 3009) from
+  // overriding stackless high port ranges.
+  const baseRaw = (env.HAPPIER_STACK_SERVER_PORT_BASE ?? '').toString().trim();
+  const rangeRaw = (env.HAPPIER_STACK_SERVER_PORT_RANGE ?? '').toString().trim();
+  const hasExplicitStableRange = Boolean(baseRaw || rangeRaw);
+  const stableBase = coercePositiveInt(baseRaw) ?? 4101;
+  const stableRange = coercePositiveInt(rangeRaw) ?? 1000;
+
+  if (runtimePort && (!hasExplicitStableRange || isWithinRange(runtimePort, stableBase, stableRange))) {
     const url = `http://127.0.0.1:${runtimePort}`;
     if (await isHappierServerRunning(url)) {
       return runtimePort;
