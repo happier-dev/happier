@@ -14,6 +14,11 @@ async function loadWorkflow(name) {
 test('publish-docker supports workflow_call and is wired from release workflow', async () => {
   const publishDocker = await loadWorkflow('publish-docker.yml');
   assert.match(publishDocker, /\n\s*workflow_call:\n/);
+  assert.match(
+    publishDocker,
+    /permissions:\n\s+contents:\s+read\n\s+packages:\s+write/m,
+    'publish-docker should request packages:write for GHCR pushes',
+  );
   assert.match(publishDocker, /\n\s*source_ref:\n/);
   assert.match(publishDocker, /\n\s*build_relay:\n/);
   assert.match(publishDocker, /\n\s*build_devcontainer:\n/);
@@ -21,6 +26,16 @@ test('publish-docker supports workflow_call and is wired from release workflow',
     publishDocker,
     /node scripts\/pipeline\/docker\/publish-images\.mjs/,
     'publish-docker should delegate docker build+push to the pipeline script',
+  );
+  assert.match(
+    publishDocker,
+    /Login to GHCR/,
+    'publish-docker should login to GHCR (ghcr.io)',
+  );
+  assert.match(
+    publishDocker,
+    /registry:\s*ghcr\.io/,
+    'publish-docker should use docker/login-action registry ghcr.io',
   );
   assert.match(
     publishDocker,

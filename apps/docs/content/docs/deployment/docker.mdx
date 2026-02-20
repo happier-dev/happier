@@ -15,6 +15,12 @@ We publish preview Docker images on Docker Hub:
 docker pull happierdev/relay-server:preview
 ```
 
+We also publish the same images to GitHub Container Registry (GHCR):
+
+```bash
+docker pull ghcr.io/happier-dev/relay-server:preview
+```
+
 The `relay-server` image defaults to the **light flavor + SQLite**, with all data stored under `/data`. Mount it as a volume so upgrades and restarts are safe.
 
 ```bash
