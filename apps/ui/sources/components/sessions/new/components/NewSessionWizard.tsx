@@ -786,12 +786,12 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                 onModelModeChange={setModelMode}
                                 modelOptionsOverride={modelOptions}
                                 modelOptionsOverrideProbe={modelOptionsProbe}
-                                acpSessionModeOptionsOverride={props.agentProps.acpSessionModeOptions}
-                                acpSessionModeSelectedIdOverride={props.agentProps.acpSessionModeId ?? null}
-                                acpSessionModeOptionsOverrideProbe={props.agentProps.acpSessionModeProbe}
+                                acpSessionModeOptionsOverride={props.agent.acpSessionModeOptions}
+                                acpSessionModeSelectedIdOverride={props.agent.acpSessionModeId ?? null}
+                                acpSessionModeOptionsOverrideProbe={props.agent.acpSessionModeProbe}
                                 onAcpSessionModeChange={
-                                    (props.agentProps.acpSessionModeOptions?.length ?? 0) > 0 && props.agentProps.setAcpSessionModeId
-                                        ? (modeId) => props.agentProps.setAcpSessionModeId?.(modeId === 'default' ? null : modeId)
+                                    (props.agent.acpSessionModeOptions?.length ?? 0) > 0 && props.agent.setAcpSessionModeId
+                                        ? (modeId) => props.agent.setAcpSessionModeId?.(modeId === 'default' ? null : modeId)
                                         : undefined
                                 }
                                 connectionStatus={connectionStatus}
