@@ -75,6 +75,31 @@ describe('maybeAutoUpdateNotice', () => {
     }
   });
 
+  it('does not crash when spawnDetached throws', () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'happy-cli-update-'));
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(() =>
+        maybeAutoUpdateNotice({
+          argv: ['start'],
+          isTTY: true,
+          homeDir,
+          cliRootDir: '/repo/apps/cli',
+          env: {},
+          nowMs: 100_000,
+          spawnDetached: () => {
+            throw new Error('boom');
+          },
+          notifyIntervalMs: 1000,
+          checkIntervalMs: 0,
+        }),
+      ).not.toThrow();
+    } finally {
+      stderr.mockRestore();
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it('does not spawn background checks for --version invocations', () => {
     const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
     const spawnDetached = vi.fn();

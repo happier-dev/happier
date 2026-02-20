@@ -7,12 +7,13 @@ import { configuration } from '@/configuration';
 import type { CommandContext } from '@/cli/commandRegistry';
 import {
   compareVersions,
-  installRuntimeFromNpm,
   readNpmDistTagVersion,
   readUpdateCache,
   resolveNpmPackageNameOverride,
   writeUpdateCache,
 } from '@happier-dev/cli-common/update';
+import { fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
+import { resolveCliBinaryAssetBundleFromReleaseAssets, updateCliBinaryFromGitHubTag } from '@/cli/runtime/update/binarySelfUpdate';
 
 type SelfChannel = 'stable' | 'preview';
 
@@ -32,6 +33,8 @@ function usage(): string {
     `${chalk.bold('Environment:')}`,
     `  HAPPIER_CLI_UPDATE_CHECK=0                 Disable update notice + background check`,
     `  HAPPIER_CLI_UPDATE_PACKAGE_NAME=@scope/pkg Override the npm package name checked/installed`,
+    `  HAPPIER_GITHUB_REPO=happier-dev/happier    Override GitHub repo for binary updates`,
+    `  HAPPIER_GITHUB_TOKEN=...                   GitHub token for release API (optional)`,
     '',
   ].join('\n');
 }
@@ -104,6 +107,32 @@ export function detectInstallSource(path: string): 'npm' | 'binary' {
   return 'binary';
 }
 
+function resolveBinaryUpdateRepo(env: NodeJS.ProcessEnv): string {
+  const raw = String(env.HAPPIER_GITHUB_REPO ?? '').trim();
+  return raw || 'happier-dev/happier';
+}
+
+function resolveBinaryUpdateToken(env: NodeJS.ProcessEnv): string {
+  return String(env.HAPPIER_GITHUB_TOKEN ?? env.GITHUB_TOKEN ?? '').trim();
+}
+
+function resolveBinaryUpdatePlatform(env: NodeJS.ProcessEnv): Readonly<{ os: string; arch: string }> {
+  const forcedOs = String(env.HAPPIER_SELF_UPDATE_OS ?? '').trim();
+  const forcedArch = String(env.HAPPIER_SELF_UPDATE_ARCH ?? '').trim();
+  if (forcedOs && forcedArch) return { os: forcedOs, arch: forcedArch };
+
+  const os = process.platform === 'linux' ? 'linux' : process.platform === 'darwin' ? 'darwin' : 'unsupported';
+  const arch = process.arch === 'x64' ? 'x64' : process.arch === 'arm64' ? 'arm64' : 'unsupported';
+  if (os === 'unsupported' || arch === 'unsupported') {
+    throw new Error(`Unsupported platform for binary updates: ${process.platform}/${process.arch}`);
+  }
+  return { os, arch };
+}
+
+function resolveBinaryUpdateTag(channel: SelfChannel): string {
+  return channel === 'preview' ? 'cli-preview' : 'cli-stable';
+}
+
 function npmUpgradeCommand(params: Readonly<{ packageName: string; channel: SelfChannel; to: string }>): string {
   const pkg = String(params.packageName ?? '').trim();
   const to = String(params.to ?? '').trim();
@@ -129,6 +158,45 @@ function resolveUpdatePackageName(): string {
 async function cmdCheck(argv: string[]): Promise<void> {
   const channel = parseSelfChannel(argv);
   const quiet = argv.includes('--quiet');
+  const installSource = detectInstallSource(process.argv[1] ?? '');
+
+  if (installSource === 'binary') {
+    const { os, arch } = resolveBinaryUpdatePlatform(process.env);
+    const githubRepo = resolveBinaryUpdateRepo(process.env);
+    const githubToken = resolveBinaryUpdateToken(process.env);
+    const tag = resolveBinaryUpdateTag(channel);
+
+    const release = await fetchGitHubReleaseByTag({ githubRepo, tag, githubToken, userAgent: 'happier-cli' });
+    const assets = typeof release === 'object' && release != null && 'assets' in release ? (release as any).assets : null;
+    const bundle = resolveCliBinaryAssetBundleFromReleaseAssets({ assets, os, arch, preferVersion: null });
+
+    const latest = bundle.version;
+    const invokerVersion = configuration.currentCliVersion;
+    const current = invokerVersion || null;
+    const updateAvailable = Boolean(current && latest && compareVersions(latest, current) > 0);
+
+    const existing = readUpdateCache(cachePath());
+    const checkedAt = Date.now();
+    writeUpdateCache(cachePath(), {
+      checkedAt,
+      latest,
+      current,
+      runtimeVersion: null,
+      invokerVersion,
+      updateAvailable,
+      notifiedAt: existing?.notifiedAt ?? null,
+    });
+
+    if (quiet) return;
+
+    if (updateAvailable) {
+      console.log(chalk.yellow(`Update available: ${current ?? 'current'} → ${latest}`));
+      console.log(chalk.gray('Run:'), chalk.cyan('happier self update'));
+      return;
+    }
+    console.log(chalk.green('Up to date.'));
+    return;
+  }
   const distTag = channel === 'preview' ? 'next' : 'latest';
   const pkgName = resolveUpdatePackageName();
 
@@ -175,24 +243,43 @@ async function cmdUpdate(argv: string[]): Promise<void> {
     return eq ? eq.slice('--to='.length) : '';
   })();
 
-  const pkgName = resolveUpdatePackageName();
   const installSource = detectInstallSource(process.argv[1] ?? '');
   if (installSource === 'npm') {
+    const pkgName = resolveUpdatePackageName();
     const upgrade = npmUpgradeCommand({ packageName: pkgName, channel, to: toArg });
     console.log(chalk.yellow('Detected npm-based install; in-place runtime update is disabled.'));
     console.log(chalk.gray('Run instead:'), chalk.cyan(upgrade));
     return;
   }
-  const spec = computeSelfUpdateSpec({ packageName: pkgName, channel, to: toArg });
-  const res = installRuntimeFromNpm({ runtimeDir: runtimeDir(), spec, cwd: process.cwd(), env: process.env });
-  if (!res.ok) {
-    console.error(chalk.red('Error:'), res.errorMessage);
-    process.exit(1);
-  }
+
+  const effective = (() => {
+    const raw = String(toArg ?? '').trim();
+    if (raw === 'latest') return { channel: 'stable' as const, preferVersion: null };
+    if (raw === 'next') return { channel: 'preview' as const, preferVersion: null };
+    const v = raw.startsWith('v') ? raw.slice(1) : raw;
+    return { channel, preferVersion: v || null };
+  })();
+
+  const { os, arch } = resolveBinaryUpdatePlatform(process.env);
+  const githubRepo = resolveBinaryUpdateRepo(process.env);
+  const githubToken = resolveBinaryUpdateToken(process.env);
+  const tag = resolveBinaryUpdateTag(effective.channel);
+  const minisignPubkeyFile = String(process.env.HAPPIER_MINISIGN_PUBKEY ?? '').trim() || undefined;
+
+  const result = await updateCliBinaryFromGitHubTag({
+    githubRepo,
+    tag,
+    githubToken,
+    os,
+    arch,
+    execPath: process.execPath,
+    preferVersion: effective.preferVersion,
+    minisignPubkeyFile,
+  });
 
   // Refresh cache best-effort.
-  await cmdCheck(['check', '--quiet', ...(channel === 'preview' ? ['--preview'] : [])]);
-  console.log(chalk.green('✓ Updated runtime.'));
+  await cmdCheck(['check', '--quiet', ...(effective.channel === 'preview' ? ['--preview'] : [])]);
+  console.log(chalk.green(`✓ Updated binary to ${result.updatedTo}`));
 }
 
 export async function handleSelfCliCommand(context: CommandContext): Promise<void> {

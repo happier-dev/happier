@@ -60,7 +60,8 @@
   "bundledDependencies": [
     "@happier-dev/agents",
     "@happier-dev/cli-common",
-    "@happier-dev/protocol"
+    "@happier-dev/protocol",
+    "@happier-dev/release-runtime"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -110,6 +111,7 @@
     "@happier-dev/agents": "0.0.0",
     "@happier-dev/cli-common": "0.0.0",
     "@happier-dev/protocol": "0.0.0",
+    "@happier-dev/release-runtime": "0.0.0",
     "@modelcontextprotocol/sdk": "^1.25.3",
     "@stablelib/base64": "^2.0.1",
     "@stablelib/hex": "^2.0.1",

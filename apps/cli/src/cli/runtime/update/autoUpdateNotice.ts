@@ -131,10 +131,14 @@ export function maybeAutoUpdateNotice(params: Readonly<{
   const lockTtlMs = envNumber(env, 'HAPPIER_CLI_UPDATE_CHECK_LOCK_TTL_MS') ?? DEFAULT_CHECK_LOCK_TTL_MS;
   const lockPath = join(params.homeDir, 'cache', 'update.check.lock.json');
   if (!acquireSingleFlightLock({ lockPath, nowMs: now, ttlMs: lockTtlMs, pid: process.pid })) return;
-  spawnImpl({
-    script: entry,
-    args: ['self', 'check', '--quiet'],
-    cwd: params.cliRootDir,
-    env: { ...env, HAPPIER_CLI_UPDATE_CHECK_SPAWNED: '1' },
-  });
+  try {
+    spawnImpl({
+      script: entry,
+      args: ['self', 'check', '--quiet'],
+      cwd: params.cliRootDir,
+      env: { ...env, HAPPIER_CLI_UPDATE_CHECK_SPAWNED: '1' },
+    });
+  } catch {
+    // Best-effort: update checks must never crash the CLI.
+  }
 }

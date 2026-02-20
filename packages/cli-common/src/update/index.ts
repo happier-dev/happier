@@ -1,6 +1,6 @@
 import { spawnSync, spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { basename, dirname } from 'node:path';
 
 export type UpdateCache = {
   checkedAt: number | null;
@@ -202,11 +202,30 @@ export function writeUpdateCache(path: string, cache: UpdateCache): void {
   }
 }
 
+export function resolveSpawnDetachedNodeInvocation(params: Readonly<{ execPath: string; script: string; args: string[] }>): {
+  file: string;
+  args: string[];
+  isRuntime: boolean;
+} {
+  const execPath = String(params.execPath ?? '').trim();
+  const base = basename(execPath).toLowerCase();
+  const isRuntime = base === 'node' || base === 'node.exe' || base === 'bun' || base === 'bun.exe';
+  if (isRuntime) {
+    return { file: execPath, args: [params.script, ...params.args], isRuntime };
+  }
+  return { file: execPath, args: [...params.args], isRuntime };
+}
+
 export function spawnDetachedNode(params: Readonly<{ script: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }>): void {
   try {
-    const child = spawn(process.execPath, [params.script, ...params.args], {
+    const resolved = resolveSpawnDetachedNodeInvocation({
+      execPath: process.execPath,
+      script: params.script,
+      args: params.args,
+    });
+    const child = spawn(resolved.file, resolved.args, {
       stdio: 'ignore',
-      cwd: params.cwd,
+      cwd: resolved.isRuntime ? params.cwd : process.cwd(),
       env: { ...params.env },
       detached: true,
     });

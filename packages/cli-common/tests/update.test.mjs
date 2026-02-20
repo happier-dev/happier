@@ -13,6 +13,7 @@ import {
   shouldNotifyUpdate,
   readUpdateCache,
   writeUpdateCache,
+  resolveSpawnDetachedNodeInvocation,
 } from '../dist/update/index.js';
 
 test('normalizeSemverBase strips prerelease', () => {
@@ -125,4 +126,34 @@ test('acquireSingleFlightLock prevents duplicate spawns until ttl expires', asyn
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('resolveSpawnDetachedNodeInvocation uses script when execPath is a JS runtime', () => {
+  assert.deepEqual(
+    resolveSpawnDetachedNodeInvocation({
+      execPath: '/usr/bin/node',
+      script: '/repo/apps/cli/dist/index.mjs',
+      args: ['self', 'check', '--quiet'],
+    }),
+    { file: '/usr/bin/node', args: ['/repo/apps/cli/dist/index.mjs', 'self', 'check', '--quiet'], isRuntime: true },
+  );
+  assert.deepEqual(
+    resolveSpawnDetachedNodeInvocation({
+      execPath: '/usr/local/bin/bun',
+      script: '/repo/apps/cli/dist/index.mjs',
+      args: ['self', 'check', '--quiet'],
+    }),
+    { file: '/usr/local/bin/bun', args: ['/repo/apps/cli/dist/index.mjs', 'self', 'check', '--quiet'], isRuntime: true },
+  );
+});
+
+test('resolveSpawnDetachedNodeInvocation omits script when execPath is a self-contained CLI binary', () => {
+  assert.deepEqual(
+    resolveSpawnDetachedNodeInvocation({
+      execPath: '/home/user/.happier/bin/happier',
+      script: '/$bunfs/dist/index.mjs',
+      args: ['self', 'check', '--quiet'],
+    }),
+    { file: '/home/user/.happier/bin/happier', args: ['self', 'check', '--quiet'], isRuntime: false },
+  );
 });
