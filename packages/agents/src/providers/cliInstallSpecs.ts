@@ -165,7 +165,13 @@ export const PROVIDER_CLI_INSTALL_SPECS: Readonly<Record<AgentId, ProviderCliIns
     install: {
       darwin: [npmGlobal('@github/copilot')],
       linux: [npmGlobal('@github/copilot')],
-      win32: [npmGlobal('@github/copilot')],
+      win32: [
+        {
+          cmd: 'npm',
+          args: ['install', '-g', '@github/copilot'],
+          note: 'Requires WSL (Windows Subsystem for Linux). Run inside your WSL terminal.',
+        },
+      ],
     },
   },
 } as const;

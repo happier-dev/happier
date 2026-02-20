@@ -485,6 +485,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         claudeCodeSessionIdCopied: 'Claude Code 工作階段 ID 已複製到剪貼簿',
         aiProvider: 'AI 提供者',
         failedToCopyClaudeCodeSessionId: '複製 Claude Code 工作階段 ID 失敗',
+        copilotSessionId: 'Copilot 工作階段 ID',
+        copilotSessionIdCopied: 'Copilot 工作階段 ID 已複製到剪貼簿',
         metadataCopied: '中繼資料已複製到剪貼簿',
         failedToCopyMetadata: '複製中繼資料失敗',
         failedToKillSession: '終止工作階段失敗',
@@ -562,6 +564,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             claude: 'Claude',
             codex: 'Codex',
             gemini: 'Gemini',
+            copilot: 'Copilot',
         },
         model: {
             title: '模型',
@@ -1383,6 +1386,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             message: ({ name }: { name: string }) => `確定要刪除「${name}」嗎？此操作無法復原。`,
             confirm: '刪除',
             cancel: '取消',
+        },
+        aiBackend: {
+            copilotSubtitleExperimental: 'GitHub Copilot CLI（實驗）',
         },
     }
 } as const;
