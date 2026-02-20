@@ -1,0 +1,108 @@
+---
+title: Encryption & plaintext storage
+description: Configure whether the server stores session content end-to-end encrypted or as plaintext.
+---
+
+Happier is designed around **end-to-end encryption (E2EE)**: clients encrypt session content locally and the server stores **ciphertext**.
+
+For some self-hosted or enterprise deployments, you may want to **opt out of E2EE for storage** so the server can store session content as **plaintext** (for example to enable future server-side indexing/search).
+
+This page explains the **server operator** configuration and what it means for **end users**.
+
+## What changes when plaintext storage is enabled?
+
+- **E2EE storage (default)**: the server cannot read session transcripts (it stores encrypted blobs).
+- **Plaintext storage**: the server *can* read and process new session content stored in plaintext.
+
+Important: plaintext storage is a **storage mode**, not an authentication mode.
+- Phase 1 plaintext storage still uses the normal Happier login model (device-key accounts).
+- Users can choose plaintext for new sessions only when the server policy allows it.
+
+## Storage policy (server-wide)
+
+Configure one of three storage policies:
+
+- `required_e2ee` (default): encrypted-only; plaintext writes are rejected.
+- `optional`: encrypted or plaintext is allowed depending on account/session mode.
+- `plaintext_only`: plaintext-only; encrypted writes are rejected.
+
+Env var:
+
+```bash
+HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=required_e2ee|optional|plaintext_only
+```
+
+### Recommended configurations
+
+Default E2EE server:
+
+```bash
+HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=required_e2ee
+```
+
+Allow plaintext storage (opt-in per account):
+
+```bash
+HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=optional
+HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT=1
+```
+
+Force plaintext-only (for “server-side features first” deployments):
+
+```bash
+HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=plaintext_only
+```
+
+## Account encryption mode (end-user toggle)
+
+When the server policy is `optional` and account opt-out is enabled, the UI can expose an account-level toggle:
+
+- `e2ee`: new sessions default to encrypted storage
+- `plain`: new sessions default to plaintext storage
+
+Env vars:
+
+```bash
+HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT=0|1
+HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE=e2ee|plain
+```
+
+Notes:
+- Switching account mode affects **new sessions** created after the change.
+- Existing sessions are **not** migrated (no retroactive decrypt/re-encrypt).
+
+## Per-session encryption mode
+
+Each session has a stable `encryptionMode` (`e2ee` or `plain`) chosen at creation time.
+
+This prevents “mixed-mode” content inside one session and makes it predictable for clients (and for future server-side features).
+
+## Sharing behavior
+
+- **Encrypted (E2EE) sessions**: sharing requires distributing a session data key to recipients (still E2EE).
+- **Plaintext sessions**: sharing is purely server-side authorization (no encrypted data key is needed).
+
+Public share links also work for plaintext sessions (the server returns plaintext envelopes).
+
+## Client compatibility
+
+- Older clients that only support encrypted writes continue to work when:
+  - policy is `required_e2ee`, or
+  - policy is `optional` and they create encrypted sessions.
+- Under `plaintext_only`, older clients will fail because encrypted writes are rejected.
+
+## Where clients learn the policy
+
+Clients use `GET /v1/features`:
+- gates: `features.encryption.plaintextStorage.enabled`, `features.encryption.accountOptOut.enabled`
+- details: `capabilities.encryption.storagePolicy`, `capabilities.encryption.defaultAccountMode`
+
+## Security checklist (plaintext mode)
+
+If you store plaintext session content on the server, treat it as sensitive application data:
+
+- Enforce HTTPS/TLS end-to-end (including between proxies and the server).
+- Encrypt disks and backups at rest.
+- Restrict database access and enable audit logging where possible.
+- Define retention and deletion policies appropriate for your org.
+

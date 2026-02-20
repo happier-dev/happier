@@ -9,3 +9,8 @@ This doc is intentionally high-level:
 - Encrypted payloads are uploaded and synced.
 - Sharing requires distributing data keys to authorized users (still encrypted end-to-end).
 
+## Plaintext storage (encryption opt-out)
+
+Some deployments may choose to store **new** session content as plaintext on the server (no E2EE for storage).
+
+This is a server-operator configuration. See: [Server → Encryption & plaintext storage](../server/encryption).

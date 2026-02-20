@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "auth",
+    "encryption",
     "auth-github",
     "auth-oidc",
     "auth-mtls"
