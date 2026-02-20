@@ -1,4 +1,4 @@
-import { dirname } from 'node:path';
+import { buildServicePath } from './servicePath';
 
 function xmlEscape(s: string): string {
   return String(s ?? '')
@@ -9,29 +9,10 @@ function xmlEscape(s: string): string {
     .replaceAll("'", '&apos;');
 }
 
-function splitPath(p: string): string[] {
-  return String(p ?? '')
-    .split(':')
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
+const MACOS_DEFAULT_PATH = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
 
 export function buildLaunchdPath(params: Readonly<{ execPath?: string; basePath?: string }> = {}): string {
-  const execPath = params.execPath ?? process.execPath;
-  const basePath = params.basePath ?? process.env.PATH ?? '';
-  const nodeDir = execPath ? dirname(execPath) : '';
-  const defaults = splitPath('/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin');
-  const fromNode = nodeDir ? [nodeDir] : [];
-  const fromEnv = splitPath(basePath);
-
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const part of [...fromNode, ...fromEnv, ...defaults]) {
-    if (seen.has(part)) continue;
-    seen.add(part);
-    out.push(part);
-  }
-  return out.join(':') || '/usr/bin:/bin:/usr/sbin:/sbin';
+  return buildServicePath({ ...params, defaultPath: MACOS_DEFAULT_PATH });
 }
 
 export function buildLaunchAgentPlistXml(params: Readonly<{

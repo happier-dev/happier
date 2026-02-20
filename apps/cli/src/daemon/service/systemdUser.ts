@@ -1,3 +1,11 @@
+import { buildServicePath } from './servicePath';
+
+const LINUX_DEFAULT_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+
+export function buildSystemdPath(params: Readonly<{ execPath?: string; basePath?: string }> = {}): string {
+  return buildServicePath({ ...params, defaultPath: LINUX_DEFAULT_PATH });
+}
+
 export function escapeSystemdValue(value: string): string {
   const s = String(value ?? '');
 
