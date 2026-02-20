@@ -18,7 +18,7 @@ function shouldAutoInstallDepsForRepoLocalCommand(cmd) {
   return true;
 }
 
-async function maybeAutoInstallRepoDeps({ repoRoot, cmd, env, autoInstallOverride = '', preflightRootOverride = '', preflightOnly = '' }) {
+async function maybeAutoInstallRepoDeps({ repoRoot, cmd, env, autoInstallOverride = '', preflightRootOverride = '' }) {
   const autoInstallRaw = String(autoInstallOverride ?? '').trim();
   const autoInstall = autoInstallRaw ? autoInstallRaw !== '0' : true;
   if (!autoInstall) return;
@@ -28,10 +28,6 @@ async function maybeAutoInstallRepoDeps({ repoRoot, cmd, env, autoInstallOverrid
   const preflightRoot = String(preflightRootOverride ?? '').trim() || repoRoot;
 
   await ensureDepsInstalled(preflightRoot, 'happier-monorepo', { quiet: false, env });
-
-  if (String(preflightOnly ?? '').trim() === '1') {
-    process.exit(0);
-  }
 }
 
 function usage() {
@@ -398,12 +394,15 @@ async function main() {
       env: effectiveEnv,
       autoInstallOverride,
       preflightRootOverride,
-      preflightOnly,
     });
   } catch (e) {
     process.stderr.write(`[repo-local] failed to install repo deps\n${String(e?.stack ?? e)}\n`);
     process.stderr.write('\nFix:\n  corepack enable\n  yarn install\n');
     process.exit(1);
+  }
+
+  if (preflightOnly === '1') {
+    process.exit(0);
   }
 
   const res = spawnSync(cmd, args, { cwd, env: effectiveEnv, stdio: 'inherit' });
