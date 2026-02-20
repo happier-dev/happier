@@ -24,7 +24,10 @@ describe('FeaturesResponseSchema', () => {
     expect(parsed.features.voice.enabled).toBe(false);
     expect(parsed.features.voice.happierVoice.enabled).toBe(false);
     expect(parsed.features.social.friends.enabled).toBe(false);
+    expect(parsed.features.encryption.plaintextStorage.enabled).toBe(false);
+    expect(parsed.features.encryption.accountOptOut.enabled).toBe(false);
     expect(parsed.features.auth.recovery.providerReset.enabled).toBe(false);
+    expect(parsed.features.auth.login.keyChallenge.enabled).toBe(false);
     expect(parsed.features.auth.ui.recoveryKeyReminder.enabled).toBe(false);
 
     expect(parsed.capabilities.bugReports).toEqual(DEFAULT_BUG_REPORTS_CAPABILITIES);
@@ -35,6 +38,12 @@ describe('FeaturesResponseSchema', () => {
       disabledByBuildPolicy: false,
     });
     expect(parsed.capabilities.oauth.providers).toEqual({});
+    expect(parsed.capabilities.encryption).toEqual({
+      storagePolicy: 'required_e2ee',
+      allowAccountOptOut: false,
+      defaultAccountMode: 'e2ee',
+    });
+    expect(parsed.capabilities.auth.login.methods).toEqual([]);
     expect(parsed.capabilities.auth.misconfig).toEqual([]);
   });
 

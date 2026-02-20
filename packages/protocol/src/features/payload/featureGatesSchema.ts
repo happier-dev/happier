@@ -11,6 +11,13 @@ const VoiceGateSchema = z.object({
 
 export const FeatureGatesSchema = z.object({
   bugReports: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+  encryption: z
+    .object({
+      plaintextStorage: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+      accountOptOut: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+    })
+    .optional()
+    .default({ plaintextStorage: DEFAULT_GATE_DISABLED, accountOptOut: DEFAULT_GATE_DISABLED }),
   attachments: z
     .object({
       uploads: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
@@ -65,6 +72,12 @@ export const FeatureGatesSchema = z.object({
         })
         .optional()
         .default({ providerReset: DEFAULT_GATE_DISABLED }),
+      login: z
+        .object({
+          keyChallenge: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+        })
+        .optional()
+        .default({ keyChallenge: DEFAULT_GATE_DISABLED }),
       ui: z
         .object({
           recoveryKeyReminder: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
@@ -75,6 +88,7 @@ export const FeatureGatesSchema = z.object({
     .optional()
     .default({
       recovery: { providerReset: DEFAULT_GATE_DISABLED },
+      login: { keyChallenge: DEFAULT_GATE_DISABLED },
       ui: { recoveryKeyReminder: DEFAULT_GATE_DISABLED },
     }),
 });

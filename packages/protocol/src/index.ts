@@ -51,6 +51,20 @@ export { buildConnectedServiceCredentialRecord } from './connect/buildConnectedS
 export { parseBooleanEnv, parseOptionalBooleanEnv } from './env/parseBooleanEnv.js';
 
 export {
+  SessionStoredMessageContentSchema,
+  type SessionStoredMessageContent,
+} from './sessionMessages/sessionStoredMessageContent.js';
+
+export {
+  isSessionEncryptionModeAllowedByStoragePolicy,
+  isStoredContentKindAllowedForSessionByStoragePolicy,
+  resolveEffectiveDefaultAccountEncryptionMode,
+  resolveStoredContentKindForSessionEncryptionMode,
+  type SessionEncryptionMode,
+  type SessionStoredContentKind,
+} from './encryption/storagePolicyDecisions.js';
+
+export {
   BOX_BUNDLE_MIN_BYTES,
   BOX_BUNDLE_NONCE_BYTES,
   BOX_BUNDLE_PUBLIC_KEY_BYTES,
@@ -668,6 +682,13 @@ export {
   type AccountProfileResponse,
   type LinkedProvider,
 } from './account/profile.js';
+
+export {
+  AccountEncryptionModeResponseSchema,
+  AccountEncryptionModeUpdateRequestSchema,
+  type AccountEncryptionModeResponse,
+  type AccountEncryptionModeUpdateRequest,
+} from './account/encryptionMode.js';
 
 export {
   ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,

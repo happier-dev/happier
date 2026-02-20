@@ -5,6 +5,7 @@ export const AuthCapabilitiesSchema = z.object({
     methods: z.array(z.object({ id: z.string(), enabled: z.boolean() })),
   }),
   login: z.object({
+    methods: z.array(z.object({ id: z.string(), enabled: z.boolean() })),
     requiredProviders: z.array(z.string()),
   }),
   recovery: z.object({
@@ -60,7 +61,7 @@ export type AuthCapabilities = z.infer<typeof AuthCapabilitiesSchema>;
 
 export const DEFAULT_AUTH_CAPABILITIES: AuthCapabilities = {
   signup: { methods: [] },
-  login: { requiredProviders: [] },
+  login: { methods: [], requiredProviders: [] },
   recovery: { providerReset: { providers: [] } },
   ui: { autoRedirect: { enabled: false, providerId: null } },
   providers: {},

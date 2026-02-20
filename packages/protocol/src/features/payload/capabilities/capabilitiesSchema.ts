@@ -14,10 +14,15 @@ import {
   AuthCapabilitiesSchema,
   DEFAULT_AUTH_CAPABILITIES,
 } from './authCapabilities.js';
+import {
+  DEFAULT_ENCRYPTION_CAPABILITIES,
+  EncryptionCapabilitiesSchema,
+} from './encryptionCapabilities.js';
 
 export const CapabilitiesSchema = z.object({
   bugReports: BugReportsCapabilitiesSchema.optional().default(DEFAULT_BUG_REPORTS_CAPABILITIES),
   voice: VoiceCapabilitiesSchema.optional().default(DEFAULT_VOICE_CAPABILITIES),
+  encryption: EncryptionCapabilitiesSchema.optional().default(DEFAULT_ENCRYPTION_CAPABILITIES),
   social: z
     .object({
       friends: SocialFriendsCapabilitiesSchema.optional().default(DEFAULT_SOCIAL_FRIENDS_CAPABILITIES),

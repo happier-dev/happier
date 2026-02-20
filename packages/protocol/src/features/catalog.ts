@@ -99,10 +99,28 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: [],
     representation: 'server',
   },
+  'auth.login.keyChallenge': {
+    description: 'Key-challenge login route availability (POST /v1/auth).',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'server',
+  },
   'auth.ui.recoveryKeyReminder': {
     description: 'Recovery key reminder UI behavior.',
     defaultFailMode: 'fail_closed',
     dependencies: [],
+    representation: 'server',
+  },
+  'encryption.plaintextStorage': {
+    description: 'Plaintext session storage support (no E2EE at rest).',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'server',
+  },
+  'encryption.accountOptOut': {
+    description: 'Per-account encryption opt-out toggle support.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['encryption.plaintextStorage'],
     representation: 'server',
   },
   'app.analytics': {
