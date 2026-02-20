@@ -2,7 +2,12 @@ name: "Roadmap: Add to Project"
 
 on:
   issues:
-    types: [opened, reopened, transferred, labeled]
+    types: [opened, reopened, transferred, labeled, unlabeled]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue number to resync"
+        required: true
 
 jobs:
   add-to-project:
@@ -10,11 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: roadmap
     if: >-
-      contains(github.event.issue.labels.*.name, 'roadmap') &&
-      (
-        (vars.ROADMAP_BOT_APP_ID != '' || secrets.ROADMAP_BOT_APP_ID != '') &&
-        (secrets.ROADMAP_BOT_PRIVATE_KEY != '')
-      )
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue != null && contains(github.event.issue.labels.*.name, 'roadmap'))
     permissions:
       contents: read
 
@@ -37,13 +39,27 @@ jobs:
         with:
           github-token: ${{ steps.app_token.outputs.token }}
           script: |
-            const contentNodeId = context.payload.issue?.node_id ?? context.payload.pull_request?.node_id ?? null;
+            const { owner, repo } = context.repo;
+
+            let issue = context.payload.issue ?? null;
+            if (!issue && context.eventName === 'workflow_dispatch') {
+              const raw = String(context.payload.inputs?.issue_number ?? '').trim();
+              const issueNumber = Number.parseInt(raw, 10);
+              if (!Number.isFinite(issueNumber) || issueNumber <= 0) {
+                throw new Error(`Invalid workflow_dispatch input: issue_number='${raw}'`);
+              }
+
+              const res = await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+              issue = res?.data ?? null;
+            }
+
+            const contentNodeId = issue?.node_id ?? null;
             if (!contentNodeId) {
               core.info('Missing issue/PR node id in event payload; skipping.');
               return;
             }
 
-            const labels = (context.payload.issue?.labels ?? context.payload.pull_request?.labels ?? [])
+            const labels = (issue?.labels ?? [])
               .map((l) => (typeof l === 'string' ? l : String(l?.name ?? '')))
               .map((n) => n.trim())
               .filter(Boolean);
