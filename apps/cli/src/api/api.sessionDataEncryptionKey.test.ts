@@ -30,6 +30,10 @@ vi.mock('@/ui/logger', () => ({
   },
 }));
 
+vi.mock('@/features/serverFeaturesClient', () => ({
+  fetchServerFeaturesSnapshot: async () => ({ status: 'unsupported', reason: 'endpoint_missing' }),
+}));
+
 describe('ApiClient.getOrCreateSession (dataEncryptionKey)', () => {
   beforeEach(() => {
     mockPost.mockReset();
