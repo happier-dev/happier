@@ -680,3 +680,19 @@ CRITICAL: Keep TypeScript strict everywhere
 
 CRITICAL: Enforce file size and responsibility boundaries
 If a file is large or multi-purpose, split it by domain/responsibility instead of expanding a monolith.
+
+## Encryption Opt-Out / Plaintext Session Storage (2026-02)
+
+Sessions can be stored in two modes, controlled by `Session.encryptionMode`:
+- `e2ee`: message/pending content is `{ t: 'encrypted', c: <base64> }` and must be decrypted client-side.
+- `plain`: message/pending content is `{ t: 'plain', v: <RawRecord> }` and must *not* be decrypted client-side.
+
+Server policy is advertised in `/v1/features`:
+- gate: `features.encryption.plaintextStorage.enabled` / `features.encryption.accountOptOut.enabled`
+- details: `capabilities.encryption.storagePolicy` (`required_e2ee | optional | plaintext_only`)
+
+Implementation rule of thumb:
+- Never assume `content.t === 'encrypted'`; always branch on the envelope.
+- In `plain` sessions, bypass encrypt/decrypt for `metadata`, `agentState`, messages, and pending rows.
+
+Core e2e coverage lives under `packages/tests/suites/core-e2e/` and includes plaintext roundtrip scenarios (including public share + pending queue v2).
