@@ -22,6 +22,31 @@ test('publish-docker supports workflow_call and is wired from release workflow',
     /node scripts\/pipeline\/docker\/publish-images\.mjs/,
     'publish-docker should delegate docker build+push to the pipeline script',
   );
+  assert.match(
+    publishDocker,
+    /peter-evans\/dockerhub-description@/,
+    'publish-docker should publish Docker Hub README/description',
+  );
+  assert.match(
+    publishDocker,
+    /repository:\s*happierdev\/relay-server/,
+    'publish-docker should publish relay-server Docker Hub README',
+  );
+  assert.match(
+    publishDocker,
+    /readme-filepath:\s*docker\/dockerhub\/relay-server\.md/,
+    'publish-docker should use repo README file for relay-server',
+  );
+  assert.match(
+    publishDocker,
+    /repository:\s*happierdev\/dev-box/,
+    'publish-docker should publish dev-box Docker Hub README',
+  );
+  assert.match(
+    publishDocker,
+    /readme-filepath:\s*docker\/dockerhub\/dev-box\.md/,
+    'publish-docker should use repo README file for dev-box',
+  );
 
   const release = await loadWorkflow('release.yml');
   assert.match(release, /publish_docker:/);

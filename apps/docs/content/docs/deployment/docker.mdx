@@ -31,6 +31,64 @@ Notes:
   - Serve UI under `/ui`: set `HAPPIER_SERVER_UI_PREFIX=/ui`.
 - It does not install a managed host service. Upgrades happen when the container is restarted after pulling a new image tag.
 
+## Optional: expose a relay securely with Tailscale
+
+If you want to access your self-hosted relay from a phone or remote machine without opening inbound ports, we recommend using **Tailscale** as a sidecar and publishing the server via **Tailscale Serve**.
+
+This approach:
+
+- avoids public ingress and TLS setup
+- gives you a stable HTTPS URL inside your tailnet
+- keeps the Happier server image unprivileged (Tailscale runs in its own container)
+
+Minimal `docker-compose.yml` example (preview channel):
+
+```yaml
+services:
+  relay:
+    image: happierdev/relay-server:preview
+    environment:
+      PORT: "3005"
+      # Optional:
+      # Disable UI serving:
+      # HAPPIER_SERVER_UI_DIR: ""
+    volumes:
+      - happier-relay-data:/data
+
+  tailscale:
+    image: tailscale/tailscale:stable
+    network_mode: service:relay
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY}
+      TS_HOSTNAME: happier-relay
+      TS_STATE_DIR: /var/lib/tailscale
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+    command: >
+      sh -lc '
+        tailscaled --state=${TS_STATE_DIR}/tailscaled.state &
+        sleep 2
+        tailscale up --authkey="${TS_AUTHKEY}" --hostname="${TS_HOSTNAME}" --accept-dns=false
+        tailscale serve --bg --https=443 http://127.0.0.1:3005
+        tail -f /dev/null
+      '
+
+volumes:
+  happier-relay-data:
+  tailscale-state:
+```
+
+Notes:
+
+- Use an **ephemeral**, **one-time** pre-auth key for `TS_AUTHKEY` when possible.
+- `tailscale serve` publishes the Happier UI + API (including WebSockets) behind the Tailscale HTTPS endpoint.
+- If your environment can’t use `/dev/net/tun` (some restricted hosts), fall back to a normal reverse proxy (Caddy/Traefik/nginx) or run Tailscale on the host OS and proxy to the container.
+
 ## Build images
 
 This repo includes a top-level `Dockerfile` with multiple targets.

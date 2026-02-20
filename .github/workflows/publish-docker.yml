@@ -130,3 +130,23 @@ jobs:
             --push-latest "${{ inputs.push_latest }}" \
             --build-relay "${{ inputs.build_relay }}" \
             --build-devcontainer "${{ inputs.build_devcontainer }}"
+
+      - name: Update Docker Hub README (relay-server)
+        if: ${{ inputs.build_relay }}
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: happierdev/relay-server
+          readme-filepath: docker/dockerhub/relay-server.md
+          short-description: Self-host the Happier Server (Docker image)
+
+      - name: Update Docker Hub README (dev-box)
+        if: ${{ inputs.build_devcontainer }}
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: happierdev/dev-box
+          readme-filepath: docker/dockerhub/dev-box.md
+          short-description: Happier dev box (CLI + daemon in Docker)
