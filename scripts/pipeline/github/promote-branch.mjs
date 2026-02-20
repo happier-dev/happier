@@ -82,6 +82,41 @@ function run(cmd, args, opts) {
 }
 
 /**
+ * @param {unknown} err
+ * @returns {{ stdout: string; stderr: string; message: string }}
+ */
+function normalizeExecError(err) {
+  const anyErr = /** @type {{ stdout?: unknown; stderr?: unknown; message?: unknown }} */ (err ?? {});
+  return {
+    stdout: typeof anyErr?.stdout === 'string' ? anyErr.stdout : '',
+    stderr: typeof anyErr?.stderr === 'string' ? anyErr.stderr : '',
+    message: typeof anyErr?.message === 'string' ? anyErr.message : String(err ?? ''),
+  };
+}
+
+/**
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+function isGhNotFoundError(err) {
+  const { stderr, message } = normalizeExecError(err);
+  return stderr.includes('(HTTP 404)') || message.includes('(HTTP 404)');
+}
+
+/**
+ * @param {unknown} err
+ * @returns {string}
+ */
+function formatExecError(err) {
+  const { stdout, stderr, message } = normalizeExecError(err);
+  const parts = [];
+  if (message) parts.push(message.trim());
+  if (stderr) parts.push(stderr.trim());
+  if (stdout) parts.push(stdout.trim());
+  return parts.filter(Boolean).join('\n');
+}
+
+/**
  * @param {string[]} files
  */
 function classifyChangedComponents(files) {
@@ -225,13 +260,18 @@ function main() {
   const force = mode === 'reset';
 
   try {
-    run('gh', ['api', '-X', 'PATCH', updateApi, '-f', `sha=${sourceSha}`, '-f', `force=${force}`], { env: ghEnv });
-  } catch {
+    run('gh', ['api', '-X', 'PATCH', updateApi, '-F', `sha=${sourceSha}`, '-F', `force=${force}`], { env: ghEnv });
+  } catch (err) {
+    if (!isGhNotFoundError(err)) {
+      fail(`Failed to update refs/heads/${target}.\n${formatExecError(err)}`);
+    }
+
     // If ref doesn't exist yet, create it.
     const createApi = `repos/${repo}/git/refs`;
-    run('gh', ['api', '-X', 'POST', createApi, '-f', `ref=refs/heads/${target}`, '-f', `sha=${sourceSha}`], { env: ghEnv });
+    run('gh', ['api', '-X', 'POST', createApi, '-f', `ref=refs/heads/${target}`, '-f', `sha=${sourceSha}`], {
+      env: ghEnv,
+    });
   }
 }
 
 main();
-
