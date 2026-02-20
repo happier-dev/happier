@@ -222,29 +222,6 @@ jobs:
         if: steps.bump_website.outputs.skipped != 'true' || steps.sync_installers.outputs.changed == 'true'
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add \
-            apps/website/package.json \
-            apps/website/public/install \
-            apps/website/public/install.sh \
-            apps/website/public/install-preview \
-            apps/website/public/install-preview.sh \
-            apps/website/public/self-host.sh \
-            apps/website/public/self-host \
-            apps/website/public/self-host-preview \
-            apps/website/public/self-host-preview.sh \
-            apps/website/public/install.ps1 \
-            apps/website/public/install-preview.ps1 \
-            apps/website/public/self-host.ps1 \
-            apps/website/public/self-host-preview.ps1 \
-            apps/website/public/happier-release.pub
-
-          if git diff --cached --quiet; then
-            echo "did_commit=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
           if [ "${{ steps.bump_website.outputs.skipped }}" != "true" ]; then
             message="chore(release): bump website to v${{ steps.bump_website.outputs.version }}"
             if [ "${{ steps.sync_installers.outputs.changed }}" = "true" ]; then
@@ -254,26 +231,20 @@ jobs:
             message="chore(release): sync website installers from release sources"
           fi
 
-          git commit -m "${message}"
-          echo "did_commit=true" >> "$GITHUB_OUTPUT"
-
-      - name: Detect whether source ref is a branch
-        id: source_ref_kind
-        run: |
-          set -euo pipefail
           src="${{ steps.resolve.outputs.ref }}"
-          if git ls-remote --exit-code --heads origin "${src}" >/dev/null 2>&1; then
-            echo "is_branch=true" >> "$GITHUB_OUTPUT"
+          paths="apps/website/package.json,apps/website/public/install,apps/website/public/install.sh,apps/website/public/install-preview,apps/website/public/install-preview.sh,apps/website/public/self-host.sh,apps/website/public/self-host,apps/website/public/self-host-preview,apps/website/public/self-host-preview.sh,apps/website/public/install.ps1,apps/website/public/install-preview.ps1,apps/website/public/self-host.ps1,apps/website/public/self-host-preview.ps1,apps/website/public/happier-release.pub"
+          out="$(node scripts/pipeline/run.mjs github-commit-and-push \
+            --paths "${paths}" \
+            --allow-missing false \
+            --message "${message}" \
+            --push-ref "${src}" \
+            --push-mode auto)"
+
+          if echo "${out}" | grep -q "DID_COMMIT=true"; then
+            echo "did_commit=true" >> "$GITHUB_OUTPUT"
           else
-            echo "is_branch=false" >> "$GITHUB_OUTPUT"
+            echo "did_commit=false" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Push source ref (only for branches)
-        if: steps.commit_changes.outputs.did_commit == 'true' && steps.source_ref_kind.outputs.is_branch == 'true'
-        run: |
-          set -euo pipefail
-          src="${{ steps.resolve.outputs.ref }}"
-          git push origin "HEAD:refs/heads/$src"
 
       - name: Promote source ref to deploy branch
         env:
@@ -281,7 +252,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/github/promote-deploy-branch.mjs \
+          node scripts/pipeline/run.mjs promote-deploy-branch \
             --deploy-environment "${{ inputs.environment }}" \
             --component website \
             --sha "$(git rev-parse HEAD)" \
@@ -295,8 +266,8 @@ jobs:
           HAPPIER_WEBSITE_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS || secrets.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/deploy/trigger-webhooks.mjs \
-            --environment "${{ inputs.environment }}" \
+          node scripts/pipeline/run.mjs deploy \
+            --deploy-environment "${{ inputs.environment }}" \
             --component "website" \
             --repository "${{ github.repository }}" \
             --ref-name "deploy/${{ inputs.environment }}/website"

@@ -222,21 +222,17 @@ jobs:
         if: inputs.run_tests
         run: yarn --cwd apps/server test
 
-      - name: Commit version bump (source ref)
-        if: steps.bump_server.outputs.skipped != 'true'
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add apps/server/package.json packages/relay-server/package.json
-          git commit -m "chore(release): bump server to v${{ steps.bump_server.outputs.version }}"
-
-      - name: Push source ref (only for branches)
+      - name: Commit + push version bump (pipeline)
         if: steps.bump_server.outputs.skipped != 'true'
         run: |
           set -euo pipefail
           src="${{ steps.resolve.outputs.ref }}"
-          git push origin "HEAD:refs/heads/$src"
+          node scripts/pipeline/run.mjs github-commit-and-push \
+            --paths "apps/server/package.json,packages/relay-server/package.json" \
+            --allow-missing false \
+            --message "chore(release): bump server to v${{ steps.bump_server.outputs.version }}" \
+            --push-ref "${src}" \
+            --push-mode auto
 
       - name: Bootstrap minisign
         if: inputs.publish_runtime_release == true
@@ -312,7 +308,7 @@ jobs:
             title="Happier Server Stable"
             prerelease="false"
           fi
-          node scripts/pipeline/github/publish-release.mjs \
+          node scripts/pipeline/run.mjs github-publish-release \
             --tag "${tag}" \
             --title "${title}" \
             --target-sha "$(git rev-parse HEAD)" \
@@ -334,7 +330,7 @@ jobs:
           version="$(node -p 'require("./apps/server/package.json").version' | tr -d '\n')"
           tag="server-v${version}"
           title="Happier Server v${version}"
-          node scripts/pipeline/github/publish-release.mjs \
+          node scripts/pipeline/run.mjs github-publish-release \
             --tag "${tag}" \
             --title "${title}" \
             --target-sha "$(git rev-parse HEAD)" \
@@ -350,7 +346,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/github/promote-deploy-branch.mjs \
+          node scripts/pipeline/run.mjs promote-deploy-branch \
             --deploy-environment "${{ inputs.environment }}" \
             --component server \
             --sha "$(git rev-parse HEAD)" \
@@ -365,8 +361,8 @@ jobs:
           HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS || secrets.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/deploy/trigger-webhooks.mjs \
-            --environment "${{ inputs.environment }}" \
+          node scripts/pipeline/run.mjs deploy \
+            --deploy-environment "${{ inputs.environment }}" \
             --component "server" \
             --repository "${{ github.repository }}" \
             --ref-name "deploy/${{ inputs.environment }}/server"

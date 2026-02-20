@@ -131,7 +131,7 @@ jobs:
           release_message: ${{ inputs.release_message }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/github/publish-release.mjs \
+          node scripts/pipeline/run.mjs github-publish-release \
             --tag "${{ inputs.tag }}" \
             --title "${{ inputs.title }}" \
             --target-sha "${{ inputs.target_sha }}" \

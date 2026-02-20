@@ -254,18 +254,6 @@ jobs:
           fi
           echo "dir=${dir}" >> "$GITHUB_OUTPUT"
 
-      - name: Set preview versions (working tree only)
-        if: inputs.channel == 'preview'
-        run: |
-          set -euo pipefail
-          node scripts/pipeline/npm/set-preview-versions.mjs \
-            --publish-cli "${{ inputs.publish_cli }}" \
-            --publish-stack "${{ inputs.publish_stack }}" \
-            --publish-server "${{ inputs.publish_server }}" \
-            --server-runner-dir "${SERVER_RUNNER_DIR}"
-        env:
-          SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
-
       - name: Install Sapling
         if: inputs.publish_cli && inputs.run_tests
         run: |
@@ -308,22 +296,44 @@ jobs:
             echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
           fi
 
+          versions_json="{}"
+          if [ "${INPUT_CHANNEL}" = "preview" ]; then
+            versions_json="$(node scripts/pipeline/run.mjs npm-set-preview-versions \
+              --publish-cli "${INPUT_PUBLISH_CLI}" \
+              --publish-stack "${INPUT_PUBLISH_STACK}" \
+              --publish-server "${INPUT_PUBLISH_SERVER}" \
+              --server-runner-dir "${SERVER_RUNNER_DIR}" \
+              --write false)"
+          fi
+
           if [ "${INPUT_PUBLISH_CLI}" = "true" ]; then
-            cli_version="$(node -p 'require("./apps/cli/package.json").version' | tr -d '\n')"
+            if [ "${INPUT_CHANNEL}" = "preview" ]; then
+              cli_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.cli||\"\"));' "${versions_json}")"
+            else
+              cli_version="$(node -p 'require("./apps/cli/package.json").version' | tr -d '\n')"
+            fi
             echo "cli_version=${cli_version}" >> "$GITHUB_OUTPUT"
           else
             echo "cli_version=SKIP" >> "$GITHUB_OUTPUT"
           fi
 
           if [ "${INPUT_PUBLISH_STACK}" = "true" ]; then
-            stack_version="$(node -p 'require("./apps/stack/package.json").version' | tr -d '\n')"
+            if [ "${INPUT_CHANNEL}" = "preview" ]; then
+              stack_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.stack||\"\"));' "${versions_json}")"
+            else
+              stack_version="$(node -p 'require("./apps/stack/package.json").version' | tr -d '\n')"
+            fi
             echo "stack_version=${stack_version}" >> "$GITHUB_OUTPUT"
           else
             echo "stack_version=SKIP" >> "$GITHUB_OUTPUT"
           fi
 
           if [ "${INPUT_PUBLISH_SERVER}" = "true" ]; then
-            server_version="$(node -p 'require("./" + process.env.SERVER_RUNNER_DIR + "/package.json").version' | tr -d '\n')"
+            if [ "${INPUT_CHANNEL}" = "preview" ]; then
+              server_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.server||\"\"));' "${versions_json}")"
+            else
+              server_version="$(node -p 'require("./" + process.env.SERVER_RUNNER_DIR + "/package.json").version' | tr -d '\n')"
+            fi
             echo "server_version=${server_version}" >> "$GITHUB_OUTPUT"
           else
             echo "server_version=SKIP" >> "$GITHUB_OUTPUT"
@@ -388,7 +398,7 @@ jobs:
           SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/npm/release-packages.mjs \
+          node scripts/pipeline/run.mjs npm-release \
             --channel "${{ inputs.channel }}" \
             --publish-cli "${{ inputs.publish_cli }}" \
             --publish-stack "${{ inputs.publish_stack }}" \
@@ -545,7 +555,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/npm/publish-tarball.mjs \
+          node scripts/pipeline/run.mjs npm-publish \
             --channel "${{ inputs.channel }}" \
             --tarball-dir "dist/release-assets/cli"
 
@@ -579,7 +589,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/npm/publish-tarball.mjs \
+          node scripts/pipeline/run.mjs npm-publish \
             --channel "${{ inputs.channel }}" \
             --tarball-dir "dist/release-assets/stack"
 
@@ -613,7 +623,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/npm/publish-tarball.mjs \
+          node scripts/pipeline/run.mjs npm-publish \
             --channel "${{ inputs.channel }}" \
             --tarball-dir "dist/release-assets/server"
 

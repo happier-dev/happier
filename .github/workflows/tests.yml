@@ -116,6 +116,91 @@ env:
   HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
 
 jobs:
+  ui-e2e:
+    if: ${{ github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call' }}
+    name: UI E2E (Playwright)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    env:
+      # UI E2E boots Expo web; keep web assets available to avoid CI-only runtime surprises.
+      HAPPIER_UI_VENDOR_WEB_ASSETS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect UI E2E-relevant changes
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            ui_e2e:
+              - 'apps/ui/**'
+              - 'apps/server/**'
+              - 'apps/cli/**'
+              - 'packages/tests/**'
+              - 'package.json'
+              - 'yarn.lock'
+
+      - name: Skip UI E2E (no relevant changes)
+        if: steps.changes.outputs.ui_e2e != 'true'
+        run: echo "UI E2E skipped: no relevant changes."
+
+      - name: Setup Node (GitHub Actions)
+        if: steps.changes.outputs.ui_e2e == 'true' && env.ACT != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Setup Node (act)
+        if: steps.changes.outputs.ui_e2e == 'true' && env.ACT == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      - name: Enable Corepack
+        if: steps.changes.outputs.ui_e2e == 'true'
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        if: steps.changes.outputs.ui_e2e == 'true'
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        if: steps.changes.outputs.ui_e2e == 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install sqlite3 (if missing)
+        if: steps.changes.outputs.ui_e2e == 'true'
+        run: |
+          if command -v sqlite3 >/dev/null 2>&1; then
+            sqlite3 --version
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y sqlite3
+          sqlite3 --version
+
+      - name: Run UI E2E
+        if: steps.changes.outputs.ui_e2e == 'true'
+        run: yarn -s test:e2e:ui
+
+      - name: Upload UI E2E artifacts (Playwright)
+        if: steps.changes.outputs.ui_e2e == 'true' && failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-e2e-playwright-artifacts
+          path: |
+            packages/tests/.project/logs/e2e/ui-playwright
+            .project/logs/e2e/*ui-e2e*
+          if-no-files-found: ignore
+
   ui:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_ui }}
     name: UI Tests (unit + integration)
@@ -429,6 +514,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
       - name: Verify published installers are synced
         run: |
           set -euo pipefail
@@ -493,6 +583,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
       - name: Verify published installers are synced
         run: node scripts/pipeline/run.mjs release-sync-installers --check
 
@@ -552,6 +647,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
 
       - name: Verify published installers are synced
         shell: pwsh
@@ -997,7 +1097,7 @@ jobs:
 
           # Create a real account + token via the normal `/v1/auth` flow (ed25519 signature),
           # then write the credentials file expected by `.env.integration-test`.
-          node scripts/pipeline/testing/create-auth-credentials.mjs
+          node scripts/pipeline/run.mjs testing-create-auth-credentials
 
           yarn --cwd apps/cli -s vitest run --config vitest.integration.config.ts src/daemon/daemon.integration.test.ts
 

@@ -144,7 +144,7 @@ jobs:
         if: inputs.environment == 'production'
         run: |
           set -euo pipefail
-          node scripts/pipeline/tauri/validate-updater-pubkey.mjs
+          node scripts/pipeline/run.mjs tauri-validate-updater-pubkey --config-path apps/ui/src-tauri/tauri.conf.json
 
       - name: Enable Corepack (Yarn)
         run: |
@@ -251,114 +251,21 @@ jobs:
           echo "ui_version=${ui_version}" >> "$GITHUB_OUTPUT"
           echo "build_version=${build_version}" >> "$GITHUB_OUTPUT"
 
-      - name: Materialize Tauri signing key (if configured)
-        if: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
-        env:
-          TAURI_SIGNING_PRIVATE_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          if [ -z "${RUNNER_TEMP:-}" ]; then
-            echo "RUNNER_TEMP is required to materialize signing key." >&2
-            exit 1
-          fi
-          key_path="${RUNNER_TEMP}/tauri.signing.key"
-          printf '%s' "${TAURI_SIGNING_PRIVATE_KEY_RAW}" > "${key_path}"
-          chmod 600 "${key_path}" || true
-          echo "TAURI_SIGNING_PRIVATE_KEY=${key_path}" >> "$GITHUB_ENV"
-          echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${TAURI_SIGNING_PRIVATE_KEY_PASSWORD}" >> "$GITHUB_ENV"
-
       - name: Build desktop updater artifacts
         env:
           CI: "true"
           APP_ENV: ${{ inputs.environment }}
           TAURI_TARGET: ${{ matrix.tauri_target }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ steps.apple_id.outputs.identity }}
         run: |
           set -euo pipefail
-          cd apps/ui
-
-          if [ -n "${TAURI_TARGET}" ]; then
-            rustup target add "${TAURI_TARGET}"
-          fi
-
-          target_args=()
-          if [ -n "${TAURI_TARGET}" ]; then
-            target_args+=(--target "${TAURI_TARGET}")
-          fi
-
-          configs=()
-
-          # Updater artifacts are disabled by default in src-tauri/tauri.conf.json so local builds do not require
-          # a signing key. In CI, explicitly enable them only when the signing private key is available.
-          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-            updater_override=""
-            if [ -n "${RUNNER_TEMP:-}" ]; then
-              updater_override="${RUNNER_TEMP}/tauri.updater.override.json"
-            elif updater_override_tmp="$(mktemp 2>/dev/null)"; then
-              updater_override="${updater_override_tmp}"
-            else
-              updater_override="/tmp/tauri.updater.override.json"
-            fi
-            if [ -z "${updater_override:-}" ]; then
-              echo "Unable to allocate a temp file path for Tauri updater override." >&2
-              exit 1
-            fi
-            mkdir -p "$(dirname "${updater_override}")"
-            touch "${updater_override}" || {
-              echo "Updater override file path is not writable: ${updater_override}" >&2
-              exit 1
-            }
-            node -e '
-              const fs = require("node:fs");
-              const out = process.argv[1];
-              const payload = { bundle: { createUpdaterArtifacts: true } };
-              fs.writeFileSync(out, `${JSON.stringify(payload)}\n`, "utf8");
-            ' "${updater_override}"
-            configs+=(--config "${updater_override}")
-          fi
-
-          # macOS codesigning (optional). If APPLE_CERTIFICATE is configured, sign the app during the build.
-          if [ "${RUNNER_OS}" = "macOS" ] && [ -n "${APPLE_SIGNING_IDENTITY}" ]; then
-            codesign_override="${RUNNER_TEMP}/tauri.codesign.override.json"
-            node -e '
-              const fs = require("node:fs");
-              const path = process.argv[1];
-              const signingIdentity = String(process.env.APPLE_SIGNING_IDENTITY ?? "");
-              const payload = { bundle: { macOS: { signingIdentity, hardenedRuntime: true } } };
-              fs.writeFileSync(path, `${JSON.stringify(payload)}\n`, "utf8");
-            ' "${codesign_override}"
-            configs+=(--config "${codesign_override}")
-          fi
-
-          if [ "${{ inputs.environment }}" = "preview" ]; then
-            override=""
-            if [ -n "${RUNNER_TEMP:-}" ]; then
-              override="${RUNNER_TEMP}/tauri.version.override.json"
-            elif override_tmp="$(mktemp 2>/dev/null)"; then
-              override="${override_tmp}"
-            else
-              override="/tmp/tauri.version.override.json"
-            fi
-            if [ -z "${override:-}" ]; then
-              echo "Unable to allocate a temp file path for Tauri version override." >&2
-              exit 1
-            fi
-            mkdir -p "$(dirname "${override}")"
-            touch "${override}" || {
-              echo "Version override file path is not writable: ${override}" >&2
-              exit 1
-            }
-            VERSION_OVERRIDE="${{ steps.ver.outputs.build_version }}" node -e '
-              const fs = require("node:fs");
-              const out = process.argv[1];
-              const version = String(process.env.VERSION_OVERRIDE ?? "");
-              fs.writeFileSync(out, `${JSON.stringify({ version })}\n`, "utf8");
-            ' "${override}"
-            yarn tauri build --config src-tauri/tauri.preview.conf.json --config "${override}" "${configs[@]}" "${target_args[@]}"
-          else
-            yarn tauri build "${configs[@]}" "${target_args[@]}"
-          fi
+          node scripts/pipeline/run.mjs tauri-build-updater-artifacts \
+            --environment "${{ inputs.environment }}" \
+            --build-version "${{ steps.ver.outputs.build_version }}" \
+            --tauri-target "${TAURI_TARGET}" \
+            --ui-dir "apps/ui"
 
       - name: Notarize macOS artifacts (updater + DMG) (macOS)
         if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != '' && env.APPLE_API_KEY_ID != '' && env.APPLE_API_ISSUER_ID != '' && env.APPLE_API_PRIVATE_KEY != '' && env.TAURI_SIGNING_PRIVATE_KEY != ''
@@ -368,89 +275,24 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
           APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           TAURI_TARGET: ${{ matrix.tauri_target }}
         run: |
           set -euo pipefail
-
-          cd apps/ui
-
-          base_dir="src-tauri/target"
-          search_dir="${base_dir}"
-          if [ -n "${TAURI_TARGET}" ]; then
-            search_dir="${base_dir}/${TAURI_TARGET}"
-          fi
-
-          sig_matches=()
-          while IFS= read -r match; do
-            sig_matches+=("${match}")
-          done < <(find "${search_dir}" -path '*/release/bundle/*' -type f -name '*.app.tar.gz.sig' | sort)
-          if [ "${#sig_matches[@]}" -ne 1 ]; then
-            echo "Expected exactly one macOS updater signature under ${search_dir}; found ${#sig_matches[@]}" >&2
-            if [ "${#sig_matches[@]}" -gt 0 ]; then
-              printf 'Matches:\n' >&2
-              printf '  %s\n' "${sig_matches[@]}" >&2
-            fi
-            exit 1
-          fi
-          sig_path="${sig_matches[0]}"
-          artifact_path="${sig_path%.sig}"
-          if [ ! -f "${artifact_path}" ]; then
-            echo "Missing updater artifact for signature: ${sig_path}" >&2
-            exit 1
-          fi
-
-          key_path="${RUNNER_TEMP}/apple-notary.p8"
-          normalized_notary_key="$(node -e 'const raw=String(process.env.APPLE_API_PRIVATE_KEY ?? ""); process.stdout.write(raw.includes("\\n") ? raw.replaceAll("\\n", "\n") : raw);')"
-          if printf "%s" "${normalized_notary_key}" | grep -q "BEGIN PRIVATE KEY"; then
-            printf "%s" "${normalized_notary_key}" > "${key_path}"
-          else
-            # Support storing the key as base64 (common for multi-line secrets).
-            printf "%s" "${normalized_notary_key}" | base64 --decode > "${key_path}"
-          fi
-          chmod 600 "${key_path}"
-
-          work="$(mktemp -d)"
-          tar -xzf "${artifact_path}" -C "${work}"
-          app_path="$(find "${work}" -maxdepth 3 -type d -name '*.app' | head -n 1 || true)"
-          if [ -z "${app_path:-}" ]; then
-            echo "Unable to find .app inside updater artifact: ${artifact_path}" >&2
-            exit 1
-          fi
-
-          zip_path="${work}/app.zip"
-          ditto -c -k --keepParent "${app_path}" "${zip_path}"
-          xcrun notarytool submit "${zip_path}" --key "${key_path}" --key-id "${APPLE_API_KEY_ID}" --issuer "${APPLE_API_ISSUER_ID}" --wait --timeout 15m
-          xcrun stapler staple "${app_path}"
-
-          # Re-pack the tar.gz so the updater payload contains the stapled ticket.
-          app_name="$(basename "${app_path}")"
-          app_parent="$(dirname "${app_path}")"
-          new_tar="${work}/notarized.app.tar.gz"
-          tar -czf "${new_tar}" -C "${app_parent}" "${app_name}"
-          mv "${new_tar}" "${artifact_path}"
-
-          # Re-sign the updated archive so latest.json signature matches.
-          artifact_abs="$(cd "$(dirname "${artifact_path}")" && pwd)/$(basename "${artifact_path}")"
-          sig_abs="$(cd "$(dirname "${sig_path}")" && pwd)/$(basename "${sig_path}")"
-          tmp_sig="${work}/notarized.sig"
-          yarn --silent tauri signer sign "${artifact_abs}" > "${tmp_sig}"
-          sig_value="$(tr -d '\r\n' < "${tmp_sig}")"
-          if [ -z "${sig_value}" ] || ! printf "%s" "${sig_value}" | grep -Eq '^[A-Za-z0-9+/=]+$'; then
-            echo "Generated updater signature is invalid: ${tmp_sig}" >&2
-            exit 1
-          fi
-          printf "%s\n" "${sig_value}" > "${tmp_sig}"
-          mv "${tmp_sig}" "${sig_abs}"
-
-          # Notarize DMG too (if present) so the installer is Gatekeeper-friendly.
-          dmg_path="$(find "${search_dir}" -path '*/release/bundle/*' -type f -name '*.dmg' | head -n 1 || true)"
-          if [ -n "${dmg_path:-}" ]; then
-            xcrun notarytool submit "${dmg_path}" --key "${key_path}" --key-id "${APPLE_API_KEY_ID}" --issuer "${APPLE_API_ISSUER_ID}" --wait --timeout 15m
-            xcrun stapler staple "${dmg_path}"
-          fi
+          node scripts/pipeline/run.mjs tauri-notarize-macos-artifacts \
+            --ui-dir "apps/ui" \
+            --tauri-target "${TAURI_TARGET}"
 
       - name: Fail when production notarization/signing secrets are missing (macOS)
         if: runner.os == 'macOS' && inputs.environment == 'production' && (env.APPLE_CERTIFICATE == '' || env.APPLE_CERTIFICATE_PASSWORD == '' || env.APPLE_API_KEY_ID == '' || env.APPLE_API_ISSUER_ID == '' || env.APPLE_API_PRIVATE_KEY == '' || env.TAURI_SIGNING_PRIVATE_KEY == '')
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           echo "Missing required production macOS signing/notarization secrets." >&2
           echo "Required: APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_API_KEY_ID, APPLE_API_ISSUER_ID, APPLE_API_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY." >&2
@@ -460,131 +302,16 @@ jobs:
         env:
           PLATFORM_KEY: ${{ matrix.platform_key }}
           UI_VERSION: ${{ steps.ver.outputs.ui_version }}
-          BUILD_VERSION: ${{ steps.ver.outputs.build_version }}
           ENVIRONMENT: ${{ inputs.environment }}
           TAURI_TARGET: ${{ matrix.tauri_target }}
         run: |
           set -euo pipefail
-
-          base_dir="apps/ui/src-tauri/target"
-          search_dir="${base_dir}"
-          if [ -n "${TAURI_TARGET}" ]; then
-            search_dir="${base_dir}/${TAURI_TARGET}"
-          fi
-
-          sig_path=""
-          case "${PLATFORM_KEY}" in
-            windows-*)
-              sig_matches=()
-              while IFS= read -r match; do
-                sig_matches+=("${match}")
-              done < <(find "${search_dir}" -path '*/release/bundle/*' -type f \( -name '*.msi.zip.sig' -o -name '*.exe.zip.sig' -o -name '*.nsis.zip.sig' \) | sort)
-              if [ "${#sig_matches[@]}" -lt 1 ]; then
-                echo "Expected at least one updater signature for PLATFORM_KEY=${PLATFORM_KEY} under ${search_dir}; found 0" >&2
-                exit 1
-              fi
-              preferred_sig=""
-              for candidate in "${sig_matches[@]}"; do
-                if [[ "${candidate}" == *.nsis.zip.sig ]]; then
-                  preferred_sig="${candidate}"
-                  break
-                fi
-              done
-              if [ -z "${preferred_sig}" ]; then
-                for candidate in "${sig_matches[@]}"; do
-                  if [[ "${candidate}" == *.exe.zip.sig ]]; then
-                    preferred_sig="${candidate}"
-                    break
-                  fi
-                done
-              fi
-              if [ -z "${preferred_sig}" ]; then
-                preferred_sig="${sig_matches[0]}"
-              fi
-              if [ "${#sig_matches[@]}" -gt 1 ]; then
-                echo "Found multiple Windows updater signatures for ${PLATFORM_KEY}; using preferred artifact: ${preferred_sig}" >&2
-                printf 'All matches:\n' >&2
-                printf '  %s\n' "${sig_matches[@]}" >&2
-              fi
-              sig_path="${preferred_sig}"
-              ;;
-            darwin-*)
-              sig_matches=()
-              while IFS= read -r match; do
-                sig_matches+=("${match}")
-              done < <(find "${search_dir}" -path '*/release/bundle/*' -type f -name '*.app.tar.gz.sig' | sort)
-              if [ "${#sig_matches[@]}" -ne 1 ]; then
-                echo "Expected exactly one updater signature for PLATFORM_KEY=${PLATFORM_KEY} under ${search_dir}; found ${#sig_matches[@]}" >&2
-                if [ "${#sig_matches[@]}" -gt 0 ]; then
-                  printf 'Matches:\n' >&2
-                  printf '  %s\n' "${sig_matches[@]}" >&2
-                fi
-                exit 1
-              fi
-              sig_path="${sig_matches[0]}"
-              ;;
-            linux-*)
-              sig_matches=()
-              while IFS= read -r match; do
-                sig_matches+=("${match}")
-              done < <(find "${search_dir}" -path '*/release/bundle/*' -type f \( -name '*.AppImage.sig' -o -name '*.appimage.sig' -o -name '*.AppImage.tar.gz.sig' -o -name '*.appimage.tar.gz.sig' \) | sort)
-              if [ "${#sig_matches[@]}" -ne 1 ]; then
-                echo "Expected exactly one updater signature for PLATFORM_KEY=${PLATFORM_KEY} under ${search_dir}; found ${#sig_matches[@]}" >&2
-                if [ "${#sig_matches[@]}" -gt 0 ]; then
-                  printf 'Matches:\n' >&2
-                  printf '  %s\n' "${sig_matches[@]}" >&2
-                fi
-                exit 1
-              fi
-              sig_path="${sig_matches[0]}"
-              ;;
-            *)
-              echo "Unknown platform_key: ${PLATFORM_KEY}" >&2
-              exit 1
-              ;;
-          esac
-
-          if [ -z "${sig_path:-}" ]; then
-            echo "Unable to find updater signature under: ${search_dir}/**/release/bundle" >&2
-            exit 1
-          fi
-
-          artifact_path="${sig_path%.sig}"
-          if [ ! -f "${artifact_path}" ]; then
-            echo "Missing updater artifact for signature: ${sig_path}" >&2
-            exit 1
-          fi
-
-          artifact_filename="$(basename "${artifact_path}")"
-          ext=""
-          case "${artifact_filename}" in
-            *.msi.zip) ext=".msi.zip" ;;
-            *.exe.zip) ext=".exe.zip" ;;
-            *.nsis.zip) ext=".nsis.zip" ;;
-            *.app.tar.gz) ext=".app.tar.gz" ;;
-            *.AppImage.tar.gz) ext=".AppImage.tar.gz" ;;
-            *.appimage.tar.gz) ext=".appimage.tar.gz" ;;
-            *) ext=".${artifact_filename##*.}" ;;
-          esac
-
-          if [ "${ENVIRONMENT}" = "preview" ]; then
-            out_base="happier-ui-desktop-preview-${PLATFORM_KEY}"
-          else
-            out_base="happier-ui-desktop-${PLATFORM_KEY}-v${UI_VERSION}"
-          fi
-
-          out_dir="dist/tauri/updates/${PLATFORM_KEY}"
-          mkdir -p "${out_dir}"
-          cp "${artifact_path}" "${out_dir}/${out_base}${ext}"
-          cp "${sig_path}" "${out_dir}/${out_base}${ext}.sig"
-
-          # Include macOS installer DMG (if present). Not referenced by latest.json (no .sig), but useful for manual installs.
-          if [[ "${PLATFORM_KEY}" == darwin-* ]]; then
-            dmg_path="$(find "${search_dir}" -path '*/release/bundle/*' -type f -name '*.dmg' | head -n 1 || true)"
-            if [ -n "${dmg_path:-}" ]; then
-              cp "${dmg_path}" "${out_dir}/${out_base}.dmg"
-            fi
-          fi
+          node scripts/pipeline/run.mjs tauri-collect-updater-artifacts \
+            --environment "${ENVIRONMENT}" \
+            --platform-key "${PLATFORM_KEY}" \
+            --ui-version "${UI_VERSION}" \
+            --tauri-target "${TAURI_TARGET}" \
+            --ui-dir "apps/ui"
 
       - name: Upload updater assets artifact
         uses: actions/upload-artifact@v4
@@ -606,6 +333,11 @@ jobs:
         with:
           ref: ${{ needs.resolve_source.outputs.source_sha }}
           fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
 
       - name: Compute build metadata
         id: meta
@@ -632,7 +364,7 @@ jobs:
           ENVIRONMENT: ${{ inputs.environment }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/tauri/prepare-publish-assets.mjs \
+          node scripts/pipeline/run.mjs tauri-prepare-assets \
             --environment "${ENVIRONMENT}" \
             --ui-version "${{ steps.meta.outputs.ui_version }}" \
             --repo "${REPO}" \

@@ -360,34 +360,7 @@ jobs:
 
       - name: CLI smoke test (Linux)
         if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',cli_smoke_linux,')) }}
-        run: |
-          set -euo pipefail
-          yarn workspace @happier-dev/cli build
-          PACKAGE_NAME="$(cd apps/cli && npm pack --silent --pack-destination /tmp)"
-          PACKAGE_FILE="/tmp/${PACKAGE_NAME}"
-          if [ ! -f "${PACKAGE_FILE}" ]; then
-            echo "Unable to find packed CLI tarball at ${PACKAGE_FILE}" >&2
-            exit 1
-          fi
-
-          SMOKE_PREFIX="$(mktemp -d)"
-          SMOKE_HOME="$(mktemp -d)"
-          npm install -g --prefix "${SMOKE_PREFIX}" "${PACKAGE_FILE}"
-
-          HAPPIER_BIN="${SMOKE_PREFIX}/bin/happier"
-          if [ ! -x "${HAPPIER_BIN}" ]; then
-            echo "Expected CLI binary not found at ${HAPPIER_BIN}" >&2
-            exit 1
-          fi
-
-          HAPPIER_HOME_DIR="${SMOKE_HOME}" timeout 30s "${HAPPIER_BIN}" --help
-          HAPPIER_HOME_DIR="${SMOKE_HOME}" timeout 10s "${HAPPIER_BIN}" --version
-          DOCTOR_OUTPUT="$(HAPPIER_HOME_DIR="${SMOKE_HOME}" timeout 10s "${HAPPIER_BIN}" doctor --help)"
-          printf '%s\n' "${DOCTOR_OUTPUT}"
-
-          DAEMON_HELP_OUTPUT="$(HAPPIER_HOME_DIR="${SMOKE_HOME}" timeout 10s "${HAPPIER_BIN}" daemon --help)"
-          printf '%s\n' "${DAEMON_HELP_OUTPUT}"
-          printf '%s' "${DAEMON_HELP_OUTPUT}" | grep -q 'Daemon management'
+        run: node scripts/pipeline/run.mjs smoke-cli
 
       - name: Compute changed components (main..dev)
         id: plan
@@ -499,6 +472,11 @@ jobs:
           ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
           fetch-depth: 0
           token: ${{ steps.app_token.outputs.token }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
 
       - name: Compute deploy plan (deploy/<env>/* behind release source?)
         id: plan
@@ -667,7 +645,7 @@ jobs:
       source_ref: dev
       push_latest: true
       build_relay: ${{ inputs.force_deploy == true || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_server == 'true' || needs.plan.outputs.changed_shared == 'true' }}
-      build_devcontainer: ${{ inputs.force_deploy == true || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_stack == 'true' || needs.plan.outputs.changed_shared == 'true' }}
+      build_dev_box: ${{ inputs.force_deploy == true || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_stack == 'true' || needs.plan.outputs.changed_shared == 'true' }}
 
   deploy_website:
     if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || needs.plan.outputs.bump_website != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')

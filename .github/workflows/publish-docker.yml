@@ -21,13 +21,18 @@ on:
         required: true
         default: true
         type: boolean
+      registries:
+        description: "Comma-separated registries to push to (dockerhub,ghcr)"
+        required: true
+        default: "dockerhub,ghcr"
+        type: string
       build_relay:
         description: "Build/push relay-server image"
         required: true
         default: true
         type: boolean
-      build_devcontainer:
-        description: "Build/push devcontainer image"
+      build_dev_box:
+        description: "Build/push dev-box image"
         required: true
         default: true
         type: boolean
@@ -44,11 +49,15 @@ on:
         required: false
         default: true
         type: boolean
+      registries:
+        required: false
+        default: dockerhub,ghcr
+        type: string
       build_relay:
         required: false
         default: true
         type: boolean
-      build_devcontainer:
+      build_dev_box:
         required: false
         default: true
         type: boolean
@@ -132,17 +141,19 @@ jobs:
 
       - name: Build & push images (pipeline)
         env:
-          PIPELINE_DOCKER_REGISTRIES: dockerhub,ghcr
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           GHCR_NAMESPACE: ghcr.io/happier-dev
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/docker/publish-images.mjs \
+          node scripts/pipeline/run.mjs docker-publish \
             --channel "${{ inputs.channel }}" \
+            --registries "${{ inputs.registries }}" \
             --push-latest "${{ inputs.push_latest }}" \
             --build-relay "${{ inputs.build_relay }}" \
-            --build-devcontainer "${{ inputs.build_devcontainer }}"
+            --build-dev-box "${{ inputs.build_dev_box }}"
 
       - name: Update Docker Hub README (relay-server)
         if: ${{ inputs.build_relay }}
@@ -155,7 +166,7 @@ jobs:
           short-description: Self-host the Happier Server (Docker image)
 
       - name: Update Docker Hub README (dev-box)
-        if: ${{ inputs.build_devcontainer }}
+        if: ${{ inputs.build_dev_box }}
         uses: peter-evans/dockerhub-description@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}

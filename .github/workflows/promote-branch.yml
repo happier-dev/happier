@@ -170,7 +170,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/github/promote-branch.mjs \
+          node scripts/pipeline/run.mjs promote-branch \
             --source "${{ inputs.source }}" \
             --target "${{ inputs.target }}" \
             --mode "${{ inputs.mode }}" \

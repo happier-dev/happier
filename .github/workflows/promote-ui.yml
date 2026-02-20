@@ -303,28 +303,17 @@ jobs:
           yarn --cwd apps/ui test:unit
           yarn --cwd apps/ui test:integration
 
-      - name: Commit version bump (source ref)
-        if: steps.bump_app.outputs.skipped != 'true'
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add apps/ui/package.json apps/ui/app.config.js
-          if [ -d apps/ui/src-tauri ]; then
-            git add apps/ui/src-tauri || true
-          fi
-          git commit -m "chore(release): bump app to v${{ steps.bump_app.outputs.version }}"
-
-      - name: Push source ref (only for branches)
+      - name: Commit + push version bump (pipeline)
         if: steps.bump_app.outputs.skipped != 'true'
         run: |
           set -euo pipefail
           src="${{ steps.resolve.outputs.ref }}"
-          if git show-ref --verify --quiet "refs/remotes/origin/$src"; then
-            git push origin "HEAD:refs/heads/$src"
-          else
-            echo "Skipping push: '$src' is not a known branch ref."
-          fi
+          node scripts/pipeline/run.mjs github-commit-and-push \
+            --paths "apps/ui/package.json,apps/ui/app.config.js,apps/ui/src-tauri" \
+            --allow-missing true \
+            --message "chore(release): bump app to v${{ steps.bump_app.outputs.version }}" \
+            --push-ref "${src}" \
+            --push-mode auto
 
       - name: Capture release SHA
         id: release_sha
@@ -338,7 +327,7 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/expo/ota-update.mjs \
+          node scripts/pipeline/run.mjs expo-ota \
             --environment "${{ inputs.environment }}" \
             --message "${{ inputs.expo_update_message }}" \
             --eas-cli-version "${EAS_CLI_VERSION}"
@@ -393,7 +382,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/github/promote-deploy-branch.mjs \
+          node scripts/pipeline/run.mjs promote-deploy-branch \
             --deploy-environment "${{ inputs.environment }}" \
             --component ui \
             --sha "$(git rev-parse HEAD)" \
@@ -408,8 +397,8 @@ jobs:
           HAPPIER_UI_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_UI_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_UI_DEPLOY_WEBHOOKS || secrets.HAPPIER_UI_DEPLOY_WEBHOOKS }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/deploy/trigger-webhooks.mjs \
-            --environment "${{ inputs.environment }}" \
+          node scripts/pipeline/run.mjs deploy \
+            --deploy-environment "${{ inputs.environment }}" \
             --component "ui" \
             --repository "${{ github.repository }}" \
             --ref-name "deploy/${{ inputs.environment }}/ui"

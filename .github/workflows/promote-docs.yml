@@ -163,7 +163,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/github/promote-deploy-branch.mjs \
+          node scripts/pipeline/run.mjs promote-deploy-branch \
             --deploy-environment "${{ inputs.environment }}" \
             --component docs \
             --sha "$(git rev-parse HEAD)" \
@@ -177,8 +177,8 @@ jobs:
           HAPPIER_DOCS_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_DOCS_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_DOCS_DEPLOY_WEBHOOKS || secrets.HAPPIER_DOCS_DEPLOY_WEBHOOKS }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/deploy/trigger-webhooks.mjs \
-            --environment "${{ inputs.environment }}" \
+          node scripts/pipeline/run.mjs deploy \
+            --deploy-environment "${{ inputs.environment }}" \
             --component "docs" \
             --repository "${{ github.repository }}" \
             --ref-name "deploy/${{ inputs.environment }}/docs"

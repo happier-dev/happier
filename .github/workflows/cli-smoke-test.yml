@@ -16,18 +16,15 @@ on:
 jobs:
   smoke-test-linux:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [22]
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Setup Node.js ${{ matrix.node-version }}
+    - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: ${{ matrix.node-version }}
+        node-version: 22.x
         cache: 'yarn'
         cache-dependency-path: yarn.lock
 
@@ -39,82 +36,20 @@ jobs:
         HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
       run: yarn install --frozen-lockfile --ignore-engines
 
-    - name: Build package
-      run: yarn workspace @happier-dev/cli build
-
-    - name: Pack package
-      run: |
-        set -euo pipefail
-        PACKAGE_NAME="$(cd apps/cli && npm pack --silent --pack-destination /tmp)"
-        PACKAGE_FILE="/tmp/${PACKAGE_NAME}"
-        if [ ! -f "${PACKAGE_FILE}" ]; then
-          echo "Unable to find packed CLI tarball at ${PACKAGE_FILE}" >&2
-          exit 1
-        fi
-        echo "CLI_PACKAGE_FILE=${PACKAGE_FILE}" >> "$GITHUB_ENV"
-
-    - name: Install packed package globally
-      run: |
-        set -euo pipefail
-        SMOKE_PREFIX="$(mktemp -d)"
-        SMOKE_HOME="$(mktemp -d)"
-        npm install -g --prefix "${SMOKE_PREFIX}" "${CLI_PACKAGE_FILE}"
-        HAPPIER_BIN="${SMOKE_PREFIX}/bin/happier"
-        if [ ! -x "${HAPPIER_BIN}" ]; then
-          echo "Expected CLI binary not found at ${HAPPIER_BIN}" >&2
-          exit 1
-        fi
-        echo "HAPPIER_BIN=${HAPPIER_BIN}" >> "$GITHUB_ENV"
-        echo "HAPPIER_HOME_DIR=${SMOKE_HOME}" >> "$GITHUB_ENV"
-
-    - name: Test binary execution
-      run: |
-        set -euo pipefail
-        export HAPPIER_HOME_DIR
-        # Test that the binary starts successfully
-        echo "Testing happier --help..."
-        timeout 30s "${HAPPIER_BIN}" --help || {
-          echo "Error: happier --help failed or timed out"
-          exit 1
-        }
-
-        echo "Testing happier --version..."
-        timeout 10s "${HAPPIER_BIN}" --version || {
-          echo "Error: happier --version failed or timed out"
-          exit 1
-        }
-
-        echo "Testing happier doctor..."
-        DOCTOR_OUTPUT="$(timeout 10s "${HAPPIER_BIN}" doctor --help)" || {
-          echo "Error: happier doctor failed or timed out"
-          exit 1
-        }
-        printf '%s\n' "${DOCTOR_OUTPUT}"
-
-        echo "Testing happier daemon --help..."
-        DAEMON_HELP_OUTPUT="$(timeout 10s "${HAPPIER_BIN}" daemon --help)" || {
-          echo "Error: happier daemon --help failed or timed out"
-          exit 1
-        }
-        printf '%s\n' "${DAEMON_HELP_OUTPUT}"
-        printf '%s' "${DAEMON_HELP_OUTPUT}" | grep -q 'Daemon management'
-
-        echo "Smoke test passed on Linux!"
+    - name: CLI smoke (pipeline)
+      run: node scripts/pipeline/run.mjs smoke-cli
 
   smoke-test-windows:
     runs-on: windows-latest
-    strategy:
-      matrix:
-        node-version: [22]
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Setup Node.js ${{ matrix.node-version }}
+    - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: ${{ matrix.node-version }}
+        node-version: 22.x
         cache: 'yarn'
         cache-dependency-path: yarn.lock
 
@@ -126,126 +61,7 @@ jobs:
         HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
       run: yarn install --frozen-lockfile --ignore-engines
 
-    - name: Build package
-      run: yarn workspace @happier-dev/cli build
-
-    - name: Pack package
-      run: |
-        cd apps/cli
-        npm pack
-
-    - name: Install packed package globally
-      shell: cmd
-      run: |
-        for %%f in (apps\cli\*.tgz) do npm install -g "%%f"
-
-    - name: Debug npm global installation structure
-      shell: cmd
-      run: |
-        for /f "tokens=*" %%i in ('npm config get prefix') do set NPM_PREFIX=%%i
-        echo NPM_PREFIX: %NPM_PREFIX%
-        echo Listing npm prefix directory:
-        dir "%NPM_PREFIX%" 2>nul || echo Failed to list NPM_PREFIX
-        echo.
-        echo Checking for node_modules in npm prefix:
-        if exist "%NPM_PREFIX%\node_modules" (
-          echo Found node_modules directory
-          dir "%NPM_PREFIX%\node_modules" 2>nul
-          echo.
-          echo Checking for @happier-dev/cli package:
-          if exist "%NPM_PREFIX%\node_modules\@happier-dev\cli" (
-            echo Found @happier-dev/cli package
-            dir "%NPM_PREFIX%\node_modules\@happier-dev\cli" 2>nul
-            echo.
-            echo Checking for dist directory:
-            if exist "%NPM_PREFIX%\node_modules\@happier-dev\cli\dist" (
-              echo Found dist directory
-              dir "%NPM_PREFIX%\node_modules\@happier-dev\cli\dist" 2>nul
-            ) else (
-              echo No dist directory found
-            )
-          ) else (
-            echo No @happier-dev/cli package found
-          )
-        ) else (
-          echo No node_modules directory found
-        )
-
-    - name: Test binary execution
-      shell: cmd
-      run: |
-        @echo on
-
-        rem Get npm global prefix and add to PATH
-        for /f "tokens=*" %%i in ('npm config get prefix') do set NPM_PREFIX=%%i
-        set PATH=%NPM_PREFIX%;%PATH%
-        echo NPM_PREFIX: %NPM_PREFIX%
-        echo Current PATH: %PATH%
-
-        rem Debug: Check if happier exists in various locations
-        echo Checking for happier binary...
-        where happier 2>nul && echo Found happier in PATH || echo happier not found in PATH
-        if exist "%NPM_PREFIX%\happier.cmd" echo Found happier.cmd in NPM_PREFIX
-        if exist "%NPM_PREFIX%\node_modules\.bin\happier.cmd" echo Found happier.cmd in .bin directory
-        dir "%NPM_PREFIX%\*happier*" 2>nul || echo No happier files found in NPM_PREFIX
-
-        rem Debug: Check the actual contents and encoding of the installed file
-        if exist "%NPM_PREFIX%\happier.cmd" (
-          echo File size and type:
-          dir "%NPM_PREFIX%\happier.cmd"
-          echo.
-          echo First few lines of the file:
-          type "%NPM_PREFIX%\happier.cmd" | head -5
-          echo.
-          echo Hex dump of first 50 bytes to check line endings:
-          powershell -Command "Get-Content '%NPM_PREFIX%\happier.cmd' -Encoding Byte -TotalCount 50 | ForEach-Object { '{0:X2}' -f $_ } | Join-String -Separator ' '"
-          echo.
-          echo Testing with direct path...
-          "%NPM_PREFIX%\happier.cmd" --help
-        ) else (
-          echo Testing happier --help...
-          happier --help
-        )
-        if errorlevel 1 (
-          echo Error: happier --help failed
-          exit /b 1
-        )
-
-        rem Test version
-        if exist "%NPM_PREFIX%\happier.cmd" (
-          "%NPM_PREFIX%\happier.cmd" --version
-        ) else (
-          happier --version
-        )
-        if errorlevel 1 (
-          echo Error: happier --version failed
-          exit /b 1
-        )
-
-        rem Test doctor
-        echo Testing happier doctor...
-        if exist "%NPM_PREFIX%\happier.cmd" (
-          "%NPM_PREFIX%\happier.cmd" doctor --help
-        ) else (
-          happier doctor --help
-        )
-        if errorlevel 1 (
-          echo Error: happier doctor failed
-          exit /b 1
-        )
-
-        rem Test daemon help
-        echo Testing happier daemon --help...
-        if exist "%NPM_PREFIX%\happier.cmd" (
-          "%NPM_PREFIX%\happier.cmd" daemon --help | findstr /C:"Daemon management" >nul
-        ) else (
-          happier daemon --help | findstr /C:"Daemon management" >nul
-        )
-        if errorlevel 1 (
-          echo Error: happier daemon --help failed
-          exit /b 1
-        )
-
-        echo Smoke test passed on Windows!
+    - name: CLI smoke (pipeline)
+      run: node scripts/pipeline/run.mjs smoke-cli
 
 # We don't need a smoke test for macOS because most contributors are developing on macOS.
