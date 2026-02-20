@@ -301,6 +301,45 @@ This repo has a single canonical feature gating system. New code must use it ins
 - Vitest automatically excludes denied feature tests using `scripts/testing/featureTestGating.ts` (dependency closure included).
 - Use `HAPPIER_TEST_FEATURES_DENY` (in addition to `HAPPIER_BUILD_FEATURES_DENY`) when you need to disable a feature’s tests in CI without changing the embedded policy.
 
+## Encryption storage modes (E2EE vs plaintext storage)
+
+This repo supports both encrypted-at-rest (E2EE-style) and plaintext-at-rest session storage. Treat this as a **storage-mode** choice; it is **not** the same thing as transport security (TLS) or authentication (key-challenge login still exists).
+
+### Concepts (authoritative contracts)
+- **Server storage policy**: `required_e2ee | optional | plaintext_only` (server config; surfaced via `/v1/features`).
+- **Account encryption mode**: `e2ee | plain` (affects *new* sessions by default).
+- **Session encryption mode**: `e2ee | plain` (fixed at session creation; avoids mixed-mode transcripts).
+- **Message content envelope** (server storage + API contract):
+  - `{ t: 'encrypted', c: string }` (ciphertext base64)
+  - `{ t: 'plain', v: unknown }` (raw transcript record)
+- Pending queue v2 uses the same envelope (`content`) alongside the legacy `ciphertext` shape.
+
+### Implementation rules (do not regress)
+- Always enforce **mode/content-kind compatibility** at write choke points (HTTP + sockets + pending):
+  - `e2ee` session ⇒ accept encrypted content only
+  - `plain` session ⇒ accept plain content only
+- Sharing:
+  - For `plain` sessions: sharing must work without `encryptedDataKey` (server-managed access).
+  - For `e2ee` sessions: sharing/public-share must require a valid `encryptedDataKey` envelope.
+- Do not add client-side “guessing” (e.g. assuming encrypted). Parse the envelope and branch behavior explicitly.
+- All gating must use the canonical feature system:
+  - feature ids: `encryption.plaintextStorage`, `encryption.accountOptOut`
+  - do not gate client behavior on raw env vars or `capabilities` fields.
+
+### Core E2E expectations (keep fast lane small)
+Do **not** duplicate the entire core-e2e suite across both modes. Instead:
+- Keep the existing suite exercising default encrypted behavior.
+- Add **targeted** plaintext-specific E2E tests for each mode-sensitive workflow you touch.
+- Add **targeted** encrypted regressions when contracts change (e.g. “must require encryptedDataKey in e2ee”).
+
+Plaintext storage E2E tests live under `packages/tests/suites/core-e2e/` and are feature-gated via filename markers:
+- `encryption.plaintextStorage.*.feat.encryption.plaintextStorage.*.e2e.test.ts`
+- Sharing plaintext coverage additionally includes `.feat.sharing.public.`, `.feat.sharing.session.`, `.feat.sharing.pendingQueueV2.`, etc.
+
+Testkit notes:
+- Social friends setup helpers: `packages/tests/src/testkit/socialFriends.ts`
+- Pending queue v2 testkit currently models encrypted-only rows; plaintext pending E2E should use direct `fetchJson` unless/until the helper is generalized.
+
 ## UI App Structure Rules (Happier UI)
 
 Applies to `apps/ui/sources`.
