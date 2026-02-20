@@ -8,6 +8,9 @@ import {
 import type { PendingMessageRow } from "@/app/session/pending/mapPendingMessageRow";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
+import { isStoredContentKindAllowedForSessionByStoragePolicy, type SessionStoredContentKind } from "@happier-dev/protocol";
+import { resolveEncryptionWriteRejectionCode, type EncryptionPolicyRejectionCode } from "@/app/session/encryptionRejectionCodes";
 
 type ParticipantCursor = SessionParticipantCursor;
 
@@ -81,26 +84,53 @@ export type EnqueuePendingMessageResult =
         pendingVersion: number;
         participantCursors: ParticipantCursor[];
       }
-    | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "internal" };
+    | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "internal"; code?: EncryptionPolicyRejectionCode };
 
 export async function enqueuePendingMessage(params: {
     actorUserId: string;
     sessionId: string;
     localId: string;
-    ciphertext: string;
-}): Promise<EnqueuePendingMessageResult> {
+} & (
+    | Readonly<{ ciphertext: string; content?: never }>
+    | Readonly<{ content: PrismaJson.SessionPendingMessageContent; ciphertext?: never }>
+)): Promise<EnqueuePendingMessageResult> {
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
     const localId = typeof params.localId === "string" ? params.localId : "";
-    const ciphertext = typeof params.ciphertext === "string" ? params.ciphertext : "";
+    const ciphertext = "ciphertext" in params && typeof params.ciphertext === "string" ? params.ciphertext : "";
+    const content =
+        "content" in params ? params.content : ciphertext ? ({ t: "encrypted", c: ciphertext } satisfies PrismaJson.SessionPendingMessageContent) : null;
 
-    if (!actorUserId || !sessionId || !localId || !ciphertext) return { ok: false, error: "invalid-params" };
+    if (!actorUserId || !sessionId || !localId || !content) return { ok: false, error: "invalid-params" };
+    if (content.t === "encrypted" && (!content.c || typeof content.c !== "string")) return { ok: false, error: "invalid-params" };
+    if (content.t === "plain" && !("v" in content)) return { ok: false, error: "invalid-params" };
 
     const access = await resolveSessionPendingEditAccess(actorUserId, sessionId);
     if (!access.ok) return { ok: false, error: access.error };
 
     try {
         return await inTx(async (tx) => {
+            const session = await tx.session.findUnique({
+                where: { id: sessionId },
+                select: { encryptionMode: true, pendingCount: true, pendingVersion: true },
+            });
+            if (!session) return { ok: false, error: "session-not-found" } as const;
+
+            const sessionEncryptionMode: "e2ee" | "plain" = session.encryptionMode === "plain" ? "plain" : "e2ee";
+            const writeKind: SessionStoredContentKind = content.t === "plain" ? "plain" : "encrypted";
+            const policy = readEncryptionFeatureEnv(process.env);
+            if (!isStoredContentKindAllowedForSessionByStoragePolicy(policy.storagePolicy, sessionEncryptionMode, writeKind)) {
+                return {
+                    ok: false,
+                    error: "invalid-params",
+                    code: resolveEncryptionWriteRejectionCode({
+                        storagePolicy: policy.storagePolicy,
+                        sessionEncryptionMode,
+                        writeKind,
+                    }),
+                } as const;
+            }
+
             const existing = await tx.sessionPendingMessage.findUnique({
                 where: { sessionId_localId: { sessionId, localId } },
                 select: {
@@ -116,16 +146,12 @@ export async function enqueuePendingMessage(params: {
                 },
             });
             if (existing) {
-                const session = await tx.session.findUnique({
-                    where: { id: sessionId },
-                    select: { pendingCount: true, pendingVersion: true },
-                });
                 return {
                     ok: true,
                     didWrite: false,
                     pending: mapPendingMessageRow(existing),
-                    pendingCount: session?.pendingCount ?? 0,
-                    pendingVersion: session?.pendingVersion ?? 0,
+                    pendingCount: session.pendingCount ?? 0,
+                    pendingVersion: session.pendingVersion ?? 0,
                     participantCursors: [],
                 };
             }
@@ -136,7 +162,6 @@ export async function enqueuePendingMessage(params: {
                 select: { position: true },
             });
             const position = (lastQueued?.position ?? 0) + 1;
-            const content: PrismaJson.SessionPendingMessageContent = { t: "encrypted", c: ciphertext };
 
             const created = await tx.sessionPendingMessage.create({
                 data: {
@@ -182,33 +207,59 @@ export async function enqueuePendingMessage(params: {
 
 export type UpdatePendingMessageResult =
     | { ok: true; pendingVersion: number; pendingCount: number; participantCursors: ParticipantCursor[] }
-    | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "not-found" | "internal" };
+    | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "not-found" | "internal"; code?: EncryptionPolicyRejectionCode };
 
 export async function updatePendingMessage(params: {
     actorUserId: string;
     sessionId: string;
     localId: string;
-    ciphertext: string;
-}): Promise<UpdatePendingMessageResult> {
+} & (
+    | Readonly<{ ciphertext: string; content?: never }>
+    | Readonly<{ content: PrismaJson.SessionPendingMessageContent; ciphertext?: never }>
+)): Promise<UpdatePendingMessageResult> {
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
     const localId = typeof params.localId === "string" ? params.localId : "";
-    const ciphertext = typeof params.ciphertext === "string" ? params.ciphertext : "";
+    const ciphertext = "ciphertext" in params && typeof params.ciphertext === "string" ? params.ciphertext : "";
+    const content =
+        "content" in params ? params.content : ciphertext ? ({ t: "encrypted", c: ciphertext } satisfies PrismaJson.SessionPendingMessageContent) : null;
 
-    if (!actorUserId || !sessionId || !localId || !ciphertext) return { ok: false, error: "invalid-params" };
+    if (!actorUserId || !sessionId || !localId || !content) return { ok: false, error: "invalid-params" };
+    if (content.t === "encrypted" && (!content.c || typeof content.c !== "string")) return { ok: false, error: "invalid-params" };
+    if (content.t === "plain" && !("v" in content)) return { ok: false, error: "invalid-params" };
 
     const access = await resolveSessionPendingEditAccess(actorUserId, sessionId);
     if (!access.ok) return { ok: false, error: access.error };
 
     try {
         return await inTx(async (tx) => {
+            const session = await tx.session.findUnique({
+                where: { id: sessionId },
+                select: { encryptionMode: true },
+            });
+            if (!session) return { ok: false, error: "session-not-found" } as const;
+
+            const sessionEncryptionMode: "e2ee" | "plain" = session.encryptionMode === "plain" ? "plain" : "e2ee";
+            const writeKind: SessionStoredContentKind = content.t === "plain" ? "plain" : "encrypted";
+            const policy = readEncryptionFeatureEnv(process.env);
+            if (!isStoredContentKindAllowedForSessionByStoragePolicy(policy.storagePolicy, sessionEncryptionMode, writeKind)) {
+                return {
+                    ok: false,
+                    error: "invalid-params",
+                    code: resolveEncryptionWriteRejectionCode({
+                        storagePolicy: policy.storagePolicy,
+                        sessionEncryptionMode,
+                        writeKind,
+                    }),
+                } as const;
+            }
+
             const existing = await tx.sessionPendingMessage.findUnique({
                 where: { sessionId_localId: { sessionId, localId } },
                 select: { id: true, status: true },
             });
             if (!existing) return { ok: false, error: "not-found" } as const;
 
-            const content: PrismaJson.SessionPendingMessageContent = { t: "encrypted", c: ciphertext };
             await tx.sessionPendingMessage.update({
                 where: { sessionId_localId: { sessionId, localId } },
                 data: { content },

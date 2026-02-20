@@ -16,7 +16,7 @@ vi.mock("@/app/changes/markAccountChanged", () => ({
     markAccountChanged: (...args: any[]) => markAccountChanged(...args),
 }));
 
-const dbFindFirst = vi.fn();
+const dbFindUnique = vi.fn();
 const dbSessionFindUnique = vi.fn();
 const dbSessionShareFindUnique = vi.fn();
 vi.mock("@/storage/db", () => ({
@@ -28,18 +28,20 @@ vi.mock("@/storage/db", () => ({
             findUnique: (...args: any[]) => dbSessionShareFindUnique(...args),
         },
         sessionMessage: {
-            findFirst: (...args: any[]) => dbFindFirst(...args),
+            findUnique: (...args: any[]) => dbFindUnique(...args),
         },
     },
 }));
 
 import { createSessionMessage, patchSession, updateSessionAgentState, updateSessionMetadata } from "./sessionWriteService";
 
+const createSessionMessageCompat = createSessionMessage as unknown as (params: any) => Promise<any>;
+
 describe("sessionWriteService", () => {
     beforeEach(() => {
         getSessionParticipantUserIds.mockReset();
         markAccountChanged.mockReset();
-        dbFindFirst.mockReset();
+        dbFindUnique.mockReset();
         dbSessionFindUnique.mockReset();
         dbSessionShareFindUnique.mockReset();
 
@@ -53,7 +55,7 @@ describe("sessionWriteService", () => {
                 findUnique: vi.fn(),
             },
             sessionMessage: {
-                findFirst: vi.fn(),
+                findUnique: vi.fn(),
                 create: vi.fn(),
             },
         };
@@ -61,7 +63,7 @@ describe("sessionWriteService", () => {
 
     describe("createSessionMessage", () => {
         it("returns existing message for (sessionId, localId) without writing or marking changes", async () => {
-            currentTx.sessionMessage.findFirst.mockResolvedValue({ id: "m1", seq: 4, localId: "l1", createdAt: new Date(1) });
+            currentTx.sessionMessage.findUnique.mockResolvedValue({ id: "m1", seq: 4, localId: "l1", createdAt: new Date(1) });
             currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
 
@@ -84,7 +86,7 @@ describe("sessionWriteService", () => {
         });
 
         it("rejects message creation if actor has no edit access", async () => {
-            currentTx.sessionMessage.findFirst.mockResolvedValue(null);
+            currentTx.sessionMessage.findUnique.mockResolvedValue(null);
             currentTx.session.findUnique.mockResolvedValue({ accountId: "owner" });
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
 
@@ -103,7 +105,7 @@ describe("sessionWriteService", () => {
             const createdAt = new Date("2020-01-01T00:00:00.000Z");
             const updatedAt = new Date("2020-01-01T00:00:00.000Z");
 
-            currentTx.sessionMessage.findFirst.mockResolvedValue(null);
+            currentTx.sessionMessage.findUnique.mockResolvedValue(null);
             currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
             currentTx.session.update.mockResolvedValue({ seq: 10 });
             currentTx.sessionMessage.create.mockResolvedValue({
@@ -150,14 +152,14 @@ describe("sessionWriteService", () => {
         });
 
         it("handles localId races by returning the winner row on P2002", async () => {
-            currentTx.sessionMessage.findFirst.mockResolvedValue(null);
+            currentTx.sessionMessage.findUnique.mockResolvedValue(null);
             currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
             currentTx.session.update.mockResolvedValue({ seq: 10 });
             currentTx.sessionMessage.create.mockRejectedValue({ code: "P2002" });
 
             dbSessionFindUnique.mockResolvedValue({ accountId: "u1" });
             dbSessionShareFindUnique.mockResolvedValue(null);
-            dbFindFirst.mockResolvedValue({ id: "mExisting", seq: 9, localId: "l1", createdAt: new Date(1) });
+            dbFindUnique.mockResolvedValue({ id: "mExisting", seq: 9, localId: "l1", createdAt: new Date(1) });
 
             const res = await createSessionMessage({
                 actorUserId: "u1",
@@ -172,6 +174,80 @@ describe("sessionWriteService", () => {
                 message: { id: "mExisting", seq: 9, localId: "l1", createdAt: new Date(1) },
                 participantCursors: [],
             });
+        });
+
+        it("rejects encrypted writes when the session encryptionMode is plain (with a stable code)", async () => {
+            const createdAt = new Date("2020-01-01T00:00:00.000Z");
+            const prevStoragePolicy = process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY;
+            process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
+            currentTx.sessionMessage.findUnique.mockResolvedValue(null);
+            currentTx.session.findUnique.mockResolvedValue({ accountId: "u1", encryptionMode: "plain" });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.session.update.mockResolvedValue({ seq: 1 });
+            currentTx.sessionMessage.create.mockResolvedValue({
+                id: "m1",
+                seq: 1,
+                localId: null,
+                content: { t: "encrypted", c: "cipher" },
+                createdAt,
+                updatedAt: createdAt,
+            });
+            getSessionParticipantUserIds.mockResolvedValue(["u1"]);
+            markAccountChanged.mockResolvedValueOnce(101);
+
+            const res = await createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                ciphertext: "cipher",
+            });
+
+            expect(res).toEqual({ ok: false, error: "invalid-params", code: "session_encryption_mode_mismatch" });
+            expect(currentTx.session.update).not.toHaveBeenCalled();
+            expect(currentTx.sessionMessage.create).not.toHaveBeenCalled();
+            expect(markAccountChanged).not.toHaveBeenCalled();
+            if (typeof prevStoragePolicy === "string") process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = prevStoragePolicy;
+            else delete (process.env as any).HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY;
+        });
+
+        it("stores plain content when the session encryptionMode is plain and storagePolicy is optional", async () => {
+            const createdAt = new Date("2020-01-01T00:00:00.000Z");
+            const prevStoragePolicy = process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY;
+            process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
+
+            try {
+                currentTx.sessionMessage.findUnique.mockResolvedValue(null);
+                currentTx.session.findUnique.mockResolvedValue({ accountId: "u1", encryptionMode: "plain" });
+                currentTx.sessionShare.findUnique.mockResolvedValue(null);
+                currentTx.session.update.mockResolvedValue({ seq: 1 });
+                currentTx.sessionMessage.create.mockResolvedValue({
+                    id: "m1",
+                    seq: 1,
+                    localId: null,
+                    content: { t: "plain", v: { type: "user", text: "hi" } },
+                    createdAt,
+                    updatedAt: createdAt,
+                });
+                getSessionParticipantUserIds.mockResolvedValue(["u1"]);
+                markAccountChanged.mockResolvedValueOnce(101);
+
+                const res = await createSessionMessageCompat({
+                    actorUserId: "u1",
+                    sessionId: "s1",
+                    content: { t: "plain", v: { type: "user", text: "hi" } },
+                });
+
+                expect(res.ok).toBe(true);
+                expect(currentTx.sessionMessage.create).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        data: expect.objectContaining({
+                            content: { t: "plain", v: { type: "user", text: "hi" } },
+                        }),
+                    }),
+                );
+            } finally {
+                if (typeof prevStoragePolicy === "string") process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = prevStoragePolicy;
+                else delete (process.env as any).HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY;
+            }
         });
     });
 

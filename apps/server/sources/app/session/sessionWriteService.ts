@@ -3,24 +3,29 @@ import { db } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
 import { isPrismaErrorCode } from "@/storage/prisma";
 import { log } from "@/utils/logging/log";
+import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
+import { isStoredContentKindAllowedForSessionByStoragePolicy, type SessionStoredContentKind } from "@happier-dev/protocol";
+import { resolveEncryptionWriteRejectionCode, type EncryptionPolicyRejectionCode } from "@/app/session/encryptionRejectionCodes";
 
 type ParticipantCursor = SessionParticipantCursor;
 
 type EnsureSessionEditAccessResult =
-    | { ok: true; sessionOwnerId: string }
+    | { ok: true; sessionOwnerId: string; sessionEncryptionMode: "e2ee" | "plain" }
     | { ok: false; error: "session-not-found" | "forbidden" };
 
 async function ensureSessionEditAccess(tx: Tx, params: { actorUserId: string; sessionId: string }): Promise<EnsureSessionEditAccessResult> {
     const session = await tx.session.findUnique({
         where: { id: params.sessionId },
-        select: { accountId: true },
+        select: { accountId: true, encryptionMode: true },
     });
     if (!session) {
         return { ok: false, error: "session-not-found" };
     }
 
+    const sessionEncryptionMode: "e2ee" | "plain" = session.encryptionMode === "plain" ? "plain" : "e2ee";
+
     if (session.accountId === params.actorUserId) {
-        return { ok: true, sessionOwnerId: session.accountId };
+        return { ok: true, sessionOwnerId: session.accountId, sessionEncryptionMode };
     }
 
     const share = await tx.sessionShare.findUnique({
@@ -37,7 +42,7 @@ async function ensureSessionEditAccess(tx: Tx, params: { actorUserId: string; se
         return { ok: false, error: "forbidden" };
     }
 
-    return { ok: true, sessionOwnerId: session.accountId };
+    return { ok: true, sessionOwnerId: session.accountId, sessionEncryptionMode };
 }
 
 async function ensureSessionEditAccessNoTx(params: { actorUserId: string; sessionId: string }): Promise<EnsureSessionEditAccessResult> {
@@ -57,20 +62,36 @@ export type CreateSessionMessageResult =
         message: { id: string; seq: number; localId: string | null; createdAt: Date };
         participantCursors: [];
       }
-    | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "internal" };
+    | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "internal"; code?: EncryptionPolicyRejectionCode };
 
-export async function createSessionMessage(params: {
+type CreateSessionMessageParamsBase = Readonly<{
     actorUserId: string;
     sessionId: string;
-    ciphertext: string;
     localId?: string | null;
-}): Promise<CreateSessionMessageResult> {
+}>;
+
+export async function createSessionMessage(
+    params: CreateSessionMessageParamsBase &
+        (
+            | Readonly<{ ciphertext: string; content?: never }>
+            | Readonly<{ content: PrismaJson.SessionMessageContent; ciphertext?: never }>
+        ),
+): Promise<CreateSessionMessageResult> {
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
-    const ciphertext = typeof params.ciphertext === "string" ? params.ciphertext : "";
+    const ciphertext = "ciphertext" in params && typeof params.ciphertext === "string" ? params.ciphertext : "";
     const localId = typeof params.localId === "string" ? params.localId : null;
 
-    if (!sessionId || !actorUserId || !ciphertext) {
+    const content = "content" in params ? params.content : ciphertext ? ({ t: "encrypted", c: ciphertext } satisfies PrismaJson.SessionMessageContent) : null;
+
+    if (!sessionId || !actorUserId || !content) {
+        return { ok: false, error: "invalid-params" };
+    }
+
+    if (content.t === "encrypted" && (!content.c || typeof content.c !== "string")) {
+        return { ok: false, error: "invalid-params" };
+    }
+    if (content.t === "plain" && !("v" in content)) {
         return { ok: false, error: "invalid-params" };
     }
 
@@ -81,9 +102,25 @@ export async function createSessionMessage(params: {
                 return { ok: false, error: access.error };
             }
 
+            const encryptionPolicy = readEncryptionFeatureEnv(process.env);
+            const writeKind: SessionStoredContentKind = content.t === "plain" ? "plain" : "encrypted";
+            if (
+                !isStoredContentKindAllowedForSessionByStoragePolicy(encryptionPolicy.storagePolicy, access.sessionEncryptionMode, writeKind)
+            ) {
+                return {
+                    ok: false,
+                    error: "invalid-params",
+                    code: resolveEncryptionWriteRejectionCode({
+                        storagePolicy: encryptionPolicy.storagePolicy,
+                        sessionEncryptionMode: access.sessionEncryptionMode,
+                        writeKind,
+                    }),
+                };
+            }
+
             if (localId) {
-                const existing = await tx.sessionMessage.findFirst({
-                    where: { sessionId, localId },
+                const existing = await tx.sessionMessage.findUnique({
+                    where: { sessionId_localId: { sessionId, localId } },
                     select: { id: true, seq: true, localId: true, createdAt: true },
                 });
                 if (existing) {
@@ -97,12 +134,11 @@ export async function createSessionMessage(params: {
                 data: { seq: { increment: 1 } },
             });
 
-            const msgContent: PrismaJson.SessionMessageContent = { t: "encrypted", c: ciphertext };
             const created = await tx.sessionMessage.create({
                 data: {
                     sessionId,
                     seq: next.seq,
-                    content: msgContent,
+                    content,
                     localId,
                 },
                 select: { id: true, seq: true, localId: true, content: true, createdAt: true, updatedAt: true },
@@ -138,8 +174,8 @@ export async function createSessionMessage(params: {
             if (!access.ok) {
                 return { ok: false, error: access.error };
             }
-            const existing = await db.sessionMessage.findFirst({
-                where: { sessionId, localId },
+            const existing = await db.sessionMessage.findUnique({
+                where: { sessionId_localId: { sessionId, localId } },
                 select: { id: true, seq: true, localId: true, createdAt: true },
             });
             if (existing) {

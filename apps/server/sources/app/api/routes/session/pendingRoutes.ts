@@ -1,3 +1,4 @@
+import type { PrismaJson } from "@prisma/client";
 import { z } from "zod";
 import { type Fastify } from "../../types";
 import { buildNewMessageUpdate, buildPendingChangedUpdate, eventRouter } from "@/app/events/eventRouter";
@@ -14,6 +15,8 @@ import {
 } from "@/app/session/pending/pendingMessageService";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { log } from "@/utils/logging/log";
+import { SessionStoredMessageContentSchema } from "@happier-dev/protocol";
+import { resolveRouteRateLimit } from "@/app/api/utils/apiRateLimitPolicy";
 
 function toPendingJson(row: PendingMessageRow) {
     return {
@@ -27,6 +30,13 @@ function toPendingJson(row: PendingMessageRow) {
         discardedReason: row.discardedReason,
         authorAccountId: row.authorAccountId,
     };
+}
+
+function getOptionalErrorCode(value: unknown): string | undefined {
+    if (!value || typeof value !== "object") return undefined;
+    if (!("code" in value)) return undefined;
+    const code = (value as { code?: unknown }).code;
+    return typeof code === "string" && code.length > 0 ? code : undefined;
 }
 
 async function emitPendingChanged(params: {
@@ -81,6 +91,14 @@ export function sessionPendingRoutes(app: Fastify) {
                     })
                     .optional(),
             },
+            config: {
+                rateLimit: resolveRouteRateLimit(process.env, {
+                    maxEnvKey: "HAPPIER_SESSION_PENDING_RATE_LIMIT_MAX",
+                    windowEnvKey: "HAPPIER_SESSION_PENDING_RATE_LIMIT_WINDOW",
+                    defaultMax: 600,
+                    defaultWindow: "1 minute",
+                }),
+            },
         },
         async (request, reply) => {
             const { sessionId } = request.params;
@@ -94,7 +112,12 @@ export function sessionPendingRoutes(app: Fastify) {
             });
 
             if (!res.ok) {
-                if (res.error === "invalid-params") return reply.code(400).send({ error: res.error });
+                if (res.error === "invalid-params") {
+                    const payload: { error: string; code?: string } = { error: res.error };
+                    const code = getOptionalErrorCode(res);
+                    if (code) payload.code = code;
+                    return reply.code(400).send(payload);
+                }
                 if (res.error === "forbidden") return reply.code(403).send({ error: res.error });
                 if (res.error === "session-not-found") return reply.code(404).send({ error: res.error });
                 return reply.code(500).send({ error: res.error });
@@ -110,25 +133,55 @@ export function sessionPendingRoutes(app: Fastify) {
             preHandler: app.authenticate,
             schema: {
                 params: z.object({ sessionId: z.string() }),
-                body: z.object({
-                    ciphertext: z.string().min(1),
-                    localId: z.string().min(1),
-                }),
+                body: z.union([
+                    z.object({
+                        ciphertext: z.string().min(1),
+                        localId: z.string().min(1),
+                    }),
+                    z.object({
+                        content: SessionStoredMessageContentSchema,
+                        localId: z.string().min(1),
+                    }),
+                ]),
             },
         },
         async (request, reply) => {
             const { sessionId } = request.params;
-            const { ciphertext, localId } = request.body;
+            const body = request.body as unknown;
+            const localId =
+                body && typeof body === "object" && "localId" in body && typeof (body as { localId?: unknown }).localId === "string"
+                    ? (body as { localId: string }).localId
+                    : "";
+            const ciphertext =
+                body && typeof body === "object" && "ciphertext" in body && typeof (body as { ciphertext?: unknown }).ciphertext === "string"
+                    ? (body as { ciphertext: string }).ciphertext
+                    : null;
+            const content =
+                body && typeof body === "object" && "content" in body
+                    ? ((body as { content: PrismaJson.SessionPendingMessageContent }).content ?? null)
+                    : null;
 
-            const res = await enqueuePendingMessage({
-                actorUserId: request.userId,
-                sessionId,
-                localId,
-                ciphertext,
-            });
+            const res = await (content
+                ? enqueuePendingMessage({
+                      actorUserId: request.userId,
+                      sessionId,
+                      localId,
+                      content,
+                  })
+                : enqueuePendingMessage({
+                      actorUserId: request.userId,
+                      sessionId,
+                      localId,
+                      ciphertext: ciphertext ?? "",
+                  }));
 
             if (!res.ok) {
-                if (res.error === "invalid-params") return reply.code(400).send({ error: res.error });
+                if (res.error === "invalid-params") {
+                    const payload: { error: string; code?: string } = { error: res.error };
+                    const code = getOptionalErrorCode(res);
+                    if (code) payload.code = code;
+                    return reply.code(400).send(payload);
+                }
                 if (res.error === "forbidden") return reply.code(403).send({ error: res.error });
                 if (res.error === "session-not-found") return reply.code(404).send({ error: res.error });
                 return reply.code(500).send({ error: res.error });
@@ -157,16 +210,34 @@ export function sessionPendingRoutes(app: Fastify) {
             preHandler: app.authenticate,
             schema: {
                 params: z.object({ sessionId: z.string(), localId: z.string() }),
-                body: z.object({ ciphertext: z.string().min(1) }),
+                body: z.union([
+                    z.object({ ciphertext: z.string().min(1) }),
+                    z.object({ content: SessionStoredMessageContentSchema }),
+                ]),
             },
         },
         async (request, reply) => {
             const { sessionId, localId } = request.params;
-            const { ciphertext } = request.body;
+            const body = request.body as unknown;
+            const ciphertext =
+                body && typeof body === "object" && "ciphertext" in body && typeof (body as { ciphertext?: unknown }).ciphertext === "string"
+                    ? (body as { ciphertext: string }).ciphertext
+                    : null;
+            const content =
+                body && typeof body === "object" && "content" in body
+                    ? ((body as { content: PrismaJson.SessionPendingMessageContent }).content ?? null)
+                    : null;
 
-            const res = await updatePendingMessage({ actorUserId: request.userId, sessionId, localId, ciphertext });
+            const res = await (content
+                ? updatePendingMessage({ actorUserId: request.userId, sessionId, localId, content })
+                : updatePendingMessage({ actorUserId: request.userId, sessionId, localId, ciphertext: ciphertext ?? "" }));
             if (!res.ok) {
-                if (res.error === "invalid-params") return reply.code(400).send({ error: res.error });
+                if (res.error === "invalid-params") {
+                    const payload: { error: string; code?: string } = { error: res.error };
+                    const code = getOptionalErrorCode(res);
+                    if (code) payload.code = code;
+                    return reply.code(400).send(payload);
+                }
                 if (res.error === "forbidden") return reply.code(403).send({ error: res.error });
                 if (res.error === "session-not-found") return reply.code(404).send({ error: res.error });
                 return reply.code(500).send({ error: res.error });
@@ -193,7 +264,12 @@ export function sessionPendingRoutes(app: Fastify) {
             const { sessionId, localId } = request.params;
             const res = await deletePendingMessage({ actorUserId: request.userId, sessionId, localId });
             if (!res.ok) {
-                if (res.error === "invalid-params") return reply.code(400).send({ error: res.error });
+                if (res.error === "invalid-params") {
+                    const payload: { error: string; code?: string } = { error: res.error };
+                    const code = getOptionalErrorCode(res);
+                    if (code) payload.code = code;
+                    return reply.code(400).send(payload);
+                }
                 if (res.error === "forbidden") return reply.code(403).send({ error: res.error });
                 if (res.error === "session-not-found") return reply.code(404).send({ error: res.error });
                 return reply.code(500).send({ error: res.error });
@@ -305,6 +381,14 @@ export function sessionPendingRoutes(app: Fastify) {
         {
             preHandler: app.authenticate,
             schema: { params: z.object({ sessionId: z.string() }) },
+            config: {
+                rateLimit: resolveRouteRateLimit(process.env, {
+                    maxEnvKey: "HAPPIER_SESSION_PENDING_MATERIALIZE_RATE_LIMIT_MAX",
+                    windowEnvKey: "HAPPIER_SESSION_PENDING_MATERIALIZE_RATE_LIMIT_WINDOW",
+                    defaultMax: 120,
+                    defaultWindow: "1 minute",
+                }),
+            },
         },
         async (request, reply) => {
             const { sessionId } = request.params;

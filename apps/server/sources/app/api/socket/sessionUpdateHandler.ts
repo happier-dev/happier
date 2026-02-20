@@ -9,6 +9,7 @@ import { Socket } from "socket.io";
 import { createSessionMessage, updateSessionAgentState, updateSessionMetadata } from "@/app/session/sessionWriteService";
 import { recordSessionAlive } from "@/app/presence/presenceRecorder";
 import { materializeNextPendingMessage } from "@/app/session/pending/pendingMessageService";
+import { normalizeIncomingSessionMessageContent } from "@/app/session/messageContent/normalizeIncomingSessionMessageContent";
 
 export function sessionUpdateHandler(userId: string, socket: Socket, connection: ClientConnection) {
     socket.on('update-metadata', async (data: any, callback: (response: any) => void) => {
@@ -182,25 +183,33 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
             try {
                 websocketEventsCounter.inc({ event_type: 'message' });
                 const sid = typeof data?.sid === 'string' ? data.sid : null;
-                const message = typeof data?.message === 'string' ? data.message : null;
+                const content = normalizeIncomingSessionMessageContent(data?.message);
                 const localId = typeof data?.localId === 'string' ? data.localId : null;
                 const echoToSender = data?.echoToSender === true;
 
-                if (!sid || !message) {
+                if (!sid || !content) {
                     socketMessageAckCounter.inc({ result: 'error', error: 'invalid-params' });
                     respond({ ok: false, error: 'invalid-params' });
                     return;
                 }
 
+                const loggedLength = (() => {
+                    if (content.t === "encrypted") return content.c.length;
+                    try {
+                        return JSON.stringify(content.v ?? null).length;
+                    } catch {
+                        return 0;
+                    }
+                })();
                 log(
                     { module: 'websocket' },
-                    `Received message from socket ${socket.id}: sessionId=${sid}, messageLength=${message.length} bytes, connectionType=${connection.connectionType}, connectionSessionId=${connection.connectionType === 'session-scoped' ? connection.sessionId : 'N/A'}`
+                    `Received message from socket ${socket.id}: sessionId=${sid}, messageLength=${loggedLength} bytes, connectionType=${connection.connectionType}, connectionSessionId=${connection.connectionType === 'session-scoped' ? connection.sessionId : 'N/A'}`
                 );
 
                 const result = await createSessionMessage({
                     actorUserId: userId,
                     sessionId: sid,
-                    ciphertext: message,
+                    content,
                     localId,
                 });
 

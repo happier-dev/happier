@@ -1,0 +1,7 @@
+-- AlterTable
+ALTER TABLE `Account` ADD COLUMN `encryptionMode` VARCHAR(191) NOT NULL DEFAULT 'e2ee';
+ALTER TABLE `Account` ADD COLUMN `encryptionModeUpdatedAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3);
+
+-- AlterTable
+ALTER TABLE `Session` ADD COLUMN `encryptionMode` VARCHAR(191) NOT NULL DEFAULT 'e2ee';
+

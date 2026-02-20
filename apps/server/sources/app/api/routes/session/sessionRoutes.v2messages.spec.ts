@@ -93,6 +93,41 @@ describe("sessionRoutes v2 messages", () => {
         });
     });
 
+    it("accepts plain content writes and forwards them to the service", async () => {
+        const createdAt = new Date(1);
+        createSessionMessage.mockResolvedValue({
+            ok: true,
+            didWrite: true,
+            message: { id: "m1", seq: 10, localId: null, content: { t: "plain", v: { type: "user", text: "hi" } }, createdAt, updatedAt: createdAt },
+            participantCursors: [{ accountId: "u1", cursor: 111 }],
+        });
+
+        const { handler } = await registerSessionRoutesAndGetHandler("POST", "/v2/sessions/:sessionId/messages");
+        const reply = createSessionRouteReply();
+
+        const res = await handler(
+            {
+                userId: "u1",
+                params: { sessionId: "s1" },
+                headers: {},
+                body: { content: { t: "plain", v: { type: "user", text: "hi" } } },
+            },
+            reply,
+        );
+
+        expect(createSessionMessage).toHaveBeenCalledWith({
+            actorUserId: "u1",
+            sessionId: "s1",
+            content: { t: "plain", v: { type: "user", text: "hi" } },
+            localId: null,
+        });
+
+        expect(res).toEqual({
+            didWrite: true,
+            message: { id: "m1", seq: 10, localId: null, createdAt: createdAt.getTime() },
+        });
+    });
+
     it("maps service errors to status codes", async () => {
         const { handler } = await registerSessionRoutesAndGetHandler("POST", "/v2/sessions/:sessionId/messages");
 
@@ -112,5 +147,26 @@ describe("sessionRoutes v2 messages", () => {
         const r3 = mkReply();
         await handler({ userId: "u1", params: { sessionId: "s1" }, headers: {}, body: { ciphertext: "x" } }, r3);
         expect(r3.code).toHaveBeenCalledWith(404);
+    });
+
+    it("includes a stable error code when the service provides one for invalid-params", async () => {
+        const { handler } = await registerSessionRoutesAndGetHandler("POST", "/v2/sessions/:sessionId/messages");
+        createSessionMessage.mockResolvedValueOnce({
+            ok: false,
+            error: "invalid-params",
+            code: "session_encryption_mode_mismatch",
+        });
+
+        const reply = createSessionRouteReply();
+        await handler(
+            { userId: "u1", params: { sessionId: "s1" }, headers: {}, body: { ciphertext: "x" } },
+            reply,
+        );
+
+        expect(reply.code).toHaveBeenCalledWith(400);
+        expect(reply.send).toHaveBeenCalledWith({
+            error: "Invalid parameters",
+            code: "session_encryption_mode_mismatch",
+        });
     });
 });

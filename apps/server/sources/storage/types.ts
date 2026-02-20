@@ -2,10 +2,15 @@ import { ImageRef as ImageRefType } from "./blob/files";
 declare global {
     namespace PrismaJson {
         // Session message content types
-        type SessionMessageContent = {
-            t: 'encrypted';
-            c: string; // Base64 encoded encrypted content
-        };
+        type SessionMessageContent =
+            | {
+                  t: 'encrypted';
+                  c: string; // Base64 encoded encrypted content
+              }
+            | {
+                  t: 'plain';
+                  v: unknown;
+              };
 
         // Pending queue content types (same encrypted wrapper).
         type SessionPendingMessageContent = SessionMessageContent;

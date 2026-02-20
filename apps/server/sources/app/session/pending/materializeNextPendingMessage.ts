@@ -2,6 +2,8 @@ import { markSessionParticipantsChanged, type SessionParticipantCursor } from "@
 import { markPendingStateChangedParticipants } from "@/app/session/pending/markPendingStateChangedParticipants";
 import { resolveSessionPendingOwnerAccess } from "@/app/session/pending/resolveSessionPendingAccess";
 import { inTx, type Tx } from "@/storage/inTx";
+import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
+import { isStoredContentKindAllowedForSessionByStoragePolicy, type SessionStoredContentKind } from "@happier-dev/protocol";
 
 type ParticipantCursor = SessionParticipantCursor;
 
@@ -97,6 +99,14 @@ export async function materializeNextPendingMessage(params: {
 
     try {
         return await inTx(async (tx) => {
+            const sessionModeRow = await tx.session.findUnique({
+                where: { id: sessionId },
+                select: { encryptionMode: true },
+            });
+            if (!sessionModeRow) return { ok: false, error: "session-not-found" } as const;
+            const sessionEncryptionMode: "e2ee" | "plain" = sessionModeRow.encryptionMode === "plain" ? "plain" : "e2ee";
+            const policy = readEncryptionFeatureEnv(process.env);
+
             const nextPending = await tx.sessionPendingMessage.findFirst({
                 where: { sessionId, status: "queued" },
                 orderBy: [{ position: "asc" }, { createdAt: "asc" }],
@@ -109,6 +119,12 @@ export async function materializeNextPendingMessage(params: {
 
             const localId = nextPending.localId;
             const content = toSessionMessageContentFromPending(nextPending.content as PrismaJson.SessionPendingMessageContent);
+
+            const writeKind: SessionStoredContentKind = content.t === "plain" ? "plain" : "encrypted";
+            if (!isStoredContentKindAllowedForSessionByStoragePolicy(policy.storagePolicy, sessionEncryptionMode, writeKind)) {
+                return { ok: false, error: "invalid-params" } as const;
+            }
+
             const created = await createSessionMessageFromPending(tx, { sessionId, localId, content });
 
             await tx.sessionPendingMessage.delete({

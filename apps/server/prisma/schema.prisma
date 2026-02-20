@@ -36,6 +36,8 @@ model Account {
     updatedAt       DateTime    @updatedAt
     settings        String?
     settingsVersion Int         @default(0)
+    encryptionMode  String      @default("e2ee")
+    encryptionModeUpdatedAt DateTime @default(now())
 
     // Profile
     firstName String?
@@ -232,6 +234,7 @@ model Session {
     tag               String
     accountId         String
     account           Account             @relation(fields: [accountId], references: [id])
+    encryptionMode    String              @default("e2ee")
     metadata          String
     metadataVersion   Int                 @default(0)
     agentState        String?
@@ -681,7 +684,7 @@ model SessionShare {
     /// Whether this recipient can approve permission prompts for this session (delegated to the owner daemon)
     canApprovePermissions Boolean       @default(false)
     /// NaCl Box encrypted dataEncryptionKey for the recipient
-    encryptedDataKey  Bytes
+    encryptedDataKey  Bytes?
     createdAt         DateTime         @default(now())
     updatedAt         DateTime         @updatedAt
     accessLogs        SessionShareAccessLog[]
@@ -718,7 +721,7 @@ model PublicSessionShare {
     /// sha256(token) (32 bytes)
     tokenHash         Bytes                     @unique
     /// Encrypted dataEncryptionKey for public access
-    encryptedDataKey  Bytes
+    encryptedDataKey  Bytes?
     /// Optional expiration time (null = no expiration)
     expiresAt         DateTime?
     /// Maximum number of uses (null = unlimited)
