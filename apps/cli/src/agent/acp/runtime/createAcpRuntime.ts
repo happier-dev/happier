@@ -21,6 +21,21 @@ import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
 import { getAgentModelConfig, type AgentId } from '@happier-dev/agents';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 
+const DEFAULT_STREAM_DELTA_FLUSH_INTERVAL_MS = 50;
+
+function resolveStreamDeltaFlushIntervalMs(input: unknown): number {
+  if (typeof input === 'number' && Number.isFinite(input) && input >= 0) {
+    return Math.trunc(input);
+  }
+
+  const raw = (process.env.HAPPIER_ACP_STREAM_DELTA_FLUSH_MS ?? '').toString().trim();
+  if (!raw) return DEFAULT_STREAM_DELTA_FLUSH_INTERVAL_MS;
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_STREAM_DELTA_FLUSH_INTERVAL_MS;
+  return Math.trunc(parsed);
+}
+
 export type AcpRuntime = Readonly<{
   getSessionId: () => string | null;
   /**
@@ -180,6 +195,15 @@ export function createAcpRuntime(params: {
       sendToolResult: (params: { callId: string; output: unknown }) => void;
     }) => void;
   };
+  /**
+   * Optional model-output streaming tuning for this runtime.
+   *
+   * When `deltaFlushIntervalMs` is 0, each delta is forwarded immediately (no buffering).
+   * Otherwise deltas are buffered and flushed periodically to reduce message volume.
+   */
+  modelOutputStreaming?: {
+    deltaFlushIntervalMs?: number | null;
+  };
 }): AcpRuntime {
   let backend: AcpRuntimeBackend | null = null;
   let backendPromise: Promise<AcpRuntimeBackend> | null = null;
@@ -297,6 +321,10 @@ export function createAcpRuntime(params: {
   const toolNameByCallId = new Map<string, { toolName: string; createdAtMs: number }>();
   const toolCallIdQueue: string[] = [];
 
+  const streamDeltaFlushIntervalMs = resolveStreamDeltaFlushIntervalMs(
+    params.modelOutputStreaming?.deltaFlushIntervalMs,
+  );
+
   const clearToolCallCache = () => {
     toolNameByCallId.clear();
     toolCallIdQueue.length = 0;
@@ -364,7 +392,6 @@ export function createAcpRuntime(params: {
   // ---------------------------------------------------------------------------
   let streamDeltaBuffer = '';
   let streamDeltaFlushTimer: ReturnType<typeof setTimeout> | null = null;
-  const STREAM_DELTA_FLUSH_INTERVAL_MS = 50;
 
   const flushStreamDeltaBuffer = () => {
     if (streamDeltaFlushTimer) {
@@ -389,9 +416,25 @@ export function createAcpRuntime(params: {
 
   const enqueueStreamDelta = (delta: string) => {
     if (!delta) return;
+
+    if (streamDeltaFlushIntervalMs === 0) {
+      if (!turnStreamKey) {
+        turnStreamKey = `acp:turn:${randomUUID()}`;
+      }
+      forwardAcpMessageDelta({
+        sendAcp: params.session.sendAgentMessage.bind(params.session),
+        provider: params.provider,
+        delta,
+        streamMetaKey: 'happierStreamKey',
+        streamKey: turnStreamKey,
+      });
+      didStreamModelOutputToSession = true;
+      return;
+    }
+
     streamDeltaBuffer += delta;
     if (!streamDeltaFlushTimer) {
-      streamDeltaFlushTimer = setTimeout(flushStreamDeltaBuffer, STREAM_DELTA_FLUSH_INTERVAL_MS);
+      streamDeltaFlushTimer = setTimeout(flushStreamDeltaBuffer, streamDeltaFlushIntervalMs);
       streamDeltaFlushTimer.unref?.();
     }
   };
