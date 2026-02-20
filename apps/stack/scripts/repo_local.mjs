@@ -18,8 +18,8 @@ function shouldAutoInstallDepsForRepoLocalCommand(cmd) {
   return true;
 }
 
-async function maybeAutoInstallRepoDeps({ repoRoot, cmd, env, preflightRootOverride = '', preflightOnly = '' }) {
-  const autoInstallRaw = String(env?.HAPPIER_STACK_REPO_LOCAL_AUTO_INSTALL ?? '').trim();
+async function maybeAutoInstallRepoDeps({ repoRoot, cmd, env, autoInstallOverride = '', preflightRootOverride = '', preflightOnly = '' }) {
+  const autoInstallRaw = String(autoInstallOverride ?? '').trim();
   const autoInstall = autoInstallRaw ? autoInstallRaw !== '0' : true;
   if (!autoInstall) return;
   if (!shouldAutoInstallDepsForRepoLocalCommand(cmd)) return;
@@ -213,6 +213,7 @@ function readRuntimeServerPort(runtimeStatePath) {
 }
 
 async function main() {
+  const autoInstallOverride = String(process.env.HAPPIER_STACK_REPO_LOCAL_AUTO_INSTALL ?? '').trim();
   const preflightRootOverride = String(process.env.HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ROOT ?? '').trim();
   const preflightOnly = String(process.env.HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ONLY ?? '').trim();
 
@@ -395,6 +396,7 @@ async function main() {
       repoRoot,
       cmd: subcommand,
       env: effectiveEnv,
+      autoInstallOverride,
       preflightRootOverride,
       preflightOnly,
     });
