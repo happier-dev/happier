@@ -1,0 +1,71 @@
+name: Feature request
+description: Propose a user-facing feature or improvement.
+labels:
+  - "type: feature"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing an improvement.
+
+        **Privacy note:** Please don’t paste secrets, tokens, or private logs.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What user problem are we solving? Who is impacted?
+      placeholder: |
+        As a …, I want …, so that …
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Optional. If you have an idea, describe what we should build/change.
+    validations:
+      required: false
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Optional. How do we know we’re done? A short checklist is ideal.
+      placeholder: |
+        - [ ] …
+        - [ ] …
+    validations:
+      required: false
+
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals (optional)
+      description: What is explicitly out of scope?
+      placeholder: |
+        - …
+    validations:
+      required: false
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority (optional)
+      description: Best guess is fine; maintainers may adjust.
+      options:
+        - P0
+        - P1
+        - P2
+        - P3
+    validations:
+      required: false
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context (optional)
+      description: Links, mockups, references, related issues.
+    validations:
+      required: false

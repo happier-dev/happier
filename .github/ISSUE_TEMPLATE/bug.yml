@@ -1,0 +1,145 @@
+name: Bug report
+description: Report a user-facing bug or regression.
+labels:
+  - "type: bug"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this.
+
+        **Privacy note:** Please don’t paste secrets, tokens, or private logs.
+        If you can reproduce in a minimal way, that’s ideal. If you can’t, still file the issue.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What’s broken, and what’s the user impact?
+      placeholder: One or two sentences.
+    validations:
+      required: true
+
+  - type: textarea
+    id: current_behavior
+    attributes:
+      label: What happened (current behavior)
+      description: What did you observe?
+      placeholder: Describe what happened.
+    validations:
+      required: false
+
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: Expected behavior
+      description: Optional.
+      placeholder: What should happen?
+    validations:
+      required: false
+
+  - type: textarea
+    id: reproduction_steps
+    attributes:
+      label: Reproduction steps
+      description: Optional. If you can reproduce, list steps here.
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: false
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: Optional. Best guess is fine.
+      options:
+        - blocker
+        - high
+        - medium
+        - low
+        - unsure
+    validations:
+      required: false
+
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: Frequency
+      description: Optional. Best guess is fine.
+      options:
+        - always
+        - often
+        - sometimes
+        - once
+        - unsure
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Happier version
+      description: App/CLI version (if known).
+      placeholder: e.g. 0.12.3 or "main @ <commit sha>"
+    validations:
+      required: false
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: OS/device details.
+      placeholder: e.g. macOS 15.2, Windows 11, iOS 18, Ubuntu 24.04
+    validations:
+      required: false
+
+  - type: input
+    id: server_version
+    attributes:
+      label: Server version
+      description: Optional. If relevant, the server version you’re connected to.
+      placeholder: e.g. 0.12.3
+    validations:
+      required: false
+
+  - type: dropdown
+    id: deployment_type
+    attributes:
+      label: Deployment type
+      description: Optional. If you know it.
+      options:
+        - cloud
+        - self-hosted
+        - enterprise
+        - unsure
+    validations:
+      required: false
+
+  - type: textarea
+    id: what_changed
+    attributes:
+      label: What changed recently?
+      description: Optional. Updates, config changes, new hardware, etc.
+      placeholder: e.g. Updated from 0.12.2 → 0.12.3, changed model settings, switched networks.
+    validations:
+      required: false
+
+  - type: input
+    id: diagnostic_id
+    attributes:
+      label: Diagnostics ID
+      description: Optional. If you submitted an in-app bug report, paste the diagnostic id line here (include the `diagnostic_id:` prefix).
+      placeholder: "diagnostic_id: 00000000-0000-0000-0000-000000000000"
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Screenshots, links to related issues/PRs, anything else.
+    validations:
+      required: false

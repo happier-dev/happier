@@ -1,0 +1,9 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Happier docs
+    url: https://happier.dev
+    about: Product docs and guides.
+  - name: Security issue
+    url: https://github.com/happier-dev/happier/security/policy
+    about: Please report security vulnerabilities privately.
+

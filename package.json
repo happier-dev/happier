@@ -12,6 +12,7 @@
     "daemon": "node ./apps/stack/scripts/repo_local.mjs daemon",
     "eas": "node ./apps/stack/scripts/repo_local.mjs eas",
     "happier": "node ./apps/stack/scripts/repo_local.mjs happier",
+    "ghops": "node ./apps/stack/scripts/ghops.mjs",
     "menubar": "node ./apps/stack/scripts/repo_local.mjs menubar",
     "mobile": "node ./apps/stack/scripts/repo_local.mjs mobile",
     "mobile-dev-client": "node ./apps/stack/scripts/repo_local.mjs mobile-dev-client",

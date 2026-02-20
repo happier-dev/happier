@@ -1,0 +1,195 @@
+name: "Roadmap: Add to Project"
+
+on:
+  issues:
+    types: [opened, reopened, transferred, labeled]
+
+jobs:
+  add-to-project:
+    name: Sync roadmap fields
+    runs-on: ubuntu-latest
+    environment: roadmap
+    if: >-
+      contains(github.event.issue.labels.*.name, 'roadmap') &&
+      (
+        (vars.ROADMAP_BOT_APP_ID != '' || secrets.ROADMAP_BOT_APP_ID != '') &&
+        (secrets.ROADMAP_BOT_PRIVATE_KEY != '')
+      )
+    permissions:
+      contents: read
+
+    steps:
+      - name: Create GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.ROADMAP_BOT_APP_ID || secrets.ROADMAP_BOT_APP_ID }}
+          private-key: ${{ secrets.ROADMAP_BOT_PRIVATE_KEY }}
+
+      - name: Sync roadmap labels to project fields
+        uses: actions/github-script@v7
+        env:
+          PROJECT_ORG: happier-dev
+          PROJECT_NUMBER: "1"
+          PROJECT_PRIORITY_FIELD: Priority
+          PROJECT_RELEASE_STAGE_FIELD: Release stage
+          PROJECT_STATUS_FIELD: Status
+        with:
+          github-token: ${{ steps.app_token.outputs.token }}
+          script: |
+            const contentNodeId = context.payload.issue?.node_id ?? context.payload.pull_request?.node_id ?? null;
+            if (!contentNodeId) {
+              core.info('Missing issue/PR node id in event payload; skipping.');
+              return;
+            }
+
+            const labels = (context.payload.issue?.labels ?? context.payload.pull_request?.labels ?? [])
+              .map((l) => (typeof l === 'string' ? l : String(l?.name ?? '')))
+              .map((n) => n.trim())
+              .filter(Boolean);
+
+            const priorityLabel = labels.find((name) => name.toLowerCase().startsWith('priority:'));
+            const stageLabel = labels.find((name) => name.toLowerCase().startsWith('stage:'));
+
+            const priorityOptionName = priorityLabel
+              ? String(priorityLabel.split(':')[1] ?? '').trim().toUpperCase()
+              : null;
+            const stageKey = stageLabel ? String(stageLabel.split(':')[1] ?? '').trim().toLowerCase() : null;
+            const stageOptionName =
+              stageKey === 'ga'
+                ? 'GA'
+                : stageKey === 'beta'
+                  ? 'Beta'
+                  : stageKey === 'experimental'
+                    ? 'Experimental'
+                    : stageKey === 'not-shipped'
+                      ? 'Not shipped'
+                      : null;
+
+            if (!priorityOptionName && !stageOptionName) {
+              core.info('No priority:* or stage:* labels found; skipping field sync.');
+              return;
+            }
+
+            const org = String(process.env.PROJECT_ORG ?? '').trim();
+            const number = Number.parseInt(String(process.env.PROJECT_NUMBER ?? '0'), 10);
+            if (!org || !Number.isFinite(number) || number <= 0) {
+              throw new Error('Invalid project org/number configuration.');
+            }
+
+            const priorityFieldName = String(process.env.PROJECT_PRIORITY_FIELD ?? 'Priority');
+            const stageFieldName = String(process.env.PROJECT_RELEASE_STAGE_FIELD ?? 'Release stage');
+
+            const project = await github.graphql(
+              `
+                query ProjectFields($org: String!, $number: Int!) {
+                  organization(login: $org) {
+                    projectV2(number: $number) {
+                      id
+                      fields(first: 100) {
+                        nodes {
+                          __typename
+                          ... on ProjectV2SingleSelectField {
+                            id
+                            name
+                            options { id name }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              `,
+              { org, number },
+            );
+
+            const projectV2 = project?.organization?.projectV2;
+            if (!projectV2?.id) throw new Error('Failed to resolve project id.');
+
+            const singleSelectFields = (projectV2.fields?.nodes ?? []).filter((n) => n?.__typename === 'ProjectV2SingleSelectField');
+            const findField = (name) => singleSelectFields.find((f) => String(f?.name ?? '').trim() === name);
+            const priorityField = findField(priorityFieldName);
+            const stageField = findField(stageFieldName);
+
+            async function findProjectItemIdForContent() {
+              let cursor = null;
+              // Reasonable cap: curated roadmap project shouldn't be massive; still paginate to be safe.
+              for (let page = 0; page < 20; page++) {
+                const res = await github.graphql(
+                  `
+                    query ProjectItems($org: String!, $number: Int!, $after: String) {
+                      organization(login: $org) {
+                        projectV2(number: $number) {
+                          items(first: 50, after: $after) {
+                            nodes {
+                              id
+                              content {
+                                __typename
+                                ... on Issue { id }
+                                ... on PullRequest { id }
+                              }
+                            }
+                            pageInfo { hasNextPage endCursor }
+                          }
+                        }
+                      }
+                    }
+                  `,
+                  { org, number, after: cursor },
+                );
+
+                const items = res?.organization?.projectV2?.items;
+                const nodes = Array.isArray(items?.nodes) ? items.nodes : [];
+                const match = nodes.find((n) => String(n?.content?.id ?? '') === String(contentNodeId));
+                if (match?.id) return String(match.id);
+
+                if (!items?.pageInfo?.hasNextPage) return null;
+                cursor = items.pageInfo.endCursor ?? null;
+                if (!cursor) return null;
+              }
+              return null;
+            }
+
+            let itemId = null;
+            for (let attempt = 1; attempt <= 10; attempt++) {
+              itemId = await findProjectItemIdForContent();
+              if (itemId) break;
+              core.info(`Project item not found yet (attempt ${attempt}/10); waiting...`);
+              await new Promise((r) => setTimeout(r, 3000));
+            }
+
+            if (!itemId) {
+              core.info('Project item not found; ensure Project auto-add is enabled for label:roadmap.');
+              return;
+            }
+
+            async function setSingleSelect(field, optionName) {
+              if (!field?.id) return false;
+              const options = Array.isArray(field.options) ? field.options : [];
+              const option = options.find((o) => String(o?.name ?? '').trim() === optionName);
+              if (!option?.id) return false;
+              await github.graphql(
+                `
+                  mutation SetField($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                    updateProjectV2ItemFieldValue(input: {
+                      projectId: $projectId
+                      itemId: $itemId
+                      fieldId: $fieldId
+                      value: { singleSelectOptionId: $optionId }
+                    }) { projectV2Item { id } }
+                  }
+                `,
+                { projectId: projectV2.id, itemId, fieldId: field.id, optionId: option.id },
+              );
+              return true;
+            }
+
+            if (priorityOptionName) {
+              const ok = await setSingleSelect(priorityField, priorityOptionName);
+              core.info(ok ? `Set ${priorityFieldName}=${priorityOptionName}` : `Skipped ${priorityFieldName} (field/option not found)`);
+            }
+
+            if (stageOptionName) {
+              const ok = await setSingleSelect(stageField, stageOptionName);
+              core.info(ok ? `Set ${stageFieldName}=${stageOptionName}` : `Skipped ${stageFieldName} (field/option not found)`);
+            }
