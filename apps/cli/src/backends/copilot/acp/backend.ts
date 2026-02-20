@@ -26,19 +26,20 @@ export interface CopilotBackendOptions extends AgentFactoryOptions {
  */
 function buildCopilotPermissionArgs(permissionMode: PermissionMode | null | undefined): string[] {
   const intent = normalizePermissionModeToIntent(permissionMode ?? 'default') ?? 'default';
-  if (intent === 'yolo' || intent === 'bypassPermissions') {
+  if (intent === 'yolo') {
     return ['--yolo'];
   }
   return [];
 }
 
-export function createCopilotBackend(options: CopilotBackendOptions): AgentBackend {
-  const backendOptions: AcpBackendOptions = {
+export function buildCopilotAcpBackendOptions(options: CopilotBackendOptions): AcpBackendOptions {
+  return {
     agentName: 'copilot',
     cwd: options.cwd,
     command: resolveCliPathOverride({ agentId: 'copilot' }) ?? 'copilot',
     args: ['--acp', ...buildCopilotPermissionArgs(options.permissionMode)],
     env: {
+      // Suppress Copilot CLI debug noise by default; callers may override via options.env.
       NODE_ENV: 'production',
       DEBUG: '',
       ...options.env,
@@ -47,6 +48,8 @@ export function createCopilotBackend(options: CopilotBackendOptions): AgentBacke
     permissionHandler: options.permissionHandler,
     transportHandler: copilotTransport,
   };
+}
 
-  return new AcpBackend(backendOptions);
+export function createCopilotBackend(options: CopilotBackendOptions): AgentBackend {
+  return new AcpBackend(buildCopilotAcpBackendOptions(options));
 }
