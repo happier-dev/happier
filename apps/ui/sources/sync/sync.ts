@@ -7,7 +7,7 @@ import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { storage } from './domains/state/storage';
 import { ApiMessage } from './api/types/apiTypes';
 import type { ApiEphemeralActivityUpdate } from './api/types/apiTypes';
-import { Session, Machine, type Metadata } from './domains/state/storageTypes';
+import { Session, Machine, MetadataSchema, type Metadata } from './domains/state/storageTypes';
 import { InvalidateSync } from '@/utils/sessions/sync';
 import { ActivityUpdateAccumulator } from './reducer/activityUpdateAccumulator';
 import { randomUUID } from '@/platform/randomUUID';
@@ -543,14 +543,6 @@ class Sync {
     async sendMessage(sessionId: string, text: string, displayText?: string, metaOverrides?: Record<string, unknown>) {
         storage.getState().markSessionOptimisticThinking(sessionId);
 
-        // Get encryption
-        const encryption = this.encryption.getSessionEncryption(sessionId);
-        if (!encryption) { // Should never happen
-            storage.getState().clearSessionOptimisticThinking(sessionId);
-            console.error(`Session ${sessionId} not found`);
-            return;
-        }
-
         // Get session data from storage
         const session = storage.getState().sessions[sessionId];
         if (!session) {
@@ -558,6 +550,8 @@ class Sync {
             console.error(`Session ${sessionId} not found in storage`);
             return;
         }
+
+        const sessionEncryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
 
         try {
             // Read permission mode from session state
@@ -594,7 +588,17 @@ class Sync {
                     metaOverrides: metaOverrides as any,
                 })
             };
-            const encryptedRawRecord = await encryption.encryptRawRecord(content);
+
+            const messagePayload =
+                sessionEncryptionMode === 'plain'
+                    ? { t: 'plain' as const, v: content }
+                    : await (async () => {
+                        const encryption = this.encryption.getSessionEncryption(sessionId);
+                        if (!encryption) {
+                            throw new Error(`Session ${sessionId} encryption not found`);
+                        }
+                        return await encryption.encryptRawRecord(content);
+                    })();
 
             // Track this outbound user message in the local pending queue until it is committed.
             // This prevents “ghost” optimistic transcript items when the send fails, and it lets the UI
@@ -617,7 +621,7 @@ class Sync {
 
             const payload = {
                 sid: sessionId,
-                message: encryptedRawRecord,
+                message: messagePayload,
                 localId,
                 sentFrom,
                 permissionMode: permissionMode || 'default'
@@ -858,8 +862,10 @@ class Sync {
     }
 
     private async updateSessionMetadataWithRetry(sessionId: string, updater: (metadata: Metadata) => Metadata): Promise<void> {
-        const encryption = this.encryption.getSessionEncryption(sessionId);
-        if (!encryption) {
+        const session = storage.getState().sessions[sessionId] ?? null;
+        const sessionEncryptionMode: 'e2ee' | 'plain' = session?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+        const encryption = sessionEncryptionMode === 'plain' ? null : this.encryption.getSessionEncryption(sessionId);
+        if (sessionEncryptionMode === 'e2ee' && !encryption) {
             throw new Error(`Session ${sessionId} not found`);
         }
 
@@ -873,8 +879,24 @@ class Sync {
             refreshSessions: async () => {
                 await this.refreshSessions();
             },
-            encryptMetadata: async (metadata) => encryption.encryptMetadata(metadata),
-            decryptMetadata: async (version, encrypted) => encryption.decryptMetadata(version, encrypted),
+            encryptMetadata: async (metadata) => {
+                if (sessionEncryptionMode === 'plain') {
+                    return JSON.stringify(metadata);
+                }
+                return await encryption!.encryptMetadata(metadata);
+            },
+            decryptMetadata: async (version, encrypted) => {
+                if (sessionEncryptionMode !== 'plain') {
+                    return await encryption!.decryptMetadata(version, encrypted);
+                }
+                try {
+                    const parsedJson = JSON.parse(encrypted);
+                    const parsed = MetadataSchema.safeParse(parsedJson);
+                    return parsed.success ? parsed.data : null;
+                } catch {
+                    return null;
+                }
+            },
             emitUpdateMetadata: async (payload) => apiSocket.emitWithAck<UpdateMetadataAck>('update-metadata', payload),
             applySessionMetadata: ({ metadataVersion, metadata }) => {
                 const currentSession = storage.getState().sessions[sessionId];

@@ -1,8 +1,7 @@
 import type { NormalizedMessage, RawRecord } from '@/sync/typesRaw';
 import { normalizeRawMessage } from '@/sync/typesRaw';
 import { computeNextSessionSeqFromUpdate } from '@/sync/domains/session/sequence/realtimeSessionSeq';
-import type { Session } from '@/sync/domains/state/storageTypes';
-import type { Metadata } from '@/sync/domains/state/storageTypes';
+import { AgentStateSchema, MetadataSchema, type Session, type Metadata } from '@/sync/domains/state/storageTypes';
 import { computeNextReadStateV1 } from '@/sync/domains/state/readStateV1';
 import type { ApiMessage, ApiSessionMessagesResponse } from '@/sync/api/types/apiTypes';
 import { ApiSessionMessagesResponseSchema } from '@/sync/api/types/apiTypes';
@@ -53,16 +52,44 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
 }): Promise<{ nextSession: Session; agentState: any }> {
     const { session, updateBody, updateSeq, updateCreatedAt, sessionEncryption } = params;
 
+    const encryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+
+    const parsePlainMetadata = (value: string): Metadata | null => {
+        try {
+            const parsedJson = JSON.parse(value);
+            const parsed = MetadataSchema.safeParse(parsedJson);
+            return parsed.success ? parsed.data : null;
+        } catch {
+            return null;
+        }
+    };
+
+    const parsePlainAgentState = (value: string | null): unknown => {
+        if (!value) return {};
+        try {
+            const parsedJson = JSON.parse(value);
+            const parsed = AgentStateSchema.safeParse(parsedJson);
+            return parsed.success ? parsed.data : {};
+        } catch {
+            return {};
+        }
+    };
+
     const agentState = updateBody.agentState
-        ? await sessionEncryption.decryptAgentState(updateBody.agentState.version, updateBody.agentState.value)
+        ? encryptionMode === 'plain'
+            ? parsePlainAgentState(updateBody.agentState.value)
+            : await sessionEncryption.decryptAgentState(updateBody.agentState.version, updateBody.agentState.value)
         : session.agentState;
 
     const metadata = updateBody.metadata
-        ? await sessionEncryption.decryptMetadata(updateBody.metadata.version, updateBody.metadata.value)
+        ? encryptionMode === 'plain'
+            ? parsePlainMetadata(updateBody.metadata.value)
+            : await sessionEncryption.decryptMetadata(updateBody.metadata.version, updateBody.metadata.value)
         : session.metadata;
 
     const nextSession: Session = {
         ...session,
+        encryptionMode,
         agentState,
         agentStateVersion: updateBody.agentState ? updateBody.agentState.version : session.agentStateVersion,
         metadata,

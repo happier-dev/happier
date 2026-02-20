@@ -143,4 +143,58 @@ describe('pendingQueueV2 optimistic thinking', () => {
         expect(pendingState?.messages ?? []).toEqual([]);
         expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
     });
+
+    it('sends plaintext pending payloads when session encryptionMode is plain', async () => {
+        const sessionId = 's_test_plain_send';
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
+        const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 8 });
+
+        const bodies: unknown[] = [];
+        await enqueuePendingMessageV2({
+            sessionId,
+            text: 'hello',
+            encryption,
+            request: async (_path, init) => {
+                bodies.push(JSON.parse(String(init?.body ?? 'null')));
+                return new Response(null, { status: 200 });
+            },
+        });
+
+        expect(bodies).toHaveLength(1);
+        expect(bodies[0]).toEqual(
+            expect.objectContaining({
+                localId: expect.any(String),
+                content: expect.objectContaining({ t: 'plain', v: expect.any(Object) }),
+            }),
+        );
+        expect(bodies[0]).not.toEqual(expect.objectContaining({ ciphertext: expect.anything() }));
+    });
+
+    it('does not require a session encryption key when session encryptionMode is plain', async () => {
+        const sessionId = 's_test_plain_send_no_key';
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
+
+        const bodies: unknown[] = [];
+        const encryptionWithoutSessionKey = {
+            getSessionEncryption: () => null,
+        } as unknown as Encryption;
+        await enqueuePendingMessageV2({
+            sessionId,
+            text: 'hello',
+            encryption: encryptionWithoutSessionKey,
+            request: async (_path, init) => {
+                bodies.push(JSON.parse(String(init?.body ?? 'null')));
+                return new Response(null, { status: 200 });
+            },
+        });
+
+        expect(bodies).toHaveLength(1);
+        expect(bodies[0]).toEqual(
+            expect.objectContaining({
+                localId: expect.any(String),
+                content: expect.objectContaining({ t: 'plain', v: expect.any(Object) }),
+            }),
+        );
+        expect(bodies[0]).not.toEqual(expect.objectContaining({ ciphertext: expect.anything() }));
+    });
 });
