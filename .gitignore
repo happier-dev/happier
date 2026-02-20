@@ -81,3 +81,6 @@ notes/
 .project/qa/score-history/
 .happier/local/
 /output
+/.tmp
+/packages/tests/playwright-report/
+/packages/tests/test-results/
