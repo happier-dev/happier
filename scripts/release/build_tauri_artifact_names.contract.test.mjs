@@ -6,11 +6,13 @@ import path from 'node:path';
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 
 test('build-tauri workflow names updater assets as happier-ui-desktop-*', () => {
-  const src = fs.readFileSync(path.join(repoRoot, '.github', 'workflows', 'build-tauri.yml'), 'utf8');
+  const workflow = fs.readFileSync(path.join(repoRoot, '.github', 'workflows', 'build-tauri.yml'), 'utf8');
+  assert.match(workflow, /node scripts\/pipeline\/run\.mjs tauri-collect-updater-artifacts/);
 
-  assert.match(src, /out_base="happier-ui-desktop-preview-\$\{PLATFORM_KEY\}"/);
-  assert.match(src, /out_base="happier-ui-desktop-\$\{PLATFORM_KEY\}-v\$\{UI_VERSION\}"/);
+  const script = fs.readFileSync(path.join(repoRoot, 'scripts', 'pipeline', 'tauri', 'collect-updater-artifacts.mjs'), 'utf8');
+  assert.match(script, /happier-ui-desktop-preview-\$\{platformKey\}/);
+  assert.match(script, /happier-ui-desktop-\$\{platformKey\}-v\$\{uiVersion\}/);
 
-  assert.doesNotMatch(src, /out_base="happier-ui-preview-/);
-  assert.doesNotMatch(src, /out_base="happier-ui-\$\{PLATFORM_KEY\}-v/);
+  assert.doesNotMatch(script, /happier-ui-preview-/);
+  assert.doesNotMatch(script, /happier-ui-\$\{platformKey\}-v/);
 });

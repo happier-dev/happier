@@ -30,7 +30,7 @@ test('build-tauri publishes desktop releases under ui-desktop-* tags', async () 
 test('build-tauri latest.json generator uses ui-desktop-* release tags and publish assets are namespaced', async () => {
   const raw = await loadWorkflow('build-tauri.yml');
 
-  assert.match(raw, /node scripts\/pipeline\/tauri\/prepare-publish-assets\.mjs/);
+  assert.match(raw, /node scripts\/pipeline\/run\.mjs tauri-prepare-assets/);
 
   const script = await loadFile('scripts/pipeline/tauri/prepare-publish-assets.mjs');
   assert.match(script, /ui-desktop-preview/);

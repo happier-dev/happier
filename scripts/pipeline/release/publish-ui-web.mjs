@@ -25,6 +25,17 @@ function parseBool(value, name) {
 }
 
 /**
+ * @param {unknown} value
+ * @param {string} name
+ * @param {boolean} autoValue
+ */
+function resolveAutoBool(value, name, autoValue) {
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (!raw || raw === 'auto') return autoValue;
+  return parseBool(raw, name);
+}
+
+/**
  * @param {string} repoRoot
  * @param {string} rel
  */
@@ -123,7 +134,7 @@ async function main() {
       channel: { type: 'string' },
       'allow-stable': { type: 'string', default: 'false' },
       'release-message': { type: 'string', default: '' },
-      'run-contracts': { type: 'string', default: 'true' },
+      'run-contracts': { type: 'string', default: 'auto' },
       'check-installers': { type: 'string', default: 'true' },
       'dry-run': { type: 'boolean', default: false },
     },
@@ -141,7 +152,7 @@ async function main() {
   }
 
   const dryRun = values['dry-run'] === true;
-  const runContracts = parseBool(values['run-contracts'], '--run-contracts');
+  const runContracts = resolveAutoBool(values['run-contracts'], '--run-contracts', process.env.GITHUB_ACTIONS === 'true');
   const checkInstallers = parseBool(values['check-installers'], '--check-installers');
   const releaseMessage = String(values['release-message'] ?? '').trim();
 

@@ -98,7 +98,7 @@ test('docker publish attempts to start Docker Desktop on macOS when docker info 
       'false',
       '--build-relay',
       'true',
-      '--build-devcontainer',
+      '--build-dev-box',
       'false',
     ],
     {
@@ -113,4 +113,3 @@ test('docker publish attempts to start Docker Desktop on macOS when docker info 
   assert.match(out, /\bOPEN -a Docker\b/);
   assert.match(out, /^BUILD\b/m);
 });
-

@@ -7,11 +7,11 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('deploy workflow delegates webhook triggering to scripts/pipeline/deploy/trigger-webhooks.mjs', async () => {
+test('deploy workflow delegates webhook triggering to the pipeline deploy command', async () => {
   const workflowPath = join(repoRoot, '.github', 'workflows', 'deploy.yml');
   const raw = await readFile(workflowPath, 'utf8');
 
-  assert.match(raw, /node scripts\/pipeline\/deploy\/trigger-webhooks\.mjs/);
+  assert.match(raw, /node scripts\/pipeline\/run\.mjs deploy/);
   assert.doesNotMatch(
     raw,
     /curl\s+-sS\s+-X\s+POST/,

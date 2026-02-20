@@ -22,8 +22,8 @@ test('tests workflow creates daemon e2e credentials via pipeline script (no inli
 
   assert.match(
     raw,
-    /node scripts\/pipeline\/testing\/create-auth-credentials\.mjs/,
-    'tests.yml should delegate /v1/auth credentials bootstrap to scripts/pipeline/testing/create-auth-credentials.mjs',
+    /node scripts\/pipeline\/run\.mjs testing-create-auth-credentials/,
+    'tests.yml should delegate /v1/auth credentials bootstrap to the pipeline command (no direct leaf script call)',
   );
 
   assert.doesNotMatch(

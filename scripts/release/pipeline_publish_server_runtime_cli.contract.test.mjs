@@ -36,5 +36,6 @@ test('pipeline CLI can publish server-runtime rolling release in dry-run', async
 
   assert.match(out, /\[pipeline\] server-runtime: channel=preview tag=server-preview/);
   assert.match(out, /scripts\/pipeline\/release\/publish-server-runtime\.mjs/);
+  // Manifests embed absolute GitHub release URLs; ensure we never emit a double-slash repo placeholder.
+  assert.doesNotMatch(out, /https:\/\/github\.com\/\/releases\//);
 });
-

@@ -20,12 +20,28 @@ test('publish-docker supports workflow_call and is wired from release workflow',
     'publish-docker should request packages:write for GHCR pushes',
   );
   assert.match(publishDocker, /\n\s*source_ref:\n/);
-  assert.match(publishDocker, /\n\s*build_relay:\n/);
-  assert.match(publishDocker, /\n\s*build_devcontainer:\n/);
   assert.match(
     publishDocker,
-    /node scripts\/pipeline\/docker\/publish-images\.mjs/,
-    'publish-docker should delegate docker build+push to the pipeline script',
+    /\n\s*registries:\n/,
+    'publish-docker should support configuring which registries receive image pushes',
+  );
+  assert.match(publishDocker, /\n\s*build_relay:\n/);
+  assert.match(publishDocker, /\n\s*build_dev_box:\n/);
+  assert.match(
+    publishDocker,
+    /node scripts\/pipeline\/run\.mjs docker-publish/,
+    'publish-docker should delegate docker build+push to the pipeline docker-publish command',
+  );
+  assert.match(publishDocker, /--registries "\${{\s*inputs\.registries\s*}}"/);
+  assert.match(
+    publishDocker,
+    /DOCKERHUB_USERNAME:\s*\${{\s*secrets\.DOCKERHUB_USERNAME\s*}}/,
+    'publish-docker should pass Docker Hub username to the pipeline script',
+  );
+  assert.match(
+    publishDocker,
+    /DOCKERHUB_TOKEN:\s*\${{\s*secrets\.DOCKERHUB_TOKEN\s*}}/,
+    'publish-docker should pass Docker Hub token to the pipeline script',
   );
   assert.match(
     publishDocker,
@@ -67,5 +83,5 @@ test('publish-docker supports workflow_call and is wired from release workflow',
   assert.match(release, /publish_docker:/);
   assert.match(release, /uses:\s+\.\/\.github\/workflows\/publish-docker\.yml/);
   assert.match(release, /build_relay:/);
-  assert.match(release, /build_devcontainer:/);
+  assert.match(release, /build_dev_box:/);
 });

@@ -9,6 +9,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 const workflowPath = join(repoRoot, '.github', 'workflows', 'build-tauri.yml');
 
+async function loadFile(rel) {
+  return readFile(join(repoRoot, rel), 'utf8');
+}
+
 test('production macOS tauri workflow hard-fails when signing/notarization secrets are missing', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const parsed = parse(workflow);
@@ -103,19 +107,22 @@ test('build-tauri workflow avoids escaped quote JS snippets and captures Apple i
   const buildScript = String(tauriBuildStep?.run ?? '');
   assert.match(
     buildScript,
-    /rustup target add "\$\{TAURI_TARGET\}"/,
-    'desktop build should ensure TAURI_TARGET is installed before invoking tauri build'
+    /node scripts\/pipeline\/run\.mjs tauri-build-updater-artifacts/,
+    'desktop build should delegate to the pipeline command (no direct leaf script call)'
   );
+  assert.match(buildScript, /--tauri-target/, 'desktop build should pass --tauri-target through to pipeline script');
 
+  const buildPipelineScript = await loadFile('scripts/pipeline/tauri/build-updater-artifacts.mjs');
+  assert.match(buildPipelineScript, /\brustup\b/, 'pipeline build script should install the tauri rust target when provided');
   assert.match(
-    buildScript,
+    buildPipelineScript,
     /createUpdaterArtifacts/,
-    'desktop build should explicitly enable updater artifacts in CI (base config defaults to disabled for local builds)'
+    'pipeline build script should enable updater artifacts when TAURI_SIGNING_PRIVATE_KEY is available'
   );
   assert.match(
-    buildScript,
+    buildPipelineScript,
     /TAURI_SIGNING_PRIVATE_KEY/,
-    'desktop build should gate updater artifact generation on the presence of TAURI_SIGNING_PRIVATE_KEY'
+    'pipeline build script should gate updater artifact generation on TAURI_SIGNING_PRIVATE_KEY'
   );
 
   const collectStep = buildSteps.find(
@@ -125,9 +132,11 @@ test('build-tauri workflow avoids escaped quote JS snippets and captures Apple i
   const collectScript = String(collectStep.run ?? '');
   assert.match(
     collectScript,
-    /\*\.AppImage\.sig/,
-    'linux updater collection should match AppImage signature files emitted by tauri'
+    /node scripts\/pipeline\/run\.mjs tauri-collect-updater-artifacts/,
+    'updater collection should delegate to the pipeline command'
   );
+  const collectPipelineScript = await loadFile('scripts/pipeline/tauri/collect-updater-artifacts.mjs');
+  assert.match(collectPipelineScript, /\.appimage\.sig/, 'linux updater collection should match appimage signature files');
 
   const notarizeStep = buildSteps.find(
     (step) => step?.name === 'Notarize macOS artifacts (updater + DMG) (macOS)'
@@ -136,8 +145,15 @@ test('build-tauri workflow avoids escaped quote JS snippets and captures Apple i
   const notarizeScript = String(notarizeStep.run ?? '');
   assert.match(
     notarizeScript,
-    /replaceAll\("\\\\n", "\\n"\)|replaceAll\('\\\\n', '\\n'\)/,
-    'notarization should normalize escaped newline private key secrets before writing the key file'
+    /node scripts\/pipeline\/run\.mjs tauri-notarize-macos-artifacts/,
+    'notarization should delegate to the pipeline command'
+  );
+
+  const notarizePipelineScript = await loadFile('scripts/pipeline/tauri/notarize-macos-artifacts.mjs');
+  assert.match(
+    notarizePipelineScript,
+    /replaceAll\('\\\\n', '\\n'\)|replaceAll\(\"\\\\n\", \"\\n\"\)/,
+    'notarization script should normalize escaped newline private key secrets before writing the key file'
   );
 });
 
@@ -153,8 +169,8 @@ test('build-tauri workflow validates updater pubkey via pipeline script', async 
   const runScript = String(step.run ?? '');
   assert.match(
     runScript,
-    /node scripts\/pipeline\/tauri\/validate-updater-pubkey\.mjs/,
-    'workflow should delegate updater pubkey validation to pipeline script (no inline heredoc)',
+    /node scripts\/pipeline\/run\.mjs tauri-validate-updater-pubkey/,
+    'workflow should delegate updater pubkey validation to the pipeline command (no inline heredoc)',
   );
   assert.doesNotMatch(
     runScript,

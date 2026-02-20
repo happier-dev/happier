@@ -22,6 +22,19 @@ function parseBool(value, name) {
 }
 
 /**
+ * @param {unknown} value
+ * @param {string} name
+ * @param {boolean} autoValue
+ */
+function resolveAutoBool(value, name, autoValue) {
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (raw === 'auto') return autoValue;
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  fail(`${name} must be 'true', 'false', or 'auto' (got: ${value})`);
+}
+
+/**
  * @param {string} repoRoot
  * @param {string} rel
  */
@@ -198,7 +211,7 @@ function main() {
       'publish-stack': { type: 'string', default: 'false' },
       'publish-server': { type: 'string', default: 'false' },
       'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
-      'run-tests': { type: 'string', default: 'true' },
+      'run-tests': { type: 'string', default: 'auto' },
       mode: { type: 'string', default: 'pack+publish' },
       'dry-run': { type: 'boolean', default: false },
     },
@@ -215,7 +228,7 @@ function main() {
   const publishStack = parseBool(values['publish-stack'], '--publish-stack');
   const publishServer = parseBool(values['publish-server'], '--publish-server');
   const runnerDir = String(values['server-runner-dir'] ?? '').trim() || 'packages/relay-server';
-  const runTests = parseBool(values['run-tests'], '--run-tests');
+  const runTests = resolveAutoBool(values['run-tests'], '--run-tests', process.env.GITHUB_ACTIONS === 'true');
   const mode = String(values.mode ?? '').trim() || 'pack+publish';
   const dryRun = values['dry-run'] === true;
 

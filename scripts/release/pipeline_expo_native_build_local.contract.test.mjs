@@ -74,6 +74,7 @@ test('expo native-build supports local mode and writes build metadata json', () 
   assert.match(stdout, /CWD=.*happier-pipeline-dagger-repo-.*\/apps\/ui\b/);
   assert.match(stdout, /NPX --yes eas-cli@/);
   assert.match(stdout, /\s--local\b/);
+  assert.match(stdout, /\s--non-interactive\b/);
   assert.ok(fs.existsSync(artifactOut), 'expected local build artifact to be created');
 
   const parsed = JSON.parse(fs.readFileSync(outJson, 'utf8'));
@@ -81,4 +82,126 @@ test('expo native-build supports local mode and writes build metadata json', () 
   assert.equal(parsed.platform, 'android');
   assert.equal(parsed.profile, 'preview-apk');
   assert.equal(path.resolve(parsed.artifactPath), path.resolve(artifactOut));
+});
+
+test('expo native-build runs local builds non-interactively in CI', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-pipeline-eas-local-ci-'));
+  const binDir = path.join(dir, 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
+
+  const outJson = path.join(dir, 'out.json');
+  const artifactOut = path.join(dir, 'app.apk');
+
+  const npxPath = path.join(binDir, 'npx');
+  writeExecutable(
+    npxPath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'echo "NPX $*"',
+      // Simulate `eas build --local --output <path>` by creating the output file.
+      'out=""',
+      'for ((i=1;i<=$#;i++)); do',
+      '  if [ "${!i}" = "--output" ]; then',
+      '    j=$((i+1))',
+      '    out="${!j}"',
+      '  fi',
+      'done',
+      'if [ -z "${out}" ]; then echo "missing --output" >&2; exit 1; fi',
+      'mkdir -p "$(dirname "${out}")"',
+      'head -c 1000001 /dev/zero > "${out}"',
+      'exit 0',
+      '',
+    ].join('\n'),
+  );
+
+  const env = {
+    ...process.env,
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    EXPO_TOKEN: 'test-token',
+    CI: 'true',
+  };
+
+  const stdout = execFileSync(
+    process.execPath,
+    [
+      path.join(repoRoot, 'scripts', 'pipeline', 'expo', 'native-build.mjs'),
+      '--platform',
+      'android',
+      '--profile',
+      'preview-apk',
+      '--out',
+      outJson,
+      '--build-mode',
+      'local',
+      '--artifact-out',
+      artifactOut,
+    ],
+    { cwd: repoRoot, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
+  );
+
+  assert.match(stdout, /NPX --yes eas-cli@/);
+  assert.match(stdout, /\s--local\b/);
+  assert.match(stdout, /\s--non-interactive\b/);
+});
+
+test('expo native-build allows interactive local builds when PIPELINE_INTERACTIVE=1', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-pipeline-eas-local-interactive-'));
+  const binDir = path.join(dir, 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
+
+  const outJson = path.join(dir, 'out.json');
+  const artifactOut = path.join(dir, 'app.apk');
+
+  const npxPath = path.join(binDir, 'npx');
+  writeExecutable(
+    npxPath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'echo "NPX $*"',
+      // Simulate `eas build --local --output <path>` by creating the output file.
+      'out=""',
+      'for ((i=1;i<=$#;i++)); do',
+      '  if [ "${!i}" = "--output" ]; then',
+      '    j=$((i+1))',
+      '    out="${!j}"',
+      '  fi',
+      'done',
+      'if [ -z "${out}" ]; then echo "missing --output" >&2; exit 1; fi',
+      'mkdir -p "$(dirname "${out}")"',
+      'head -c 1000001 /dev/zero > "${out}"',
+      'exit 0',
+      '',
+    ].join('\n'),
+  );
+
+  const env = {
+    ...process.env,
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    EXPO_TOKEN: 'test-token',
+    PIPELINE_INTERACTIVE: '1',
+  };
+
+  const stdout = execFileSync(
+    process.execPath,
+    [
+      path.join(repoRoot, 'scripts', 'pipeline', 'expo', 'native-build.mjs'),
+      '--platform',
+      'android',
+      '--profile',
+      'preview-apk',
+      '--out',
+      outJson,
+      '--build-mode',
+      'local',
+      '--artifact-out',
+      artifactOut,
+    ],
+    { cwd: repoRoot, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
+  );
+
+  assert.match(stdout, /NPX --yes eas-cli@/);
+  assert.match(stdout, /\s--local\b/);
+  assert.doesNotMatch(stdout, /\s--non-interactive\b/);
 });

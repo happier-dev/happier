@@ -84,7 +84,7 @@ test('docker publish retries transient buildx failures (EOF) once', () => {
       'false',
       '--build-relay',
       'true',
-      '--build-devcontainer',
+      '--build-dev-box',
       'false',
     ],
     {
@@ -99,4 +99,3 @@ test('docker publish retries transient buildx failures (EOF) once', () => {
   const buildLines = out.match(/^BUILD\b.*$/gm) ?? [];
   assert.equal(buildLines.length, 2);
 });
-

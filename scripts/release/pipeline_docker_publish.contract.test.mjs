@@ -22,7 +22,7 @@ test('pipeline docker publish script supports dry-run and computes stable tags',
       'true',
       '--build-relay',
       'true',
-      '--build-devcontainer',
+      '--build-dev-box',
       'true',
       '--dry-run',
     ],
@@ -43,7 +43,7 @@ test('pipeline docker publish script supports dry-run and computes stable tags',
   assert.match(out, /--tag happierdev\/relay-server:stable-0123456789ab/);
   assert.match(out, /--tag happierdev\/relay-server:latest/);
 
-  assert.match(out, /--file docker\/devcontainer\/Dockerfile/);
+  assert.match(out, /--file docker\/dev-box\/Dockerfile/);
   assert.match(out, /--tag happierdev\/dev-box:stable/);
   assert.match(out, /--tag happierdev\/dev-box:stable-0123456789ab/);
   assert.match(out, /--tag happierdev\/dev-box:latest/);
@@ -64,7 +64,7 @@ test('pipeline docker publish script can also tag/push to GHCR', async () => {
       'true',
       '--build-relay',
       'true',
-      '--build-devcontainer',
+      '--build-dev-box',
       'true',
       '--dry-run',
     ],

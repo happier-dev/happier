@@ -57,6 +57,7 @@ test('expo submit uses --latest by default (cloud builds)', () => {
   const out = runSubmit({ withPath: false });
   assert.match(out, /NPX --yes eas-cli@/);
   assert.match(out, /\ssubmit\b/);
+  assert.match(out, /\s--profile preview\b/);
   assert.match(out, /\s--latest\b/);
 });
 

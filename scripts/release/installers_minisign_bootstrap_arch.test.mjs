@@ -128,6 +128,32 @@ echo "$hash  $file"
   );
   await chmod(sha256sumStubPath, 0o755);
 
+  const realTar = String(spawnSync('bash', ['-lc', 'command -v tar'], { encoding: 'utf8' }).stdout ?? '').trim();
+  assert.ok(realTar, 'expected tar to exist for installer test');
+
+  // Stub tar: emit the noisy LIBARCHIVE warnings on extract so the installer must suppress them.
+  const tarStubPath = join(binDir, 'tar');
+  await writeFile(
+    tarStubPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+is_extract=0
+for arg in "$@"; do
+  if [[ "$arg" == -*x* ]] && [[ "$arg" != -*c* ]]; then
+    is_extract=1
+    break
+  fi
+done
+if [[ "$is_extract" == "1" ]]; then
+  echo "tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'" >&2
+  echo "tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'" >&2
+fi
+exec ${JSON.stringify(realTar)} "$@"
+`,
+    'utf8',
+  );
+  await chmod(tarStubPath, 0o755);
+
   // Stub curl: return release JSON (no -o), or copy fixture files to -o destinations.
   const curlStubPath = join(binDir, 'curl');
   const releaseJson = `{
@@ -195,6 +221,7 @@ printf '%s' '${releaseJson}'
 
   assert.ok(stdout.includes('Checksum verified.'), 'installer should verify checksums');
   assert.ok(stdout.includes('Signature verified.'), 'installer should verify minisign signature');
+  assert.doesNotMatch(stderr, /Ignoring unknown extended header keyword/i, 'installer should suppress non-actionable tar warnings');
 
   await rm(root, { recursive: true, force: true });
 });

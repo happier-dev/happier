@@ -8,6 +8,7 @@ import { parseArgs } from 'node:util';
 import { stageRepoForDagger } from './stage-repo-for-dagger.mjs';
 import { rewriteEasLocalBuildArtifactPath } from './rewrite-eas-local-build-artifact-path.mjs';
 import { assertDockerCanRunLinuxAmd64 } from '../docker/assert-docker-can-run-linux-amd64.mjs';
+import { createEasLocalBuildEnv } from './eas-local-build-env.mjs';
 
 function fail(message) {
   console.error(message);
@@ -193,8 +194,9 @@ async function main() {
   }
   const localRuntime = /** @type {'host' | 'dagger'} */ (localRuntimeRaw);
 
+  const isCi = String(process.env.CI ?? '').trim().toLowerCase() === 'true' || String(process.env.GITHUB_ACTIONS ?? '').trim() === 'true';
   const expoToken = String(process.env.EXPO_TOKEN ?? '').trim();
-  if (!expoToken) {
+  if ((buildMode === 'cloud' || localRuntime === 'dagger' || isCi) && !expoToken) {
     fail('EXPO_TOKEN is required for Expo native builds.');
   }
 
@@ -309,7 +311,8 @@ async function main() {
     if (!dryRun) fs.mkdirSync(path.dirname(absOut), { recursive: true });
 
     const baseEnv = /** @type {Record<string, string>} */ ({ ...process.env });
-    const buildEnv = withUtf8LocaleDefaults(baseEnv);
+    const buildEnvBase = withUtf8LocaleDefaults(baseEnv);
+    const buildEnv = createEasLocalBuildEnv({ baseEnv: buildEnvBase, platform });
     if (platform === 'ios') {
       // CocoaPods on macOS can crash when locale is `C`/`C.UTF-8` even if the terminal locale is set.
       // Force a known UTF-8 locale for the local build subprocess tree.
@@ -348,27 +351,33 @@ async function main() {
     const effectiveRepoDir = dryRun ? repoRoot : staged?.stagedRepoDir ?? repoRoot;
     const effectiveUiDir = path.join(effectiveRepoDir, 'apps', 'ui');
 
+    const pipelineInteractive =
+      String(process.env.PIPELINE_INTERACTIVE ?? '').trim() === '1' ||
+      String(process.env.PIPELINE_INTERACTIVE ?? '').trim().toLowerCase() === 'true';
+    const localNonInteractive = isCi || !pipelineInteractive;
+
     try {
       if (staged && effectiveRepoDir !== repoRoot) {
         maybeLinkNodeModulesIntoStage({ repoRoot, stagedRepoDir: effectiveRepoDir, dryRun });
       }
       ensureStagedGitRepo({ repoDir: effectiveRepoDir, env: buildEnv, dryRun });
+      const localArgs = [
+        '--yes',
+        `eas-cli@${easCliVersion}`,
+        'build',
+        '--platform',
+        platform,
+        '--profile',
+        profile,
+        '--local',
+        '--output',
+        absOut,
+        ...(localNonInteractive ? ['--non-interactive'] : []),
+      ];
       run(
         opts,
         'npx',
-        [
-          '--yes',
-          `eas-cli@${easCliVersion}`,
-          'build',
-          '--platform',
-          platform,
-          '--profile',
-          profile,
-          '--local',
-          '--output',
-          absOut,
-          '--non-interactive',
-        ],
+        localArgs,
         { cwd: effectiveUiDir, env: buildEnv, stdio: 'inherit' },
       );
     } finally {

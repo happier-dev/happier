@@ -266,12 +266,46 @@ function dockerLogin(opts) {
 }
 
 /**
+ * @returns {boolean}
+ */
+function isGithubActions() {
+  return String(process.env.GITHUB_ACTIONS ?? '')
+    .trim()
+    .toLowerCase() === 'true';
+}
+
+/**
+ * @param {string[]} args
+ * @returns {string}
+ */
+function tryGh(args) {
+  try {
+    const out = execFileSync('gh', args, {
+      env: process.env,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 10_000,
+    });
+    return String(out ?? '').trim();
+  } catch {
+    return '';
+  }
+}
+
+/**
  * @param {{ dryRun: boolean }} opts
  */
 function dockerLoginGhcr(opts) {
   const registry = String(process.env.GHCR_REGISTRY ?? 'ghcr.io').trim() || 'ghcr.io';
-  const username = String(process.env.GHCR_USERNAME ?? process.env.GITHUB_ACTOR ?? '').trim();
-  const token = String(process.env.GHCR_TOKEN ?? process.env.GITHUB_TOKEN ?? '').trim();
+  const localMode = !isGithubActions();
+
+  let username = String(process.env.GHCR_USERNAME ?? process.env.GITHUB_ACTOR ?? '').trim();
+  let token = String(process.env.GHCR_TOKEN ?? process.env.GITHUB_TOKEN ?? '').trim();
+
+  if (!opts.dryRun && localMode) {
+    if (!token) token = tryGh(['auth', 'token']);
+    if (!username) username = tryGh(['api', 'user', '-q', '.login']);
+  }
 
   if (opts.dryRun) {
     const printable = `docker login ${registry} --username ${username || '$GHCR_USERNAME'} --password-stdin`;
@@ -280,10 +314,20 @@ function dockerLoginGhcr(opts) {
   }
 
   if (!username) {
-    fail('[pipeline] missing GHCR_USERNAME (required to push GHCR images)');
+    fail(
+      [
+        '[pipeline] missing GHCR_USERNAME (required to push GHCR images).',
+        'Fix: set GHCR_USERNAME, or authenticate with GitHub CLI locally via `gh auth login`.',
+      ].join('\n'),
+    );
   }
   if (!token) {
-    fail('[pipeline] missing GHCR_TOKEN (required to push GHCR images)');
+    fail(
+      [
+        '[pipeline] missing GHCR_TOKEN (required to push GHCR images).',
+        'Fix: set GHCR_TOKEN, or authenticate with GitHub CLI locally via `gh auth login`.',
+      ].join('\n'),
+    );
   }
 
   console.log(`[pipeline] docker login: ${registry}`);
@@ -299,7 +343,7 @@ function dockerLoginGhcr(opts) {
     fail(
       [
         `[pipeline] docker login failed for ${registry}.`,
-        'Fix: verify GHCR_USERNAME/GHCR_TOKEN (token needs packages:write on the repo).',
+        'Fix: verify GHCR_USERNAME/GHCR_TOKEN (token needs packages:write on the repo or org).',
         `Error: ${msg}`,
       ].join('\n'),
     );
@@ -411,7 +455,7 @@ async function main() {
       sha: { type: 'string', default: '' },
       'push-latest': { type: 'string', default: 'true' },
       'build-relay': { type: 'string', default: 'true' },
-      'build-devcontainer': { type: 'string', default: 'true' },
+      'build-dev-box': { type: 'string', default: 'true' },
       'dry-run': { type: 'boolean', default: false },
     },
     allowPositionals: false,
@@ -425,7 +469,7 @@ async function main() {
 
   const pushLatest = parseBool(values['push-latest'], '--push-latest');
   const buildRelay = parseBool(values['build-relay'], '--build-relay');
-  const buildDevcontainer = parseBool(values['build-devcontainer'], '--build-devcontainer');
+  const buildDevBox = parseBool(values['build-dev-box'], '--build-dev-box');
   const dryRun = values['dry-run'] === true;
 
   const shaRaw = String(values.sha ?? '').trim();
@@ -501,19 +545,19 @@ async function main() {
     });
   }
 
-  if (buildDevcontainer) {
+  if (buildDevBox) {
     const args = [
       'buildx',
       'build',
       '--file',
-      'docker/devcontainer/Dockerfile',
+      'docker/dev-box/Dockerfile',
       '--builder',
       builder,
       '--platform',
       'linux/amd64,linux/arm64',
       '--push',
-      ...(useGhaCache ? ['--cache-from', 'type=gha,scope=devcontainer'] : []),
-      ...(useGhaCache ? ['--cache-to', 'type=gha,mode=max,scope=devcontainer'] : []),
+      ...(useGhaCache ? ['--cache-from', 'type=gha,scope=dev-box'] : []),
+      ...(useGhaCache ? ['--cache-to', 'type=gha,mode=max,scope=dev-box'] : []),
       '--label',
       `org.opencontainers.image.revision=${sha}`,
       ...devTags.flatMap((t) => ['--tag', t]),

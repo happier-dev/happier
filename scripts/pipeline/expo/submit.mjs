@@ -141,10 +141,17 @@ function main() {
   const dryRun = values['dry-run'] === true;
   const opts = { dryRun };
 
+  const isCi = String(process.env.CI ?? '').trim().toLowerCase() === 'true' || String(process.env.GITHUB_ACTIONS ?? '').trim() === 'true';
   const expoToken = String(process.env.EXPO_TOKEN ?? '').trim();
-  if (!expoToken) {
+  if (isCi && !expoToken) {
     fail('EXPO_TOKEN is required for Expo submit.');
   }
+  const pipelineInteractive =
+    String(process.env.PIPELINE_INTERACTIVE ?? '').trim() === '1' ||
+    String(process.env.PIPELINE_INTERACTIVE ?? '').trim().toLowerCase() === 'true';
+  // Default to non-interactive when EXPO_TOKEN is present (matches CI behavior), but allow an explicit
+  // local escape hatch for one-time credential bootstrap (e.g. Google Play service account setup).
+  const nonInteractive = isCi || (Boolean(expoToken) && !pipelineInteractive);
 
   const easCliVersion =
     String(values['eas-cli-version'] ?? '').trim() || String(process.env.EAS_CLI_VERSION ?? '').trim() || '18.0.1';
@@ -158,16 +165,15 @@ function main() {
     // Avoid importing fs for this script; let EAS fail with a clear message if the path is invalid.
   }
 
-  if (platforms.includes('ios')) {
+  if (platforms.includes('ios') && nonInteractive) {
     ensureIosSubmitAscApiKeyFile({ repoRoot, uiDir, submitProfile, dryRun });
   }
 
   let hadFailure = false;
   for (const platform of platforms) {
-    const baseArgs = ['--yes', `eas-cli@${easCliVersion}`, 'submit', '--platform', platform];
-    const submitArgs = submitPathAbs
-      ? [...baseArgs, '--path', submitPathAbs, '--profile', submitProfile, '--non-interactive']
-      : [...baseArgs, '--latest', '--non-interactive'];
+    const baseArgs = ['--yes', `eas-cli@${easCliVersion}`, 'submit', '--platform', platform, '--profile', submitProfile];
+    const submitArgs = submitPathAbs ? [...baseArgs, '--path', submitPathAbs] : [...baseArgs, '--latest'];
+    if (nonInteractive) submitArgs.push('--non-interactive');
 
     const appEnv = String(process.env.APP_ENV ?? '').trim() || environment;
     const result = run(opts, 'npx', submitArgs, {

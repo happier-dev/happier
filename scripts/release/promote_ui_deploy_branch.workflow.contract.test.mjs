@@ -14,7 +14,7 @@ async function loadWorkflow(name) {
 test('promote-ui delegates web deploy branch promotion to pipeline script', async () => {
   const raw = await loadWorkflow('promote-ui.yml');
   assert.match(raw, /Promote source ref to deploy branch \(web\)/);
-  assert.match(raw, /node scripts\/pipeline\/github\/promote-deploy-branch\.mjs/);
-  assert.match(raw, /node scripts\/pipeline\/deploy\/trigger-webhooks\.mjs/);
+  assert.match(raw, /node scripts\/pipeline\/run\.mjs promote-deploy-branch/);
+  assert.match(raw, /node scripts\/pipeline\/run\.mjs deploy/);
   assert.doesNotMatch(raw, /Wait for deploy workflow/i);
 });

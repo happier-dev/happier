@@ -72,7 +72,7 @@ function runPublishImagesWithFakeDocker({ inspectDriver, fallbackExists }) {
       'false',
       '--build-relay',
       'true',
-      '--build-devcontainer',
+      '--build-dev-box',
       'false',
     ],
     {

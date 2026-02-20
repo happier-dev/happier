@@ -29,7 +29,7 @@ test('publish-github-release uses release bot GitHub App token for rolling tag u
   );
 
   assert.match(raw, /actions\/create-github-app-token@v1/, 'publish-github-release must use actions/create-github-app-token@v1');
-  assert.match(raw, /node scripts\/pipeline\/github\/publish-release\.mjs/, 'publish-github-release must delegate to pipeline script');
+  assert.match(raw, /node scripts\/pipeline\/run\.mjs github-publish-release/, 'publish-github-release must delegate to pipeline script');
   assert.match(
     raw,
     /persist-credentials:\s*false/,

@@ -63,6 +63,7 @@ function main() {
       'publish-stack': { type: 'string', default: 'false' },
       'publish-server': { type: 'string', default: 'false' },
       'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
+      write: { type: 'string', default: 'true' },
     },
     allowPositionals: false,
   });
@@ -72,6 +73,7 @@ function main() {
   const publishStack = parseBoolString(values['publish-stack'], '--publish-stack');
   const publishServer = parseBoolString(values['publish-server'], '--publish-server');
   const serverRunnerDir = String(values['server-runner-dir'] ?? '').trim() || 'packages/relay-server';
+  const shouldWrite = parseBoolString(values.write, '--write');
 
   const runRaw = String(process.env.GITHUB_RUN_NUMBER ?? '').trim();
   const attemptRaw = String(process.env.GITHUB_RUN_ATTEMPT ?? '').trim();
@@ -88,20 +90,26 @@ function main() {
   if (publishCli) {
     const base = normalizeBase(readPackageVersion(repoRoot, path.join('apps', 'cli', 'package.json')));
     versions.cli = `${base}-preview.${run}.${attempt}`;
-    writePackageVersion(repoRoot, path.join('apps', 'cli', 'package.json'), versions.cli);
+    if (shouldWrite) {
+      writePackageVersion(repoRoot, path.join('apps', 'cli', 'package.json'), versions.cli);
+    }
   }
 
   if (publishStack) {
     const base = normalizeBase(readPackageVersion(repoRoot, path.join('apps', 'stack', 'package.json')));
     versions.stack = `${base}-preview.${run}.${attempt}`;
-    writePackageVersion(repoRoot, path.join('apps', 'stack', 'package.json'), versions.stack);
+    if (shouldWrite) {
+      writePackageVersion(repoRoot, path.join('apps', 'stack', 'package.json'), versions.stack);
+    }
   }
 
   if (publishServer) {
     if (!serverRunnerDir) fail('--server-runner-dir is required when --publish-server true');
     const base = normalizeBase(readPackageVersion(repoRoot, path.join(serverRunnerDir, 'package.json')));
     versions.server = `${base}-preview.${run}.${attempt}`;
-    writePackageVersion(repoRoot, path.join(serverRunnerDir, 'package.json'), versions.server);
+    if (shouldWrite) {
+      writePackageVersion(repoRoot, path.join(serverRunnerDir, 'package.json'), versions.server);
+    }
   }
 
   process.stdout.write(`${JSON.stringify(versions)}\n`);

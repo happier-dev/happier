@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { prepareMinisignSecretKeyFile } from './lib/binary-release.mjs';
+import { resolveGitHubRepoSlug } from '../github/resolve-github-repo-slug.mjs';
 
 function fail(message) {
   console.error(message);
@@ -22,6 +23,17 @@ function parseBool(value, name) {
   if (raw === 'true') return true;
   if (raw === 'false') return false;
   fail(`${name} must be 'true' or 'false' (got: ${value})`);
+}
+
+/**
+ * @param {unknown} value
+ * @param {string} name
+ * @param {boolean} autoValue
+ */
+function resolveAutoBool(value, name, autoValue) {
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (!raw || raw === 'auto') return autoValue;
+  return parseBool(raw, name);
 }
 
 /**
@@ -104,7 +116,7 @@ async function main() {
       channel: { type: 'string' },
       'allow-stable': { type: 'string', default: 'false' },
       'release-message': { type: 'string', default: '' },
-      'run-contracts': { type: 'string', default: 'true' },
+      'run-contracts': { type: 'string', default: 'auto' },
       'check-installers': { type: 'string', default: 'true' },
       'dry-run': { type: 'boolean', default: false },
     },
@@ -122,7 +134,7 @@ async function main() {
   }
 
   const dryRun = values['dry-run'] === true;
-  const runContracts = parseBool(values['run-contracts'], '--run-contracts');
+  const runContracts = resolveAutoBool(values['run-contracts'], '--run-contracts', process.env.GITHUB_ACTIONS === 'true');
   const checkInstallers = parseBool(values['check-installers'], '--check-installers');
   const releaseMessage = String(values['release-message'] ?? '').trim();
 
@@ -177,11 +189,16 @@ async function main() {
   const signature = withinRepo(repoRoot, `dist/release-assets/server/checksums-happier-server-v${serverVersion}.txt.minisig`);
   const manifestPath = withinRepo(repoRoot, `dist/release-assets/server/manifests/v1/happier-server/${channel}/latest.json`);
 
-  const assetsBaseUrl = `https://github.com/${process.env.GH_REPO || process.env.GITHUB_REPOSITORY || ''}/releases/download/${tag}`;
-  if (!assetsBaseUrl.includes('/')) {
-    // Keep manifests generation possible in local dry-runs without GH_REPO set.
-    // The base URL is used for URLs inside the manifests; local callers can override GH_REPO.
+  const repoSlug = resolveGitHubRepoSlug({ repoRoot, env: process.env });
+  if (!repoSlug) {
+    fail(
+      [
+        'Unable to resolve GitHub repo slug for manifest URL generation.',
+        'Set GH_REPO=owner/repo (recommended) or ensure git remote.origin.url points at github.com.',
+      ].join('\n'),
+    );
   }
+  const assetsBaseUrl = `https://github.com/${repoSlug}/releases/download/${tag}`;
 
   run(
     opts,
