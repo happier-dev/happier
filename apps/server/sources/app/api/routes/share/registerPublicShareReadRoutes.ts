@@ -149,6 +149,7 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
             select: {
                 id: true,
                 seq: true,
+                encryptionMode: true,
                 createdAt: true,
                 updatedAt: true,
                 metadata: true,
@@ -167,10 +168,22 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
             return reply.code(404).send({ error: 'Session not found' });
         }
 
+        const sessionEncryptionMode: "e2ee" | "plain" = session.encryptionMode === "plain" ? "plain" : "e2ee";
+        const encryptedDataKeyB64 =
+            sessionEncryptionMode === "plain"
+                ? null
+                : result.encryptedDataKey
+                    ? Buffer.from(result.encryptedDataKey).toString("base64")
+                    : null;
+        if (sessionEncryptionMode === "e2ee" && !encryptedDataKeyB64) {
+            return reply.code(404).send({ error: "Public share not found or expired" });
+        }
+
         return reply.send({
             session: {
                 id: session.id,
                 seq: session.seq,
+                encryptionMode: sessionEncryptionMode,
                 createdAt: session.createdAt.getTime(),
                 updatedAt: session.updatedAt.getTime(),
                 active: session.active,
@@ -182,7 +195,7 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
             },
             owner: toShareUserProfile(session.account),
             accessLevel: 'view',
-            encryptedDataKey: Buffer.from(result.encryptedDataKey).toString('base64'),
+            encryptedDataKey: encryptedDataKeyB64,
             isConsentRequired: result.isConsentRequired
         });
     });
@@ -225,6 +238,7 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
                 maxUses: true,
                 useCount: true,
                 isConsentRequired: true,
+                encryptedDataKey: true,
                 blockedUsers: userId ? {
                     where: { userId },
                     select: { id: true }
@@ -268,6 +282,18 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
                 sessionId: publicShare.sessionId,
                 owner: session?.account ? toShareUserProfile(session.account) : null
             });
+        }
+
+        const session = await db.session.findUnique({
+            where: { id: publicShare.sessionId },
+            select: { encryptionMode: true },
+        });
+        if (!session) {
+            return reply.code(404).send({ error: 'Public share not found or expired' });
+        }
+        const sessionEncryptionMode: "e2ee" | "plain" = session.encryptionMode === "plain" ? "plain" : "e2ee";
+        if (sessionEncryptionMode === "e2ee" && !publicShare.encryptedDataKey) {
+            return reply.code(404).send({ error: "Public share not found or expired" });
         }
 
         const messages = await db.sessionMessage.findMany({

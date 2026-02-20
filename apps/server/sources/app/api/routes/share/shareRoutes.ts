@@ -94,7 +94,7 @@ export function shareRoutes(app: Fastify) {
                 userId: z.string(),
                 accessLevel: z.enum(['view', 'edit', 'admin']),
                 canApprovePermissions: z.boolean().optional(),
-                encryptedDataKey: z.string(),
+                encryptedDataKey: z.string().optional(),
             })
         }
     }, async (request, reply) => {
@@ -104,11 +104,12 @@ export function shareRoutes(app: Fastify) {
 
         const session = await db.session.findUnique({
             where: { id: sessionId },
-            select: { id: true }
+            select: { id: true, encryptionMode: true }
         });
         if (!session) {
             return reply.code(404).send({ error: 'Session not found' });
         }
+        const sessionEncryptionMode: "e2ee" | "plain" = session.encryptionMode === "plain" ? "plain" : "e2ee";
 
         // Only owner or admin can create shares
         if (!await canManageSharing(ownerId, sessionId)) {
@@ -144,11 +145,16 @@ export function shareRoutes(app: Fastify) {
             return reply.code(403).send({ error: 'Can only share with friends' });
         }
 
-        let encryptedDataKeyBytes: Uint8Array<ArrayBuffer>;
-        try {
-            encryptedDataKeyBytes = parseEncryptedDataKeyV0(encryptedDataKey);
-        } catch (error) {
-            return reply.code(400).send({ error: 'Invalid encryptedDataKey' });
+        let encryptedDataKeyBytes: Uint8Array<ArrayBuffer> | null = null;
+        if (sessionEncryptionMode === "e2ee") {
+            if (typeof encryptedDataKey !== "string" || encryptedDataKey.length === 0) {
+                return reply.code(400).send({ error: "encryptedDataKey required" });
+            }
+            try {
+                encryptedDataKeyBytes = parseEncryptedDataKeyV0(encryptedDataKey);
+            } catch {
+                return reply.code(400).send({ error: 'Invalid encryptedDataKey' });
+            }
         }
 
         const share = await inTx(async (tx) => {
