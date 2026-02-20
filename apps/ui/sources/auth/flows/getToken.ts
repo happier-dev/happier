@@ -2,12 +2,25 @@ import { authChallenge } from "./challenge";
 import { encodeBase64 } from "@/encryption/base64";
 import { Encryption } from "@/sync/encryption/encryption";
 import sodium from '@/encryption/libsodium.lib';
-import { isSessionSharingSupported } from '@/sync/api/capabilities/sessionSharingSupport';
+import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 import { serverFetch } from '@/sync/http/client';
+import { readServerEnabledBit } from '@happier-dev/protocol';
 
 const CONTENT_KEY_BINDING_PREFIX = new TextEncoder().encode('Happy content key v1\u0000');
 
 export async function authGetToken(secret: Uint8Array) {
+    const serverFeatures = await getReadyServerFeatures({ timeoutMs: 800 });
+    if (serverFeatures) {
+        // Backward compatibility:
+        // - New servers explicitly advertise `features.auth.login.keyChallenge.enabled`.
+        // - Older servers don't advertise it at all. In that case we must NOT fail fast,
+        //   because key-challenge login may still be supported (the server just predates this gate).
+        const keyChallengeEnabledRaw = (serverFeatures as any)?.features?.auth?.login?.keyChallenge?.enabled;
+        if (typeof keyChallengeEnabledRaw === 'boolean' && keyChallengeEnabledRaw === false) {
+            throw new Error('Authentication failed: key-challenge login is disabled on this server.');
+        }
+    }
+
     const { challenge, signature, publicKey } = authChallenge(secret);
 
     const body: any = {
@@ -18,8 +31,9 @@ export async function authGetToken(secret: Uint8Array) {
 
     // Backward compatibility: only send new key fields when the server advertises support.
     // Older servers validate request bodies strictly and would reject unknown fields.
-    const supportsSharing = await isSessionSharingSupported({ timeoutMs: 800 });
-    if (supportsSharing) {
+    const supportsContentKeys =
+        serverFeatures ? readServerEnabledBit(serverFeatures, 'sharing.contentKeys') === true : false;
+    if (supportsContentKeys) {
         const encryption = await Encryption.create(secret);
         const contentPublicKey = encryption.contentDataKey;
 

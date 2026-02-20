@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { FeatureGateSchema, type FeatureGate } from './featureGate.js';
 
 const DEFAULT_GATE_DISABLED: FeatureGate = { enabled: false };
+const DEFAULT_GATE_ENABLED: FeatureGate = { enabled: true };
 
 const VoiceGateSchema = z.object({
   enabled: z.boolean(),
@@ -74,10 +75,12 @@ export const FeatureGatesSchema = z.object({
         .default({ providerReset: DEFAULT_GATE_DISABLED }),
       login: z
         .object({
-          keyChallenge: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+          // Backward compatibility: older servers predate this gate but still support key-challenge login.
+          // Default to enabled unless a server explicitly disables it.
+          keyChallenge: FeatureGateSchema.optional().default(DEFAULT_GATE_ENABLED),
         })
         .optional()
-        .default({ keyChallenge: DEFAULT_GATE_DISABLED }),
+        .default({ keyChallenge: DEFAULT_GATE_ENABLED }),
       ui: z
         .object({
           recoveryKeyReminder: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
@@ -88,7 +91,7 @@ export const FeatureGatesSchema = z.object({
     .optional()
     .default({
       recovery: { providerReset: DEFAULT_GATE_DISABLED },
-      login: { keyChallenge: DEFAULT_GATE_DISABLED },
+      login: { keyChallenge: DEFAULT_GATE_ENABLED },
       ui: { recoveryKeyReminder: DEFAULT_GATE_DISABLED },
     }),
 });

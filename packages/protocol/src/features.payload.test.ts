@@ -27,7 +27,9 @@ describe('FeaturesResponseSchema', () => {
     expect(parsed.features.encryption.plaintextStorage.enabled).toBe(false);
     expect(parsed.features.encryption.accountOptOut.enabled).toBe(false);
     expect(parsed.features.auth.recovery.providerReset.enabled).toBe(false);
-    expect(parsed.features.auth.login.keyChallenge.enabled).toBe(false);
+    // Backward compatibility: older servers predate this gate but still support `POST /v1/auth`.
+    // Default to enabled unless a server explicitly disables it.
+    expect(parsed.features.auth.login.keyChallenge.enabled).toBe(true);
     expect(parsed.features.auth.ui.recoveryKeyReminder.enabled).toBe(false);
 
     expect(parsed.capabilities.bugReports).toEqual(DEFAULT_BUG_REPORTS_CAPABILITIES);
@@ -45,6 +47,24 @@ describe('FeaturesResponseSchema', () => {
     });
     expect(parsed.capabilities.auth.login.methods).toEqual([]);
     expect(parsed.capabilities.auth.misconfig).toEqual([]);
+  });
+
+  it('accepts legacy payloads that omit auth.login.methods', () => {
+    const parsed = FeaturesResponseSchema.parse({
+      features: {},
+      capabilities: {
+        auth: {
+          signup: { methods: [{ id: 'anonymous', enabled: true }] },
+          login: { requiredProviders: [] },
+          recovery: { providerReset: { providers: [] } },
+          ui: { autoRedirect: { enabled: false, providerId: null } },
+          providers: {},
+          misconfig: [],
+        },
+      },
+    });
+
+    expect(parsed.capabilities.auth.login.methods).toEqual([]);
   });
 
   it('coerces bug reports capabilities from sparse payloads', () => {
