@@ -355,11 +355,54 @@ export function createAcpRuntime(params: {
     evictToolCallCache(nowMs);
   };
 
+  // ---------------------------------------------------------------------------
+  // Streaming debounce buffer: accumulate tiny text deltas (e.g. one word per
+  // ACP chunk from Copilot) and flush as a single server message periodically.
+  // This reduces the number of encrypted messages sent through the server and
+  // avoids race conditions in the UI's async socket handler where out-of-order
+  // decryption can trigger unnecessary full message refetches.
+  // ---------------------------------------------------------------------------
+  let streamDeltaBuffer = '';
+  let streamDeltaFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  const STREAM_DELTA_FLUSH_INTERVAL_MS = 50;
+
+  const flushStreamDeltaBuffer = () => {
+    if (streamDeltaFlushTimer) {
+      clearTimeout(streamDeltaFlushTimer);
+      streamDeltaFlushTimer = null;
+    }
+    const buffered = streamDeltaBuffer;
+    streamDeltaBuffer = '';
+    if (!buffered) return;
+    if (!turnStreamKey) {
+      turnStreamKey = `acp:turn:${randomUUID()}`;
+    }
+    forwardAcpMessageDelta({
+      sendAcp: params.session.sendAgentMessage.bind(params.session),
+      provider: params.provider,
+      delta: buffered,
+      streamMetaKey: 'happierStreamKey',
+      streamKey: turnStreamKey,
+    });
+    didStreamModelOutputToSession = true;
+  };
+
+  const enqueueStreamDelta = (delta: string) => {
+    if (!delta) return;
+    streamDeltaBuffer += delta;
+    if (!streamDeltaFlushTimer) {
+      streamDeltaFlushTimer = setTimeout(flushStreamDeltaBuffer, STREAM_DELTA_FLUSH_INTERVAL_MS);
+      streamDeltaFlushTimer.unref?.();
+    }
+  };
+
   const resetTurnState = () => {
     accumulatedResponse = '';
     isResponseInProgress = false;
     taskStartedSent = false;
     turnAborted = false;
+    // Flush any remaining buffered text before resetting the stream key.
+    flushStreamDeltaBuffer();
     turnStreamKey = null;
     didStreamModelOutputToSession = false;
   };
@@ -418,17 +461,7 @@ export function createAcpRuntime(params: {
           });
 
           if (deltaRaw) {
-            if (!turnStreamKey) {
-              turnStreamKey = `acp:turn:${randomUUID()}`;
-            }
-            forwardAcpMessageDelta({
-              sendAcp: params.session.sendAgentMessage.bind(params.session),
-              provider: params.provider,
-              delta: deltaRaw,
-              streamMetaKey: 'happierStreamKey',
-              streamKey: turnStreamKey,
-            });
-            didStreamModelOutputToSession = true;
+            enqueueStreamDelta(deltaRaw);
           }
           break;
         }
@@ -686,9 +719,9 @@ export function createAcpRuntime(params: {
             const availableModelsRaw = payloadRecord?.availableModels;
             const availableModels = Array.isArray(availableModelsRaw)
               ? availableModelsRaw
-                  .filter((m: any) => m && typeof m.id === 'string' && typeof m.name === 'string')
+                  .filter((m: any) => m && (typeof m.id === 'string' || typeof m.modelId === 'string') && typeof m.name === 'string')
                   .map((m: any) => ({
-                    id: String(m.id),
+                    id: String(m.id ?? m.modelId),
                     name: String(m.name),
                     ...(typeof m.description === 'string' ? { description: String(m.description) } : {}),
                   }))
@@ -898,6 +931,7 @@ export function createAcpRuntime(params: {
 
     async cancel(): Promise<void> {
       if (!sessionId) return;
+      flushStreamDeltaBuffer();
       const b = await ensureBackend();
       try {
         await b.cancel(sessionId);
@@ -1110,6 +1144,8 @@ export function createAcpRuntime(params: {
     },
 
     flushTurn(): void {
+      // Flush any remaining buffered streaming text before checking didStreamModelOutputToSession.
+      flushStreamDeltaBuffer();
       turnInFlight = false;
       stopPendingPump();
       params.onThinkingChange(false);
