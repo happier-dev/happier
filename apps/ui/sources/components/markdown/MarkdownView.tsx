@@ -527,7 +527,8 @@ const style = StyleSheet.create((theme) => ({
         overflow: 'hidden',
     },
     tableScrollView: {
-        flexGrow: 1,
+        flexGrow: 0,
+        flexShrink: 0,
     },
     tableContent: {
         flexDirection: 'row',
