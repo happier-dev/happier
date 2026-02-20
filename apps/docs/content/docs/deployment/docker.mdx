@@ -9,7 +9,7 @@ Use `/apps/server/.env.example` as your base env template and load the same valu
 
 ## Prebuilt images (recommended)
 
-We publish preview Docker images on Docker Hub:
+We publish preview Docker images on Docker Hub (recommended):
 
 ```bash
 docker pull happierdev/relay-server:preview
@@ -21,6 +21,17 @@ We also publish the same images to GitHub Container Registry (GHCR):
 docker pull ghcr.io/happier-dev/relay-server:preview
 ```
 
+Published images:
+
+- `relay-server`: Happier Server + embedded web UI (this page)
+- `dev-box`: Happier CLI + daemon in Docker (see: [Dev box](../development/devcontainers))
+
+Tags:
+
+- `:preview` (floating preview tag)
+- `:preview-<short-sha>` (immutable preview build)
+- `:stable` / `:latest` (stable channel, when enabled)
+
 The `relay-server` image defaults to the **light flavor + SQLite**, with all data stored under `/data`. Mount it as a volume so upgrades and restarts are safe.
 
 ```bash
@@ -29,6 +40,12 @@ docker run --rm -p 3005:3005 \
   happierdev/relay-server:preview
 ```
 
+Configuration docs:
+
+- Server env var reference: [Environment variables](./env)
+- Server auth policy (GitHub/OIDC/anonymous, etc): [Server Auth](../server/auth)
+- If you’re running a headless machine and want to pair/authenticate without a browser: [Daemon auth (headless)](../clients/daemon#headless-authentication-no-tty)
+
 Notes:
 
 - This Docker image runs the Happier Server directly (a self-host-friendly default config).
@@ -36,6 +53,47 @@ Notes:
   - Disable UI serving: set `HAPPIER_SERVER_UI_DIR=` (empty).
   - Serve UI under `/ui`: set `HAPPIER_SERVER_UI_PREFIX=/ui`.
 - It does not install a managed host service. Upgrades happen when the container is restarted after pulling a new image tag.
+
+### Prebuilt image: use Postgres (full flavor)
+
+The `relay-server` image is built from the same server code and can run full flavor too — you just override the defaults.
+
+Example `docker-compose.yml` (Postgres + local files backend):
+
+```yaml
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: happier
+      POSTGRES_USER: happier
+      POSTGRES_PASSWORD: change-me
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  relay:
+    image: happierdev/relay-server:preview
+    ports:
+      - "3005:3005"
+    environment:
+      PORT: "3005"
+      HAPPIER_SERVER_FLAVOR: full
+      HAPPIER_DB_PROVIDER: postgres
+      DATABASE_URL: postgresql://happier:change-me@db:5432/happier
+      HANDY_MASTER_SECRET: change-me-to-a-long-random-string
+      HAPPIER_FILES_BACKEND: local
+      HAPPIER_SERVER_LIGHT_DATA_DIR: /data/happier
+    volumes:
+      - happier-relay-data:/data/happier
+    depends_on:
+      - db
+
+volumes:
+  pgdata:
+  happier-relay-data:
+```
+
+For S3/Minio instead of local files, set `HAPPIER_FILES_BACKEND=s3` and the `S3_*` env vars (see [Environment variables](./env)).
 
 ## Optional: expose a relay securely with Tailscale
 
