@@ -77,6 +77,56 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
         expect(decrypted?.meta?.displayText).toBe('Old display');
     });
 
+    it('sends plaintext pending updates when session encryptionMode is plain', async () => {
+        const sessionId = 's_test_plain_update';
+        const encryption = await createPendingQueueEncryption({ sessionId });
+
+        storage.setState(
+            {
+                ...storage.getState(),
+                sessions: {
+                    ...storage.getState().sessions,
+                    [sessionId]: {
+                        ...buildSession({ sessionId, overrides: { encryptionMode: 'plain' } }),
+                        metadata: { path: '/tmp', host: 'h' },
+                    } as Session,
+                },
+            },
+            true,
+        );
+
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'p1',
+            localId: 'p1',
+            createdAt: 1,
+            updatedAt: 1,
+            text: 'old',
+            rawRecord: {
+                role: 'user',
+                content: { type: 'text', text: 'old' },
+                meta: {},
+            },
+        });
+
+        let capturedContent: any = null;
+        const request = async (_path: string, init?: RequestInit) => {
+            const parsed = JSON.parse(String(init?.body ?? 'null'));
+            capturedContent = parsed?.content ?? null;
+            return new Response('{}', { status: 200 });
+        };
+
+        await updatePendingMessageV2({
+            sessionId,
+            pendingId: 'p1',
+            text: 'new text',
+            encryption,
+            request,
+        });
+
+        expect(capturedContent).toEqual(expect.objectContaining({ t: 'plain', v: expect.any(Object) }));
+        expect(capturedContent?.v?.content?.text).toBe('new text');
+    });
+
     it('injects execution-run guidance into appendSystemPrompt when enabled in settings', async () => {
         const sessionId = 's_test_guidance';
         const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 6 });

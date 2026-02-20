@@ -1,9 +1,16 @@
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
-import { RawRecord } from '../typesRaw';
+import { RawRecordSchema, type RawRecord } from '../typesRaw';
 import { ApiMessage } from '../api/types/apiTypes';
 import { DecryptedMessage, Metadata, MetadataSchema, AgentState, AgentStateSchema } from '../domains/state/storageTypes';
 import { EncryptionCache } from './encryptionCache';
 import { Decryptor, Encryptor } from './encryptor';
+
+type EncryptedApiMessage = ApiMessage & { content: { t: 'encrypted'; c: string } };
+
+function isEncryptedApiMessage(message: ApiMessage): message is EncryptedApiMessage {
+    const content: any = (message as any)?.content;
+    return Boolean(content && content.t === 'encrypted' && typeof content.c === 'string');
+}
 
 export class SessionEncryption {
     private sessionId: string;
@@ -34,17 +41,32 @@ export class SessionEncryption {
             return `enc:${len}:${start}:${end}`;
         };
 
+        const computePlainValueFingerprint = (value: unknown): string => {
+            try {
+                const json = JSON.stringify(value);
+                const len = json.length;
+                const start = json.slice(0, 48);
+                const end = json.slice(Math.max(0, len - 48));
+                return `plain:${len}:${start}:${end}`;
+            } catch {
+                return "plain:unserializable";
+            }
+        };
+
         const computeMessageFingerprint = (message: ApiMessage): string => {
             const content: any = (message as any)?.content;
             if (content && content.t === 'encrypted' && typeof content.c === 'string') {
                 return computeCiphertextFingerprint(content.c);
             }
-            return `plain:${String(content?.t ?? 'unknown')}`;
+            if (content && content.t === 'plain') {
+                return computePlainValueFingerprint(content.v);
+            }
+            return 'plain:unknown';
         };
 
         // Check cache for all messages first
         const results: (DecryptedMessage | null)[] = new Array(messages.length);
-        const toDecrypt: { index: number; message: ApiMessage; fingerprint: string }[] = [];
+        const toDecrypt: { index: number; message: EncryptedApiMessage; fingerprint: string }[] = [];
 
         for (let i = 0; i < messages.length; i++) {
             const message = messages[i];
@@ -63,10 +85,21 @@ export class SessionEncryption {
                     results[i] = cached;
                     continue;
                 }
-            } else if (message.content.t === 'encrypted') {
+            } else if (isEncryptedApiMessage(message)) {
                 toDecrypt.push({ index: i, message, fingerprint });
+            } else if (message.content.t === 'plain') {
+                const parsed = RawRecordSchema.safeParse((message.content as any).v);
+                const result: DecryptedMessage = {
+                    id: message.id,
+                    seq: message.seq,
+                    localId: message.localId ?? null,
+                    content: parsed.success ? parsed.data : null,
+                    createdAt: message.createdAt,
+                };
+                results[i] = result;
+                this.cache.setCachedMessage(message.id, result, fingerprint);
             } else {
-                // Not encrypted or invalid
+                // Invalid content
                 results[i] = {
                     id: message.id,
                     seq: message.seq,

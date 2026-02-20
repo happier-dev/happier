@@ -5,6 +5,106 @@ import { SessionEncryption } from './sessionEncryption';
 import { AES256Encryption } from './encryptor';
 
 describe('SessionEncryption.decryptMessages (cache behavior)', () => {
+  it('returns plaintext messages without decrypting and caches them', async () => {
+    const cache = new EncryptionCache()
+    const sessionId = 's_plain'
+
+    const encryptor = {
+      encrypt: async () => {
+        throw new Error('encrypt should not be called')
+      },
+      decrypt: async () => {
+        throw new Error('decrypt should not be called')
+      },
+    }
+
+    const sessionEnc = new SessionEncryption(sessionId, encryptor as any, cache)
+
+    const msg = {
+      id: 'm_plain_1',
+      seq: 1,
+      localId: null,
+      createdAt: 1,
+      updatedAt: 1,
+      content: {
+        t: 'plain' as const,
+        v: { role: 'user', content: { type: 'text', text: 'hello' } },
+      },
+    }
+
+    const first = await sessionEnc.decryptMessages([msg as any])
+    expect(first[0]).toBeTruthy()
+    expect(first[0]!.content).toEqual({ role: 'user', content: { type: 'text', text: 'hello' } })
+
+    const second = await sessionEnc.decryptMessages([msg as any])
+    expect(second[0]).toBeTruthy()
+    expect(second[0]!.content).toEqual({ role: 'user', content: { type: 'text', text: 'hello' } })
+  })
+
+  it('rehydrates plaintext messages when content changes for the same message id', async () => {
+    const cache = new EncryptionCache()
+    const sessionId = 's_plain_stream'
+
+    const encryptor = {
+      encrypt: async () => {
+        throw new Error('encrypt should not be called')
+      },
+      decrypt: async () => {
+        throw new Error('decrypt should not be called')
+      },
+    }
+
+    const sessionEnc = new SessionEncryption(sessionId, encryptor as any, cache)
+
+    const base = {
+      id: 'm_plain_stream_1',
+      seq: 1,
+      localId: null,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+
+    const msg1 = { ...base, content: { t: 'plain' as const, v: { role: 'user', content: { type: 'text', text: 'partial' } } } }
+    const msg2 = { ...base, updatedAt: 2, content: { t: 'plain' as const, v: { role: 'user', content: { type: 'text', text: 'final' } } } }
+
+    const first = await sessionEnc.decryptMessages([msg1 as any])
+    expect(first[0]).toBeTruthy()
+    expect(first[0]!.content).toEqual({ role: 'user', content: { type: 'text', text: 'partial' } })
+
+    const second = await sessionEnc.decryptMessages([msg2 as any])
+    expect(second[0]).toBeTruthy()
+    expect(second[0]!.content).toEqual({ role: 'user', content: { type: 'text', text: 'final' } })
+  })
+
+  it('treats invalid plaintext envelopes as undecipherable (content: null)', async () => {
+    const cache = new EncryptionCache()
+    const sessionId = 's_plain_invalid'
+
+    const encryptor = {
+      encrypt: async () => {
+        throw new Error('encrypt should not be called')
+      },
+      decrypt: async () => {
+        throw new Error('decrypt should not be called')
+      },
+    }
+
+    const sessionEnc = new SessionEncryption(sessionId, encryptor as any, cache)
+
+    const msg = {
+      id: 'm_plain_invalid_1',
+      seq: 1,
+      localId: null,
+      createdAt: 1,
+      updatedAt: 1,
+      content: { t: 'plain' as const, v: { kind: 'not-a-raw-record', text: 'hello' } },
+    }
+
+    const result = await sessionEnc.decryptMessages([msg as any])
+    expect(result[0]).toBeTruthy()
+    expect(result[0]!.content).toBeNull()
+  })
+
   it('retries decrypting encrypted messages when a prior attempt failed (does not permanently cache null)', async () => {
     const cache = new EncryptionCache();
     const sessionId = 's1';
