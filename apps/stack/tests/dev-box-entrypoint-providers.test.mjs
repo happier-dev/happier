@@ -8,8 +8,8 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('../../..', import.meta.url));
 
-test('devcontainer entrypoint installs provider CLIs via hstack when HAPPIER_PROVIDER_CLIS is set', (t) => {
-  const tmp = mkdtempSync(join(tmpdir(), 'happier-devcontainer-entrypoint-'));
+test('dev-box entrypoint installs provider CLIs via hstack when HAPPIER_PROVIDER_CLIS is set', (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), 'happier-dev-box-entrypoint-'));
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
   const binDir = join(tmp, 'bin');
@@ -29,7 +29,7 @@ exit 0
   );
   chmodSync(hstackPath, 0o755);
 
-  const entrypoint = join(repoRoot, 'docker', 'devcontainer', 'entrypoint.sh');
+  const entrypoint = join(repoRoot, 'docker', 'dev-box', 'entrypoint.sh');
   const injectedPath = `${binDir}${delimiter}${process.env.PATH ?? ''}`;
   const res = spawnSync('sh', [entrypoint, 'sh', '-lc', 'echo ok'], {
     env: { ...process.env, PATH: injectedPath, HAPPIER_PROVIDER_CLIS: 'codex' },
@@ -44,4 +44,3 @@ exit 0
   assert.match(log, /providers install/);
   assert.match(log, /codex/);
 });
-

@@ -44,7 +44,7 @@ RUN yarn workspace @happier-dev/protocol postinstall:real \
 	  && yarn workspace @happier-dev/release-runtime postinstall:real \
 	  && yarn workspace @happier-dev/cli build
 
-FROM node:${NODE_VERSION}-bookworm AS devcontainer
+FROM node:${NODE_VERSION}-bookworm AS devbox
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
@@ -79,13 +79,13 @@ RUN useradd -m -s /bin/bash happier
 ENV NPM_CONFIG_PREFIX=/home/happier/.npm-global
 ENV PATH=/home/happier/.npm-global/bin:$PATH
 
-COPY docker/devcontainer/entrypoint.sh /usr/local/bin/happier-devcontainer-entrypoint
-RUN chmod +x /usr/local/bin/happier-devcontainer-entrypoint \
+COPY docker/dev-box/entrypoint.sh /usr/local/bin/happier-dev-box-entrypoint
+RUN chmod +x /usr/local/bin/happier-dev-box-entrypoint \
   && mkdir -p /home/happier/.npm-global \
   && chown -R happier:happier /home/happier/.npm-global
 
 USER happier
 WORKDIR /workspace
 
-ENTRYPOINT ["happier-devcontainer-entrypoint"]
+ENTRYPOINT ["happier-dev-box-entrypoint"]
 CMD ["bash"]
