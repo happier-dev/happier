@@ -4,6 +4,7 @@ import { run, runCapture } from './utils/proc/proc.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from './utils/env/sandbox.mjs';
 import { getInternalServerUrl } from './utils/server/urls.mjs';
+import { getStackName, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { resolveCommandPath } from './utils/proc/commands.mjs';
 import { constants } from 'node:fs';
 import { access } from 'node:fs/promises';
@@ -446,6 +447,9 @@ async function main() {
             'If you really want this, set: HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1'
         );
       }
+      const stackName = getStackName(process.env);
+      const envPath = (process.env.HAPPIER_STACK_ENV_FILE ?? '').toString().trim() || resolveStackEnvPath(stackName, process.env).envPath;
+      const { upstream } = getServeConfig(internalServerUrl);
       const res = await tailscaleServeEnable({ internalServerUrl });
       if (res?.enableUrl && !res?.httpsUrl) {
         printResult({
@@ -453,6 +457,9 @@ async function main() {
           data: { ok: true, httpsUrl: null, enableUrl: res.enableUrl },
           text:
             `${green('✓')} tailscale serve needs one-time approval in your tailnet.\n` +
+            `${dim('stack:')} ${stackName}\n` +
+            `${dim('upstream:')} ${upstream}\n` +
+            `${dim('env:')} ${envPath}\n` +
             `${dim('Open:')} ${cyan(res.enableUrl)}`,
         });
         return;
@@ -460,7 +467,15 @@ async function main() {
       printResult({
         json,
         data: { ok: true, httpsUrl: res.httpsUrl ?? null },
-        text: res.httpsUrl ? `${green('✓')} tailscale serve enabled: ${cyan(res.httpsUrl)}` : `${green('✓')} tailscale serve enabled`,
+        text: res.httpsUrl
+          ? `${green('✓')} tailscale serve enabled: ${cyan(res.httpsUrl)}\n` +
+            `${dim('stack:')} ${stackName}\n` +
+            `${dim('upstream:')} ${upstream}\n` +
+            `${dim('env:')} ${envPath}`
+          : `${green('✓')} tailscale serve enabled\n` +
+            `${dim('stack:')} ${stackName}\n` +
+            `${dim('upstream:')} ${upstream}\n` +
+            `${dim('env:')} ${envPath}`,
       });
       return;
     }

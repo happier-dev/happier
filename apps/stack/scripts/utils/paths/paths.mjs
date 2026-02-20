@@ -125,9 +125,15 @@ export function getWorkspaceDir(cliRootDir = null, env = process.env) {
 export function getRepoDir(rootDir, env = process.env) {
   const fromEnv = normalizePathForEnv(rootDir, env.HAPPIER_STACK_REPO_DIR, env);
   const workspaceDir = getWorkspaceDir(rootDir, env);
-  const fallback = join(workspaceDir, 'main');
 
   // Prefer explicitly configured repo dir (if set).
+  // Otherwise:
+  // - If this CLI root is inside a Happier monorepo checkout, treat that checkout as the repo dir.
+  //   This enables "repo-local / stackless" usage without requiring a workspace/main checkout.
+  // - Else, fall back to <workspace>/main.
+  const inferredFromCliRoot = fromEnv ? '' : coerceHappyMonorepoRootFromPath(rootDir);
+  const fallback = inferredFromCliRoot || join(workspaceDir, 'main');
+
   const candidate = fromEnv || fallback;
   if (!candidate) return fallback;
 

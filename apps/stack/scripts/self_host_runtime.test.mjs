@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 import {
   parseSelfHostInvocation,
@@ -26,6 +26,7 @@ import {
   normalizeSelfHostAutoUpdateState,
   decideSelfHostAutoUpdateReconcile,
   mergeEnvTextWithDefaults,
+  installBinaryAtomically,
 } from './self_host_runtime.mjs';
 
 function b64(buf) {
@@ -257,6 +258,59 @@ test('self-host release installer ignores extra root entries when extracting bun
   });
   assert.equal(raw.status, 0, raw.stderr || raw.stdout);
   assert.equal(String(raw.stdout ?? '').trim(), 'ok');
+});
+
+test('installBinaryAtomically swaps a running binary on Linux without ETXTBSY', async (t) => {
+  if (process.platform !== 'linux') {
+    t.skip('ETXTBSY behavior is Linux-specific');
+    return;
+  }
+
+  const sleepPath = '/bin/sleep';
+  const truePath = '/bin/true';
+  if (spawnSync('bash', ['-lc', `test -x "${sleepPath}" && test -x "${truePath}"`], { stdio: 'ignore' }).status !== 0) {
+    t.skip('requires /bin/sleep and /bin/true');
+    return;
+  }
+
+  const tmp = await mkdtemp(join(tmpdir(), 'happier-self-host-etxtbsy-'));
+  t.after(() => {
+    spawnSync('bash', ['-lc', `rm -rf "${tmp.replaceAll('"', '\\"')}"`], { stdio: 'ignore' });
+  });
+
+  const targetBinaryPath = join(tmp, 'bin', 'happier-server');
+  const previousBinaryPath = join(tmp, 'bin', 'happier-server.previous');
+  const versioned1 = join(tmp, 'versions', 'happier-server-1');
+  const versioned2 = join(tmp, 'versions', 'happier-server-2');
+
+  await installBinaryAtomically({
+    sourceBinaryPath: sleepPath,
+    targetBinaryPath,
+    previousBinaryPath,
+    versionedTargetPath: versioned1,
+  });
+
+  const child = spawn(targetBinaryPath, ['30'], { stdio: 'ignore' });
+  t.after(() => {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      // ignore
+    }
+  });
+
+  // Wait briefly for the process to enter the running state.
+  await new Promise((r) => setTimeout(r, 200));
+
+  await installBinaryAtomically({
+    sourceBinaryPath: truePath,
+    targetBinaryPath,
+    previousBinaryPath,
+    versionedTargetPath: versioned2,
+  });
+
+  const ran = spawnSync(targetBinaryPath, [], { encoding: 'utf-8' });
+  assert.equal(ran.status, 0, `expected swapped binary to run cleanly, got:\n${ran.stderr || ran.stdout || ''}`);
 });
 
 test('resolveExtractedUiWebBundleRootDir picks the directory that contains index.html', async (t) => {

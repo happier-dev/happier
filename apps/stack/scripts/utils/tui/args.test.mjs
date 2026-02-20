@@ -13,6 +13,11 @@ test('normalizeTuiForwardedArgs defaults to dev for empty args', () => {
   assert.deepEqual(normalizeTuiForwardedArgs([]), ['dev']);
 });
 
+test('normalizeTuiForwardedArgs defaults to dev when only flags are provided', () => {
+  assert.deepEqual(normalizeTuiForwardedArgs(['--restart', '--mobile']), ['dev', '--restart', '--mobile']);
+  assert.deepEqual(normalizeTuiForwardedArgs(['--json']), ['dev', '--json']);
+});
+
 test('normalizeTuiForwardedArgs preserves explicit args', () => {
   assert.deepEqual(normalizeTuiForwardedArgs(['stack', 'dev', 'exp1']), ['stack', 'dev', 'exp1']);
 });

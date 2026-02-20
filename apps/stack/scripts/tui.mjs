@@ -32,6 +32,7 @@ import { detachTuiStdinForChild, waitForEnter } from './utils/tui/stdin_handoff.
 import { waitForHappierHealthOk } from './utils/server/server.mjs';
 import { buildTuiAuthArgs, buildTuiDaemonStartArgs, shouldHoldAfterAuthExit } from './utils/tui/actions.mjs';
 import { shouldAttemptTuiDaemonAutostart } from './utils/tui/daemon_autostart.mjs';
+import { reconcileDaemonPaneAfterDaemonStarts } from './utils/tui/daemon_pane_reconcile.mjs';
 import { buildScriptPtyArgs } from './utils/tui/script_pty_command.mjs';
 
 function nowTs() {
@@ -615,131 +616,136 @@ async function main() {
       panes[idx].lines = [`summary error: ${e instanceof Error ? e.message : String(e)}`];
     }
 
-    // Daemon pane (best-effort): if daemon isn't running because credentials are missing, show guidance.
-    try {
-      const daemonIdx = paneIndexById.get('daemon');
-      if (stackName) {
-        const runtimePath = getStackRuntimeStatePath(stackName);
-        const runtime = await readStackRuntimeStateFile(runtimePath);
-        const daemonPid = Number(runtime?.processes?.daemonPid);
-        if (!Number.isFinite(daemonPid) || daemonPid <= 1) {
-          const { baseDir } = resolveStackEnvPath(stackName);
-          const serverPort = Number(runtime?.ports?.server);
-          const internalServerUrl =
-            Number.isFinite(serverPort) && serverPort > 0 ? `http://127.0.0.1:${serverPort}` : '';
-          const cliHomeDir = join(baseDir, 'cli');
-          const authed = internalServerUrl
-            ? hasStackCredentials({
-                cliHomeDir,
-                serverUrl: internalServerUrl,
-                env: applyTuiStackAuthScopeEnv({ env: process.env, stackName }),
-              })
-            : hasStackCredentials({ cliHomeDir, serverUrl: '', env: applyTuiStackAuthScopeEnv({ env: process.env, stackName }) });
+	    // Daemon pane (best-effort): show sign-in guidance when credentials are missing,
+	    // and clear stale guidance once the daemon starts.
+	    try {
+	      const daemonIdx = paneIndexById.get('daemon');
+	      if (stackName) {
+	        const runtimePath = getStackRuntimeStatePath(stackName);
+	        const runtime = await readStackRuntimeStateFile(runtimePath);
+	        const daemonPid = Number(runtime?.processes?.daemonPid);
 
-          const startDaemon = parseStartDaemonFlagFromEnv(process.env);
-          const notice = buildDaemonAuthNotice({
-            stackName,
-            internalServerUrl,
-            daemonPid: null,
-            authed,
-            startDaemon,
-          });
-          if (notice.show) {
-            panes[daemonIdx].visible = true;
-            panes[daemonIdx].title = notice.paneTitle || panes[daemonIdx].title;
-            const preserve =
-              daemonAutostartInProgress ||
-              (daemonAutostartLastAttemptAtMs > 0 && Date.now() - daemonAutostartLastAttemptAtMs < 6_000);
-            if (!preserve || panes[daemonIdx].lines.length === 0) {
-              panes[daemonIdx].lines = styleDaemonNoticeLines(notice.paneLines || panes[daemonIdx].lines);
-            }
-            if (!sawDaemonAuthRequired && notice.paneTitle === 'daemon (SIGN-IN REQUIRED)') {
-              sawDaemonAuthRequired = true;
-              // One-shot nudge: focus the daemon pane so users see the message before opening the UI.
-              if (focused === paneIndexById.get('local')) {
-                focused = daemonIdx;
-              }
-            }
-          }
+	        const { baseDir } = resolveStackEnvPath(stackName);
+	        const serverPort = Number(runtime?.ports?.server);
+	        const internalServerUrl =
+	          Number.isFinite(serverPort) && serverPort > 0 ? `http://127.0.0.1:${serverPort}` : '';
+	        const cliHomeDir = join(baseDir, 'cli');
 
-          const isStartLike = isTuiStartLikeForwardedArgs(forwarded);
-          const minIntervalRaw = (process.env.HAPPIER_STACK_TUI_DAEMON_AUTOSTART_MIN_INTERVAL_MS ?? '').toString().trim();
-          const minIntervalMs = minIntervalRaw ? Number(minIntervalRaw) : 12_000;
-          const shouldAutostart = shouldAttemptTuiDaemonAutostart({
-            stackName,
-            isStartLike,
-            startDaemon,
-            internalServerUrl,
-            authed,
-            daemonPid: null,
-            inProgress: daemonAutostartInProgress,
-            lastAttemptAtMs: daemonAutostartLastAttemptAtMs,
-            nowMs: Date.now(),
-            minIntervalMs,
-          });
+	        const scopedEnv = applyTuiStackAuthScopeEnv({ env: process.env, stackName });
+	        const authed = internalServerUrl
+	          ? hasStackCredentials({ cliHomeDir, serverUrl: internalServerUrl, env: scopedEnv })
+	          : hasStackCredentials({ cliHomeDir, serverUrl: '', env: scopedEnv });
 
-          if (shouldAutostart) {
-            daemonAutostartInProgress = true;
-            daemonAutostartLastAttemptAtMs = Date.now();
-            panes[daemonIdx].visible = true;
-            panes[daemonIdx].title = 'daemon (STARTING)';
-            pushLine(panes[daemonIdx], 'starting daemon...');
-            scheduleRender();
+	        const startDaemon = parseStartDaemonFlagFromEnv(process.env);
+	        const notice = buildDaemonAuthNotice({
+	          stackName,
+	          internalServerUrl,
+	          daemonPid: Number.isFinite(daemonPid) && daemonPid > 1 ? daemonPid : null,
+	          authed,
+	          startDaemon,
+	        });
 
-	            void (async () => {
-	              try {
-	                // Best-effort: only start daemon once server is responding.
-	                await waitForHappierHealthOk(internalServerUrl, { timeoutMs: 10_000, intervalMs: 250 });
+	        if (notice.show) {
+	          panes[daemonIdx].visible = true;
+	          panes[daemonIdx].title = notice.paneTitle || panes[daemonIdx].title;
+	          const preserve =
+	            daemonAutostartInProgress ||
+	            (daemonAutostartLastAttemptAtMs > 0 && Date.now() - daemonAutostartLastAttemptAtMs < 6_000);
+	          if (!preserve || panes[daemonIdx].lines.length === 0) {
+	            panes[daemonIdx].lines = styleDaemonNoticeLines(notice.paneLines || panes[daemonIdx].lines);
+	          }
+	          if (!sawDaemonAuthRequired && notice.paneTitle === 'daemon (SIGN-IN REQUIRED)') {
+	            sawDaemonAuthRequired = true;
+	            if (focused === paneIndexById.get('local')) {
+	              focused = daemonIdx;
+	            }
+	          }
+	        } else {
+	          const reconciled = reconcileDaemonPaneAfterDaemonStarts({
+	            title: panes[daemonIdx].title,
+	            lines: panes[daemonIdx].lines,
+	            daemonPid,
+	          });
+	          panes[daemonIdx].title = reconciled.title;
+	          panes[daemonIdx].lines = reconciled.lines;
+	        }
 
-	                const daemonArgs = buildTuiDaemonStartArgs({ happysBin, stackName });
-	                const attemptLines = [];
-	                await new Promise((resolvePromise) => {
-	                  const proc = spawn(process.execPath, daemonArgs, {
-	                    cwd: rootDir,
-	                    env: { ...process.env, HAPPIER_STACK_TUI: '1' },
-	                    stdio: ['ignore', 'pipe', 'pipe'],
-	                  });
+	        const isStartLike = isTuiStartLikeForwardedArgs(forwarded);
+	        const minIntervalRaw = (process.env.HAPPIER_STACK_TUI_DAEMON_AUTOSTART_MIN_INTERVAL_MS ?? '').toString().trim();
+	        const minIntervalMs = minIntervalRaw ? Number(minIntervalRaw) : 12_000;
+	        const shouldAutostart = shouldAttemptTuiDaemonAutostart({
+	          stackName,
+	          isStartLike,
+	          startDaemon,
+	          internalServerUrl,
+	          authed,
+	          daemonPid: Number.isFinite(daemonPid) && daemonPid > 1 ? daemonPid : null,
+	          inProgress: daemonAutostartInProgress,
+	          lastAttemptAtMs: daemonAutostartLastAttemptAtMs,
+	          nowMs: Date.now(),
+	          minIntervalMs,
+	        });
 
-	                  const write = (chunk) => {
-	                    const s = String(chunk ?? '');
-	                    for (const line of s.split(/\r?\n/)) {
-	                      if (!line.trim()) continue;
-	                      attemptLines.push(line);
-	                      pushLine(panes[daemonIdx], line);
-	                    }
-	                    scheduleRender();
-	                  };
+	        if (shouldAutostart) {
+	          daemonAutostartInProgress = true;
+	          daemonAutostartLastAttemptAtMs = Date.now();
+	          panes[daemonIdx].visible = true;
+	          panes[daemonIdx].title = 'daemon (STARTING)';
+	          pushLine(panes[daemonIdx], 'starting daemon...');
+	          scheduleRender();
 
-	                  proc.stdout?.on('data', write);
-	                  proc.stderr?.on('data', write);
-	                  proc.on('exit', () => resolvePromise());
-	                  proc.on('error', () => resolvePromise());
+	          void (async () => {
+	            try {
+	              await waitForHappierHealthOk(internalServerUrl, { timeoutMs: 10_000, intervalMs: 250 });
+
+	              const daemonArgs = buildTuiDaemonStartArgs({ happysBin, stackName });
+	              const attemptLines = [];
+	              await new Promise((resolvePromise) => {
+	                const proc = spawn(process.execPath, daemonArgs, {
+	                  cwd: rootDir,
+	                  env: { ...process.env, HAPPIER_STACK_TUI: '1' },
+	                  stdio: ['ignore', 'pipe', 'pipe'],
 	                });
 
-	                const combined = attemptLines.join('\n').toLowerCase();
-	                if (combined.includes('already running')) {
-	                  panes[daemonIdx].title = 'daemon (ALREADY RUNNING)';
-	                  pushLine(panes[daemonIdx], 'daemon already running; no action needed');
-	                } else {
-	                  panes[daemonIdx].title = 'daemon (STARTED)';
-	                  pushLine(panes[daemonIdx], 'daemon start completed');
-	                }
-	                scheduleRender();
-	              } finally {
-	                daemonAutostartInProgress = false;
-	                try {
-	                  await refreshSummary();
-                } catch {
-                  // ignore
-                }
-              }
-            })();
-          }
-        }
-      }
-    } catch {
-      // ignore
-    }
+	                const write = (chunk) => {
+	                  const s = String(chunk ?? '');
+	                  for (const line of s.split(/\r?\n/)) {
+	                    if (!line.trim()) continue;
+	                    attemptLines.push(line);
+	                    pushLine(panes[daemonIdx], line);
+	                  }
+	                  scheduleRender();
+	                };
+
+	                proc.stdout?.on('data', write);
+	                proc.stderr?.on('data', write);
+	                proc.on('exit', () => resolvePromise());
+	                proc.on('error', () => resolvePromise());
+	              });
+
+	              const combined = attemptLines.join('\n').toLowerCase();
+	              if (combined.includes('already running')) {
+	                panes[daemonIdx].title = 'daemon (ALREADY RUNNING)';
+	                pushLine(panes[daemonIdx], 'daemon already running; no action needed');
+	              } else {
+	                panes[daemonIdx].title = 'daemon (STARTED)';
+	                pushLine(panes[daemonIdx], 'daemon start completed');
+	              }
+	              scheduleRender();
+	            } finally {
+	              daemonAutostartInProgress = false;
+	              try {
+	                await refreshSummary();
+	              } catch {
+	                // ignore
+	              }
+	            }
+	          })();
+	        }
+	      }
+	    } catch {
+	      // ignore
+	    }
 
     // QR pane: driven by runtime state (expo port) and rendered independently of logs.
     try {

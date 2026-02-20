@@ -6,7 +6,14 @@ export function isTuiHelpRequest(argv) {
 
 export function normalizeTuiForwardedArgs(argv) {
   if (!Array.isArray(argv) || argv.length === 0) return ['dev'];
-  return argv;
+
+  // UX: `hstack tui -- --restart --mobile` is intended to mean "tui dev --restart --mobile".
+  // If the user only passed flags, treat them as flags for the default `dev` command.
+  const args = argv.filter((a) => String(a ?? '').trim() !== '');
+  const allFlags = args.length > 0 && args.every((a) => String(a ?? '').trim().startsWith('-'));
+  if (allFlags) return ['dev', ...args];
+
+  return args.length ? args : ['dev'];
 }
 
 export function inferTuiStackName(argv, env = process.env) {

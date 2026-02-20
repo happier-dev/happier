@@ -10,6 +10,7 @@ import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs
 import { ensureDepsInstalled } from './utils/proc/pm.mjs';
 import { ensureEnvFilePruned, ensureEnvFileUpdated } from './utils/env/env_file.mjs';
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
+import { resolveLocalServerPortForStack } from './utils/server/resolve_stack_server_port.mjs';
 
 function shouldAutoInstallDepsForRepoLocalCommand(cmd) {
   const c = String(cmd ?? '').trim();
@@ -412,16 +413,38 @@ async function main() {
       // ignore (best-effort)
     }
 
-    const serverComponent = (effectiveEnv.HAPPIER_STACK_SERVER_COMPONENT ?? 'happier-server-light').toString().trim() || 'happier-server-light';
-    const serverBase = effectiveEnv.HAPPIER_STACK_SERVER_PORT_BASE;
-    const serverRange = effectiveEnv.HAPPIER_STACK_SERVER_PORT_RANGE;
-    const expoBase = effectiveEnv.HAPPIER_STACK_EXPO_DEV_PORT_BASE;
-    const expoRange = effectiveEnv.HAPPIER_STACK_EXPO_DEV_PORT_RANGE;
+	    const serverComponent = (effectiveEnv.HAPPIER_STACK_SERVER_COMPONENT ?? 'happier-server-light').toString().trim() || 'happier-server-light';
+	    const serverBase = effectiveEnv.HAPPIER_STACK_SERVER_PORT_BASE;
+	    const serverRange = effectiveEnv.HAPPIER_STACK_SERVER_PORT_RANGE;
+	    const expoBase = effectiveEnv.HAPPIER_STACK_EXPO_DEV_PORT_BASE;
+	    const expoRange = effectiveEnv.HAPPIER_STACK_EXPO_DEV_PORT_RANGE;
 
-    // Auto-heal:
-    // If a stale pinned port exists in the stackless env file but it doesn't match the configured stable range,
-    // prune it so dev/start can pick a stable high port again.
-    const pruneKeys = [];
+	    // Persist a stable pinned server port early so repo-local "global-ish" commands like
+	    // `yarn tailscale enable` and `yarn service install` can resolve the correct internal URL
+	    // even before the first `yarn dev/start` run creates stack.runtime.json.
+	    let persistedServerPort = null;
+	    if (!existingPinnedServerPort) {
+	      if (runtimeServerPort && isPortWithinRange(runtimeServerPort, serverBase, serverRange)) {
+	        persistedServerPort = runtimeServerPort;
+	      } else {
+	        persistedServerPort = await resolveLocalServerPortForStack({
+	          env: {
+	            ...effectiveEnv,
+	            HAPPIER_STACK_SERVER_PORT_BASE: (effectiveEnv.HAPPIER_STACK_SERVER_PORT_BASE ?? '52005').toString(),
+	            HAPPIER_STACK_SERVER_PORT_RANGE: (effectiveEnv.HAPPIER_STACK_SERVER_PORT_RANGE ?? '2000').toString(),
+	          },
+	          stackMode: true,
+	          stackName: stacklessName,
+	          runtimeStatePath: stacklessRuntimePath,
+	          defaultPort: 3005,
+	        }).catch(() => null);
+	      }
+	    }
+
+	    // Auto-heal:
+	    // If a stale pinned port exists in the stackless env file but it doesn't match the configured stable range,
+	    // prune it so dev/start can pick a stable high port again.
+	    const pruneKeys = [];
     if (
       existingPinnedServerPort &&
       existingPinnedServerPort < 5000 &&
@@ -440,19 +463,19 @@ async function main() {
       HAPPIER_STACK_SERVER_PORT_BASE: effectiveEnv.HAPPIER_STACK_SERVER_PORT_BASE,
       HAPPIER_STACK_SERVER_PORT_RANGE: effectiveEnv.HAPPIER_STACK_SERVER_PORT_RANGE,
       HAPPIER_STACK_EXPO_DEV_PORT_BASE: effectiveEnv.HAPPIER_STACK_EXPO_DEV_PORT_BASE,
-      HAPPIER_STACK_EXPO_DEV_PORT_RANGE: effectiveEnv.HAPPIER_STACK_EXPO_DEV_PORT_RANGE,
-      HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: effectiveEnv.HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY,
-      // Keep the stable active server id explicit so daemons/CLI always scope state/credentials per stack.
-      ...(effectiveEnv.HAPPIER_ACTIVE_SERVER_ID ? { HAPPIER_ACTIVE_SERVER_ID: effectiveEnv.HAPPIER_ACTIVE_SERVER_ID } : {}),
-      ...(runtimeServerPort &&
-      !existingPinnedServerPort &&
-      isPortWithinRange(runtimeServerPort, serverBase, serverRange)
-        ? { HAPPIER_STACK_SERVER_PORT: String(runtimeServerPort) }
-        : {}),
-      ...(runtimeExpoPort &&
-      !existingPinnedExpoPort &&
-      isPortWithinRange(runtimeExpoPort, expoBase, expoRange)
-        ? { HAPPIER_STACK_EXPO_DEV_PORT: String(runtimeExpoPort) }
+	      HAPPIER_STACK_EXPO_DEV_PORT_RANGE: effectiveEnv.HAPPIER_STACK_EXPO_DEV_PORT_RANGE,
+	      HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: effectiveEnv.HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY,
+	      // Keep the stable active server id explicit so daemons/CLI always scope state/credentials per stack.
+	      ...(effectiveEnv.HAPPIER_ACTIVE_SERVER_ID ? { HAPPIER_ACTIVE_SERVER_ID: effectiveEnv.HAPPIER_ACTIVE_SERVER_ID } : {}),
+	      ...(persistedServerPort &&
+	      !existingPinnedServerPort &&
+	      isPortWithinRange(persistedServerPort, serverBase, serverRange)
+	        ? { HAPPIER_STACK_SERVER_PORT: String(persistedServerPort) }
+	        : {}),
+	      ...(runtimeExpoPort &&
+	      !existingPinnedExpoPort &&
+	      isPortWithinRange(runtimeExpoPort, expoBase, expoRange)
+	        ? { HAPPIER_STACK_EXPO_DEV_PORT: String(runtimeExpoPort) }
         : {}),
     };
     await syncRepoLocalEnvFile({ envPath: stacklessEnvPath, managedEnv, pruneKeys });

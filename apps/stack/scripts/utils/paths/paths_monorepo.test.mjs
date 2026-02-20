@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { getComponentDir, getComponentRepoDir } from './paths.mjs';
+import { getComponentDir, getComponentRepoDir, getRepoDir } from './paths.mjs';
 
 async function withTempRoot(t) {
   const dir = await mkdtemp(join(tmpdir(), 'happier-stacks-paths-monorepo-'));
@@ -16,6 +16,16 @@ async function withTempRoot(t) {
 
 async function writeHappyMonorepoStub({ rootDir }) {
   const monoRoot = join(rootDir, 'main');
+  await mkdir(join(monoRoot, 'apps', 'ui'), { recursive: true });
+  await mkdir(join(monoRoot, 'apps', 'cli'), { recursive: true });
+  await mkdir(join(monoRoot, 'apps', 'server'), { recursive: true });
+  await writeFile(join(monoRoot, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(monoRoot, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(monoRoot, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
+  return monoRoot;
+}
+
+async function writeHappyMonorepoStubAt({ monoRoot }) {
   await mkdir(join(monoRoot, 'apps', 'ui'), { recursive: true });
   await mkdir(join(monoRoot, 'apps', 'cli'), { recursive: true });
   await mkdir(join(monoRoot, 'apps', 'server'), { recursive: true });
@@ -55,4 +65,19 @@ test('getComponentDir normalizes HAPPIER_STACK_REPO_DIR that points inside the m
 
   env.HAPPIER_STACK_REPO_DIR = join(monoRoot, 'apps', 'cli', 'src');
   assert.equal(getComponentDir(rootDir, 'happier-cli', env), join(monoRoot, 'apps', 'cli'));
+});
+
+test('getRepoDir falls back to the monorepo containing the CLI root when HAPPIER_STACK_REPO_DIR is unset', async (t) => {
+  const tmpRoot = await withTempRoot(t);
+
+  const workspaceDir = join(tmpRoot, 'workspace');
+  const monoRoot = join(tmpRoot, 'happier');
+  await writeHappyMonorepoStubAt({ monoRoot });
+
+  // Simulate running hstack from an activated local clone:
+  // rootDir is inside the monorepo, but there is no workspace/main checkout.
+  const rootDir = join(monoRoot, 'apps', 'stack');
+  const env = { HAPPIER_STACK_WORKSPACE_DIR: workspaceDir };
+
+  assert.equal(getRepoDir(rootDir, env), monoRoot);
 });

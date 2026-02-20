@@ -4,6 +4,9 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const logsScriptPath = fileURLToPath(new URL('./logs.mjs', import.meta.url));
 
 function runNode(args, { cwd, env }) {
   return new Promise((resolve, reject) => {
@@ -36,7 +39,7 @@ test('hstack logs --json resolves stack-scoped sources and auto-selects runner w
   writeFileSync(runtimePath, JSON.stringify({ version: 1, stackName, logs: { runner: runnerLog } }, null, 2) + '\n', 'utf-8');
 
   const res = await runNode(
-    [join(process.cwd(), 'apps/stack/scripts/logs.mjs'), '--json'],
+    [logsScriptPath, '--json'],
     {
       cwd: process.cwd(),
       env: {
@@ -66,7 +69,7 @@ test('hstack logs --component=server --json selects server log path when present
   writeFileSync(serverLog, '[server] hi\n', 'utf-8');
 
   const res = await runNode(
-    [join(process.cwd(), 'apps/stack/scripts/logs.mjs'), '--component=server', '--json'],
+    [logsScriptPath, '--component=server', '--json'],
     {
       cwd: process.cwd(),
       env: {
@@ -82,4 +85,3 @@ test('hstack logs --component=server --json selects server log path when present
   assert.equal(data.selected.component, 'server');
   assert.deepEqual(data.selected.paths, [serverLog]);
 });
-

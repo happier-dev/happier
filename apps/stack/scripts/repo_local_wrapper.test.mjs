@@ -2,9 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
 import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+
+import { resolveStablePortStart } from './utils/expo/metro_ports.mjs';
 
 function runNode(args, { cwd, env }) {
   return new Promise((resolve, reject) => {
@@ -16,6 +19,38 @@ function runNode(args, { cwd, env }) {
     proc.on('error', reject);
     proc.on('exit', (code, signal) => resolve({ code: code ?? (signal ? 1 : 0), signal, stdout, stderr }));
   });
+}
+
+async function listenOnPort(port) {
+  const srv = createServer(() => {});
+  await new Promise((resolve, reject) => {
+    srv.once('error', reject);
+    srv.listen({ host: '127.0.0.1', port }, () => resolve());
+  });
+  return srv;
+}
+
+async function reserveStableStartPort({ stackName, baseCandidates, range }) {
+  for (const base of baseCandidates) {
+    const startPort = resolveStablePortStart({
+      env: {
+        HAPPIER_STACK_SERVER_PORT_BASE: String(base),
+        HAPPIER_STACK_SERVER_PORT_RANGE: String(range),
+      },
+      stackName,
+      baseKey: 'HAPPIER_STACK_SERVER_PORT_BASE',
+      rangeKey: 'HAPPIER_STACK_SERVER_PORT_RANGE',
+      defaultBase: base,
+      defaultRange: range,
+    });
+    try {
+      const server = await listenOnPort(startPort);
+      return { base, range, startPort, server };
+    } catch {
+      // Port in use; try another base.
+    }
+  }
+  throw new Error(`failed to reserve a stable start port (bases=${baseCandidates.join(', ')}, range=${range})`);
 }
 
 test('repo-local wrapper dry-run prints hstack invocation with repo-local env', async () => {
@@ -344,6 +379,75 @@ test('repo-local wrapper prunes pinned server port when it falls outside the con
     assert.match(updated, /\bHAPPIER_STACK_SERVER_PORT_BASE=52005\b/, `expected base to be preserved:\n${updated}`);
     assert.match(updated, /\bHAPPIER_STACK_SERVER_PORT_RANGE=2000\b/, `expected range to be preserved:\n${updated}`);
     assert.doesNotMatch(updated, /\bHAPPIER_STACK_SERVER_PORT=3009\b/, `expected stale pinned port to be pruned:\n${updated}`);
+  } finally {
+    rmSync(stacksRoot, { recursive: true, force: true });
+  }
+});
+
+test('repo-local wrapper persists a stable pinned server port when none is present (service/tailscale pre-start)', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir); // apps/stack
+  const repoRoot = dirname(dirname(packageRoot)); // repo root
+
+  const stacksRoot = mkdtempSync(join(tmpdir(), 'happier-repo-local-stacks-'));
+  try {
+    const dry = await runNode(
+      [join(packageRoot, 'scripts', 'repo_local.mjs'), 'dev', '--dry-run'],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          HAPPIER_STACK_STORAGE_DIR: stacksRoot,
+        },
+      }
+    );
+    assert.equal(dry.code, 0, `expected exit 0, got ${dry.code}\nstdout:\n${dry.stdout}\nstderr:\n${dry.stderr}`);
+    const dryData = JSON.parse(dry.stdout);
+    const envPath = String(dryData?.env?.HAPPIER_STACK_ENV_FILE ?? '').trim();
+    assert.ok(envPath, 'expected dry-run to include HAPPIER_STACK_ENV_FILE');
+    const stackName = String(dryData?.env?.HAPPIER_STACK_STACK ?? '').trim();
+    assert.ok(stackName, 'expected dry-run to include HAPPIER_STACK_STACK');
+
+    // Ensure env exists but does not contain a server port pin yet.
+    mkdirSync(dirname(envPath), { recursive: true });
+    writeFileSync(envPath, ['CUSTOM_KEY=1', ''].join('\n'));
+
+    // Reserve the first stable port to force the wrapper to pick the next free one and persist it.
+    const reserved = await reserveStableStartPort({
+      stackName,
+      baseCandidates: [52005, 54005, 56005, 58005],
+      range: 2000,
+    });
+    try {
+      const res = await runNode(
+        [join(packageRoot, 'scripts', 'repo_local.mjs'), 'service', 'status'],
+        {
+          cwd: repoRoot,
+          env: {
+            ...process.env,
+            HAPPIER_STACK_STORAGE_DIR: stacksRoot,
+            HAPPIER_STACK_SERVER_PORT_BASE: String(reserved.base),
+            HAPPIER_STACK_SERVER_PORT_RANGE: String(reserved.range),
+            HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ONLY: '1',
+          },
+        }
+      );
+      assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+    } finally {
+      await new Promise((resolve) => reserved.server.close(() => resolve()));
+    }
+
+    const updated = readFileSync(envPath, 'utf-8');
+    assert.match(updated, /\bCUSTOM_KEY=1\b/, `expected user key to be preserved:\n${updated}`);
+    const m = updated.match(/^HAPPIER_STACK_SERVER_PORT=(\d+)$/m);
+    assert.ok(m, `expected wrapper to persist HAPPIER_STACK_SERVER_PORT:\n${updated}`);
+    const pinned = Number(m?.[1] ?? '');
+    assert.ok(Number.isFinite(pinned) && pinned > 0, `expected pinned port to be numeric, got: ${m?.[1]}`);
+    assert.ok(
+      pinned >= reserved.base && pinned < reserved.base + reserved.range,
+      `expected pinned port within range [${reserved.base}, ${reserved.base + reserved.range}): ${pinned}`
+    );
+    assert.notEqual(pinned, reserved.startPort, `expected wrapper to avoid occupied start port ${reserved.startPort}, got: ${pinned}`);
   } finally {
     rmSync(stacksRoot, { recursive: true, force: true });
   }

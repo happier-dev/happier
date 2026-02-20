@@ -9,6 +9,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   stat,
   symlink,
@@ -1287,7 +1288,7 @@ export function resolveMinisignPublicKeyText(env = process.env) {
   return inline || DEFAULT_MINISIGN_PUBLIC_KEY;
 }
 
-async function installBinaryAtomically({ sourceBinaryPath, targetBinaryPath, previousBinaryPath, versionedTargetPath }) {
+export async function installBinaryAtomically({ sourceBinaryPath, targetBinaryPath, previousBinaryPath, versionedTargetPath }) {
   await mkdir(dirname(targetBinaryPath), { recursive: true });
   await mkdir(dirname(versionedTargetPath), { recursive: true });
   const stagedPath = `${targetBinaryPath}.new`;
@@ -1299,9 +1300,30 @@ async function installBinaryAtomically({ sourceBinaryPath, targetBinaryPath, pre
   }
   await copyFile(stagedPath, versionedTargetPath);
   await chmod(versionedTargetPath, 0o755).catch(() => {});
-  await rm(stagedPath, { force: true });
+
+  // Replacing an on-disk executable that may currently be running can fail with ETXTBSY if we try to
+  // write over the existing path. Prefer an atomic rename/swap on POSIX so the running process keeps
+  // using the old inode while new spawns see the new binary.
+  if (process.platform !== 'win32') {
+    await rename(stagedPath, targetBinaryPath).catch(async (e) => {
+      const code = String(e?.code ?? '');
+      // Best-effort fallback (should be rare): keep behavior working even on filesystems where rename fails.
+      if (code === 'EXDEV') {
+        await copyFile(versionedTargetPath, targetBinaryPath);
+        await chmod(targetBinaryPath, 0o755).catch(() => {});
+        await rm(stagedPath, { force: true });
+        return;
+      }
+      throw e;
+    });
+    await chmod(targetBinaryPath, 0o755).catch(() => {});
+    return;
+  }
+
+  // Windows does not reliably support overwrite semantics for rename.
   await copyFile(versionedTargetPath, targetBinaryPath);
   await chmod(targetBinaryPath, 0o755).catch(() => {});
+  await rm(stagedPath, { force: true });
 }
 
 async function syncSelfHostSqliteMigrations({ artifactRootDir, targetDir }) {

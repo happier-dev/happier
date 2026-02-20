@@ -19,6 +19,9 @@ test('repo root package.json exposes repo-local hstack scripts', async () => {
   assert.equal(scripts.start, 'node ./apps/stack/scripts/repo_local.mjs start');
   assert.equal(scripts.build, 'node ./apps/stack/scripts/repo_local.mjs build');
   assert.equal(scripts.tui, 'node ./apps/stack/scripts/repo_local.mjs tui');
+  assert.equal(scripts['tui:with-mobile'], 'node ./apps/stack/scripts/repo_local.mjs tui dev --mobile');
+  assert.equal(scripts['cli:activate'], 'node ./apps/stack/scripts/repo_cli_activate.mjs');
+  assert.equal(scripts['cli:activate:path'], 'node ./apps/stack/scripts/repo_cli_activate.mjs --install-path');
   assert.equal(scripts.auth, 'node ./apps/stack/scripts/repo_local.mjs auth');
   assert.equal(scripts.daemon, 'node ./apps/stack/scripts/repo_local.mjs daemon');
   assert.equal(scripts.eas, 'node ./apps/stack/scripts/repo_local.mjs eas');
@@ -32,6 +35,12 @@ test('repo root package.json exposes repo-local hstack scripts', async () => {
   assert.equal(scripts.setup, 'node ./apps/stack/scripts/repo_local.mjs setup');
   assert.equal(scripts.service, 'node ./apps/stack/scripts/repo_local.mjs service');
   assert.equal(scripts.logs, 'node ./apps/stack/scripts/repo_local.mjs logs --follow');
+  assert.equal(scripts['logs:all'], 'node ./apps/stack/scripts/repo_local.mjs logs --follow --component=all');
+  assert.equal(scripts['logs:server'], 'node ./apps/stack/scripts/repo_local.mjs logs --follow --component=server');
+  assert.equal(scripts['logs:expo'], 'node ./apps/stack/scripts/repo_local.mjs logs --follow --component=expo');
+  assert.equal(scripts['logs:ui'], 'node ./apps/stack/scripts/repo_local.mjs logs --follow --component=ui');
+  assert.equal(scripts['logs:daemon'], 'node ./apps/stack/scripts/repo_local.mjs logs --follow --component=daemon');
+  assert.equal(scripts['logs:service'], 'node ./apps/stack/scripts/repo_local.mjs logs --follow --component=service');
   assert.equal(scripts.tailscale, 'node ./apps/stack/scripts/repo_local.mjs tailscale');
   assert.equal(scripts.env, 'node ./apps/stack/scripts/repo_local.mjs env');
 });
