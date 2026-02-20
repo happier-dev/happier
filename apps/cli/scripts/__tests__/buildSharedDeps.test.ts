@@ -74,4 +74,38 @@ describe('buildSharedDeps', () => {
     expect(dest).toBe('/repo/apps/cli/node_modules/@happier-dev/protocol/dist');
     expect(opts).toMatchObject({ recursive: true, force: true });
   });
+
+  it('syncs bundled workspace package.json exports when present', () => {
+    const cpSync = vi.fn(() => undefined);
+    const existsSync = vi.fn((p: any) =>
+      String(p).includes('/apps/cli/node_modules/@happier-dev/protocol/dist') ||
+      String(p).endsWith('/apps/cli/node_modules/@happier-dev/protocol/package.json'),
+    );
+    const readFileSync = vi.fn(() =>
+      JSON.stringify({
+        name: '@happier-dev/protocol',
+        version: '0.0.0',
+        type: 'module',
+        exports: { '.': { default: './dist/index.js' }, './installables': { default: './dist/installables.js' } },
+        dependencies: { zod: '1.0.0' },
+      }),
+    );
+    const writeFileSync = vi.fn(() => undefined);
+
+    syncBundledWorkspaceDist({
+      repoRoot: '/repo',
+      cpSync,
+      existsSync,
+      readFileSync,
+      writeFileSync,
+      packages: ['protocol'],
+    });
+
+    expect(writeFileSync).toHaveBeenCalledTimes(1);
+    const [destPath, payload] = writeFileSync.mock.calls[0] ?? [];
+    expect(destPath).toBe('/repo/apps/cli/node_modules/@happier-dev/protocol/package.json');
+    const parsed = JSON.parse(String(payload));
+    expect(parsed.exports?.['./installables']).toBeTruthy();
+    expect(parsed.private).toBe(true);
+  });
 });

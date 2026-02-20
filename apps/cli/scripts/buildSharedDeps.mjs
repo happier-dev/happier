@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, realpathSync } from 'node:fs';
+import { cpSync, existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -76,6 +76,8 @@ export function syncBundledWorkspaceDist(opts = {}) {
   const repoRoot = typeof repoRootArg === 'string' && repoRootArg.trim() ? repoRootArg : findRepoRoot(__dirname);
   const exists = opts.existsSync ?? existsSync;
   const cp = opts.cpSync ?? cpSync;
+  const readFile = opts.readFileSync ?? readFileSync;
+  const writeFile = opts.writeFileSync ?? writeFileSync;
   const packages = Array.isArray(opts.packages) && opts.packages.length > 0 ? opts.packages : ['agents', 'cli-common', 'protocol'];
 
   for (const pkg of packages) {
@@ -87,7 +89,48 @@ export function syncBundledWorkspaceDist(opts = {}) {
     } catch {
       // Best-effort: bundled deps may be missing or readonly.
     }
+
+    const destPackageJsonPath = resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', pkg, 'package.json');
+    if (!exists(destPackageJsonPath)) continue;
+    try {
+      const raw = JSON.parse(readFile(resolve(repoRoot, 'packages', pkg, 'package.json'), 'utf8'));
+      const sanitized = sanitizeBundledWorkspacePackageJson(raw);
+      writeFile(destPackageJsonPath, `${JSON.stringify(sanitized, null, 2)}\n`, 'utf8');
+    } catch {
+      // Best-effort: keep local bundled deps usable even if package.json sync fails.
+    }
   }
+}
+
+function sanitizeBundledWorkspacePackageJson(raw) {
+  const {
+    name,
+    version,
+    type,
+    main,
+    module,
+    types,
+    exports,
+    dependencies,
+    peerDependencies,
+    optionalDependencies,
+    engines,
+  } = raw ?? {};
+
+  return {
+    name,
+    version,
+    private: true,
+    type,
+    main,
+    module,
+    types,
+    exports,
+    dependencies,
+    peerDependencies,
+    optionalDependencies,
+    engines,
+  };
 }
 
 export function main() {

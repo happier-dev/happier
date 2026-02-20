@@ -4,6 +4,7 @@ import path from 'node:path';
 import process from 'node:process';
 import url from 'node:url';
 import { resolveUiPostinstallTasks } from './resolveUiPostinstallTasks.mjs';
+import { ensureNohoistPeerLinks } from './ensureNohoistPeerLinks.mjs';
 
 // Yarn workspaces can execute this script via a symlinked path (e.g. repoRoot/node_modules/happy/...).
 // Resolve symlinks so repoRootDir/expoAppDir are computed from the real filesystem location.
@@ -33,6 +34,13 @@ const patchDirFromRepoRoot = path.relative(repoRootDir, patchDir);
 const patchDirFromExpoApp = path.relative(expoAppDir, patchDir);
 const repoRootNodeModulesDir = path.resolve(repoRootDir, 'node_modules');
 const expoAppNodeModulesDir = path.resolve(expoAppDir, 'node_modules');
+
+try {
+    ensureNohoistPeerLinks({ repoRootDir, expoAppDir });
+} catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+}
 
 const patchPackageCliCandidatePaths = [
     path.resolve(expoAppDir, 'node_modules', 'patch-package', 'dist', 'index.js'),
