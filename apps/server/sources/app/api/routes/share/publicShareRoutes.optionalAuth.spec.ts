@@ -154,6 +154,11 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             useCount: 0,
             isConsentRequired: false,
             blockedUsers: undefined,
+            encryptedDataKey: new Uint8Array([1, 2, 3]),
+        }));
+
+        sessionFindUnique.mockImplementation(async () => ({
+            encryptionMode: "e2ee",
         }));
 
         sessionMessageFindMany.mockImplementation(async () => [
@@ -178,4 +183,3 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         expect(payload).toEqual({ messages: [{ id: "m1", seq: 1, content: "c", localId: "l1", createdAt: 1, updatedAt: 2 }] });
     });
 });
-

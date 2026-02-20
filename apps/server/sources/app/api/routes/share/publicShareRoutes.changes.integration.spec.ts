@@ -44,9 +44,13 @@ let txFindUnique: any;
 let txCreate: any;
 let txUpdate: any;
 let txDelete: any;
+let txSessionFindUnique: any;
 
 vi.mock("@/storage/inTx", () => {
     const harness = createInTxHarness(() => ({
+            session: {
+                findUnique: (...args: any[]) => txSessionFindUnique(...args),
+            },
             publicSessionShare: {
                 findUnique: (...args: any[]) => txFindUnique(...args),
                 create: (...args: any[]) => txCreate(...args),
@@ -66,6 +70,7 @@ describe("publicShareRoutes (AccountChange integration)", () => {
         txCreate = vi.fn();
         txUpdate = vi.fn();
         txDelete = vi.fn();
+        txSessionFindUnique = vi.fn(async () => ({ encryptionMode: "e2ee" }));
     });
 
     it("POST create marks share+session and emits created update using latest cursor", async () => {
