@@ -7,6 +7,32 @@ import { fileURLToPath } from 'node:url';
 
 import { scrubHappierStackEnv, STACK_WRAPPER_PRESERVE_KEYS } from './utils/env/scrub_env.mjs';
 import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
+import { ensureDepsInstalled } from './utils/proc/pm.mjs';
+
+function shouldAutoInstallDepsForRepoLocalCommand(cmd) {
+  const c = String(cmd ?? '').trim();
+  if (!c) return false;
+  if (c === 'help' || c === '--help' || c === '-h') return false;
+  if (c === 'where') return false;
+  if (c === 'stop') return false;
+  return true;
+}
+
+async function maybeAutoInstallRepoDeps({ repoRoot, cmd, env, preflightRootOverride = '', preflightOnly = '' }) {
+  const autoInstallRaw = String(env?.HAPPIER_STACK_REPO_LOCAL_AUTO_INSTALL ?? '').trim();
+  const autoInstall = autoInstallRaw ? autoInstallRaw !== '0' : true;
+  if (!autoInstall) return;
+  if (!shouldAutoInstallDepsForRepoLocalCommand(cmd)) return;
+
+  // Test hook: allow validating auto-install behavior without mutating the real repo checkout.
+  const preflightRoot = String(preflightRootOverride ?? '').trim() || repoRoot;
+
+  await ensureDepsInstalled(preflightRoot, 'happier-monorepo', { quiet: false, env });
+
+  if (String(preflightOnly ?? '').trim() === '1') {
+    process.exit(0);
+  }
+}
 
 function usage() {
   return [
@@ -186,7 +212,10 @@ function readRuntimeServerPort(runtimeStatePath) {
   }
 }
 
-function main() {
+async function main() {
+  const preflightRootOverride = String(process.env.HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ROOT ?? '').trim();
+  const preflightOnly = String(process.env.HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ONLY ?? '').trim();
+
   const argvRaw = process.argv.slice(2);
   const firstArg = argvRaw[0];
   const showWrapperHelp =
@@ -361,8 +390,25 @@ function main() {
     return;
   }
 
+  try {
+    await maybeAutoInstallRepoDeps({
+      repoRoot,
+      cmd: subcommand,
+      env: effectiveEnv,
+      preflightRootOverride,
+      preflightOnly,
+    });
+  } catch (e) {
+    process.stderr.write(`[repo-local] failed to install repo deps\n${String(e?.stack ?? e)}\n`);
+    process.stderr.write('\nFix:\n  corepack enable\n  yarn install\n');
+    process.exit(1);
+  }
+
   const res = spawnSync(cmd, args, { cwd, env: effectiveEnv, stdio: 'inherit' });
   process.exit(res.status ?? 1);
 }
 
-main();
+main().catch((e) => {
+  process.stderr.write(`[repo-local] ${String(e?.stack ?? e)}\n`);
+  process.exit(1);
+});

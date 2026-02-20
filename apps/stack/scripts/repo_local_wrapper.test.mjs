@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 function runNode(args, { cwd, env }) {
@@ -152,4 +154,56 @@ test('repo-local wrapper maps `stop` to stack stop for the repo-local stack', as
   assert.equal(data.args[1], 'stack');
   assert.equal(data.args[2], 'stop');
   assert.ok(String(data.args[3] ?? '').trim() !== '');
+});
+
+test('repo-local wrapper auto-installs deps when node_modules are missing', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir); // apps/stack
+  const repoRoot = dirname(dirname(packageRoot)); // repo root
+
+  const preflightRoot = mkdtempSync(join(tmpdir(), 'happier-repo-local-preflight-'));
+  try {
+    writeFileSync(join(preflightRoot, 'package.json'), JSON.stringify({ name: 'tmp', private: true }));
+
+    const binDir = join(preflightRoot, 'bin');
+    mkdirSync(binDir, { recursive: true });
+    const logPath = join(preflightRoot, 'yarn.log');
+    const yarnBin = join(binDir, 'yarn');
+    writeFileSync(
+      yarnBin,
+      [
+        '#!/usr/bin/env node',
+        "import { appendFileSync, mkdirSync } from 'node:fs';",
+        "import { dirname, join } from 'node:path';",
+        'const logPath = process.env.YARN_LOG;',
+        "appendFileSync(logPath, process.argv.slice(2).join(' ') + '\\n');",
+        "if (process.argv.includes('install')) {",
+        "  const nodeModules = join(process.cwd(), 'node_modules');",
+        "  mkdirSync(nodeModules, { recursive: true });",
+        '}',
+        'process.exit(0);',
+      ].join('\n') + '\n',
+    );
+    chmodSync(yarnBin, 0o755);
+
+    const res = await runNode(
+      [join(packageRoot, 'scripts', 'repo_local.mjs'), 'dev'],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH ?? ''}`,
+          YARN_LOG: logPath,
+          HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ROOT: preflightRoot,
+          HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ONLY: '1',
+        },
+      }
+    );
+
+    assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+    const log = readFileSync(logPath, 'utf-8');
+    assert.match(log, /\binstall\b/);
+  } finally {
+    rmSync(preflightRoot, { recursive: true, force: true });
+  }
 });
