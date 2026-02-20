@@ -12,12 +12,12 @@ This avoids Docker/container UX issues (browser opening, Expo networking, file w
 brew install lima
 ```
 
-### 1b) Automated E2E smoke test (optional)
+### 1b) Automated smoke test (optional)
 
-On your macOS host (this repo):
+On your macOS host (this repo, from `apps/stack/`):
 
 ```bash
-./scripts/provision/macos-lima-hstack-e2e.sh happy-e2e
+./scripts/provision/macos-lima-hstack-smoke.sh happy-e2e
 ```
 
 What it validates (best-effort):
@@ -28,18 +28,18 @@ What it validates (best-effort):
 
 Notes:
 - This runs inside the VM (Linux) and uses `npx` by default.
-- You can pin the version under test: `HSTACK_VERSION=0.6.14 ./scripts/provision/macos-lima-hstack-e2e.sh happy-e2e`.
+- You can pin the version under test: `HSTACK_VERSION=0.6.14 ./scripts/provision/macos-lima-hstack-smoke.sh happy-e2e`.
 - If you’re testing a fork, you can point the runner at your fork’s raw scripts:
-  `HSTACK_RAW_BASE=https://raw.githubusercontent.com/<owner>/<repo>/<ref>/apps/stack ./scripts/provision/macos-lima-hstack-e2e.sh happy-e2e`.
+  `HSTACK_RAW_BASE=https://raw.githubusercontent.com/<owner>/<repo>/<ref>/apps/stack ./scripts/provision/macos-lima-hstack-smoke.sh happy-e2e`.
 - If you’re testing unpublished local changes, copy a packed tarball into the VM and run:
-  `HSTACK_TGZ=./happier-dev-stack-*.tgz /tmp/linux-ubuntu-e2e.sh`.
+  `HSTACK_TGZ=./happier-dev-stack-*.tgz /tmp/linux-ubuntu-hstack-smoke.sh`.
 
 ### 2) Create + configure a VM (recommended script)
 
-On your macOS host (this repo):
+On your macOS host (this repo, from `apps/stack/`):
 
 ```bash
-./scripts/provision/macos-lima-happy-vm.sh happy-test
+./scripts/provision/macos-lima-vm.sh happy-test
 ```
 
 This creates the VM if needed and configures **localhost port forwarding** for the port ranges used by our VM defaults.
@@ -49,7 +49,7 @@ It also sets a higher default VM memory size (to avoid Expo/Metro getting OOM-ki
 Override if needed:
 
 ```bash
-LIMA_MEMORY=12GiB ./scripts/provision/macos-lima-happy-vm.sh happy-test
+LIMA_MEMORY=12GiB ./scripts/provision/macos-lima-vm.sh happy-test
 ```
 
 Port ranges note:
@@ -131,9 +131,9 @@ limactl shell happy-pr
 Inside the VM:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack/scripts/provision/linux-ubuntu-review-pr.sh -o /tmp/linux-ubuntu-review-pr.sh \
-  && chmod +x /tmp/linux-ubuntu-review-pr.sh \
-  && /tmp/linux-ubuntu-review-pr.sh
+curl -fsSL https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack/scripts/provision/linux-ubuntu-provision.sh -o /tmp/linux-ubuntu-provision.sh \
+  && chmod +x /tmp/linux-ubuntu-provision.sh \
+  && /tmp/linux-ubuntu-provision.sh --profile=happier
 ```
 
 ### 3b) (Optional) Run the hstack dev setup wizard
