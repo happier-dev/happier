@@ -950,10 +950,10 @@
     "@noble/curves" "1.5.0"
     "@noble/hashes" "1.4.0"
 
-"@config-plugins/react-native-webrtc@^12.0.0":
-  version "12.0.0"
-  resolved "https://registry.yarnpkg.com/@config-plugins/react-native-webrtc/-/react-native-webrtc-12.0.0.tgz#2bad8d59fa8aeb1b311c82c8704259154b00805f"
-  integrity sha512-EIYR+ArIOFBz8cEHSdPjxqFPhaN+nNeoPnI6iVStctYKZdl6AEgmXq6Qfpds6qyin1W4JP7wq2jJh32OsRfwxg==
+"@config-plugins/react-native-webrtc@^13.0.0":
+  version "13.0.0"
+  resolved "https://registry.yarnpkg.com/@config-plugins/react-native-webrtc/-/react-native-webrtc-13.0.0.tgz#8242d5afd89e269630918c448ac1503fd84fdc41"
+  integrity sha512-EtRRLXmsU4GcDA3TgIxtqg++eh/CjbI6EV8N/1EFQTtaWI2lpww0fg+S0wd+ndXE0dFWaLqUFvZuyTAaAoOSeA==
 
 "@cspotcode/source-map-support@^0.8.0":
   version "0.8.1"
