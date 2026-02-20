@@ -16,11 +16,14 @@ with_remote_server=""
 remote_installer=""
 remote_auth_mode=""
 remote_server_db=""
+with_docker_images=""
+docker_channel=""
+docker_images_db=""
 show_help="0"
 
 usage() {
   cat <<EOF
-Usage: $0 [--mode=npm|local] [--stack-spec <spec>] [--cli-spec <spec>] [--cli-install=global|npx] [--monorepo=github|local] [--timeout-s <seconds>] [--with-remote-daemon|--no-remote-daemon] [--with-remote-server|--no-remote-server] [--remote-server-db=postgres|sqlite] [--remote-installer=shim|official] [--remote-auth-mode=reuse-cli|bootstrap] [--keep]
+Usage: $0 [--mode=npm|local] [--stack-spec <spec>] [--cli-spec <spec>] [--cli-install=global|npx] [--monorepo=github|local] [--timeout-s <seconds>] [--with-remote-daemon|--no-remote-daemon] [--with-remote-server|--no-remote-server] [--remote-server-db=postgres|sqlite] [--remote-installer=shim|official] [--remote-auth-mode=reuse-cli|bootstrap] [--with-docker-images|--no-docker-images] [--docker-channel=preview|stable] [--docker-images-db=sqlite|postgres|both] [--keep]
 
 Examples:
   $0
@@ -30,6 +33,7 @@ Examples:
   $0 --monorepo=local
   $0 --mode=local --with-remote-daemon --with-remote-server --remote-server-db=postgres --remote-installer=shim --remote-auth-mode=reuse-cli
   $0 --mode=npm --with-remote-daemon --remote-installer=official --remote-auth-mode=bootstrap
+  $0 --mode=npm --with-docker-images --docker-channel=preview --docker-images-db=both
 EOF
 }
 
@@ -48,6 +52,10 @@ for arg in "$@"; do
     --remote-installer=*) remote_installer="${arg#*=}" ;;
     --remote-auth-mode=*) remote_auth_mode="${arg#*=}" ;;
     --remote-server-db=*) remote_server_db="${arg#*=}" ;;
+    --with-docker-images) with_docker_images="1" ;;
+    --no-docker-images) with_docker_images="0" ;;
+    --docker-channel=*) docker_channel="${arg#*=}" ;;
+    --docker-images-db=*) docker_images_db="${arg#*=}" ;;
     --keep) keep="1" ;;
     -h|--help) show_help="1" ;;
     *) echo "Unknown arg: $arg" >&2; usage; exit 2 ;;
@@ -116,6 +124,30 @@ if [[ -z "$remote_auth_mode" ]]; then
 fi
 if [[ "$remote_auth_mode" != "reuse-cli" && "$remote_auth_mode" != "bootstrap" ]]; then
   echo "Invalid --remote-auth-mode=$remote_auth_mode (expected reuse-cli|bootstrap)" >&2
+  exit 2
+fi
+
+if [[ -z "$with_docker_images" ]]; then
+  with_docker_images="0"
+fi
+if [[ "$with_docker_images" != "0" && "$with_docker_images" != "1" ]]; then
+  echo "Invalid docker images mode (expected --with-docker-images or --no-docker-images)" >&2
+  exit 2
+fi
+
+if [[ -z "$docker_channel" ]]; then
+  docker_channel="preview"
+fi
+if [[ "$docker_channel" != "preview" && "$docker_channel" != "stable" ]]; then
+  echo "Invalid --docker-channel=$docker_channel (expected preview|stable)" >&2
+  exit 2
+fi
+
+if [[ -z "$docker_images_db" ]]; then
+  docker_images_db="both"
+fi
+if [[ "$docker_images_db" != "sqlite" && "$docker_images_db" != "postgres" && "$docker_images_db" != "both" ]]; then
+  echo "Invalid --docker-images-db=$docker_images_db (expected sqlite|postgres|both)" >&2
   exit 2
 fi
 
@@ -274,6 +306,167 @@ if [[ "$mode" == "local" ]]; then
     echo "HAPPIER_TGZ=/packs/cli.tgz"
   } >> "$env_file"
 fi
+
+run_dockerhub_images_smoke() {
+  if [[ "$with_docker_images" != "1" ]]; then
+    return 0
+  fi
+
+  # Published Docker Hub images (see scripts/pipeline/docker/publish-images.mjs).
+  relay_image="happierdev/relay-server:${docker_channel}"
+  devbox_image="happierdev/dev-box:${docker_channel}"
+
+  echo "[npm-e2e-smoke] checking dockerhub image availability..."
+  if ! docker manifest inspect "$relay_image" >/dev/null 2>&1; then
+    echo "[npm-e2e-smoke] missing relay-server image on dockerhub: $relay_image" >&2
+    echo "[npm-e2e-smoke] hint: ensure the image is published, or run: docker login" >&2
+    return 1
+  fi
+  if ! docker manifest inspect "$devbox_image" >/dev/null 2>&1; then
+    echo "[npm-e2e-smoke] missing dev-box image on dockerhub: $devbox_image" >&2
+    echo "[npm-e2e-smoke] hint: ensure the image is published, or run: docker login" >&2
+    return 1
+  fi
+
+  db_cases=()
+  if [[ "$docker_images_db" == "both" ]]; then
+    db_cases=(sqlite postgres)
+  else
+    db_cases=("$docker_images_db")
+  fi
+
+  for db_case in "${db_cases[@]}"; do
+    (
+      set -euo pipefail
+
+      images_project_name="${project_name}-dockerhub-${docker_channel}-${db_case}"
+      compose_images=(docker compose --project-name "$images_project_name" -f "$here/compose.dockerhub.yml")
+
+      docker_env_file="$repo_root/output/npm-e2e-smoke.dockerhub.${docker_channel}.${db_case}.env"
+      rm -f "$docker_env_file" >/dev/null 2>&1 || true
+
+      postgres_app_name="happier_npm_e2e_smoke_dockerhub_${docker_channel}_${db_case}"
+      database_url="postgresql://${POSTGRES_USER:-happier}:${POSTGRES_PASSWORD:-happier}@postgres:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-happier_smoke}?application_name=${postgres_app_name}"
+
+      {
+        echo "REPO_ROOT=$repo_root"
+        echo "HAPPIER_RELAY_IMAGE=$relay_image"
+        echo "HAPPIER_DEVBOX_IMAGE=$devbox_image"
+        echo "HAPPIER_NPM_SPEC=$cli_spec"
+        echo "HAPPIER_SERVER_URL=http://relay:3005"
+        echo "HAPPIER_ACTIVE_SERVER_ID=smoke_dockerhub_${docker_channel}_${db_case}"
+        echo "CLIENT_HOME_DIR=/home/happier/happier-home"
+        echo "APPROVER_HOME_DIR=/home/happier/happier-approver-home"
+
+        echo "POSTGRES_HOST=postgres"
+        echo "POSTGRES_PORT=5432"
+        echo "POSTGRES_USER=happier"
+        echo "POSTGRES_PASSWORD=happier"
+        echo "POSTGRES_DB=happier_smoke"
+        echo "POSTGRES_APP_NAME=$postgres_app_name"
+
+        echo "RELAY_PORT=3005"
+        if [[ "$db_case" == "postgres" ]]; then
+          echo "RELAY_DB_PROVIDER=postgres"
+          echo "RELAY_DATABASE_URL=$database_url"
+        else
+          echo "RELAY_DB_PROVIDER=sqlite"
+          echo "RELAY_DATABASE_URL="
+        fi
+      } >"$docker_env_file"
+
+      cleanup_images() {
+        if [[ "$keep" == "1" ]]; then
+          echo "[npm-e2e-smoke] keeping dockerhub containers/volumes (use: ${compose_images[*]} --env-file $docker_env_file down -v)" >&2
+          return 0
+        fi
+        set +e
+        "${compose_images[@]}" --env-file "$docker_env_file" down -v >/dev/null 2>&1 || true
+        set -e
+      }
+      trap cleanup_images EXIT
+
+      echo "[npm-e2e-smoke] starting dockerhub relay-server ($db_case)..."
+      if [[ "$db_case" == "postgres" ]]; then
+        echo "[npm-e2e-smoke] starting dockerhub postgres..."
+        "${compose_images[@]}" --env-file "$docker_env_file" up -d --force-recreate --renew-anon-volumes --remove-orphans postgres >/dev/null
+
+        echo "[npm-e2e-smoke] waiting for dockerhub postgres..."
+        for _ in $(seq 1 90); do
+          if "${compose_images[@]}" --env-file "$docker_env_file" exec -T postgres sh -lc "pg_isready -U \"${POSTGRES_USER:-happier}\" -d \"${POSTGRES_DB:-happier_smoke}\" -h 127.0.0.1 -p 5432 >/dev/null 2>&1"; then
+            break
+          fi
+          sleep 1
+        done
+        if ! "${compose_images[@]}" --env-file "$docker_env_file" exec -T postgres sh -lc "pg_isready -U \"${POSTGRES_USER:-happier}\" -d \"${POSTGRES_DB:-happier_smoke}\" -h 127.0.0.1 -p 5432 >/dev/null 2>&1"; then
+          echo "[npm-e2e-smoke] dockerhub postgres did not become ready" >&2
+          "${compose_images[@]}" --env-file "$docker_env_file" logs --no-color postgres >&2 || true
+          exit 1
+        fi
+      fi
+
+      "${compose_images[@]}" --env-file "$docker_env_file" up -d --no-deps --force-recreate --renew-anon-volumes --remove-orphans relay >/dev/null
+
+      echo "[npm-e2e-smoke] waiting for dockerhub relay-server..."
+      start_ts="$(date +%s)"
+      while true; do
+        if "${compose_images[@]}" exec -T relay bash -lc 'curl -fsS http://127.0.0.1:3005/v1/version >/dev/null && curl -fsS http://127.0.0.1:3005/ | head -c 4096 | grep -qi "<html"' >/dev/null 2>&1; then
+          break
+        fi
+        now_ts="$(date +%s)"
+        if (( now_ts - start_ts > 180 )); then
+          echo "[npm-e2e-smoke] dockerhub relay-server did not become ready (db=$db_case)" >&2
+          "${compose_images[@]}" --env-file "$docker_env_file" logs --no-color relay >&2 || true
+          exit 1
+        fi
+        sleep 2
+      done
+
+      echo "[npm-e2e-smoke] checking dockerhub relay-server env (db=$db_case)..."
+      expected_db="$db_case"
+      if [[ "$db_case" == "postgres" ]]; then
+        expected_db="postgres"
+      else
+        expected_db="sqlite"
+      fi
+      "${compose_images[@]}" exec -T relay bash -lc "test \"\${HAPPIER_DB_PROVIDER:-}\" = \"$expected_db\" || test \"\${HAPPY_DB_PROVIDER:-}\" = \"$expected_db\"" >/dev/null
+
+      echo "[npm-e2e-smoke] running dockerhub dev-box happier-cli smoke (db=$db_case)..."
+      set +e
+      "${compose_images[@]}" --env-file "$docker_env_file" run --rm --no-deps devbox-smoke
+      status=$?
+      set -e
+
+      if [[ $status -ne 0 ]]; then
+        echo "[npm-e2e-smoke] dev-box smoke failed (exit $status) (db=$db_case)" >&2
+        echo "[npm-e2e-smoke] relay logs:" >&2
+        "${compose_images[@]}" --env-file "$docker_env_file" logs --no-color relay >&2 || true
+        if [[ "$db_case" == "postgres" ]]; then
+          echo "[npm-e2e-smoke] postgres logs:" >&2
+          "${compose_images[@]}" --env-file "$docker_env_file" logs --no-color postgres >&2 || true
+        fi
+        exit $status
+      fi
+
+      if [[ "$db_case" == "postgres" ]]; then
+        echo "[npm-e2e-smoke] validating dockerhub relay-server postgres connectivity..."
+        for _ in $(seq 1 60); do
+          conn_count="$("${compose_images[@]}" --env-file "$docker_env_file" exec -T postgres sh -lc "psql -U \"${POSTGRES_USER:-happier}\" -d \"${POSTGRES_DB:-happier_smoke}\" -tAc \"select count(*) from pg_stat_activity where datname='${POSTGRES_DB:-happier_smoke}' and application_name='${postgres_app_name}';\" 2>/dev/null | tr -d '[:space:]' | head -n 1" || true)"
+          if [[ "$conn_count" =~ ^[0-9]+$ ]] && [[ "$conn_count" -ge 1 ]]; then
+            break
+          fi
+          sleep 1
+        done
+        if ! [[ "${conn_count:-}" =~ ^[0-9]+$ ]] || [[ "$conn_count" -lt 1 ]]; then
+          echo "[npm-e2e-smoke] expected at least one postgres connection from relay-server (application_name=$postgres_app_name, got: ${conn_count:-missing})" >&2
+          exit 1
+        fi
+      fi
+
+      echo "[npm-e2e-smoke] dockerhub images OK (db=$db_case)"
+    )
+  done
+}
 
 if [[ "$monorepo_mode" == "local" ]]; then
   echo "[npm-e2e-smoke] using local monorepo as clone source..."
@@ -492,5 +685,7 @@ if [[ $status -ne 0 ]]; then
   fi
   exit $status
 fi
+
+run_dockerhub_images_smoke
 
 echo "[npm-e2e-smoke] OK"

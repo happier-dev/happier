@@ -1,8 +1,9 @@
-# NPM E2E smoke (Docker)
+# Release assets E2E (Docker)
 
 Repeatable manual end-to-end smoke for validating:
 - `@happier-dev/stack` (`hstack`) can self-host + start a server
 - `@happier-dev/cli` (`happier`) can point at that server and pass `happier server test`
+- published Docker Hub images (`relay-server` + `dev-box`)
 
 This is meant for release validation and can run against:
 - real NPM dist-tags/versions (default)
@@ -13,13 +14,13 @@ This is meant for release validation and can run against:
 From repo root:
 
 ```bash
-./scripts/release/npm-e2e-smoke/run.sh
+./scripts/release/release-assets-e2e/run.sh
 ```
 
 ## Local tarballs (pre-publish)
 
 ```bash
-./scripts/release/npm-e2e-smoke/run.sh --mode=local
+./scripts/release/release-assets-e2e/run.sh --mode=local
 ```
 
 ## Options
@@ -51,6 +52,12 @@ From repo root:
 - `--remote-auth-mode=reuse-cli|bootstrap` (default: `reuse-cli`)
   - `reuse-cli`: authenticates the remote daemon onto the exact same account as the already-authenticated `cli` smoke machine (uses its home volume).
   - `bootstrap`: remote daemon smoke creates a separate local approver identity specifically to approve the remote machine pairing.
+- `--with-docker-images` / `--no-docker-images` (default: `off`)
+  - When enabled, also validates the published Docker Hub images:
+    - `happierdev/relay-server:<channel>` runs with SQLite by default and can be configured for Postgres.
+    - `happierdev/dev-box:<channel>` runs `happier` in a “preinstalled” mode against the relay server.
+- `--docker-channel=preview|stable` (default: `preview`)
+- `--docker-images-db=sqlite|postgres|both` (default: `both`)
 
 ## What it does
 
@@ -69,5 +76,5 @@ From repo root:
 If something fails, re-run with `--keep` and inspect logs:
 
 ```bash
-docker compose -f ./scripts/release/npm-e2e-smoke/compose.yml logs -f stack
+docker compose -f ./scripts/release/release-assets-e2e/compose.yml logs -f stack
 ```

@@ -1,0 +1,44 @@
+services:
+  relay:
+    image: ${HAPPIER_RELAY_IMAGE:?Missing HAPPIER_RELAY_IMAGE}
+    environment:
+      PORT: ${RELAY_PORT:-3005}
+      HAPPIER_DB_PROVIDER: ${RELAY_DB_PROVIDER:-sqlite}
+      HAPPY_DB_PROVIDER: ${RELAY_DB_PROVIDER:-sqlite}
+      DATABASE_URL: ${RELAY_DATABASE_URL:-}
+      RUN_MIGRATIONS: ${RELAY_RUN_MIGRATIONS:-1}
+    volumes:
+      - relay-data:/data
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-happier}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-happier}
+      POSTGRES_DB: ${POSTGRES_DB:-happier_smoke}
+    volumes:
+      - relay-postgres:/var/lib/postgresql/data
+
+  devbox-smoke:
+    image: ${HAPPIER_DEVBOX_IMAGE:?Missing HAPPIER_DEVBOX_IMAGE}
+    depends_on:
+      - relay
+    environment:
+      HAPPIER_NPM_SPEC: ${HAPPIER_NPM_SPEC:-@happier-dev/cli@next}
+      HAPPIER_SERVER_URL: ${HAPPIER_SERVER_URL:-http://relay:3005}
+      HAPPIER_E2E_WITH_DAEMON: ${HAPPIER_E2E_WITH_DAEMON:-1}
+      HAPPIER_CLI_INSTALL_MODE: preinstalled
+      HAPPIER_ACTIVE_SERVER_ID: ${HAPPIER_ACTIVE_SERVER_ID:-smoke}
+      CLIENT_HOME_DIR: ${CLIENT_HOME_DIR:-/home/happier/happier-home}
+      APPROVER_HOME_DIR: ${APPROVER_HOME_DIR:-/home/happier/happier-approver-home}
+    volumes:
+      - ${REPO_ROOT:?Missing REPO_ROOT}:/repo:ro
+      - ${REPO_ROOT:?Missing REPO_ROOT}/scripts/release/release-assets-e2e/bin:/opt/happier-npm-e2e/bin:ro
+    working_dir: /workspace
+    command: ["bash", "/opt/happier-npm-e2e/bin/cli-smoke.sh"]
+
+volumes:
+  relay-data:
+    driver: local
+  relay-postgres:
+    driver: local

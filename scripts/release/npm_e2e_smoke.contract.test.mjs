@@ -8,7 +8,7 @@ import { existsSync } from 'node:fs';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-const smokeDir = join(repoRoot, 'scripts', 'release', 'npm-e2e-smoke');
+const smokeDir = join(repoRoot, 'scripts', 'release', 'release-assets-e2e');
 
 test('npm-e2e-smoke Dockerfile uses Node 22 policy', async () => {
   const dockerfilePath = join(smokeDir, 'Dockerfile');

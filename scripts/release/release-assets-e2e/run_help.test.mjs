@@ -127,3 +127,45 @@ test('npm-e2e-smoke postgres validation asserts connectivity (pg_stat_activity) 
   const remoteServerSmoke = fs.readFileSync(join(here, 'bin', 'remote-server-smoke.sh'), 'utf8');
   assert.match(remoteServerSmoke, /application_name=/);
 });
+
+test('npm-e2e-smoke run.sh documents docker image smoke flags', () => {
+  const res = spawnSync('bash', [runScript, '--help'], { encoding: 'utf8' });
+  assert.equal(res.status, 0);
+  assert.match(res.stdout ?? '', /--with-docker-images/);
+  assert.match(res.stdout ?? '', /--no-docker-images/);
+  assert.match(res.stdout ?? '', /--docker-channel=/);
+  assert.match(res.stdout ?? '', /--docker-images-db=/);
+});
+
+test('npm-e2e-smoke includes dockerhub compose and references published images', () => {
+  const composePath = join(here, 'compose.dockerhub.yml');
+  assert.ok(fs.existsSync(composePath));
+
+  const compose = fs.readFileSync(composePath, 'utf8');
+  assert.match(compose, /\n  relay:\n/);
+  assert.match(compose, /HAPPIER_RELAY_IMAGE/);
+  assert.match(compose, /HAPPIER_DEVBOX_IMAGE/);
+
+  // Ensure the runner defaults target the published dockerhub repositories.
+  const content = fs.readFileSync(runScript, 'utf8');
+  assert.match(content, /happierdev\/relay-server/);
+  assert.match(content, /happierdev\/dev-box/);
+});
+
+test('npm-e2e-smoke cli-smoke.sh supports preinstalled happier-cli mode', () => {
+  const cliSmoke = fs.readFileSync(join(here, 'bin', 'cli-smoke.sh'), 'utf8');
+  assert.match(cliSmoke, /HAPPIER_CLI_INSTALL_MODE/);
+  assert.match(cliSmoke, /preinstalled/);
+  assert.match(cliSmoke, /command -v happier/);
+});
+
+test('npm-e2e-smoke dockerhub postgres smoke waits for postgres readiness', () => {
+  const content = fs.readFileSync(runScript, 'utf8');
+  assert.match(content, /waiting for dockerhub postgres/i);
+  assert.match(content, /pg_isready/);
+});
+
+test('npm-e2e-smoke dockerhub images smoke preflights image availability', () => {
+  const content = fs.readFileSync(runScript, 'utf8');
+  assert.match(content, /docker manifest inspect/);
+});
