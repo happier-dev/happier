@@ -41,9 +41,16 @@ export type SocialFriendsFeatureEnv = Readonly<{
 
 export type AuthFeatureEnv = Readonly<{
   recoveryProviderResetEnabled: boolean;
+  loginKeyChallengeEnabled: boolean;
   uiAutoRedirectEnabled: boolean;
   uiAutoRedirectProviderId: string;
   uiRecoveryKeyReminderEnabled: boolean;
+}>;
+
+export type EncryptionFeatureEnv = Readonly<{
+  storagePolicy: "required_e2ee" | "optional" | "plaintext_only";
+  allowAccountOptOut: boolean;
+  defaultAccountMode: "e2ee" | "plain";
 }>;
 
 export function readAutomationsFeatureEnv(env: NodeJS.ProcessEnv): AutomationsFeatureEnv {
@@ -113,8 +120,28 @@ export function readSocialFriendsFeatureEnv(env: NodeJS.ProcessEnv): SocialFrien
 export function readAuthFeatureEnv(env: NodeJS.ProcessEnv): AuthFeatureEnv {
   return {
     recoveryProviderResetEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.authRecoveryProviderResetEnabled], true),
+    loginKeyChallengeEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.authLoginKeyChallengeEnabled], true),
     uiAutoRedirectEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.authUiAutoRedirectEnabled], false),
     uiAutoRedirectProviderId: (env[FEATURE_ENV_KEYS.authUiAutoRedirectProviderId] ?? '').trim().toLowerCase(),
     uiRecoveryKeyReminderEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.authUiRecoveryKeyReminderEnabled], true),
+  };
+}
+
+export function readEncryptionFeatureEnv(env: NodeJS.ProcessEnv): EncryptionFeatureEnv {
+  const rawStoragePolicy = (env[FEATURE_ENV_KEYS.encryptionStoragePolicy] ?? "").toString().trim();
+  const storagePolicy: EncryptionFeatureEnv["storagePolicy"] =
+    rawStoragePolicy === "optional" || rawStoragePolicy === "plaintext_only" || rawStoragePolicy === "required_e2ee"
+      ? rawStoragePolicy
+      : "required_e2ee";
+
+  const allowAccountOptOut = parseBooleanEnv(env[FEATURE_ENV_KEYS.encryptionAllowAccountOptOut], false);
+  const rawDefaultAccountMode = (env[FEATURE_ENV_KEYS.encryptionDefaultAccountMode] ?? "").toString().trim();
+  const defaultAccountMode: EncryptionFeatureEnv["defaultAccountMode"] =
+    rawDefaultAccountMode === "plain" || rawDefaultAccountMode === "e2ee" ? rawDefaultAccountMode : "e2ee";
+
+  return {
+    storagePolicy,
+    allowAccountOptOut,
+    defaultAccountMode,
   };
 }

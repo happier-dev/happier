@@ -24,9 +24,14 @@ export const FEATURE_ENV_KEYS = Object.freeze({
   socialFriendsIdentityProvider: 'HAPPIER_FEATURE_SOCIAL_FRIENDS__IDENTITY_PROVIDER',
 
   authRecoveryProviderResetEnabled: 'HAPPIER_FEATURE_AUTH_RECOVERY__PROVIDER_RESET_ENABLED',
+  authLoginKeyChallengeEnabled: 'HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED',
   authUiAutoRedirectEnabled: 'HAPPIER_FEATURE_AUTH_UI__AUTO_REDIRECT_ENABLED',
   authUiAutoRedirectProviderId: 'HAPPIER_FEATURE_AUTH_UI__AUTO_REDIRECT_PROVIDER_ID',
   authUiRecoveryKeyReminderEnabled: 'HAPPIER_FEATURE_AUTH_UI__RECOVERY_KEY_REMINDER_ENABLED',
+
+  encryptionStoragePolicy: 'HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY',
+  encryptionAllowAccountOptOut: 'HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT',
+  encryptionDefaultAccountMode: 'HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE',
 });
 
 export type FeatureEnvKey = (typeof FEATURE_ENV_KEYS)[keyof typeof FEATURE_ENV_KEYS];

@@ -135,6 +135,42 @@ describe("authRoutes (auth policy) (integration)", () => {
         await app.close();
     });
 
+    it("returns 404 when key-challenge login is disabled", async () => {
+        process.env.HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED = "0";
+        // With key-challenge disabled, the server must still have at least one other
+        // viable login method configured to avoid a hard lockout.
+        process.env.AUTH_SIGNUP_PROVIDERS = "github";
+        process.env.GITHUB_CLIENT_ID = "id";
+        process.env.GITHUB_CLIENT_SECRET = "secret";
+        process.env.GITHUB_REDIRECT_URL = "https://example.com/oauth/github/callback";
+
+        const { body } = createAuthBody();
+
+        const app = createTestApp();
+        authRoutes(app as any);
+        await app.ready();
+
+        const res = await app.inject({
+            method: "POST",
+            url: "/v1/auth",
+            payload: body,
+        });
+
+        expect(res.statusCode).toBe(404);
+
+        await app.close();
+    });
+
+    it("fails fast when key-challenge login is disabled and no other login methods are available", async () => {
+        process.env.HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED = "0";
+        process.env.AUTH_SIGNUP_PROVIDERS = "";
+        process.env.AUTH_ANONYMOUS_SIGNUP_ENABLED = "0";
+
+        const app = createTestApp();
+        expect(() => authRoutes(app as any)).toThrow(/no login methods/i);
+        await app.close();
+    });
+
     it("returns 403 provider-required when a required identity provider is missing", async () => {
         process.env.AUTH_REQUIRED_LOGIN_PROVIDERS = "github";
 
@@ -187,6 +223,33 @@ describe("authRoutes (auth policy) (integration)", () => {
         expect(json.success).toBe(true);
         expect(typeof json.token).toBe("string");
         expect(json.token.length).toBeGreaterThan(10);
+
+        await app.close();
+    });
+
+    it("creates new accounts with encryptionMode=plain when plaintext storage is optional and defaultAccountMode=plain", async () => {
+        process.env.AUTH_ANONYMOUS_SIGNUP_ENABLED = "1";
+        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
+        process.env.HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE = "plain";
+
+        const { body, publicKeyHex } = createAuthBody();
+
+        const app = createTestApp();
+        authRoutes(app as any);
+        await app.ready();
+
+        const res = await app.inject({
+            method: "POST",
+            url: "/v1/auth",
+            payload: body,
+        });
+        expect(res.statusCode).toBe(200);
+
+        const stored = await db.account.findUnique({
+            where: { publicKey: publicKeyHex },
+            select: { encryptionMode: true },
+        });
+        expect(stored?.encryptionMode).toBe("plain");
 
         await app.close();
     });

@@ -5,6 +5,8 @@ import { auth } from "@/app/auth/auth";
 import { resolveAuthPolicyFromEnv } from "@/app/auth/authPolicy";
 import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
 import { type Fastify } from "../../types";
+import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
+import { resolveEffectiveDefaultAccountEncryptionMode } from "@happier-dev/protocol";
 
 export function registerKeyChallengeAuthRoute(app: Fastify): void {
     app.post('/v1/auth', {
@@ -94,6 +96,12 @@ export function registerKeyChallengeAuthRoute(app: Fastify): void {
         // Create or update user in database
         const publicKeyHex = privacyKit.encodeHex(publicKey);
 
+        const encryptionFeatureEnv = readEncryptionFeatureEnv(process.env);
+        const effectiveDefaultEncryptionMode = resolveEffectiveDefaultAccountEncryptionMode(
+            encryptionFeatureEnv.storagePolicy,
+            encryptionFeatureEnv.defaultAccountMode,
+        );
+
         const existingAccount = await db.account.findUnique({
             where: { publicKey: publicKeyHex },
             select: {
@@ -126,6 +134,7 @@ export function registerKeyChallengeAuthRoute(app: Fastify): void {
             },
             create: {
                 publicKey: publicKeyHex,
+                encryptionMode: effectiveDefaultEncryptionMode,
                 ...(contentPublicKey ? { contentPublicKey: new Uint8Array(contentPublicKey) } : {}),
                 ...(contentPublicKeySig ? { contentPublicKeySig: new Uint8Array(contentPublicKeySig) } : {}),
             }

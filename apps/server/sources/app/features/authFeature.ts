@@ -24,10 +24,14 @@ export function resolveAuthFeature(env: NodeJS.ProcessEnv): FeaturesPayloadDelta
 
     const signupProviders = uniqueStrings(policy.signupProviders);
     const requiredLoginProviders = uniqueStrings(policy.requiredLoginProviders);
+    const loginKeyChallengeEnabled = featureEnv.loginKeyChallengeEnabled;
 
     const signupMethods: Array<{ id: string; enabled: boolean }> = [
         { id: "anonymous", enabled: policy.anonymousSignupEnabled },
         ...signupProviders.map((id) => ({ id, enabled: true })),
+    ];
+    const loginMethods: Array<{ id: string; enabled: boolean }> = [
+        { id: "key_challenge", enabled: loginKeyChallengeEnabled },
     ];
 
     const misconfig: FeaturesResponse["capabilities"]["auth"]["misconfig"] = [];
@@ -107,6 +111,11 @@ export function resolveAuthFeature(env: NodeJS.ProcessEnv): FeaturesPayloadDelta
                         enabled: providerResetEnabled,
                     },
                 },
+                login: {
+                    keyChallenge: {
+                        enabled: loginKeyChallengeEnabled,
+                    },
+                },
                 ui: {
                     recoveryKeyReminder: {
                         enabled: recoveryKeyReminderEnabled,
@@ -117,7 +126,7 @@ export function resolveAuthFeature(env: NodeJS.ProcessEnv): FeaturesPayloadDelta
         capabilities: {
             auth: {
                 signup: { methods: signupMethods },
-                login: { requiredProviders: requiredLoginProviders },
+                login: { methods: loginMethods, requiredProviders: requiredLoginProviders },
                 recovery: {
                     providerReset: {
                         providers: providerResetEnabled ? providerResetProviders : [],
