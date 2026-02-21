@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { resolveGeneratedClientEntrypoint, resolvePackagedGeneratedClientEntrypoint } from "./prisma";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+    resolveGeneratedClientEntrypoint,
+    resolvePackagedGeneratedClientEntrypoint,
+    resolvePreferredGeneratedClientEntrypoint,
+} from "./prisma";
 
 describe("resolveGeneratedClientEntrypoint", () => {
     it("appends /index.js for directory specifiers", () => {
@@ -20,5 +28,16 @@ describe("resolveGeneratedClientEntrypoint", () => {
         expect(resolvePackagedGeneratedClientEntrypoint("mysql", "/opt/happier/happier-server")).toBe(
             "/opt/happier/generated/mysql-client/index.js",
         );
+    });
+
+    it("prefers packaged generated clients when present next to executable", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happier-server-packaged-prisma-"));
+        const execPath = join(root, "happier-server");
+        const packaged = join(root, "generated", "sqlite-client", "index.js");
+        await mkdir(join(root, "generated", "sqlite-client"), { recursive: true });
+        await writeFile(packaged, "export const PrismaClient = class PrismaClient {};\n", "utf-8");
+
+        const resolved = resolvePreferredGeneratedClientEntrypoint("sqlite", execPath);
+        expect(resolved).toBe(packaged);
     });
 });

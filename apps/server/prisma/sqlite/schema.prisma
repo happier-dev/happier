@@ -7,6 +7,8 @@
 
 generator client {
     provider        = "prisma-client-js"
+    // Include Linux query engines so macOS-built release artifacts can run on Linux (self-host).
+    binaryTargets   = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x"]
     previewFeatures = ["metrics"]
     output          = "../../generated/sqlite-client"
 }

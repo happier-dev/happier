@@ -7,6 +7,8 @@
 
 generator client {
     provider        = "prisma-client-js"
+    // Include Linux query engines so macOS-built release artifacts can run on Linux (self-host).
+    binaryTargets   = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x"]
     previewFeatures = ["metrics", "relationJoins"]
     output          = "../../generated/mysql-client"
 }
@@ -38,8 +40,7 @@ model Account {
     settings        String? @db.LongText
     settingsVersion Int         @default(0)
     encryptionMode  String      @default("e2ee")
-    // Vitess/Planetscale compatibility: avoid non-constant defaults in ALTER TABLE migrations.
-    encryptionModeUpdatedAt DateTime @default(dbgenerated("'1970-01-01 00:00:00.000'"))
+    encryptionModeUpdatedAt DateTime @default(now())
 
     // Profile
     firstName String?

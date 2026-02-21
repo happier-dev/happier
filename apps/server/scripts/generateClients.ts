@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
 
 export type BuildDbProvider = "postgres" | "mysql" | "sqlite";
 
@@ -100,17 +101,23 @@ async function main(): Promise<void> {
 
     await run("yarn", ["-s", "schema:sync", "--quiet"], env);
 
+    const require = createRequire(import.meta.url);
+    const prismaCliPath = require.resolve("prisma/build/index.js");
+
     // Always generate the default client (postgres schema).
-    await run("yarn", ["-s", "prisma", "generate"], { ...env, DATABASE_URL: prismaGenerateDatabaseUrlForProvider("postgres") });
+    await run(process.execPath, [prismaCliPath, "generate"], {
+        ...env,
+        DATABASE_URL: prismaGenerateDatabaseUrlForProvider("postgres"),
+    });
 
     if (providers.has("sqlite")) {
-        await run("yarn", ["-s", "prisma", "generate", "--schema", "prisma/sqlite/schema.prisma"], {
+        await run(process.execPath, [prismaCliPath, "generate", "--schema", "prisma/sqlite/schema.prisma"], {
             ...env,
             DATABASE_URL: prismaGenerateDatabaseUrlForProvider("sqlite"),
         });
     }
     if (providers.has("mysql")) {
-        await run("yarn", ["-s", "prisma", "generate", "--schema", "prisma/mysql/schema.prisma"], {
+        await run(process.execPath, [prismaCliPath, "generate", "--schema", "prisma/mysql/schema.prisma"], {
             ...env,
             DATABASE_URL: prismaGenerateDatabaseUrlForProvider("mysql"),
         });

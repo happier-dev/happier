@@ -25,6 +25,32 @@ model Account { id String @id }
         expect(mysql).toContain('provider = "mysql"');
     });
 
+    it("includes linux binaryTargets in sqlite/mysql generator blocks (cross-compiled server binaries)", () => {
+        const master = `
+generator client {
+    provider        = "prisma-client-js"
+    previewFeatures = ["metrics", "relationJoins"]
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+model Account { id String @id }
+`;
+
+        const sqlite = generateSqliteSchemaFromPostgres(master);
+        expect(sqlite).toMatch(
+            /binaryTargets\s*=\s*\["native",\s*"debian-openssl-3\.0\.x",\s*"linux-arm64-openssl-3\.0\.x"\]/,
+        );
+
+        const mysql = generateMySqlSchemaFromPostgres(master);
+        expect(mysql).toMatch(
+            /binaryTargets\s*=\s*\["native",\s*"debian-openssl-3\.0\.x",\s*"linux-arm64-openssl-3\.0\.x"\]/,
+        );
+    });
+
     it("pins MySQL-indexed sha256 token hashes to VARBINARY(32)", () => {
         const master = `
 generator client {

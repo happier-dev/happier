@@ -1,8 +1,9 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import { PGlite } from "@electric-sql/pglite";
 import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
+import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { acquirePgliteDirLock } from "./locks/pgliteLock";
 
@@ -35,6 +36,21 @@ export function resolvePackagedGeneratedClientEntrypoint(
     executablePath: string = process.execPath,
 ): string {
     return join(dirname(executablePath), "generated", `${provider}-client`, "index.js");
+}
+
+export function resolvePreferredGeneratedClientEntrypoint(
+    provider: "mysql" | "sqlite",
+    executablePath: string = process.execPath,
+): string {
+    const packaged = resolvePackagedGeneratedClientEntrypoint(provider, executablePath);
+    // Compiled binaries (e.g. Bun --compile) may embed workspace paths into generated Prisma clients
+    // (import.meta.url / __dirname). Prefer the on-disk packaged client next to the executable when present.
+    if (existsSync(packaged)) {
+        return packaged;
+    }
+    return provider === "mysql"
+        ? resolveGeneratedClientEntrypoint("../../generated/mysql-client")
+        : resolveGeneratedClientEntrypoint("../../generated/sqlite-client");
 }
 
 let _db: PrismaClientType | null = null;
@@ -77,6 +93,14 @@ export function initDbPostgres(): void {
 }
 
 async function importGeneratedClient(provider: "mysql" | "sqlite"): Promise<any> {
+    const preferred = resolvePreferredGeneratedClientEntrypoint(provider);
+    if (isAbsolute(preferred)) {
+        try {
+            return await import(pathToFileURL(preferred).href);
+        } catch {
+            // Fall back to workspace path below.
+        }
+    }
     try {
         if (provider === "mysql") {
             return await import("../../generated/mysql-client/index.js");
