@@ -30,6 +30,10 @@
       "types": "./dist/checklists.d.ts",
       "default": "./dist/checklists.js"
     },
+    "./installables": {
+      "types": "./dist/installables.d.ts",
+      "default": "./dist/installables.js"
+    },
     "./capabilities": {
       "types": "./dist/capabilities.d.ts",
       "default": "./dist/capabilities.js"

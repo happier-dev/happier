@@ -119,6 +119,19 @@ export {
   type RpcErrorCarrier,
 } from './rpcErrors.js';
 export { CHECKLIST_IDS, resumeChecklistId, type ChecklistId } from './checklists.js';
+export {
+  INSTALLABLES_CATALOG,
+  INSTALLABLE_KEYS,
+  CODEX_ACP_DEP_ID,
+  CODEX_ACP_DIST_TAG,
+  CODEX_MCP_RESUME_DEP_ID,
+  CODEX_MCP_RESUME_DIST_TAG,
+  type InstallableAutoUpdateMode,
+  type InstallableCatalogEntry,
+  type InstallableDefaultPolicy,
+  type InstallableKey,
+  type InstallableKind,
+} from './installables.js';
 export { SOCKET_RPC_EVENTS, type SocketRpcEvent } from './socketRpc.js';
 export {
   ChangeEntrySchema,
