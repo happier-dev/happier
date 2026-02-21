@@ -41,6 +41,7 @@ vi.mock('@/sync/store/hooks', () => ({
     ],
   }),
   useSettings: () => useSettingsSpy(),
+  useLocalSetting: () => 1,
 }));
 
 const { getConnectedServiceQuotaSnapshotSealedSpy } = vi.hoisted(() => ({

@@ -41,6 +41,7 @@ vi.mock('@/sync/store/hooks', () => ({
         connectedServicesDefaultProfileByServiceId: {},
         connectedServicesProfileLabelByKey: {},
     }),
+    useLocalSetting: () => 1,
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
