@@ -10,6 +10,7 @@ vi.mock('react-native', () => {
     const React = require('react');
     return {
         Platform: { OS: 'web', select: (values: any) => values?.default ?? values?.web ?? values?.ios ?? values?.android },
+        AppState: { addEventListener: () => ({ remove: () => {} }) },
         Text: (props: any) => React.createElement('Text', props, props.children),
         View: React.forwardRef((props: any, ref: any) => {
             React.useImperativeHandle(ref, () => ({ scrollIntoView: scrollIntoViewSpy }));

@@ -5,7 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
+    Platform: { OS: 'web', select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android },
+    AppState: { addEventListener: () => ({ remove: () => {} }) },
     View: ({ children, ...props }: any) => React.createElement('View', props, children),
     Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
     Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
@@ -15,37 +16,40 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                textSecondary: '#666',
-                syntaxKeyword: '#b00',
-                syntaxString: '#070',
-                syntaxNumber: '#00b',
-                syntaxFunction: '#850',
-                syntaxDefault: '#111',
-                syntaxComment: '#777',
-                syntaxBracket1: '#a00',
-                syntaxBracket2: '#0a0',
-                syntaxBracket3: '#00a',
-                syntaxBracket4: '#aa0',
-                syntaxBracket5: '#0aa',
-                surfaceHigh: '#eee',
-                diff: {
-                    addedBg: '#e6ffed',
-                    removedBg: '#ffeef0',
-                    hunkHeaderBg: '#f6f8fa',
-                    addedText: '#22863a',
-                    removedText: '#b31d28',
-                    hunkHeaderText: '#111',
-                    contextText: '#24292e',
-                },
+vi.mock('react-native-unistyles', () => {
+    const theme = {
+        colors: {
+            textSecondary: '#666',
+            syntaxKeyword: '#b00',
+            syntaxString: '#070',
+            syntaxNumber: '#00b',
+            syntaxFunction: '#850',
+            syntaxDefault: '#111',
+            syntaxComment: '#777',
+            syntaxBracket1: '#a00',
+            syntaxBracket2: '#0a0',
+            syntaxBracket3: '#00a',
+            syntaxBracket4: '#aa0',
+            syntaxBracket5: '#0aa',
+            surfaceHigh: '#eee',
+            diff: {
+                addedBg: '#e6ffed',
+                removedBg: '#ffeef0',
+                hunkHeaderBg: '#f6f8fa',
+                addedText: '#22863a',
+                removedText: '#b31d28',
+                hunkHeaderText: '#111',
+                contextText: '#24292e',
             },
+            shadow: { color: '#000', opacity: 0.2 },
         },
-    }),
-    StyleSheet: { create: (v: any) => (typeof v === 'function' ? v({ colors: {} }) : v) },
-}));
+    };
+
+    return {
+        useUnistyles: () => ({ theme }),
+        StyleSheet: { create: (v: any) => (typeof v === 'function' ? v(theme) : v) },
+    };
+});
 
 describe('CodeLineRow', () => {
     it('renders prefix and code segments', async () => {

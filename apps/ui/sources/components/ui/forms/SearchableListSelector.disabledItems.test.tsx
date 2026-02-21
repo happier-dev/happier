@@ -12,6 +12,7 @@ vi.mock('react-native', () => ({
         select: (spec: { web?: unknown; ios?: unknown; default?: unknown }) =>
             (spec && 'web' in spec ? spec.web : spec?.default),
     },
+    AppState: { addEventListener: () => ({ remove: () => {} }) },
     View: 'View',
     Text: 'Text',
     Pressable: 'Pressable',
@@ -27,6 +28,9 @@ vi.mock('react-native-unistyles', () => ({
         theme: {
             dark: false,
             colors: {
+                surface: '#fff',
+                divider: '#ddd',
+                shadow: { color: '#000', opacity: 0.2 },
                 textSecondary: '#666',
                 textLink: '#00f',
                 button: { primary: { background: '#00f' } },
@@ -117,4 +121,3 @@ describe('SearchableListSelector (disabled items)', () => {
         expect(onSelect).toHaveBeenCalledWith(items[0]);
     });
 });
-

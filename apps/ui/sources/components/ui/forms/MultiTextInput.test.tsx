@@ -14,15 +14,20 @@ vi.mock('react-native', async (importOriginal) => {
     };
 });
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                input: { text: '#111', placeholder: '#777' },
-            },
+vi.mock('react-native-unistyles', () => {
+    const theme = {
+        colors: {
+            surface: '#fff',
+            divider: '#ddd',
+            shadow: { color: '#000', opacity: 0.2 },
+            input: { text: '#111', placeholder: '#777' },
         },
-    }),
-}));
+    };
+    return {
+        useUnistyles: () => ({ theme }),
+        StyleSheet: { create: (input: any) => (typeof input === 'function' ? input(theme) : input) },
+    };
+});
 
 vi.mock('react-textarea-autosize', () => ({
     __esModule: true,

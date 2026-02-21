@@ -52,7 +52,10 @@ vi.mock('react-native-unistyles', () => ({
             },
         },
     }),
-    StyleSheet: { create: (fn: any) => fn({ colors: { groupped: { background: '#111', chevron: '#888' }, divider: '#444' } }, {}) },
+    StyleSheet: {
+        create: (input: any) =>
+            typeof input === 'function' ? input({ colors: { groupped: { background: '#111', chevron: '#888' }, divider: '#444' } }, {}) : input,
+    },
 }));
 
 vi.mock('@/constants/Typography', () => ({

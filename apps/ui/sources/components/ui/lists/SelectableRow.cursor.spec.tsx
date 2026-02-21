@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-native', () => ({
   Platform: { OS: 'web', select: (values: any) => values?.default ?? values?.web ?? values?.ios ?? values?.android },
+  AppState: { addEventListener: () => ({ remove: () => {} }) },
   Pressable: 'Pressable',
   Text: 'Text',
   View: 'View',

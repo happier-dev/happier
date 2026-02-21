@@ -41,6 +41,7 @@ vi.mock('react-native', () => {
     const React = require('react');
     return {
         Platform: { OS: 'ios', select: (m: any) => m?.ios ?? m?.default },
+        AppState: { addEventListener: () => ({ remove: () => {} }) },
         InteractionManager: { runAfterInteractions: () => {} },
         useWindowDimensions: () => ({ width: 320, height: 800 }),
         StyleSheet: {

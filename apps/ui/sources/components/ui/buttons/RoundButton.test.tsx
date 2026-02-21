@@ -16,24 +16,21 @@ vi.mock('react-native', async (importOriginal) => {
     };
 });
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                button: { primary: { background: '#000', tint: '#fff' } },
-                text: '#111',
-            },
+vi.mock('react-native-unistyles', () => {
+    const theme = {
+        colors: {
+            surface: '#fff',
+            divider: '#ddd',
+            shadow: { color: '#000', opacity: 0.2 },
+            button: { primary: { background: '#000', tint: '#fff' } },
+            text: '#111',
         },
-    }),
-    StyleSheet: {
-        create: (factory: any) => factory({
-            colors: {
-                button: { primary: { background: '#000', tint: '#fff' } },
-                text: '#111',
-            },
-        }),
-    },
-}));
+    };
+    return {
+        useUnistyles: () => ({ theme }),
+        StyleSheet: { create: (input: any) => (typeof input === 'function' ? input(theme) : input) },
+    };
+});
 
 describe('RoundButton', () => {
     it('forwards testID to the Pressable', async () => {
