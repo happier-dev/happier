@@ -1,4 +1,4 @@
-import { StyleSheet, type StyleProp, type TextStyle } from 'react-native';
+import type { StyleProp, TextStyle } from 'react-native';
 
 function roundTo2(value: number): number {
     return Math.round(value * 100) / 100;
@@ -24,10 +24,10 @@ export function scaleTextStyle<T extends StyleProp<TextStyle> | undefined | null
     const scaleOne = (entry: any): any => {
         if (!entry) return entry;
         if (typeof entry === 'number') {
-            const flattened = StyleSheet.flatten(entry) as TextStyle | null | undefined;
-            if (!flattened) return entry;
-            const scaled = scaleOne(flattened);
-            return scaled === flattened ? entry : scaled;
+            // Numeric style ids come from React Native's internal style registry, which isn't available
+            // in this codebase (we avoid React Native's StyleSheet API in favor of Unistyles).
+            // Fail closed and preserve the original value.
+            return entry;
         }
         if (typeof entry !== 'object') return entry;
 
