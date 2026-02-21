@@ -162,7 +162,19 @@ function main() {
   const uiDir = path.join(repoRoot, 'apps', 'ui');
   const submitPathAbs = submitPathRaw ? path.resolve(repoRoot, submitPathRaw) : '';
   if (submitPathAbs && !dryRun) {
-    // Avoid importing fs for this script; let EAS fail with a clear message if the path is invalid.
+    if (!fs.existsSync(submitPathAbs)) {
+      fail(
+        [
+          `${submitPathAbs} doesn't exist`,
+          '',
+          'Tip: local production builds are versioned.',
+          'Example iOS: dist/ui-mobile/happier-production-ios-v<uiVersion>.ipa',
+          'Example Android (AAB): dist/ui-mobile/happier-production-android-v<uiVersion>.aab',
+          '',
+          'Run: ls dist/ui-mobile',
+        ].join('\n'),
+      );
+    }
   }
 
   if (platforms.includes('ios') && nonInteractive) {

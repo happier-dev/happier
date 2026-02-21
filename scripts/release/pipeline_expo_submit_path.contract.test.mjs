@@ -15,6 +15,8 @@ function runSubmit({ withPath }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-pipeline-expo-submit-'));
   const binDir = path.join(dir, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
+  const artifactPath = path.join(dir, 'app.apk');
+  if (withPath) fs.writeFileSync(artifactPath, 'placeholder');
 
   const npxPath = path.join(binDir, 'npx');
   writeExecutable(
@@ -41,7 +43,7 @@ function runSubmit({ withPath }) {
     'preview',
     '--platform',
     'android',
-    ...(withPath ? ['--path', path.join(dir, 'app.apk')] : []),
+    ...(withPath ? ['--path', artifactPath] : []),
   ];
 
   return execFileSync(process.execPath, args, {
