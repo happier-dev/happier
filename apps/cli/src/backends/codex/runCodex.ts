@@ -37,6 +37,7 @@ import { createCodexAcpRuntime } from './acp/runtime';
 import { syncCodexAcpSessionModeFromPermissionMode } from './acp/syncSessionModeFromPermissionMode';
 import { publishInFlightSteerCapability } from './utils/publishInFlightSteerCapability';
 import { createStartupMetadataOverrides } from '@/agent/runtime/createStartupMetadataOverrides';
+import { loadCodexMcpServers } from '@/mcp/loadUserMcpServers';
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
 import { archiveAndCloseSession } from '@/agent/runtime/archiveAndCloseSession';
@@ -762,7 +763,11 @@ export async function runCodex(opts: {
     const happierBridge = await createHappierMcpBridge(session, { commandMode: 'current-process' });
     happierMcpServer = happierBridge.happierMcpServer;
     const directory = workspaceDirFromMetadata ?? process.cwd();
-    const mcpServers = happierBridge.mcpServers;
+    const userMcpServers = loadCodexMcpServers();
+    const mcpServers = {
+        ...userMcpServers,             // codex config.toml (lower priority)
+        ...happierBridge.mcpServers,   // happier bridge (highest, never overridable)
+    };
 
     const localControlSupportedForMcp = !useCodexAcp
         ? (await resolveLocalControlSupport({ includeAcpProbe: false })).ok
