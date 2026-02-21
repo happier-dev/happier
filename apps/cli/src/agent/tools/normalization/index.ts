@@ -276,7 +276,14 @@ export function canonicalizeToolNameV2(opts: {
     if (name === 'GeminiReasoning' || name === 'CodexReasoning' || lower === 'think') return 'Reasoning';
     if (lower === 'exit_plan_mode') return 'ExitPlanMode';
     if (lower === 'askuserquestion' || lower === 'ask_user_question') return 'AskUserQuestion';
-    if (lower === 'mcp__happier__change_title' || lower === 'mcp__happy__change_title') return 'change_title';
+    if (
+      lower === 'mcp__happier__change_title' ||
+      lower === 'mcp__happy__change_title' ||
+      lower === 'happier__change_title' ||
+      lower === 'happy__change_title' ||
+      lower === 'change_title'
+    )
+      return 'change_title';
     return name;
 }
 

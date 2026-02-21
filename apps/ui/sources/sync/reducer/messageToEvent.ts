@@ -10,8 +10,15 @@ import { NormalizedMessage } from "../typesRaw";
 import { AgentEvent } from "../typesRaw";
 
 const CHANGE_TITLE_TOOL_NAMES = new Set([
+    // Preferred MCP naming
     'mcp__happier__change_title',
+    // Legacy MCP naming during migration
     'mcp__happy__change_title',
+    // Non-MCP-prefixed variants seen in some transports/providers
+    'happier__change_title',
+    'happy__change_title',
+    // Canonical tool name
+    'change_title',
 ]);
 
 /**

@@ -27,6 +27,20 @@ describe('OpenCodeTransport determineToolName', () => {
       expected: 'Task',
     },
     {
+      label: 'maps change_title task alias to Task when input shape looks like a task tool call',
+      toolName: 'change_title',
+      toolCallId: 'tool-2b',
+      input: { prompt: 'Respond with EXACTLY: SUBTASK_OK', subagent_type: 'assistant' },
+      expected: 'Task',
+    },
+    {
+      label: 'keeps change_title as change_title when an explicit title is provided',
+      toolName: 'change_title',
+      toolCallId: 'tool-2c',
+      input: { title: 'New Title' },
+      expected: 'change_title',
+    },
+    {
       label: 'uses toolCallId pattern mapping (case-insensitive)',
       toolName: 'other',
       toolCallId: 'BASH-123',

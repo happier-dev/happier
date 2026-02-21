@@ -12,7 +12,13 @@ function canonicalizeToolNameNonV2(toolName: string, input: unknown): string {
     if (toolName === 'CodexReasoning' || toolName === 'GeminiReasoning' || toolName === 'think') return 'Reasoning';
     if (toolName === 'exit_plan_mode') return 'ExitPlanMode';
 
-    if (toolName === 'mcp__happier__change_title' || toolName === 'mcp__happy__change_title') return 'change_title';
+    if (
+        toolName === 'mcp__happier__change_title' ||
+        toolName === 'mcp__happy__change_title' ||
+        toolName === 'happier__change_title' ||
+        toolName === 'happy__change_title' ||
+        toolName === 'change_title'
+    ) return 'change_title';
 
     const lower = toolName.toLowerCase();
     if (lower === 'patch') return 'Patch';
