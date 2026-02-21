@@ -43,6 +43,7 @@ function main() {
 
   writeGithubOutput(String(values['github-output'] ?? '').trim(), {
     run_ci: plan.runCi ? 'true' : 'false',
+    run_ui_e2e: plan.runUiE2e ? 'true' : 'false',
     run_e2e_core: plan.runE2eCore ? 'true' : 'false',
     run_e2e_core_slow: plan.runE2eCoreSlow ? 'true' : 'false',
     run_server_db_contract: plan.runServerDbContract ? 'true' : 'false',
@@ -56,4 +57,3 @@ function main() {
 }
 
 main();
-

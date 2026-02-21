@@ -123,6 +123,9 @@ function main() {
   run({ dryRun }, 'yarn', ['test:integration']);
   run({ dryRun }, 'yarn', ['typecheck']);
 
+  // UI E2E (Playwright) is now part of the default preflight plan for full/fast.
+  if (plan.runUiE2e) run({ dryRun }, 'yarn', ['test:e2e:ui']);
+
   // Release contracts are part of release checks.
   run({ dryRun }, 'yarn', ['-s', 'test:release:contracts'], { env: { HAPPIER_FEATURE_POLICY_ENV: '' } });
   run({ dryRun }, process.execPath, ['scripts/pipeline/run.mjs', 'release-sync-installers', '--check']);
@@ -137,4 +140,3 @@ function main() {
 }
 
 main();
-

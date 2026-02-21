@@ -18,6 +18,7 @@ Usage:
 
 Jobs:
   ui
+  ui-e2e
   server
   cli
   stack
@@ -59,7 +60,7 @@ fi
 
 mkdir -p "$LOG_DIR"
 
-DEFAULT_JOBS=(ui server cli stack typecheck cli-daemon-e2e e2e-core)
+DEFAULT_JOBS=(ui ui-e2e server cli stack typecheck cli-daemon-e2e e2e-core)
 JOBS=("$@")
 if [[ ${#JOBS[@]} -eq 0 ]]; then
   JOBS=("${DEFAULT_JOBS[@]}")

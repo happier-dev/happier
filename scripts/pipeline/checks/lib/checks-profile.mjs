@@ -5,6 +5,7 @@
  *
  * @typedef {{
  *   runCi: boolean;
+ *   runUiE2e: boolean;
  *   runE2eCore: boolean;
  *   runE2eCoreSlow: boolean;
  *   runServerDbContract: boolean;
@@ -55,10 +56,12 @@ export function resolveChecksProfilePlan(input) {
   const runCi = profile !== 'none';
 
   const isFull = profile === 'full';
+  const isFast = profile === 'fast';
   const isCustom = profile === 'custom';
 
   const has = (key) => customChecks.has(key);
 
+  const runUiE2e = isFull || isFast || (isCustom && has('ui_e2e'));
   const runE2eCore = isFull || (isCustom && (has('e2e_core') || has('e2e_core_slow')));
   const runE2eCoreSlow = isFull || (isCustom && has('e2e_core_slow'));
   const runServerDbContract = isFull || (isCustom && has('server_db_contract'));
@@ -70,6 +73,7 @@ export function resolveChecksProfilePlan(input) {
 
   return {
     runCi,
+    runUiE2e: runCi && runUiE2e,
     runE2eCore: runCi && runE2eCore,
     runE2eCoreSlow: runCi && runE2eCoreSlow,
     runServerDbContract: runCi && runServerDbContract,
@@ -79,4 +83,3 @@ export function resolveChecksProfilePlan(input) {
     runCliSmokeLinux: runCi && runCliSmokeLinux,
   };
 }
-
