@@ -18,7 +18,9 @@ export const connectPendingSchema = z.object({
 export const authPendingSchema = z.object({
     flow: z.literal("auth"),
     provider: z.string(),
-    publicKeyHex: z.string(),
+    authMode: z.enum(["keyed", "keyless"]).optional().default("keyed"),
+    publicKeyHex: z.string().nullable().optional(),
+    proofHash: z.string().nullable().optional(),
     profileEnc: z.string(),
     accessTokenEnc: z.string(),
     refreshTokenEnc: z.string().optional(),

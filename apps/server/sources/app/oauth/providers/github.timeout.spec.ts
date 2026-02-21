@@ -228,4 +228,56 @@ describe("githubOAuthProvider timeouts", () => {
             login: "alice",
         });
     });
+
+    it("uses GITHUB_OAUTH_AUTHORIZE_URL when provided", async () => {
+        const env: NodeJS.ProcessEnv = {
+            GITHUB_CLIENT_ID: "cid",
+            GITHUB_CLIENT_SECRET: "secret",
+            GITHUB_REDIRECT_URL: "https://server.example.test/v1/oauth/github/callback",
+            GITHUB_OAUTH_AUTHORIZE_URL: "http://127.0.0.1:7777/login/oauth/authorize",
+        };
+
+        const url = await githubOAuthProvider.resolveAuthorizeUrl({
+            env,
+            state: "state",
+            scope: "read:user",
+            codeChallenge: "challenge",
+            codeChallengeMethod: "S256",
+        });
+
+        expect(url.startsWith("http://127.0.0.1:7777/login/oauth/authorize?")).toBe(true);
+        const parsed = new URL(url);
+        expect(parsed.searchParams.get("client_id")).toBe("cid");
+        expect(parsed.searchParams.get("state")).toBe("state");
+        expect(parsed.searchParams.get("code_challenge")).toBe("challenge");
+    });
+
+    it("uses GITHUB_OAUTH_TOKEN_URL and GITHUB_API_USER_URL when provided", async () => {
+        const env: NodeJS.ProcessEnv = {
+            GITHUB_HTTP_TIMEOUT_SECONDS: "7",
+            GITHUB_CLIENT_ID: "cid",
+            GITHUB_CLIENT_SECRET: "secret",
+            GITHUB_REDIRECT_URL: "https://server.example.test/v1/oauth/github/callback",
+            GITHUB_OAUTH_TOKEN_URL: "http://127.0.0.1:7777/login/oauth/access_token",
+            GITHUB_API_USER_URL: "http://127.0.0.1:7777/user",
+        };
+
+        const fetchSpy = vi.fn(async (url: any) => {
+            const u = String(url);
+            if (u.endsWith("/login/oauth/access_token")) {
+                return { ok: true, json: async () => ({ access_token: "t" }) } as any;
+            }
+            if (u.endsWith("/user")) {
+                return { ok: true, json: async () => ({ id: 1, login: "alice" }) } as any;
+            }
+            throw new Error(`Unexpected fetch: ${u}`);
+        });
+        vi.stubGlobal("fetch", fetchSpy as any);
+
+        const token = await githubOAuthProvider.exchangeCodeForAccessToken({ env, code: "code" });
+        expect(token).toEqual({ accessToken: "t" });
+
+        const profile = await githubOAuthProvider.fetchProfile({ env, accessToken: "t" });
+        expect(profile).toMatchObject({ id: 1, login: "alice" });
+    });
 });

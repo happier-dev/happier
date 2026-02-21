@@ -64,7 +64,7 @@ export function buildUserProfile(
         lastName: string | null;
         username: string | null;
         avatar: ImageRef | null;
-        publicKey: string;
+        publicKey: string | null;
         contentPublicKey: Uint8Array<ArrayBuffer> | null;
         contentPublicKeySig: Uint8Array<ArrayBuffer> | null;
     },

@@ -14,6 +14,8 @@ import { validateUsername } from "@/app/social/usernamePolicy";
 import { deleteOAuthStateAttemptBestEffort, loadValidOAuthStateAttempt } from "../connectRoutes.oauthStateAttempt";
 import { log } from "@/utils/logging/log";
 import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
+import { readAuthOauthKeylessFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
+import { resolveKeylessAccountsAvailability } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
 import {
     buildRedirectUrl,
     resolveOAuthPendingTtlMsFromEnv,
@@ -82,7 +84,23 @@ export function registerOAuthCallbackRoute(app: Fastify) {
         }
 
         const flow = oauthState.flow;
-        const redirectBaseParams: Record<string, string> = { flow };
+        const authMode = flow === "auth" && oauthState.publicKey ? "keyed" : flow === "auth" ? "keyless" : null;
+        const redirectBaseParams: Record<string, string> =
+            flow === "auth" && authMode === "keyless" ? { flow, mode: "keyless" } : { flow };
+
+        if (flow === "auth" && authMode === "keyless") {
+            const keyless = readAuthOauthKeylessFeatureEnv(process.env);
+            if (!(keyless.enabled && keyless.providers.includes(providerId))) {
+                return reply.redirect(buildRedirectUrl(webAppUrl, { ...redirectBaseParams, error: "keyless_disabled" }));
+            }
+            const availability = resolveKeylessAccountsAvailability(process.env);
+            if (!availability.ok) {
+                return reply.redirect(buildRedirectUrl(webAppUrl, {
+                    ...redirectBaseParams,
+                    error: availability.reason === "e2ee-required" ? "e2ee_required" : "keyless_disabled",
+                }));
+            }
+        }
 
         if (flow === "connect" && !isServerFeatureEnabledForRequest("connectedServices", process.env)) {
             return reply.redirect(buildRedirectUrl(webAppUrl, { ...redirectBaseParams, error: "connect_disabled" }));
@@ -94,10 +112,14 @@ export function registerOAuthCallbackRoute(app: Fastify) {
 
         const userId = flow === "connect" ? oauthState.userId : null;
         const publicKeyHex = flow === "auth" ? oauthState.publicKey : null;
+        const proofHash = flow === "auth" ? oauthState.proofHash : null;
         if (flow === "connect" && !userId) {
             return reply.redirect(buildRedirectUrl(webAppUrl, { ...redirectBaseParams, error: "invalid_state" }));
         }
-        if (flow === "auth" && !publicKeyHex) {
+        if (flow === "auth" && authMode === "keyed" && !publicKeyHex) {
+            return reply.redirect(buildRedirectUrl(webAppUrl, { ...redirectBaseParams, error: "invalid_state" }));
+        }
+        if (flow === "auth" && authMode === "keyless" && !proofHash) {
             return reply.redirect(buildRedirectUrl(webAppUrl, { ...redirectBaseParams, error: "invalid_state" }));
         }
 
@@ -168,6 +190,55 @@ export function registerOAuthCallbackRoute(app: Fastify) {
                 } catch {
                     return reply.redirect(buildRedirectUrl(webAppUrl, { ...redirectBaseParams, error: "invalid_profile" }));
                 }
+
+                if (authMode === "keyless") {
+                    const tokenEnc = privacyKit.encodeBase64(
+                        encryptString(["auth", "external", providerId, "pending_keyless", pendingKey, "token"], accessToken),
+                    );
+                    const profileEnc = privacyKit.encodeBase64(
+                        encryptString(["auth", "external", providerId, "pending_keyless", pendingKey, "profile"], profileJson),
+                    );
+                    const refreshTokenEnc =
+                        typeof refreshToken === "string" && refreshToken.trim()
+                            ? privacyKit.encodeBase64(
+                                  encryptString(
+                                      ["auth", "external", providerId, "pending_keyless", pendingKey, "refresh"],
+                                      refreshToken,
+                                  ),
+                              )
+                            : undefined;
+                    const ttlMs = resolveOAuthPendingTtlMsFromEnv(process.env);
+                    await db.repeatKey.create({
+                        data: {
+                            key: pendingKey,
+                            value: JSON.stringify({
+                                flow: "auth",
+                                provider: providerId,
+                                authMode: "keyless",
+                                proofHash: proofHash!,
+                                profileEnc,
+                                accessTokenEnc: tokenEnc,
+                                ...(refreshTokenEnc ? { refreshTokenEnc } : {}),
+                                suggestedUsername,
+                                usernameRequired,
+                                usernameReason,
+                            }),
+                            expiresAt: new Date(Date.now() + ttlMs),
+                        },
+                    });
+
+                    if (usernameRequired) {
+                        return reply.redirect(buildRedirectUrl(webAppUrl, {
+                            ...redirectBaseParams,
+                            status: "username_required",
+                            reason: usernameReason ?? "invalid_login",
+                            login,
+                            pending: pendingKey,
+                        }));
+                    }
+                    return reply.redirect(buildRedirectUrl(webAppUrl, { ...redirectBaseParams, pending: pendingKey }));
+                }
+
                 const tokenEnc = privacyKit.encodeBase64(
                     encryptString(["auth", "external", providerId, "pending", pendingKey, publicKeyHex!], accessToken),
                 );

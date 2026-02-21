@@ -171,6 +171,21 @@ describe("authRoutes (auth policy) (integration)", () => {
         await app.close();
     });
 
+    it("does not fail fast when key-challenge login is disabled and a keyless OAuth login method is configured", async () => {
+        process.env.HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED = "0";
+        process.env.AUTH_SIGNUP_PROVIDERS = "";
+        process.env.AUTH_ANONYMOUS_SIGNUP_ENABLED = "0";
+        process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED = "1";
+        process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS = "github";
+        process.env.GITHUB_CLIENT_ID = "id";
+        process.env.GITHUB_CLIENT_SECRET = "secret";
+        process.env.GITHUB_REDIRECT_URL = "https://example.com/oauth/github/callback";
+
+        const app = createTestApp();
+        expect(() => authRoutes(app as any)).not.toThrow();
+        await app.close();
+    });
+
     it("returns 403 provider-required when a required identity provider is missing", async () => {
         process.env.AUTH_REQUIRED_LOGIN_PROVIDERS = "github";
 

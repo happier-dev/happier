@@ -1,25 +1,20 @@
 import { type Fastify } from "../../types";
-import { registerKeyChallengeAuthRoute } from "./registerKeyChallengeAuthRoute";
 import { registerTerminalAuthRequestRoutes } from "./registerTerminalAuthRequestRoutes";
 import { registerAccountAuthRoutes } from "./registerAccountAuthRoutes";
 import { resolveTerminalAuthRequestPolicyFromEnv } from "./terminalAuthRequestPolicy";
 import { readAuthFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
-import { resolveAuthPolicyFromEnv } from "@/app/auth/authPolicy";
-import { resolveAuthProviderRegistryResult } from "@/app/auth/providers/registry";
+import { resolveAuthFeature } from "@/app/features/authFeature";
+import { resolveAuthMethodRegistry } from "@/app/auth/methods/registry";
 
-function resolveViableExternalSignupProvidersFromEnv(env: NodeJS.ProcessEnv): readonly string[] {
-    const policy = resolveAuthPolicyFromEnv(env);
-    const registry = resolveAuthProviderRegistryResult(env);
-    const providers = registry.providers;
-
-    return Object.freeze(
-        policy.signupProviders.filter((providerId) => {
-            const resolver = providers.find((p) => p.id === providerId);
-            if (!resolver) return false;
-            if (!resolver.requiresOAuth) return true;
-            return resolver.isConfigured(env);
-        }),
-    );
+function hasAnyViableNonKeyChallengeAuthMethod(env: NodeJS.ProcessEnv): boolean {
+    const feature = resolveAuthFeature(env);
+    const methods = feature.capabilities?.auth?.methods ?? [];
+    return methods.some((m: any) => {
+        const id = String(m?.id ?? "").trim().toLowerCase();
+        if (!id || id === "key_challenge") return false;
+        const actions = Array.isArray(m?.actions) ? m.actions : [];
+        return actions.some((a: any) => a?.enabled === true && (a?.id === "login" || a?.id === "provision"));
+    });
 }
 
 export function authRoutes(app: Fastify): void {
@@ -31,15 +26,15 @@ export function authRoutes(app: Fastify): void {
 
     const authFeatureEnv = readAuthFeatureEnv(process.env);
     if (!authFeatureEnv.loginKeyChallengeEnabled) {
-        const viableExternalSignupProviders = resolveViableExternalSignupProvidersFromEnv(process.env);
-        if (viableExternalSignupProviders.length === 0) {
+        if (!hasAnyViableNonKeyChallengeAuthMethod(process.env)) {
             throw new Error(
-                "No login methods are available: HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED=0 and no viable AUTH_SIGNUP_PROVIDERS are configured.",
+                "No login methods are available: HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED=0, no viable AUTH_SIGNUP_PROVIDERS are configured, and no other login providers are enabled.",
             );
         }
     }
-    if (authFeatureEnv.loginKeyChallengeEnabled) {
-        registerKeyChallengeAuthRoute(app);
+    const authMethodRegistry = resolveAuthMethodRegistry(process.env);
+    for (const method of authMethodRegistry) {
+        method.registerRoutes(app);
     }
     registerTerminalAuthRequestRoutes(app, { terminalAuthPolicy, isTerminalAuthExpired });
     registerAccountAuthRoutes(app);

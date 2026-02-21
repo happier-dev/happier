@@ -170,4 +170,53 @@ describe("connectRoutes (external auth params)", () => {
 
         await app.close();
     });
+
+    it("rejects keyless auth params when server storagePolicy=required_e2ee", async () => {
+        process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED = "1";
+        process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS = "github";
+        process.env.HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED = "1";
+        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "required_e2ee";
+
+        process.env.GITHUB_CLIENT_ID = "gh_client";
+        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
+
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const res = await app.inject({
+            method: "GET",
+            url: `/v1/auth/external/github/params?mode=keyless&proofHash=${encodeURIComponent("a".repeat(64))}`,
+        });
+
+        expect(res.statusCode).toBe(403);
+        expect(res.json()).toEqual({ error: "e2ee-required" });
+
+        await app.close();
+    });
+
+    it("rejects keyless auth params when proofHash is not a sha256 hex string", async () => {
+        process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED = "1";
+        process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS = "github";
+        process.env.HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED = "1";
+        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
+        process.env.HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE = "plain";
+
+        process.env.GITHUB_CLIENT_ID = "gh_client";
+        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
+
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const res = await app.inject({
+            method: "GET",
+            url: `/v1/auth/external/github/params?mode=keyless&proofHash=${encodeURIComponent("not-hex")}`,
+        });
+
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toEqual({ error: "Invalid proof" });
+
+        await app.close();
+    });
 });

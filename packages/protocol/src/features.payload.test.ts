@@ -27,10 +27,12 @@ describe('FeaturesResponseSchema', () => {
     expect(parsed.features.encryption.plaintextStorage.enabled).toBe(false);
     expect(parsed.features.encryption.accountOptOut.enabled).toBe(false);
     expect(parsed.features.auth.recovery.providerReset.enabled).toBe(false);
+    expect((parsed as any).features.auth.mtls.enabled).toBe(false);
     // Backward compatibility: older servers predate this gate but still support `POST /v1/auth`.
     // Default to enabled unless a server explicitly disables it.
     expect(parsed.features.auth.login.keyChallenge.enabled).toBe(true);
     expect(parsed.features.auth.ui.recoveryKeyReminder.enabled).toBe(false);
+    expect((parsed as any).features.e2ee.keylessAccounts.enabled).toBe(false);
 
     expect(parsed.capabilities.bugReports).toEqual(DEFAULT_BUG_REPORTS_CAPABILITIES);
     expect(parsed.capabilities.voice).toEqual({
@@ -45,7 +47,18 @@ describe('FeaturesResponseSchema', () => {
       allowAccountOptOut: false,
       defaultAccountMode: 'e2ee',
     });
+    expect((parsed as any).capabilities.auth.methods).toEqual([]);
     expect(parsed.capabilities.auth.login.methods).toEqual([]);
+    expect(parsed.capabilities.auth.mtls).toEqual({
+      mode: 'forwarded',
+      autoProvision: false,
+      identitySource: 'san_email',
+      policy: {
+        trustForwardedHeaders: false,
+        issuerAllowlist: { enabled: false, count: 0 },
+        emailDomainAllowlist: { enabled: false, count: 0 },
+      },
+    });
     expect(parsed.capabilities.auth.misconfig).toEqual([]);
   });
 
@@ -65,6 +78,7 @@ describe('FeaturesResponseSchema', () => {
     });
 
     expect(parsed.capabilities.auth.login.methods).toEqual([]);
+    expect((parsed as any).capabilities.auth.methods).toEqual([]);
   });
 
   it('coerces bug reports capabilities from sparse payloads', () => {

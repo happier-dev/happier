@@ -132,4 +132,92 @@ describe("connectRoutes (GitHub callback) oauth-state auth flow", () => {
 
         await app.close();
     });
+
+    it("redirects with flow=auth&mode=keyless when the oauth state token indicates a keyless auth flow", async () => {
+        process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED = "1";
+        process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS = "github";
+        process.env.HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED = "1";
+        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
+        process.env.GITHUB_CLIENT_ID = "gh_client";
+        process.env.GITHUB_CLIENT_SECRET = "gh_secret";
+        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
+        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
+
+        globalThis.fetch = (async (url: any) => {
+            if (typeof url === "string" && url.includes("https://github.com/login/oauth/access_token")) {
+                return { ok: true, json: async () => ({}) } as any; // missing access_token
+            }
+            throw new Error(`Unexpected fetch: ${String(url)}`);
+        }) as any;
+
+        const proofHash = "a".repeat(64);
+
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const paramsRes = await app.inject({
+            method: "GET",
+            url: `/v1/auth/external/github/params?mode=keyless&proofHash=${encodeURIComponent(proofHash)}`,
+        });
+        expect(paramsRes.statusCode).toBe(200);
+        const paramsUrl = new URL((paramsRes.json() as { url: string }).url);
+        const state = paramsUrl.searchParams.get("state");
+        expect(state).toBeTruthy();
+
+        const res = await app.inject({
+            method: "GET",
+            url: `/v1/oauth/github/callback?code=c1&state=${encodeURIComponent(state!)}`,
+        });
+
+        expect(res.statusCode).toBe(302);
+        expect(res.headers.location).toBe("https://app.example.test/oauth/github?flow=auth&mode=keyless&error=missing_access_token");
+
+        await app.close();
+    });
+
+    it("redirects with error=e2ee_required when keyless auth becomes unavailable before the callback is handled", async () => {
+        process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED = "1";
+        process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS = "github";
+        process.env.HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED = "1";
+        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
+        process.env.GITHUB_CLIENT_ID = "gh_client";
+        process.env.GITHUB_CLIENT_SECRET = "gh_secret";
+        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
+        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
+
+        globalThis.fetch = (async (url: any) => {
+            if (typeof url === "string" && url.includes("https://github.com/login/oauth/access_token")) {
+                return { ok: true, json: async () => ({}) } as any; // missing access_token
+            }
+            throw new Error(`Unexpected fetch: ${String(url)}`);
+        }) as any;
+
+        const proofHash = "b".repeat(64);
+
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const paramsRes = await app.inject({
+            method: "GET",
+            url: `/v1/auth/external/github/params?mode=keyless&proofHash=${encodeURIComponent(proofHash)}`,
+        });
+        expect(paramsRes.statusCode).toBe(200);
+        const paramsUrl = new URL((paramsRes.json() as { url: string }).url);
+        const state = paramsUrl.searchParams.get("state");
+        expect(state).toBeTruthy();
+
+        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "required_e2ee";
+
+        const res = await app.inject({
+            method: "GET",
+            url: `/v1/oauth/github/callback?code=c1&state=${encodeURIComponent(state!)}`,
+        });
+
+        expect(res.statusCode).toBe(302);
+        expect(res.headers.location).toBe("https://app.example.test/oauth/github?flow=auth&mode=keyless&error=e2ee_required");
+
+        await app.close();
+    });
 });

@@ -3,11 +3,49 @@ import { resolveGitHubOAuthConfigFromEnv } from "./githubOAuthConfig";
 import { GitHubProfileSchema, type GitHubProfile } from "@/app/auth/providers/github/types";
 import { shouldRequestReadOrgScopeForGitHub } from "@/app/auth/providers/github/restrictions";
 import { resolveGitHubHttpTimeoutMs } from "@/app/auth/providers/github/httpTimeout";
+import { isLoopbackHostname } from "@/utils/network/urlSafety";
 
 function parseGitHubProfile(raw: unknown): GitHubProfile | null {
     const parsed = GitHubProfileSchema.safeParse(raw);
     if (!parsed.success) return null;
     return parsed.data;
+}
+
+function resolveGitHubOverrideUrl(params: { env: NodeJS.ProcessEnv; key: string; fallback: string }): string {
+    const raw = params.env[params.key]?.toString?.().trim?.() ?? "";
+    if (!raw) return params.fallback;
+    try {
+        const url = new URL(raw);
+        if (url.protocol === "https:") return url.toString();
+        if (url.protocol === "http:" && isLoopbackHostname(url.hostname)) return url.toString();
+        return params.fallback;
+    } catch {
+        return params.fallback;
+    }
+}
+
+function resolveGitHubOAuthAuthorizeUrl(env: NodeJS.ProcessEnv): string {
+    return resolveGitHubOverrideUrl({
+        env,
+        key: "GITHUB_OAUTH_AUTHORIZE_URL",
+        fallback: "https://github.com/login/oauth/authorize",
+    });
+}
+
+function resolveGitHubOAuthTokenUrl(env: NodeJS.ProcessEnv): string {
+    return resolveGitHubOverrideUrl({
+        env,
+        key: "GITHUB_OAUTH_TOKEN_URL",
+        fallback: "https://github.com/login/oauth/access_token",
+    });
+}
+
+function resolveGitHubApiUserUrl(env: NodeJS.ProcessEnv): string {
+    return resolveGitHubOverrideUrl({
+        env,
+        key: "GITHUB_API_USER_URL",
+        fallback: "https://api.github.com/user",
+    });
 }
 
 async function safeReadResponseText(res: Response): Promise<string> {
@@ -88,29 +126,29 @@ export const githubOAuthProvider: OAuthFlowProvider = Object.freeze({
         if (!cfg.clientId || !cfg.redirectUrl) {
             throw new Error("oauth_not_configured");
         }
-        const params: Record<string, string> = {
-            client_id: cfg.clientId,
-            redirect_uri: cfg.redirectUrl,
-            scope,
-            state,
-        };
+        const authorizeUrl = resolveGitHubOAuthAuthorizeUrl(env);
+        const url = new URL(authorizeUrl);
+        url.searchParams.set("client_id", cfg.clientId);
+        url.searchParams.set("redirect_uri", cfg.redirectUrl);
+        url.searchParams.set("scope", scope);
+        url.searchParams.set("state", state);
         if (codeChallenge && codeChallengeMethod) {
-            params.code_challenge = codeChallenge;
-            params.code_challenge_method = codeChallengeMethod;
+            url.searchParams.set("code_challenge", codeChallenge);
+            url.searchParams.set("code_challenge_method", codeChallengeMethod);
         }
-        const search = new URLSearchParams(params);
-        return `https://github.com/login/oauth/authorize?${search.toString()}`;
+        return url.toString();
     },
     exchangeCodeForAccessToken: async ({ env, code, pkceCodeVerifier }): Promise<OAuthTokenExchangeResult> => {
         const cfg = resolveGitHubOAuthConfigFromEnv(env);
         if (!cfg.clientId || !cfg.clientSecret) {
             throw new Error("oauth_not_configured");
         }
+        const tokenUrl = resolveGitHubOAuthTokenUrl(env);
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), resolveGitHubHttpTimeoutMs(env));
         let tokenResponse: Response;
         try {
-            tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
+            tokenResponse = await fetch(tokenUrl, {
                 method: "POST",
                 headers: {
                     Accept: "application/json",
@@ -153,11 +191,12 @@ export const githubOAuthProvider: OAuthFlowProvider = Object.freeze({
         return { accessToken };
     },
     fetchProfile: async ({ env, accessToken }): Promise<unknown> => {
+        const userUrl = resolveGitHubApiUserUrl(env);
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), resolveGitHubHttpTimeoutMs(env));
         let userResponse: Response;
         try {
-            userResponse = await fetch("https://api.github.com/user", {
+            userResponse = await fetch(userUrl, {
                 headers: {
                     Authorization: `Bearer ${accessToken}`,
                     Accept: "application/vnd.github.v3+json",

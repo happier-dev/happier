@@ -1,6 +1,24 @@
 import { z } from 'zod';
 
+const AuthMethodActionSchema = z.object({
+  id: z.enum(['login', 'provision', 'connect']),
+  enabled: z.boolean(),
+  mode: z.enum(['keyed', 'keyless', 'either']),
+});
+
+export const AuthMethodSchema = z.object({
+  id: z.string(),
+  actions: z.array(AuthMethodActionSchema),
+  ui: z
+    .object({
+      displayName: z.string().optional(),
+      iconHint: z.string().nullable().optional(),
+    })
+    .optional(),
+});
+
 export const AuthCapabilitiesSchema = z.object({
+  methods: z.array(AuthMethodSchema).optional().default([]),
   signup: z.object({
     methods: z.array(z.object({ id: z.string(), enabled: z.boolean() })),
   }),
@@ -55,15 +73,56 @@ export const AuthCapabilitiesSchema = z.object({
       envVars: z.array(z.string()).optional(),
     }),
   ),
+  mtls: z
+    .object({
+      mode: z.enum(['forwarded', 'direct']),
+      autoProvision: z.boolean(),
+      identitySource: z.enum(['san_email', 'san_upn', 'subject_cn', 'fingerprint']),
+      policy: z
+        .object({
+          trustForwardedHeaders: z.boolean(),
+          issuerAllowlist: z.object({
+            enabled: z.boolean(),
+            count: z.number().int().min(0),
+          }),
+          emailDomainAllowlist: z.object({
+            enabled: z.boolean(),
+            count: z.number().int().min(0),
+          }),
+        })
+        .optional(),
+    })
+    .optional()
+    .default({
+      mode: 'forwarded',
+      autoProvision: false,
+      identitySource: 'san_email',
+      policy: {
+        trustForwardedHeaders: false,
+        issuerAllowlist: { enabled: false, count: 0 },
+        emailDomainAllowlist: { enabled: false, count: 0 },
+      },
+    }),
 });
 
 export type AuthCapabilities = z.infer<typeof AuthCapabilitiesSchema>;
 
 export const DEFAULT_AUTH_CAPABILITIES: AuthCapabilities = {
+  methods: [],
   signup: { methods: [] },
   login: { methods: [], requiredProviders: [] },
   recovery: { providerReset: { providers: [] } },
   ui: { autoRedirect: { enabled: false, providerId: null } },
   providers: {},
   misconfig: [],
+  mtls: {
+    mode: 'forwarded',
+    autoProvision: false,
+    identitySource: 'san_email',
+    policy: {
+      trustForwardedHeaders: false,
+      issuerAllowlist: { enabled: false, count: 0 },
+      emailDomainAllowlist: { enabled: false, count: 0 },
+    },
+  },
 };

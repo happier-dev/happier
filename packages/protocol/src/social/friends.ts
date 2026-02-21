@@ -14,7 +14,8 @@ export const UserProfileSchema = z.object({
   bio: z.string().nullable(),
   badges: z.array(ProfileBadgeSchema).optional().default([]),
   status: RelationshipStatusSchema,
-  publicKey: z.string(),
+  // Keyless accounts (enterprise/plaintext mode) may not have an E2EE signing public key.
+  publicKey: z.string().nullable(),
   // Optional for backward compatibility with older servers.
   contentPublicKey: z.string().nullable().optional(),
   contentPublicKeySig: z.string().nullable().optional(),

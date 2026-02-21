@@ -10,9 +10,12 @@ import { createExternalAuthorizeUrl } from "./oauthExternal/createExternalAuthor
 import { oauthExternalRateLimitPerIp } from "./oauthExternal/oauthExternalRateLimits";
 import { OAUTH_NOT_CONFIGURED_ERROR } from "./oauthExternal/oauthExternalErrors";
 import { registerExternalAuthFinalizeRoute } from "./oauthExternal/registerExternalAuthFinalizeRoute";
+import { registerExternalAuthFinalizeKeylessRoute } from "./oauthExternal/registerExternalAuthFinalizeKeylessRoute";
 import { authPendingSchema } from "./oauthExternal/oauthExternalSchemas";
 import { deleteOAuthPendingBestEffort, loadValidOAuthPending } from "./connectRoutes.oauthPending";
 import { ExternalOAuthErrorResponseSchema, ExternalOAuthParamsResponseSchema } from "@happier-dev/protocol";
+import { readAuthOauthKeylessFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
+import { resolveKeylessAccountsAvailability } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
 
 export function connectAuthExternalRoutes(app: Fastify) {
     //
@@ -23,7 +26,15 @@ export function connectAuthExternalRoutes(app: Fastify) {
         config: { rateLimit: oauthExternalRateLimitPerIp() },
         schema: {
             params: z.object({ provider: z.string() }),
-            querystring: z.object({ publicKey: z.string() }),
+            querystring: z
+                .object({
+                    publicKey: z.string().optional(),
+                    mode: z.enum(["keyed", "keyless"]).optional(),
+                    proofHash: z.string().optional(),
+                })
+                .refine((q) => (q.mode === "keyless" ? Boolean(q.proofHash) : Boolean(q.publicKey)), {
+                    message: "Expected publicKey (keyed) or proofHash (keyless)",
+                }),
             response: {
                 200: ExternalOAuthParamsResponseSchema,
                 400: ExternalOAuthErrorResponseSchema,
@@ -36,20 +47,38 @@ export function connectAuthExternalRoutes(app: Fastify) {
         const provider = findOAuthProviderById(process.env, providerId);
         if (!provider) return reply.code(404).send({ error: "unsupported-provider" });
 
+        const mode = (request.query as any)?.mode === "keyless" ? "keyless" : "keyed";
         const policy = resolveAuthPolicyFromEnv(process.env);
-        if (!policy.signupProviders.includes(providerId)) {
-            return reply.code(403).send({ error: "signup-provider-disabled" });
+        if (mode === "keyed") {
+            if (!policy.signupProviders.includes(providerId)) {
+                return reply.code(403).send({ error: "signup-provider-disabled" });
+            }
+        } else {
+            const keyless = readAuthOauthKeylessFeatureEnv(process.env);
+            if (!(keyless.enabled && keyless.providers.includes(providerId))) {
+                return reply.code(403).send({ error: "keyless-disabled" });
+            }
+            const availability = resolveKeylessAccountsAvailability(process.env);
+            if (!availability.ok) {
+                return reply.code(403).send({ error: availability.reason === "e2ee-required" ? "e2ee-required" : "keyless-disabled" });
+            }
         }
 
-        let publicKeyHex: string;
-        try {
-            const publicKeyBytes = privacyKit.decodeBase64(request.query.publicKey);
-            if (publicKeyBytes.length !== tweetnacl.sign.publicKeyLength) {
+        let publicKeyHex: string | null = null;
+        let proofHash: string | null = null;
+        if (mode === "keyed") {
+            try {
+                const publicKeyBytes = privacyKit.decodeBase64((request.query as any).publicKey);
+                if (publicKeyBytes.length !== tweetnacl.sign.publicKeyLength) {
+                    return reply.code(400).send({ error: "Invalid public key" });
+                }
+                publicKeyHex = privacyKit.encodeHex(publicKeyBytes);
+            } catch {
                 return reply.code(400).send({ error: "Invalid public key" });
             }
-            publicKeyHex = privacyKit.encodeHex(publicKeyBytes);
-        } catch {
-            return reply.code(400).send({ error: "Invalid public key" });
+        } else {
+            proofHash = String((request.query as any)?.proofHash ?? "").trim().toLowerCase();
+            if (!/^[0-9a-f]{64}$/.test(proofHash)) return reply.code(400).send({ error: "Invalid proof" });
         }
 
         try {
@@ -59,6 +88,7 @@ export function connectAuthExternalRoutes(app: Fastify) {
                 providerId,
                 provider,
                 publicKeyHex,
+                proofHash,
             });
             if (!url) return reply.code(400).send({ error: OAUTH_STATE_UNAVAILABLE_CODE });
             return reply.send({ url });
@@ -71,6 +101,7 @@ export function connectAuthExternalRoutes(app: Fastify) {
     });
 
     registerExternalAuthFinalizeRoute(app);
+    registerExternalAuthFinalizeKeylessRoute(app);
 
     app.delete("/v1/auth/external/:provider/pending/:pending", {
         schema: {
@@ -105,4 +136,3 @@ export function connectAuthExternalRoutes(app: Fastify) {
         return reply.send({ success: true });
     });
 }
-

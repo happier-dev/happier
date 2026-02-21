@@ -12,6 +12,12 @@ const VoiceGateSchema = z.object({
 
 export const FeatureGatesSchema = z.object({
   bugReports: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+  e2ee: z
+    .object({
+      keylessAccounts: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+    })
+    .optional()
+    .default({ keylessAccounts: DEFAULT_GATE_DISABLED }),
   encryption: z
     .object({
       plaintextStorage: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
@@ -73,6 +79,7 @@ export const FeatureGatesSchema = z.object({
         })
         .optional()
         .default({ providerReset: DEFAULT_GATE_DISABLED }),
+      mtls: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
       login: z
         .object({
           // Backward compatibility: older servers predate this gate but still support key-challenge login.
@@ -91,6 +98,7 @@ export const FeatureGatesSchema = z.object({
     .optional()
     .default({
       recovery: { providerReset: DEFAULT_GATE_DISABLED },
+      mtls: DEFAULT_GATE_DISABLED,
       login: { keyChallenge: DEFAULT_GATE_ENABLED },
       ui: { recoveryKeyReminder: DEFAULT_GATE_DISABLED },
     }),

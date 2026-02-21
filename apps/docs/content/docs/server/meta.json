@@ -4,6 +4,7 @@
     "index",
     "auth",
     "encryption",
+    "auth-custom-providers",
     "auth-github",
     "auth-oidc",
     "auth-mtls"

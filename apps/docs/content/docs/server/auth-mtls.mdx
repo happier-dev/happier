@@ -88,21 +88,52 @@ Note: switching encryption mode does not retroactively decrypt or re-encrypt his
 
 ### Enable mTLS
 
-- `HAPPIER_AUTH_MTLS_ENABLED` (`0`/`1`)
-- `HAPPIER_AUTH_MTLS_MODE` (`forwarded` | `direct`)
-- `HAPPIER_AUTH_MTLS_AUTO_PROVISION` (`0`/`1`)
+- `HAPPIER_FEATURE_AUTH_MTLS__ENABLED` (`0`/`1`)
+- `HAPPIER_FEATURE_AUTH_MTLS__MODE` (`forwarded` | `direct`)
+- `HAPPIER_FEATURE_AUTH_MTLS__AUTO_PROVISION` (`0`/`1`)
 
 ### Identity mapping
 
-- `HAPPIER_AUTH_MTLS_IDENTITY_SOURCE` (`san_email` | `san_upn` | `subject_cn` | `fingerprint`)
-- `HAPPIER_AUTH_MTLS_ALLOWED_EMAIL_DOMAINS` (CSV; recommended with `san_email`)
-- `HAPPIER_AUTH_MTLS_ALLOWED_ISSUERS` (CSV or regex; recommended)
+- `HAPPIER_FEATURE_AUTH_MTLS__IDENTITY_SOURCE` (`san_email` | `san_upn` | `subject_cn` | `fingerprint`)
+- `HAPPIER_FEATURE_AUTH_MTLS__ALLOWED_EMAIL_DOMAINS` (CSV; recommended with `san_email` / `san_upn`)
+- `HAPPIER_FEATURE_AUTH_MTLS__ALLOWED_ISSUERS` (recommended; supports CN or exact DN matching)
+
+Notes:
+- CN allowlist entries (most common) can be either `cn=...` or bare CN strings (e.g. `Example Root CA`). Multiple CN entries can be comma-separated.
+- Exact DN allowlist entries can be provided as full issuer DNs (e.g. `C=US, O=Example Corp, CN=Example Root CA`). If you want multiple DN entries, separate them with **newlines** or `;` (DN strings include commas).
+- Forwarded issuer strings can be either a simple `CN=...` value or a full DN. Happier performs case/whitespace-insensitive normalization.
+- Matching behavior:
+  - if an allowlist entry is CN-only, Happier compares it against the extracted issuer CN.
+  - if an allowlist entry is a full DN, Happier requires an exact DN match (after normalization).
 
 ### Forwarded-header configuration (forwarded mode only)
 
-- `HAPPIER_AUTH_MTLS_TRUST_FORWARDED_HEADERS` (`0`/`1`)
-- `HAPPIER_AUTH_MTLS_FORWARDED_FINGERPRINT_HEADER` (default `x-happier-client-cert-sha256`)
-- `HAPPIER_AUTH_MTLS_FORWARDED_SUBJECT_HEADER` (optional)
+- `HAPPIER_FEATURE_AUTH_MTLS__TRUST_FORWARDED_HEADERS` (`0`/`1`)
+- `HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_EMAIL_HEADER` (default `x-happier-client-cert-email`)
+- `HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_UPN_HEADER` (default `x-happier-client-cert-upn`)
+- `HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_SUBJECT_HEADER` (default `x-happier-client-cert-subject`)
+- `HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_FINGERPRINT_HEADER` (default `x-happier-client-cert-sha256`)
+- `HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_ISSUER_HEADER` (default `x-happier-client-cert-issuer`)
+
+### Native app handoff (mobile)
+
+- `HAPPIER_FEATURE_AUTH_MTLS__RETURN_TO_ALLOW_PREFIXES` (CSV; defaults to `happier://` and `HAPPIER_WEBAPP_URL`)
+- `HAPPIER_FEATURE_AUTH_MTLS__CLAIM_TTL_SECONDS` (default `60`)
+
+Notes:
+
+- For `http://` / `https://` entries, Happier validates `returnTo` by **origin** (scheme + host + port), with an optional path-prefix constraint if you include a path in the allowlist entry. This prevents “prefix” open-redirect bypasses like `https://app.example.com.evil.com/...`.
+- For deep links, use a scheme prefix like `happier://` (or a more specific prefix like `happier:///mtls`).
+
+### Auto-redirect (skip the connection screen)
+
+If mTLS is the only supported login flow for your deployment, you can enable auto-redirect so users don’t have to tap “Sign in with certificate”.
+
+- `HAPPIER_FEATURE_AUTH_UI__AUTO_REDIRECT_ENABLED=1`
+- `HAPPIER_FEATURE_AUTH_UI__AUTO_REDIRECT_PROVIDER_ID=mtls`
+- Disable anonymous signup: `AUTH_ANONYMOUS_SIGNUP_ENABLED=0`
+
+On mobile, this will open the system browser to start the certificate-authenticated flow.
 
 For the full canonical list, see [Deployment → Environment variables](../deployment/env).
 
@@ -125,6 +156,8 @@ For the full canonical list, see [Deployment → Environment variables](../deplo
    - CA chain configured for verification.
 3. Enable direct mode in Happier and confirm the API rejects requests without a valid client cert.
 
+Note: Direct mode is not implemented yet in the open-source server; use forwarded mode for now.
+
 ## Troubleshooting
 
 ### “mTLS login isn’t offered in the UI”
@@ -134,11 +167,21 @@ For the full canonical list, see [Deployment → Environment variables](../deplo
 
 ### “Auto-provisioning doesn’t create accounts”
 
-- Confirm `HAPPIER_AUTH_MTLS_AUTO_PROVISION=1`.
+- Confirm `HAPPIER_FEATURE_AUTH_MTLS__AUTO_PROVISION=1`.
 - Confirm your identity mapping is producing a stable id (use `san_email`/`san_upn` when possible).
-- Confirm issuer/domain allowlists are not rejecting the cert.
+- Confirm domain allowlists are not rejecting the cert.
+
+Also confirm that plaintext storage is allowed if you want keyless auto-provisioning:
+
+- `HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=optional|plaintext_only`
+- `HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE=plain`
 
 ### “Users get multiple accounts across devices”
 
 - You are likely using `fingerprint` identity mapping.
 - Switch to `san_email`/`san_upn`, and enforce issuer + domain allowlists.
+
+### Identity normalization notes
+
+- `san_email` and `san_upn` are normalized to lowercase.
+- Issuer comparisons are case-insensitive and whitespace-insensitive (but you must still configure the allowlist with comma-separated issuer strings).

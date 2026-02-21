@@ -117,6 +117,11 @@ export function registerExternalAuthFinalizeRoute(app: Fastify) {
             return reply.code(400).send({ error: "invalid-pending" });
         }
 
+        if (parsedValue.authMode !== "keyed" || !parsedValue.publicKeyHex) {
+            await deleteOAuthPendingBestEffort(pendingKey);
+            return reply.code(400).send({ error: "invalid-pending" });
+        }
+
         if (parsedValue.provider.toString().trim().toLowerCase() !== providerId) {
             return reply.code(403).send({ error: "forbidden" });
         }

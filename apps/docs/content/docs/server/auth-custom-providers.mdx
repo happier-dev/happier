@@ -1,0 +1,64 @@
+---
+title: Custom Auth Providers
+description: How to add custom login providers (including enterprise forks) without duplicating core auth logic.
+---
+
+Happier’s server supports a **provider-module registry** so new authentication mechanisms can be added without rewriting core route wiring or `/v1/features` advertising.
+
+Key idea:
+
+- An auth mechanism is an **auth method**.
+- A method can support multiple **actions** (for example: `login`, `provision`, `connect`).
+- The server advertises methods centrally via `capabilities.auth.methods[]`.
+
+## Provider modules (server)
+
+Provider modules live under:
+
+- `apps/server/sources/app/auth/providers/*`
+
+The registry is assembled in:
+
+- `apps/server/sources/app/auth/providers/providerModules.ts`
+
+Each module can contribute one or more **facets**:
+
+- `oauth`: OAuth redirect/callback flow wiring (e.g. GitHub/OIDC)
+- `identity`: identity linking + offboarding eligibility enforcement
+- `auth`: provider status/capabilities surfaced under `capabilities.auth.providers`
+
+Non-OAuth auth methods (like mTLS) are registered separately via the **auth-method registry**:
+
+- `apps/server/sources/app/auth/methods/registry.ts`
+- `apps/server/sources/app/auth/methods/modules/*`
+
+## Adding a custom auth method (enterprise fork)
+
+Auth methods are the right extension point for login mechanisms that are **not** the built-in key-challenge route and are **not** implemented via OAuth/OIDC config.
+
+1. Create a new auth-method module, for example:
+   - `apps/server/sources/app/auth/methods/modules/acmeAuthMethodModule.ts`
+
+2. Implement an `AuthMethodModule`:
+   - Types: `apps/server/sources/app/auth/methods/types.ts`
+   - Reference implementation (mTLS): `apps/server/sources/app/auth/methods/modules/mtlsAuthMethodModule.ts`
+
+3. Register the module by adding it to `staticAuthMethodModules` in:
+   - `apps/server/sources/app/auth/methods/registry.ts`
+
+After that:
+
+- `authRoutes(...)` will register your login routes automatically.
+- Boot-time lockout prevention uses the advertised `capabilities.auth.methods[]` actions; ensure your method reports at least one enabled `login`/`provision` action when correctly configured.
+- `/v1/features` will advertise methods via `capabilities.auth.methods[]` so clients can render options without guessing.
+
+## UI considerations
+
+Adding a server login provider does not automatically add a UI login flow.
+
+The built-in mTLS flow is implemented as:
+
+- Web: `POST /v1/auth/mtls`
+- Mobile handoff: `/v1/auth/mtls/start` → `/v1/auth/mtls/complete` → `POST /v1/auth/mtls/claim`
+
+Enterprise forks can implement custom UI flows similarly, while still using the shared login-provider registration and feature advertising from core.

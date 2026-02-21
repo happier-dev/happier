@@ -9,6 +9,7 @@ For provider-specific setup guides, see:
 - [GitHub auth](./auth-github)
 - [OIDC auth](./auth-oidc)
 - [mTLS auth](./auth-mtls)
+- [Custom auth providers](./auth-custom-providers)
 
 ## Choosing an auth setup (private vs public servers)
 
@@ -64,6 +65,41 @@ Happier uses a **device-key** account model (each account is tied to a device se
 - Default behavior: users can create accounts via device-key signup (`POST /v1/auth`).
 - You can optionally require external providers (GitHub and/or OIDC) for signup and/or ongoing access.
 - External providers are **not** “password login”: if a user is trying to access an *existing* Happier account from a new device/browser, they still need to **restore** the account (for example “Login with mobile app”), then connect providers from settings.
+
+## Auth methods (discovery)
+
+Clients should treat `GET /v1/features` as the source of truth for “what auth flows are available”.
+
+Happier advertises auth entrypoints via:
+
+- `capabilities.auth.methods[]` (preferred; method + action + mode)
+- plus legacy surfaces like `capabilities.auth.signup.methods[]` for older clients
+
+Each method can advertise multiple actions:
+
+- `login` (sign in to an existing account)
+- `provision` (create an account)
+- `connect` (link an identity provider to an already-authenticated account)
+
+And each action declares its account key mode:
+
+- `keyed`: device-key account (default Happier model)
+- `keyless`: no device keys (enterprise mode; typically paired with plaintext storage)
+
+## Keyless authentication (enterprise)
+
+Some deployments want accounts to exist **without device keys** (for example: company-managed identity, server-side indexing/search, and simpler multi-device behavior).
+
+Happier currently supports keyless login via:
+
+- [mTLS auth](./auth-mtls)
+- keyless OAuth login (GitHub/OIDC) when enabled by feature env vars
+
+Keyless account auto-provisioning is intentionally guarded:
+
+- enable keyless accounts: `HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED=1`
+- ensure new accounts default to plaintext: `HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=optional|plaintext_only` and `HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE=plain`
+- for OAuth keyless login: `HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED=1` + allowlist providers via `HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS`
 
 ## OAuth return URL (required for GitHub/OIDC self-hosting)
 

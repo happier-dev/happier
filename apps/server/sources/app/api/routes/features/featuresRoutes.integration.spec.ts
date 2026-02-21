@@ -231,6 +231,27 @@ describe("featuresRoutes", () => {
         });
     });
 
+    describe("auth mtls", () => {
+        it("exposes mtls policy details under capabilities.auth.mtls.policy", async () => {
+            process.env.HAPPIER_FEATURE_AUTH_MTLS__ENABLED = "1";
+            process.env.HAPPIER_FEATURE_AUTH_MTLS__MODE = "forwarded";
+            process.env.HAPPIER_FEATURE_AUTH_MTLS__TRUST_FORWARDED_HEADERS = "1";
+            process.env.HAPPIER_FEATURE_AUTH_MTLS__ALLOWED_ISSUERS = "CN=Example Root CA\ncn=Example Intermediate CA";
+            process.env.HAPPIER_FEATURE_AUTH_MTLS__ALLOWED_EMAIL_DOMAINS = "example.com, example.org";
+
+            const payload = await getFeaturesPayload();
+            expect(payload.capabilities.auth.mtls).toEqual(
+                expect.objectContaining({
+                    policy: {
+                        trustForwardedHeaders: true,
+                        issuerAllowlist: { enabled: true, count: 2 },
+                        emailDomainAllowlist: { enabled: true, count: 2 },
+                    },
+                }),
+            );
+        });
+    });
+
     describe("encryption", () => {
         it("reports required_e2ee by default", async () => {
             const payload = await getFeaturesPayload();

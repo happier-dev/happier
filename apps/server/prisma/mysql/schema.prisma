@@ -24,7 +24,7 @@ datasource db {
 
 model Account {
     id              String      @id @default(cuid())
-    publicKey       String      @unique
+    publicKey       String?     @unique
     /// X25519 (NaCl box) public key for encrypting session DEKs to this account
     contentPublicKey Bytes?
     /// Ed25519 signature binding contentPublicKey to publicKey

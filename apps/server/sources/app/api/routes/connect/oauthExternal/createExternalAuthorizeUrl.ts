@@ -14,7 +14,8 @@ type ExternalAuthorizeFlowParams =
           providerId: string;
           provider: OAuthFlowProvider;
           env: NodeJS.ProcessEnv;
-          publicKeyHex: string;
+          publicKeyHex: string | null;
+          proofHash: string | null;
       }>
     | Readonly<{
           flow: "connect";
@@ -57,6 +58,7 @@ export async function createExternalAuthorizeUrl(params: ExternalAuthorizeFlowPa
                   provider: params.providerId,
                   sid,
                   publicKey: params.publicKeyHex,
+                  proofHash: params.proofHash,
               })
             : await auth.createOauthStateToken({
                   flow: "connect",

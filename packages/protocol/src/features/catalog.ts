@@ -105,6 +105,12 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: [],
     representation: 'server',
   },
+  'auth.mtls': {
+    description: 'mTLS client certificate authentication support.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'server',
+  },
   'auth.ui.recoveryKeyReminder': {
     description: 'Recovery key reminder UI behavior.',
     defaultFailMode: 'fail_closed',
@@ -121,6 +127,12 @@ const FEATURE_CATALOG_DEFINITION = {
     description: 'Per-account encryption opt-out toggle support.',
     defaultFailMode: 'fail_closed',
     dependencies: ['encryption.plaintextStorage'],
+    representation: 'server',
+  },
+  'e2ee.keylessAccounts': {
+    description: 'Keyless account support (accounts may omit E2EE signing keys).',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
     representation: 'server',
   },
   'app.analytics': {

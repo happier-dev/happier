@@ -32,6 +32,7 @@ type OAuthStatePayload = Readonly<{
     sid?: string | null;
     userId?: string | null;
     publicKey?: string | null;
+    proofHash?: string | null;
 }>;
 
 class AuthModule {
@@ -224,7 +225,7 @@ class AuthModule {
         
         return token;
     }
-    
+
     async verifyToken(token: string): Promise<{ userId: string; extras?: any } | null> {
         // Check cache first
         const cached = this.tokenCache?.get(token);
@@ -311,6 +312,7 @@ class AuthModule {
         const sid = payload.sid?.toString().trim() || null;
         const userId = payload.userId?.toString().trim() || null;
         const publicKey = payload.publicKey?.toString().trim() || null;
+        const proofHash = payload.proofHash?.toString().trim() || null;
 
         return await oauthStateTokens.oauthStateGenerator.new({
             user: "oauth-state",
@@ -320,6 +322,7 @@ class AuthModule {
                 sid,
                 userId,
                 publicKey,
+                proofHash,
             },
         });
     }
@@ -330,6 +333,7 @@ class AuthModule {
         sid: string | null;
         userId: string | null;
         publicKey: string | null;
+        proofHash: string | null;
     } | null> {
         if (!this.tokens) {
             throw new Error("Auth module not initialized");
@@ -356,6 +360,10 @@ class AuthModule {
                 publicKey:
                     typeof extras.publicKey === "string" && extras.publicKey.trim()
                         ? extras.publicKey.trim()
+                        : null,
+                proofHash:
+                    typeof extras.proofHash === "string" && extras.proofHash.trim()
+                        ? extras.proofHash.trim()
                         : null,
             };
         } catch (error) {

@@ -37,6 +37,7 @@ describe("auth (oauth state tokens)", () => {
             sid: "sid_1",
             userId: "u1",
             publicKey: null,
+            proofHash: null,
         });
 
         const authToken = await (auth as any).createOauthStateToken({
@@ -52,6 +53,27 @@ describe("auth (oauth state tokens)", () => {
             sid: "sid_2",
             userId: null,
             publicKey: "pk_hex_1",
+            proofHash: null,
+        });
+    });
+
+    it("round-trips keyless oauth state tokens with a proof hash", async () => {
+        const token = await (auth as any).createOauthStateToken({
+            flow: "auth",
+            provider: "github",
+            sid: "sid_keyless_1",
+            publicKey: null,
+            proofHash: "sha256hex_1",
+        });
+
+        const verified = await (auth as any).verifyOauthStateToken(token);
+        expect(verified).toEqual({
+            flow: "auth",
+            provider: "github",
+            sid: "sid_keyless_1",
+            userId: null,
+            publicKey: null,
+            proofHash: "sha256hex_1",
         });
     });
 

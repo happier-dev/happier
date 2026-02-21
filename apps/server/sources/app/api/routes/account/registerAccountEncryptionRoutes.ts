@@ -23,13 +23,13 @@ export function registerAccountEncryptionRoutes(app: Fastify): void {
             try {
                 const user = await db.account.findUnique({
                     where: { id: request.userId },
-                    select: { encryptionMode: true, encryptionModeUpdatedAt: true },
+                    select: { encryptionMode: true, encryptionModeUpdatedAt: true, publicKey: true },
                 });
                 if (!user) {
                     return reply.code(500).send({ error: "internal" });
                 }
 
-                const mode = user.encryptionMode === "plain" ? "plain" : "e2ee";
+                const mode = !user.publicKey ? "plain" : user.encryptionMode === "plain" ? "plain" : "e2ee";
                 return reply.send({ mode, updatedAt: user.encryptionModeUpdatedAt.getTime() });
             } catch {
                 return reply.code(500).send({ error: "internal" });
@@ -56,6 +56,19 @@ export function registerAccountEncryptionRoutes(app: Fastify): void {
             const mode = requestedMode === "plain" ? "plain" : "e2ee";
 
             try {
+                if (mode === "e2ee") {
+                    const account = await db.account.findUnique({
+                        where: { id: request.userId },
+                        select: { publicKey: true },
+                    });
+                    if (!account) {
+                        return reply.code(500).send({ error: "internal" });
+                    }
+                    if (!account.publicKey) {
+                        return reply.code(400).send({ error: "invalid-params" });
+                    }
+                }
+
                 const updated = await db.account.update({
                     where: { id: request.userId },
                     data: { encryptionMode: mode, encryptionModeUpdatedAt: new Date() },
