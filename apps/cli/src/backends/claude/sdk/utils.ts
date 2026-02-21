@@ -29,11 +29,12 @@ function resolveHomeDir(): string {
 function getGlobalClaudeVersion(): string | null {
     try {
         const cleanEnv = getCleanEnv()
-        const output = execSync('claude --version', { 
-            encoding: 'utf8', 
+        const output = execSync('claude --version', {
+            encoding: 'utf8',
             stdio: ['pipe', 'pipe', 'pipe'],
             cwd: resolveHomeDir(),
-            env: cleanEnv
+            env: cleanEnv,
+            windowsHide: true,
         }).trim()
         // Output format: "2.0.54 (Claude Code)" or similar
         const match = output.match(/(\d+\.\d+\.\d+)/)
@@ -97,11 +98,12 @@ function findGlobalClaudePath(): string | null {
     
     // PRIMARY: Check if 'claude' command works directly from home dir with clean PATH
     try {
-        execSync('claude --version', { 
-            encoding: 'utf8', 
+        execSync('claude --version', {
+            encoding: 'utf8',
             stdio: ['pipe', 'pipe', 'pipe'],
             cwd: homeDir,
-            env: cleanEnv
+            env: cleanEnv,
+            windowsHide: true,
         })
         logger.debug('[Claude SDK] Global claude command available (checked with clean PATH)')
         return 'claude'
@@ -112,11 +114,12 @@ function findGlobalClaudePath(): string | null {
     // FALLBACK for Unix: try which to get actual path
     if (process.platform !== 'win32') {
         try {
-            const result = execSync('which claude', { 
-                encoding: 'utf8', 
+            const result = execSync('which claude', {
+                encoding: 'utf8',
                 stdio: ['pipe', 'pipe', 'pipe'],
                 cwd: homeDir,
-                env: cleanEnv
+                env: cleanEnv,
+                windowsHide: true,
             }).trim()
             if (result && existsSync(result)) {
                 logger.debug(`[Claude SDK] Found global claude path via which: ${result}`)

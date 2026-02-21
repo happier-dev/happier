@@ -248,6 +248,7 @@ export async function codexLocalLauncher<TMode>(opts: {
       cwd: opts.path,
       env: process.env,
       stdio: interactive ? 'inherit' : 'pipe',
+      windowsHide: true,
     });
     const managedChild = createManagedChildProcess(child);
     child.once('error', (error) => {

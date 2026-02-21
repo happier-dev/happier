@@ -309,12 +309,14 @@ export async function claudeLocal(opts: {
                     signal: opts.abort,
                     cwd: opts.path,
                     env,
+                    windowsHide: true,
                 })
                 : spawn(resolvedClaudeCliPath, args, {
                     stdio: ['inherit', 'inherit', 'inherit', 'ignore'],
                     signal: opts.abort,
                     cwd: opts.path,
                     env,
+                    windowsHide: true,
                 });
 
             // Forward signals to child process to prevent orphaned processes
