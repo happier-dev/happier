@@ -8,6 +8,8 @@ export const SENT_FROM_VALUES = [
     'ios',
     'mac',
     'retry',
+    'e2e',
+    'voice_agent',
 ] as const;
 
 export type SentFrom = (typeof SENT_FROM_VALUES)[number];
@@ -19,5 +21,8 @@ export type SentFrom = (typeof SENT_FROM_VALUES)[number];
  * - Known values parse as-is.
  * - Unknown/invalid values parse as `'unknown'` (forward compatible; never throws).
  */
-export const SentFromSchema = z.enum(SENT_FROM_VALUES).catch('unknown');
+export function createSentFromSchema(zod: typeof z) {
+    return zod.enum(SENT_FROM_VALUES).catch('unknown');
+}
 
+export const SentFromSchema = createSentFromSchema(z);

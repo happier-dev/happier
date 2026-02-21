@@ -175,7 +175,7 @@ export {
   type UpdateStateAckResponse,
 } from './updates.js';
 
-export { SENT_FROM_VALUES, SentFromSchema, type SentFrom } from './sentFrom.js';
+export { SENT_FROM_VALUES, SentFromSchema, createSentFromSchema, type SentFrom } from './sentFrom.js';
 export {
   AuthStatusEnvelopeSchema,
   AuthStatusResultSchema,
