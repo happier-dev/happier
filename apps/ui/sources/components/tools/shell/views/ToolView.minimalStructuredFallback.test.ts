@@ -15,6 +15,7 @@ vi.mock('react-native', () => ({
     TouchableOpacity: 'TouchableOpacity',
     ActivityIndicator: 'ActivityIndicator',
     NativeModules: {},
+    AppState: { addEventListener: () => ({ remove: () => {} }) },
     Platform: { OS: 'ios', select: (v: any) => v.ios },
 }));
 

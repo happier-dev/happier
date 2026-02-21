@@ -10,13 +10,10 @@ vi.mock('expo-router', () => ({
     useRouter: () => ({ push: vi.fn() }),
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    TouchableOpacity: 'TouchableOpacity',
-    ActivityIndicator: 'ActivityIndicator',
-    Platform: { OS: 'ios', select: (v: any) => v.ios },
-}));
+vi.mock('react-native', async () => {
+    const rn = await import('@/dev/reactNativeStub');
+    return { ...rn, AppState: rn.AppState, Platform: { ...rn.Platform, OS: 'ios', select: (v: any) => v.ios } };
+});
 
 vi.mock('react-native-unistyles', () => ({
     StyleSheet: { create: (styles: any) => styles },
@@ -28,6 +25,7 @@ vi.mock('react-native-unistyles', () => ({
                 text: '#000',
                 textSecondary: '#666',
                 warning: '#f90',
+                shadow: { color: '#000', opacity: 0.1 },
             },
         },
     }),

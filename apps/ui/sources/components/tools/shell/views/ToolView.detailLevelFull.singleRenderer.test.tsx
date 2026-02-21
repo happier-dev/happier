@@ -24,6 +24,7 @@ vi.mock('expo-router', () => ({
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
+    AGENT_IDS: [],
     resolveAgentIdFromFlavor: () => null,
     getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
 }));
