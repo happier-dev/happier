@@ -94,9 +94,11 @@ function loadMcpFromToml(filePath: string, label: string): Record<string, unknow
   }
 }
 
+const TOML_ESCAPES: Record<string, string> = { '\\"': '"', '\\\\': '\\', '\\n': '\n', '\\t': '\t', '\\r': '\r' };
+
 function parseTomlString(block: string, key: string): string | null {
   const re = new RegExp(`^${key}\\s*=\\s*"((?:[^"\\\\]|\\\\.)*)"`, 'm');
-  return block.match(re)?.[1]?.replace(/\\"/g, '"') ?? null;
+  return block.match(re)?.[1]?.replace(/\\./g, (m) => TOML_ESCAPES[m] ?? m) ?? null;
 }
 
 function parseTomlStringArray(block: string, key: string): string[] {
