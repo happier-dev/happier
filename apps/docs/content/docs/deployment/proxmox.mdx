@@ -221,7 +221,25 @@ For ongoing profile switching and multi-server usage, see [Features → Multi-se
 - **Reverse proxy**: You terminate TLS yourself (Caddy / Nginx / Traefik / etc).
 - **None**: Local network only.
 
-If you choose **Tailscale**, you can optionally paste a **Tailscale pre-auth key** (recommended: ephemeral, one-time). If you skip it, you can enroll later from inside the container.
+If you choose **Tailscale**, you can optionally paste a **Tailscale pre-auth key** (recommended: ephemeral, one-time). If you skip it (or leave it blank), the installer will still install Tailscale and you can enroll later from inside the container.
+
+#### Tailscale enrollment (auto vs manual)
+
+Tailscale enrollment is optional and depends on your tailnet policy:
+
+- **Auto-enroll (optional):** provide a pre-auth key during install. If it works, the installer will attempt to bring the node online and enable Tailscale Serve.
+- **Manual enroll (always works):** skip the key during install (or leave it blank), then run `tailscale up` later inside the container.
+
+If enrollment fails or a key is rejected/expired/revoked, the installer prints a “Login URL” (when available) and the exact manual commands to run.
+
+Manual enrollment commands (inside the container):
+
+```bash
+tailscale up
+tailscale set --operator=happier
+su - happier -c "/home/happier/.happier-stack/bin/hstack tailscale enable"
+su - happier -c "/home/happier/.happier-stack/bin/hstack tailscale url"
+```
 
 ### HStack release channel
 
