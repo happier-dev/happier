@@ -26,7 +26,7 @@ import { getDefaultClaudeCodePath, getCleanEnv, logDebug, streamToStdin } from '
 import type { Writable } from 'node:stream'
 import { logger } from '@/ui/logger'
 import { createManagedChildProcess } from '@/subprocess/supervision/managedChildProcess'
-import { stripNestedClaudeCodeEnv } from '@/utils/processEnv/stripNestedClaudeCodeEnv'
+import { stripNestedSessionDetectionEnv } from '@/utils/processEnv/stripNestedSessionDetectionEnv'
 
 /**
  * Query class manages Claude Code process interaction
@@ -347,7 +347,7 @@ export function query(config: {
     // Spawn Claude Code process
     // Use clean env for global claude to avoid local node_modules/.bin taking precedence
     const baseEnv = isCommandOnly ? getCleanEnv() : process.env
-    const spawnEnv: NodeJS.ProcessEnv = stripNestedClaudeCodeEnv({ ...baseEnv, ...envOverlay })
+    const spawnEnv: NodeJS.ProcessEnv = stripNestedSessionDetectionEnv({ ...baseEnv, ...envOverlay })
     logDebug(`Spawning Claude Code process: ${spawnCommand} ${spawnArgs.join(' ')} (using ${isCommandOnly ? 'clean' : 'normal'} env)`)
 
     const lowerSpawnCommand = typeof spawnCommand === 'string' ? spawnCommand.toLowerCase() : '';
