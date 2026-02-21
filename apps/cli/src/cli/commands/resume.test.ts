@@ -11,6 +11,7 @@ import { reloadConfiguration } from '@/configuration';
 import type { Credentials } from '@/persistence';
 import { encodeBase64, encrypt } from '@/api/encryption';
 import { readSessionAttachFromEnv } from '@/agent/runtime/sessionAttach';
+import { makeSessionFixtureRow } from '@/sessionControl/testFixtures';
 
 import { handleResumeCommand } from './resume';
 
@@ -61,18 +62,19 @@ describe('happier resume', () => {
       });
 
       const rawSession = {
-        id: 'sid_1',
-        dataEncryptionKey: encodeBase64(envelope),
-        metadataVersion: 1,
-        agentStateVersion: 1,
-        metadata: encodeBase64(
-          encrypt(sessionEncryptionKey, 'dataKey', {
-            path: directory,
-            host: 'test',
-            flavor: 'codex',
-          }),
-        ),
-        agentState: null,
+        ...makeSessionFixtureRow({
+          id: 'sid_1',
+          dataEncryptionKey: encodeBase64(envelope),
+          metadata: encodeBase64(
+            encrypt(sessionEncryptionKey, 'dataKey', {
+              path: directory,
+              host: 'test',
+              flavor: 'codex',
+            }),
+          ),
+          active: true,
+          activeAt: 1,
+        }),
       };
 
       const dispatched: { args: string[] }[] = [];

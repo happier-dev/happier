@@ -47,6 +47,18 @@ class Configuration {
   // MCP server SSE keepalive (prevents client idle timeouts on long-lived streams).
   public readonly mcpSseKeepAliveIntervalMs: number | null
 
+  // Transcript lookup / recovery (fallback path when socket ACK/broadcast is missed).
+  public readonly transcriptLookupRequestTimeoutMs: number
+  public readonly transcriptLookupPollIntervalMs: number
+  public readonly transcriptLookupErrorBackoffBaseMs: number
+  public readonly transcriptLookupErrorBackoffMaxMs: number
+  public readonly transcriptLookupKeepAliveEnabled: boolean
+
+  public readonly transcriptRecoveryDelayMs: number
+  public readonly transcriptRecoveryMaxWaitMs: number
+  public readonly transcriptRecoveryMaxConcurrent: number
+  public readonly transcriptRecoveryErrorLogThrottleMs: number
+
   // Claude remote TaskOutput sidechain import limits (defense-in-depth against huge transcripts).
   public readonly claudeTaskOutputMaxPendingPerAgent: number
   public readonly claudeTaskOutputMaxSeenUuidsPerSidechain: number
@@ -141,6 +153,70 @@ class Configuration {
     // Set to 0 to disable (not recommended).
     this.mcpSseKeepAliveIntervalMs =
       mcpKeepAliveRaw === '0' ? null : (Number.isFinite(mcpKeepAliveMs) && mcpKeepAliveMs >= 10 ? mcpKeepAliveMs : 15_000);
+
+    const transcriptLookupRequestTimeoutRaw = Number.parseInt(
+      String(process.env.HAPPIER_TRANSCRIPT_LOOKUP_REQUEST_TIMEOUT_MS ?? ''),
+      10,
+    );
+    this.transcriptLookupRequestTimeoutMs =
+      Number.isFinite(transcriptLookupRequestTimeoutRaw) && transcriptLookupRequestTimeoutRaw >= 250
+        ? transcriptLookupRequestTimeoutRaw
+        : 10_000;
+
+    const transcriptLookupPollIntervalRaw = Number.parseInt(
+      String(process.env.HAPPIER_TRANSCRIPT_LOOKUP_POLL_INTERVAL_MS ?? ''),
+      10,
+    );
+    this.transcriptLookupPollIntervalMs =
+      Number.isFinite(transcriptLookupPollIntervalRaw) && transcriptLookupPollIntervalRaw >= 10
+        ? transcriptLookupPollIntervalRaw
+        : 150;
+
+    const transcriptLookupErrorBackoffBaseRaw = Number.parseInt(
+      String(process.env.HAPPIER_TRANSCRIPT_LOOKUP_ERROR_BACKOFF_BASE_MS ?? ''),
+      10,
+    );
+    this.transcriptLookupErrorBackoffBaseMs =
+      Number.isFinite(transcriptLookupErrorBackoffBaseRaw) && transcriptLookupErrorBackoffBaseRaw >= 10
+        ? transcriptLookupErrorBackoffBaseRaw
+        : Math.max(50, this.transcriptLookupPollIntervalMs);
+
+    const transcriptLookupErrorBackoffMaxRaw = Number.parseInt(
+      String(process.env.HAPPIER_TRANSCRIPT_LOOKUP_ERROR_BACKOFF_MAX_MS ?? ''),
+      10,
+    );
+    this.transcriptLookupErrorBackoffMaxMs =
+      Number.isFinite(transcriptLookupErrorBackoffMaxRaw) && transcriptLookupErrorBackoffMaxRaw >= this.transcriptLookupErrorBackoffBaseMs
+        ? transcriptLookupErrorBackoffMaxRaw
+        : Math.max(this.transcriptLookupErrorBackoffBaseMs, 2_000);
+
+    const transcriptLookupKeepAliveRaw = String(process.env.HAPPIER_TRANSCRIPT_LOOKUP_KEEPALIVE ?? '').trim().toLowerCase();
+    this.transcriptLookupKeepAliveEnabled =
+      transcriptLookupKeepAliveRaw.length === 0 ? true : ['1', 'true', 'yes', 'on'].includes(transcriptLookupKeepAliveRaw);
+
+    const transcriptRecoveryDelayRaw = Number.parseInt(String(process.env.HAPPIER_TRANSCRIPT_RECOVERY_DELAY_MS ?? ''), 10);
+    this.transcriptRecoveryDelayMs =
+      Number.isFinite(transcriptRecoveryDelayRaw) && transcriptRecoveryDelayRaw >= 0 ? transcriptRecoveryDelayRaw : 500;
+
+    const transcriptRecoveryMaxWaitRaw = Number.parseInt(String(process.env.HAPPIER_TRANSCRIPT_RECOVERY_MAX_WAIT_MS ?? ''), 10);
+    this.transcriptRecoveryMaxWaitMs =
+      Number.isFinite(transcriptRecoveryMaxWaitRaw) && transcriptRecoveryMaxWaitRaw >= 250 ? transcriptRecoveryMaxWaitRaw : 7_500;
+
+    const transcriptRecoveryMaxConcurrentRaw = Number.parseInt(
+      String(process.env.HAPPIER_TRANSCRIPT_RECOVERY_MAX_CONCURRENT ?? ''),
+      10,
+    );
+    this.transcriptRecoveryMaxConcurrent =
+      Number.isFinite(transcriptRecoveryMaxConcurrentRaw) && transcriptRecoveryMaxConcurrentRaw >= 1
+        ? Math.floor(transcriptRecoveryMaxConcurrentRaw)
+        : 3;
+
+    const transcriptRecoveryLogThrottleRaw = Number.parseInt(
+      String(process.env.HAPPIER_TRANSCRIPT_RECOVERY_ERROR_LOG_THROTTLE_MS ?? ''),
+      10,
+    );
+    this.transcriptRecoveryErrorLogThrottleMs =
+      Number.isFinite(transcriptRecoveryLogThrottleRaw) && transcriptRecoveryLogThrottleRaw >= 0 ? transcriptRecoveryLogThrottleRaw : 5_000;
 
     const maxPendingRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_TASKOUTPUT_MAX_PENDING_PER_AGENT ?? ''), 10);
     const maxSeenUuidsRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_TASKOUTPUT_MAX_SEEN_UUIDS_PER_SIDECHAIN ?? ''), 10);

@@ -7,7 +7,7 @@ export class JsonlFollower {
     private readonly filePath: string;
     private readonly pollIntervalMs: number;
     private readonly startAtEnd: boolean;
-    private readonly onJson: (value: unknown) => void;
+    private readonly onJson: (value: unknown) => void | Promise<void>;
     private readonly onError?: (error: unknown) => void;
 
     private offsetBytes = 0;
@@ -22,7 +22,7 @@ export class JsonlFollower {
         filePath: string;
         pollIntervalMs: number;
         startAtEnd?: boolean;
-        onJson: (value: unknown) => void;
+        onJson: (value: unknown) => void | Promise<void>;
         onError?: (error: unknown) => void;
     }) {
         this.filePath = opts.filePath;
@@ -150,7 +150,7 @@ export class JsonlFollower {
             if (!trimmed) continue;
             try {
                 const parsed = JSON.parse(trimmed) as unknown;
-                this.onJson(parsed);
+                await this.onJson(parsed);
             } catch (e) {
                 this.onError?.(e);
             }

@@ -4,11 +4,11 @@ import { access, mkdir, readFile, writeFile } from 'fs/promises';
 import { dirname, join } from 'path';
 import { promisify } from 'util';
 import { configuration } from '@/configuration';
+import { CODEX_ACP_DIST_TAG } from '@happier-dev/protocol/installables';
 
 const execFileAsync = promisify(execFile);
 
 export const CODEX_ACP_NPM_PACKAGE = '@zed-industries/codex-acp';
-export const CODEX_ACP_DIST_TAG = 'latest';
 export const DEFAULT_CODEX_ACP_INSTALL_SPEC = `${CODEX_ACP_NPM_PACKAGE}@${CODEX_ACP_DIST_TAG}`;
 
 export const codexAcpInstallDir = () => join(configuration.happyHomeDir, 'tools', 'codex-acp');

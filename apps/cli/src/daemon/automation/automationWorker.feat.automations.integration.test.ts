@@ -221,6 +221,7 @@ describe('automationWorker integration', () => {
       encryption: TEST_ENCRYPTION,
       spawnSession,
       env: {
+        HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
         HAPPIER_AUTOMATION_CLAIM_POLL_MS: '20',
         HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '20',
         HAPPIER_AUTOMATION_LEASE_MS: '200',
@@ -229,7 +230,13 @@ describe('automationWorker integration', () => {
     });
 
     try {
-      await waitForCondition(() => server.state.succeeded.length === 1);
+      await waitForCondition(
+        () => server.state.succeeded.length === 1 || server.state.failed.length === 1,
+        30_000,
+      );
+      if (server.state.failed.length > 0) {
+        throw new Error(`Automation run failed: ${JSON.stringify(server.state.failed[0])}`);
+      }
       expect(spawnSession).toHaveBeenCalledTimes(1);
       expect(server.state.started).toHaveLength(1);
       expect(server.state.failed).toHaveLength(0);

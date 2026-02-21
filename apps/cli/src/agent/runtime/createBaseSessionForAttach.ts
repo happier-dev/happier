@@ -19,6 +19,7 @@ export async function createBaseSessionForAttach(opts: {
     return {
         id: existingSessionId,
         seq: 0,
+        encryptionMode: 'e2ee',
         encryptionKey: attach.encryptionKey,
         encryptionVariant: attach.encryptionVariant,
         metadata: opts.metadata,

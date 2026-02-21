@@ -7,6 +7,7 @@
 
 import { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import type { AgentBackend, AgentFactoryOptions, McpServerConfig } from '@/agent/core';
+import { DefaultTransport } from '@/agent/transport/DefaultTransport';
 import { resolveCodexAcpSpawn, type SpawnSpec } from '@/backends/codex/acp/resolveCommand';
 import type { PermissionMode } from '@/api/types';
 
@@ -23,6 +24,35 @@ export interface CodexAcpBackendOptions extends AgentFactoryOptions {
 export interface CodexAcpBackendResult {
   backend: AgentBackend;
   spawn: SpawnSpec;
+}
+
+function readPositiveIntEnv(name: string): number | null {
+  const raw = typeof process.env[name] === 'string' ? process.env[name]!.trim() : '';
+  if (!raw) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  if (!Number.isInteger(n)) return null;
+  if (n <= 0) return null;
+  return n;
+}
+
+function resolveCodexAcpInitTimeoutMs(spawn: SpawnSpec): number {
+  const base = readPositiveIntEnv('HAPPIER_CODEX_ACP_INIT_TIMEOUT_MS');
+  const npx = readPositiveIntEnv('HAPPIER_CODEX_ACP_NPX_INIT_TIMEOUT_MS');
+  if (spawn.command === 'npx') {
+    return npx ?? base ?? 180_000;
+  }
+  return base ?? 60_000;
+}
+
+class CodexAcpTransport extends DefaultTransport {
+  constructor(private readonly initTimeoutMs: number) {
+    super('codex');
+  }
+
+  override getInitTimeout(): number {
+    return this.initTimeoutMs;
+  }
 }
 
 export function createCodexAcpBackend(options: CodexAcpBackendOptions): CodexAcpBackendResult {
@@ -44,6 +74,9 @@ export function createCodexAcpBackend(options: CodexAcpBackendOptions): CodexAcp
     env: options.env,
     mcpServers: options.mcpServers,
     permissionHandler: options.permissionHandler,
+    transportHandler: spawn.command === 'npx'
+      ? new CodexAcpTransport(resolveCodexAcpInitTimeoutMs(spawn))
+      : undefined,
     authMethodId,
   };
 

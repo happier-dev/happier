@@ -26,12 +26,19 @@ export function decryptTranscriptRows(params: Readonly<{
     const createdAtMs =
       typeof row?.createdAt === 'number' && Number.isFinite(row.createdAt) ? Math.trunc(row.createdAt) : null;
     const content = row?.content as any;
-    const ciphertextBase64 = content && typeof content === 'object' && content.t === 'encrypted' ? content.c : null;
     if (seq === null || createdAtMs === null) continue;
-    if (typeof ciphertextBase64 !== 'string' || ciphertextBase64.trim().length === 0) continue;
 
     try {
-      const decrypted = decryptSessionPayload({ ctx: params.ctx, ciphertextBase64 }) as any;
+      let decrypted: any = null;
+      if (content && typeof content === 'object' && content.t === 'plain') {
+        decrypted = content.v;
+      } else {
+        const ciphertextBase64 =
+          content && typeof content === 'object' && content.t === 'encrypted' ? content.c : null;
+        if (typeof ciphertextBase64 !== 'string' || ciphertextBase64.trim().length === 0) continue;
+        decrypted = decryptSessionPayload({ ctx: params.ctx, ciphertextBase64 }) as any;
+      }
+
       const role = decrypted?.role;
       if (role !== 'user' && role !== 'agent') continue;
       const body = decrypted?.content;
@@ -51,4 +58,3 @@ export function decryptTranscriptRows(params: Readonly<{
 
   return out;
 }
-

@@ -50,7 +50,9 @@ describe('CodexRolloutMirror', () => {
     const mirror = new CodexRolloutMirror({
       filePath,
       debug: false,
-      onCodexSessionId: (id) => codexSessionIds.push(id),
+      onCodexSessionId: (id) => {
+        codexSessionIds.push(id);
+      },
       session: {
         sendUserTextMessage: (text: string) => userTexts.push(text),
         sendCodexMessage: (body: unknown) => codexBodies.push(body as CodexBody),
@@ -103,6 +105,56 @@ describe('CodexRolloutMirror', () => {
     }
   });
 
+  it('awaits codexSessionId publishing before processing later rollout lines', async () => {
+    const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'codex-rollout-mirror-')));
+    const filePath = join(root, 'rollout.jsonl');
+    await writeFile(
+      filePath,
+      [
+        JSON.stringify({ type: 'session_meta', payload: { id: 'sid' } }),
+        JSON.stringify({
+          type: 'response_item',
+          payload: { type: 'function_call', name: 'exec_command', arguments: '{\"cmd\":\"echo hi\"}', call_id: 'call_1' },
+        }),
+      ].join('\n') + '\n',
+      'utf8',
+    );
+
+    const codexBodies: CodexBody[] = [];
+    let resolvePublish!: () => void;
+    const publishPromise = new Promise<void>((resolve) => {
+      resolvePublish = resolve;
+    });
+
+    const mirror = new CodexRolloutMirror({
+      filePath,
+      debug: false,
+      onCodexSessionId: async () => {
+        await publishPromise;
+      },
+      session: {
+        sendUserTextMessage: () => {},
+        sendCodexMessage: (body: unknown) => codexBodies.push(body as CodexBody),
+        sendSessionEvent: () => {},
+      } as any,
+    });
+
+    const startPromise = mirror.start();
+    try {
+      // Mirror should not process subsequent lines until codexSessionId publishing completes.
+      expect(codexBodies.some((b) => b.type === 'tool-call')).toBe(false);
+
+      resolvePublish();
+
+      await startPromise;
+      await waitFor(() => {
+        expect(codexBodies.some((b) => b.type === 'tool-call' && b.callId === 'call_1')).toBe(true);
+      });
+    } finally {
+      await mirror.stop();
+    }
+  });
+
   it('replays existing JSONL content when starting after lines already exist', async () => {
     const root = rememberTempDir(await mkdtemp(join(tmpdir(), 'codex-rollout-mirror-')));
     const filePath = join(root, 'rollout.jsonl');
@@ -124,7 +176,9 @@ describe('CodexRolloutMirror', () => {
     const mirror = new CodexRolloutMirror({
       filePath,
       debug: false,
-      onCodexSessionId: (id) => codexSessionIds.push(id),
+      onCodexSessionId: (id) => {
+        codexSessionIds.push(id);
+      },
       session: {
         sendUserTextMessage: () => {},
         sendCodexMessage: (body: unknown) => codexBodies.push(body as CodexBody),

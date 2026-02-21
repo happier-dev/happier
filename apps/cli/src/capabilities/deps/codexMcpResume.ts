@@ -4,44 +4,25 @@ import { access, mkdir, readFile, writeFile } from 'fs/promises';
 import { dirname, join } from 'path';
 import { promisify } from 'util';
 import { configuration } from '@/configuration';
+import { CODEX_MCP_RESUME_DIST_TAG } from '@happier-dev/protocol/installables';
 
 const execFileAsync = promisify(execFile);
 
 export const CODEX_MCP_RESUME_NPM_PACKAGE = '@leeroy/codex-mcp-resume';
-export const CODEX_MCP_RESUME_DIST_TAG = 'happy-codex-resume';
 export const DEFAULT_CODEX_MCP_RESUME_INSTALL_SPEC = `${CODEX_MCP_RESUME_NPM_PACKAGE}@${CODEX_MCP_RESUME_DIST_TAG}`;
 
 export const codexResumeInstallDir = () => join(configuration.happyHomeDir, 'tools', 'codex-mcp-resume');
-export const codexResumeLegacyInstallDir = () => join(configuration.happyHomeDir, 'tools', 'codex-resume');
 
 const codexResumeBinPath = () => {
     const binName = process.platform === 'win32' ? 'codex-mcp-resume.cmd' : 'codex-mcp-resume';
     return join(codexResumeInstallDir(), 'node_modules', '.bin', binName);
 };
-const codexResumeLegacyBinPath = () => {
-    const binName = process.platform === 'win32' ? 'codex-mcp-resume.cmd' : 'codex-mcp-resume';
-    return join(codexResumeLegacyInstallDir(), 'node_modules', '.bin', binName);
-};
 
 const codexResumeStatePath = () => join(codexResumeInstallDir(), 'install-state.json');
-const codexResumeLegacyStatePath = () => join(codexResumeLegacyInstallDir(), 'install-state.json');
 
 async function readCodexResumeState(): Promise<{ lastInstallLogPath: string | null } | null> {
     try {
         const raw = await readFile(codexResumeStatePath(), 'utf8');
-        const parsed = JSON.parse(raw);
-        const lastInstallLogPath = typeof parsed?.lastInstallLogPath === 'string' ? parsed.lastInstallLogPath : null;
-        return { lastInstallLogPath };
-    } catch {
-        return null;
-    }
-}
-
-async function readCodexResumeStateWithFallback(): Promise<{ lastInstallLogPath: string | null } | null> {
-    const primary = await readCodexResumeState();
-    if (primary) return primary;
-    try {
-        const raw = await readFile(codexResumeLegacyStatePath(), 'utf8');
         const parsed = JSON.parse(raw);
         const lastInstallLogPath = typeof parsed?.lastInstallLogPath === 'string' ? parsed.lastInstallLogPath : null;
         return { lastInstallLogPath };
@@ -164,8 +145,7 @@ export async function getCodexMcpResumeDepStatus(opts?: {
     distTag?: string;
 }): Promise<CodexMcpResumeDepData> {
     const primaryBinPath = codexResumeBinPath();
-    const legacyBinPath = codexResumeLegacyBinPath();
-    const state = await readCodexResumeStateWithFallback();
+    const state = await readCodexResumeState();
     const accessMode = process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK;
 
     const installed = await (async () => {
@@ -173,27 +153,12 @@ export async function getCodexMcpResumeDepStatus(opts?: {
             await access(primaryBinPath, accessMode);
             return true;
         } catch {
-            try {
-                await access(legacyBinPath, accessMode);
-                return true;
-            } catch {
-                return false;
-            }
+            return false;
         }
     })();
 
-    const binPath = installed
-        ? await (async () => {
-            try {
-                await access(primaryBinPath, accessMode);
-                return primaryBinPath;
-            } catch {
-                return legacyBinPath;
-            }
-        })()
-        : null;
-
-    const installDir = binPath?.startsWith(codexResumeLegacyInstallDir()) ? codexResumeLegacyInstallDir() : codexResumeInstallDir();
+    const binPath = installed ? primaryBinPath : null;
+    const installDir = codexResumeInstallDir();
     const installedVersion = await readInstalledNpmPackageVersion({ installDir, packageName: CODEX_MCP_RESUME_NPM_PACKAGE });
     const includeRegistry = Boolean(opts?.includeRegistry);
     const onlyIfInstalled = Boolean(opts?.onlyIfInstalled);

@@ -11,6 +11,7 @@ import os from 'node:os';
 import { resolve } from 'node:path';
 
 import type { AgentId } from '@happier-dev/agents';
+import { buildAcpSessionModeOverrideV1, buildModelOverrideV1 } from '@happier-dev/protocol';
 
 import type { AgentState, Metadata, PermissionMode } from '@/api/types';
 import { configuration } from '@/configuration';
@@ -114,20 +115,18 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
         ...(typeof opts.permissionModeUpdatedAt === 'number' && { permissionModeUpdatedAt: opts.permissionModeUpdatedAt }),
         ...(typeof opts.agentModeId === 'string' && opts.agentModeId.trim()
             ? {
-                  acpSessionModeOverrideV1: {
-                      v: 1,
+                  acpSessionModeOverrideV1: buildAcpSessionModeOverrideV1({
                       updatedAt: typeof opts.agentModeUpdatedAt === 'number' ? opts.agentModeUpdatedAt : Date.now(),
                       modeId: opts.agentModeId.trim(),
-                  },
+                  }),
               }
             : {}),
         ...(typeof opts.modelId === 'string' && opts.modelId.trim()
             ? {
-                  modelOverrideV1: {
-                      v: 1,
+                  modelOverrideV1: buildModelOverrideV1({
                       updatedAt: typeof opts.modelUpdatedAt === 'number' ? opts.modelUpdatedAt : Date.now(),
                       modelId: opts.modelId.trim(),
-                  },
+                  }),
               }
             : {}),
     };

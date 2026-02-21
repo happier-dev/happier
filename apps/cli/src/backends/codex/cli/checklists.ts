@@ -1,5 +1,5 @@
-import { CODEX_MCP_RESUME_DIST_TAG } from '@/capabilities/deps/codexMcpResume';
 import type { AgentChecklistContributions } from '@/backends/types';
+import { CODEX_ACP_DEP_ID, CODEX_MCP_RESUME_DEP_ID, CODEX_MCP_RESUME_DIST_TAG } from '@happier-dev/protocol/installables';
 
 export const checklists = {
   'resume.codex': [
@@ -11,11 +11,10 @@ export const checklists = {
     // - `includeAcpCapabilities` so the UI can enable/disable resume correctly when `expCodexAcp` is enabled
     // - dep statuses so we can block with a helpful install prompt
     { id: 'cli.codex', params: { includeAcpCapabilities: true, includeLoginStatus: true } },
-    { id: 'dep.codex-acp', params: { onlyIfInstalled: true, includeRegistry: true } },
+    { id: CODEX_ACP_DEP_ID, params: { onlyIfInstalled: true, includeRegistry: true } },
     {
-      id: 'dep.codex-mcp-resume',
+      id: CODEX_MCP_RESUME_DEP_ID,
       params: { includeRegistry: true, onlyIfInstalled: true, distTag: CODEX_MCP_RESUME_DIST_TAG },
     },
   ],
 } satisfies AgentChecklistContributions;
-

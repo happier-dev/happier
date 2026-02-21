@@ -43,7 +43,7 @@ describe('resolveCodexMcpResumeServerCommand', () => {
     }
   });
 
-  it('falls back to the legacy install bin when present', async () => {
+  it('does not fall back to the legacy install bin when present', async () => {
     const home = makeTempHomeDir();
     const bin = join(home, 'tools', 'codex-resume', 'node_modules', '.bin', process.platform === 'win32' ? 'codex-mcp-resume.cmd' : 'codex-mcp-resume');
     writeExecutable(bin);
@@ -56,7 +56,28 @@ describe('resolveCodexMcpResumeServerCommand', () => {
         vi.resetModules();
         const mod = await import('./resolveMcpResumeServer');
         const resolved = await mod.resolveCodexMcpResumeServerCommand();
-        expect(resolved).toBe(bin);
+        expect(resolved).toBeNull();
+      });
+    } finally {
+      cleanupTempDir(home);
+    }
+  });
+
+  it('ignores legacy HAPPIER_CODEX_RESUME_BIN env override', async () => {
+    const home = makeTempHomeDir();
+    const legacyOverride = join(home, 'override', 'codex-mcp-resume');
+    writeExecutable(legacyOverride);
+
+    try {
+      await withResumeEnv({
+        HAPPIER_HOME_DIR: home,
+        HAPPIER_CODEX_RESUME_MCP_SERVER_BIN: undefined,
+        HAPPIER_CODEX_RESUME_BIN: legacyOverride,
+      }, async () => {
+        vi.resetModules();
+        const mod = await import('./resolveMcpResumeServer');
+        const resolved = await mod.resolveCodexMcpResumeServerCommand();
+        expect(resolved).toBeNull();
       });
     } finally {
       cleanupTempDir(home);

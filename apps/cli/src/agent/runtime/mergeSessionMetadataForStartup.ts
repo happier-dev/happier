@@ -1,5 +1,6 @@
 import type { Metadata, PermissionMode } from '@/api/types';
 import { computeMonotonicUpdatedAt } from '@happier-dev/agents';
+import { buildAcpSessionModeOverrideV1, buildModelOverrideV1 } from '@happier-dev/protocol';
 
 export type PermissionModeOverride = {
     mode: PermissionMode;
@@ -304,7 +305,7 @@ export function mergeSessionMetadataForStartup(opts: {
         mode,
     });
     if (acpMode) {
-        (merged as any).acpSessionModeOverrideV1 = { v: 1, updatedAt: acpMode.updatedAt, modeId: acpMode.modeId };
+        (merged as any).acpSessionModeOverrideV1 = buildAcpSessionModeOverrideV1({ updatedAt: acpMode.updatedAt, modeId: acpMode.modeId });
     } else if (mode === 'attach') {
         // Attach safety: explicitly remove any next-derived override fields.
         delete (merged as any).acpSessionModeOverrideV1;
@@ -318,7 +319,7 @@ export function mergeSessionMetadataForStartup(opts: {
         mode,
     });
     if (model) {
-        (merged as any).modelOverrideV1 = { v: 1, updatedAt: model.updatedAt, modelId: model.modelId };
+        (merged as any).modelOverrideV1 = buildModelOverrideV1({ updatedAt: model.updatedAt, modelId: model.modelId });
     } else if (mode === 'attach') {
         // Attach safety: explicitly remove any next-derived override fields.
         delete (merged as any).modelOverrideV1;

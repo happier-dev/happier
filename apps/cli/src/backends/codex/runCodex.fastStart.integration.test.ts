@@ -95,6 +95,7 @@ vi.mock('@/ui/logger', () => ({
     debugLargeJson: vi.fn(),
     infoDeveloper: vi.fn(),
     warn: vi.fn(),
+    getLogPath: vi.fn(() => '/tmp/happier.log'),
     logFilePath: '/tmp/happier.log',
   },
 }));
@@ -137,6 +138,8 @@ describe('runCodex fast-start', () => {
   it('invokes local TUI spawn without waiting for backend API initialization', async () => {
     const prevTiming = process.env.HAPPIER_STARTUP_TIMING_ENABLED;
     process.env.HAPPIER_STARTUP_TIMING_ENABLED = '1';
+    const { reloadConfiguration } = await import('@/configuration');
+    reloadConfiguration();
 
     const { runCodex } = await import('./runCodex');
     const { logger } = await import('@/ui/logger');
@@ -159,6 +162,7 @@ describe('runCodex fast-start', () => {
 
       if (prevTiming === undefined) delete process.env.HAPPIER_STARTUP_TIMING_ENABLED;
       else process.env.HAPPIER_STARTUP_TIMING_ENABLED = prevTiming;
+      reloadConfiguration();
     }
 
     const debugCalls = (logger.debug as any).mock?.calls?.map((c: any[]) => c[0]) ?? [];
@@ -215,6 +219,8 @@ describe('runCodex fast-start', () => {
   it('does not attach the deferred session to an offline stub; flushes buffered writes only after reconnection swap', async () => {
     const prevTiming = process.env.HAPPIER_STARTUP_TIMING_ENABLED;
     process.env.HAPPIER_STARTUP_TIMING_ENABLED = '1';
+    const { reloadConfiguration } = await import('@/configuration');
+    reloadConfiguration();
 
     const offlineStubCalls: Array<'sendSessionEvent' | 'updateMetadata'> = [];
     const offlineStub = {
@@ -345,6 +351,7 @@ describe('runCodex fast-start', () => {
       await runPromise;
       if (prevTiming === undefined) delete process.env.HAPPIER_STARTUP_TIMING_ENABLED;
       else process.env.HAPPIER_STARTUP_TIMING_ENABLED = prevTiming;
+      reloadConfiguration();
     }
 
     if (testError) {

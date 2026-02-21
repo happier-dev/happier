@@ -36,8 +36,8 @@ function truncateText(text: string, maxChars: number): string {
 
 export function decryptTranscriptTextItems(params: Readonly<{
   rows: readonly RawTranscriptRow[];
-  encryptionKey: Uint8Array;
-  encryptionVariant: 'dataKey';
+  encryptionKey?: Uint8Array;
+  encryptionVariant?: 'dataKey';
   maxTextChars?: number;
 }>): HappierReplayDialogItem[] {
   const maxTextChars = params.maxTextChars;
@@ -48,9 +48,16 @@ export function decryptTranscriptTextItems(params: Readonly<{
         typeof (row as any)?.seq === 'number' && Number.isFinite((row as any).seq) ? Number((row as any).seq) : null;
       const createdAt = typeof row?.createdAt === 'number' && Number.isFinite(row.createdAt) ? row.createdAt : 0;
       const content = row?.content as any;
-      if (!content || content.t !== 'encrypted' || typeof content.c !== 'string') continue;
+      if (!content || typeof content !== 'object') continue;
 
-      const decrypted: any = decrypt(params.encryptionKey, params.encryptionVariant, decodeBase64(content.c));
+      let decrypted: any = null;
+      if (content.t === 'plain') {
+        decrypted = content.v;
+      } else {
+        if (content.t !== 'encrypted' || typeof content.c !== 'string') continue;
+        if (!params.encryptionKey || params.encryptionVariant !== 'dataKey') continue;
+        decrypted = decrypt(params.encryptionKey, params.encryptionVariant, decodeBase64(content.c));
+      }
       if (!decrypted || typeof decrypted !== 'object') continue;
 
       const role = decrypted.role;

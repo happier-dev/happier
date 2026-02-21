@@ -15,6 +15,7 @@ function createSessionResponse(id: string, metadata: Metadata, state: AgentState
   return {
     id,
     seq: 0,
+    encryptionMode: 'e2ee',
     encryptionKey: new Uint8Array([1]),
     encryptionVariant: 'legacy',
     metadata,

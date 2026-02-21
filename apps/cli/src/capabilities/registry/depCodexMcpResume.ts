@@ -1,10 +1,11 @@
 import type { Capability } from '../service';
 import { CapabilityError } from '../errors';
 import { getCodexMcpResumeDepStatus, installCodexMcpResume } from '../deps/codexMcpResume';
+import { CODEX_MCP_RESUME_DEP_ID } from '@happier-dev/protocol/installables';
 
 export const codexMcpResumeDepCapability: Capability = {
     descriptor: {
-        id: 'dep.codex-mcp-resume',
+        id: CODEX_MCP_RESUME_DEP_ID,
         kind: 'dep',
         title: 'Codex MCP resume',
         methods: {

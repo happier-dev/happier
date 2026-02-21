@@ -8,10 +8,6 @@ import { configuration } from '@/configuration';
 export type SpawnSpec = { command: string; args: string[] };
 export type ResolveCodexAcpSpawnOptions = { permissionMode?: PermissionMode };
 
-function isTruthyEnv(value: string | undefined): boolean {
-  return typeof value === 'string' && ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
-}
-
 type NpxMode = 'auto' | 'never' | 'force';
 
 function readCodexAcpNpxMode(): NpxMode {
@@ -19,9 +15,6 @@ function readCodexAcpNpxMode(): NpxMode {
     ? process.env.HAPPIER_CODEX_ACP_NPX_MODE.trim().toLowerCase()
     : '';
   if (raw === 'never' || raw === 'force' || raw === 'auto') return raw;
-
-  // Backward-compat: legacy allow flag. (Default is already auto.)
-  if (isTruthyEnv(process.env.HAPPIER_CODEX_ACP_ALLOW_NPX)) return 'auto';
 
   return 'auto';
 }
@@ -51,9 +44,7 @@ function readCodexAcpConfigOverrides(): string[] {
   const raw =
     typeof process.env.HAPPIER_CODEX_ACP_CONFIG_OVERRIDES === 'string'
       ? process.env.HAPPIER_CODEX_ACP_CONFIG_OVERRIDES
-      : typeof process.env.HAPPY_CODEX_ACP_CONFIG_OVERRIDES === 'string'
-        ? process.env.HAPPY_CODEX_ACP_CONFIG_OVERRIDES
-        : '';
+      : '';
   return raw
     .split('\n')
     .map((l) => l.trim())

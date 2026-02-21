@@ -92,7 +92,7 @@ export const codexDaemonSpawnHooks: DaemonSpawnHooks = {
       return {
         ok: false,
         errorMessage:
-          'Codex ACP is enabled, but codex-acp is not installed and npx is not available. Install codex-acp from the Happier app (Machine details → Codex ACP), install Node.js/npm (for npx), or disable the experiment.',
+          'Codex ACP is enabled, but codex-acp is not installed and npx is not available. Install codex-acp from the Happier app (Machine details → Installables), install Node.js/npm (for npx), or disable the experiment.',
       };
     }
 
@@ -103,13 +103,13 @@ export const codexDaemonSpawnHooks: DaemonSpawnHooks = {
         return {
           ok: false,
           errorMessage:
-            'Codex ACP is enabled, but codex-acp is not installed (and npx fallback is disabled). Install codex-acp from the Happier app (Machine details → Codex ACP), add codex-acp to PATH, or disable the experiment.',
+            'Codex ACP is enabled, but codex-acp is not installed (and npx fallback is disabled). Install codex-acp from the Happier app (Machine details → Installables), add codex-acp to PATH, or disable the experiment.',
         };
       }
       return {
         ok: false,
         errorMessage:
-          'Codex ACP is enabled, but codex-acp could not be resolved on PATH. Install codex-acp from the Happier app (Machine details → Codex ACP), add codex-acp to PATH, or disable the experiment.',
+          'Codex ACP is enabled, but codex-acp could not be resolved on PATH. Install codex-acp from the Happier app (Machine details → Installables), add codex-acp to PATH, or disable the experiment.',
       };
     }
 

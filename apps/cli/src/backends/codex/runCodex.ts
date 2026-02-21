@@ -49,11 +49,9 @@ import {
 } from './localControl/localControlSupport';
 import { createCodexLocalControlSupportResolver } from './localControl/createLocalControlSupportResolver';
 import { resolveCodexMcpServerSpawn } from './resume/resolveCodexMcpServer';
-import { probeCodexAcpLoadSessionSupport } from './acp/probeLoadSessionSupport';
 import { resolveCodexMessageModel } from './utils/resolveCodexMessageModel';
 import { buildCodexMcpStartConfigForMessage } from './utils/buildCodexMcpStartConfigForMessage';
 import { createModelOverrideSynchronizer } from '@/agent/runtime/modelOverrideSync';
-import { resolveCodexAcpResumePreflight } from './utils/codexAcpResumePreflight';
 import { resolveCodexMcpPolicyForPermissionMode } from './utils/permissionModePolicy';
 import {
     createCodexMcpMessageHandler,
@@ -163,6 +161,9 @@ export async function runCodex(opts: {
     const timing = createStartupTiming({ enabled: configuration.startupTimingEnabled, nowMs });
 
     const resumeIdFromArgs = typeof opts.resume === 'string' && opts.resume.trim().length > 0 ? opts.resume.trim() : null;
+    // If the user explicitly provided --resume, fail closed for that specific resume id.
+    // Once the explicit resume succeeds, subsequent best-effort resume attempts (e.g. after abort) may fall back.
+    let strictResumeIdForRun: string | null = resumeIdFromArgs;
     let permissionModeSeededFromCache = false;
     if (resumeIdFromArgs && typeof opts.permissionMode !== 'string') {
         const cached = readStartupOverridesCacheForBackend({
@@ -757,26 +758,6 @@ export async function runCodex(opts: {
     // Start Context 
     //
 
-    if (useCodexAcp) {
-        const resumeId = storedSessionIdForResume?.trim();
-        if (resumeId) {
-            const stopProbeSpan = timing.startSpan('codex_acp_probe');
-            const probe = await probeCodexAcpLoadSessionSupport({ signal: abortController.signal });
-            stopProbeSpan();
-            const preflight = resolveCodexAcpResumePreflight({
-                resumeId,
-                probe: probe.ok
-                    ? { ok: true, loadSessionSupported: probe.loadSession }
-                    : { ok: false, errorMessage: probe.error.message },
-            });
-            if (!preflight.ok) {
-                messageBuffer.addMessage(preflight.errorMessage, 'status');
-                session.sendSessionEvent({ type: 'message', message: preflight.errorMessage });
-                throw new Error(preflight.errorMessage);
-            }
-        }
-    }
-
     // Start Happier MCP server (HTTP) and prepare STDIO bridge config for Codex
     const happierBridge = await createHappierMcpBridge(session, { commandMode: 'current-process' });
     happierMcpServer = happierBridge.happierMcpServer;
@@ -1106,12 +1087,30 @@ export async function runCodex(opts: {
                             messageBuffer.addMessage('Resuming previous context…', 'status');
                             try {
                                 await codexAcp.startOrLoad({ resumeId, importHistory: storedSessionIdFromLocalControl !== true });
+                                if (strictResumeIdForRun && resumeId === strictResumeIdForRun) {
+                                    strictResumeIdForRun = null;
+                                }
                                 storedSessionIdForResume = nextStoredSessionIdForResumeAfterAttempt(storedSessionIdForResume, {
                                     attempted: true,
                                     success: true,
                                 });
                                 storedSessionIdFromLocalControl = false;
                             } catch (e) {
+                                const isStrict = Boolean(strictResumeIdForRun && resumeId === strictResumeIdForRun);
+                                if (isStrict) {
+                                    const reason = formatErrorForUi(e);
+                                    const message =
+                                        `Failed to resume this Codex ACP session (${resumeId}).\n` +
+                                        `Reason: ${reason}\n` +
+                                        `Fix: install/enable a Codex ACP build that supports resume (loadSession), or disable Codex ACP and use Codex MCP resume.\n` +
+                                        `Note: Happier refuses to start a new Codex session when --resume was requested.`;
+                                    messageBuffer.addMessage(message, 'status');
+                                    session.sendSessionEvent({ type: 'message', message });
+                                    const err = new Error(message);
+                                    err.name = 'CodexAcpResumeError';
+                                    throw err;
+                                }
+
                                 logger.debug('[Codex ACP] Resume failed; starting a new session instead', e);
                                 messageBuffer.addMessage('Resume failed; starting a new session.', 'status');
                                 session.sendSessionEvent({ type: 'message', message: 'Resume failed; starting a new session.' });
@@ -1238,6 +1237,11 @@ export async function runCodex(opts: {
             } catch (error) {
                 logger.warn('Error in codex session:', error);
                 const isAbortError = error instanceof Error && error.name === 'AbortError';
+                const isResumeError = error instanceof Error && error.name === 'CodexAcpResumeError';
+
+                if (isResumeError) {
+                    throw error;
+                }
 
                 if (isAbortError) {
                     messageBuffer.addMessage('Aborted by user', 'status');

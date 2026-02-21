@@ -18,6 +18,20 @@ function encryptedRow(params: { seq: number; createdAt: number; value: unknown }
 }
 
 describe('decryptTranscriptTextItems', () => {
+  it('accepts plaintext transcript rows without encryption materials (no decrypt)', () => {
+    const out = decryptTranscriptTextItems({
+      rows: [
+        {
+          seq: 1,
+          createdAt: 1,
+          content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'aaa' } } },
+        },
+      ],
+    });
+
+    expect(out).toEqual([{ role: 'User', createdAt: 1, text: 'aaa' }]);
+  });
+
   it('sorts by seq when available (not createdAt)', () => {
     const a = encryptedRow({
       seq: 2,

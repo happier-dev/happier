@@ -1876,7 +1876,10 @@ export class AcpBackend implements AgentBackend {
         // Don't resolve immediately: give stderr/process-exit handlers a chance to surface errors
         // before we declare the turn complete (prevents swallowing "exit non-zero" or auth errors).
         const transportIdleTimeoutMs = this.transport.getIdleTimeout?.() ?? DEFAULT_IDLE_TIMEOUT_MS;
-        const graceMs = Math.max(25, transportIdleTimeoutMs);
+        // NOTE: When an ACP agent crashes/exits shortly after responding to session/prompt, the
+        // subprocess exit can race with our "no updates" idle fallback. Use a small minimum grace
+        // to reduce flakes and avoid incorrectly treating a failed turn as complete.
+        const graceMs = Math.max(35, transportIdleTimeoutMs);
         if (this.postPromptCompletionIdleTimeout) {
           clearTimeout(this.postPromptCompletionIdleTimeout);
         }

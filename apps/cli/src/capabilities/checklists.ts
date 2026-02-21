@@ -3,6 +3,7 @@ import { AGENTS } from '@/backends/catalog';
 import { CATALOG_AGENT_IDS } from '@/backends/types';
 import type { CatalogAgentId } from '@/backends/types';
 import { AGENTS_CORE } from '@happier-dev/agents';
+import { CODEX_ACP_DEP_ID, CODEX_MCP_RESUME_DEP_ID } from '@happier-dev/protocol/installables';
 
 import { CHECKLIST_IDS, resumeChecklistId, type ChecklistId } from './checklistIds';
 import type { CapabilityDetectRequest } from './types';
@@ -58,8 +59,8 @@ const baseChecklists = {
         ...cliAgentRequests,
         { id: 'tool.tmux' },
         { id: 'tool.executionRuns' },
-        { id: 'dep.codex-mcp-resume' },
-        { id: 'dep.codex-acp' },
+        { id: CODEX_MCP_RESUME_DEP_ID },
+        { id: CODEX_ACP_DEP_ID },
     ],
     ...resumeChecklistEntries,
 } satisfies Record<ChecklistId, CapabilityDetectRequest[]>;

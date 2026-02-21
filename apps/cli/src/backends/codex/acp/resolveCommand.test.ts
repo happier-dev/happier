@@ -7,9 +7,7 @@ import type { PermissionMode } from '@/api/types';
 const ENV_KEYS = [
   'HAPPIER_CODEX_ACP_BIN',
   'HAPPIER_CODEX_ACP_CONFIG_OVERRIDES',
-  'HAPPY_CODEX_ACP_CONFIG_OVERRIDES',
   'HAPPIER_HOME_DIR',
-  'HAPPIER_CODEX_ACP_ALLOW_NPX',
   'HAPPIER_CODEX_ACP_NPX_MODE',
   'PATH',
 ] as const;
@@ -17,9 +15,7 @@ const ENV_KEYS = [
 const ORIGINAL_ENV: Record<(typeof ENV_KEYS)[number], string | undefined> = {
   HAPPIER_CODEX_ACP_BIN: process.env.HAPPIER_CODEX_ACP_BIN,
   HAPPIER_CODEX_ACP_CONFIG_OVERRIDES: process.env.HAPPIER_CODEX_ACP_CONFIG_OVERRIDES,
-  HAPPY_CODEX_ACP_CONFIG_OVERRIDES: process.env.HAPPY_CODEX_ACP_CONFIG_OVERRIDES,
   HAPPIER_HOME_DIR: process.env.HAPPIER_HOME_DIR,
-  HAPPIER_CODEX_ACP_ALLOW_NPX: process.env.HAPPIER_CODEX_ACP_ALLOW_NPX,
   HAPPIER_CODEX_ACP_NPX_MODE: process.env.HAPPIER_CODEX_ACP_NPX_MODE,
   PATH: process.env.PATH,
 };
@@ -138,7 +134,6 @@ describe.sequential('resolveCodexAcpSpawn', () => {
     const { dir } = await createFakeCodexAcpBinary();
     process.env.HAPPIER_HOME_DIR = dir;
     delete process.env.HAPPIER_CODEX_ACP_BIN;
-    delete process.env.HAPPIER_CODEX_ACP_ALLOW_NPX;
     delete process.env.HAPPIER_CODEX_ACP_NPX_MODE;
 
     const pathDir = await mkdtemp(join(tmpdir(), 'happier-codex-acp-path-'));

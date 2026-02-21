@@ -151,4 +151,33 @@ describe('createCodexAcpBackend', () => {
       await rm(homeDir, { recursive: true, force: true });
     }
   });
+
+  it('uses a longer init timeout when codex ACP is resolved via npx fallback', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-home-'));
+    const captured: Array<any> = [];
+    try {
+      await withEnv({
+        HAPPIER_VARIANT: 'stable',
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_CODEX_ACP_NPX_MODE: 'force',
+      }, async () => {
+        vi.doMock('@/agent/acp/AcpBackend', () => ({
+          AcpBackend: class {
+            constructor(opts: any) {
+              captured.push(opts);
+            }
+          },
+        }));
+
+        const mod = await import('./backend');
+        mod.createCodexAcpBackend({ cwd: homeDir, env: {} });
+
+        expect(captured).toHaveLength(1);
+        expect(captured[0].command).toBe('npx');
+        expect(captured[0].transportHandler?.getInitTimeout?.()).toBeGreaterThan(60_000);
+      });
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
 });

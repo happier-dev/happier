@@ -61,7 +61,9 @@ describe('JsonlFollower', () => {
     const follower = new JsonlFollower({
       filePath,
       pollIntervalMs: 5,
-      onJson: (value: unknown) => received.push(value),
+      onJson: (value: unknown) => {
+        received.push(value);
+      },
       onError: (error: unknown) => errors.push(error),
     });
     await follower.start();
@@ -88,7 +90,9 @@ describe('JsonlFollower', () => {
     const follower = new JsonlFollower({
       filePath,
       pollIntervalMs: 5,
-      onJson: (value: unknown) => received.push(value),
+      onJson: (value: unknown) => {
+        received.push(value);
+      },
     });
     await follower.start();
 
@@ -118,7 +122,9 @@ describe('JsonlFollower', () => {
       filePath,
       pollIntervalMs: 5,
       startAtEnd: true,
-      onJson: (value: unknown) => received.push(value),
+      onJson: (value: unknown) => {
+        received.push(value);
+      },
     });
     await follower.start();
 
@@ -147,7 +153,9 @@ describe('JsonlFollower', () => {
     const follower = new JsonlFollower({
       filePath,
       pollIntervalMs: 5,
-      onJson: (value: unknown) => received.push(value),
+      onJson: (value: unknown) => {
+        received.push(value);
+      },
       onError: (error: unknown) => errors.push(error),
     });
     await follower.start();

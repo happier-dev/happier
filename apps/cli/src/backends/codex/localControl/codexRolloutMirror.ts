@@ -11,7 +11,7 @@ export class CodexRolloutMirror {
             filePath: string;
             session: ApiSessionClient;
             debug: boolean;
-            onCodexSessionId: (id: string) => void;
+            onCodexSessionId: (id: string) => void | Promise<void>;
         },
     ) {}
 
@@ -36,11 +36,11 @@ export class CodexRolloutMirror {
         await follower?.stop();
     }
 
-    private onJson(value: unknown): void {
+    private async onJson(value: unknown): Promise<void> {
         const actions = mapCodexRolloutEventToActions(value, { debug: this.opts.debug });
         for (const action of actions) {
             if (action.type === 'codex-session-id') {
-                this.opts.onCodexSessionId(action.id);
+                await this.opts.onCodexSessionId(action.id);
                 continue;
             }
             if (action.type === 'user-text') {

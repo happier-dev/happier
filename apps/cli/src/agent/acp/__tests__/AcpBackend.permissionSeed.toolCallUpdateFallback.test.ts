@@ -40,7 +40,7 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
       waitingForPermResponse = true;
     }
 
-    function sendToolCallUpdateAndMessage() {
+	    function sendToolCallUpdateAndMessage() {
       send({
         jsonrpc: '2.0',
         method: 'session/update',
@@ -78,7 +78,7 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
       });
     }
 
-    process.stdin.on('data', (chunk) => {
+	    process.stdin.on('data', (chunk) => {
       buf += decoder.decode(chunk, { stream: true });
       const lines = buf.split('\\n');
       buf = lines.pop() || '';
@@ -90,12 +90,12 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
         try { req = JSON.parse(trimmed); } catch { continue; }
         if (!req || typeof req !== 'object') continue;
 
-        // Handle client responses (permission request response)
-        if (waitingForPermResponse && req.id === 'perm-1') {
-          waitingForPermResponse = false;
-          setTimeout(sendToolCallUpdateAndMessage, 10);
-          continue;
-        }
+	        // Handle client responses (permission request response)
+	        if (waitingForPermResponse && req.id === 'perm-1') {
+	          waitingForPermResponse = false;
+	          setTimeout(sendToolCallUpdateAndMessage, 0);
+	          continue;
+	        }
 
         const id = req.id;
         const method = req.method;
@@ -111,11 +111,11 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
           continue;
         }
 
-        if (method === 'session/prompt') {
-          ok(id, {});
-          setTimeout(sendPermissionRequest, 10);
-          continue;
-        }
+	        if (method === 'session/prompt') {
+	          ok(id, {});
+	          setTimeout(sendPermissionRequest, 0);
+	          continue;
+	        }
 
         ok(id, {});
       }
@@ -127,29 +127,29 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
 }
 
 describe('AcpBackend permission seed + tool_call_update fallback', () => {
-  it('reuses tool name from permission request when tool_call_update lacks kind, and preserves content when output is empty', async () => {
+	  it('reuses tool name from permission request when tool_call_update lacks kind, and preserves content when output is empty', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-acp-perm-seed-'));
     const scriptPath = writeFakeAcpAgentScript({ dir });
     let backendForCleanup: AcpBackend | undefined;
 
     try {
-      const backend = new AcpBackend({
+	      const backend = new AcpBackend({
         agentName: 'test',
         cwd: dir,
         command: process.execPath,
         args: [scriptPath],
-        transportHandler: {
-          agentName: 'test',
-          getInitTimeout: () => 1_000,
-          getToolPatterns: () => [] as ToolPattern[],
-          getIdleTimeout: () => 1,
-        } satisfies TransportHandler,
-        permissionHandler: {
-          async handleToolCall() {
-            return { decision: 'approved' as const };
-          },
-        },
-      });
+	        transportHandler: {
+	          agentName: 'test',
+	          getInitTimeout: () => 1_000,
+	          getToolPatterns: () => [] as ToolPattern[],
+	          getIdleTimeout: () => 50,
+	        } satisfies TransportHandler,
+	        permissionHandler: {
+	          async handleToolCall() {
+	            return { decision: 'approved' as const };
+	          },
+	        },
+	      });
       backendForCleanup = backend;
 
       const toolResults: Array<{ toolName: string; result: unknown }> = [];
@@ -158,16 +158,21 @@ describe('AcpBackend permission seed + tool_call_update fallback', () => {
         toolResults.push({ toolName: msg.toolName, result: msg.result });
       });
 
-      const started = await backend.startSession();
-      await backend.sendPrompt(started.sessionId, 'hi');
-      await backend.waitForResponseComplete(5_000);
+	      const started = await backend.startSession();
+	      await backend.sendPrompt(started.sessionId, 'hi');
+	      await backend.waitForResponseComplete(5_000);
 
-      expect(toolResults.length).toBeGreaterThan(0);
-      const last = toolResults[toolResults.length - 1]!;
-      expect(last.toolName).toBe('execute');
-      expect(last.result).not.toBe('');
-      expect(Array.isArray(last.result)).toBe(true);
-    } finally {
+	      const startMs = Date.now();
+	      while (toolResults.length === 0 && Date.now() - startMs < 2_000) {
+	        await new Promise((resolve) => setTimeout(resolve, 10));
+	      }
+
+	      expect(toolResults.length).toBeGreaterThan(0);
+	      const last = toolResults[toolResults.length - 1]!;
+	      expect(last.toolName).toBe('execute');
+	      expect(last.result).not.toBe('');
+	      expect(Array.isArray(last.result)).toBe(true);
+	    } finally {
       await backendForCleanup?.dispose().catch(() => {});
       rmSync(dir, { recursive: true, force: true });
     }

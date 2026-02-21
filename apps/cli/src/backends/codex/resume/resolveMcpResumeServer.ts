@@ -5,7 +5,7 @@ import { getCodexMcpResumeDepStatus } from '@/capabilities/deps/codexMcpResume';
 function readCodexMcpResumeEnvOverride(): string | null {
   const v = typeof process.env.HAPPIER_CODEX_RESUME_MCP_SERVER_BIN === 'string'
     ? process.env.HAPPIER_CODEX_RESUME_MCP_SERVER_BIN.trim()
-    : (typeof process.env.HAPPIER_CODEX_RESUME_BIN === 'string' ? process.env.HAPPIER_CODEX_RESUME_BIN.trim() : '');
+    : '';
   return v || null;
 }
 

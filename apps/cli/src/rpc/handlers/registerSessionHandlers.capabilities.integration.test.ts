@@ -19,6 +19,7 @@ import type {
     CapabilitiesInvokeResponse,
 } from '@happier-dev/protocol';
 import { CHECKLIST_IDS, resumeChecklistId } from '@happier-dev/protocol/checklists';
+import { CODEX_MCP_RESUME_DEP_ID } from '@happier-dev/protocol/installables';
 import { createEncryptedRpcTestClient } from './encryptedRpc.testkit';
 
 function createTestRpcManager(params?: { scopePrefix?: string }) {
@@ -69,7 +70,7 @@ describe('registerCommonHandlers capabilities', () => {
 
         expect(result.protocolVersion).toBe(1);
         expect(result.capabilities.map((c) => c.id)).toEqual(
-            expect.arrayContaining(['cli.codex', 'cli.claude', 'cli.gemini', 'cli.opencode', 'tool.tmux', 'dep.codex-mcp-resume']),
+            expect.arrayContaining(['cli.codex', 'cli.claude', 'cli.gemini', 'cli.opencode', 'tool.tmux', CODEX_MCP_RESUME_DEP_ID]),
         );
         expect(Object.keys(result.checklists)).toEqual(
             expect.arrayContaining([
@@ -82,7 +83,7 @@ describe('registerCommonHandlers capabilities', () => {
             ]),
         );
         expect(result.checklists[resumeChecklistId('codex')].map((r) => r.id)).toEqual(
-            expect.arrayContaining(['cli.codex', 'dep.codex-mcp-resume']),
+            expect.arrayContaining(['cli.codex', CODEX_MCP_RESUME_DEP_ID]),
         );
     });
 
@@ -295,14 +296,14 @@ describe('registerCommonHandlers capabilities', () => {
             const result = await call<CapabilitiesDetectResponse, CapabilitiesDetectRequest>(RPC_METHODS.CAPABILITIES_DETECT, {
                 requests: [
                     { id: 'cli.codex', params: { includeLoginStatus: true } },
-                    { id: 'dep.codex-mcp-resume', params: { includeRegistry: true, onlyIfInstalled: true } },
+                    { id: CODEX_MCP_RESUME_DEP_ID, params: { includeRegistry: true, onlyIfInstalled: true } },
                 ],
             });
 
             const codexData = expectCapabilityData(result, 'cli.codex');
             expect(codexData.isLoggedIn).toBe(true);
 
-            const resumeData = expectCapabilityData(result, 'dep.codex-mcp-resume');
+            const resumeData = expectCapabilityData(result, CODEX_MCP_RESUME_DEP_ID);
             expect(resumeData.installed).toBe(false);
             expect(resumeData.registry).toBeUndefined();
         } finally {

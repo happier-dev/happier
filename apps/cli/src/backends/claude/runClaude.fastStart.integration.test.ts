@@ -84,6 +84,7 @@ vi.mock('@/ui/logger', () => ({
     debugLargeJson: vi.fn(),
     infoDeveloper: vi.fn(),
     warn: vi.fn(),
+    getLogPath: vi.fn(() => '/tmp/happier.log'),
     logFilePath: '/tmp/happier.log',
   },
 }));
@@ -184,13 +185,17 @@ describe('runClaude fast-start', () => {
     return undefined as never;
   }) as any);
 
-  beforeAll(() => {
+  beforeAll(async () => {
     process.env.HAPPIER_STARTUP_TIMING_ENABLED = '1';
+    const { reloadConfiguration } = await import('@/configuration');
+    reloadConfiguration();
   });
 
-  afterAll(() => {
+  afterAll(async () => {
     if (prevTiming === undefined) delete process.env.HAPPIER_STARTUP_TIMING_ENABLED;
     else process.env.HAPPIER_STARTUP_TIMING_ENABLED = prevTiming;
+    const { reloadConfiguration } = await import('@/configuration');
+    reloadConfiguration();
     exitSpy.mockRestore();
   });
 

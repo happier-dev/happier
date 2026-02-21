@@ -5,6 +5,33 @@ import { encryptSessionPayload, type SessionEncryptionContext } from '@/sessionC
 import { decryptTranscriptRows } from './decryptTranscriptRows';
 
 describe('decryptTranscriptRows', () => {
+  it('accepts plaintext transcript rows (no decrypt)', () => {
+    const ctx: SessionEncryptionContext = {
+      encryptionVariant: 'legacy',
+      encryptionKey: new Uint8Array(32).fill(7),
+    };
+
+    const rows = decryptTranscriptRows({
+      ctx,
+      rows: [
+        {
+          seq: 1,
+          createdAt: 1000,
+          content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello' } } },
+        },
+      ],
+    });
+
+    expect(rows).toEqual([
+      {
+        seq: 1,
+        createdAtMs: 1000,
+        role: 'user',
+        content: { type: 'text', text: 'hello' },
+      },
+    ]);
+  });
+
   it('preserves seq and structured meta payloads', () => {
     const ctx: SessionEncryptionContext = {
       encryptionVariant: 'legacy',
@@ -49,4 +76,3 @@ describe('decryptTranscriptRows', () => {
     expect(rows).toEqual([]);
   });
 });
-
