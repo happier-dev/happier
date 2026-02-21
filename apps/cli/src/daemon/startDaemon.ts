@@ -62,6 +62,7 @@ import { ensureSessionDirectory } from './startup/ensureSessionDirectory';
 import { waitForInitialCredentials } from './startup/waitForInitialCredentials';
 import { waitForSessionWebhook } from './spawn/waitForSessionWebhook';
 import { resolveSpawnChildEnvironment } from './spawn/resolveSpawnChildEnvironment';
+import { buildSpawnChildProcessEnv } from './spawn/buildSpawnChildProcessEnv';
 import { createSpawnConcurrencyGate } from './spawn/createSpawnConcurrencyGate';
 import { startAutomationWorker, type AutomationWorkerHandle } from './automation/automationWorker';
 import { startMemoryWorker, type MemoryWorkerHandle } from './memory/memoryWorker';
@@ -750,14 +751,14 @@ export async function startDaemon(): Promise<void> {
 			          }
 
 		          // NOTE: sessionId is reserved for future Happy session resume; we currently ignore it.
-		          const happyProcess = spawnHappyCLI(args, {
+	          const happyProcess = spawnHappyCLI(args, {
 		            cwd: directory,
 		            detached: true,  // Sessions stay alive when daemon stops
 	            stdio: ['ignore', 'pipe', 'pipe'],  // Capture stdout/stderr for debugging
-	            env: {
-	              ...process.env,
-	              ...extraEnvForChildWithMessage
-	            }
+	            env: buildSpawnChildProcessEnv({
+	              processEnv: process.env,
+	              extraEnv: extraEnvForChildWithMessage,
+	            })
 	          });
 
 	          // Log output for debugging

@@ -158,4 +158,49 @@ describe('claude sdk query executable resolution', () => {
     const spawnOpts = spawnMock.mock.calls[0]?.[2] as Record<string, unknown> | undefined;
     expect(spawnOpts?.shell).toBe(true);
   });
+
+  it('strips nested Claude Code env vars from the spawned process environment', async () => {
+    const prevClaudeCode = process.env.CLAUDECODE;
+    const prevEntrypoint = process.env.CLAUDE_CODE_ENTRYPOINT;
+    process.env.CLAUDECODE = '1';
+    process.env.CLAUDE_CODE_ENTRYPOINT = 'parent';
+
+    const spawnMock = vi.fn((..._args: any[]) => {
+      throw new Error('spawn invoked');
+    });
+
+    vi.doMock('node:child_process', async () => {
+      const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+      return { ...actual, spawn: spawnMock };
+    });
+
+    vi.doMock('node:fs', async () => {
+      const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+      return { ...actual, existsSync: () => true };
+    });
+
+    const { query } = (await import('./query')) as typeof import('./query');
+
+    try {
+      expect(() =>
+        query({
+          prompt: 'hi',
+          options: {
+            cwd: '/tmp',
+            pathToClaudeCodeExecutable: '/tmp/fake-claude.cjs',
+          },
+        }),
+      ).toThrow(/spawn invoked/);
+
+      expect(spawnMock).toHaveBeenCalled();
+      const spawnOpts = spawnMock.mock.calls[0]?.[2] as Record<string, any> | undefined;
+      expect(spawnOpts?.env?.CLAUDECODE).toBeUndefined();
+      expect(spawnOpts?.env?.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
+    } finally {
+      if (typeof prevClaudeCode === 'string') process.env.CLAUDECODE = prevClaudeCode;
+      else delete process.env.CLAUDECODE;
+      if (typeof prevEntrypoint === 'string') process.env.CLAUDE_CODE_ENTRYPOINT = prevEntrypoint;
+      else delete process.env.CLAUDE_CODE_ENTRYPOINT;
+    }
+  });
 });

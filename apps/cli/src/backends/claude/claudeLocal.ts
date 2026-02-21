@@ -13,6 +13,7 @@ import { systemPrompt } from "./utils/systemPrompt";
 import { restoreStdinBestEffort } from "@/ui/ink/restoreStdinBestEffort";
 import { isClaudeCliJavaScriptFile, resolveClaudeCliPath } from "./utils/resolveClaudeCliPath";
 import { isBun } from "@/utils/runtime";
+import { stripNestedClaudeCodeEnv } from "@/utils/processEnv/stripNestedClaudeCodeEnv";
 
 /**
  * Error thrown when the Claude process exits with a non-zero exit code.
@@ -274,12 +275,12 @@ export async function claudeLocal(opts: {
             // Prepare environment variables
             // Note: Local mode uses global Claude installation with --session-id flag
             // Launcher only intercepts fetch for thinking state tracking
-            const env: NodeJS.ProcessEnv = {
+            const env: NodeJS.ProcessEnv = stripNestedClaudeCodeEnv({
                 ...process.env,
                 ...opts.claudeEnvVars,
                 // Keep behavior consistent with our wrapper script.
                 DISABLE_AUTOUPDATER: '1',
-            }
+            })
 
             const resolvedClaudeCliPath = resolveClaudeCliPath();
             const shouldUseNodeLauncher = isClaudeCliJavaScriptFile(resolvedClaudeCliPath);

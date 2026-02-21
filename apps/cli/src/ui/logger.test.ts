@@ -44,6 +44,19 @@ describe('logger.debugLargeJson', () => {
         expect(content).toContain('[TEST] debugLargeJson');
     });
 
+    it('writes Error objects with message/stack instead of "{}" when DEBUG is set', async () => {
+        process.env.DEBUG = '1';
+
+        const { logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
+
+        logger.debug('[TEST] error serialization', new Error('boom'));
+
+        expect(existsSync(logger.getLogPath())).toBe(true);
+        const content = readFileSync(logger.getLogPath(), 'utf8');
+        expect(content).toContain('[TEST] error serialization');
+        expect(content).toContain('boom');
+    });
+
     it('creates logs dir on demand when writing the first debug entry', async () => {
         process.env.DEBUG = '1';
 

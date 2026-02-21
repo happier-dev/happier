@@ -9,6 +9,7 @@ import { execSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { logger } from '@/ui/logger'
 import { isBun } from '@/utils/runtime'
+import { stripNestedClaudeCodeEnv } from '@/utils/processEnv/stripNestedClaudeCodeEnv'
 
 function resolveHomeDir(): string {
     // Prefer env overrides so unit tests and sandboxed runtimes can control the home directory.
@@ -81,7 +82,7 @@ export function getCleanEnv(): NodeJS.ProcessEnv {
         logger.debug('[Claude SDK] Removed Bun-specific environment variables for Node.js compatibility')
     }
 
-    return env
+    return stripNestedClaudeCodeEnv(env)
 }
 
 /**
