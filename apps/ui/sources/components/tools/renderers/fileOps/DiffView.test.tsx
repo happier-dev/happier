@@ -10,16 +10,6 @@ import { ToolHeaderActionsContext } from '../../shell/presentation/ToolHeaderAct
 const diffSpy = vi.fn();
 const codeLinesSpy = vi.fn();
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    ScrollView: 'ScrollView',
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-}));
 
 vi.mock('../../shell/presentation/ToolSectionView', () => ({
     ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),

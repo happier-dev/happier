@@ -7,15 +7,6 @@ import { makeCompletedTool, normalizedHostText } from '../core/truncationView.te
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-}));
-
 vi.mock('@/components/ui/media/CodeView', () => ({
     CodeView: ({ code }: any) => React.createElement('CodeView', { code }),
 }));

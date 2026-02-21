@@ -5,15 +5,6 @@ import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-}));
-
 vi.mock('../../shell/presentation/ToolSectionView', () => ({
     ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
@@ -90,4 +81,3 @@ describe('WorkspaceIndexingPermissionView', () => {
         expect(joined).toContain('Choose an option below to continue.');
     });
 });
-

@@ -20,29 +20,6 @@ vi.mock('@/modal', () => ({
     },
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    TouchableOpacity: 'TouchableOpacity',
-    ActivityIndicator: 'ActivityIndicator',
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                button: { primary: { background: '#00f', tint: '#fff' } },
-                divider: '#ddd',
-                text: '#000',
-                textSecondary: '#666',
-                surfaceHigh: '#eee',
-                surfaceHighest: '#f3f3f3',
-            },
-        },
-    }),
-}));
-
 vi.mock('../../shell/presentation/ToolSectionView', () => ({
     ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));

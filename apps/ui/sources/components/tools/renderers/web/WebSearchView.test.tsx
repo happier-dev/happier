@@ -7,15 +7,6 @@ import { makeCompletedTool, normalizedHostText } from '../core/truncationView.te
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-}));
-
 vi.mock('../../shell/presentation/ToolSectionView', () => ({
     ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));

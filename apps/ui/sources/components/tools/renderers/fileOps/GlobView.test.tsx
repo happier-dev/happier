@@ -6,16 +6,6 @@ import { expectListSummary, makeCompletedTool } from '../core/listView.testHelpe
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-    useUnistyles: () => ({ theme: { colors: { textSecondary: '#999' } } }),
-}));
-
 vi.mock('../../shell/presentation/ToolSectionView', () => ({
     ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));

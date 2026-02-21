@@ -7,16 +7,6 @@ import { makeCompletedTool, normalizedHostText } from '../core/truncationView.te
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-    useUnistyles: () => ({ theme: { colors: { textSecondary: '#999', surfaceHigh: '#000' } } }),
-}));
-
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));

@@ -22,28 +22,6 @@ vi.mock('@/modal', () => ({
     },
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    TouchableOpacity: 'TouchableOpacity',
-    ActivityIndicator: 'ActivityIndicator',
-    TextInput: 'TextInput',
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                button: { primary: { background: '#00f', tint: '#fff' } },
-                divider: '#ddd',
-                text: '#000',
-                textSecondary: '#666',
-            },
-        },
-    }),
-}));
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));

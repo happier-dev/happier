@@ -10,22 +10,27 @@ vi.mock('react-native', () => ({
     View: 'View',
     Text: 'Text',
     ActivityIndicator: 'ActivityIndicator',
-    Platform: { OS: 'ios' },
+    Platform: { OS: 'ios', select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? null },
+    AppState: { addEventListener: () => ({ remove: () => {} }) },
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                textSecondary: '#666',
-                warning: '#f90',
-                success: '#0a0',
-                textDestructive: '#a00',
-            },
+vi.mock('react-native-unistyles', () => {
+    const theme = {
+        colors: {
+            surface: '#fff',
+            divider: '#ddd',
+            shadow: { color: '#000', opacity: 0.2 },
+            textSecondary: '#666',
+            warning: '#f90',
+            success: '#0a0',
+            textDestructive: '#a00',
         },
-    }),
-}));
+    };
+    return {
+        StyleSheet: { create: (input: any) => (typeof input === 'function' ? input(theme) : input) },
+        useUnistyles: () => ({ theme }),
+    };
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',

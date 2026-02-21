@@ -5,33 +5,6 @@ import { makeToolCall, makeToolViewProps, findPressableByText } from '../../shel
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (fn: any) => fn({
-            colors: {
-                text: '#111',
-                textSecondary: '#666',
-                textLink: '#08f',
-                divider: '#ddd',
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                surfaceHighest: '#fafafa',
-                diff: {
-                    addedBg: '#e6ffed',
-                    addedBorder: '#b7eb8f',
-                    addedText: '#135200',
-                    removedBg: '#ffecec',
-                    removedBorder: '#ffa39e',
-                    removedText: '#a8071a',
-                },
-                box: {
-                    warning: { background: '#fff7e6', border: '#ffd591', text: '#ad6800' },
-                },
-            },
-        }),
-    },
-}));
-
 vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: (key: string) => {
         if (key === 'showLineNumbersInToolViews') return false;

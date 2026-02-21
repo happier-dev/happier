@@ -4,31 +4,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: ({ children, ...props }: any) => React.createElement('View', props, children),
-    Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (arg: any) => {
-            const theme = { colors: { surfaceHigh: '#222', textSecondary: '#aaa', text: '#eee' } };
-            return typeof arg === 'function' ? arg(theme) : arg;
-        },
-    },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                textSecondary: '#aaa',
-                text: '#eee',
-                warning: '#f90',
-                success: '#0a0',
-                textDestructive: '#a00',
-            },
-        },
-    }),
-}));
-
 vi.mock('@/components/tools/renderers/system/StructuredResultView', () => ({
     StructuredResultView: () => React.createElement('StructuredResultView'),
 }));
