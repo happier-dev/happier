@@ -19,6 +19,61 @@ MINISIGN_PUBKEY="${HAPPIER_MINISIGN_PUBKEY:-${DEFAULT_MINISIGN_PUBKEY}}"
 MINISIGN_PUBKEY_URL="${HAPPIER_MINISIGN_PUBKEY_URL:-https://happier.dev/happier-release.pub}"
 MINISIGN_BIN="minisign"
 
+INSTALLER_COLOR_MODE="${HAPPIER_INSTALLER_COLOR:-auto}" # auto|always|never
+
+supports_color() {
+  if [[ "${INSTALLER_COLOR_MODE}" == "never" ]]; then
+    return 1
+  fi
+  if [[ -n "${NO_COLOR:-}" ]]; then
+    return 1
+  fi
+  if [[ "${INSTALLER_COLOR_MODE}" == "always" ]]; then
+    return 0
+  fi
+  [[ -t 1 ]] && [[ "${TERM:-}" != "dumb" ]]
+}
+
+if supports_color; then
+  COLOR_RESET=$'\033[0m'
+  COLOR_BOLD=$'\033[1m'
+  COLOR_GREEN=$'\033[32m'
+  COLOR_YELLOW=$'\033[33m'
+  COLOR_CYAN=$'\033[36m'
+else
+  COLOR_RESET=""
+  COLOR_BOLD=""
+  COLOR_GREEN=""
+  COLOR_YELLOW=""
+  COLOR_CYAN=""
+fi
+
+say() {
+  printf '%s\n' "$*"
+}
+
+info() {
+  say "${COLOR_CYAN}$*${COLOR_RESET}"
+}
+
+success() {
+  say "${COLOR_GREEN}$*${COLOR_RESET}"
+}
+
+warn() {
+  say "${COLOR_YELLOW}$*${COLOR_RESET}"
+}
+
+tar_extract_gz() {
+  local archive_path="$1"
+  local dest_dir="$2"
+  mkdir -p "${dest_dir}"
+  # GNU tar on Linux emits noisy, non-actionable warnings when extracting archives created by bsdtar/libarchive:
+  #   "Ignoring unknown extended header keyword 'LIBARCHIVE.xattr...'"
+  # Filter those while preserving real errors.
+  tar -xzf "${archive_path}" -C "${dest_dir}" 2> >(grep -v -E "^tar: Ignoring unknown extended header keyword" >&2 || true)
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -225,7 +280,7 @@ ensure_minisign() {
   local extract_dir="${TMP_DIR}/minisign-extract"
   mkdir -p "${extract_dir}"
   if [[ "${asset}" == *.tar.gz ]]; then
-    tar -xzf "${archive_path}" -C "${extract_dir}"
+    tar_extract_gz "${archive_path}" "${extract_dir}"
   else
     # Prefer built-in macOS tooling to avoid requiring unzip.
     if command -v ditto >/dev/null 2>&1; then
@@ -292,16 +347,56 @@ append_path_hint() {
   fi
   local shell_name
   shell_name="$(basename "${SHELL:-}")"
-  local rc_file
-  case "${shell_name}" in
-    zsh) rc_file="$HOME/.zshrc" ;;
-    bash) rc_file="$HOME/.bashrc" ;;
-    *) rc_file="$HOME/.profile" ;;
-  esac
   local export_line="export PATH=\"${BIN_DIR}:\$PATH\""
-  if [[ ! -f "${rc_file}" ]] || ! grep -Fq "${export_line}" "${rc_file}"; then
-    printf '\n%s\n' "${export_line}" >> "${rc_file}"
-    echo "Added ${BIN_DIR} to PATH in ${rc_file}"
+  local rc_files=()
+  case "${shell_name}" in
+    zsh)
+      rc_files+=("$HOME/.zshrc")
+      rc_files+=("$HOME/.zprofile")
+      ;;
+    bash)
+      rc_files+=("$HOME/.bashrc")
+      if [[ -f "$HOME/.bash_profile" ]]; then
+        rc_files+=("$HOME/.bash_profile")
+      else
+        rc_files+=("$HOME/.profile")
+      fi
+      ;;
+    *)
+      rc_files+=("$HOME/.profile")
+      ;;
+  esac
+
+  local updated=0
+  for rc_file in "${rc_files[@]}"; do
+    if [[ ! -f "${rc_file}" ]] || ! grep -Fq "${export_line}" "${rc_file}"; then
+      printf '\n%s\n' "${export_line}" >> "${rc_file}"
+      info "Added ${BIN_DIR} to PATH in ${rc_file}"
+      updated=1
+    fi
+  done
+
+  if [[ ":${PATH}:" != *":${BIN_DIR}:"* ]]; then
+    echo
+    say "${COLOR_BOLD}Next steps${COLOR_RESET}"
+    say "To use ${EXE_NAME} in your current shell:"
+    say "  export PATH=\"${BIN_DIR}:\$PATH\""
+    if [[ "${shell_name}" == "bash" ]]; then
+      say "  source \"$HOME/.bashrc\""
+      if [[ -f "$HOME/.bash_profile" ]]; then
+        say "  source \"$HOME/.bash_profile\""
+      else
+        say "  source \"$HOME/.profile\""
+      fi
+    elif [[ "${shell_name}" == "zsh" ]]; then
+      say "  source \"$HOME/.zshrc\""
+    else
+      say "  source \"$HOME/.profile\""
+    fi
+    say "Or open a new terminal."
+  elif [[ "${updated}" == "1" ]]; then
+    echo
+    say "PATH is already configured in this shell."
   fi
 }
 
@@ -350,7 +445,7 @@ if [[ "${CHANNEL}" == "preview" ]]; then
 fi
 
 API_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${TAG}"
-echo "Fetching ${TAG} release metadata..."
+info "Fetching ${TAG} release metadata..."
 curl_auth() {
   if [[ -n "${GITHUB_TOKEN:-}" ]]; then
     curl -fsSL \
@@ -415,7 +510,7 @@ if [[ "${EXPECTED_SHA}" != "${ACTUAL_SHA}" ]]; then
   echo "Checksum verification failed." >&2
   exit 1
 fi
-echo "Checksum verified."
+success "Checksum verified."
 
 if ! ensure_minisign; then
   echo "minisign is required for installer signature verification." >&2
@@ -428,11 +523,11 @@ SIG_PATH="${TMP_DIR}/checksums.txt.minisig"
 write_minisign_public_key "${PUBKEY_PATH}"
 curl_auth -o "${SIG_PATH}" "${SIG_URL}"
 "${MINISIGN_BIN}" -Vm "${CHECKSUMS_PATH}" -x "${SIG_PATH}" -p "${PUBKEY_PATH}" >/dev/null
-echo "Signature verified."
+success "Signature verified."
 
 EXTRACT_DIR="${TMP_DIR}/extract"
 mkdir -p "${EXTRACT_DIR}"
-tar -xzf "${ARCHIVE_PATH}" -C "${EXTRACT_DIR}"
+tar_extract_gz "${ARCHIVE_PATH}" "${EXTRACT_DIR}"
 
 BINARY_PATH="$(find "${EXTRACT_DIR}" -type f -name "${EXE_NAME}" -perm -u+x | head -n 1 || true)"
 if [[ -z "${BINARY_PATH}" ]]; then
@@ -449,7 +544,7 @@ append_path_hint
 
 if [[ "${PRODUCT}" == "cli" && "${WITH_DAEMON}" == "1" ]]; then
   echo
-  echo "Installing daemon service (user-mode)..."
+  info "Installing daemon service (user-mode)..."
   if ! "${INSTALL_DIR}/bin/${EXE_NAME}" daemon service install >/dev/null 2>&1; then
     echo "Warning: daemon service install failed. You can retry manually:" >&2
     echo "  ${INSTALL_DIR}/bin/${EXE_NAME} daemon service install" >&2

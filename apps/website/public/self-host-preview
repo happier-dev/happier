@@ -22,6 +22,61 @@ MINISIGN_PUBKEY="${HAPPIER_MINISIGN_PUBKEY:-${DEFAULT_MINISIGN_PUBKEY}}"
 MINISIGN_PUBKEY_URL="${HAPPIER_MINISIGN_PUBKEY_URL:-https://happier.dev/happier-release.pub}"
 MINISIGN_BIN="minisign"
 
+INSTALLER_COLOR_MODE="${HAPPIER_INSTALLER_COLOR:-auto}" # auto|always|never
+
+supports_color() {
+  if [[ "${INSTALLER_COLOR_MODE}" == "never" ]]; then
+    return 1
+  fi
+  if [[ -n "${NO_COLOR:-}" ]]; then
+    return 1
+  fi
+  if [[ "${INSTALLER_COLOR_MODE}" == "always" ]]; then
+    return 0
+  fi
+  [[ -t 1 ]] && [[ "${TERM:-}" != "dumb" ]]
+}
+
+if supports_color; then
+  COLOR_RESET=$'\033[0m'
+  COLOR_BOLD=$'\033[1m'
+  COLOR_GREEN=$'\033[32m'
+  COLOR_YELLOW=$'\033[33m'
+  COLOR_CYAN=$'\033[36m'
+else
+  COLOR_RESET=""
+  COLOR_BOLD=""
+  COLOR_GREEN=""
+  COLOR_YELLOW=""
+  COLOR_CYAN=""
+fi
+
+say() {
+  printf '%s\n' "$*"
+}
+
+info() {
+  say "${COLOR_CYAN}$*${COLOR_RESET}"
+}
+
+success() {
+  say "${COLOR_GREEN}$*${COLOR_RESET}"
+}
+
+warn() {
+  say "${COLOR_YELLOW}$*${COLOR_RESET}"
+}
+
+tar_extract_gz() {
+  local archive_path="$1"
+  local dest_dir="$2"
+  mkdir -p "${dest_dir}"
+  # GNU tar on Linux emits noisy, non-actionable warnings when extracting archives created by bsdtar/libarchive:
+  #   "Ignoring unknown extended header keyword 'LIBARCHIVE.xattr...'"
+  # Filter those while preserving real errors.
+  tar -xzf "${archive_path}" -C "${dest_dir}" 2> >(grep -v -E "^tar: Ignoring unknown extended header keyword" >&2 || true)
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -296,7 +351,7 @@ ensure_minisign() {
   local extract_dir="${TMP_DIR}/minisign-extract"
   mkdir -p "${extract_dir}"
   if [[ "${asset}" == *.tar.gz ]]; then
-    tar -xzf "${archive_path}" -C "${extract_dir}"
+    tar_extract_gz "${archive_path}" "${extract_dir}"
   else
     if command -v unzip >/dev/null 2>&1; then
       unzip -q "${archive_path}" -d "${extract_dir}"
@@ -345,7 +400,7 @@ write_minisign_public_key() {
 }
 
 API_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${TAG}"
-echo "Fetching ${TAG} release metadata..."
+info "Fetching ${TAG} release metadata..."
 if ! RELEASE_JSON="$(curl -fsSL "${API_URL}")"; then
   if [[ "${CHANNEL}" == "stable" ]]; then
     echo "No stable releases found for Happier Stack." >&2
@@ -393,7 +448,7 @@ CHECKSUMS_PATH="${TMP_DIR}/checksums.txt"
 curl -fsSL "${ASSET_URL}" -o "${ARCHIVE_PATH}"
 curl -fsSL "${CHECKSUMS_URL}" -o "${CHECKSUMS_PATH}"
 
-EXPECTED_SHA="$(grep -E "  $(basename "${ASSET_URL}")$" "${CHECKSUMS_PATH}" | awk '{print $1}' | head -n 1)"
+EXPECTED_SHA="$(grep -E "  $(basename "${ASSET_URL}")$" "${CHECKSUMS_PATH}" | awk '{print $1}' | head -n 1 || true)"
 if [[ -z "${EXPECTED_SHA}" ]]; then
   echo "Failed to resolve checksum for $(basename "${ASSET_URL}")" >&2
   exit 1
@@ -403,7 +458,7 @@ if [[ "${EXPECTED_SHA}" != "${ACTUAL_SHA}" ]]; then
   echo "Checksum verification failed." >&2
   exit 1
 fi
-echo "Checksum verified."
+success "Checksum verified."
 
 if ! ensure_minisign; then
   echo "minisign is required for installer signature verification." >&2
@@ -416,11 +471,11 @@ SIG_PATH="${TMP_DIR}/checksums.txt.minisig"
 write_minisign_public_key "${PUBKEY_PATH}"
 curl -fsSL "${SIG_URL}" -o "${SIG_PATH}"
 "${MINISIGN_BIN}" -Vm "${CHECKSUMS_PATH}" -x "${SIG_PATH}" -p "${PUBKEY_PATH}" >/dev/null
-echo "Signature verified."
+success "Signature verified."
 
 EXTRACT_DIR="${TMP_DIR}/extract"
 mkdir -p "${EXTRACT_DIR}"
-tar -xzf "${ARCHIVE_PATH}" -C "${EXTRACT_DIR}"
+tar_extract_gz "${ARCHIVE_PATH}" "${EXTRACT_DIR}"
 BINARY_PATH="$(find "${EXTRACT_DIR}" -type f -name hstack -perm -u+x | head -n 1 || true)"
 if [[ -z "${BINARY_PATH}" ]]; then
   echo "Failed to locate extracted hstack binary." >&2
@@ -432,7 +487,7 @@ cp "${BINARY_PATH}" "${STACK_INSTALL_DIR}/bin/hstack"
 chmod +x "${STACK_INSTALL_DIR}/bin/hstack"
 ln -sf "${STACK_INSTALL_DIR}/bin/hstack" "${STACK_BIN_DIR}/hstack"
 
-echo "Installed hstack to ${STACK_INSTALL_DIR}/bin/hstack"
+success "Installed hstack to ${STACK_INSTALL_DIR}/bin/hstack"
 
 SELF_HOST_ARGS=(self-host install --non-interactive --channel="${CHANNEL}" --mode="${MODE}")
 if [[ "${WITH_CLI}" != "1" ]]; then
@@ -442,10 +497,56 @@ fi
 export HAPPIER_NONINTERACTIVE="${NONINTERACTIVE}"
 
 if [[ "${NONINTERACTIVE}" != "1" ]]; then
-  echo "Starting Happier Self-Host guided installation..."
+  info "Starting Happier Self-Host guided installation..."
+  say
+  info "This can take a few minutes. If it looks stuck, check logs:"
+  if [[ "${MODE}" == "system" ]]; then
+    SELF_HOST_LOG_DIR="${HAPPIER_SELF_HOST_LOG_DIR:-/var/log/happier}"
+    SELF_HOST_SERVICE_NAME="${HAPPIER_SELF_HOST_SERVICE_NAME:-happier-server}"
+  else
+    SELF_HOST_LOG_DIR="${HAPPIER_SELF_HOST_LOG_DIR:-${HAPPIER_HOME}/self-host/logs}"
+    SELF_HOST_SERVICE_NAME="${HAPPIER_SELF_HOST_SERVICE_NAME:-happier-server}"
+  fi
+  say "  - ${SELF_HOST_LOG_DIR}/server.err.log"
+  say "  - ${SELF_HOST_LOG_DIR}/server.out.log"
+  if [[ "${OS}" == "linux" ]]; then
+    if [[ "${MODE}" == "system" ]]; then
+      say "  - sudo journalctl -u ${SELF_HOST_SERVICE_NAME} -e --no-pager"
+    else
+      say "  - journalctl --user -u ${SELF_HOST_SERVICE_NAME} -e --no-pager"
+    fi
+  fi
+  say
 fi
-"${STACK_INSTALL_DIR}/bin/hstack" "${SELF_HOST_ARGS[@]}"
+if ! "${STACK_INSTALL_DIR}/bin/hstack" "${SELF_HOST_ARGS[@]}"; then
+  warn
+  warn "[self-host] install failed"
+  say
+  info "Troubleshooting:"
+  say "  ${STACK_BIN_DIR}/hstack self-host status --mode=${MODE} --channel=${CHANNEL}"
+  say "  ${STACK_BIN_DIR}/hstack self-host doctor --mode=${MODE} --channel=${CHANNEL}"
+  say "  ${STACK_BIN_DIR}/hstack self-host config view --mode=${MODE} --channel=${CHANNEL} --json"
+  say
+  info "Logs:"
+  if [[ "${MODE}" == "system" ]]; then
+    SELF_HOST_LOG_DIR="${HAPPIER_SELF_HOST_LOG_DIR:-/var/log/happier}"
+    SELF_HOST_SERVICE_NAME="${HAPPIER_SELF_HOST_SERVICE_NAME:-happier-server}"
+  else
+    SELF_HOST_LOG_DIR="${HAPPIER_SELF_HOST_LOG_DIR:-${HAPPIER_HOME}/self-host/logs}"
+    SELF_HOST_SERVICE_NAME="${HAPPIER_SELF_HOST_SERVICE_NAME:-happier-server}"
+  fi
+  say "  tail -n 200 ${SELF_HOST_LOG_DIR}/server.err.log"
+  say "  tail -n 200 ${SELF_HOST_LOG_DIR}/server.out.log"
+  if [[ "${OS}" == "linux" ]]; then
+    if [[ "${MODE}" == "system" ]]; then
+      say "  sudo journalctl -u ${SELF_HOST_SERVICE_NAME} -e --no-pager"
+    else
+      say "  journalctl --user -u ${SELF_HOST_SERVICE_NAME} -e --no-pager"
+    fi
+  fi
+  exit 1
+fi
 
 echo
-echo "Happier Self-Host installation completed."
-echo "Run: ${STACK_BIN_DIR}/hstack self-host status"
+success "Happier Self-Host installation completed."
+info "Run: ${STACK_BIN_DIR}/hstack self-host status"
