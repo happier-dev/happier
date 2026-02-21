@@ -1,6 +1,26 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 describe('storage/files (S3 env parsing)', () => {
+  it('does not require the MinIO dependency when the local backend is selected', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-server-files-local-'));
+    try {
+      vi.resetModules();
+      vi.doMock('minio', () => {
+        throw new Error('MinIO should not be imported for the local backend');
+      });
+
+      const { initFilesLocalFromEnv, loadFiles } = await import('./files');
+      initFilesLocalFromEnv({ HAPPIER_SERVER_LIGHT_FILES_DIR: dir } as unknown as NodeJS.ProcessEnv);
+      await expect(loadFiles()).resolves.toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('passes an explicit S3 region to the MinIO client (S3_REGION override, default us-east-1)', async () => {
     vi.resetModules();
 
@@ -15,7 +35,7 @@ describe('storage/files (S3 env parsing)', () => {
 
     const { initFilesS3FromEnv } = await import('./files');
 
-    initFilesS3FromEnv({
+    await initFilesS3FromEnv({
       S3_HOST: 'example.com',
       S3_BUCKET: 'bucket',
       S3_PUBLIC_URL: 'https://cdn.example.com',
@@ -33,7 +53,7 @@ describe('storage/files (S3 env parsing)', () => {
     });
 
     const { initFilesS3FromEnv: init2 } = await import('./files');
-    init2({
+    await init2({
       S3_HOST: 'example.com',
       S3_BUCKET: 'bucket',
       S3_PUBLIC_URL: 'https://cdn.example.com',
@@ -48,7 +68,7 @@ describe('storage/files (S3 env parsing)', () => {
     vi.resetModules();
     const { initFilesS3FromEnv } = await import('./files');
 
-    expect(() =>
+    await expect(
       initFilesS3FromEnv({
         S3_HOST: 'example.com',
         S3_PORT: 'nope',
@@ -57,7 +77,7 @@ describe('storage/files (S3 env parsing)', () => {
         S3_ACCESS_KEY: 'access',
         S3_SECRET_KEY: 'secret',
       } as unknown as NodeJS.ProcessEnv),
-    ).toThrow(/S3_PORT/i);
+    ).rejects.toThrow(/S3_PORT/i);
   });
 
   it('throws when the configured bucket does not exist', async () => {
@@ -75,7 +95,7 @@ describe('storage/files (S3 env parsing)', () => {
 
     const { initFilesS3FromEnv, loadFiles } = await import('./files');
 
-    initFilesS3FromEnv({
+    await initFilesS3FromEnv({
       S3_HOST: 'example.com',
       S3_BUCKET: 'bucket',
       S3_PUBLIC_URL: 'https://cdn.example.com',

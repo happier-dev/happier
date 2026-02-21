@@ -1,4 +1,3 @@
-import * as Minio from 'minio';
 import { ensureLightFilesDir, getLightPublicUrl, readLightPublicFile, writeLightPublicFile } from '@/flavors/light/files';
 
 export type ImageRef = {
@@ -17,7 +16,7 @@ export type PublicFilesBackend = {
 
 let backend: PublicFilesBackend | null = null;
 
-export function initFilesS3FromEnv(env: NodeJS.ProcessEnv = process.env): void {
+export async function initFilesS3FromEnv(env: NodeJS.ProcessEnv = process.env): Promise<void> {
     const s3Host = requiredEnv(env, 'S3_HOST');
     const s3PortRaw = env.S3_PORT?.trim();
     let s3Port: number | undefined;
@@ -34,6 +33,7 @@ export function initFilesS3FromEnv(env: NodeJS.ProcessEnv = process.env): void {
     const s3public = requiredEnv(env, 'S3_PUBLIC_URL');
     const s3Region = env.S3_REGION?.trim() ? env.S3_REGION.trim() : 'us-east-1';
 
+    const Minio = await import('minio');
     const s3client = new Minio.Client({
         endPoint: s3Host,
         port: s3Port,
