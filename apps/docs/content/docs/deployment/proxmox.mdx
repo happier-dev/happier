@@ -18,6 +18,15 @@ This guide explains how to deploy Happier on **Proxmox VE** using the community-
 2. Copy the install command from the script page.
 3. Paste it into the **Proxmox Shell** (host) and follow the prompts.
 
+If the script is not available on `helper-scripts.com` yet, you can run the installer directly from our ProxmoxVE fork:
+
+```bash
+tmp="$(mktemp)" \
+  && curl -fsSL "https://raw.githubusercontent.com/happier-dev/ProxmoxVE/main/ct/happier.sh" -o "$tmp" \
+  && bash "$tmp" \
+  && rm -f "$tmp"
+```
+
 At the end, the installer prints:
 
 - Your container IP and local HTTP URL
@@ -213,6 +222,19 @@ For ongoing profile switching and multi-server usage, see [Features → Multi-se
 - **None**: Local network only.
 
 If you choose **Tailscale**, you can optionally paste a **Tailscale pre-auth key** (recommended: ephemeral, one-time). If you skip it, you can enroll later from inside the container.
+
+### HStack release channel
+
+The installer runs `hstack setup` via `npx` (npm). You can choose which HStack build you want:
+
+- **Stable** (recommended): installs `@happier-dev/stack@latest`
+- **Preview**: installs `@happier-dev/stack@next`
+- **Custom**: pin a version (or a different npm spec)
+
+Non-interactive overrides:
+
+- `HAPPIER_PVE_HSTACK_CHANNEL=stable|preview` (`preview` maps to npm `@next`)
+- `HAPPIER_PVE_HSTACK_PACKAGE='@happier-dev/stack@<tag-or-version>'` (takes precedence)
 
 ## HTTPS guidance (important)
 
