@@ -40,6 +40,7 @@ import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendAp
 import { ClaudeLocalPermissionBridge, DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE } from '@/backends/claude/localPermissions/localPermissionBridge';
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { computeRunnerTerminationOutcome, type RunnerTerminationEvent } from '@/agent/runtime/runnerTerminationOutcome';
+import { loadClaudeMcpServers } from '@/mcp/loadUserMcpServers';
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
 import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -442,6 +443,9 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     const extractedMcp = extractMcpServersFromClaudeArgs(options.claudeArgs);
     options.claudeArgs = extractedMcp.claudeArgs;
 
+    // Load user MCP servers from Claude's disk config (~/.claude/mcp_servers.json)
+    const userMcpServers = loadClaudeMcpServers(options.claudeEnvVars?.CLAUDE_CONFIG_DIR);
+
     // Start Happier MCP server
     const happyServer = await startHappyServer(session);
     logger.debug(`[START] Happier MCP server started at ${happyServer.url}`);
@@ -838,6 +842,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             }
         },
 	        mcpServers: {
+	            ...userMcpServers,
 	            ...extractedMcp.mcpServers,
 	            // Keep Happy MCP server last so a user-provided "happy" entry cannot override it.
 	            happy: {
@@ -939,6 +944,9 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
 
     const extractedMcp = extractMcpServersFromClaudeArgs(options.claudeArgs);
     options.claudeArgs = extractedMcp.claudeArgs;
+
+    // Load user MCP servers from Claude's disk config (~/.claude/mcp_servers.json)
+    const userMcpServers = loadClaudeMcpServers(options.claudeEnvVars?.CLAUDE_CONFIG_DIR);
 
     // Fast-start uses a deferred session client so we can spawn Claude before the server session exists.
     const messageQueue = new MessageQueue2<EnhancedMode>(hashClaudeEnhancedModeForQueue);
@@ -1368,6 +1376,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         }
                     },
                     mcpServers: {
+                        ...userMcpServers,
                         ...extractedMcp.mcpServers,
                         happy: {
                             type: 'http' as const,
