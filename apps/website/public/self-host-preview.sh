@@ -9,7 +9,7 @@ if [[ -n "${HAPPIER_SELF_HOST_MODE:-}" ]]; then
 fi
 WITH_CLI="${HAPPIER_WITH_CLI:-1}"
 NONINTERACTIVE="${HAPPIER_NONINTERACTIVE:-0}"
-ACTION="${HAPPIER_INSTALLER_ACTION:-install}" # install|check|uninstall|restart
+ACTION="${HAPPIER_INSTALLER_ACTION:-install}" # install|reinstall|check|uninstall|restart
 DEBUG_MODE="${HAPPIER_INSTALLER_DEBUG:-0}"
 PURGE_DATA="${HAPPIER_SELF_HOST_PURGE_DATA:-0}"
 HAPPIER_HOME="${HAPPIER_HOME:-${HOME}/.happier}"
@@ -105,6 +105,7 @@ Options:
   --stable
   --preview
   --check
+  --reinstall
   --restart
   --uninstall [--purge-data]
   --reset
@@ -183,6 +184,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --check)
       ACTION="check"
+      shift 1
+      ;;
+    --reinstall)
+      ACTION="install"
       shift 1
       ;;
     --restart)

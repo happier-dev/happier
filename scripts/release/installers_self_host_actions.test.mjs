@@ -293,3 +293,57 @@ exit 0
 
   await rm(root, { recursive: true, force: true });
 });
+
+test('self-host.sh --reinstall is accepted and runs the install flow', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-self-host-reinstall-'));
+  const homeDir = join(root, 'home');
+  const binDir = join(root, 'bin');
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(binDir, { recursive: true });
+
+  const unameStubPath = join(binDir, 'uname');
+  await writeFile(
+    unameStubPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" = "-s" ]]; then
+  echo Linux
+  exit 0
+fi
+if [[ "$1" = "-m" ]]; then
+  echo x86_64
+  exit 0
+fi
+echo Linux
+`,
+    'utf8',
+  );
+  await chmod(unameStubPath, 0o755);
+
+  const systemctlStubPath = join(binDir, 'systemctl');
+  await writeFile(systemctlStubPath, '#!/usr/bin/env bash\nexit 0\n', 'utf8');
+  await chmod(systemctlStubPath, 0o755);
+
+  const curlStubPath = join(binDir, 'curl');
+  await writeFile(curlStubPath, '#!/usr/bin/env bash\necho \"curl invoked\" >&2\nexit 88\n', 'utf8');
+  await chmod(curlStubPath, 0o755);
+
+  const installerPath = join(repoRoot, 'scripts', 'release', 'installers', 'self-host.sh');
+  const env = {
+    ...process.env,
+    HOME: homeDir,
+    PATH: `${binDir}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    HAPPIER_HOME: join(homeDir, '.happier'),
+    HAPPIER_NONINTERACTIVE: '1',
+  };
+
+  const res = spawnSync('bash', [installerPath, '--reinstall', '--mode', 'user', '--channel', 'preview'], { env, encoding: 'utf8' });
+  const stdout = String(res.stdout ?? '');
+  const stderr = String(res.stderr ?? '');
+  assert.equal(res.status, 1, `expected reinstall to enter install flow and attempt fetching releases:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
+  assert.doesNotMatch(stdout + stderr, /unknown argument/i);
+  assert.match(stdout + stderr, /fetching .* release metadata/i);
+  assert.match(stdout + stderr, /curl invoked/i);
+
+  await rm(root, { recursive: true, force: true });
+});

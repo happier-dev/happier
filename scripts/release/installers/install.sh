@@ -8,7 +8,7 @@ BIN_DIR="${HAPPIER_BIN_DIR:-$HOME/.local/bin}"
 WITH_DAEMON="${HAPPIER_WITH_DAEMON:-1}"
 NO_PATH_UPDATE="${HAPPIER_NO_PATH_UPDATE:-0}"
 NONINTERACTIVE="${HAPPIER_NONINTERACTIVE:-0}"
-ACTION="${HAPPIER_INSTALLER_ACTION:-install}" # install|check|uninstall|restart
+ACTION="${HAPPIER_INSTALLER_ACTION:-install}" # install|reinstall|check|uninstall|restart
 DEBUG_MODE="${HAPPIER_INSTALLER_DEBUG:-0}"
 PURGE_INSTALL_DIR="${HAPPIER_INSTALLER_PURGE:-0}"
 GITHUB_REPO="${HAPPIER_GITHUB_REPO:-happier-dev/happier}"
@@ -256,6 +256,7 @@ Options:
   --with-daemon
   --without-daemon
   --check
+  --reinstall
   --restart
   --uninstall [--purge]
   --reset
@@ -302,6 +303,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --check)
       ACTION="check"
+      shift 1
+      ;;
+    --reinstall)
+      ACTION="install"
       shift 1
       ;;
     --restart)

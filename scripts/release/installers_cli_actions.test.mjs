@@ -245,3 +245,46 @@ exit 0
 
   await rm(root, { recursive: true, force: true });
 });
+
+test('install.sh --reinstall is accepted and runs the install flow', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-reinstall-'));
+  const homeDir = join(root, 'home');
+  const binDir = join(root, 'bin');
+  const installDir = join(root, 'install');
+  const outBinDir = join(root, 'out-bin');
+
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(binDir, { recursive: true });
+  await mkdir(installDir, { recursive: true });
+  await mkdir(outBinDir, { recursive: true });
+
+  const curlStubPath = join(binDir, 'curl');
+  await writeFile(
+    curlStubPath,
+    '#!/usr/bin/env bash\n\necho "curl invoked" >&2\nexit 88\n',
+    'utf8',
+  );
+  await chmod(curlStubPath, 0o755);
+
+  const installerPath = join(repoRoot, 'scripts', 'release', 'installers', 'install.sh');
+  const env = {
+    ...process.env,
+    HOME: homeDir,
+    SHELL: '/bin/bash',
+    PATH: `${binDir}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    HAPPIER_PRODUCT: 'cli',
+    HAPPIER_INSTALL_DIR: installDir,
+    HAPPIER_BIN_DIR: outBinDir,
+    HAPPIER_NONINTERACTIVE: '1',
+  };
+
+  const res = spawnSync('bash', [installerPath, '--reinstall'], { env, encoding: 'utf8' });
+  const stdout = String(res.stdout ?? '');
+  const stderr = String(res.stderr ?? '');
+  assert.equal(res.status, 1, `expected reinstall to enter install flow and attempt fetching releases:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
+  assert.doesNotMatch(stdout + stderr, /unknown argument/i);
+  assert.match(stdout + stderr, /fetching .* release metadata/i);
+  assert.match(stdout + stderr, /curl invoked/i);
+
+  await rm(root, { recursive: true, force: true });
+});
