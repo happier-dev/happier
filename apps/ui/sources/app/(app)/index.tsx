@@ -25,6 +25,9 @@ import { formatOperationFailedDebugMessage } from "@/utils/errors/formatOperatio
 import { getActiveServerSnapshot } from "@/sync/domains/server/serverRuntime";
 import { getServerFeaturesSnapshot } from "@/sync/api/capabilities/serverFeaturesClient";
 import { Text } from '@/components/ui/text/Text';
+import { buildDataKeyCredentialsForToken } from "@/auth/flows/buildDataKeyCredentialsForToken";
+import { digest } from "@/platform/digest";
+import { encodeHex } from "@/encryption/hex";
 
 
 export default function Home() {
@@ -55,6 +58,11 @@ function NotAuthenticated() {
         providerIds: readonly string[];
         preferredProviderId: string | null;
     }>({ anonymousEnabled: true, providerIds: Object.freeze([]), preferredProviderId: null });
+    const [loginOptions, setLoginOptions] = React.useState<{
+        mtlsEnabled: boolean;
+        keylessProviderIds: readonly string[];
+        preferredKeylessProviderId: string | null;
+    }>({ mtlsEnabled: false, keylessProviderIds: Object.freeze([]), preferredKeylessProviderId: null });
     const autoRedirectAttemptedRef = React.useRef(false);
     const hasPendingTerminalConnect = Boolean(getPendingTerminalConnect());
 
@@ -75,48 +83,117 @@ function NotAuthenticated() {
                 }
 
                 const features = featuresSnapshot.status === 'ready' ? featuresSnapshot.features : null;
-                const methods = features?.capabilities?.auth?.signup?.methods ?? [];
-                const enabled = methods
+                const authMethodsRaw = features?.capabilities?.auth?.methods ?? [];
+                const authMethods = Array.isArray(authMethodsRaw) ? authMethodsRaw : [];
+
+                const hasAuthMethods = authMethods.length > 0;
+
+                const legacySignupMethods = features?.capabilities?.auth?.signup?.methods ?? [];
+                const legacyEnabledSignupIds = legacySignupMethods
                     .filter((m) => m.enabled === true)
                     .map((m) => String(m.id).trim().toLowerCase())
                     .filter(Boolean);
 
-                // Default to legacy behavior (anonymous) when features can't be fetched.
-                if (enabled.length === 0) {
+                const legacyLoginMethods = features?.capabilities?.auth?.login?.methods ?? [];
+                const legacyEnabledLoginIds = legacyLoginMethods
+                    .filter((m) => m.enabled === true)
+                    .map((m) => String(m.id).trim().toLowerCase())
+                    .filter(Boolean);
+
+                const resolveMethodById = (id: string): any | null =>
+                    authMethods.find((m: any) => String(m?.id ?? '').trim().toLowerCase() === id) ?? null;
+
+                const hasEnabledAction = (
+                    method: any | null,
+                    actionId: 'login' | 'provision',
+                    modes: readonly ('keyed' | 'keyless' | 'either')[],
+                ): boolean => {
+                    const actions = Array.isArray(method?.actions) ? method.actions : [];
+                    return actions.some((a: any) => a?.enabled === true && a?.id === actionId && modes.includes(a?.mode));
+                };
+
+                const anonymousEnabled = hasAuthMethods
+                    ? hasEnabledAction(resolveMethodById('key_challenge'), 'provision', ['keyed', 'either'])
+                    : legacyEnabledSignupIds.includes('anonymous');
+
+                const keyedProvisionProviderIds = hasAuthMethods
+                    ? authMethods
+                          .map((m: any) => String(m?.id ?? '').trim().toLowerCase())
+                          .filter(Boolean)
+                          .filter((id: string) => id !== 'key_challenge' && id !== 'mtls')
+                          .filter((id: string) => hasEnabledAction(resolveMethodById(id), 'provision', ['keyed', 'either']))
+                    : legacyEnabledSignupIds.filter((id) => id !== 'anonymous');
+
+                const keylessLoginMethodIds = hasAuthMethods
+                    ? authMethods
+                          .map((m: any) => String(m?.id ?? '').trim().toLowerCase())
+                          .filter(Boolean)
+                          .filter((id: string) => id !== 'key_challenge')
+                          .filter((id: string) => hasEnabledAction(resolveMethodById(id), 'login', ['keyless', 'either']))
+                    : legacyEnabledLoginIds.filter((id) => id !== 'key_challenge');
+
+                const mtlsEnabled = keylessLoginMethodIds.includes('mtls');
+                const keylessProviderIds = keylessLoginMethodIds.filter((id) => id !== 'mtls');
+
+                // Default to legacy behavior (anonymous) when features can't be fetched
+                // and the server doesn't advertise any viable auth methods.
+                if (!hasAuthMethods && legacyEnabledSignupIds.length === 0 && legacyEnabledLoginIds.length === 0) {
                     if (mounted) {
                         setSignupOptions({ anonymousEnabled: true, providerIds: Object.freeze([]), preferredProviderId: null });
+                        setLoginOptions({ mtlsEnabled: false, keylessProviderIds: Object.freeze([]), preferredKeylessProviderId: null });
                         setServerAvailability('legacy');
                     }
                     return;
                 }
 
-                const anonymousEnabled = enabled.includes("anonymous");
-                const providers = enabled.filter((id) => id !== "anonymous");
                 const configuredProviderId =
-                    providers.find((id) => features?.capabilities?.oauth?.providers?.[id]?.configured === true) ?? null;
-                const preferredProviderId = configuredProviderId ?? providers[0] ?? null;
+                    keyedProvisionProviderIds.find((id) => features?.capabilities?.oauth?.providers?.[id]?.configured === true) ?? null;
+                const preferredProviderId = configuredProviderId ?? keyedProvisionProviderIds[0] ?? null;
+
+                const configuredKeylessProviderId =
+                    keylessProviderIds.find((id) => features?.capabilities?.oauth?.providers?.[id]?.configured === true) ?? null;
+                const preferredKeylessProviderId = configuredKeylessProviderId ?? keylessProviderIds[0] ?? null;
                 if (mounted) {
                     setSignupOptions({
                         anonymousEnabled,
-                        providerIds: Object.freeze(providers),
+                        providerIds: Object.freeze(keyedProvisionProviderIds),
                         preferredProviderId,
+                    });
+                    setLoginOptions({
+                        mtlsEnabled,
+                        keylessProviderIds: Object.freeze(keylessProviderIds),
+                        preferredKeylessProviderId,
                     });
                     setServerAvailability('ready');
                 }
 
                 const autoRedirect = features?.capabilities?.auth?.ui?.autoRedirect ?? null;
                 const autoRedirectProviderId = (autoRedirect?.providerId ?? "").trim().toLowerCase();
+                const methodForAutoRedirect = hasAuthMethods ? resolveMethodById(autoRedirectProviderId) : null;
+                const autoRedirectToKeyedProvision =
+                    hasAuthMethods && hasEnabledAction(methodForAutoRedirect, 'provision', ['keyed', 'either']);
+                const autoRedirectToKeylessLogin =
+                    hasAuthMethods && hasEnabledAction(methodForAutoRedirect, 'login', ['keyless', 'either']);
+                const autoRedirectToMtls = autoRedirectProviderId === "mtls" && mtlsEnabled;
+                const autoRedirectToLegacySignupProvider =
+                    !hasAuthMethods && autoRedirectProviderId && legacyEnabledSignupIds.includes(autoRedirectProviderId);
                 if (
                     !autoRedirectAttemptedRef.current &&
                     autoRedirect?.enabled === true &&
                     autoRedirectProviderId &&
-                    !enabled.includes("anonymous") &&
-                    enabled.includes(autoRedirectProviderId)
+                    !anonymousEnabled &&
+                    (autoRedirectToMtls || autoRedirectToKeyedProvision || autoRedirectToKeylessLogin || autoRedirectToLegacySignupProvider)
                 ) {
                     autoRedirectAttemptedRef.current = true;
                     const suppressedUntil = await TokenStorage.getAuthAutoRedirectSuppressedUntil();
                     if (Date.now() < suppressedUntil) return;
-                    await createAccountViaProvider(autoRedirectProviderId);
+                    if (autoRedirectToMtls) {
+                        await loginWithMtls();
+                    } else if (autoRedirectToKeylessLogin) {
+                        await loginWithKeylessProvider(autoRedirectProviderId);
+                    } else {
+                        await createAccountViaProvider(autoRedirectProviderId);
+                    }
                 }
             } catch {
                 if (mounted) {
@@ -187,19 +264,131 @@ function NotAuthenticated() {
         }
     };
 
+    const loginWithKeylessProvider = async (providerId: string) => {
+        try {
+            const proofBytes = await getRandomBytesAsync(32);
+            const proof = encodeBase64(proofBytes, "base64url");
+            const proofHashBytes = await digest('SHA-256', new TextEncoder().encode(proof));
+            const proofHash = encodeHex(proofHashBytes).toLowerCase();
+
+            const snapshot = getActiveServerSnapshot();
+            const serverUrl = snapshot.serverUrl ? String(snapshot.serverUrl).trim() : '';
+            await TokenStorage.setPendingExternalAuth({
+                provider: providerId,
+                proof,
+                mode: 'keyless',
+                returnTo: '/',
+                ...(serverUrl ? { serverUrl } : {}),
+            });
+
+            const provider = getAuthProvider(providerId);
+            if (!provider || !provider.getExternalLoginUrl) {
+                await TokenStorage.clearPendingExternalAuth();
+                await Modal.alert(t('common.error'), t('errors.operationFailed'));
+                return;
+            }
+
+            const url = await provider.getExternalLoginUrl({ proofHash });
+            if (!isSafeExternalAuthUrl(url)) {
+                await TokenStorage.clearPendingExternalAuth();
+                await Modal.alert(t('common.error'), t('errors.operationFailed'));
+                return;
+            }
+            if (Platform.OS === 'web') {
+                const location = (globalThis as any)?.window?.location;
+                if (location && typeof location.assign === 'function') {
+                    location.assign(url);
+                    return;
+                }
+                if (location && typeof location.href === 'string') {
+                    location.href = url;
+                    return;
+                }
+            }
+            await Linking.openURL(url);
+        } catch {
+            await TokenStorage.clearPendingExternalAuth();
+            await Modal.alert(t('common.error'), t('errors.operationFailed'));
+        }
+    };
+
+    const loginWithMtls = async () => {
+        try {
+            const snapshot = getActiveServerSnapshot();
+            const rawServerUrl = snapshot.serverUrl ? String(snapshot.serverUrl).trim() : "";
+            const serverUrl = rawServerUrl.replace(/\/+$/, "");
+            if (!serverUrl) {
+                await Modal.alert(t('common.error'), t('errors.operationFailed'));
+                return;
+            }
+
+            if (Platform.OS !== 'web') {
+                const returnTo = 'happier:///mtls';
+                const startUrl = `${serverUrl}/v1/auth/mtls/start?returnTo=${encodeURIComponent(returnTo)}`;
+                await Linking.openURL(startUrl);
+                return;
+            }
+
+            const controller = new AbortController();
+            const timeoutMs = 15000;
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+                const res = await fetch(`${serverUrl}/v1/auth/mtls`, { method: 'POST', signal: controller.signal });
+                const json = await res.json().catch(() => null);
+                if (!res.ok || !json || typeof json.token !== 'string') {
+                    await Modal.alert(t('common.error'), t('errors.operationFailed'));
+                    return;
+                }
+                const token = String(json.token);
+                const credentials = await buildDataKeyCredentialsForToken(token);
+                await auth.loginWithCredentials(credentials);
+            } finally {
+                clearTimeout(timer);
+            }
+        } catch (error) {
+            const message = process.env.EXPO_PUBLIC_DEBUG
+                ? formatOperationFailedDebugMessage(t('errors.operationFailed'), error)
+                : t('errors.operationFailed');
+            await Modal.alert(t('common.error'), message);
+        }
+    };
+
     const providerId = signupOptions.preferredProviderId;
+    const keylessProviderId = loginOptions.preferredKeylessProviderId;
     const providerSignupTitle = providerId
         ? t("welcome.signUpWithProvider", {
               provider: getAuthProvider(providerId)?.displayName ?? providerId,
+          })
+        : "";
+    const providerKeylessTitle = keylessProviderId
+        ? t("welcome.signUpWithProvider", {
+              provider: getAuthProvider(keylessProviderId)?.displayName ?? keylessProviderId,
           })
         : "";
     const anonymousSignupTitle = t("welcome.createAccount");
 
     const showProviderSignup = Boolean(providerId);
     const showAnonymousSignup = signupOptions.anonymousEnabled;
+    const showMtlsLogin = loginOptions.mtlsEnabled;
+    const showKeylessProviderLogin = Boolean(keylessProviderId) && keylessProviderId !== providerId;
+    const mtlsTitle = t('welcome.signInWithCertificate');
 
-    const primarySignupTitle = showProviderSignup ? providerSignupTitle : anonymousSignupTitle;
-    const primarySignupAction = showProviderSignup ? () => createAccountViaProvider(providerId!) : createAccount;
+    const mtlsPrimary = showMtlsLogin && !showProviderSignup && !showAnonymousSignup;
+    const keylessPrimary = showKeylessProviderLogin && !showProviderSignup && !showAnonymousSignup && !showMtlsLogin;
+    const primarySignupTitle = mtlsPrimary
+        ? mtlsTitle
+        : keylessPrimary
+          ? providerKeylessTitle
+          : showProviderSignup
+            ? providerSignupTitle
+            : anonymousSignupTitle;
+    const primarySignupAction = mtlsPrimary
+        ? loginWithMtls
+        : keylessPrimary
+          ? () => loginWithKeylessProvider(keylessProviderId!)
+          : showProviderSignup
+            ? () => createAccountViaProvider(providerId!)
+            : createAccount;
     const terminalConnectIntentBlock = hasPendingTerminalConnect ? (
         <View testID="welcome-terminal-connect-intent" style={styles.intentBlock}>
             <Text style={styles.intentTitle}>{t('terminal.connectTerminal')}</Text>
@@ -297,6 +486,16 @@ function NotAuthenticated() {
                             />
                         </View>
                     )}
+                    {showAuthActions && showMtlsLogin && !mtlsPrimary && (
+                        <View style={styles.buttonContainerSecondary}>
+                            <RoundButton
+                                testID="welcome-mtls-login"
+                                size="normal"
+                                title={mtlsTitle}
+                                action={loginWithMtls}
+                            />
+                        </View>
+                    )}
                     {showAuthActions && showAnonymousSignup && (
                         <View style={showProviderSignup ? styles.buttonContainerTertiary : styles.buttonContainerSecondary}>
                             <RoundButton
@@ -329,6 +528,17 @@ function NotAuthenticated() {
                                 size="normal"
                                 title={primarySignupTitle}
                                 action={primarySignupAction}
+                            />
+                        </View>
+                    )}
+                    {showAuthActions && showMtlsLogin && !mtlsPrimary && (
+                        <View style={styles.buttonContainerSecondary}>
+                            <RoundButton
+                                testID="welcome-mtls-login"
+                                size="small"
+                                title={mtlsTitle}
+                                action={loginWithMtls}
+                                display="inverted"
                             />
                         </View>
                     )}

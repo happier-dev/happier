@@ -17,6 +17,7 @@ import { getAuthProvider } from '@/auth/providers/registry';
 import { buildContentKeyBinding } from '@/auth/oauth/contentKeyBinding';
 import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { buildDataKeyCredentialsForToken } from '@/auth/flows/buildDataKeyCredentialsForToken';
 
 
 function paramString(params: Record<string, unknown>, key: string): string | null {
@@ -118,7 +119,9 @@ export default function OAuthProviderReturn() {
     const pendingUsernameContextRef = React.useRef<null | Readonly<{
         providerId: string;
         providerName: string;
-        secret: string;
+        mode: 'keyed' | 'keyless';
+        secret: string | null;
+        proof: string | null;
         returnTo: string;
         serverUrl?: string;
         basePayload: Record<string, unknown>;
@@ -134,6 +137,7 @@ export default function OAuthProviderReturn() {
     const resolvedPending = paramString(params, 'pending') ?? '';
     const resolvedLogin = paramString(params, 'login') ?? '';
     const resolvedReason = paramString(params, 'reason');
+    const resolvedMode = paramString(params, 'mode');
 
     const submitUsername = React.useCallback(() => {
         const ctx = pendingUsernameContextRef.current;
@@ -151,9 +155,11 @@ export default function OAuthProviderReturn() {
             setBusy(true);
             try {
                 const base = typeof ctx.serverUrl === 'string' ? ctx.serverUrl.trim().replace(/\/+$/, '') : '';
-                const url = base
-                    ? `${base}/v1/auth/external/${encodeURIComponent(ctx.providerId)}/finalize`
-                    : `/v1/auth/external/${encodeURIComponent(ctx.providerId)}/finalize`;
+                const finalizePath =
+                    ctx.mode === 'keyless'
+                        ? `/v1/auth/external/${encodeURIComponent(ctx.providerId)}/finalize-keyless`
+                        : `/v1/auth/external/${encodeURIComponent(ctx.providerId)}/finalize`;
+                const url = base ? `${base}${finalizePath}` : finalizePath;
                 const response = await serverFetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -166,7 +172,12 @@ export default function OAuthProviderReturn() {
                     pendingUsernameContextRef.current = null;
                     setUsernameHint(null);
                     maybeActivateServerUrl(ctx.serverUrl);
-                    await auth.login(json.token, ctx.secret);
+                    if (ctx.mode === 'keyless') {
+                        const credentials = await buildDataKeyCredentialsForToken(json.token);
+                        await (auth as any).loginWithCredentials(credentials);
+                    } else {
+                        await auth.login(json.token, ctx.secret!);
+                    }
                     router.replace(ctx.returnTo);
                     return;
                 }
@@ -177,6 +188,13 @@ export default function OAuthProviderReturn() {
                     pendingUsernameContextRef.current = null;
                     setUsernameHint(null);
                     router.replace(buildRestoreRedirectUrl({ providerId: ctx.providerId, reason: 'provider_already_linked' }));
+                    return;
+                }
+                if (err === 'restore-required') {
+                    await TokenStorage.clearPendingExternalAuth();
+                    pendingUsernameContextRef.current = null;
+                    setUsernameHint(null);
+                    router.replace('/restore');
                     return;
                 }
                 if (err === 'username-taken') {
@@ -277,7 +295,13 @@ export default function OAuthProviderReturn() {
             if (flow === 'auth') {
                 const pending = pendingFromParams;
                 const state = await TokenStorage.getPendingExternalAuth();
-                if (!pending || !state || state.provider !== providerId || !state.secret) {
+                const keyless =
+                    (resolvedMode ?? '').toString().trim().toLowerCase() === 'keyless'
+                    || state?.mode === 'keyless';
+                const secret = typeof state?.secret === 'string' ? state.secret : null;
+                const proof = typeof state?.proof === 'string' ? state.proof : null;
+
+                if (!pending || !state || state.provider !== providerId || (keyless ? !proof : !secret)) {
                     await Modal.alert(t('common.error'), t('errors.oauthInitializationFailed'));
                     safeReplace('/');
                     return;
@@ -285,24 +309,34 @@ export default function OAuthProviderReturn() {
                 const returnTo = normalizeInternalReturnTo(state.returnTo) ?? '/';
 
                 try {
-                    const secretBytes = decodeBase64(state.secret, 'base64url');
-                    const { challenge, signature, publicKey } = authChallenge(secretBytes);
+                    const body: any = keyless
+                        ? {
+                            pending,
+                            proof,
+                        }
+                        : (() => {
+                            const secretBytes = decodeBase64(secret!, 'base64url');
+                            const { challenge, signature, publicKey } = authChallenge(secretBytes);
+                            const keyedBody: any = {
+                                pending,
+                                publicKey: encodeBase64(publicKey),
+                                challenge: encodeBase64(challenge),
+                                signature: encodeBase64(signature),
+                            };
+                            if (state.intent === 'reset') {
+                                keyedBody.reset = true;
+                            }
+                            return keyedBody;
+                        })();
 
-                    const body: any = {
-                        pending,
-                        publicKey: encodeBase64(publicKey),
-                        challenge: encodeBase64(challenge),
-                        signature: encodeBase64(signature),
-                    };
-                    if (state.intent === 'reset') {
-                        body.reset = true;
-                    }
-
-                    const supportsSharing = await isSessionSharingSupported({ timeoutMs: 800 });
-                    if (supportsSharing) {
-                        const binding = await buildContentKeyBinding(secretBytes);
-                        body.contentPublicKey = binding.contentPublicKey;
-                        body.contentPublicKeySig = binding.contentPublicKeySig;
+                    if (!keyless) {
+                        const secretBytes = decodeBase64(secret!, 'base64url');
+                        const supportsSharing = await isSessionSharingSupported({ timeoutMs: 800 });
+                        if (supportsSharing) {
+                            const binding = await buildContentKeyBinding(secretBytes);
+                            body.contentPublicKey = binding.contentPublicKey;
+                            body.contentPublicKeySig = binding.contentPublicKeySig;
+                        }
                     }
 
                     const login = loginFromParams;
@@ -312,9 +346,10 @@ export default function OAuthProviderReturn() {
                         safeSetBusy(true);
                         try {
                             const base = typeof state.serverUrl === 'string' ? state.serverUrl.trim().replace(/\/+$/, '') : '';
-                            const url = base
-                                ? `${base}/v1/auth/external/${encodeURIComponent(providerId)}/finalize`
+                            const finalizePath = keyless
+                                ? `/v1/auth/external/${encodeURIComponent(providerId)}/finalize-keyless`
                                 : `/v1/auth/external/${encodeURIComponent(providerId)}/finalize`;
+                            const url = base ? `${base}${finalizePath}` : finalizePath;
                             const response = await serverFetch(url, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
@@ -333,7 +368,9 @@ export default function OAuthProviderReturn() {
                         pendingUsernameContextRef.current = {
                             providerId,
                             providerName: provider.displayName ?? providerId,
-                            secret: state.secret,
+                            mode: keyless ? 'keyless' : 'keyed',
+                            secret,
+                            proof,
                             returnTo,
                             serverUrl: state.serverUrl,
                             basePayload: body,
@@ -355,12 +392,19 @@ export default function OAuthProviderReturn() {
                             safeReplace(buildRestoreRedirectUrl({ providerId, reason: 'provider_already_linked' }));
                             return;
                         }
+                        if (err === 'restore-required') {
+                            await TokenStorage.clearPendingExternalAuth();
+                            safeReplace('/restore');
+                            return;
+                        }
                         if (err === 'username-required' || err === 'username-taken') {
                             const initialHint = err === 'username-taken' ? t('friends.username.taken') : t('friends.username.invalid');
                             pendingUsernameContextRef.current = {
                                 providerId,
                                 providerName: provider.displayName ?? providerId,
-                                secret: state.secret,
+                                mode: keyless ? 'keyless' : 'keyed',
+                                secret,
+                                proof,
                                 returnTo,
                                 serverUrl: state.serverUrl,
                                 basePayload: body,
@@ -378,7 +422,12 @@ export default function OAuthProviderReturn() {
 
                     await TokenStorage.clearPendingExternalAuth();
                     maybeActivateServerUrl(state.serverUrl);
-                    await loginFn(res.json.token, state.secret);
+                    if (keyless) {
+                        const credentials = await buildDataKeyCredentialsForToken(res.json.token);
+                        await (auth as any).loginWithCredentials(credentials);
+                    } else {
+                        await loginFn(res.json.token, state.secret!);
+                    }
                     safeReplace(returnTo);
                     return;
                 } catch (e) {

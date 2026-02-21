@@ -16,6 +16,7 @@ export type AuthProvider = Readonly<{
     connectButtonColor?: string;
     getRestoreRedirectNotice?: (params: { reason: RestoreRedirectReason }) => RestoreRedirectNotice | null;
     getExternalSignupUrl: (params: { publicKey: string }) => Promise<string>;
+    getExternalLoginUrl?: (params: { proofHash: string }) => Promise<string>;
     getConnectUrl: (credentials: AuthCredentials) => Promise<string>;
     finalizeConnect: (credentials: AuthCredentials, params: { pending: string; username: string }) => Promise<void>;
     cancelConnectPending: (credentials: AuthCredentials, pending: string) => Promise<void>;

@@ -185,7 +185,9 @@ export function isLegacyAuthCredentials(credentials: AuthCredentials): credentia
 
 export interface PendingExternalAuth {
     provider: string;
-    secret: string;
+    secret?: string;
+    proof?: string;
+    mode?: 'keyed' | 'keyless';
     intent?: 'signup' | 'reset';
     serverUrl?: string;
     returnTo?: string;
@@ -212,7 +214,18 @@ function isInternalReturnTo(value: unknown): value is string {
 function isPendingExternalAuthRecord(value: unknown): value is PendingExternalAuth {
     if (!value || typeof value !== 'object') return false;
     const maybe = value as Record<string, unknown>;
-    if (!isNonEmptyString(maybe.provider) || !isNonEmptyString(maybe.secret)) return false;
+    if (!isNonEmptyString(maybe.provider)) return false;
+    const secret = maybe.secret;
+    const proof = maybe.proof;
+    const mode = maybe.mode;
+    const hasSecret = isNonEmptyString(secret);
+    const hasProof = isNonEmptyString(proof);
+    if (hasSecret === hasProof) return false;
+    if (hasProof) {
+        if (mode !== 'keyless') return false;
+    } else if (mode !== undefined && mode !== 'keyed') {
+        return false;
+    }
     if (maybe.serverUrl !== undefined && !isNonEmptyString(maybe.serverUrl)) return false;
     if (maybe.returnTo !== undefined && !isInternalReturnTo(maybe.returnTo)) return false;
     if (maybe.intent === undefined) return true;

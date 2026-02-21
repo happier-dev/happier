@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { createWelcomeFeaturesResponse } from './index.testHelpers';
 import type { ServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import type { FeaturesResponse } from '@happier-dev/protocol';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -124,6 +125,70 @@ describe('/ (welcome) signup methods', () => {
         }
     });
 
+    it('prefers auth.methods over legacy signup/login methods when present', async () => {
+        vi.resetModules();
+        const { t } = await import('@/text');
+
+        const authMethods = [
+            {
+                id: 'key_challenge',
+                actions: [
+                    { id: 'login' as const, enabled: true, mode: 'keyed' as const },
+                    { id: 'provision' as const, enabled: false, mode: 'keyed' as const },
+                ],
+                ui: { displayName: 'Device key', iconHint: null },
+            },
+            {
+                id: 'github',
+                actions: [{ id: 'provision' as const, enabled: true, mode: 'keyed' as const }],
+                ui: { displayName: 'GitHub', iconHint: 'github' },
+            },
+        ] satisfies NonNullable<FeaturesResponse['capabilities']['auth']['methods']>;
+
+        const payload = createWelcomeFeaturesResponse({
+            // Legacy says anonymous signup is enabled…
+            signupMethods: [
+                { id: 'anonymous', enabled: true },
+                { id: 'github', enabled: true },
+            ],
+            // …but auth.methods disables key_challenge provisioning, so Create account must be hidden.
+            authMethods,
+            requiredProviders: [],
+            autoRedirectEnabled: false,
+            autoRedirectProviderId: null,
+            providerOffboardingIntervalSeconds: 600,
+        });
+        getServerFeaturesSnapshotMock.mockResolvedValueOnce({ status: 'ready', features: payload });
+
+        const { default: Screen } = await import('./index');
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        try {
+            await act(async () => {
+                tree = renderer.create(<Screen />);
+            });
+            if (!tree) throw new Error('Expected welcome screen renderer');
+
+            let textValues: string[] = [];
+            for (let turn = 0; turn < 10; turn += 1) {
+                await act(async () => {});
+                textValues = tree.root
+                    .findAll((n) => typeof n.props?.children === 'string')
+                    .map((n) => String(n.props.children));
+                if (textValues.includes(t('welcome.signUpWithProvider', { provider: 'GitHub' }))) {
+                    break;
+                }
+            }
+
+            expect(textValues).toContain(t('welcome.signUpWithProvider', { provider: 'GitHub' }));
+            expect(textValues).not.toContain(t('welcome.createAccount'));
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+        }
+    });
+
     it('hides Create account when anonymous signup is disabled and shows provider option', async () => {
         vi.resetModules();
         const { t } = await import('@/text');
@@ -151,6 +216,106 @@ describe('/ (welcome) signup methods', () => {
 
             expect(textValues).not.toContain(t('welcome.createAccount'));
             expect(textValues).toContain(t('welcome.signUpWithProvider', { provider: 'GitHub' }));
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+        }
+    });
+
+    it('shows mTLS login when signup methods are disabled but mTLS is enabled', async () => {
+        vi.resetModules();
+        const { t } = await import('@/text');
+        const mtlsOnly = createWelcomeFeaturesResponse({
+            signupMethods: [{ id: 'anonymous', enabled: false }],
+            loginMethods: [{ id: 'mtls', enabled: true }],
+            authMtlsEnabled: true,
+            requiredProviders: [],
+            autoRedirectEnabled: false,
+            autoRedirectProviderId: null,
+            providerOffboardingIntervalSeconds: 600,
+        });
+        getServerFeaturesSnapshotMock.mockResolvedValueOnce({ status: 'ready', features: mtlsOnly });
+
+        const { default: Screen } = await import('./index');
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        try {
+            await act(async () => {
+                tree = renderer.create(<Screen />);
+            });
+            if (!tree) throw new Error('Expected welcome screen renderer');
+
+            let textValues: string[] = [];
+            for (let turn = 0; turn < 10; turn += 1) {
+                await act(async () => {});
+                textValues = tree.root
+                    .findAll((n) => typeof n.props?.children === 'string')
+                    .map((n) => String(n.props.children));
+                if (textValues.includes(t('welcome.signInWithCertificate'))) {
+                    break;
+                }
+            }
+
+            expect(textValues).toContain(t('welcome.signInWithCertificate'));
+            expect(textValues).not.toContain(t('welcome.createAccount'));
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+        }
+    });
+
+    it('shows keyless provider login when signup methods are disabled but a keyless OAuth login method is enabled', async () => {
+        vi.resetModules();
+        const { t } = await import('@/text');
+        const keylessOnly = createWelcomeFeaturesResponse({
+            signupMethods: [{ id: 'anonymous', enabled: false }],
+            loginMethods: [],
+            authMethods: [
+                {
+                    id: 'key_challenge',
+                    actions: [
+                        { id: 'login', enabled: false, mode: 'keyed' },
+                        { id: 'provision', enabled: false, mode: 'keyed' },
+                    ],
+                    ui: { displayName: 'Device key', iconHint: null },
+                },
+                {
+                    id: 'github',
+                    actions: [{ id: 'login', enabled: true, mode: 'keyless' }],
+                    ui: { displayName: 'GitHub', iconHint: 'github' },
+                },
+            ],
+            requiredProviders: [],
+            autoRedirectEnabled: false,
+            autoRedirectProviderId: null,
+            providerOffboardingIntervalSeconds: 600,
+        });
+        getServerFeaturesSnapshotMock.mockResolvedValueOnce({ status: 'ready', features: keylessOnly });
+
+        const { default: Screen } = await import('./index');
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        try {
+            await act(async () => {
+                tree = renderer.create(<Screen />);
+            });
+            if (!tree) throw new Error('Expected welcome screen renderer');
+
+            let textValues: string[] = [];
+            for (let turn = 0; turn < 10; turn += 1) {
+                await act(async () => {});
+                textValues = tree.root
+                    .findAll((n) => typeof n.props?.children === 'string')
+                    .map((n) => String(n.props.children));
+                if (textValues.includes(t('welcome.signUpWithProvider', { provider: 'GitHub' }))) {
+                    break;
+                }
+            }
+
+            expect(textValues).toContain(t('welcome.signUpWithProvider', { provider: 'GitHub' }));
+            expect(textValues).not.toContain(t('welcome.createAccount'));
         } finally {
             act(() => {
                 tree?.unmount();

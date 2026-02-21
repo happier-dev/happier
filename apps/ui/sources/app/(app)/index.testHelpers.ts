@@ -6,6 +6,9 @@ type ProviderState = { enabled: boolean; configured: boolean };
 
 type WelcomeFeaturesOverrides = {
     signupMethods?: Array<{ id: string; enabled: boolean }>;
+    loginMethods?: Array<{ id: string; enabled: boolean }>;
+    authMethods?: FeaturesResponse['capabilities']['auth']['methods'];
+    authMtlsEnabled?: boolean;
     requiredProviders?: string[];
     autoRedirectEnabled?: boolean;
     autoRedirectProviderId?: string | null;
@@ -62,6 +65,37 @@ export function createWelcomeFeaturesResponse(
     const providerResetEnabled = overrides.recoveryProviderResetEnabled ?? false;
     const providerResetProviders = overrides.recoveryProviderResetProviders ?? [];
 
+    const signupMethods =
+        overrides.signupMethods ?? [
+            { id: 'anonymous', enabled: true },
+            { id: 'github', enabled: true },
+        ];
+
+    const loginMethods = overrides.loginMethods ?? [{ id: 'key_challenge', enabled: true }];
+
+    const derivedAuthMethods = [
+        {
+            id: 'key_challenge',
+            actions: [
+                { id: 'login' as const, enabled: loginMethods.some((m) => m.id === 'key_challenge' && m.enabled), mode: 'keyed' as const },
+                { id: 'provision' as const, enabled: signupMethods.some((m) => m.id === 'anonymous' && m.enabled), mode: 'keyed' as const },
+            ],
+            ui: { displayName: 'Device key', iconHint: null },
+        },
+        {
+            id: 'mtls',
+            actions: [{ id: 'login' as const, enabled: loginMethods.some((m) => m.id === 'mtls' && m.enabled), mode: 'keyless' as const }],
+            ui: { displayName: 'Certificate', iconHint: null },
+        },
+        ...signupMethods
+            .filter((m) => m.id !== 'anonymous' && m.enabled)
+            .map((m) => ({
+                id: m.id,
+                actions: [{ id: 'provision' as const, enabled: true, mode: 'keyed' as const }],
+                ui: { displayName: m.id, iconHint: null },
+            })),
+    ] satisfies NonNullable<FeaturesResponse['capabilities']['auth']['methods']>;
+
     return createRootLayoutFeaturesResponse({
         features: {
             sharing: {
@@ -77,6 +111,11 @@ export function createWelcomeFeaturesResponse(
                 },
             },
             auth: {
+                ...(overrides.authMtlsEnabled
+                    ? {
+                          mtls: { enabled: true },
+                      }
+                    : {}),
                 recovery: {
                     providerReset: { enabled: providerResetEnabled },
                 },
@@ -95,14 +134,11 @@ export function createWelcomeFeaturesResponse(
             },
             oauth: { providers: oauthProviders },
             auth: {
+                methods: overrides.authMethods ?? derivedAuthMethods,
                 signup: {
-                    methods:
-                        overrides.signupMethods ?? [
-                            { id: 'anonymous', enabled: true },
-                            { id: 'github', enabled: true },
-                        ],
+                    methods: signupMethods,
                 },
-                login: { methods: [{ id: 'key_challenge', enabled: true }], requiredProviders: overrides.requiredProviders ?? [] },
+                login: { methods: loginMethods, requiredProviders: overrides.requiredProviders ?? [] },
                 recovery: { providerReset: { providers: providerResetEnabled ? providerResetProviders : [] } },
                 ui: {
                     autoRedirect: {

@@ -137,14 +137,18 @@ export function parseBackupSecretKey(formattedKey: string): string {
  */
 export function isValidSecretKey(key: string): boolean {
     try {
-        // Try parsing as formatted key first
-        if (key.includes('-')) {
-            const parsed = parseBackupSecretKey(key);
-            return decodeBase64(parsed, 'base64url').length === 32;
+        // Prefer base64url validation first. Base64url secrets may contain `-` and `_`,
+        // so we must not treat `-` as an automatic signal for base32 backup format.
+        if (decodeBase64(key, 'base64url').length === 32) {
+            return true;
         }
+    } catch {
+        // ignore and fall back to backup parsing below
+    }
 
-        // Try as base64url
-        return decodeBase64(key, 'base64url').length === 32;
+    try {
+        parseBackupSecretKey(key);
+        return true;
     } catch {
         return false;
     }
@@ -158,22 +162,18 @@ export function isValidSecretKey(key: string): boolean {
 export function normalizeSecretKey(key: string): string {
     // Trim whitespace
     const trimmed = key.trim();
-    
-    // Check if it looks like a formatted key (contains dashes or spaces between groups)
-    // or has been typed with spaces/formatting
-    if (/[-\s]/.test(trimmed) || trimmed.length > 50) {
-        return parseBackupSecretKey(trimmed);
-    }
 
-    // Otherwise try to parse as base64url
+    // Prefer base64url normalization first. Base64url secrets may contain `-` and `_`,
+    // so we must not treat the presence of `-` as an automatic signal for base32 backup format.
     try {
         const bytes = decodeBase64(trimmed, 'base64url');
-        if (bytes.length !== 32) {
-            throw new Error('Invalid secret key');
+        if (bytes.length === 32) {
+            return encodeBase64(bytes, 'base64url');
         }
-        return trimmed;
-    } catch (error) {
-        // If base64 parsing fails, try parsing as formatted key anyway
-        return parseBackupSecretKey(trimmed);
+    } catch {
+        // ignore and fall back to backup parsing below
     }
+
+    // If base64url decoding doesn't produce a 32-byte seed, fall back to the base32 backup format.
+    return parseBackupSecretKey(trimmed);
 }

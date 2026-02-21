@@ -62,6 +62,27 @@ describe('createExternalOAuthProvider', () => {
         );
     });
 
+    it('returns the external keyless login URL when params endpoint is successful', async () => {
+        let capturedUrl: string | null = null;
+        stubFetch(async (url) => {
+            capturedUrl = url;
+            return {
+                ok: true,
+                status: 200,
+                body: { url: 'https://oauth.example.test/login' },
+            };
+        });
+
+        const provider = createProvider();
+        expect(provider.getExternalLoginUrl).toBeDefined();
+        await expect(provider.getExternalLoginUrl!({ proofHash: 'abc123' })).resolves.toBe(
+            'https://oauth.example.test/login',
+        );
+        expect(capturedUrl).toContain('/v1/auth/external/github/params');
+        expect(capturedUrl).toContain('mode=keyless');
+        expect(capturedUrl).toContain('proofHash=abc123');
+    });
+
     it('throws config HappyError when external OAuth is not configured', async () => {
         stubFetch(async () => ({
             ok: false,

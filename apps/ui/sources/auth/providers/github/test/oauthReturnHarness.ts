@@ -7,6 +7,7 @@ export const replaceSpy = vi.fn();
 export const localSearchParamsMock = vi.fn();
 
 export const loginSpy = vi.fn(async () => {});
+export const loginWithCredentialsSpy = vi.fn(async () => {});
 export const upsertAndActivateServerSpy = vi.fn();
 const hoistedModal = vi.hoisted(() => ({
     alert: vi.fn(async () => {}),
@@ -71,6 +72,7 @@ vi.mock('@/auth/context/AuthContext', () => ({
         isAuthenticated: authState.isAuthenticated,
         credentials: authState.credentials,
         login: loginSpy,
+        loginWithCredentials: loginWithCredentialsSpy,
         logout: vi.fn(async () => {}),
     }),
 }));
@@ -88,6 +90,7 @@ vi.mock('@/sync/api/capabilities/sessionSharingSupport', () => ({
 
 vi.mock('@/platform/cryptoRandom', () => ({
     getRandomBytes: () => new Uint8Array(32).fill(9),
+    getRandomBytesAsync: async () => new Uint8Array(32).fill(9),
 }));
 
 vi.mock('@/auth/storage/tokenStorage', async () => {
@@ -111,6 +114,10 @@ vi.mock('@/encryption/libsodium.lib', () => ({
             privateKey: new Uint8Array(64).fill(2),
         }),
         crypto_sign_detached: (_message: Uint8Array, _privateKey: Uint8Array) => new Uint8Array(64).fill(3),
+        crypto_box_seed_keypair: (_seed: Uint8Array) => ({
+            publicKey: new Uint8Array(32).fill(4),
+            privateKey: new Uint8Array(32).fill(5),
+        }),
     },
 }));
 
@@ -149,6 +156,7 @@ export async function renderOAuthReturnScreen() {
 export function resetOAuthHarness() {
     replaceSpy.mockReset();
     loginSpy.mockReset();
+    loginWithCredentialsSpy.mockReset();
     upsertAndActivateServerSpy.mockReset();
     if (typeof modal.alert.mockReset === 'function') {
         modal.alert.mockReset();

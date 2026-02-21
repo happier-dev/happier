@@ -10,6 +10,7 @@ import {
 import {
     fullFFSecretBase64,
     sequentialSecretBase64,
+    toBase64Url,
 } from './secretKeyBackup.testHelpers';
 
 describe('secretKeyBackup validation', () => {
@@ -18,6 +19,20 @@ describe('secretKeyBackup validation', () => {
         expect(isValidSecretKey(sequentialSecretBase64)).toBe(true);
         expect(isValidSecretKey(fullFFSecretBase64)).toBe(true);
         expect(isValidSecretKey(formatted)).toBe(true);
+    });
+
+    it("accepts base64url secrets that include '-' characters", () => {
+        const findBase64UrlWithDash = (): string => {
+            for (let offset = 0; offset < 256; offset += 1) {
+                const candidate = toBase64Url(new Uint8Array(32).fill(offset));
+                if (candidate.includes('-')) return candidate;
+            }
+            throw new Error("Unable to generate a base64url key containing '-'");
+        };
+
+        const base64Url = findBase64UrlWithDash();
+        expect(base64Url.includes('-')).toBe(true);
+        expect(isValidSecretKey(base64Url)).toBe(true);
     });
 
     it('rejects malformed and empty keys', () => {

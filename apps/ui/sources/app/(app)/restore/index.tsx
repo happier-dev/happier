@@ -179,7 +179,6 @@ export default function Restore() {
 
             } catch (error) {
                 if (!isCancelledRef.current) {
-                    console.error('QR Auth error:', error);
                     Modal.alert(t('common.error'), t('errors.authenticationFailed'));
                 }
             } finally {

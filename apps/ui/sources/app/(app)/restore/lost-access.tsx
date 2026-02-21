@@ -146,6 +146,7 @@ export default function LostAccess() {
                         {providers.map((providerId) => (
                             <View key={providerId} style={styles.actionButton}>
                                 <RoundButton
+                                    testID={`lost-access-provider-${providerId}`}
                                     size="normal"
                                     title={t('connect.lostAccessContinue', {
                                         provider: getAuthProvider(providerId)?.displayName ?? providerId,

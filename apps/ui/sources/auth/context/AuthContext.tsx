@@ -12,6 +12,7 @@ interface AuthContextType {
     isAuthenticated: boolean;
     credentials: AuthCredentials | null;
     login: (token: string, secret: string) => Promise<void>;
+    loginWithCredentials: (credentials: AuthCredentials) => Promise<void>;
     logout: () => Promise<void>;
     refreshFromActiveServer: () => Promise<void>;
 }
@@ -23,8 +24,7 @@ export function AuthProvider({ children, initialCredentials }: { children: React
     const [credentials, setCredentials] = useState<AuthCredentials | null>(initialCredentials);
     const activeServerKeyRef = React.useRef<string | null>(null);
 
-    const login = React.useCallback(async (token: string, secret: string) => {
-        const newCredentials: AuthCredentials = { token, secret };
+    const loginWithCredentials = React.useCallback(async (newCredentials: AuthCredentials) => {
         const success = await TokenStorage.setCredentials(newCredentials);
         if (!success) {
             throw new Error('Failed to save credentials');
@@ -33,6 +33,14 @@ export function AuthProvider({ children, initialCredentials }: { children: React
         setIsAuthenticated(true);
         fireAndForget(syncSwitchServer(newCredentials), { tag: 'AuthContext.login.syncSwitchServer' });
     }, []);
+
+    const login = React.useCallback(
+        async (token: string, secret: string) => {
+            const newCredentials: AuthCredentials = { token, secret };
+            await loginWithCredentials(newCredentials);
+        },
+        [loginWithCredentials],
+    );
 
     const logout = React.useCallback(async () => {
         trackLogout();
@@ -55,10 +63,11 @@ export function AuthProvider({ children, initialCredentials }: { children: React
             isAuthenticated,
             credentials,
             login,
+            loginWithCredentials,
             logout,
             refreshFromActiveServer,
         });
-    }, [isAuthenticated, credentials, login, logout, refreshFromActiveServer]);
+    }, [isAuthenticated, credentials, login, loginWithCredentials, logout, refreshFromActiveServer]);
 
     useEffect(() => {
         const unsubscribe = subscribeActiveServer((snapshot) => {
@@ -87,6 +96,7 @@ export function AuthProvider({ children, initialCredentials }: { children: React
                 isAuthenticated,
                 credentials,
                 login,
+                loginWithCredentials,
                 logout,
                 refreshFromActiveServer,
             }}

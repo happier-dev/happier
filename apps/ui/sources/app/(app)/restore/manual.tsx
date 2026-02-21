@@ -110,7 +110,6 @@ export default function Restore() {
             router.replace('/');
 
         } catch (error) {
-            console.error('Restore error:', error);
             Modal.alert(t('common.error'), t('connect.invalidSecretKey'));
         }
     };

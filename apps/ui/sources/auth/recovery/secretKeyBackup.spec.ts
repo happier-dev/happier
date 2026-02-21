@@ -10,6 +10,7 @@ import {
     patternedSecretBase64,
     sequentialSecretBase64,
     sequentialSecretBytes,
+    toBase64Url,
 } from './secretKeyBackup.testHelpers';
 
 describe('secretKeyBackup format/parse', () => {
@@ -42,5 +43,20 @@ describe('secretKeyBackup format/parse', () => {
         const formatted = formatSecretKeyForBackup(sequentialSecretBase64);
         expect(normalizeSecretKey(sequentialSecretBase64)).toBe(sequentialSecretBase64);
         expect(normalizeSecretKey(formatted)).toBe(sequentialSecretBase64);
+    });
+
+    it("does not treat base64url keys containing '-' as formatted backup keys", () => {
+        const findBase64UrlWithDash = (): string => {
+            for (let offset = 0; offset < 256; offset += 1) {
+                const candidate = toBase64Url(new Uint8Array(32).fill(offset));
+                if (candidate.includes('-')) return candidate;
+            }
+            throw new Error("Unable to generate a base64url key containing '-'");
+        };
+
+        const base64Url = findBase64UrlWithDash();
+        expect(base64Url.includes('-')).toBe(true);
+        expect(decodeBase64(base64Url, 'base64url')).toHaveLength(32);
+        expect(normalizeSecretKey(base64Url)).toBe(base64Url);
     });
 });

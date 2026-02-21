@@ -61,6 +61,15 @@ describe('TokenStorage pending external auth (web)', () => {
         await expect(TokenStorage.getPendingExternalAuth()).resolves.toBeNull();
     });
 
+    it('round-trips pending external auth state for keyless external login', async () => {
+        const { TokenStorage } = await import('./tokenStorage');
+
+        const ok = await TokenStorage.setPendingExternalAuth({ provider: 'github', proof: 'p', mode: 'keyless' });
+        expect(ok).toBe(true);
+
+        await expect(TokenStorage.getPendingExternalAuth()).resolves.toEqual({ provider: 'github', proof: 'p', mode: 'keyless' });
+    });
+
     it('round-trips pending external auth returnTo when it is an internal path', async () => {
         const { TokenStorage } = await import('./tokenStorage');
 
