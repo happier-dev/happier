@@ -3,7 +3,7 @@ import { ActivityIndicator, Platform, Pressable, View, useWindowDimensions } fro
 import { Octicons } from '@expo/vector-icons';
 
 import { Item } from '@/components/ui/lists/Item';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { SessionAttributedFile, SessionAttributionReliability, ChangedFilesViewMode } from '@/scm/scmAttribution';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';

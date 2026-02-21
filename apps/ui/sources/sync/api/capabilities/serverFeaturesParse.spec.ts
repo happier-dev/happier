@@ -34,7 +34,7 @@ function createValidFeaturesResponse() {
             oauth: { providers: { github: { enabled: true, configured: true } } },
             auth: {
                 signup: { methods: [{ id: 'anonymous', enabled: true }] },
-                login: { requiredProviders: [] },
+                login: { methods: [], requiredProviders: [] },
                 recovery: { providerReset: { providers: [] } },
                 ui: { autoRedirect: { enabled: false, providerId: null } },
                 providers: {

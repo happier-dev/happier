@@ -1,5 +1,6 @@
 import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -74,6 +75,7 @@ function parsePositiveInt(input: string, opts: Readonly<{ min: number; max: numb
 }
 
 export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsView() {
+    const { theme } = useUnistyles();
     const attachmentsEnabled = useFeatureEnabled('attachments.uploads');
 
     const [uploadLocation, setUploadLocation] = useSettingMutable('attachmentsUploadsUploadLocation');
@@ -101,7 +103,7 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
                     <Item
                         title="File uploads"
                         subtitle="Disabled"
-                        icon={<Ionicons name="attach-outline" size={29} color="#FF3B30" />}
+                        icon={<Ionicons name="attach-outline" size={29} color={theme.colors.warningCritical} />}
                         showChevron={false}
                     />
                 </ItemGroup>
@@ -110,7 +112,7 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
     }
 
     const renderIcon = (iconName: IoniconName) => (
-        <Ionicons name={iconName} size={29} color="#8E8E93" />
+        <Ionicons name={iconName} size={29} color={theme.colors.textSecondary} />
     );
 
     return (
@@ -125,7 +127,7 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
                         title={option.title}
                         subtitle={option.subtitle}
                         icon={renderIcon(option.iconName)}
-                        rightElement={effectiveUploadLocation === option.id ? <Ionicons name="checkmark" size={20} color="#007AFF" /> : null}
+                        rightElement={effectiveUploadLocation === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
                         onPress={() => setUploadLocation(option.id)}
                         showChevron={false}
                     />
@@ -164,7 +166,7 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
                         title={option.title}
                         subtitle={option.subtitle}
                         icon={renderIcon(option.iconName)}
-                        rightElement={effectiveIgnoreStrategy === option.id ? <Ionicons name="checkmark" size={20} color="#007AFF" /> : null}
+                        rightElement={effectiveIgnoreStrategy === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
                         onPress={() => setVcsIgnoreStrategy(option.id)}
                         showChevron={false}
                     />
@@ -240,4 +242,3 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
         </ItemList>
     );
 });
-

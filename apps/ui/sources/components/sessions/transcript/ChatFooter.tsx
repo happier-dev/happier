@@ -1,11 +1,13 @@
 import * as React from 'react';
-import { View, Text, ViewStyle, TextStyle, Pressable } from 'react-native';
+import { View, ViewStyle, TextStyle, Pressable } from 'react-native';
 import { Typography } from '@/constants/Typography';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { SessionNoticeBanner, type SessionNoticeBannerProps } from '@/components/sessions/SessionNoticeBanner';
 import { layout } from '@/components/ui/layout/layout';
+import { Text } from '@/components/ui/text/Text';
+
 
 interface ChatFooterProps {
     controlledByUser?: boolean;

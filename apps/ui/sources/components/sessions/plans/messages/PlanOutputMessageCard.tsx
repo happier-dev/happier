@@ -1,10 +1,12 @@
 import React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import type { PlanOutputV1 } from '@happier-dev/protocol';
 import { sync } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { Text } from '@/components/ui/text/Text';
+
 
 export function PlanOutputMessageCard(props: Readonly<{ payload: PlanOutputV1; sessionId: string }>) {
     const [error, setError] = React.useState<string | null>(null);

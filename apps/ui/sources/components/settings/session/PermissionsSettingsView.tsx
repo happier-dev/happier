@@ -82,7 +82,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
                     popoverBoundaryRef={popoverBoundaryRef}
                     itemTrigger={{
                         title: t('settingsSession.defaultPermissions.applyPermissionChangesTitle'),
-                        icon: <Ionicons name="shield-checkmark-outline" size={29} color="#34C759" />,
+                        icon: <Ionicons name="shield-checkmark-outline" size={29} color={theme.colors.success} />,
                         // Keep the compact label as a fallback; selected option subtitle will override by default.
                         subtitle: applyTimingLabel,
                     }}

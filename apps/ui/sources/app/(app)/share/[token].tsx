@@ -20,6 +20,7 @@ import { TranscriptList } from '@/components/sessions/transcript/TranscriptList'
 import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { serverFetch } from '@/sync/http/client';
+import { AgentStateSchema, MetadataSchema } from '@/sync/domains/state/storageTypes';
 
 const SHARE_SCREEN_OPTIONS = { headerShown: false } as const;
 
@@ -35,6 +36,7 @@ type PublicShareResponse = {
     session: {
         id: string;
         seq: number;
+        encryptionMode: 'e2ee' | 'plain';
         createdAt: number;
         updatedAt: number;
         active: boolean;
@@ -46,7 +48,7 @@ type PublicShareResponse = {
     };
     owner: ShareOwner;
     accessLevel: 'view';
-    encryptedDataKey: string;
+    encryptedDataKey: string | null;
     isConsentRequired: boolean;
 };
 
@@ -73,6 +75,7 @@ export default memo(function PublicShareViewerScreen() {
     const { credentials } = useAuth();
     const router = useRouter();
     const { theme } = useUnistyles();
+    const tokenParam = typeof token === 'string' ? token : null;
 
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -87,7 +90,7 @@ export default memo(function PublicShareViewerScreen() {
     }, [credentials?.token]);
 
     const load = useCallback(async (withConsent: boolean) => {
-        if (!token) {
+        if (!tokenParam) {
             setError(t('errors.invalidShareLink'));
             setIsLoading(false);
             return;
@@ -102,8 +105,8 @@ export default memo(function PublicShareViewerScreen() {
 
         try {
             const path = withConsent
-                ? `/v1/public-share/${token}?consent=true`
-                : `/v1/public-share/${token}`;
+                ? `/v1/public-share/${tokenParam}?consent=true`
+                : `/v1/public-share/${tokenParam}`;
 
             const headers: Record<string, string> = {};
             if (authHeader) {
@@ -126,26 +129,6 @@ export default memo(function PublicShareViewerScreen() {
             }
 
             const data = (await response.json()) as PublicShareResponse;
-            const decryptedKey = await decryptDataKeyFromPublicShare(data.encryptedDataKey, token);
-            if (!decryptedKey) {
-                setError(t('session.sharing.failedToDecrypt'));
-                setIsLoading(false);
-                return;
-            }
-
-            const sessionEncryptor = new AES256Encryption(decryptedKey);
-            const cache = new EncryptionCache();
-            const sessionEncryption = new SessionEncryption(data.session.id, sessionEncryptor, cache);
-
-            const decryptedMetadata = await sessionEncryption.decryptMetadata(
-                data.session.metadataVersion,
-                data.session.metadata
-            );
-
-            const decryptedAgentState = await sessionEncryption.decryptAgentState(
-                data.session.agentStateVersion,
-                data.session.agentState
-            );
 
             const messagesPath = withConsent
                 ? `/v1/public-share/${token}/messages?consent=true`
@@ -157,15 +140,84 @@ export default memo(function PublicShareViewerScreen() {
                 return;
             }
             const messagesData = (await messagesResponse.json()) as PublicShareMessagesResponse;
-            const decryptedMessages = await sessionEncryption.decryptMessages(messagesData.messages ?? []);
             const normalized: NormalizedMessage[] = [];
-            for (const m of decryptedMessages) {
-                if (!m || !m.content) continue;
-                const normalizedMessage = normalizeRawMessage(m.id, m.localId, m.createdAt, m.content);
-                if (normalizedMessage) {
-                    normalized.push(normalizedMessage);
+
+            const sessionEncryptionMode = data.session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+            const decryptedMetadata = (() => {
+                if (sessionEncryptionMode !== 'plain') return null;
+                try {
+                    const raw = JSON.parse(data.session.metadata);
+                    const parsed = MetadataSchema.safeParse(raw);
+                    return parsed.success ? parsed.data : null;
+                } catch {
+                    return null;
                 }
+            })();
+            const decryptedAgentState = (() => {
+                if (sessionEncryptionMode !== 'plain') return {};
+                if (!data.session.agentState) return {};
+                try {
+                    const raw = JSON.parse(data.session.agentState);
+                    const parsed = AgentStateSchema.safeParse(raw);
+                    return parsed.success ? parsed.data : {};
+                } catch {
+                    return {};
+                }
+            })();
+
+            if (sessionEncryptionMode === 'plain') {
+                for (const m of messagesData.messages ?? []) {
+                    if (!m) continue;
+                    const content: any = (m as any).content;
+                    if (!content || content.t !== 'plain') continue;
+                    const normalizedMessage = normalizeRawMessage(m.id, m.localId ?? null, m.createdAt, content.v);
+                    if (normalizedMessage) normalized.push(normalizedMessage);
+                }
+            } else {
+                if (!data.encryptedDataKey) {
+                    setError(t('session.sharing.failedToDecrypt'));
+                    setIsLoading(false);
+                    return;
+                }
+
+                const decryptedKey = await decryptDataKeyFromPublicShare(data.encryptedDataKey, tokenParam);
+                if (!decryptedKey) {
+                    setError(t('session.sharing.failedToDecrypt'));
+                    setIsLoading(false);
+                    return;
+                }
+
+                const sessionEncryptor = new AES256Encryption(decryptedKey);
+                const cache = new EncryptionCache();
+                const sessionEncryption = new SessionEncryption(data.session.id, sessionEncryptor, cache);
+
+                const e2eeMetadata = await sessionEncryption.decryptMetadata(
+                    data.session.metadataVersion,
+                    data.session.metadata
+                );
+
+                const e2eeAgentState = await sessionEncryption.decryptAgentState(
+                    data.session.agentStateVersion,
+                    data.session.agentState
+                );
+
+                const decryptedMessages = await sessionEncryption.decryptMessages(messagesData.messages ?? []);
+                for (const m of decryptedMessages) {
+                    if (!m || !m.content) continue;
+                    const normalizedMessage = normalizeRawMessage(m.id, m.localId ?? null, m.createdAt, m.content);
+                    if (normalizedMessage) normalized.push(normalizedMessage);
+                }
+
+                const reducerState = createReducer();
+                const reduced = reducer(reducerState, normalized, e2eeAgentState);
+
+                setShare(data);
+                setDecryptedMetadata(e2eeMetadata);
+                setMessages(reduced.messages.slice(-200));
+                setIsLoading(false);
+                return;
             }
+
             normalized.sort((a, b) => a.createdAt - b.createdAt);
 
             const reducerState = createReducer();
@@ -179,7 +231,7 @@ export default memo(function PublicShareViewerScreen() {
             setError(t('errors.operationFailed'));
             setIsLoading(false);
         }
-    }, [authHeader, token]);
+    }, [authHeader, tokenParam]);
 
     useEffect(() => {
         void load(false);
@@ -213,7 +265,7 @@ export default memo(function PublicShareViewerScreen() {
                 <ItemGroup title={t('session.sharing.consentRequired')}>
                     <Item
                         title={t('session.sharing.sharedBy', { name: ownerName })}
-                        icon={<Ionicons name="person-outline" size={29} color="#007AFF" />}
+                        icon={<Ionicons name="person-outline" size={29} color={theme.colors.accent.blue} />}
                         showChevron={false}
                     />
                     <Item
@@ -224,12 +276,12 @@ export default memo(function PublicShareViewerScreen() {
                 <ItemGroup>
                     <Item
                         title={t('session.sharing.acceptAndView')}
-                        icon={<Ionicons name="checkmark-circle-outline" size={29} color="#34C759" />}
+                        icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.success} />}
                         onPress={() => load(true)}
                     />
                     <Item
                         title={t('common.cancel')}
-                        icon={<Ionicons name="close-circle-outline" size={29} color="#FF3B30" />}
+                        icon={<Ionicons name="close-circle-outline" size={29} color={theme.colors.warningCritical} />}
                         onPress={() => router.back()}
                     />
                 </ItemGroup>

@@ -36,7 +36,16 @@ export const Linking = {
     canOpenURL: async () => true,
     openURL: async () => {},
 } as const;
-export const StyleSheet = { create: (styles: any) => styles } as const;
+function flattenStyle(style: any): any {
+    if (style == null) return style;
+    if (Array.isArray(style)) {
+        return style.reduce((acc, entry) => ({ ...acc, ...(flattenStyle(entry) ?? {}) }), {});
+    }
+    if (typeof style === 'number') return {};
+    if (typeof style === 'object') return style;
+    return {};
+}
+export const StyleSheet = { create: (styles: any) => styles, flatten: flattenStyle } as const;
 export const TurboModuleRegistry = { getEnforcing: () => ({}) } as const;
 export const registerCallableModule = () => {};
 

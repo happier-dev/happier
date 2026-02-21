@@ -1,19 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, ScrollView, ActivityIndicator } from 'react-native';
-import { useRouter } from 'expo-router';
+import { View, ScrollView, ActivityIndicator } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '@/auth/context/AuthContext';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Typography } from '@/constants/Typography';
 import { encodeBase64 } from '@/encryption/base64';
 import { generateAuthKeyPair, authQRStart } from '@/auth/flows/qrStart';
 import { authQRWait } from '@/auth/flows/qrWait';
-import { layout } from '@/components/ui/layout/layout';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { QRCode } from '@/components/qr/QRCode';
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { getAuthProvider } from '@/auth/providers/registry';
+import type { RestoreRedirectReason, RestoreRedirectNotice } from '@/auth/providers/types';
+import { Text } from '@/components/ui/text/Text';
+
 
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {
@@ -27,29 +30,55 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     contentWrapper: {
         width: '100%',
-        maxWidth: layout.maxWidth,
-        paddingVertical: 24,
+        maxWidth: 560,
+        paddingVertical: 28,
     },
-    instructionText: {
-        fontSize: 20,
-        color: theme.colors.text,
-        marginBottom: 24,
-        ...Typography.default(),
+    noticeCard: {
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        borderRadius: 14,
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        backgroundColor: theme.colors.surface,
     },
-    secondInstructionText: {
+    noticeTitle: {
         fontSize: 16,
-        color: theme.colors.textSecondary,
-        marginBottom: 20,
-        marginTop: 30,
-        ...Typography.default(),
+        color: theme.colors.text,
+        marginBottom: 6,
+        ...Typography.default('semiBold'),
     },
-    qrInstructions: {
+    noticeBody: {
         fontSize: 14,
         color: theme.colors.textSecondary,
-        marginBottom: 16,
-        lineHeight: 22,
-        textAlign: 'center',
+        lineHeight: 20,
         ...Typography.default(),
+    },
+    sectionLead: {
+        fontSize: 15,
+        color: theme.colors.textSecondary,
+        marginTop: 18,
+        marginBottom: 14,
+        textAlign: 'center',
+        lineHeight: 21,
+        ...Typography.default(),
+    },
+    qrBlock: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '100%',
+        paddingVertical: 10,
+    },
+    footer: {
+        marginTop: 18,
+        alignItems: 'center',
+        width: '100%',
+    },
+    footerButton: {
+        width: '100%',
+        maxWidth: 320,
+    },
+    footerButtonSpacer: {
+        height: 12,
     },
     textInput: {
         backgroundColor: theme.colors.input.background,
@@ -64,17 +93,40 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
+function paramString(params: Record<string, unknown>, key: string): string | null {
+    const value = (params as any)[key];
+    if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : null;
+    return typeof value === 'string' ? value : null;
+}
+
+function parseRestoreRedirectReason(value: unknown): RestoreRedirectReason | null {
+    const raw = typeof value === 'string' ? value.trim() : '';
+    if (raw === 'provider_already_linked') return raw;
+    return null;
+}
+
 export default function Restore() {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const auth = useAuth();
     const router = useRouter();
+    const params = useLocalSearchParams() as any;
     const [restoreKey, setRestoreKey] = useState('');
     const [isWaitingForAuth, setIsWaitingForAuth] = useState(false);
     const [authReady, setAuthReady] = useState(false);
     const [waitingDots, setWaitingDots] = useState(0);
     const [providerResetEnabled, setProviderResetEnabled] = useState(false);
     const isCancelledRef = useRef(false);
+
+    const restoreRedirectNotice: RestoreRedirectNotice | null = React.useMemo(() => {
+        const providerId = (paramString(params, 'provider') ?? '').trim().toLowerCase();
+        const reason = parseRestoreRedirectReason(paramString(params, 'reason'));
+        if (!providerId || !reason) return null;
+
+        const provider = getAuthProvider(providerId);
+        if (!provider?.getRestoreRedirectNotice) return null;
+        return provider.getRestoreRedirectNotice({ reason });
+    }, [params]);
 
     // Memoize keypair generation to prevent re-creating on re-renders
     const keypair = React.useMemo(() => generateAuthKeyPair(), []);
@@ -149,39 +201,56 @@ export default function Restore() {
     return (
         <ScrollView style={styles.scrollView} contentContainerStyle={{ flexGrow: 1 }}>
             <View style={styles.container}>
-
-                <View style={{justifyContent: 'flex-end' }}>
-                    <Text style={styles.secondInstructionText}>
-                        {t('connect.restoreQrInstructions')}
-                    </Text>
-                </View>
-                {!authReady && (
-                    <View style={{ width: 200, height: 200, backgroundColor: theme.colors.surface, alignItems: 'center', justifyContent: 'center' }}>
-                        <ActivityIndicator size="small" color={theme.colors.text} />
-                    </View>
-                )}
-                {authReady && (
-                    <QRCode
-                        data={'happier:///account?' + encodeBase64(keypair.publicKey, 'base64url')}
-                        size={300}
-                        foregroundColor={'black'}
-                        backgroundColor={'white'}
-                    />
-                )}
-                <View style={{ flexGrow: 4, paddingTop: 30 }}>
-                    <RoundButton title={t('connect.restoreWithSecretKeyInstead')} display='inverted' onPress={() => {
-                        router.push('/restore/manual');
-                    }} />
-                    {providerResetEnabled ? (
-                        <View style={{ paddingTop: 12 }}>
-                            <RoundButton
-                                size="small"
-                                title={t('connect.lostAccessLink')}
-                                display="inverted"
-                                onPress={() => router.push('/restore/lost-access')}
-                            />
+                <View style={styles.contentWrapper}>
+                    {restoreRedirectNotice ? (
+                        <View style={styles.noticeCard}>
+                            <Text style={styles.noticeTitle}>{restoreRedirectNotice.title}</Text>
+                            <Text style={styles.noticeBody}>{restoreRedirectNotice.body}</Text>
                         </View>
                     ) : null}
+
+                    <Text style={styles.sectionLead}>{t('connect.restoreQrInstructions')}</Text>
+
+                    <View style={styles.qrBlock}>
+                        {!authReady ? (
+                            <View style={{ width: 220, height: 220, alignItems: 'center', justifyContent: 'center' }}>
+                                <ActivityIndicator size="small" color={theme.colors.text} />
+                            </View>
+                        ) : (
+                            <QRCode
+                                data={'happier:///account?' + encodeBase64(keypair.publicKey, 'base64url')}
+                                size={260}
+                                foregroundColor={'black'}
+                                backgroundColor={'white'}
+                            />
+                        )}
+                    </View>
+
+                    <View style={styles.footer}>
+                        <View style={styles.footerButton}>
+                            <RoundButton
+                                testID="restore-open-manual"
+                                size="normal"
+                                title={t('connect.restoreWithSecretKeyInstead')}
+                                display="inverted"
+                                onPress={() => router.push('/restore/manual')}
+                            />
+                        </View>
+                        {providerResetEnabled ? (
+                            <>
+                                <View style={styles.footerButtonSpacer} />
+                                <View style={styles.footerButton}>
+                                    <RoundButton
+                                        testID="restore-open-lost-access"
+                                        size="small"
+                                        title={t('connect.lostAccessLink')}
+                                        display="inverted"
+                                        onPress={() => router.push('/restore/lost-access')}
+                                    />
+                                </View>
+                            </>
+                        ) : null}
+                    </View>
                 </View>
             </View>
         </ScrollView>

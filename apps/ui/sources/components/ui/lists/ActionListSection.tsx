@@ -1,8 +1,10 @@
 import * as React from 'react';
-import { Text, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { SelectableRow } from './SelectableRow';
+import { Text } from '@/components/ui/text/Text';
+
 
 export type ActionListItem = Readonly<{
     id: string;

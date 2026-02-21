@@ -81,6 +81,7 @@ describe('socket scm invalidation', () => {
       invalidateMessagesForSession: vi.fn(),
       assumeUsers: vi.fn(async () => {}),
       applyTodoSocketUpdates: vi.fn(async () => {}),
+      invalidateMachines: vi.fn(),
       invalidateSessions: vi.fn(),
       invalidateArtifacts: vi.fn(),
       invalidateFriends: vi.fn(),
@@ -94,4 +95,3 @@ describe('socket scm invalidation', () => {
     expect(invalidateScmSpy).not.toHaveBeenCalled();
   });
 });
-

@@ -9,6 +9,7 @@ vi.mock('react-native', () => ({
     Text: 'Text',
     Pressable: 'Pressable',
     ActivityIndicator: 'ActivityIndicator',
+    AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
     Platform: {
         OS: 'web',
         select: (values: any) => values?.default ?? values?.web ?? values?.ios ?? values?.android,

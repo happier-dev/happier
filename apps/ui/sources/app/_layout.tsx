@@ -31,6 +31,7 @@ import { installBugReportConsoleCapture } from '@/utils/system/bugReportLogBuffe
 import { configureBugReportUserActionTrail } from '@/utils/system/bugReportActionTrail';
 import { useUnistyles } from 'react-native-unistyles';
 import { AsyncLock } from '@/utils/system/lock';
+import { useWebUiFontScale } from '@/components/ui/text/useWebUiFontScale';
 
 function shouldCaptureRnwUnexpectedTextNodeStacks(): boolean {
     // Dev-only diagnostics: enable via `?debugRnwTextNode=1` on web.
@@ -517,6 +518,7 @@ async function loadFonts() {
 
 export default function RootLayout() {
     const { theme } = useUnistyles();
+    useWebUiFontScale();
     const navigationTheme = React.useMemo(() => {
         if (theme.dark) {
             return {

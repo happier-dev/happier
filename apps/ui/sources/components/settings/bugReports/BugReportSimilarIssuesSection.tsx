@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 
 import type { BugReportSimilarIssue } from './bugReportServiceClient';
 import { bugReportComposerStyles } from './bugReportComposerStyles';

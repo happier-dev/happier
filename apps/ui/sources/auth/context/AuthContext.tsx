@@ -29,9 +29,9 @@ export function AuthProvider({ children, initialCredentials }: { children: React
         if (!success) {
             throw new Error('Failed to save credentials');
         }
-        await syncSwitchServer(newCredentials);
         setCredentials(newCredentials);
         setIsAuthenticated(true);
+        fireAndForget(syncSwitchServer(newCredentials), { tag: 'AuthContext.login.syncSwitchServer' });
     }, []);
 
     const logout = React.useCallback(async () => {

@@ -29,23 +29,6 @@ vi.mock('react-native', () => ({
     },
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                text: '#000',
-                textSecondary: '#666',
-                surface: '#fff',
-                border: '#ddd',
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (styles: any) => styles,
-        absoluteFillObject: {},
-    },
-}));
-
 vi.mock('@expo/vector-icons', async () => {
     const Ionicons = (props: any) => React.createElement('Ionicons', props);
     return { Ionicons };

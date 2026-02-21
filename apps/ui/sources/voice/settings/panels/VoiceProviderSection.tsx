@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { Ionicons } from '@expo/vector-icons';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -12,6 +13,7 @@ export function VoiceProviderSection(props: {
   setVoice: (next: VoiceSettings) => void;
   happierVoiceSupported: boolean | null;
 }) {
+  const { theme } = useUnistyles();
   const select = (next: VoiceSettings) => props.setVoice(next);
 
   const billingMode = props.voice.adapters.realtime_elevenlabs.billingMode;
@@ -25,7 +27,7 @@ export function VoiceProviderSection(props: {
       <Item
         title={t('settingsVoice.mode.off')}
         subtitle={t('settingsVoice.mode.offSubtitle')}
-        rightElement={isOff ? <Ionicons name="checkmark-circle" size={24} color="#007AFF" /> : null}
+        rightElement={isOff ? <Ionicons name="checkmark-circle" size={24} color={theme.colors.accent.blue} /> : null}
         onPress={() => select({ ...props.voice, providerId: 'off' })}
         showChevron={false}
       />
@@ -34,7 +36,7 @@ export function VoiceProviderSection(props: {
         <Item
           title={t('settingsVoice.mode.happier')}
           subtitle={t('settingsVoice.mode.happierSubtitle')}
-          rightElement={isHappier ? <Ionicons name="checkmark-circle" size={24} color="#007AFF" /> : null}
+          rightElement={isHappier ? <Ionicons name="checkmark-circle" size={24} color={theme.colors.accent.blue} /> : null}
           onPress={() =>
             select({
               ...props.voice,
@@ -52,7 +54,7 @@ export function VoiceProviderSection(props: {
       <Item
         title={t('settingsVoice.mode.byo')}
         subtitle={t('settingsVoice.mode.byoSubtitle')}
-        rightElement={isByo ? <Ionicons name="checkmark-circle" size={24} color="#007AFF" /> : null}
+        rightElement={isByo ? <Ionicons name="checkmark-circle" size={24} color={theme.colors.accent.blue} /> : null}
         onPress={() =>
           select({
             ...props.voice,
@@ -69,7 +71,7 @@ export function VoiceProviderSection(props: {
       <Item
         title={t('settingsVoice.mode.local')}
         subtitle={t('settingsVoice.mode.localSubtitle')}
-        rightElement={isLocal ? <Ionicons name="checkmark-circle" size={24} color="#007AFF" /> : null}
+        rightElement={isLocal ? <Ionicons name="checkmark-circle" size={24} color={theme.colors.accent.blue} /> : null}
         onPress={() => select({ ...props.voice, providerId: 'local_conversation' })}
         showChevron={false}
       />

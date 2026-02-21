@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { useAcceptedFriends, useFriendRequests, useRequestedFriends } from '@/sync/domains/state/storage';
 import { UserCard } from '@/components/ui/cards/UserCard';
@@ -9,6 +9,8 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useRouter } from 'expo-router';
 import { useRequireFriendsEnabled } from '@/hooks/friends/useRequireFriendsEnabled';
 import { RequireFriendsIdentityForFriends } from '@/components/friends/RequireFriendsIdentityForFriends';
+import { Text } from '@/components/ui/text/Text';
+
 
 export default function FriendsManageScreen() {
     const enabled = useRequireFriendsEnabled();

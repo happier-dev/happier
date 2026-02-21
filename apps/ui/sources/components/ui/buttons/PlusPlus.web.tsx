@@ -1,6 +1,8 @@
 import React from 'react';
-import { Text, View, ViewStyle } from 'react-native';
+import { View, ViewStyle } from 'react-native';
 import { Typography } from '@/constants/Typography';
+import { Text } from '@/components/ui/text/Text';
+
 
 interface PlusPlusProps {
     fontSize: number;

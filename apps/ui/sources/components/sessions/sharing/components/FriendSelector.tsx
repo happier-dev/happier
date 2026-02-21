@@ -1,5 +1,5 @@
 import React, { memo, useMemo, useState } from 'react';
-import { View, Text, TextInput, FlatList, ScrollView, Pressable, useWindowDimensions, Platform, Switch } from 'react-native';
+import { View, FlatList, ScrollView, Pressable, useWindowDimensions, Platform, Switch } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -13,6 +13,8 @@ import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Modal } from '@/modal';
 import { HappyError } from '@/utils/errors/errors';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 /**
  * Props for FriendSelector component

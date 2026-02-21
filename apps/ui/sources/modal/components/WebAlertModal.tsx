@@ -1,10 +1,12 @@
 import React from 'react';
-import { View, Text, Pressable } from 'react-native';
+import { View, Pressable } from 'react-native';
 import { BaseModal } from './BaseModal';
 import { AlertModalConfig, ConfirmModalConfig } from '../types';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
+import { Text } from '@/components/ui/text/Text';
+
 
 interface WebAlertModalProps {
     config: AlertModalConfig | ConfirmModalConfig;
@@ -61,6 +63,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     button: {
         flex: 1,
         paddingVertical: 11,
+        paddingHorizontal: 14,
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -78,6 +81,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     buttonText: {
         fontSize: 17,
         color: theme.colors.textLink,
+        textAlign: 'center',
+        lineHeight: 20,
+        flexShrink: 1,
+        paddingHorizontal: 2,
     },
     primaryText: {
         color: theme.colors.text,

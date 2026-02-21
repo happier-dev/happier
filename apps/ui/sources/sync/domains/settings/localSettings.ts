@@ -10,6 +10,8 @@ export const LocalSettingsSchema = z.object({
     devModeEnabled: z.boolean().describe('Enable developer menu in settings'),
     commandPaletteEnabled: z.boolean().describe('Enable CMD+K command palette (web only)'),
     themePreference: z.enum(['light', 'dark', 'adaptive']).describe('Theme preference: light, dark, or adaptive (follows system)'),
+    uiFontScale: z.number().describe('In-app UI font scale multiplier (stacks with OS font scale)'),
+    uiFontSize: z.enum(['xxsmall', 'xsmall', 'small', 'default', 'large', 'xlarge', 'xxlarge']).optional().describe('Deprecated: legacy in-app UI font size'),
     markdownCopyV2: z.boolean().describe('Replace native paragraph selection with long-press modal for full markdown copy'),
     sidebarCollapsed: z.boolean().describe('Collapse the permanent sidebar on tablets'),
     // CLI version acknowledgments - keyed by machineId
@@ -34,6 +36,8 @@ export const localSettingsDefaults: LocalSettings = {
     devModeEnabled: false,
     commandPaletteEnabled: false,
     themePreference: 'adaptive',
+    uiFontScale: 1,
+    uiFontSize: 'default',
     markdownCopyV2: false,
     sidebarCollapsed: false,
     acknowledgedCliVersions: {},
@@ -49,7 +53,34 @@ export function localSettingsParse(settings: unknown): LocalSettings {
     if (!parsed.success) {
         return { ...localSettingsDefaults };
     }
-    return { ...localSettingsDefaults, ...parsed.data };
+
+    const legacyScaleBySize: Record<string, number> = {
+        xxsmall: 0.8,
+        xsmall: 0.85,
+        small: 0.93,
+        default: 1,
+        large: 1.1,
+        xlarge: 1.2,
+        xxlarge: 1.3,
+    };
+
+    const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+    const UI_FONT_SCALE_MIN = 0.5;
+    const UI_FONT_SCALE_MAX = 2.5;
+
+    const data = parsed.data as any;
+    const nextUiFontScaleRaw =
+        typeof data.uiFontScale === 'number'
+            ? data.uiFontScale
+            : (typeof data.uiFontSize === 'string' ? legacyScaleBySize[data.uiFontSize] : undefined);
+
+    const nextUiFontScale =
+        typeof nextUiFontScaleRaw === 'number' && Number.isFinite(nextUiFontScaleRaw)
+            ? clamp(nextUiFontScaleRaw, UI_FONT_SCALE_MIN, UI_FONT_SCALE_MAX)
+            : localSettingsDefaults.uiFontScale;
+
+    return { ...localSettingsDefaults, ...parsed.data, uiFontScale: nextUiFontScale };
 }
 
 //

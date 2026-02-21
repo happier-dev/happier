@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, ScrollView, Pressable } from 'react-native';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { UsageDataPoint } from '@/sync/api/account/apiUsage';
 import { t } from '@/text';

@@ -161,23 +161,28 @@ describe('ExitPlanToolView', () => {
     });
 
     it('shows an error when requesting plan changes fails', async () => {
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         sessionDeny.mockRejectedValueOnce(new Error('network'));
 
-        const tree = await renderView(makeRunningTool());
+        try {
+            const tree = await renderView(makeRunningTool());
 
-        await act(async () => {
-            await tree.root.findByProps({ testID: 'exit-plan-request-changes' }).props.onPress();
-        });
+            await act(async () => {
+                await tree.root.findByProps({ testID: 'exit-plan-request-changes' }).props.onPress();
+            });
 
-        await act(async () => {
-            tree.root.findByProps({ testID: 'exit-plan-request-changes-input' }).props.onChangeText('Please change step 2');
-        });
+            await act(async () => {
+                tree.root.findByProps({ testID: 'exit-plan-request-changes-input' }).props.onChangeText('Please change step 2');
+            });
 
-        await act(async () => {
-            await tree.root.findByProps({ testID: 'exit-plan-request-changes-send' }).props.onPress();
-        });
+            await act(async () => {
+                await tree.root.findByProps({ testID: 'exit-plan-request-changes-send' }).props.onPress();
+            });
 
-        expect(modalAlert).toHaveBeenCalledWith('common.error', 'tools.exitPlanMode.requestChangesFailed');
+            expect(modalAlert).toHaveBeenCalledWith('common.error', 'tools.exitPlanMode.requestChangesFailed');
+        } finally {
+            consoleErrorSpy.mockRestore();
+        }
     });
 
     it('shows an error when requesting changes is attempted without text', async () => {

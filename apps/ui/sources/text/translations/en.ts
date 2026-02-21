@@ -144,6 +144,9 @@ export const en = {
         openMachine: 'Open machine',
         terminalUrlPlaceholder: 'happier://terminal?...',
         restoreQrInstructions: '1. Open Happier on your mobile device\n2. Go to Settings → Account\n3. Tap "Link New Device"\n4. Scan this QR code',
+        externalAuthVerifiedTitle: ({ provider }: { provider: string }) => `${provider} verified`,
+        externalAuthVerifiedBody: ({ provider }: { provider: string }) =>
+            `We found an existing Happier account linked to ${provider}. To finish signing in on this device, restore your account key using the QR code or your secret key.`,
         restoreWithSecretKeyInstead: 'Restore with Secret Key Instead',
         restoreWithSecretKeyDescription: 'Enter your secret key to restore access to your account.',
         lostAccessLink: 'Lost access?',
@@ -343,6 +346,19 @@ export const en = {
         compactSessionViewDescription: 'Show active sessions in a more compact layout',
         compactSessionViewMinimal: 'Minimal Compact View',
         compactSessionViewMinimalDescription: 'Remove avatars and show a very compact session row layout',
+        text: 'Text',
+        textDescription: 'Adjust text size across the app',
+        textSize: 'Text Size',
+        textSizeDescription: 'Make text larger or smaller',
+        textSizeOptions: {
+            xxsmall: 'Extra extra small',
+            xsmall: 'Extra small',
+            small: 'Small',
+            default: 'Default',
+            large: 'Large',
+            xlarge: 'Extra large',
+            xxlarge: 'Extra extra large',
+        },
     },
 
     settingsFeatures: {
@@ -502,10 +518,10 @@ export const en = {
         missingPermissionId: 'Missing permission request id',
         codexResumeNotInstalledTitle: 'Codex resume is not installed on this machine',
         codexResumeNotInstalledMessage:
-            'To resume a Codex conversation, install the Codex resume server on the target machine (Machine Details → Codex resume).',
+            'To resume a Codex conversation, install the Codex resume server on the target machine (Machine Details → Installables).',
         codexAcpNotInstalledTitle: 'Codex ACP is not installed on this machine',
         codexAcpNotInstalledMessage:
-            'To use the Codex ACP experiment, install codex-acp on the target machine (Machine Details → Codex ACP) or disable the experiment.',
+            'To use the Codex ACP experiment, install codex-acp on the target machine (Machine Details → Installables) or disable the experiment.',
     },
 
     deps: {
@@ -1804,6 +1820,12 @@ export const en = {
         signUpWithProvider: ({ provider }: { provider: string }) => `Continue with ${provider}`,
         linkOrRestoreAccount: 'Link or restore account',
         loginWithMobileApp: 'Login with mobile app',
+        serverUnavailableTitle: 'Can’t reach server',
+        serverUnavailableBody: ({ serverUrl }: { serverUrl: string }) =>
+            `We can’t connect to ${serverUrl}. Retry or change your server to continue.`,
+        serverIncompatibleTitle: 'Server not supported',
+        serverIncompatibleBody: ({ serverUrl }: { serverUrl: string }) =>
+            `The server at ${serverUrl} returned an unexpected response. Update the server or change your server to continue.`,
     },
 
     review: {

@@ -1,12 +1,17 @@
 import * as React from 'react';
-import { View, TextInput, Text, TouchableOpacity } from 'react-native';
+import { View, TouchableOpacity } from 'react-native';
 import { RoundButton } from './RoundButton';
 import { useConnectTerminal } from '@/hooks/session/useConnectTerminal';
 import { trackConnectAttempt } from '@/track';
 import { Ionicons } from '@expo/vector-icons';
 import { t } from '@/text';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 export const ConnectButton = React.memo(() => {
+    const { theme } = useUnistyles();
+    const styles = stylesheet;
     const { connectTerminal, connectWithUrl, isLoading } = useConnectTerminal();
     const [manualUrl, setManualUrl] = React.useState('');
     const [showManualEntry, setShowManualEntry] = React.useState(false);
@@ -25,7 +30,7 @@ export const ConnectButton = React.memo(() => {
     };
 
     return (
-        <View style={{ width: 210 }}>
+        <View style={styles.container}>
             <RoundButton
                 title={t('connectButton.authenticate')}
                 size="large"
@@ -35,61 +40,31 @@ export const ConnectButton = React.memo(() => {
             
             <TouchableOpacity
                 onPress={() => setShowManualEntry(!showManualEntry)}
-                style={{
-                    marginTop: 12,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                }}
+                style={styles.manualToggle}
             >
                 <Ionicons 
                     name="link-outline" 
                     size={16} 
-                    color="#666" 
-                    style={{ marginRight: 6 }}
+                    color={theme.colors.textSecondary}
+                    style={styles.manualToggleIcon}
                 />
-                <Text style={{
-                    fontSize: 14,
-                    color: '#666',
-                    textDecorationLine: 'underline',
-                }}>
+                <Text style={styles.manualToggleText}>
                     {t('connectButton.authenticateWithUrlPaste')}
                 </Text>
             </TouchableOpacity>
 
             {showManualEntry && (
-                <View style={{
-                    marginTop: 12,
-                    padding: 12,
-                    borderRadius: 8,
-                    backgroundColor: '#f5f5f5',
-                    width: 210,
-                }}>
-                    <Text style={{
-                        fontSize: 12,
-                        color: '#666',
-                        marginBottom: 8,
-                    }}>
+                <View style={styles.manualEntryContainer}>
+                    <Text style={styles.manualEntryLabel}>
                         {t('connectButton.pasteAuthUrl')}
                     </Text>
-                    <View style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                    }}>
+                    <View style={styles.manualEntryRow}>
                         <TextInput
-                            style={{
-                                flex: 1,
-                                backgroundColor: 'white',
-                                borderWidth: 1,
-                                borderColor: '#ddd',
-                                borderRadius: 6,
-                                padding: 8,
-                                fontSize: 12,
-                            }}
+                            style={styles.manualUrlInput}
                             value={manualUrl}
                             onChangeText={setManualUrl}
                             placeholder={t('connect.terminalUrlPlaceholder')}
-                            placeholderTextColor="#999"
+                            placeholderTextColor={theme.colors.input.placeholder}
                             autoCapitalize="none"
                             autoCorrect={false}
                             onSubmitEditing={handleManualConnect}
@@ -97,16 +72,15 @@ export const ConnectButton = React.memo(() => {
                         <TouchableOpacity
                             onPress={handleManualConnect}
                             disabled={!manualUrl.trim()}
-                            style={{
-                                marginLeft: 8,
-                                padding: 8,
-                                opacity: manualUrl.trim() ? 1 : 0.5,
-                            }}
+                            style={[
+                                styles.manualSubmitButton,
+                                manualUrl.trim() ? null : styles.manualSubmitButtonDisabled,
+                            ]}
                         >
                             <Ionicons 
                                 name="checkmark-circle" 
                                 size={24} 
-                                color="#007AFF" 
+                                color={theme.colors.accent.blue}
                             />
                         </TouchableOpacity>
                     </View>
@@ -115,3 +89,56 @@ export const ConnectButton = React.memo(() => {
         </View>
     )
 });
+
+const stylesheet = StyleSheet.create((theme) => ({
+    container: {
+        width: 210,
+    },
+    manualToggle: {
+        marginTop: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    manualToggleIcon: {
+        marginRight: 6,
+    },
+    manualToggleText: {
+        fontSize: 14,
+        color: theme.colors.textSecondary,
+        textDecorationLine: 'underline',
+    },
+    manualEntryContainer: {
+        marginTop: 12,
+        padding: 12,
+        borderRadius: 8,
+        backgroundColor: theme.colors.surfaceHigh,
+        width: 210,
+    },
+    manualEntryLabel: {
+        fontSize: 12,
+        color: theme.colors.textSecondary,
+        marginBottom: 8,
+    },
+    manualEntryRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    manualUrlInput: {
+        flex: 1,
+        backgroundColor: theme.colors.input.background,
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        borderRadius: 6,
+        padding: 8,
+        fontSize: 12,
+        color: theme.colors.input.text,
+    },
+    manualSubmitButton: {
+        marginLeft: 8,
+        padding: 8,
+    },
+    manualSubmitButtonDisabled: {
+        opacity: 0.5,
+    },
+}));

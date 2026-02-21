@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Text, Pressable, ScrollView } from 'react-native';
+import { View, Pressable, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -19,6 +19,8 @@ import { resolvePreferredMachineId } from '@/components/settings/pickers/resolve
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 
 import type { VoiceSessionSpawnPickerResult } from './openVoiceSessionSpawnPicker';
+import { Text } from '@/components/ui/text/Text';
+
 
 type Props = CustomModalInjectedProps & Readonly<{
   onResolve: (value: VoiceSessionSpawnPickerResult | null) => void;

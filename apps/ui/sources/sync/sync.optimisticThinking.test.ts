@@ -117,6 +117,45 @@ describe('sync.sendMessage optimistic thinking', () => {
         expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
     });
 
+    it('sends plaintext message envelopes when session encryptionMode is plain', async () => {
+        const sessionId = 's_plain_send';
+        storage.getState().applySessions([{ ...createSession({ sessionId }), encryptionMode: 'plain' }]);
+
+        const encryptRawRecord = vi.fn(async () => {
+            throw new Error('encryptRawRecord should not be called')
+        })
+        const encryption = {
+            getSessionEncryption: () => ({ encryptRawRecord }),
+        } as unknown as Encryption;
+
+        const emitWithAck = vi.fn(async () => ({
+            ok: true,
+            id: 'm1',
+            seq: 1,
+            localId: null,
+            didWrite: true,
+        })) as any;
+
+        const { sync } = await import('./sync');
+        sync.encryption = encryption as any;
+        sync.setMessageTransport({
+            emitWithAck,
+            send: vi.fn(),
+        });
+
+        await sync.sendMessage(sessionId, 'hello');
+
+        expect(encryptRawRecord).not.toHaveBeenCalled();
+        expect(emitWithAck).toHaveBeenCalledWith(
+            'message',
+            expect.objectContaining({
+                sid: sessionId,
+                message: expect.objectContaining({ t: 'plain', v: expect.any(Object) }),
+            }),
+            expect.anything(),
+        );
+    });
+
     it('includes metaOverrides (e.g. meta.happier) in the outbound rawRecord meta', async () => {
         const sessionId = 's_meta_overrides';
         storage.getState().applySessions([createSession({ sessionId })]);

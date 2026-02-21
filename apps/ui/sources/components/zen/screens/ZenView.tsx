@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Text, ScrollView, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,6 +16,8 @@ import { toCamelCase } from '@/utils/strings/stringUtils';
 import { removeTaskLinks, getSessionsForTask } from '@/sync/domains/todos/taskSessionLink';
 import { t } from '@/text';
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 export const ZenView = React.memo(() => {
     const router = useRouter();
@@ -173,7 +175,7 @@ export const ZenView = React.memo(() => {
                             ]}
                         >
                             {todo.done && (
-                                <Ionicons name="checkmark" size={20} color="#FFFFFF" />
+                                <Ionicons name="checkmark" size={20} color={theme.colors.button.primary.tint} />
                             )}
                         </Pressable>
 
@@ -218,7 +220,7 @@ export const ZenView = React.memo(() => {
                             onPress={handleWorkOnTask}
                             style={[styles.actionButton, { backgroundColor: theme.colors.button.primary.background }]}
                         >
-                            <Ionicons name="hammer-outline" size={20} color="#FFFFFF" />
+                            <Ionicons name="hammer-outline" size={20} color={theme.colors.button.primary.tint} />
                             <Text style={styles.actionButtonText}>{t('zen.view.workOnTask')}</Text>
                         </Pressable>
 
@@ -234,7 +236,7 @@ export const ZenView = React.memo(() => {
                             onPress={handleDelete}
                             style={[styles.actionButton, { backgroundColor: theme.colors.textDestructive }]}
                         >
-                            <Ionicons name="trash-outline" size={20} color="#FFFFFF" />
+                            <Ionicons name="trash-outline" size={20} color={theme.colors.button.primary.tint} />
                             <Text style={styles.actionButtonText}>{t('zen.view.delete')}</Text>
                         </Pressable>
                     </View>

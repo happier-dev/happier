@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Text, Platform, StatusBar, Pressable } from 'react-native';
+import { View, Platform, StatusBar, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackHeaderProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -7,6 +7,8 @@ import { layout } from '../ui/layout/layout';
 import { useHeaderHeight, useIsTablet } from '@/utils/platform/responsive';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet } from 'react-native-unistyles';
+import { Text } from '@/components/ui/text/Text';
+
 
 interface HeaderProps {
     title?: React.ReactNode;

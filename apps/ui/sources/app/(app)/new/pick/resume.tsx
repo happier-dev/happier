@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable, InteractionManager } from 'react-native';
+import { View, Pressable, InteractionManager } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { CommonActions, useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -13,6 +13,8 @@ import { MultiTextInput, type MultiTextInputHandle } from '@/components/ui/forms
 import type { AgentId } from '@/agents/catalog/catalog';
 import { DEFAULT_AGENT_ID, getAgentCore, isAgentId } from '@/agents/catalog/catalog';
 import { getClipboardStringTrimmedSafe } from '@/utils/ui/clipboard';
+import { Text } from '@/components/ui/text/Text';
+
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {

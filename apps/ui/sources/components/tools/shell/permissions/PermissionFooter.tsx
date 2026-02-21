@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { sessionAbort, sessionAllow, sessionDeny } from '@/sync/ops';
 import { sync } from '@/sync/sync';
@@ -11,6 +11,8 @@ import { getPermissionFooterCopy } from '@/agents/catalog/permissionUiCopy';
 import { extractShellCommand } from '@/components/tools/normalization/parse/shellCommand';
 import { parseParenIdentifier } from '@/components/tools/normalization/parse/parseParenIdentifier';
 import { formatPermissionRequestSummary } from '@/components/tools/normalization/policy/permissionSummary';
+import { Text } from '@/components/ui/text/Text';
+
 
 interface PermissionFooterProps {
     permission: {

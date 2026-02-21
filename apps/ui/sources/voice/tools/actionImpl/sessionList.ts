@@ -1,6 +1,7 @@
 import { storage } from '@/sync/domains/state/storage';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import type { Message } from '@/sync/domains/messages/messageTypes';
+import { isHiddenSystemSession } from '@happier-dev/protocol';
 
 import {
   compareSessionKeyDesc,
@@ -29,7 +30,7 @@ export async function listSessionsForVoiceTool(params: Readonly<{
 
   const pushSessionRow = (s: any, serverId: string | null) => {
     if (!s || typeof s.id !== 'string') return;
-    if (s?.metadata?.systemSessionV1?.hidden === true) return;
+    if (isHiddenSystemSession({ metadata: s?.metadata })) return;
     if (seen.has(s.id)) return;
     seen.add(s.id);
     const updatedAt = typeof s.updatedAt === 'number' ? s.updatedAt : 0;
@@ -103,4 +104,3 @@ export async function listSessionsForVoiceTool(params: Readonly<{
 
   return { ok: true, sessions, nextCursor };
 }
-

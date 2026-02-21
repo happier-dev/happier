@@ -117,6 +117,7 @@ describe('SessionGettingStartedGuidanceView', () => {
 
     expect(() => tree.root.findByProps({ testID: 'session-getting-started-copy-all' } as any)).toThrow();
     expect(() => tree.root.findByProps({ testID: 'session-getting-started-scroll' } as any)).not.toThrow();
+    expect(() => tree.root.findByProps({ testID: 'session-getting-started-kind-connect_machine' } as any)).not.toThrow();
     expect(() => tree.root.findByProps({ testID: 'session-getting-started-step-create_session' } as any)).not.toThrow();
 
     clipboardMocks.setStringAsync.mockClear();

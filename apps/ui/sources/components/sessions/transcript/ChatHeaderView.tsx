@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Text, Platform, Pressable } from 'react-native';
+import { View, Platform, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
@@ -8,6 +8,8 @@ import { Typography } from '@/constants/Typography';
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { layout } from '@/components/ui/layout/layout';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Text } from '@/components/ui/text/Text';
+
 
 interface ChatHeaderViewProps {
     title: string;

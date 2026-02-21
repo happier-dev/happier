@@ -249,19 +249,21 @@ class Sync {
         AppState.addEventListener('change', (nextAppState) => {
             if (nextAppState === 'active') {
                 log.log('📱 App became active');
-                this.purchasesSync.invalidate();
-                this.profileSync.invalidate();
-                this.machinesSync.invalidate();
-                this.pushTokenSync.invalidate();
-                this.sessionsSync.invalidate();
-                this.nativeUpdateSync.invalidate();
+                // Many devices/platforms can emit multiple "active" transitions in quick succession.
+                // Coalesce invalidations to avoid redundant double-runs that can spike API load.
+                this.purchasesSync.invalidateCoalesced();
+                this.profileSync.invalidateCoalesced();
+                this.machinesSync.invalidateCoalesced();
+                this.pushTokenSync.invalidateCoalesced();
+                this.sessionsSync.invalidateCoalesced();
+                this.nativeUpdateSync.invalidateCoalesced();
                 log.log('📱 App became active: Invalidating artifacts sync');
-                this.artifactsSync.invalidate();
-                this.friendsSync.invalidate();
-                this.friendRequestsSync.invalidate();
-                this.feedSync.invalidate();
-                this.todosSync.invalidate();
-                this.automationsSync.invalidate();
+                this.artifactsSync.invalidateCoalesced();
+                this.friendsSync.invalidateCoalesced();
+                this.friendRequestsSync.invalidateCoalesced();
+                this.feedSync.invalidateCoalesced();
+                this.todosSync.invalidateCoalesced();
+                this.automationsSync.invalidateCoalesced();
             } else {
                 log.log(`📱 App state changed to: ${nextAppState}`);
                 // Reliability: ensure we persist any pending settings immediately when backgrounding.
@@ -345,14 +347,14 @@ class Sync {
         }
         await this.#init();
 
-        // Await settings sync to have fresh settings
-        await this.settingsSync.awaitQueue();
-
-        // Await profile sync to have fresh profile
-        await this.profileSync.awaitQueue();
-
-        // Await purchases sync to have fresh purchases
-        await this.purchasesSync.awaitQueue();
+        // UX: avoid blocking login forever if initial sync fetches hang/retry indefinitely.
+        // We still kick off the sync work in #init(); this just bounds the time we block the login call.
+        const initialAwaitTimeoutMs = 2500;
+        await Promise.all([
+            this.settingsSync.awaitQueue({ timeoutMs: initialAwaitTimeoutMs }),
+            this.profileSync.awaitQueue({ timeoutMs: initialAwaitTimeoutMs }),
+            this.purchasesSync.awaitQueue({ timeoutMs: initialAwaitTimeoutMs }),
+        ]);
     }
 
     async restore(credentials: AuthCredentials, encryption: Encryption) {
@@ -2004,6 +2006,7 @@ class Sync {
             },
             assumeUsers: (userIds) => this.assumeUsers(userIds),
             applyTodoSocketUpdates: (changes) => this.applyTodoSocketUpdates(changes),
+            invalidateMachines: () => this.machinesSync.invalidate(),
             invalidateSessions: () => this.sessionsSync.invalidate(),
             invalidateArtifacts: () => this.artifactsSync.invalidate(),
             invalidateFriends: () => this.friendsSync.invalidate(),

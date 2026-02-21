@@ -114,6 +114,7 @@ export function createServerScopedSessionSendMessage(deps?: Partial<Deps>): Read
     if (!session) {
       return { ok: false, errorCode: 'session_not_found', error: 'session_not_found' };
     }
+    const sessionEncryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
 
     const permissionMode = (session.permissionMode || 'default') as string;
     const flavor = session.metadata?.flavor;
@@ -143,13 +144,18 @@ export function createServerScopedSessionSendMessage(deps?: Partial<Deps>): Read
       meta,
     };
 
-    const sessionEncryption = await d.getScopedSessionEncryption({ context, sessionId });
-    const encryptedRawRecord = await sessionEncryption.encryptRawRecord(record);
+    const messagePayload =
+      sessionEncryptionMode === 'plain'
+        ? { t: 'plain' as const, v: record }
+        : await (async () => {
+            const sessionEncryption = await d.getScopedSessionEncryption({ context, sessionId });
+            return await sessionEncryption.encryptRawRecord(record);
+          })();
     const localId = randomUUID();
 
     const payload = {
       sid: sessionId,
-      message: encryptedRawRecord,
+      message: messagePayload,
       localId,
       sentFrom,
       permissionMode: permissionMode || 'default',

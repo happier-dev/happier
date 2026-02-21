@@ -29,7 +29,7 @@ function buildCachedFeatures(
             oauth: { providers: { [providerId]: { enabled: true, configured: true } } },
             auth: {
                 signup: { methods: [{ id: providerId, enabled: true }] },
-                login: { requiredProviders: [] },
+                login: { methods: [{ id: 'key_challenge', enabled: true }], requiredProviders: [] },
                 providers: {
                     [providerId]: {
                         enabled: true,

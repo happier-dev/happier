@@ -136,6 +136,22 @@ vi.mock('@shopify/react-native-skia', () => ({
     rrect: () => ({}),
 }));
 
+// `react-native-typography` relies on React Native's platform resolution (e.g. systemWeights.web.js),
+// which Node/Vitest cannot resolve via CJS `require("../helpers/systemWeights")`. Provide a minimal
+// stub so components can render without pulling in platform-specific internals.
+vi.mock('react-native-typography', () => ({
+    iOSUIKit: {
+        title3: {},
+        title3Object: {},
+    },
+    human: {},
+    humanDense: {},
+    humanTall: {},
+    material: {},
+    materialDense: {},
+    materialTall: {},
+}));
+
 // `expo-constants` reads React Native `NativeModules` and isn't safe to import in Vitest.
 vi.mock('expo-constants', () => ({
     default: {
@@ -171,17 +187,40 @@ vi.mock('react-native-unistyles', () => {
     const theme = {
         colors: {
             surface: '#fff',
+            surfaceRipple: 'rgba(0, 0, 0, 0.08)',
+            surfacePressed: '#f0f0f2',
             surfaceSelected: '#f2f2f2',
             divider: '#ddd',
             text: '#000',
             textSecondary: '#666',
+            textLink: '#2BACCC',
+            accent: {
+                blue: '#007AFF',
+                green: '#34C759',
+                orange: '#FF9500',
+                red: '#FF3B30',
+                indigo: '#5856D6',
+                purple: '#AF52DE',
+            },
             groupped: { sectionTitle: '#666', background: '#fff' },
             header: { background: '#fff', tint: '#000' },
-            button: { primary: { tint: '#000' } },
+            button: {
+                primary: { background: '#000', tint: '#fff', disabled: '#999' },
+                secondary: { tint: '#666', surface: '#fff' },
+            },
             shadow: { color: '#000', opacity: 0.2 },
             modal: { border: '#ddd' },
             switch: { track: { inactive: '#ccc', active: '#4ade80' }, thumb: { active: '#fff' } },
-            input: { background: '#eee' },
+            radio: {
+                active: '#007AFF',
+                inactive: '#C0C0C0',
+                dot: '#007AFF',
+            },
+            input: {
+                background: '#eee',
+                text: '#000',
+                placeholder: '#999',
+            },
             status: { error: '#ff3b30' },
             box: { error: { background: '#fee', border: '#f99', text: '#900' } },
             permissionButton: {
@@ -196,8 +235,13 @@ vi.mock('react-native-unistyles', () => {
         StyleSheet: {
             create: (styles: any) => (typeof styles === 'function' ? styles(theme) : styles),
             configure: () => {},
+            absoluteFillObject: {},
         },
         useUnistyles: () => ({ theme }),
-        UnistylesRuntime: { setRootViewBackgroundColor: () => {} },
+        UnistylesRuntime: {
+            setRootViewBackgroundColor: () => {},
+            setAdaptiveThemes: () => {},
+            setTheme: () => {},
+        },
     };
 });

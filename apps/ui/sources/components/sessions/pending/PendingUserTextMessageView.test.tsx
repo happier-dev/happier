@@ -9,6 +9,7 @@ vi.mock('react-native', () => ({
     View: 'View',
     Text: 'Text',
     Pressable: 'Pressable',
+    AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
 }));
 
 vi.mock('@expo/vector-icons', () => ({

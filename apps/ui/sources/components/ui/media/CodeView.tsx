@@ -1,6 +1,8 @@
 import * as React from 'react';
-import { Text, View, Platform } from 'react-native';
+import { View, Platform } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { Text } from '@/components/ui/text/Text';
+
 
 interface CodeViewProps {
     code: string;

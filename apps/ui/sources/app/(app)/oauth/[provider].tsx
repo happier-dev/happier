@@ -1,6 +1,7 @@
 import React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, Pressable, View } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { Modal } from '@/modal';
@@ -14,11 +15,27 @@ import { serverFetch } from '@/sync/http/client';
 import { isSessionSharingSupported } from '@/sync/api/capabilities/sessionSharingSupport';
 import { getAuthProvider } from '@/auth/providers/registry';
 import { buildContentKeyBinding } from '@/auth/oauth/contentKeyBinding';
+import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 function paramString(params: Record<string, unknown>, key: string): string | null {
     const value = (params as any)[key];
     if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : null;
-    return typeof value === 'string' ? value : null;
+    if (typeof value === 'string') return value;
+
+    // Cold-start/hydration on web can temporarily omit search params from expo-router's
+    // useLocalSearchParams, even though the URL already contains them. Fall back to
+    // window.location.search so the OAuth return page can still finalize.
+    try {
+        const search = (globalThis as any)?.window?.location?.search;
+        if (typeof search !== 'string' || !search) return null;
+        const parsed = new URLSearchParams(search.startsWith('?') ? search : `?${search}`);
+        const fromSearch = parsed.get(key);
+        return typeof fromSearch === 'string' ? fromSearch : null;
+    } catch {
+        return null;
+    }
 }
 
 function mapUsernameErrorToMessage(code: string): string {
@@ -52,32 +69,188 @@ function mapFinalizeErrorToMessage(code: string): string {
     }
 }
 
+function tryResolveProviderIdFromWebPathname(): string | null {
+    try {
+        const pathname = (globalThis as any)?.window?.location?.pathname;
+        if (typeof pathname !== 'string' || !pathname.trim()) return null;
+        const match = pathname.match(/\/oauth\/([^/?#]+)/i);
+        const provider = match?.[1]?.toString?.().trim?.().toLowerCase?.() ?? '';
+        return provider || null;
+    } catch {
+        return null;
+    }
+}
+
+function buildRestoreRedirectUrl(params: { providerId: string; reason: 'provider_already_linked' }): string {
+    const provider = encodeURIComponent(params.providerId);
+    const reason = encodeURIComponent(params.reason);
+    return `/restore?provider=${provider}&reason=${reason}`;
+}
+
+function normalizeInternalReturnTo(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    if (!trimmed.startsWith('/')) return null;
+    if (trimmed.startsWith('//')) return null;
+    return trimmed;
+}
+
+function maybeActivateServerUrl(rawServerUrl: unknown): void {
+    const serverUrl = typeof rawServerUrl === 'string' ? rawServerUrl.trim() : '';
+    if (!serverUrl) return;
+
+    const active = getActiveServerSnapshot();
+    const current = typeof active?.serverUrl === 'string' ? active.serverUrl.trim() : '';
+    if (current === serverUrl) return;
+
+    upsertAndActivateServer({ serverUrl, source: 'url', scope: 'tab' });
+}
+
 export default function OAuthProviderReturn() {
     const router = useRouter();
     const params = useLocalSearchParams() as any;
     const auth = useAuth();
+    const { theme } = useUnistyles();
 
     const [busy, setBusy] = React.useState(false);
-    const handledRef = React.useRef(false);
+    const [usernameHint, setUsernameHint] = React.useState<string | null>(null);
+    const [usernameValue, setUsernameValue] = React.useState<string>('');
+    const pendingUsernameContextRef = React.useRef<null | Readonly<{
+        providerId: string;
+        providerName: string;
+        secret: string;
+        returnTo: string;
+        serverUrl?: string;
+        basePayload: Record<string, unknown>;
+    }>>(null);
+
+    const resolvedProviderId =
+        ((paramString(params, 'provider') ?? '').trim().toLowerCase()
+            || tryResolveProviderIdFromWebPathname()
+            || '').trim().toLowerCase();
+    const resolvedFlow = paramString(params, 'flow');
+    const resolvedStatus = paramString(params, 'status');
+    const resolvedError = paramString(params, 'error');
+    const resolvedPending = paramString(params, 'pending') ?? '';
+    const resolvedLogin = paramString(params, 'login') ?? '';
+    const resolvedReason = paramString(params, 'reason');
+
+    const submitUsername = React.useCallback(() => {
+        const ctx = pendingUsernameContextRef.current;
+        if (!ctx) {
+            router.replace('/');
+            return;
+        }
+        const nextUsername = usernameValue.trim();
+        if (!nextUsername) {
+            setUsernameHint(t('friends.username.invalid'));
+            return;
+        }
+
+        fireAndForget((async () => {
+            setBusy(true);
+            try {
+                const base = typeof ctx.serverUrl === 'string' ? ctx.serverUrl.trim().replace(/\/+$/, '') : '';
+                const url = base
+                    ? `${base}/v1/auth/external/${encodeURIComponent(ctx.providerId)}/finalize`
+                    : `/v1/auth/external/${encodeURIComponent(ctx.providerId)}/finalize`;
+                const response = await serverFetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...ctx.basePayload, username: nextUsername }),
+                }, { includeAuth: false });
+                const json = await response.json().catch(() => ({}));
+
+                if (response.ok && json?.token) {
+                    await TokenStorage.clearPendingExternalAuth();
+                    pendingUsernameContextRef.current = null;
+                    setUsernameHint(null);
+                    maybeActivateServerUrl(ctx.serverUrl);
+                    await auth.login(json.token, ctx.secret);
+                    router.replace(ctx.returnTo);
+                    return;
+                }
+
+                const err = typeof json?.error === 'string' ? json.error : 'token-exchange-failed';
+                if (err === 'provider-already-linked') {
+                    await TokenStorage.clearPendingExternalAuth();
+                    pendingUsernameContextRef.current = null;
+                    setUsernameHint(null);
+                    router.replace(buildRestoreRedirectUrl({ providerId: ctx.providerId, reason: 'provider_already_linked' }));
+                    return;
+                }
+                if (err === 'username-taken') {
+                    setUsernameHint(t('friends.username.taken'));
+                    return;
+                }
+                if (err === 'invalid-username' || err === 'username-required') {
+                    setUsernameHint(t('friends.username.invalid'));
+                    return;
+                }
+                if (err === 'invalid-pending') {
+                    await Modal.alert(t('common.error'), t('errors.oauthStateMismatch'));
+                    await TokenStorage.clearPendingExternalAuth();
+                    pendingUsernameContextRef.current = null;
+                    setUsernameHint(null);
+                    router.replace('/');
+                    return;
+                }
+
+                await Modal.alert(t('common.error'), mapFinalizeErrorToMessage(err));
+                await TokenStorage.clearPendingExternalAuth();
+                pendingUsernameContextRef.current = null;
+                setUsernameHint(null);
+                router.replace('/');
+            } finally {
+                setBusy(false);
+            }
+        })(), { tag: 'OAuthProviderReturn.submitUsername' });
+    }, [auth, router, usernameValue]);
+
+    const cancelUsername = React.useCallback(() => {
+        fireAndForget((async () => {
+            await TokenStorage.clearPendingExternalAuth();
+        })(), { tag: 'OAuthProviderReturn.cancelUsername' });
+        pendingUsernameContextRef.current = null;
+        setUsernameHint(null);
+        setUsernameValue('');
+        router.replace('/');
+    }, [router]);
 
     React.useEffect(() => {
-        if (handledRef.current) return;
-        handledRef.current = true;
+        const providerId = resolvedProviderId;
+        const flow = resolvedFlow;
+        const status = resolvedStatus;
+        const error = resolvedError;
+        const pendingFromParams = resolvedPending;
+        const loginFromParams = resolvedLogin;
+        const reasonFromParams = resolvedReason;
+        const loginFn = auth.login;
+        const credentialsFromAuth = auth.credentials;
 
-        let cancelled = false;
+        let disposed = false;
+        const controller = new AbortController();
+        const isAbort = (e: unknown) => {
+            if (controller.signal.aborted) return true;
+            const name = (e as any)?.name;
+            return typeof name === 'string' && name.toLowerCase() === 'aborterror';
+        };
+
         const safeSetBusy = (value: boolean) => {
-            if (!cancelled) setBusy(value);
+            if (disposed || controller.signal.aborted) return;
+            setBusy(value);
         };
         const safeReplace = (path: string) => {
-            if (!cancelled) router.replace(path);
+            if (disposed || controller.signal.aborted) return;
+            router.replace(path);
         };
 
         fireAndForget((async () => {
-            const providerId = (paramString(params, 'provider') ?? '').trim().toLowerCase();
             if (!providerId) {
                 safeReplace('/');
                 return;
             }
+
             const provider = getAuthProvider(providerId);
             if (!provider) {
                 await Modal.alert(t('common.error'), t('errors.oauthInitializationFailed'));
@@ -85,9 +258,6 @@ export default function OAuthProviderReturn() {
                 return;
             }
 
-            const flow = paramString(params, 'flow');
-            const status = paramString(params, 'status');
-            const error = paramString(params, 'error');
             if (error) {
                 const providerName = provider.displayName ?? providerId;
                 const message =
@@ -105,13 +275,14 @@ export default function OAuthProviderReturn() {
             }
 
             if (flow === 'auth') {
-                const pending = paramString(params, 'pending') ?? '';
+                const pending = pendingFromParams;
                 const state = await TokenStorage.getPendingExternalAuth();
                 if (!pending || !state || state.provider !== providerId || !state.secret) {
                     await Modal.alert(t('common.error'), t('errors.oauthInitializationFailed'));
                     safeReplace('/');
                     return;
                 }
+                const returnTo = normalizeInternalReturnTo(state.returnTo) ?? '/';
 
                 try {
                     const secretBytes = decodeBase64(state.secret, 'base64url');
@@ -134,15 +305,20 @@ export default function OAuthProviderReturn() {
                         body.contentPublicKeySig = binding.contentPublicKeySig;
                     }
 
-                    const login = paramString(params, 'login') ?? '';
-                    const reason = paramString(params, 'reason');
+                    const login = loginFromParams;
+                    const reason = reasonFromParams;
 
                     const finalize = async (payload: any) => {
                         safeSetBusy(true);
                         try {
-                            const response = await serverFetch(`/v1/auth/external/${encodeURIComponent(providerId)}/finalize`, {
+                            const base = typeof state.serverUrl === 'string' ? state.serverUrl.trim().replace(/\/+$/, '') : '';
+                            const url = base
+                                ? `${base}/v1/auth/external/${encodeURIComponent(providerId)}/finalize`
+                                : `/v1/auth/external/${encodeURIComponent(providerId)}/finalize`;
+                            const response = await serverFetch(url, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
+                                signal: controller.signal,
                                 body: JSON.stringify(payload),
                             }, { includeAuth: false });
                             const json = await response.json().catch(() => ({}));
@@ -150,81 +326,20 @@ export default function OAuthProviderReturn() {
                         } finally {
                             safeSetBusy(false);
                         }
-                    };
-
-                    const promptForUsername = async (params: { hint: string; defaultValue?: string }) => {
-                        return await Modal.prompt(
-                            t('profile.username'),
-                            params.hint,
-                            {
-                                placeholder: t('profile.username'),
-                                defaultValue: params.defaultValue,
-                                confirmText: t('common.save'),
-                                cancelText: t('common.cancel'),
-                            },
-                        );
-                    };
-
-                    const runUsernameLoop = async (params: { initialHint: string; initialDefaultValue?: string }) => {
-                        let hint = params.initialHint;
-                        let defaultValue = params.initialDefaultValue;
-
-                        while (true) {
-                            const username = await promptForUsername({ hint, defaultValue });
-                            if (username == null) {
-                                await TokenStorage.clearPendingExternalAuth();
-                                safeReplace('/');
-                                return;
-                            }
-
-                            const res = await finalize({ ...body, username });
-                            if (res.ok && res.json?.token) {
-                                await TokenStorage.clearPendingExternalAuth();
-                                if (cancelled) return;
-                                await auth.login(res.json.token, state.secret);
-                                if (cancelled) return;
-                                safeReplace('/friends');
-                                return;
-                            }
-
-                            const err =
-                                typeof res.json?.error === 'string'
-                                    ? res.json.error
-                                    : 'token-exchange-failed';
-                            if (err === 'provider-already-linked') {
-                                const providerName = provider.displayName ?? providerId;
-                                await Modal.alert(t('common.error'), t('errors.providerAlreadyLinked', { provider: providerName }));
-                                await TokenStorage.clearPendingExternalAuth();
-                                safeReplace('/restore');
-                                return;
-                            }
-                            if (err === 'username-taken') {
-                                hint = t('friends.username.taken');
-                                defaultValue = username;
-                                continue;
-                            }
-                            if (err === 'invalid-username' || err === 'username-required') {
-                                hint = t('friends.username.invalid');
-                                defaultValue = username;
-                                continue;
-                            }
-                            if (err === 'invalid-pending') {
-                                await Modal.alert(t('common.error'), t('errors.oauthStateMismatch'));
-                                await TokenStorage.clearPendingExternalAuth();
-                                safeReplace('/');
-                                return;
-                            }
-
-                            await Modal.alert(t('common.error'), mapFinalizeErrorToMessage(err));
-                            await TokenStorage.clearPendingExternalAuth();
-                            safeReplace('/');
-                            return;
-                        }
-                    };
+	                    };
 
                     if (status === 'username_required') {
                         const initialHint = reason === 'invalid_login' ? t('friends.username.invalid') : t('friends.username.taken');
-                        await runUsernameLoop({ initialHint, initialDefaultValue: login || undefined });
+                        pendingUsernameContextRef.current = {
+                            providerId,
+                            providerName: provider.displayName ?? providerId,
+                            secret: state.secret,
+                            returnTo,
+                            serverUrl: state.serverUrl,
+                            basePayload: body,
+                        };
+                        setUsernameHint(initialHint);
+                        setUsernameValue(login || '');
                         return;
                     }
 
@@ -236,14 +351,22 @@ export default function OAuthProviderReturn() {
                                 : 'token-exchange-failed';
                         if (err === 'provider-already-linked') {
                             const providerName = provider.displayName ?? providerId;
-                            await Modal.alert(t('common.error'), t('errors.providerAlreadyLinked', { provider: providerName }));
                             await TokenStorage.clearPendingExternalAuth();
-                            safeReplace('/restore');
+                            safeReplace(buildRestoreRedirectUrl({ providerId, reason: 'provider_already_linked' }));
                             return;
                         }
                         if (err === 'username-required' || err === 'username-taken') {
                             const initialHint = err === 'username-taken' ? t('friends.username.taken') : t('friends.username.invalid');
-                            await runUsernameLoop({ initialHint, initialDefaultValue: login || undefined });
+                            pendingUsernameContextRef.current = {
+                                providerId,
+                                providerName: provider.displayName ?? providerId,
+                                secret: state.secret,
+                                returnTo,
+                                serverUrl: state.serverUrl,
+                                basePayload: body,
+                            };
+                            setUsernameHint(initialHint);
+                            setUsernameValue(login || '');
                             return;
                         }
 
@@ -254,18 +377,20 @@ export default function OAuthProviderReturn() {
                     }
 
                     await TokenStorage.clearPendingExternalAuth();
-                    if (cancelled) return;
-                    await auth.login(res.json.token, state.secret);
-                    if (cancelled) return;
-                    safeReplace('/friends');
+                    maybeActivateServerUrl(state.serverUrl);
+                    await loginFn(res.json.token, state.secret);
+                    safeReplace(returnTo);
                     return;
+                } catch (e) {
+                    if (isAbort(e)) return;
+                    throw e;
                 } finally {
                     safeSetBusy(false);
                 }
             }
 
             // connect flow (default)
-            const credentials = auth.credentials;
+            const credentials = credentialsFromAuth;
             const pendingConnect = await TokenStorage.getPendingExternalConnect();
             const connectReturnTo =
                 pendingConnect && pendingConnect.provider === providerId && typeof pendingConnect.returnTo === 'string' && pendingConnect.returnTo.trim().startsWith('/')
@@ -357,9 +482,84 @@ export default function OAuthProviderReturn() {
         })(), { tag: 'OAuthProviderReturn.handleRedirect' });
 
         return () => {
-            cancelled = true;
+            disposed = true;
+            controller.abort('oauth-return-disposed');
         };
-    }, [auth, params, router]);
+	    // Keep deps primitive so we don't dispose mid-flight due to param identity changes.
+	    }, [
+        router,
+        resolvedProviderId,
+        resolvedFlow,
+        resolvedStatus,
+        resolvedError,
+        resolvedPending,
+        resolvedLogin,
+        resolvedReason,
+        auth.login,
+        resolvedFlow === 'auth' ? '' : auth.credentials?.token ?? '',
+    ]);
+
+    if (usernameHint != null) {
+        return (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 }}>
+                <View style={{ width: '100%', maxWidth: 420 }}>
+                    <Text style={{ fontSize: 18, marginBottom: 8, color: theme.colors.text }}>{t('profile.username')}</Text>
+                    <Text style={{ fontSize: 14, marginBottom: 16, color: theme.colors.textSecondary }}>{usernameHint}</Text>
+                    <TextInput
+                        testID="oauth-username-input"
+                        value={usernameValue}
+                        onChangeText={setUsernameValue}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        placeholder={t('profile.username')}
+                        placeholderTextColor={theme.colors.input.placeholder}
+                        style={{
+                            borderWidth: 1,
+                            borderColor: theme.colors.divider,
+                            borderRadius: 8,
+                            paddingHorizontal: 12,
+                            paddingVertical: 10,
+                            marginBottom: 12,
+                            backgroundColor: theme.colors.input.background,
+                            color: theme.colors.input.text,
+                        }}
+                    />
+                    <View style={{ flexDirection: 'row', gap: 12 }}>
+                        <Pressable
+                            testID="oauth-username-cancel"
+                            onPress={cancelUsername}
+                            style={{
+                                flex: 1,
+                                paddingVertical: 10,
+                                borderRadius: 8,
+                                borderWidth: 1,
+                                borderColor: theme.colors.divider,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                            }}
+                        >
+                            <Text style={{ color: theme.colors.text }}>{t('common.cancel')}</Text>
+                        </Pressable>
+                        <Pressable
+                            testID="oauth-username-save"
+                            onPress={submitUsername}
+                            style={{
+                                flex: 1,
+                                paddingVertical: 10,
+                                borderRadius: 8,
+                                backgroundColor: theme.colors.button.primary.background,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                            }}
+                        >
+                            <Text style={{ color: theme.colors.button.primary.tint }}>{t('common.save')}</Text>
+                        </Pressable>
+                    </View>
+                </View>
+                {busy ? <ActivityIndicator size="small" style={{ marginTop: 16 }} /> : null}
+            </View>
+        );
+    }
 
     return (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>

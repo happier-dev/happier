@@ -16,24 +16,6 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                text: '#111111',
-                textSecondary: '#666666',
-                divider: '#e5e5e5',
-                surface: '#ffffff',
-                surfaceHigh: '#fafafa',
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (styles: any) => styles,
-        absoluteFillObject: {},
-    },
-}));
-
 vi.mock('expo-router', () => ({
     useRouter: () => ({ push: vi.fn() }),
 }));
@@ -58,8 +40,9 @@ vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: 'Switch',
 }));
 
-vi.mock('@/components/ui/text/StyledText', () => ({
+vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
+    TextInput: 'TextInput',
 }));
 
 vi.mock('@/constants/Typography', () => ({

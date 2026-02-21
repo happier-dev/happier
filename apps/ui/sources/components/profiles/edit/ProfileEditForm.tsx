@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TextInput, ViewStyle, Linking, Platform, Pressable } from 'react-native';
+import { View, ViewStyle, Linking, Platform, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet } from 'react-native-unistyles';
 import { useUnistyles } from 'react-native-unistyles';
@@ -29,6 +29,8 @@ import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { DEFAULT_AGENT_ID, getAgentCore, type AgentId, type MachineLoginKey } from '@/agents/catalog/catalog';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MachinePreviewModal } from './MachinePreviewModal';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 export interface ProfileEditFormProps {
     profile: AIBackendProfile;

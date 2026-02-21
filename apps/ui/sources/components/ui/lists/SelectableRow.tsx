@@ -1,7 +1,9 @@
 import * as React from 'react';
-import { Platform, Pressable, Text, View, type StyleProp, type ViewStyle, type TextStyle } from 'react-native';
+import { Platform, Pressable, View, StyleProp, ViewStyle, TextStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
+import { Text } from '@/components/ui/text/Text';
+
 
 export type SelectableRowVariant = 'slim' | 'default' | 'selectable';
 
@@ -63,14 +65,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     // Palette variant states (match old CommandPaletteItem styles exactly)
     rowSelectablePressed: {
-        backgroundColor: '#F5F5F5',
+        backgroundColor: theme.colors.surfacePressed,
     },
     rowSelectableHovered: {
-        backgroundColor: '#F8F8F8',
+        backgroundColor: theme.dark ? theme.colors.surfaceHighest : theme.colors.surfaceHigh,
     },
     rowSelectableSelected: {
-        backgroundColor: '#F0F7FF',
-        borderColor: '#007AFF20',
+        backgroundColor: theme.colors.surfaceSelected,
+        borderColor: theme.colors.accent.blue,
     },
     rowDisabled: {
         opacity: 0.5,
@@ -92,7 +94,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         letterSpacing: Platform.select({ ios: -0.2, default: 0 }),
     },
     titleSelectable: {
-        color: '#000',
+        color: theme.colors.text,
         fontSize: 15,
         letterSpacing: -0.2,
     },
@@ -107,7 +109,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         lineHeight: 18,
     },
     subtitleSelectable: {
-        color: '#666',
+        color: theme.colors.textSecondary,
         letterSpacing: -0.1,
     },
     right: {

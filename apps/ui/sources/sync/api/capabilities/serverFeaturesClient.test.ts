@@ -95,6 +95,30 @@ describe('serverFeaturesClient', () => {
         }
     });
 
+    it('treats a 200 non-JSON features response as invalid_payload (not a network error)', async () => {
+        const htmlResponse = {
+            ok: true,
+            status: 200,
+            headers: {
+                get: (name: string) => (name.toLowerCase() === 'content-type' ? 'text/html; charset=utf-8' : null),
+            },
+            json: async () => {
+                throw new SyntaxError('Unexpected token < in JSON at position 0');
+            },
+        } as unknown as Response;
+
+        (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(htmlResponse);
+
+        const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+
+        const result = await getServerFeaturesSnapshot({ force: true, timeoutMs: 50 });
+        expect(result.status).toBe('unsupported');
+        if (result.status === 'unsupported') {
+            expect(result.reason).toBe('invalid_payload');
+        }
+    });
+
     it('caches endpoint-missing responses even when forced (cooldown)', async () => {
         const payload = {
             features: {

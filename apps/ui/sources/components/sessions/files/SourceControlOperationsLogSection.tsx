@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { ScmProjectOperationLogEntry } from '@/sync/runtime/orchestration/projectManager';
 

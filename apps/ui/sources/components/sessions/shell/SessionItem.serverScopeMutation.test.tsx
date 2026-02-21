@@ -22,8 +22,9 @@ vi.mock('react-native', async () => {
     };
 });
 
-vi.mock('@/components/ui/text/StyledText', () => ({
+vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
+    TextInput: 'TextInput',
 }));
 
 vi.mock('@/utils/sessions/sessionUtils', () => ({

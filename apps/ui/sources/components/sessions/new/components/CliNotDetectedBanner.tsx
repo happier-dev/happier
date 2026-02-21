@@ -1,10 +1,12 @@
 import * as React from 'react';
-import { Linking, Platform, Pressable, Text, View } from 'react-native';
+import { Linking, Platform, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { Text } from '@/components/ui/text/Text';
+
 
 export type CliNotDetectedBannerDismissScope = 'machine' | 'global' | 'temporary';
 

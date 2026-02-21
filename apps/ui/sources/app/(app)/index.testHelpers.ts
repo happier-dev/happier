@@ -102,7 +102,7 @@ export function createWelcomeFeaturesResponse(
                             { id: 'github', enabled: true },
                         ],
                 },
-                login: { requiredProviders: overrides.requiredProviders ?? [] },
+                login: { methods: [{ id: 'key_challenge', enabled: true }], requiredProviders: overrides.requiredProviders ?? [] },
                 recovery: { providerReset: { providers: providerResetEnabled ? providerResetProviders : [] } },
                 ui: {
                     autoRedirect: {

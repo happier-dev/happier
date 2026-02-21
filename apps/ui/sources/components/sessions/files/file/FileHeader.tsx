@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform, View } from 'react-native';
 
 import { FileIcon } from '@/components/ui/media/FileIcon';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
 type FileHeaderProps = {

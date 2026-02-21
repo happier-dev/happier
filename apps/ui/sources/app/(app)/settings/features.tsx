@@ -1,6 +1,7 @@
 import React from 'react';
 import { Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useUnistyles } from 'react-native-unistyles';
 import {
     FEATURE_IDS,
     featureRequiresServerSnapshot,
@@ -26,6 +27,7 @@ import { useEffectiveServerSelection } from '@/hooks/server/useEffectiveServerSe
 import { useServerFeaturesMainSelectionSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 
 export default React.memo(function FeaturesSettingsScreen() {
+    const { theme } = useUnistyles();
     const [experiments, setExperiments] = useSettingMutable('experiments');
     const [featureToggles, setFeatureToggles] = useSettingMutable('featureToggles');
     const [useProfiles, setUseProfiles] = useSettingMutable('useProfiles');
@@ -39,6 +41,43 @@ export default React.memo(function FeaturesSettingsScreen() {
 
     const toggleDefinitions = React.useMemo(() => listUiFeatureToggleDefinitions(), []);
     const selection = useEffectiveServerSelection();
+
+    const resolveLegacyIconColor = React.useCallback((color: string): string => {
+        const normalized = String(color).trim().toUpperCase();
+        switch (normalized) {
+            case '#007AFF':
+            case '#0A84FF':
+                return theme.colors.accent.blue;
+            case '#34C759':
+            case '#32D74B':
+                return theme.colors.success;
+            case '#FF9500':
+            case '#FF9F0A':
+                return theme.colors.accent.orange;
+            case '#AF52DE':
+            case '#BF5AF2':
+                return theme.colors.accent.purple;
+            case '#5856D6':
+            case '#5E5CE6':
+                return theme.colors.accent.indigo;
+            case '#FF3B30':
+            case '#FF453A':
+                return theme.colors.warningCritical;
+            case '#FFCC00':
+            case '#FFD60A':
+                return theme.colors.accent.yellow;
+            default:
+                return color;
+        }
+    }, [
+        theme.colors.accent.blue,
+        theme.colors.accent.indigo,
+        theme.colors.accent.orange,
+        theme.colors.accent.purple,
+        theme.colors.accent.yellow,
+        theme.colors.success,
+        theme.colors.warningCritical,
+    ]);
 
     const shouldProbeServerForToggleVisibility = React.useMemo(() => {
         for (const def of toggleDefinitions) {
@@ -199,14 +238,14 @@ export default React.memo(function FeaturesSettingsScreen() {
                 <Item
                     title={t('settingsFeatures.markdownCopyV2')}
                     subtitle={t('settingsFeatures.markdownCopyV2Subtitle')}
-                    icon={<Ionicons name="text-outline" size={29} color="#34C759" />}
+                    icon={<Ionicons name="text-outline" size={29} color={theme.colors.success} />}
                     rightElement={<Switch value={markdownCopyV2} onValueChange={setMarkdownCopyV2} />}
                     showChevron={false}
                 />
                 <Item
                     title={t('settingsFeatures.environmentBadge')}
                     subtitle={t('settingsFeatures.environmentBadgeSubtitle')}
-                    icon={<Ionicons name="pricetag-outline" size={29} color="#5856D6" />}
+                    icon={<Ionicons name="pricetag-outline" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={<Switch value={showEnvironmentBadge} onValueChange={setShowEnvironmentBadge} />}
                     showChevron={false}
                 />
@@ -215,21 +254,21 @@ export default React.memo(function FeaturesSettingsScreen() {
                     subtitle={useEnhancedSessionWizard
                         ? t('settingsFeatures.enhancedSessionWizardEnabled')
                         : t('settingsFeatures.enhancedSessionWizardDisabled')}
-                    icon={<Ionicons name="sparkles-outline" size={29} color="#AF52DE" />}
+                    icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.purple} />}
                     rightElement={<Switch value={useEnhancedSessionWizard} onValueChange={setUseEnhancedSessionWizard} />}
                     showChevron={false}
                 />
                 <Item
                     title={t('settingsFeatures.machinePickerSearch')}
                     subtitle={t('settingsFeatures.machinePickerSearchSubtitle')}
-                    icon={<Ionicons name="search-outline" size={29} color="#007AFF" />}
+                    icon={<Ionicons name="search-outline" size={29} color={theme.colors.accent.blue} />}
                     rightElement={<Switch value={useMachinePickerSearch} onValueChange={setUseMachinePickerSearch} />}
                     showChevron={false}
                 />
                 <Item
                     title={t('settingsFeatures.pathPickerSearch')}
                     subtitle={t('settingsFeatures.pathPickerSearchSubtitle')}
-                    icon={<Ionicons name="folder-outline" size={29} color="#007AFF" />}
+                    icon={<Ionicons name="folder-outline" size={29} color={theme.colors.accent.blue} />}
                     rightElement={<Switch value={usePathPickerSearch} onValueChange={setUsePathPickerSearch} />}
                     showChevron={false}
                 />
@@ -238,7 +277,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                     subtitle={useProfiles
                         ? t('settingsFeatures.profilesEnabled')
                         : t('settingsFeatures.profilesDisabled')}
-                    icon={<Ionicons name="person-outline" size={29} color="#AF52DE" />}
+                    icon={<Ionicons name="person-outline" size={29} color={theme.colors.accent.purple} />}
                     rightElement={<Switch value={useProfiles} onValueChange={setUseProfiles} />}
                     showChevron={false}
                 />
@@ -253,7 +292,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                     <Item
                         title={t('settingsFeatures.commandPalette')}
                         subtitle={commandPaletteEnabled ? t('settingsFeatures.commandPaletteEnabled') : t('settingsFeatures.commandPaletteDisabled')}
-                        icon={<Ionicons name="keypad-outline" size={29} color="#007AFF" />}
+                        icon={<Ionicons name="keypad-outline" size={29} color={theme.colors.accent.blue} />}
                         rightElement={<Switch value={commandPaletteEnabled} onValueChange={setCommandPaletteEnabled} />}
                         showChevron={false}
                     />
@@ -268,7 +307,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                 <Item
                     title={t('settingsFeatures.experimentalFeatures')}
                     subtitle={experiments ? t('settingsFeatures.experimentalFeaturesEnabled') : t('settingsFeatures.experimentalFeaturesDisabled')}
-                    icon={<Ionicons name="flask-outline" size={29} color="#5856D6" />}
+                    icon={<Ionicons name="flask-outline" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={
                         <Switch
                             value={experiments}
@@ -299,7 +338,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                                 key={d.featureId}
                                 title={t(d.titleKey)}
                                 subtitle={t(d.subtitleKey)}
-                                icon={<Ionicons name={d.icon.ioniconName as keyof typeof Ionicons.glyphMap} size={29} color={d.icon.color} />}
+                                icon={<Ionicons name={d.icon.ioniconName as keyof typeof Ionicons.glyphMap} size={29} color={resolveLegacyIconColor(d.icon.color)} />}
                                 rightElement={
                                     <Switch
                                         value={enabled}
@@ -328,7 +367,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                                 key={d.featureId}
                                 title={t(d.titleKey)}
                                 subtitle={t(d.subtitleKey)}
-                                icon={<Ionicons name={d.icon.ioniconName as keyof typeof Ionicons.glyphMap} size={29} color={d.icon.color} />}
+                                icon={<Ionicons name={d.icon.ioniconName as keyof typeof Ionicons.glyphMap} size={29} color={resolveLegacyIconColor(d.icon.color)} />}
                                 rightElement={
                                     <Switch
                                         value={enabled}

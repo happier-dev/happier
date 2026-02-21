@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Text, Platform, Pressable } from 'react-native';
+import { View, Platform, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 import { InboxView } from '@/components/navigation/shell/InboxView';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,6 +9,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useRequireFriendsEnabled } from '@/hooks/friends/useRequireFriendsEnabled';
+import { Text } from '@/components/ui/text/Text';
+
 
 const styles = StyleSheet.create((theme) => ({
     container: {

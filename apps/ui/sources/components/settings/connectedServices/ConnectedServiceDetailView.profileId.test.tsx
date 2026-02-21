@@ -30,22 +30,26 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: (featureId: string) => (featureId === 'connectedServices.quotas' ? false : true),
 }));
 
-vi.mock('@/sync/store/hooks', () => ({
-  useProfile: () => ({
-    connectedServicesV2: [
-      {
-        serviceId: 'openai-codex',
-        profiles: [{ profileId: 'work', status: 'connected', providerEmail: null }],
-      },
-    ],
-  }),
-  useSettings: () => ({
-    connectedServicesDefaultProfileByServiceId: { 'openai-codex': 'work' },
-    connectedServicesProfileLabelByKey: {},
-    connectedServicesQuotaPinnedMeterIdsByKey: {},
-    connectedServicesQuotaSummaryStrategyByKey: {},
-  }),
-}));
+vi.mock('@/sync/store/hooks', async () => {
+  const actual = await vi.importActual<typeof import('@/sync/store/hooks')>('@/sync/store/hooks');
+  return {
+    ...actual,
+    useProfile: () => ({
+      connectedServicesV2: [
+        {
+          serviceId: 'openai-codex',
+          profiles: [{ profileId: 'work', status: 'connected', providerEmail: null }],
+        },
+      ],
+    }),
+    useSettings: () => ({
+      connectedServicesDefaultProfileByServiceId: { 'openai-codex': 'work' },
+      connectedServicesProfileLabelByKey: {},
+      connectedServicesQuotaPinnedMeterIdsByKey: {},
+      connectedServicesQuotaSummaryStrategyByKey: {},
+    }),
+  };
+});
 
 vi.mock('@/sync/sync', () => ({
   sync: { refreshProfile: vi.fn(async () => {}), applySettings: vi.fn(async () => {}) },

@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Linking, Text, View } from 'react-native';
+import { ActivityIndicator, Linking, Platform, ScrollView, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -13,10 +13,21 @@ import { getAuthProvider } from '@/auth/providers/registry';
 import { Modal } from '@/modal';
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { StyleSheet } from 'react-native-unistyles';
+import { Typography } from '@/constants/Typography';
+import { layout } from '@/components/ui/layout/layout';
+import { useUnistyles } from 'react-native-unistyles';
+import { formatOperationFailedDebugMessage } from '@/utils/errors/formatOperationFailedDebugMessage';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { Text } from '@/components/ui/text/Text';
+
 
 export default function LostAccess() {
+    useUnistyles();
     const router = useRouter();
     const [providers, setProviders] = React.useState<string[] | null>(null);
+
+    const styles = stylesheet;
 
     React.useEffect(() => {
         let mounted = true;
@@ -54,28 +65,51 @@ export default function LostAccess() {
         try {
             const secretBytes = await getRandomBytesAsync(32);
             const secret = encodeBase64(secretBytes, 'base64url');
-            await TokenStorage.setPendingExternalAuth({ provider: providerId, secret, intent: 'reset' });
+            const snapshot = getActiveServerSnapshot();
+            const serverUrl = snapshot.serverUrl ? String(snapshot.serverUrl).trim() : '';
+            await TokenStorage.setPendingExternalAuth({
+                provider: providerId,
+                secret,
+                intent: 'reset',
+                returnTo: '/',
+                ...(serverUrl ? { serverUrl } : {}),
+            });
 
             const kp = sodium.crypto_sign_seed_keypair(secretBytes);
-            const publicKey = encodeBase64(kp.publicKey, 'base64url');
+            // Server expects standard base64 (not base64url) for `publicKey`.
+            const publicKey = encodeBase64(kp.publicKey);
             const url = await provider.getExternalSignupUrl({ publicKey });
             if (!isSafeExternalAuthUrl(url)) {
                 throw new Error('unsafe_url');
             }
-            const supported = await Linking.canOpenURL(url);
-            if (!supported) {
-                throw new Error('unsupported_url');
+
+            if (Platform.OS === 'web') {
+                const location = (globalThis as any)?.window?.location;
+                if (location && typeof location.assign === 'function') {
+                    location.assign(url);
+                    return;
+                }
+                if (location && typeof location.href === 'string') {
+                    location.href = url;
+                    return;
+                }
             }
+
+            const supported = await Linking.canOpenURL(url);
+            if (!supported) throw new Error('unsupported_url');
             await Linking.openURL(url);
-        } catch {
+        } catch (error) {
             await TokenStorage.clearPendingExternalAuth();
-            await Modal.alert(t('common.error'), t('errors.operationFailed'));
+            const message = process.env.EXPO_PUBLIC_DEBUG
+                ? formatOperationFailedDebugMessage(t('errors.operationFailed'), error)
+                : t('errors.operationFailed');
+            await Modal.alert(t('common.error'), message);
         }
     };
 
     if (providers === null) {
         return (
-            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+            <View style={styles.loading}>
                 <ActivityIndicator size="small" />
             </View>
         );
@@ -83,32 +117,108 @@ export default function LostAccess() {
 
     if (providers.length === 0) {
         return (
-            <View style={{ flex: 1, padding: 24 }}>
-                <Text style={{ fontSize: 16 }}>{t('connect.lostAccessBody')}</Text>
-                <View style={{ height: 16 }} />
-                <RoundButton title={t('common.back')} display="inverted" onPress={() => router.back()} />
-            </View>
+            <ScrollView style={styles.scrollView} contentContainerStyle={{ flexGrow: 1 }}>
+                <View style={styles.container}>
+                    <View style={styles.contentWrapper}>
+                        <View style={styles.noticeCard}>
+                            <Text style={styles.noticeBody}>{t('connect.lostAccessBody')}</Text>
+                        </View>
+                        <View style={styles.footer}>
+                            <View style={styles.footerButton}>
+                                <RoundButton size="normal" title={t('common.back')} display="inverted" onPress={() => router.back()} />
+                            </View>
+                        </View>
+                    </View>
+                </View>
+            </ScrollView>
         );
     }
 
     return (
-        <View style={{ flex: 1, padding: 24 }}>
-            <Text style={{ fontSize: 20, fontWeight: '600' }}>{t('connect.lostAccessTitle')}</Text>
-            <View style={{ height: 12 }} />
-            <Text style={{ fontSize: 16 }}>{t('connect.lostAccessBody')}</Text>
-            <View style={{ height: 24 }} />
-            {providers.map((providerId) => (
-                <View key={providerId} style={{ marginBottom: 12 }}>
-                    <RoundButton
-                        title={t('connect.lostAccessContinue', {
-                            provider: getAuthProvider(providerId)?.displayName ?? providerId,
-                        })}
-                        action={() => startReset(providerId)}
-                    />
+        <ScrollView style={styles.scrollView} contentContainerStyle={{ flexGrow: 1 }}>
+            <View style={styles.container}>
+                <View style={styles.contentWrapper}>
+                    <View style={styles.noticeCard}>
+                        <Text style={styles.noticeBody}>{t('connect.lostAccessBody')}</Text>
+                    </View>
+
+                    <View style={styles.actions}>
+                        {providers.map((providerId) => (
+                            <View key={providerId} style={styles.actionButton}>
+                                <RoundButton
+                                    size="normal"
+                                    title={t('connect.lostAccessContinue', {
+                                        provider: getAuthProvider(providerId)?.displayName ?? providerId,
+                                    })}
+                                    action={() => startReset(providerId)}
+                                />
+                            </View>
+                        ))}
+                    </View>
+
+                    <View style={styles.footer}>
+                        <View style={styles.footerButton}>
+                            <RoundButton size="normal" title={t('common.back')} display="inverted" onPress={() => router.back()} />
+                        </View>
+                    </View>
                 </View>
-            ))}
-            <View style={{ height: 12 }} />
-            <RoundButton title={t('common.back')} display="inverted" onPress={() => router.back()} />
-        </View>
+            </View>
+        </ScrollView>
     );
 }
+
+const stylesheet = StyleSheet.create((theme) => ({
+    scrollView: {
+        flex: 1,
+        backgroundColor: theme.colors.surface,
+    },
+    loading: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: theme.colors.surface,
+    },
+    container: {
+        flex: 1,
+        alignItems: 'center',
+        paddingHorizontal: 24,
+    },
+    contentWrapper: {
+        width: '100%',
+        maxWidth: Math.min(560, layout.maxWidth),
+        paddingVertical: 28,
+    },
+    noticeCard: {
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        borderRadius: 14,
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        backgroundColor: theme.colors.surface,
+    },
+    noticeBody: {
+        fontSize: 15,
+        color: theme.colors.text,
+        lineHeight: 21,
+        ...Typography.default(),
+    },
+    actions: {
+        marginTop: 18,
+        alignItems: 'center',
+        width: '100%',
+    },
+    actionButton: {
+        width: '100%',
+        maxWidth: 360,
+        marginTop: 12,
+    },
+    footer: {
+        marginTop: 18,
+        alignItems: 'center',
+        width: '100%',
+    },
+    footerButton: {
+        width: '100%',
+        maxWidth: 360,
+    },
+}));

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, ScrollView, TextInput, View, useWindowDimensions } from 'react-native';
+import { Platform, ScrollView, View, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -12,7 +12,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { ExecutionRunsGuidanceEntry } from '@/sync/domains/settings/executionRunsGuidance';
@@ -182,7 +182,7 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                     <Item
                         title="Enabled"
                         subtitle={enabled ? 'Enabled' : 'Disabled'}
-                        icon={<Ionicons name="sparkles-outline" size={24} color="#FF9500" />}
+                        icon={<Ionicons name="sparkles-outline" size={24} color={theme.colors.accent.orange} />}
                         rightElement={<Switch value={enabled} onValueChange={setEnabled} />}
                         showChevron={false}
                         showDivider={false}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { getActionSpec } from '@happier-dev/protocol';
@@ -8,6 +8,8 @@ import { storage } from '@/sync/domains/state/storage';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/AgentInput';
 import { listAgentInputActionChipActionIds } from '@/components/sessions/agentInput/actionChips/listAgentInputActionChipActionIds';
 import { buildActionDraftInput } from '@/sync/domains/actions/buildActionDraftInput';
+import { Text } from '@/components/ui/text/Text';
+
 
 export function buildSessionAgentInputActionChips(params: Readonly<{
     sessionId: string;

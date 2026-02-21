@@ -40,7 +40,7 @@ vi.mock('@expo/vector-icons', () => {
   return { Ionicons: (props: any) => React.createElement('Ionicons', props) };
 });
 
-vi.mock('@/components/ui/text/StyledText', () => {
+vi.mock('@/components/ui/text/Text', () => {
   const React = require('react');
   return { Text: (props: any) => React.createElement('Text', props, props.children) };
 });

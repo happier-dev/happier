@@ -4,7 +4,9 @@ import { ToolViewProps } from '../core/_registry';
 import { ToolDiffView } from '@/components/tools/shell/presentation/ToolDiffView';
 import { trimIdent } from '@/utils/strings/trimIdent';
 import { useSetting } from '@/sync/domains/state/storage';
-import { Text } from 'react-native';
+
+import { Text } from '@/components/ui/text/Text';
+
 
 function extractEditStrings(input: any): { old: string; next: string } {
     // 1) ACP nested format: tool.input.toolCall.content[0]

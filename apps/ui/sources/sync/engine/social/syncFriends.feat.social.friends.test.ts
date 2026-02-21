@@ -43,7 +43,6 @@ describe('syncFriends', () => {
     afterEach(() => {
         vi.unstubAllGlobals();
         vi.restoreAllMocks();
-        vi.resetModules();
         resetServerFeaturesClientForTests();
     });
 

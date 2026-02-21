@@ -36,6 +36,12 @@ export const UI_FEATURE_REGISTRY = {
             icon: { ioniconName: 'code-slash-outline', color: '#AF52DE' },
         },
     },
+    'encryption.plaintextStorage': {
+        settingsToggle: undefined,
+    },
+    'encryption.accountOptOut': {
+        settingsToggle: undefined,
+    },
     voice: {
         settingsToggle: {
             showInSettings: true,
@@ -106,6 +112,9 @@ export const UI_FEATURE_REGISTRY = {
         },
     },
     'auth.recovery.providerReset': {
+        settingsToggle: undefined,
+    },
+    'auth.login.keyChallenge': {
         settingsToggle: undefined,
     },
     'auth.ui.recoveryKeyReminder': {

@@ -8,7 +8,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -128,7 +128,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                     <Item
                         title="Memory search is disabled"
                         subtitle="Open Settings → Features to enable memory.search"
-                        icon={<Ionicons name="search-outline" size={29} color="#34C759" />}
+                        icon={<Ionicons name="search-outline" size={29} color={theme.colors.success} />}
                         onPress={() => { void Modal.alert('Memory search disabled', 'Enable memory.search in Settings → Features.'); }}
                     />
                 </ItemGroup>
@@ -145,7 +145,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                 <Item
                     title="Machine"
                     subtitle={selectedMachineTitle}
-                    icon={<Ionicons name="desktop-outline" size={29} color="#007AFF" />}
+                    icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.accent.blue} />}
                     rightElement={loading ? <Text>Loading…</Text> : null}
                     showChevron={false}
                 />
@@ -162,14 +162,14 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                         }}
                         itemTrigger={{
                             title: 'Change machine',
-                            icon: <Ionicons name="swap-horizontal-outline" size={29} color="#5856D6" />,
+                            icon: <Ionicons name="swap-horizontal-outline" size={29} color={theme.colors.accent.indigo} />,
                         }}
                     />
                 </View>
                 <Item
                     title="Enabled"
                     subtitle="Build and maintain a local index on this machine"
-                    icon={<Ionicons name="search-outline" size={29} color="#34C759" />}
+                    icon={<Ionicons name="search-outline" size={29} color={theme.colors.success} />}
                     rightElement={(
                         <Switch
                             value={settings.enabled}
@@ -198,7 +198,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                     }}
                     itemTrigger={{
                         title: 'Mode',
-                        icon: <Ionicons name="options-outline" size={29} color="#FF9500" />,
+                        icon: <Ionicons name="options-outline" size={29} color={theme.colors.accent.orange} />,
                     }}
                 />
             </ItemGroup>
@@ -224,7 +224,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                     }}
                     itemTrigger={{
                         title: 'Policy',
-                        icon: <Ionicons name="time-outline" size={29} color="#AF52DE" />,
+                        icon: <Ionicons name="time-outline" size={29} color={theme.colors.accent.purple} />,
                     }}
                 />
             </ItemGroup>
@@ -239,7 +239,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                     testID="memory-settings-summarizer-backend"
                     title="Summarizer backend"
                     subtitle={settings.hints.summarizerBackendId}
-                    icon={<Ionicons name="server-outline" size={29} color="#007AFF" />}
+                    icon={<Ionicons name="server-outline" size={29} color={theme.colors.accent.blue} />}
                     onPress={async () => {
                         const next = await Modal.prompt(
                             'Summarizer backend',
@@ -264,7 +264,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                     testID="memory-settings-summarizer-model"
                     title="Summarizer model"
                     subtitle={settings.hints.summarizerModelId}
-                    icon={<Ionicons name="cube-outline" size={29} color="#5856D6" />}
+                    icon={<Ionicons name="cube-outline" size={29} color={theme.colors.accent.indigo} />}
                     onPress={async () => {
                         const next = await Modal.prompt(
                             'Summarizer model',
@@ -300,7 +300,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                     }}
                     itemTrigger={{
                         title: 'Summarizer permissions',
-                        icon: <Ionicons name="lock-closed-outline" size={29} color="#FF3B30" />,
+                        icon: <Ionicons name="lock-closed-outline" size={29} color={theme.colors.warningCritical} />,
                     }}
                 />
             </ItemGroup>

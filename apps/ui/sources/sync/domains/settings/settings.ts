@@ -129,6 +129,24 @@ const SessionTmuxMachineOverrideSchema = z.object({
     tmpDir: z.string().nullable(),
 });
 
+const InstallableAutoUpdateModeSchema = z.enum(['off', 'notify', 'auto']);
+
+const InstallablePolicySchema = z.object({
+    // When true, Happier may automatically install this installable when it is required
+    // for a selected backend/session flow (best-effort, non-blocking).
+    autoInstallWhenNeeded: z.boolean().optional(),
+    // Auto-update mode policy:
+    // - off: never update automatically
+    // - notify: surface update availability in UI, require manual confirmation
+    // - auto: update automatically in the background (best-effort)
+    autoUpdateMode: InstallableAutoUpdateModeSchema.optional(),
+});
+
+const InstallablesPolicyByMachineIdSchema = z.record(
+    z.string(),
+    z.record(z.string(), InstallablePolicySchema).default({}),
+).default({});
+
 const ServerSelectionGroupSchema = z.object({
     id: z.string().min(1),
     name: z.string().min(1).max(100),
@@ -360,6 +378,7 @@ const SettingsSchemaBase = z.object({
     sessionTmuxIsolated: z.boolean().describe('Whether to use an isolated tmux server for new sessions'),
     sessionTmuxTmpDir: z.string().nullable().describe('Optional TMUX_TMPDIR override for isolated tmux server'),
     sessionTmuxByMachineId: z.record(z.string(), SessionTmuxMachineOverrideSchema).default({}).describe('Per-machine overrides for tmux session spawning'),
+    installablesPolicyByMachineId: InstallablesPolicyByMachineIdSchema.describe('Per-machine installables policy overrides (auto-install / auto-update)'),
     // Legacy combined toggle (kept for backward compatibility; see settingsParse migration)
     usePickerSearch: z.boolean().describe('Whether to show search in machine/path picker UIs (legacy combined toggle)'),
     useMachinePickerSearch: z.boolean().describe('Whether to show search in machine picker UIs'),
@@ -526,6 +545,7 @@ export type Settings = KnownSettings & Record<string, unknown>;
     sessionTmuxIsolated: true,
     sessionTmuxTmpDir: null,
     sessionTmuxByMachineId: {},
+    installablesPolicyByMachineId: {},
     useEnhancedSessionWizard: false,
     usePickerSearch: false,
     useMachinePickerSearch: false,

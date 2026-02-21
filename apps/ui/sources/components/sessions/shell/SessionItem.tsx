@@ -1,10 +1,10 @@
 import React from 'react';
-import { Platform, Pressable, View, Text as RNText } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { Text } from '@/components/ui/text/StyledText';
+import { Text, Text as RNText } from '@/components/ui/text/Text';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Typography } from '@/constants/Typography';
@@ -306,10 +306,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'center',
         backgroundColor: theme.colors.status.error,
     },
+    swipeActionIcon: {
+        color: theme.colors.button.primary.tint,
+    },
     swipeActionText: {
         marginTop: 4,
         fontSize: 12,
-        color: '#FFFFFF',
+        color: theme.colors.button.primary.tint,
         textAlign: 'center',
         ...Typography.default('semiBold'),
     },
@@ -385,11 +388,11 @@ export const SessionItem = React.memo(
         const showTagAction = supportsTag && (Platform.OS !== 'web' || showRowActions);
         const activeTags = tags ?? [];
         const knownTags = allKnownTags ?? [];
-        const handleMouseEnter = React.useCallback(() => {
+        const handleHoverIn = React.useCallback(() => {
             setIsHovered(true);
         }, []);
 
-        const handleMouseLeave = React.useCallback(() => {
+        const handleHoverOut = React.useCallback(() => {
             setIsHovered(false);
         }, []);
 
@@ -475,6 +478,7 @@ export const SessionItem = React.memo(
 
         const itemContent = (
             <Pressable
+                testID={`session-list-item-${session.id}`}
                 style={[
                     styles.sessionItem,
                     compact ? styles.sessionItemCompact : null,
@@ -482,8 +486,8 @@ export const SessionItem = React.memo(
                     selected ? styles.sessionItemSelected : null,
                     embedded && !embeddedIsLast ? styles.embeddedSeparator : null,
                 ]}
-                onMouseEnter={Platform.OS === 'web' ? handleMouseEnter : undefined}
-                onMouseLeave={Platform.OS === 'web' ? handleMouseLeave : undefined}
+                onHoverIn={Platform.OS === 'web' ? handleHoverIn : undefined}
+                onHoverOut={Platform.OS === 'web' ? handleHoverOut : undefined}
                 onPressIn={() => {
                     if (isTablet) {
                         navigateToSession(session.id, serverId ? { serverId } : undefined);
@@ -702,7 +706,7 @@ export const SessionItem = React.memo(
 
         const renderRightActions = () => (
             <Pressable style={styles.swipeAction} onPress={handleSwipeAction} disabled={mutatingSession}>
-                <Ionicons name={isActiveSession ? 'stop-circle-outline' : 'archive-outline'} size={20} color="#FFFFFF" />
+                <Ionicons name={isActiveSession ? 'stop-circle-outline' : 'archive-outline'} size={20} style={styles.swipeActionIcon} />
                 <Text style={styles.swipeActionText} numberOfLines={2}>
                     {isActiveSession ? t('sessionInfo.stopSession') : t('sessionInfo.archiveSession')}
                 </Text>

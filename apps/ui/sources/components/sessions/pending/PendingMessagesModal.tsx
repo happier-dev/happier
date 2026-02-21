@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
@@ -8,6 +8,8 @@ import { sync } from '@/sync/sync';
 import { Modal } from '@/modal';
 import { sessionAbort } from '@/sync/ops';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { Text } from '@/components/ui/text/Text';
+
 
 export function PendingMessagesModal(props: { sessionId: string; onClose: () => void }) {
     const { theme } = useUnistyles();

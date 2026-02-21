@@ -1,8 +1,10 @@
 import * as React from 'react';
-import { Pressable, Text, TextInput, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Typography } from '@/constants/Typography';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 export type ScmCommitMessageGenerateResult =
     | { ok: true; message: string }

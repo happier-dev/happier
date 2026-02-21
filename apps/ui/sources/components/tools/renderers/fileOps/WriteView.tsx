@@ -4,7 +4,9 @@ import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { knownTools } from '@/components/tools/catalog';
 import { ToolDiffView } from '@/components/tools/shell/presentation/ToolDiffView';
 import { useSetting } from '@/sync/domains/state/storage';
-import { Text } from 'react-native';
+
+import { Text } from '@/components/ui/text/Text';
+
 
 function truncateLines(text: string, maxLines: number): string {
     const lines = text.replace(/\r\n/g, '\n').split('\n');

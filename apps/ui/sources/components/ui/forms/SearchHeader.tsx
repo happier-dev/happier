@@ -1,10 +1,12 @@
 import * as React from 'react';
-import { View, TextInput, Platform, Pressable, StyleProp, ViewStyle } from 'react-native';
+import { View, Platform, Pressable, StyleProp, ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
+import { TextInput } from '@/components/ui/text/Text';
+
 
 export interface SearchHeaderProps {
     value: string;
@@ -13,7 +15,7 @@ export interface SearchHeaderProps {
     containerStyle?: StyleProp<ViewStyle>;
     autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
     autoCorrect?: boolean;
-    inputRef?: React.Ref<TextInput>;
+    inputRef?: React.Ref<React.ElementRef<typeof TextInput>>;
     onFocus?: () => void;
     onBlur?: () => void;
 }

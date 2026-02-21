@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, Text, TextInput, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -11,6 +11,8 @@ import { t } from '@/text';
 import { buildExecutionRunsGuidanceBlock, coerceExecutionRunsGuidanceEntries } from '@/sync/domains/settings/executionRunsGuidance';
 import { buildAvailableReviewEngineOptions } from '@/sync/domains/reviews/reviewEngineCatalog';
 import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 type ExecutionRunIntent = 'review' | 'plan' | 'delegate' | 'voice_agent';
 

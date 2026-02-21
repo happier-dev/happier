@@ -45,7 +45,6 @@ describe('syncAutomations', () => {
         delete process.env.HAPPIER_BUILD_FEATURES_DENY;
         vi.unstubAllGlobals();
         vi.restoreAllMocks();
-        vi.resetModules();
     });
 
     it('does not call /v2/automations when /v1/features is missing (404)', async () => {

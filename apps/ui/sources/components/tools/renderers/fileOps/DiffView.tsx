@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ScrollView, View, Text, Pressable, Platform } from 'react-native';
+import { ScrollView, View, Pressable, Platform } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
@@ -10,6 +10,8 @@ import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildC
 import { buildDiffBlocks, buildDiffFileEntries, type DiffFileEntry } from '@/components/ui/code/model/diff/diffViewModel';
 import { t } from '@/text';
 import { useToolHeaderActions } from '../../shell/presentation/ToolHeaderActionsContext';
+import { Text } from '@/components/ui/text/Text';
+
 
 function UnifiedDiffInlineView(props: Readonly<{
     unifiedDiff: string;

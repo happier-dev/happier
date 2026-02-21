@@ -3,6 +3,7 @@ import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilitie
 import { getCodexAcpDepData } from '@/capabilities/codexAcpDep';
 import { getCodexMcpResumeDepData } from '@/capabilities/codexMcpResume';
 import { resumeChecklistId } from '@happier-dev/protocol/checklists';
+import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables';
 import type { CapabilitiesDetectRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
 
 import type {
@@ -96,8 +97,8 @@ export function getCodexNewSessionRelevantInstallableDepKeys(ctx: NewSessionRele
     });
 
     const keys: string[] = [];
-    if (extras?.experimentalCodexResume === true) keys.push('codex-mcp-resume');
-    if (extras?.experimentalCodexAcp === true) keys.push('codex-acp');
+    if (extras?.experimentalCodexResume === true) keys.push(INSTALLABLE_KEYS.CODEX_MCP_RESUME);
+    if (extras?.experimentalCodexAcp === true) keys.push(INSTALLABLE_KEYS.CODEX_ACP);
     return keys;
 }
 

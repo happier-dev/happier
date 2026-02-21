@@ -1,7 +1,9 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { ActivityIndicator, Pressable, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 export type ModelPickerOption = Readonly<{
     value: string;
@@ -29,8 +31,10 @@ export function ModelPickerOverlay(props: {
     probe?: ModelPickerProbeState;
 }) {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
     const [query, setQuery] = React.useState('');
 
+    const probe = props.probe;
     const showSearch = props.options.length >= 12;
     const normalizedQuery = query.trim().toLowerCase();
 
@@ -46,33 +50,33 @@ export function ModelPickerOverlay(props: {
         <View style={styles.section}>
             <View style={styles.titleRow}>
                 <Text style={styles.title}>{props.title}</Text>
-                {props.probe ? (
-                    typeof props.probe.onRefresh === 'function' ? (
+                {probe ? (
+                    typeof probe.onRefresh === 'function' ? (
                         <Pressable
-                            onPress={props.probe.phase === 'idle' ? props.probe.onRefresh : undefined}
+                            onPress={probe.phase === 'idle' ? probe.onRefresh : undefined}
                             style={({ pressed }) => [
                                 styles.refreshIconButton,
-                                pressed && props.probe.phase === 'idle' ? styles.refreshIconButtonPressed : null,
-                                props.probe.phase !== 'idle' ? styles.refreshIconButtonDisabled : null,
+                                pressed && probe.phase === 'idle' ? styles.refreshIconButtonPressed : null,
+                                probe.phase !== 'idle' ? styles.refreshIconButtonDisabled : null,
                             ]}
                             accessibilityRole="button"
                             accessibilityLabel="Refresh models"
                             hitSlop={6}
                         >
-                            {props.probe.phase === 'idle' ? (
+                            {probe.phase === 'idle' ? (
                                 <Ionicons name="refresh-outline" size={18} style={styles.refreshIcon as any} />
                             ) : (
                                 <ActivityIndicator
                                     size="small"
-                                    accessibilityLabel={props.probe.phase === 'loading' ? 'Loading models…' : 'Refreshing models…'}
+                                    accessibilityLabel={probe.phase === 'loading' ? 'Loading models…' : 'Refreshing models…'}
                                 />
                             )}
                         </Pressable>
-                    ) : props.probe.phase !== 'idle' ? (
+                    ) : probe.phase !== 'idle' ? (
                         <View style={styles.refreshIconButton}>
                             <ActivityIndicator
                                 size="small"
-                                accessibilityLabel={props.probe.phase === 'loading' ? 'Loading models…' : 'Refreshing models…'}
+                                accessibilityLabel={probe.phase === 'loading' ? 'Loading models…' : 'Refreshing models…'}
                             />
                         </View>
                     ) : null
@@ -93,7 +97,7 @@ export function ModelPickerOverlay(props: {
                                 value={query}
                                 onChangeText={setQuery}
                                 placeholder="Search models…"
-                                placeholderTextColor="#999"
+                                placeholderTextColor={theme.colors.input.placeholder}
                                 autoCorrect={false}
                                 autoCapitalize="none"
                                 style={styles.searchInput as any}
@@ -231,7 +235,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginRight: 12,
     },
     radioOuterSelected: {
-        borderColor: theme.colors.button.primary.background,
+        borderColor: theme.colors.radio.active,
     },
     radioOuterUnselected: {
         borderColor: theme.colors.divider,
@@ -240,7 +244,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: 8,
         height: 8,
         borderRadius: 4,
-        backgroundColor: theme.colors.button.primary.background,
+        backgroundColor: theme.colors.radio.active,
     },
     optionLabel: {
         fontSize: 14,

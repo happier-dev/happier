@@ -1,9 +1,11 @@
 import * as React from 'react';
-import { View, Text } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { Text } from '@/components/ui/text/Text';
+
 
 interface CommandSuggestionProps {
     command: string;

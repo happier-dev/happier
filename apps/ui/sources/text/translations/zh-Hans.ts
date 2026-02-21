@@ -141,6 +141,10 @@ export const zhHans: TranslationStructure = {
     terminalUrlPlaceholder: "happier://terminal?...",
     restoreQrInstructions:
       "1. 在你的手机上打开 Happier\n2. 前往 设置 → 账户\n3. 点击“链接新设备”\n4. 扫描此二维码",
+    externalAuthVerifiedTitle: ({ provider }: { provider: string }) =>
+      `${provider} 验证完成`,
+    externalAuthVerifiedBody: ({ provider }: { provider: string }) =>
+      `我们找到了与 ${provider} 关联的现有 Happier 账户。要在此设备上完成登录，请使用二维码或你的密钥恢复账户密钥。`,
     restoreWithSecretKeyInstead: "改用密钥恢复",
     restoreWithSecretKeyDescription: "输入你的密钥以恢复账户访问权限。",
     lostAccessLink: "无法访问？",
@@ -354,6 +358,19 @@ export const zhHans: TranslationStructure = {
     compactSessionViewDescription: "以更紧凑的布局显示活跃会话",
     compactSessionViewMinimal: "极简紧凑视图",
     compactSessionViewMinimalDescription: "隐藏头像并显示更紧凑的会话行布局",
+    text: "文本",
+    textDescription: "调整应用内文字大小",
+    textSize: "文字大小",
+    textSizeDescription: "让文字更大或更小",
+    textSizeOptions: {
+      xxsmall: "超特小",
+      xsmall: "特小",
+      small: "小",
+      default: "默认",
+      large: "大",
+      xlarge: "特大",
+      xxlarge: "超特大",
+    },
   },
 
   settingsFeatures: {
@@ -535,10 +552,10 @@ export const zhHans: TranslationStructure = {
     missingPermissionId: "缺少权限请求 ID",
     codexResumeNotInstalledTitle: "此机器未安装 Codex resume",
     codexResumeNotInstalledMessage:
-      "要恢复 Codex 对话，请在目标机器上安装 Codex resume 服务器（机器详情 → Codex resume）。",
+      "要恢复 Codex 对话，请在目标机器上安装 Codex resume 服务器（机器详情 → Installables）。",
     codexAcpNotInstalledTitle: "此机器未安装 Codex ACP",
     codexAcpNotInstalledMessage:
-      "要使用 Codex ACP 实验功能，请在目标机器上安装 codex-acp（机器详情 → Codex ACP），或关闭实验开关。",
+      "要使用 Codex ACP 实验功能，请在目标机器上安装 codex-acp（机器详情 → Installables），或关闭实验开关。",
   },
 
   deps: {
@@ -1940,6 +1957,12 @@ export const zhHans: TranslationStructure = {
       `使用 ${provider} 继续`,
     linkOrRestoreAccount: "链接或恢复账户",
     loginWithMobileApp: "使用移动应用登录",
+    serverUnavailableTitle: "无法连接到服务器",
+    serverUnavailableBody: ({ serverUrl }: { serverUrl: string }) =>
+      `无法连接到 ${serverUrl}。请重试或更改服务器以继续。`,
+    serverIncompatibleTitle: "服务器不受支持",
+    serverIncompatibleBody: ({ serverUrl }: { serverUrl: string }) =>
+      `${serverUrl} 返回了意外的响应。请更新服务器或更改服务器以继续。`,
   },
 
   review: {
@@ -1956,7 +1979,7 @@ export const zhHans: TranslationStructure = {
       `${label} 已复制到剪贴板`,
   },
 
-  machine: {
+	  machine: {
     launchNewSessionInDirectory: "在目录中启动新会话",
     offlineUnableToSpawn: "设备离线时无法启动",
     offlineHelp:
@@ -1971,13 +1994,22 @@ export const zhHans: TranslationStructure = {
     stopDaemonFailed: "停止守护进程失败。它可能未在运行。",
     renameTitle: "重命名设备",
     renameDescription: "为此设备设置自定义名称。留空则使用默认主机名。",
-    renamePlaceholder: "输入设备名称",
-    renamedSuccess: "设备重命名成功",
-    renameFailed: "设备重命名失败",
-    lastKnownPid: "最后已知 PID",
-    lastKnownHttpPort: "最后已知 HTTP 端口",
-    startedAt: "启动时间",
-    cliVersion: "CLI 版本",
+	    renamePlaceholder: "输入设备名称",
+	    renamedSuccess: "设备重命名成功",
+	    renameFailed: "设备重命名失败",
+	    actions: {
+	      removeMachine: "Remove Machine",
+	      removeMachineSubtitle:
+	        "Revokes this machine and removes it from your account.",
+	      removeMachineConfirmBody:
+	        "This will revoke access from this machine (including access keys and automation assignments). You can reconnect later by signing in again from the CLI.",
+	      removeMachineAlreadyRemoved:
+	        "This machine has already been removed from your account.",
+	    },
+	    lastKnownPid: "最后已知 PID",
+	    lastKnownHttpPort: "最后已知 HTTP 端口",
+	    startedAt: "启动时间",
+	    cliVersion: "CLI 版本",
     daemonStateVersion: "守护进程状态版本",
     activeSessions: ({ count }: { count: number }) => `活跃会话 (${count})`,
     machineGroup: "设备",

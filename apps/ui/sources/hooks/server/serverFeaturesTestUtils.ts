@@ -50,6 +50,10 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
     return {
         features: {
             bugReports: { enabled: true },
+            encryption: {
+                plaintextStorage: { enabled: false },
+                accountOptOut: { enabled: false },
+            },
             attachments: {
                 uploads: { enabled: true },
             },
@@ -86,6 +90,9 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 recovery: {
                     providerReset: { enabled: false },
                 },
+                login: {
+                    keyChallenge: { enabled: true },
+                },
                 ui: {
                     recoveryKeyReminder: { enabled: true },
                 },
@@ -106,6 +113,11 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 requested: voiceEnabled,
                 disabledByBuildPolicy: false,
             },
+            encryption: {
+                storagePolicy: 'required_e2ee',
+                allowAccountOptOut: false,
+                defaultAccountMode: 'e2ee',
+            },
             social: {
                 friends: {
                     allowUsername: overrides.friendsAllowUsername ?? false,
@@ -117,7 +129,7 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
             },
             auth: {
                 signup: { methods: [{ id: 'anonymous', enabled: true }] },
-                login: { requiredProviders: [] },
+                login: { methods: [{ id: 'key_challenge', enabled: true }], requiredProviders: [] },
                 recovery: {
                     providerReset: { providers: [] },
                 },

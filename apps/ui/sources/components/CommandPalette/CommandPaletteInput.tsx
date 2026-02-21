@@ -1,20 +1,23 @@
 import React from 'react';
-import { View, TextInput, Platform } from 'react-native';
+import { View, Platform } from 'react-native';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { TextInput } from '@/components/ui/text/Text';
+
 
 interface CommandPaletteInputProps {
     value: string;
     onChangeText: (text: string) => void;
     onKeyPress?: (key: string) => void;
-    inputRef?: React.RefObject<TextInput | null>;
+    inputRef?: React.RefObject<React.ElementRef<typeof TextInput> | null>;
     placeholder?: string;
     autoFocus?: boolean;
 }
 
 export function CommandPaletteInput({ value, onChangeText, onKeyPress, inputRef, placeholder, autoFocus = true }: CommandPaletteInputProps) {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
 
     const handleKeyDown = React.useCallback((e: any) => {
         if (Platform.OS === 'web' && onKeyPress) {
@@ -37,7 +40,7 @@ export function CommandPaletteInput({ value, onChangeText, onKeyPress, inputRef,
                 value={value}
                 onChangeText={onChangeText}
                 placeholder={placeholder ?? t('commandPalette.placeholder')}
-                placeholderTextColor="#999"
+                placeholderTextColor={theme.colors.input.placeholder}
                 autoFocus={autoFocus}
                 autoCorrect={false}
                 autoCapitalize="none"
@@ -49,17 +52,17 @@ export function CommandPaletteInput({ value, onChangeText, onKeyPress, inputRef,
     );
 }
 
-const stylesheet = StyleSheet.create(() => ({
+const stylesheet = StyleSheet.create((theme) => ({
     container: {
         borderBottomWidth: 1,
-        borderBottomColor: 'rgba(0, 0, 0, 0.06)',
-        backgroundColor: '#FAFAFA',
+        borderBottomColor: theme.colors.divider,
+        backgroundColor: theme.colors.surfaceHigh,
     },
     input: {
         paddingHorizontal: 32,
         paddingVertical: 24,
         fontSize: 20,
-        color: '#000',
+        color: theme.colors.text,
         letterSpacing: -0.3,
         // Remove outline on web
         ...(Platform.OS === 'web' ? {

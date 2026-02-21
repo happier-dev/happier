@@ -3,7 +3,7 @@ import { View } from 'react-native';
 
 import { CodeEditor } from '@/components/ui/code/editor/CodeEditor';
 import { Typography } from '@/constants/Typography';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 
 export function FileEditorPanel(props: Readonly<{
     theme: any;

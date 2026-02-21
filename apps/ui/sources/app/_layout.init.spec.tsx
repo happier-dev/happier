@@ -229,9 +229,9 @@ describe('app/_layout init resilience', () => {
         mockedPlatformOS = 'web';
         fromModuleMock.mockImplementation(() => ({ uri: 'https://example.com/font.ttf' }));
 
-        let appended: any | null = null;
+        const appended: any[] = [];
         const appendChild = vi.fn((node: any) => {
-            appended = node;
+            appended.push(node);
         });
 
         Object.defineProperty(globalThis, 'document', {
@@ -256,11 +256,12 @@ describe('app/_layout init resilience', () => {
         });
 
         expect(loadAsyncMock).toHaveBeenCalledTimes(0);
-        expect(appendChild).toHaveBeenCalledTimes(1);
-        expect(typeof appended?.textContent).toBe('string');
-        expect(appended.textContent).toContain('@font-face');
-        expect(appended.textContent).toContain('Inter-Regular');
-        expect(appended.textContent).toContain('example.com/font.ttf');
+        // We inject a <style> for @font-face rules and also add a <style> for UI font scaling overrides.
+        expect(appendChild).toHaveBeenCalledTimes(2);
+        const texts = appended.map((n) => String(n?.textContent ?? ''));
+        expect(texts.some((t) => t.includes('@font-face'))).toBe(true);
+        expect(texts.some((t) => t.includes('Inter-Regular'))).toBe(true);
+        expect(texts.some((t) => t.includes('example.com/font.ttf'))).toBe(true);
         expect(tree!.toJSON()).not.toBeNull();
     });
 

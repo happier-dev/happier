@@ -2,6 +2,7 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { createWelcomeFeaturesResponse } from './index.testHelpers';
+import type { ServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -25,10 +26,12 @@ const setPendingExternalAuthMock = vi.fn(async () => true);
 const clearPendingExternalAuthMock = vi.fn(async () => true);
 
 vi.mock('react-native', () => ({
+    ActivityIndicator: 'ActivityIndicator',
     Text: 'Text',
     View: 'View',
     Image: 'Image',
     useWindowDimensions: () => ({ width: 400, height: 800, scale: 1, fontScale: 1 }),
+    AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
     Platform: {
         OS: 'ios',
         select: (spec: Record<string, unknown>) => (spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? spec.ios : undefined),
@@ -99,10 +102,29 @@ vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
     getReadyServerFeatures: getServerFeaturesMock,
 }));
 
+const getServerFeaturesSnapshotMock = vi.fn(async (_params?: unknown): Promise<ServerFeaturesSnapshot> => ({
+    status: 'ready',
+    features: createWelcomeFeaturesResponse({
+        signupMethods: [
+            { id: 'anonymous', enabled: false },
+            { id: 'github', enabled: true },
+        ],
+        requiredProviders: ['github'],
+        autoRedirectEnabled: true,
+        autoRedirectProviderId: 'github',
+        providerOffboardingIntervalSeconds: 86400,
+    }),
+}));
+
+vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
+    getServerFeaturesSnapshot: getServerFeaturesSnapshotMock,
+}));
+
 describe('/ (welcome) auto redirect', () => {
     beforeEach(() => {
         openURL.mockClear();
         getServerFeaturesMock.mockClear();
+        getServerFeaturesSnapshotMock.mockClear();
         setPendingExternalAuthMock.mockClear();
         clearPendingExternalAuthMock.mockClear();
         getSuppressedUntilMock.mockReset();
@@ -175,6 +197,7 @@ describe('/ (welcome) auto redirect', () => {
     it('does not throw when server features fetch fails', async () => {
         vi.resetModules();
         getServerFeaturesMock.mockRejectedValueOnce(new Error('network'));
+        getServerFeaturesSnapshotMock.mockResolvedValueOnce({ status: 'error', reason: 'network' });
 
         await renderWelcomeScreen();
         expect(openURL).not.toHaveBeenCalled();

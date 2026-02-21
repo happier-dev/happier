@@ -1,6 +1,6 @@
 import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { View, TextInput, Platform } from 'react-native';
+import { View, Platform } from 'react-native';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
@@ -9,7 +9,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useSettingMutable } from '@/sync/domains/state/storage';
@@ -137,7 +137,7 @@ export default React.memo(function SessionSettingsScreen() {
                 <Item
                     title={t('settingsSession.sessionList.tagsTitle')}
                     subtitle={sessionTagsEnabled ? t('settingsSession.sessionList.tagsEnabledSubtitle') : t('settingsSession.sessionList.tagsDisabledSubtitle')}
-                    icon={<Ionicons name="pricetag-outline" size={29} color="#007AFF" />}
+                    icon={<Ionicons name="pricetag-outline" size={29} color={theme.colors.accent.blue} />}
                     rightElement={<Switch value={Boolean(sessionTagsEnabled)} onValueChange={setSessionTagsEnabled} />}
                     showChevron={false}
                     onPress={() => setSessionTagsEnabled(!sessionTagsEnabled)}
@@ -150,8 +150,8 @@ export default React.memo(function SessionSettingsScreen() {
                         key={option.key}
                         title={option.title}
                         subtitle={option.subtitle}
-                        icon={<Ionicons name="send-outline" size={29} color="#007AFF" />}
-                        rightElement={messageSendMode === option.key ? <Ionicons name="checkmark" size={20} color="#007AFF" /> : null}
+                        icon={<Ionicons name="send-outline" size={29} color={theme.colors.accent.blue} />}
+                        rightElement={messageSendMode === option.key ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
                         onPress={() => setMessageSendMode(option.key)}
                         showChevron={false}
                     />
@@ -168,8 +168,8 @@ export default React.memo(function SessionSettingsScreen() {
                             key={option.key}
                             title={option.title}
                             subtitle={option.subtitle}
-                            icon={<Ionicons name="git-branch-outline" size={29} color="#007AFF" />}
-                            rightElement={busySteerSendPolicy === option.key ? <Ionicons name="checkmark" size={20} color="#007AFF" /> : null}
+                            icon={<Ionicons name="git-branch-outline" size={29} color={theme.colors.accent.blue} />}
+                            rightElement={busySteerSendPolicy === option.key ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
                             onPress={() => setBusySteerSendPolicy(option.key)}
                             showChevron={false}
                         />
@@ -185,7 +185,7 @@ export default React.memo(function SessionSettingsScreen() {
                     <Item
                         title={t('settingsFeatures.enterToSend')}
                         subtitle={agentInputEnterToSend ? t('settingsFeatures.enterToSendEnabled') : t('settingsFeatures.enterToSendDisabled')}
-                        icon={<Ionicons name="return-down-forward-outline" size={29} color="#007AFF" />}
+                        icon={<Ionicons name="return-down-forward-outline" size={29} color={theme.colors.accent.blue} />}
                         rightElement={<Switch value={agentInputEnterToSend} onValueChange={setAgentInputEnterToSend} />}
                         showChevron={false}
                         onPress={() => setAgentInputEnterToSend(!agentInputEnterToSend)}
@@ -204,7 +204,7 @@ export default React.memo(function SessionSettingsScreen() {
                         popoverBoundaryRef={popoverBoundaryRef}
                         itemTrigger={{
                             title: t('settingsFeatures.historyScope'),
-                            icon: <Ionicons name="time-outline" size={29} color="#007AFF" />,
+                            icon: <Ionicons name="time-outline" size={29} color={theme.colors.accent.blue} />,
                         }}
                         items={historyScopeOptions.map((opt) => ({
                             id: opt.id,
@@ -239,7 +239,7 @@ export default React.memo(function SessionSettingsScreen() {
                         popoverBoundaryRef={popoverBoundaryRef}
                         itemTrigger={{
                             title: t('settingsSession.thinking.displayModeTitle'),
-                            icon: <Ionicons name="bulb-outline" size={29} color="#007AFF" />,
+                            icon: <Ionicons name="bulb-outline" size={29} color={theme.colors.accent.blue} />,
                         }}
                         items={thinkingDisplayOptions.map((opt) => ({
                             id: opt.key,
@@ -266,7 +266,7 @@ export default React.memo(function SessionSettingsScreen() {
                 <Item
                     title={t('settingsSession.toolRendering.title')}
                     subtitle={t('settingsSession.toolDetailOverrides.title')}
-                    icon={<Ionicons name="construct-outline" size={29} color="#007AFF" />}
+                    icon={<Ionicons name="construct-outline" size={29} color={theme.colors.accent.blue} />}
                     onPress={() => router.push('/(app)/settings/session/tool-rendering')}
                 />
             </ItemGroup>
@@ -275,7 +275,7 @@ export default React.memo(function SessionSettingsScreen() {
                 <Item
                     title={t('settingsSession.permissions.title')}
                     subtitle={t('settingsSession.permissions.entrySubtitle')}
-                    icon={<Ionicons name="shield-checkmark-outline" size={29} color="#34C759" />}
+                    icon={<Ionicons name="shield-checkmark-outline" size={29} color={theme.colors.success} />}
                     onPress={() => router.push('/(app)/settings/session/permissions')}
                 />
             </ItemGroup>
@@ -287,7 +287,7 @@ export default React.memo(function SessionSettingsScreen() {
                 <Item
                     title={t('settingsSession.replayResume.enabledTitle')}
                     subtitle={sessionReplayEnabled ? t('settingsSession.replayResume.enabledSubtitleOn') : t('settingsSession.replayResume.enabledSubtitleOff')}
-                    icon={<Ionicons name="refresh-outline" size={29} color="#34C759" />}
+                    icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.success} />}
                     rightElement={<Switch value={sessionReplayEnabled} onValueChange={setSessionReplayEnabled} />}
                     showChevron={false}
                     onPress={() => setSessionReplayEnabled(!sessionReplayEnabled)}
@@ -308,7 +308,7 @@ export default React.memo(function SessionSettingsScreen() {
                             popoverBoundaryRef={popoverBoundaryRef}
                             itemTrigger={{
                                 title: t('settingsSession.replayResume.strategyTitle'),
-                                icon: <Ionicons name="list-outline" size={29} color="#34C759" />,
+                                icon: <Ionicons name="list-outline" size={29} color={theme.colors.success} />,
                             }}
                             items={replayStrategyOptions.map((opt) => ({
                                 id: opt.key,
@@ -356,7 +356,7 @@ export default React.memo(function SessionSettingsScreen() {
                     <Item
                         title="Guidance rules"
                         subtitle="Open Sub-agent settings"
-                        icon={<Ionicons name="git-network-outline" size={29} color="#FF9500" />}
+                        icon={<Ionicons name="git-network-outline" size={29} color={theme.colors.accent.orange} />}
                         onPress={() => router.push('/(app)/settings/sub-agent')}
                     />
                 </ItemGroup>
@@ -366,7 +366,7 @@ export default React.memo(function SessionSettingsScreen() {
                 <Item
                     title="Actions"
                     subtitle="Open actions settings"
-                    icon={<Ionicons name="flash-outline" size={29} color="#FF9500" />}
+                    icon={<Ionicons name="flash-outline" size={29} color={theme.colors.accent.orange} />}
                     onPress={() => router.push('/(app)/settings/actions')}
                 />
             </ItemGroup>
@@ -375,7 +375,7 @@ export default React.memo(function SessionSettingsScreen() {
                 <Item
                     title={t('profiles.tmux.spawnSessionsTitle')}
                     subtitle={useTmux ? t('profiles.tmux.spawnSessionsEnabledSubtitle') : t('profiles.tmux.spawnSessionsDisabledSubtitle')}
-                    icon={<Ionicons name="terminal-outline" size={29} color="#5856D6" />}
+                    icon={<Ionicons name="terminal-outline" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={<Switch value={useTmux} onValueChange={setUseTmux} />}
                     showChevron={false}
                     onPress={() => setUseTmux(!useTmux)}
@@ -399,7 +399,7 @@ export default React.memo(function SessionSettingsScreen() {
                         <Item
                             title={t('profiles.tmux.isolatedServerTitle')}
                             subtitle={tmuxIsolated ? t('profiles.tmux.isolatedServerEnabledSubtitle') : t('profiles.tmux.isolatedServerDisabledSubtitle')}
-                            icon={<Ionicons name="albums-outline" size={29} color="#5856D6" />}
+                            icon={<Ionicons name="albums-outline" size={29} color={theme.colors.accent.indigo} />}
                             rightElement={<Switch value={tmuxIsolated} onValueChange={setTmuxIsolated} />}
                             showChevron={false}
                             onPress={() => setTmuxIsolated(!tmuxIsolated)}
@@ -433,7 +433,7 @@ export default React.memo(function SessionSettingsScreen() {
                             ? t('settingsSession.terminalConnect.legacySecretExportEnabledSubtitle')
                             : t('settingsSession.terminalConnect.legacySecretExportDisabledSubtitle')
                     }
-                    icon={<Ionicons name="shield-outline" size={29} color="#5856D6" />}
+                    icon={<Ionicons name="shield-outline" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={
                         <Switch
                             value={terminalConnectLegacySecretExportEnabled}

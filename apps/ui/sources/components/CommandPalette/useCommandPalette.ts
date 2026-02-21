@@ -1,11 +1,14 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
-import { TextInput } from 'react-native';
+import type { ElementRef } from 'react';
+
 import { Command, CommandCategory } from './types';
+import { TextInput } from '@/components/ui/text/Text';
+
 
 export function useCommandPalette(commands: Command[], onClose: () => void) {
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedIndex, setSelectedIndex] = useState(0);
-    const inputRef = useRef<TextInput>(null);
+    const inputRef = useRef<ElementRef<typeof TextInput> | null>(null);
 
     // Filter commands based on search query
     const filteredCategories = useMemo((): CommandCategory[] => {

@@ -24,8 +24,9 @@ vi.mock('expo-image', () => ({
     Image: 'Image',
 }));
 
-vi.mock('@/components/ui/text/StyledText', () => ({
+vi.mock('@/components/ui/text/Text', () => ({
     Text: 'StyledText',
+    TextInput: 'TextInput',
 }));
 
 vi.mock('expo-router', () => ({
@@ -113,21 +114,6 @@ vi.mock('@/modal', () => ({
 
 vi.mock('@/hooks/ui/useMultiClick', () => ({
     useMultiClick: (cb: () => void) => cb,
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            dark: false,
-            colors: {
-                surface: '#ffffff',
-                text: '#111111',
-                textSecondary: '#666666',
-                status: { connected: '#00ff00', disconnected: '#ff0000' },
-                groupped: { background: '#fff', sectionTitle: '#666' },
-            },
-        },
-    }),
 }));
 
 vi.mock('@/components/ui/layout/layout', () => ({

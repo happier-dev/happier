@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, ScrollView, ActivityIndicator, Pressable, Platform } from 'react-native';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 import { useArtifact } from '@/sync/domains/state/storage';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';

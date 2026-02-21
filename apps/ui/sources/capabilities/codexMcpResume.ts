@@ -1,8 +1,6 @@
 import type { CapabilitiesDetectRequest, CapabilityDetectResult, CapabilityId, CodexMcpResumeDepData } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { compareVersions, parseVersion } from '@/utils/system/versionUtils';
-
-export const CODEX_MCP_RESUME_DEP_ID = 'dep.codex-mcp-resume' as const satisfies CapabilityId;
-export const CODEX_MCP_RESUME_DIST_TAG = 'happy-codex-resume' as const;
+import { CODEX_MCP_RESUME_DEP_ID, CODEX_MCP_RESUME_DIST_TAG } from '@happier-dev/protocol/installables';
 
 export function getCodexMcpResumeDetectResult(
     results: Partial<Record<CapabilityId, CapabilityDetectResult>> | null | undefined,

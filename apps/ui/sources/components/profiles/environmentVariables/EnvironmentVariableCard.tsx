@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TextInput, Pressable, Platform } from 'react-native';
+import { View, Pressable, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
@@ -9,6 +9,8 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { formatEnvVarTemplate, parseEnvVarTemplate, type EnvVarTemplateOperator } from '@/utils/profiles/envVarTemplate';
 import { t } from '@/text';
 import type { EnvPreviewSecretsPolicy, PreviewEnvValue } from '@/sync/ops';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 export interface EnvironmentVariableCardProps {
     variable: { name: string; value: string; isSecret?: boolean };

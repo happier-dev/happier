@@ -1,5 +1,5 @@
 import React, { memo, useEffect, useState } from 'react';
-import { View, Text, Switch, Platform, Linking, useWindowDimensions, ScrollView, Pressable } from 'react-native';
+import { View, Switch, Platform, Linking, useWindowDimensions, ScrollView, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
@@ -14,6 +14,8 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { PublicSessionShare } from '@/sync/domains/social/sharingTypes';
 import { HappyError } from '@/utils/errors/errors';
 import { QRCode } from '@/components/qr';
+import { Text } from '@/components/ui/text/Text';
+
 
 export interface PublicLinkDialogProps {
     publicShare: PublicSessionShare | null;
@@ -277,7 +279,7 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
                                         setIsConfiguring(true);
                                         requestAnimationFrame(() => scrollRef.current?.scrollTo({ y: 0, animated: false }));
                                     }}
-                                    icon={<Ionicons name="refresh-outline" size={29} color="#007AFF" />}
+                                    icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.accent.blue} />}
                                 />
                             </ItemGroup>
 
@@ -297,7 +299,7 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
                                     />
                                     <Item
                                         title={t('common.copy')}
-                                        icon={<Ionicons name="copy-outline" size={29} color="#007AFF" />}
+                                        icon={<Ionicons name="copy-outline" size={29} color={theme.colors.accent.blue} />}
                                         onPress={handleCopyLink}
                                         showChevron={false}
                                         showDivider={false}

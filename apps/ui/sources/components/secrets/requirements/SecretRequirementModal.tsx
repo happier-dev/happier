@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable, TextInput, Platform, ScrollView, useWindowDimensions } from 'react-native';
+import { View, Pressable, Platform, ScrollView, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,6 +19,8 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 const secretRequirementSelectionMemory = new Map<string, 'machine' | 'saved' | 'once'>();
 
@@ -147,7 +149,7 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
         const initial = props.sessionOnlySecretValueByEnvVarName?.[activeEnvVarName];
         return typeof initial === 'string' ? initial : '';
     });
-    const sessionOnlyInputRef = React.useRef<TextInput>(null);
+    const sessionOnlyInputRef = React.useRef<React.ElementRef<typeof TextInput> | null>(null);
     const selectionKey = `${props.profile.id}:${activeEnvVarName}:${props.machineId ?? 'no-machine'}`;
     const [selectedSource, setSelectedSource] = React.useState<'machine' | 'saved' | 'once' | null>(() => {
         if (variant === 'defaultForProfile') return 'saved';

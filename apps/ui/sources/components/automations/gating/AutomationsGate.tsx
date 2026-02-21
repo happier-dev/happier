@@ -5,7 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 import { layout } from '@/components/ui/layout/layout';
 
 const stylesheet = StyleSheet.create((theme) => ({

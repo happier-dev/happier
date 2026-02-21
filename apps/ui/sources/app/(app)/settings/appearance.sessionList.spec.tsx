@@ -24,18 +24,6 @@ vi.mock('expo-localization', () => ({
     getLocales: () => [{ languageTag: 'en-US' }],
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-    useUnistyles: () => ({
-        theme: { colors: { status: { connecting: '#00f' } } },
-    }),
-    UnistylesRuntime: {
-        setAdaptiveThemes: vi.fn(),
-        setTheme: vi.fn(),
-        setRootViewBackgroundColor: vi.fn(),
-    },
-}));
-
 vi.mock('expo-system-ui', () => ({
     setBackgroundColorAsync: vi.fn(),
 }));
@@ -48,6 +36,10 @@ vi.mock('@/theme', () => ({
 vi.mock('react-native', () => ({
     View: 'View',
     Text: 'Text',
+    Pressable: 'Pressable',
+    AppState: {
+        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+    },
     Platform: {
         OS: 'ios',
         select: (spec: Record<string, unknown>) =>
@@ -131,6 +123,7 @@ describe('AppearanceSettingsScreen (session list controls)', () => {
 
         useLocalSettingMutableMock.mockImplementation((key: string) => {
             if (key === 'themePreference') return createNoopMutable('adaptive' as any);
+            if (key === 'uiFontScale') return createNoopMutable(1 as any);
             return createNoopMutable(null);
         });
     });
@@ -149,5 +142,6 @@ describe('AppearanceSettingsScreen (session list controls)', () => {
         expect(titles).toContain('settingsFeatures.hideInactiveSessions');
         expect(titles).toContain('settingsFeatures.sessionListActiveGrouping');
         expect(titles).toContain('settingsFeatures.sessionListInactiveGrouping');
+        expect(titles).toContain('settingsAppearance.textSize');
     });
 });

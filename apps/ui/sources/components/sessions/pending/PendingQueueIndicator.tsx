@@ -1,11 +1,13 @@
 import React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { PendingMessagesModal } from './PendingMessagesModal';
 import { layout } from '@/components/ui/layout/layout';
+import { Text } from '@/components/ui/text/Text';
+
 
 const PENDING_INDICATOR_DEBOUNCE_MS = 250;
 

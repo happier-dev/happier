@@ -1,8 +1,10 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleProp, Text, TextStyle, View, ViewStyle } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, StyleProp, TextStyle, View, ViewStyle } from 'react-native';
 import { iOSUIKit } from 'react-native-typography';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Text } from '@/components/ui/text/Text';
+
 
 export type RoundButtonSize = 'large' | 'normal' | 'small';
 const sizes: { [key in RoundButtonSize]: { fontSize: number, hitSlop: number, pad: number } } = {
@@ -37,7 +39,19 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-export const RoundButton = React.memo((props: { size?: RoundButtonSize, display?: RoundButtonDisplay, title?: any, style?: StyleProp<ViewStyle>, textStyle?: StyleProp<TextStyle>, disabled?: boolean, loading?: boolean, onPress?: () => void, action?: () => Promise<any> }) => {
+export const RoundButton = React.memo((props: {
+    size?: RoundButtonSize,
+    display?: RoundButtonDisplay,
+    title?: any,
+    style?: StyleProp<ViewStyle>,
+    textStyle?: StyleProp<TextStyle>,
+    disabled?: boolean,
+    loading?: boolean,
+    testID?: string,
+    accessibilityLabel?: string,
+    onPress?: () => void,
+    action?: () => Promise<any>
+}) => {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const [loading, setLoading] = React.useState(false);
@@ -80,6 +94,9 @@ export const RoundButton = React.memo((props: { size?: RoundButtonSize, display?
 
     return (
         <Pressable
+            testID={props.testID}
+            accessibilityRole="button"
+            accessibilityLabel={props.accessibilityLabel}
             disabled={doLoading || props.disabled}
             hitSlop={size.hitSlop}
             style={(p) => ([

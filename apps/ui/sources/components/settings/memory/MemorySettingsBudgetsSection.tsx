@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
@@ -11,6 +12,7 @@ export const MemorySettingsBudgetsSection = React.memo(function MemorySettingsBu
     settings: MemorySettingsV1;
     writeSettings: (next: MemorySettingsV1) => void | Promise<void>;
 }>) {
+    const { theme } = useUnistyles();
     const { settings } = props;
 
     return (
@@ -22,7 +24,7 @@ export const MemorySettingsBudgetsSection = React.memo(function MemorySettingsBu
                 testID="memory-settings-budget-light"
                 title="Light index budget"
                 subtitle={`${settings.budgets.maxDiskMbLight} MB`}
-                icon={<Ionicons name="server-outline" size={29} color="#007AFF" />}
+                icon={<Ionicons name="server-outline" size={29} color={theme.colors.accent.blue} />}
                 onPress={async () => {
                     const next = await Modal.prompt(
                         'Light index budget',
@@ -47,7 +49,7 @@ export const MemorySettingsBudgetsSection = React.memo(function MemorySettingsBu
                 testID="memory-settings-budget-deep"
                 title="Deep index budget"
                 subtitle={`${settings.budgets.maxDiskMbDeep} MB`}
-                icon={<Ionicons name="server-outline" size={29} color="#AF52DE" />}
+                icon={<Ionicons name="server-outline" size={29} color={theme.colors.accent.purple} />}
                 onPress={async () => {
                     const next = await Modal.prompt(
                         'Deep index budget',
@@ -71,4 +73,3 @@ export const MemorySettingsBudgetsSection = React.memo(function MemorySettingsBu
         </ItemGroup>
     );
 });
-

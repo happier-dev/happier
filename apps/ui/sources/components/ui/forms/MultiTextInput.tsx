@@ -1,7 +1,9 @@
 import * as React from 'react';
-import { TextInput, Platform, View, NativeSyntheticEvent, TextInputKeyPressEventData, TextInputSelectionChangeEventData } from 'react-native';
+import { Platform, View, NativeSyntheticEvent, TextInputKeyPressEventData, TextInputSelectionChangeEventData } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
+import { TextInput } from '@/components/ui/text/Text';
+
 
 export type SupportedKey = 'Enter' | 'Escape' | 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight' | 'Tab';
 
@@ -30,6 +32,7 @@ interface MultiTextInputProps {
     value: string;
     onChangeText: (text: string) => void;
     placeholder?: string;
+    testID?: string;
     maxHeight?: number;
     autoFocus?: boolean;
     editable?: boolean;
@@ -61,7 +64,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
     const { theme } = useUnistyles();
     // Track latest selection in a ref
     const selectionRef = React.useRef({ start: 0, end: 0 });
-    const inputRef = React.useRef<TextInput>(null);
+    const inputRef = React.useRef<React.ElementRef<typeof TextInput> | null>(null);
 
     const handleKeyPress = React.useCallback((e: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
         if (!onKeyPress) return;
@@ -182,6 +185,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         <View style={{ width: '100%' }}>
             <TextInput
                 ref={inputRef}
+                testID={props.testID}
                 style={{
                     width: '100%',
                     fontSize: 16,

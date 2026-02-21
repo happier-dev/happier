@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Text, View } from 'react-native';
+import { View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
@@ -14,6 +14,8 @@ import { useIsDataReady, useLocalSetting, useSession } from '@/sync/domains/stat
 import { sessionReadLogTail } from '@/sync/ops';
 import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
+import { Text } from '@/components/ui/text/Text';
+
 
 const LOG_TAIL_MAX_BYTES = 200_000;
 
@@ -119,7 +121,7 @@ export default function SessionLogScreen() {
                 <Item
                     title="Log path"
                     subtitle={resolvedLogPath || metadataLogPath || 'Unavailable'}
-                    icon={<Ionicons name="document-text-outline" size={29} color="#5856D6" />}
+                    icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.accent.indigo} />}
                     showChevron={false}
                     onPress={() => {
                         const path = resolvedLogPath || metadataLogPath;
@@ -130,14 +132,14 @@ export default function SessionLogScreen() {
                 <Item
                     title="Refresh log tail"
                     subtitle={loading ? 'Loading…' : `Read last ${LOG_TAIL_MAX_BYTES.toLocaleString()} bytes`}
-                    icon={<Ionicons name="refresh-outline" size={29} color="#007AFF" />}
+                    icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.accent.blue} />}
                     onPress={() => void refreshTail()}
                     showChevron={false}
                 />
                 <Item
                     title="Copy visible log"
                     subtitle={tailText.length > 0 ? 'Copy current tail to clipboard' : 'No log content loaded'}
-                    icon={<Ionicons name="copy-outline" size={29} color="#007AFF" />}
+                    icon={<Ionicons name="copy-outline" size={29} color={theme.colors.accent.blue} />}
                     onPress={() => void copyText('Session log', tailText)}
                     showChevron={false}
                     disabled={tailText.length === 0}
@@ -149,7 +151,7 @@ export default function SessionLogScreen() {
                     <Item
                         title="Read error"
                         subtitle={error}
-                        icon={<Ionicons name="alert-circle-outline" size={29} color="#FF3B30" />}
+                        icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.warningCritical} />}
                         showChevron={false}
                     />
                 </ItemGroup>

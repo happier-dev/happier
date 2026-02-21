@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Text, View, ActivityIndicator, Platform } from 'react-native';
+import { View, ActivityIndicator, Platform } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -8,6 +8,8 @@ import { ToolSectionView } from '@/components/tools/shell/presentation/ToolSecti
 import type { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
+import { Text } from '@/components/ui/text/Text';
+
 
 interface FilteredTool {
     tool: ToolCall;

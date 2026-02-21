@@ -1,8 +1,10 @@
 import * as React from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
+import { Text } from '@/components/ui/text/Text';
+
 
 export type HeaderTitleWithActionProps = {
     title: string;

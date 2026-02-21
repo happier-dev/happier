@@ -47,7 +47,7 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
                 <Item
                     title="Enabled"
                     subtitle="Allow push notifications on this account"
-                    icon={<Ionicons name="notifications-outline" size={29} color="#007AFF" />}
+                    icon={<Ionicons name="notifications-outline" size={29} color={theme.colors.accent.blue} />}
                     rightElement={(
                         <Switch
                             value={pushEnabled}
@@ -65,7 +65,7 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
                 <Item
                     title="Ready"
                     subtitle="Notify when a turn finishes and the agent is waiting for your command"
-                    icon={<Ionicons name="checkmark-circle-outline" size={29} color="#34C759" />}
+                    icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.success} />}
                     rightElement={(
                         <Switch
                             value={notifications.ready !== false}
@@ -92,4 +92,3 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
         </ItemList>
     );
 });
-

@@ -1,6 +1,6 @@
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { View, Platform, useWindowDimensions, ViewStyle, Text, ActivityIndicator, Pressable, ScrollView } from 'react-native';
+import { View, Platform, useWindowDimensions, ViewStyle, ActivityIndicator, Pressable, ScrollView } from 'react-native';
 import { Image } from 'expo-image';
 import { layout } from '@/components/ui/layout/layout';
 import { MultiTextInput, KeyPressEvent } from '@/components/ui/forms/MultiTextInput';
@@ -38,6 +38,12 @@ import { useSetting } from '@/sync/domains/state/storage';
 import { useUserMessageHistory } from '@/hooks/session/useUserMessageHistory';
 import { Theme } from '@/theme';
 import { t } from '@/text';
+
+const ScrollViewWithWheel = ScrollView as unknown as React.ComponentType<
+    React.ComponentPropsWithRef<typeof ScrollView> & {
+        onWheel?: any;
+    }
+>;
 import { Metadata } from '@/sync/domains/state/storageTypes';
 import { AIBackendProfile, getProfileEnvironmentVariables } from '@/sync/domains/settings/settings';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, type AgentId } from '@/agents/catalog/catalog';
@@ -59,6 +65,11 @@ import { computeAcpConfigOptionControls, type AcpConfigOptionValueId } from '@/s
 import { PermissionFooter } from '@/components/tools/shell/permissions/PermissionFooter';
 import { formatPermissionRequestSummary } from '@/components/tools/normalization/policy/permissionSummary';
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
+import { Text } from '@/components/ui/text/Text';
+import { attachActionBarMouseDragScroll } from './attachActionBarMouseDragScroll';
+
+const ACTION_BAR_SCROLL_END_GUTTER_WIDTH = 24;
+
 
 export type AgentInputExtraActionChipRenderContext = Readonly<{
     chipStyle: (pressed: boolean) => any;
@@ -78,6 +89,14 @@ export type AgentInputAttachment = Readonly<{
     status?: 'pending' | 'uploading' | 'uploaded' | 'error';
     onRemove?: () => void;
 }>;
+
+const AGENT_INPUT_TEST_IDS = {
+    sessionInput: 'session-composer-input',
+    sessionSend: 'session-composer-send',
+    newSessionInput: 'new-session-composer-input',
+    newSessionSend: 'new-session-composer-send',
+    connectionStatusText: 'agent-input-connection-status-text',
+} as const;
 
 interface AgentInputProps {
     value: string;
@@ -409,7 +428,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         flexDirection: 'row',
         alignItems: 'center',
         ...(Platform.OS === 'web' ? { columnGap: 6 } : {}),
-        paddingRight: 6,
+        paddingRight: 6 + ACTION_BAR_SCROLL_END_GUTTER_WIDTH,
     },
     actionButtonsFadeLeft: {
         position: 'absolute',
@@ -787,6 +806,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         // Match previous behavior: avoid showing fades for tiny offsets.
         edgeThreshold: 2,
     });
+    const actionBarScrollRef = React.useRef<any>(null);
 
 		    const permissionModeOptions = React.useMemo(() => {
 		        return getPermissionModeOptionsForSession(agentId, props.metadata ?? null);
@@ -909,6 +929,127 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const actionBarFadeColor = React.useMemo(() => {
         return theme.colors.input.background;
     }, [theme.colors.input.background]);
+
+    const getActionBarScrollNode = React.useCallback(() => {
+        const raw = actionBarScrollRef.current;
+        if (!raw) return null;
+        // RN ScrollView refs often expose getScrollableNode()
+        return raw.getScrollableNode?.() ?? raw;
+    }, []);
+
+    const seedActionBarScrollMeasurements = React.useCallback(() => {
+        if (Platform.OS !== 'web') return;
+        const node = getActionBarScrollNode() as any;
+        if (!node) return;
+        const clientWidth = typeof node.clientWidth === 'number' ? node.clientWidth : null;
+        const clientHeight = typeof node.clientHeight === 'number' ? node.clientHeight : null;
+        const scrollWidth = typeof node.scrollWidth === 'number' ? node.scrollWidth : null;
+        if (clientWidth === null || scrollWidth === null) return;
+
+        // Seed both viewport and content sizes so chevrons/fades can render even before the first scroll event.
+        actionBarFades.onViewportLayout({ nativeEvent: { layout: { width: clientWidth, height: clientHeight ?? 0 } } });
+        actionBarFades.onContentSizeChange(
+            Math.max(0, scrollWidth - ACTION_BAR_SCROLL_END_GUTTER_WIDTH),
+            clientHeight ?? 0
+        );
+    }, [actionBarFades, getActionBarScrollNode]);
+
+    const reportActionBarWebScroll = React.useCallback((nodeOverride?: any) => {
+        if (Platform.OS !== 'web') return;
+        const node = (nodeOverride ?? getActionBarScrollNode()) as any;
+        if (!node) return;
+
+        const clientWidth = typeof node.clientWidth === 'number' ? node.clientWidth : null;
+        const clientHeight = typeof node.clientHeight === 'number' ? node.clientHeight : 0;
+        const scrollWidth = typeof node.scrollWidth === 'number' ? node.scrollWidth : null;
+        const scrollLeft = typeof node.scrollLeft === 'number' ? node.scrollLeft : 0;
+        if (clientWidth === null || scrollWidth === null) return;
+
+        actionBarFades.onScroll({
+            nativeEvent: {
+                contentOffset: { x: scrollLeft, y: 0 },
+                layoutMeasurement: { width: clientWidth, height: clientHeight },
+                contentSize: {
+                    width: Math.max(0, scrollWidth - ACTION_BAR_SCROLL_END_GUTTER_WIDTH),
+                    height: clientHeight,
+                },
+            },
+        });
+    }, [actionBarFades, getActionBarScrollNode]);
+
+    React.useEffect(() => {
+        if (Platform.OS !== 'web') return;
+        if (!actionBarShouldScroll) return;
+
+        const requestAnimationFrameSafe: (cb: () => void) => any =
+            (globalThis as any).requestAnimationFrame?.bind(globalThis) ??
+            ((cb: () => void) => setTimeout(cb, 0));
+        const cancelAnimationFrameSafe: (id: any) => void =
+            (globalThis as any).cancelAnimationFrame?.bind(globalThis) ??
+            ((id: any) => clearTimeout(id));
+
+        const rAF = requestAnimationFrameSafe(() => {
+            seedActionBarScrollMeasurements();
+            reportActionBarWebScroll();
+        });
+
+        const node = getActionBarScrollNode();
+        if (!node) return () => cancelAnimationFrameSafe(rAF);
+
+        // Keep measurements up-to-date as the viewport changes (resizes, chip density changes, etc).
+        // Prefer ResizeObserver (more accurate), but fall back to window resize.
+        const ResizeObserverAny = (globalThis as any).ResizeObserver as (new (cb: () => void) => { observe: (n: any) => void; disconnect: () => void }) | undefined;
+        if (typeof ResizeObserverAny === 'function') {
+            const observer = new ResizeObserverAny(() => {
+                seedActionBarScrollMeasurements();
+                reportActionBarWebScroll();
+            });
+            observer.observe(node as any);
+            return () => {
+                cancelAnimationFrameSafe(rAF);
+                observer.disconnect();
+            };
+        }
+
+        const onResize = () => {
+            seedActionBarScrollMeasurements();
+            reportActionBarWebScroll();
+        };
+        const w = (globalThis as any).window as Window | undefined;
+        w?.addEventListener?.('resize', onResize);
+        return () => {
+            cancelAnimationFrameSafe(rAF);
+            w?.removeEventListener?.('resize', onResize);
+        };
+    }, [actionBarShouldScroll, getActionBarScrollNode, reportActionBarWebScroll, seedActionBarScrollMeasurements]);
+
+    React.useEffect(() => {
+        if (Platform.OS !== 'web') return;
+        if (!actionBarShouldScroll) return;
+
+        const requestAnimationFrameSafe: (cb: () => void) => any =
+            (globalThis as any).requestAnimationFrame?.bind(globalThis) ??
+            ((cb: () => void) => setTimeout(cb, 0));
+        const cancelAnimationFrameSafe: (id: any) => void =
+            (globalThis as any).cancelAnimationFrame?.bind(globalThis) ??
+            ((id: any) => clearTimeout(id));
+
+        let cleanup: (() => void) | undefined;
+
+        const rAF = requestAnimationFrameSafe(() => {
+            const node = getActionBarScrollNode() as any;
+            if (!node || typeof node.addEventListener !== 'function') return;
+            cleanup = attachActionBarMouseDragScroll({
+                node,
+                onScroll: () => reportActionBarWebScroll(node),
+            });
+        });
+
+        return () => {
+            cancelAnimationFrameSafe(rAF);
+            cleanup?.();
+        };
+    }, [actionBarShouldScroll, getActionBarScrollNode, reportActionBarWebScroll]);
 
     // Handle abort button press
     const handleAbortPress = React.useCallback(async () => {
@@ -1247,26 +1388,26 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                     Mode
                                                 </Text>
                                                 {props.acpSessionModeOptionsOverrideProbe &&
-                                                (props.acpSessionModeOptionsOverrideProbe.phase !== 'idle' ||
+                                                (props.acpSessionModeOptionsOverrideProbe!.phase !== 'idle' ||
                                                     typeof props.acpSessionModeOptionsOverrideProbe.onRefresh === 'function') ? (
                                                     typeof props.acpSessionModeOptionsOverrideProbe.onRefresh === 'function' ? (
                                                         <Pressable
                                                             accessibilityRole="button"
                                                             accessibilityLabel="Refresh modes"
                                                             onPress={
-                                                                props.acpSessionModeOptionsOverrideProbe.phase === 'idle'
+                                                                props.acpSessionModeOptionsOverrideProbe!.phase === 'idle'
                                                                     ? props.acpSessionModeOptionsOverrideProbe.onRefresh
                                                                     : undefined
                                                             }
                                                             style={({ pressed }) => [
                                                                 styles.overlayInlineRefreshButton,
                                                                 pressed ? styles.overlayInlineRefreshButtonPressed : null,
-                                                                props.acpSessionModeOptionsOverrideProbe.phase !== 'idle'
+                                                                props.acpSessionModeOptionsOverrideProbe!.phase !== 'idle'
                                                                     ? styles.overlayInlineRefreshButtonDisabled
                                                                     : null,
                                                             ]}
                                                         >
-                                                            {props.acpSessionModeOptionsOverrideProbe.phase === 'idle' ? (
+                                                            {props.acpSessionModeOptionsOverrideProbe!.phase === 'idle' ? (
                                                                 <Ionicons name="refresh-outline" size={18} color={theme.colors.textSecondary} />
                                                             ) : (
                                                                 <ActivityIndicator size="small" />
@@ -1554,7 +1695,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         size={6}
                                         style={styles.statusDot}
                                     />
-                                    <Text style={[styles.statusText, { color: props.connectionStatus.color }]}>
+                                    <Text
+                                        testID={AGENT_INPUT_TEST_IDS.connectionStatusText}
+                                        style={[styles.statusText, { color: props.connectionStatus.color }]}
+                                    >
                                         {props.connectionStatus.text}
                                     </Text>
                                 </>
@@ -1678,6 +1822,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     <View style={[styles.inputContainer, props.minHeight ? { minHeight: props.minHeight } : undefined]}>
                         <MultiTextInput
                             ref={inputRef}
+                            testID={props.sessionId ? AGENT_INPUT_TEST_IDS.sessionInput : AGENT_INPUT_TEST_IDS.newSessionInput}
                             value={props.value}
                             paddingTop={Platform.OS === 'web' ? 10 : 8}
                             paddingBottom={Platform.OS === 'web' ? 10 : 8}
@@ -1972,23 +2117,73 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     // otherwise we never measure content/viewport widths and can't know whether
                                     // scrolling is needed (deadlock).
                                     if (actionBarShouldScroll) {
+                                        const scrollEnabled = Platform.OS === 'web' ? true : canActionBarScroll;
+
+                                        const handleWheel = (e: any) => {
+                                            if (Platform.OS !== 'web') return;
+                                            const node = getActionBarScrollNode() as any;
+                                            if (!node) return;
+                                            const ne = e?.nativeEvent ?? e;
+                                            const dx = typeof ne?.deltaX === 'number' ? ne.deltaX : 0;
+                                            const dy = typeof ne?.deltaY === 'number' ? ne.deltaY : 0;
+                                            // Map vertical wheel to horizontal scrolling (mouse-friendly).
+                                            const delta = Math.abs(dy) >= Math.abs(dx) ? dy : dx;
+                                            if (!delta) return;
+                                            const before = node.scrollLeft ?? 0;
+                                            node.scrollLeft = before + delta;
+                                            reportActionBarWebScroll(node);
+                                        };
+
+                                        const handleScrollContentSizeChange = (width: number, height: number) => {
+                                            actionBarFades.onContentSizeChange(
+                                                Math.max(0, width - ACTION_BAR_SCROLL_END_GUTTER_WIDTH),
+                                                height
+                                            );
+                                        };
+
+                                        const handleScroll = (e: any) => {
+                                            if (Platform.OS === 'web') {
+                                                reportActionBarWebScroll();
+                                                return;
+                                            }
+                                            const nativeEvent = e?.nativeEvent;
+                                            const contentSizeWidth = nativeEvent?.contentSize?.width;
+                                            if (typeof contentSizeWidth !== 'number') {
+                                                actionBarFades.onScroll(e);
+                                                return;
+                                            }
+                                            actionBarFades.onScroll({
+                                                ...e,
+                                                nativeEvent: {
+                                                    ...nativeEvent,
+                                                    contentSize: {
+                                                        ...nativeEvent.contentSize,
+                                                        width: Math.max(0, contentSizeWidth - ACTION_BAR_SCROLL_END_GUTTER_WIDTH),
+                                                    },
+                                                },
+                                            });
+                                        };
+
                                         return (
                                             <View style={styles.actionButtonsLeftScroll}>
-                                                <ScrollView
+                                                <ScrollViewWithWheel
+                                                    ref={actionBarScrollRef}
                                                     horizontal
                                                     showsHorizontalScrollIndicator={false}
-                                                    scrollEnabled={canActionBarScroll}
+                                                    scrollEnabled={scrollEnabled}
                                                     alwaysBounceHorizontal={false}
                                                     directionalLockEnabled
                                                     keyboardShouldPersistTaps="handled"
-                                                    contentContainerStyle={styles.actionButtonsLeftScrollContent as any}
+                                                    onWheel={handleWheel}
                                                     onLayout={actionBarFades.onViewportLayout}
-                                                    onContentSizeChange={actionBarFades.onContentSizeChange}
-                                                    onScroll={actionBarFades.onScroll}
+                                                    onContentSizeChange={handleScrollContentSizeChange}
+                                                    onScroll={handleScroll}
                                                     scrollEventThrottle={16}
                                                 >
-                                                    {chips as any}
-                                                </ScrollView>
+                                                    <View style={styles.actionButtonsLeftScrollContent as any}>
+                                                        {chips as any}
+                                                    </View>
+                                                </ScrollViewWithWheel>
                                                 <ScrollEdgeFades
                                                     color={actionBarFadeColor}
                                                     size={24}
@@ -2018,6 +2213,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
                                 {/* Send/Voice button - aligned with first row */}
                                 <PrimaryCircleIconButton
+                                    testID={props.sessionId ? AGENT_INPUT_TEST_IDS.sessionSend : AGENT_INPUT_TEST_IDS.newSessionSend}
                                     active={hasSendableContent || props.isSending || Boolean(micPressHandler)}
                                     loading={props.isSending}
                                     disabled={props.disabled || props.isSendDisabled || props.isSending || (!hasSendableContent && !micPressHandler)}

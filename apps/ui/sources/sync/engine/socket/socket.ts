@@ -52,6 +52,7 @@ export async function handleSocketUpdate(params: {
     invalidateMessagesForSession: (sessionId: string) => void;
     assumeUsers: (userIds: string[]) => Promise<void>;
     applyTodoSocketUpdates: (changes: any[]) => Promise<void>;
+    invalidateMachines: () => void;
     invalidateSessions: () => void;
     invalidateArtifacts: () => void;
     invalidateFriends: () => void;
@@ -76,6 +77,7 @@ export async function handleSocketUpdate(params: {
         invalidateMessagesForSession,
         assumeUsers,
         applyTodoSocketUpdates,
+        invalidateMachines,
         invalidateSessions,
         invalidateArtifacts,
         invalidateFriends,
@@ -104,6 +106,7 @@ export async function handleSocketUpdate(params: {
         invalidateMessagesForSession,
         assumeUsers,
         applyTodoSocketUpdates,
+        invalidateMachines,
         invalidateSessions,
         invalidateArtifacts,
         invalidateFriends,
@@ -130,6 +133,7 @@ export async function handleUpdateContainer(params: {
     invalidateMessagesForSession: (sessionId: string) => void;
     assumeUsers: (userIds: string[]) => Promise<void>;
     applyTodoSocketUpdates: (changes: any[]) => Promise<void>;
+    invalidateMachines: () => void;
     invalidateSessions: () => void;
     invalidateArtifacts: () => void;
     invalidateFriends: () => void;
@@ -154,6 +158,7 @@ export async function handleUpdateContainer(params: {
         invalidateMessagesForSession,
         assumeUsers,
         applyTodoSocketUpdates,
+        invalidateMachines,
         invalidateSessions,
         invalidateArtifacts,
         invalidateFriends,
@@ -266,6 +271,29 @@ export async function handleUpdateContainer(params: {
             getLocalSettings: () => storage.getState().settings,
             log,
         });
+    } else if (updateData.body.t === 'new-machine') {
+        log.log('🖥️ New machine update received');
+        const machineUpdate = updateData.body;
+        const machineId = machineUpdate.machineId;
+
+        // Apply a placeholder immediately so UI state (e.g. onboarding) can react
+        // even if machine-activity ephemerals arrive before a full machines refresh.
+        storage.getState().applyMachines([{
+            id: machineId,
+            seq: machineUpdate.seq,
+            createdAt: machineUpdate.createdAt,
+            updatedAt: machineUpdate.updatedAt,
+            active: machineUpdate.active,
+            activeAt: machineUpdate.activeAt,
+            revokedAt: null,
+            metadata: null,
+            metadataVersion: machineUpdate.metadataVersion,
+            daemonState: null,
+            daemonStateVersion: machineUpdate.daemonStateVersion,
+        }]);
+
+        // Hydrate machine details + encryption keys via the existing machines sync pipeline.
+        invalidateMachines();
     } else if (updateData.body.t === 'update-machine') {
         const machineUpdate = updateData.body;
         const machineId = machineUpdate.machineId; // Changed from .id to .machineId
@@ -442,12 +470,26 @@ export function handleEphemeralSocketUpdate(params: {
 
     // Handle machine activity updates
     if (updateData.type === 'machine-activity') {
-        // Update machine's active status and lastActiveAt
-        const machine = storage.getState().machines[updateData.id];
-        if (machine) {
-            const updatedMachine: Machine = buildMachineFromMachineActivityEphemeralUpdate({ machine, updateData });
-            storage.getState().applyMachines([updatedMachine]);
-        }
+        // Update machine's active status and lastActiveAt.
+        // Important: the server can emit machine-activity ephemerals immediately after a daemon connects,
+        // before the UI has fetched or applied the corresponding machine entity. Create a minimal placeholder
+        // so we don't drop the online signal.
+        const existing = storage.getState().machines[updateData.id];
+        const machine: Machine = existing ?? {
+            id: updateData.id,
+            seq: 0,
+            createdAt: updateData.activeAt,
+            updatedAt: updateData.activeAt,
+            active: updateData.active,
+            activeAt: updateData.activeAt,
+            revokedAt: null,
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+        const updatedMachine: Machine = buildMachineFromMachineActivityEphemeralUpdate({ machine, updateData });
+        storage.getState().applyMachines([updatedMachine]);
     }
 
     // daemon-status ephemeral updates are deprecated, machine status is handled via machine-activity

@@ -1,8 +1,10 @@
 import React from 'react';
-import { Text, ViewStyle } from 'react-native';
+import { ViewStyle } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import MaskedView from '@react-native-masked-view/masked-view';
 import { Typography } from '@/constants/Typography';
+import { Text } from '@/components/ui/text/Text';
+
 
 interface PlusPlusProps {
     fontSize: number;

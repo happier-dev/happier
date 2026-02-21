@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
+import { useUnistyles } from 'react-native-unistyles';
 
 import {
   ActionsSettingsV1Schema,
@@ -81,6 +82,7 @@ const PLACEMENT_ICONS: Record<ActionUiPlacement, React.ComponentProps<typeof Ion
 };
 
 export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
+  const { theme } = useUnistyles();
   const [raw, setRaw] = useSettingMutable('actionsSettingsV1');
 
   const settings = React.useMemo(() => {
@@ -108,7 +110,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
         <Item
           title="About"
           subtitle="Enable or disable actions globally, per surface (UI/voice/MCP), and per placement (where they appear in the UI). Disabled actions are fail-closed at runtime."
-          icon={<Ionicons name="information-circle-outline" size={29} color="#8E8E93" />}
+          icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.textSecondary} />}
           showChevron={false}
         />
       </ItemGroup>
@@ -189,7 +191,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
                 <Ionicons
                   name={effectiveEnabled ? 'flash-outline' : 'flash-off-outline'}
                   size={29}
-                  color={effectiveEnabled ? '#34C759' : '#FF3B30'}
+                  color={effectiveEnabled ? theme.colors.success : theme.colors.warningCritical}
                 />
               }
               rightElement={<Switch value={globallyEnabled} onValueChange={toggleGlobal} />}
@@ -204,7 +206,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
                   key={`surface:${surface}`}
                   title={SURFACE_LABELS[surface] ?? String(surface)}
                   subtitle={isEnabledOnSurface ? 'Enabled' : 'Disabled'}
-                  icon={<Ionicons name={SURFACE_ICONS[surface] ?? 'options-outline'} size={29} color="#8E8E93" />}
+                  icon={<Ionicons name={SURFACE_ICONS[surface] ?? 'options-outline'} size={29} color={theme.colors.textSecondary} />}
                   rightElement={<Switch value={isEnabledOnSurface} onValueChange={() => toggleSurface(surface)} />}
                   showChevron={false}
                   onPress={() => toggleSurface(surface)}
@@ -219,7 +221,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
                   key={`placement:${placement}`}
                   title={PLACEMENT_LABELS[placement] ?? String(placement)}
                   subtitle={isEnabledInPlacement ? 'Enabled' : 'Disabled'}
-                  icon={<Ionicons name={PLACEMENT_ICONS[placement] ?? 'options-outline'} size={29} color="#8E8E93" />}
+                  icon={<Ionicons name={PLACEMENT_ICONS[placement] ?? 'options-outline'} size={29} color={theme.colors.textSecondary} />}
                   rightElement={<Switch value={isEnabledInPlacement} onValueChange={() => togglePlacement(placement)} />}
                   showChevron={false}
                   onPress={() => togglePlacement(placement)}

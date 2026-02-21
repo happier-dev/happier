@@ -1,8 +1,6 @@
 import type { CapabilitiesDetectRequest, CapabilityDetectResult, CapabilityId, CodexAcpDepData } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { compareVersions, parseVersion } from '@/utils/system/versionUtils';
-
-export const CODEX_ACP_DEP_ID = 'dep.codex-acp' as const satisfies CapabilityId;
-export const CODEX_ACP_DIST_TAG = 'latest' as const;
+import { CODEX_ACP_DEP_ID, CODEX_ACP_DIST_TAG } from '@happier-dev/protocol/installables';
 
 export function getCodexAcpDetectResult(
     results: Partial<Record<CapabilityId, CapabilityDetectResult>> | null | undefined,

@@ -1,8 +1,9 @@
 import React from 'react';
-import { View } from 'react-native';
+import { PixelRatio, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { useUnistyles } from 'react-native-unistyles';
 
+import { useLocalSetting } from '@/sync/store/hooks';
 import type { CodeEditorProps } from '../codeEditorTypes';
 import { encodeChunkedEnvelope, decodeChunkedEnvelope } from '../bridge/chunkedBridge';
 import { buildCodeMirrorWebViewHtml } from '../bridge/codemirrorWebViewHtml';
@@ -13,6 +14,7 @@ function createMessageId(): string {
 
 export function CodeMirrorWebViewSurface(props: CodeEditorProps) {
     const { theme } = useUnistyles();
+    const uiFontScale = useLocalSetting('uiFontScale');
     const webViewRef = React.useRef<WebView>(null);
     const readyRef = React.useRef(false);
     const pendingInitRef = React.useRef<null | { doc: string }>(null);
@@ -36,11 +38,14 @@ export function CodeMirrorWebViewSurface(props: CodeEditorProps) {
                 showLineNumbers,
                 changeDebounceMs,
                 maxChunkBytes,
+                uiFontScale,
+                osFontScale: typeof PixelRatio.getFontScale === 'function' ? PixelRatio.getFontScale() : 1,
             }),
         [
             changeDebounceMs,
             maxChunkBytes,
             showLineNumbers,
+            uiFontScale,
             theme.colors.divider,
             theme.colors.surfaceHighest,
             theme.colors.text,
@@ -116,4 +121,3 @@ export function CodeMirrorWebViewSurface(props: CodeEditorProps) {
         </View>
     );
 }
-

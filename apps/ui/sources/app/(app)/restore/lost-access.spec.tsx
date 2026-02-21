@@ -13,6 +13,9 @@ vi.mock('react-native-reanimated', () => ({}));
 const canOpenURL = vi.fn(async () => true);
 const openURL = vi.fn(async () => true);
 vi.mock('react-native', () => ({
+    Platform: { OS: 'ios' },
+    Dimensions: { get: () => ({ width: 800, height: 600 }) },
+    ScrollView: 'ScrollView',
     View: 'View',
     Text: 'Text',
     ActivityIndicator: 'ActivityIndicator',
@@ -34,6 +37,15 @@ vi.mock('@/modal', () => ({
     },
 }));
 
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: () => ({
+        serverId: 'server-a',
+        serverUrl: 'http://localhost:53288',
+        kind: 'custom',
+        generation: 1,
+    }),
+}));
+
 const setPendingExternalAuth = vi.fn(async () => true);
 const clearPendingExternalAuth = vi.fn(async () => true);
 vi.mock('@/auth/storage/tokenStorage', () => ({
@@ -49,7 +61,10 @@ vi.mock('@/platform/cryptoRandom', () => ({
 }));
 
 vi.mock('@/encryption/base64', () => ({
-    encodeBase64: () => 'x',
+    encodeBase64: (_bytes: unknown, encoding?: 'base64' | 'base64url') => {
+        if (encoding === 'base64url') return 'base64url-value';
+        return 'base64-value+slash/plus+';
+    },
 }));
 
 vi.mock('@/encryption/libsodium.lib', () => ({
@@ -58,11 +73,12 @@ vi.mock('@/encryption/libsodium.lib', () => ({
     },
 }));
 
+const getExternalSignupUrl = vi.fn(async (_params: unknown) => 'https://example.test/oauth');
 vi.mock('@/auth/providers/registry', () => ({
     getAuthProvider: () => ({
         id: 'github',
         displayName: 'GitHub',
-        getExternalSignupUrl: async () => 'https://example.test/oauth',
+        getExternalSignupUrl,
     }),
 }));
 
@@ -119,6 +135,9 @@ describe('/restore/lost-access', () => {
             });
 
             expect(setPendingExternalAuth).toHaveBeenCalledWith(expect.objectContaining({ provider: 'github', intent: 'reset' }));
+            expect(getExternalSignupUrl).toHaveBeenCalledWith(
+                expect.objectContaining({ publicKey: 'base64-value+slash/plus+' }),
+            );
             expect(canOpenURL).toHaveBeenCalledWith('https://example.test/oauth');
             expect(openURL).toHaveBeenCalledWith('https://example.test/oauth');
         } finally {
@@ -139,7 +158,7 @@ describe('/restore/lost-access', () => {
             getAuthProvider: () => ({
                 id: 'github',
                 displayName: 'GitHub',
-                getExternalSignupUrl: async () => 'javascript:alert(1)',
+                getExternalSignupUrl: vi.fn(async () => 'javascript:alert(1)'),
             }),
         }));
 

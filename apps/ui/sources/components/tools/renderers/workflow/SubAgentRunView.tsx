@@ -1,11 +1,13 @@
 import * as React from 'react';
-import { Text, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import type { ToolViewProps } from '@/components/tools/renderers/core/_registry';
 import { StructuredResultView } from '@/components/tools/renderers/system/StructuredResultView';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { TaskLikeSummarySection } from './TaskLikeSummarySection';
+import { Text } from '@/components/ui/text/Text';
+
 
 type FindingsDigest = Readonly<{
     total: number;

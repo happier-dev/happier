@@ -8,6 +8,7 @@ import {
     ScrollViewProps
 } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { PopoverBoundaryProvider } from '@/components/ui/popover/PopoverBoundary';
 
 export interface ItemListProps extends ScrollViewProps {
     children: React.ReactNode;
@@ -28,9 +29,25 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
 }));
 
+function setForwardedRef<T>(ref: React.ForwardedRef<T>, value: T | null) {
+    if (typeof ref === 'function') {
+        ref(value);
+        return;
+    }
+    if (ref && typeof ref === 'object') {
+        (ref as React.MutableRefObject<T | null>).current = value;
+    }
+}
+
+function isRefObject<T>(ref: React.ForwardedRef<T>): ref is React.MutableRefObject<T | null> {
+    return Boolean(ref && typeof ref === 'object' && 'current' in ref);
+}
+
 export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((props, ref) => {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const internalRef = React.useRef<ScrollView>(null);
+    const boundaryRef = isRefObject(ref) ? ref : internalRef;
 
     const {
         children,
@@ -46,26 +63,33 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
     // Override background for non-inset grouped lists on iOS
     const backgroundColor = (isIOS && !insetGrouped) ? '#FFFFFF' : theme.colors.groupped.background;
 
+    const setRefs = React.useCallback((node: ScrollView | null) => {
+        internalRef.current = node;
+        setForwardedRef(ref, node);
+    }, [ref]);
+
     return (
-        <ScrollView
-            ref={ref}
-            style={[
-                styles.container,
-                { backgroundColor },
-                style
-            ]}
-            contentContainerStyle={[
-                styles.contentContainer,
-                containerStyle
-            ]}
-            showsVerticalScrollIndicator={scrollViewProps.showsVerticalScrollIndicator !== undefined
-                ? scrollViewProps.showsVerticalScrollIndicator
-                : true}
-            contentInsetAdjustmentBehavior={(isIOS && !isWeb) ? 'automatic' : undefined}
-            {...scrollViewProps}
-        >
-            {children}
-        </ScrollView>
+        <PopoverBoundaryProvider boundaryRef={boundaryRef}>
+            <ScrollView
+                ref={setRefs}
+                style={[
+                    styles.container,
+                    { backgroundColor },
+                    style
+                ]}
+                contentContainerStyle={[
+                    styles.contentContainer,
+                    containerStyle
+                ]}
+                showsVerticalScrollIndicator={scrollViewProps.showsVerticalScrollIndicator !== undefined
+                    ? scrollViewProps.showsVerticalScrollIndicator
+                    : true}
+                contentInsetAdjustmentBehavior={(isIOS && !isWeb) ? 'automatic' : undefined}
+                {...scrollViewProps}
+            >
+                {children}
+            </ScrollView>
+        </PopoverBoundaryProvider>
     );
 }));
 

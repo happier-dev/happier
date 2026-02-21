@@ -1,7 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { ResumeChip } from './ResumeChip';
+import { Text } from '@/components/ui/text/Text';
+
 
 export type PathAndResumeRowStyles = {
     pathRow: any;

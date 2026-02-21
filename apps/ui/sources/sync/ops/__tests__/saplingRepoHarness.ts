@@ -12,6 +12,15 @@ import {
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
+const SAPLING_TEST_ENV: NodeJS.ProcessEnv = {
+    ...process.env,
+    NODE_ENV: process.env.NODE_ENV ?? 'test',
+    // Ensure integration tests do not accidentally pick up user/system Sapling/Mercurial config
+    // (extensions, hooks, remotes, credential helpers) that can make commands slow/flaky.
+    // Repo-local config (set via `sl config --local …`) is still read.
+    HGRCPATH: '/dev/null',
+};
+
 type SaplingStatusEntry = {
     path: string;
     kind: 'modified' | 'added' | 'deleted' | 'untracked' | 'conflicted';
@@ -142,6 +151,7 @@ function buildSnapshot(cwd: string) {
 export function runSapling(cwd: string, args: string[]): string {
     return execFileSync('sl', args, {
         cwd,
+        env: SAPLING_TEST_ENV,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
@@ -154,6 +164,7 @@ function runSaplingResult(
     try {
         const stdout = execFileSync('sl', args, {
             cwd,
+            env: SAPLING_TEST_ENV,
             encoding: 'utf8',
             stdio: ['pipe', 'pipe', 'pipe'],
         }).trim();

@@ -1,8 +1,10 @@
 import React from 'react';
-import { View, Text } from 'react-native';
+import { View } from 'react-native';
 import { useSessionProjectScmSnapshot } from '@/sync/domains/state/storage';
 import { StyleSheet } from 'react-native-unistyles';
 import { buildScmStatusSummaryFromSnapshot } from './statusSummary';
+import { Text } from '@/components/ui/text/Text';
+
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {

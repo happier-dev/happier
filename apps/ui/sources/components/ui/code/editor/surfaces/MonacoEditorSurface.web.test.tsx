@@ -7,6 +7,11 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('react-native', () => ({
     View: ({ children, ...props }: any) => React.createElement('View', props, children),
     TextInput: ({ children, ...props }: any) => React.createElement('TextInput', props, children),
+    Platform: {
+        OS: 'web',
+        select: (spec: Record<string, unknown>) =>
+            spec && Object.prototype.hasOwnProperty.call(spec, 'web') ? (spec as any).web : (spec as any).default,
+    },
 }));
 
 vi.mock('react-native-unistyles', () => ({
@@ -20,6 +25,13 @@ vi.mock('react-native-unistyles', () => ({
             },
         },
     }),
+}));
+
+vi.mock('@/sync/store/hooks', () => ({
+    useLocalSetting: (key: string) => {
+        if (key === 'uiFontScale') return 2;
+        return null;
+    },
 }));
 
 describe('MonacoEditorSurface (web)', () => {
@@ -41,6 +53,9 @@ describe('MonacoEditorSurface (web)', () => {
         const inputs = tree.root.findAllByType('TextInput' as any);
         expect(inputs).toHaveLength(1);
         expect(inputs[0]!.props.value).toBe('hello');
+
+        const style = inputs[0]!.props.style;
+        const flattened = Array.isArray(style) ? Object.assign({}, ...style.filter(Boolean)) : style;
+        expect(flattened.fontSize).toBe(26);
     });
 });
-

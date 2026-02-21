@@ -3,6 +3,8 @@ import { createWelcomeFeaturesResponse } from '../index.testHelpers';
 type AccountFeaturesOverrides = {
     friendsEnabled?: boolean;
     friendsAllowUsername?: boolean;
+    encryptionPlaintextStorageEnabled?: boolean;
+    encryptionAccountOptOutEnabled?: boolean;
 };
 
 export function createAccountFeaturesResponse(
@@ -20,6 +22,14 @@ export function createAccountFeaturesResponse(
         ...base,
         features: {
             ...base.features,
+            encryption: {
+                plaintextStorage: {
+                    enabled: overrides.encryptionPlaintextStorageEnabled ?? (overrides.encryptionAccountOptOutEnabled ?? false),
+                },
+                accountOptOut: {
+                    enabled: overrides.encryptionAccountOptOutEnabled ?? false,
+                },
+            },
             social: {
                 friends: {
                     enabled: overrides.friendsEnabled ?? true,
@@ -28,6 +38,13 @@ export function createAccountFeaturesResponse(
         },
         capabilities: {
             ...base.capabilities,
+            encryption: {
+                storagePolicy: (overrides.encryptionPlaintextStorageEnabled ?? (overrides.encryptionAccountOptOutEnabled ?? false))
+                    ? 'optional'
+                    : 'required_e2ee',
+                allowAccountOptOut: overrides.encryptionAccountOptOutEnabled ?? false,
+                defaultAccountMode: 'e2ee',
+            },
             social: {
                 ...base.capabilities.social,
                 friends: {

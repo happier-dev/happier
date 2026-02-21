@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TextInput, Platform } from 'react-native';
+import { View, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
@@ -10,6 +10,8 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useEnvironmentVariables } from '@/hooks/server/useEnvironmentVariables';
 import { parseEnvVarTemplate } from '@/utils/profiles/envVarTemplate';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 export interface EnvironmentVariablesListProps {
     environmentVariables: Array<{ name: string; value: string; isSecret?: boolean }>;
@@ -114,7 +116,7 @@ export function EnvironmentVariablesList({
     const [isAddExpanded, setIsAddExpanded] = React.useState(false);
     const [newVarName, setNewVarName] = React.useState('');
     const [newVarValue, setNewVarValue] = React.useState('');
-    const nameInputRef = React.useRef<TextInput>(null);
+    const nameInputRef = React.useRef<React.ElementRef<typeof TextInput> | null>(null);
 
     const resetAddDraft = React.useCallback(() => {
         setNewVarName('');

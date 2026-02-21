@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
@@ -9,6 +9,8 @@ import { sync } from '@/sync/sync';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { Ionicons } from '@expo/vector-icons';
+import { Text } from '@/components/ui/text/Text';
+
 
 interface QuestionOption {
     label: string;
@@ -365,7 +367,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                                                     isSelected && styles.checkboxOuterSelected,
                                                 ]}>
                                                     {isSelected && (
-                                                        <Ionicons name="checkmark" size={14} color="#fff" />
+                                                        <Ionicons name="checkmark" size={14} color={theme.colors.button.primary.tint} />
                                                     )}
                                                 </View>
                                             ) : (

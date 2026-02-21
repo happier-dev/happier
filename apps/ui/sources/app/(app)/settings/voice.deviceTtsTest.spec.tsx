@@ -7,17 +7,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const speakDeviceTextSpy = vi.fn();
 const modalAlertSpy = vi.fn();
 
-vi.mock('react-native-unistyles', () => {
-    const theme = { colors: { textSecondary: '#999' } };
-    return {
-        useUnistyles: () => ({ theme }),
-        StyleSheet: {
-            create: (factory: any) => (typeof factory === 'function' ? {} : factory),
-            absoluteFillObject: {},
-        },
-    };
-});
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));

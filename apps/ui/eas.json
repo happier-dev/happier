@@ -8,6 +8,7 @@
       "node": "22.14.0",
       "env": {
         "HAPPIER_INSTALL_SCOPE": "ui,protocol,agents",
+        "EXPO_PUBLIC_HAPPY_SERVER_URL": "https://api.happier.dev",
         "HAPPIER_UI_VENDOR_WEB_ASSETS": "0"
       },
       "android": {

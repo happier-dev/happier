@@ -16,8 +16,9 @@ vi.mock('@/components/ui/media/FileIcon', () => ({
     FileIcon: 'FileIcon',
 }));
 
-vi.mock('@/components/ui/text/StyledText', () => ({
+vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
+    TextInput: 'TextInput',
 }));
 
 vi.mock('@/constants/Typography', () => ({

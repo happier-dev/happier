@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Platform, Text, Pressable } from 'react-native';
+import { View, Platform, Pressable } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
@@ -7,6 +7,8 @@ import { t } from '@/text';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
 import { sanitizeRenderedMermaidSvg } from './mermaidSanitize';
+import { Text } from '@/components/ui/text/Text';
+
 
 // Style for Web platform
 const webStyle: any = {

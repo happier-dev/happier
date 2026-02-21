@@ -1,9 +1,11 @@
 import * as React from 'react';
-import { View, Text } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import type { ToolViewProps } from '../core/_registry';
 import { coerceToolResultRecord } from '../../legacy/coerceToolResultRecord';
+import { Text } from '@/components/ui/text/Text';
+
 
 function getMatches(result: unknown): string[] {
     const record = coerceToolResultRecord(result);

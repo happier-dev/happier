@@ -9,7 +9,11 @@ import type { VoiceAssistantAction } from '@happier-dev/protocol';
 import { voiceSettingsDefaults } from '@/sync/domains/settings/voiceSettings';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
-import { ensureVoiceCarrierSessionId, findVoiceCarrierSessionId } from '@/voice/agent/voiceCarrierSession';
+import {
+  ensureVoiceCarrierSessionId,
+  findVoiceCarrierSessionId,
+  isVoiceCarrierSystemSessionMetadata,
+} from '@/voice/agent/voiceCarrierSession';
 import { buildVoiceReplaySeedPromptFromCarrierSession } from '@/voice/persistence/buildVoiceReplaySeedPromptFromCarrierSession';
 import { readVoiceAgentRunMetadataFromCarrierSession } from '@/voice/persistence/voiceAgentRunMetadata';
 import { writeVoiceAgentRunMetadataToCarrierSession } from '@/voice/persistence/voiceAgentRunMetadata';
@@ -75,8 +79,7 @@ export function createVoiceAgentSessionController(): VoiceAgentSessionController
       const id = normalizeSessionId(s.id);
       if (!id) continue;
       const meta = s.metadata ?? null;
-      const sys = meta?.systemSessionV1 ?? null;
-      if (!sys || sys.hidden !== true || String(sys.key ?? '') !== 'voice_carrier') continue;
+      if (!isVoiceCarrierSystemSessionMetadata(meta)) continue;
       const updatedAt = typeof s.updatedAt === 'number' && Number.isFinite(s.updatedAt) ? s.updatedAt : 0;
       if (!bestSystem || updatedAt > bestSystem.updatedAt || (updatedAt === bestSystem.updatedAt && id < bestSystem.id)) {
         bestSystem = { id, updatedAt };

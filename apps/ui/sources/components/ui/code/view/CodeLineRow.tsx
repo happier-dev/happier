@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, Text, View, Platform } from 'react-native';
+import { Pressable, View, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { TextStyle } from 'react-native';
@@ -9,6 +9,8 @@ import { Typography } from '@/constants/Typography';
 import { tokenizeSimpleSyntaxLine } from '@/components/ui/code/tokenization/simpleSyntaxTokenizer';
 
 import { CodeGutter } from './CodeGutter';
+import { Text } from '@/components/ui/text/Text';
+
 
 export function CodeLineRow(props: {
     line: CodeLine;

@@ -18,8 +18,9 @@ vi.mock('react-native', async () => {
     };
 });
 
-vi.mock('@/components/ui/text/StyledText', () => ({
+vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
+    TextInput: 'TextInput',
 }));
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
@@ -117,6 +118,11 @@ describe('SessionItem tags (new tag)', () => {
                 />,
             );
         });
+
+        const stableItemLocator = (tree as any).root.findAll((node: any) => {
+            return node.type === 'Pressable' && node.props?.testID === 'session-list-item-sess_1';
+        });
+        expect(stableItemLocator).toHaveLength(1);
 
         const dropdown = (tree as any).root.findByType('DropdownMenu');
         expect(dropdown.props.emptyLabel).toBe(null);

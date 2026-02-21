@@ -1,6 +1,8 @@
 import * as React from 'react';
-import { Text, View, type ViewStyle } from 'react-native';
+import { View, ViewStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
+import { Text } from '@/components/ui/text/Text';
+
 
 export type SessionNoticeBannerProps = {
     title: string;

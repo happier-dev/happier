@@ -1,7 +1,11 @@
 import type { FeaturesResponse as RootLayoutFeatures } from '@happier-dev/protocol';
 
 type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' | 'capabilities'> & Readonly<{
-    features?: Omit<Partial<RootLayoutFeatures['features']>, 'attachments' | 'automations' | 'connectedServices' | 'updates' | 'sharing' | 'voice' | 'social' | 'auth'> & Readonly<{
+    features?: Omit<
+        Partial<RootLayoutFeatures['features']>,
+        'attachments' | 'automations' | 'connectedServices' | 'updates' | 'sharing' | 'voice' | 'social' | 'auth' | 'encryption'
+    > &
+        Readonly<{
         attachments?: Partial<RootLayoutFeatures['features']['attachments']>;
         automations?: Partial<RootLayoutFeatures['features']['automations']>;
         connectedServices?: Partial<RootLayoutFeatures['features']['connectedServices']>;
@@ -10,17 +14,24 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
         voice?: Partial<RootLayoutFeatures['features']['voice']>;
         social?: Partial<RootLayoutFeatures['features']['social']>;
         auth?: Partial<RootLayoutFeatures['features']['auth']>;
+        encryption?: Partial<RootLayoutFeatures['features']['encryption']>;
     }>;
-    capabilities?: Omit<Partial<RootLayoutFeatures['capabilities']>, 'oauth' | 'social' | 'auth'> & Readonly<{
+    capabilities?: Omit<Partial<RootLayoutFeatures['capabilities']>, 'oauth' | 'social' | 'auth' | 'encryption'> &
+        Readonly<{
         oauth?: Partial<RootLayoutFeatures['capabilities']['oauth']>;
         social?: Partial<RootLayoutFeatures['capabilities']['social']>;
         auth?: Partial<RootLayoutFeatures['capabilities']['auth']>;
+        encryption?: Partial<RootLayoutFeatures['capabilities']['encryption']>;
     }>;
 }>;
 
 const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
     features: {
         bugReports: { enabled: true },
+        encryption: {
+            plaintextStorage: { enabled: false },
+            accountOptOut: { enabled: false },
+        },
         attachments: {
             uploads: { enabled: true },
         },
@@ -50,6 +61,9 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             recovery: {
                 providerReset: { enabled: false },
             },
+            login: {
+                keyChallenge: { enabled: true },
+            },
             ui: {
                 recoveryKeyReminder: { enabled: true },
             },
@@ -65,6 +79,11 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             contextWindowMs: 30 * 60 * 1_000,
         },
         voice: { configured: false, provider: null, requested: false, disabledByBuildPolicy: false },
+        encryption: {
+            storagePolicy: 'required_e2ee',
+            allowAccountOptOut: false,
+            defaultAccountMode: 'e2ee',
+        },
         social: {
             friends: {
                 allowUsername: false,
@@ -74,7 +93,7 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
         oauth: { providers: { github: { enabled: true, configured: true } } },
         auth: {
             signup: { methods: [{ id: 'anonymous', enabled: true }] },
-            login: { requiredProviders: [] },
+            login: { methods: [{ id: 'key_challenge', enabled: true }], requiredProviders: [] },
             recovery: {
                 providerReset: { providers: [] },
             },
@@ -103,6 +122,7 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
     const nextSocial: Partial<RootLayoutFeatures['features']['social']> = nextFeatures.social ?? {};
     const nextSharing: Partial<RootLayoutFeatures['features']['sharing']> = nextFeatures.sharing ?? {};
     const nextAttachments: Partial<RootLayoutFeatures['features']['attachments']> = nextFeatures.attachments ?? {};
+    const nextEncryption: Partial<RootLayoutFeatures['features']['encryption']> = nextFeatures.encryption ?? {};
     const nextConnectedServices: Partial<RootLayoutFeatures['features']['connectedServices']> =
         nextFeatures.connectedServices ?? {};
     const nextUpdates: Partial<RootLayoutFeatures['features']['updates']> = nextFeatures.updates ?? {};
@@ -111,6 +131,7 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
     const nextCapabilitiesAuth: Partial<RootLayoutFeatures['capabilities']['auth']> = nextCapabilities.auth ?? {};
     const nextCapabilitiesSocial: Partial<RootLayoutFeatures['capabilities']['social']> = nextCapabilities.social ?? {};
     const nextCapabilitiesOauth: Partial<RootLayoutFeatures['capabilities']['oauth']> = nextCapabilities.oauth ?? {};
+    const nextCapabilitiesEncryption: Partial<RootLayoutFeatures['capabilities']['encryption']> = nextCapabilities.encryption ?? {};
     const nextCapabilitiesAuthRecovery: Partial<RootLayoutFeatures['capabilities']['auth']['recovery']> =
         nextCapabilitiesAuth.recovery ?? {};
     const nextCapabilitiesAuthUi: Partial<RootLayoutFeatures['capabilities']['auth']['ui']> =
@@ -119,6 +140,18 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
         features: {
             ...BASE_ROOT_LAYOUT_FEATURES.features,
             ...nextFeatures,
+            encryption: {
+                ...BASE_ROOT_LAYOUT_FEATURES.features.encryption,
+                ...nextEncryption,
+                plaintextStorage: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.encryption.plaintextStorage,
+                    ...(nextEncryption.plaintextStorage ?? {}),
+                },
+                accountOptOut: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.encryption.accountOptOut,
+                    ...(nextEncryption.accountOptOut ?? {}),
+                },
+            },
             attachments: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.attachments,
                 ...nextAttachments,
@@ -166,6 +199,14 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
                     ...BASE_ROOT_LAYOUT_FEATURES.features.auth.recovery,
                     ...(nextAuth.recovery ?? {}),
                 },
+                login: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.auth.login,
+                    ...(nextAuth.login ?? {}),
+                    keyChallenge: {
+                        ...BASE_ROOT_LAYOUT_FEATURES.features.auth.login.keyChallenge,
+                        ...(nextAuth.login?.keyChallenge ?? {}),
+                    },
+                },
                 ui: {
                     ...BASE_ROOT_LAYOUT_FEATURES.features.auth.ui,
                     ...(nextAuth.ui ?? {}),
@@ -178,6 +219,10 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
             voice: {
                 ...BASE_ROOT_LAYOUT_FEATURES.capabilities.voice,
                 ...(nextCapabilities.voice ?? {}),
+            },
+            encryption: {
+                ...BASE_ROOT_LAYOUT_FEATURES.capabilities.encryption,
+                ...nextCapabilitiesEncryption,
             },
             social: {
                 ...BASE_ROOT_LAYOUT_FEATURES.capabilities.social,

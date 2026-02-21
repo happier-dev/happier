@@ -132,6 +132,11 @@ vi.mock('@/sync/domains/state/storage', () => {
             React.useMemo(() => 0, [name]);
             return [name === 'codexMcpResumeInstallSpec' ? '' : null, vi.fn()];
         },
+        useLocalSetting: (name: string) => {
+            React.useMemo(() => 0, [name]);
+            if (name === 'uiFontScale') return 1;
+            return null;
+        },
     };
 });
 

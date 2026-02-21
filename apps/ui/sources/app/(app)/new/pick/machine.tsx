@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, Text, View, Platform } from 'react-native';
+import { Pressable, View, Platform } from 'react-native';
 import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { CommonActions } from '@react-navigation/native';
 import { Typography } from '@/constants/Typography';
@@ -21,6 +21,8 @@ import { getActiveServerId, listServerProfiles } from '@/sync/domains/server/ser
 import { resolveActiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { Text } from '@/components/ui/text/Text';
+
 
 function useMachinePickerScreenOptions(params: {
     title: string;

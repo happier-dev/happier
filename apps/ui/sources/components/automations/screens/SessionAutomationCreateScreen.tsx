@@ -1,5 +1,5 @@
 import React from 'react';
-import { Platform, TextInput, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
@@ -7,7 +7,7 @@ import { useRouter } from 'expo-router';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text, TextInput } from '@/components/ui/text/Text';
 import { layout } from '@/components/ui/layout/layout';
 import { AutomationSettingsForm, type AutomationSettingsValue } from '@/components/automations/editor/AutomationSettingsForm';
 import { Modal } from '@/modal';
@@ -151,7 +151,7 @@ export function SessionAutomationCreateScreen(props: { sessionId: string }) {
                                 title="Cannot create automation for this session"
                                 subtitle={missingReason}
                                 subtitleLines={0}
-                                icon={<Ionicons name="alert-circle-outline" size={29} color="#FF3B30" />}
+                                icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.warningCritical} />}
                                 showChevron={false}
                             />
                         </ItemGroup>
@@ -185,7 +185,7 @@ export function SessionAutomationCreateScreen(props: { sessionId: string }) {
                     <ItemGroup title="Actions">
                         <Item
                             title="Create automation"
-                            icon={<Ionicons name="checkmark-circle-outline" size={29} color="#34C759" />}
+                            icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.success} />}
                             onPress={() => void handleCreate()}
                             disabled={!isValid}
                             showChevron={false}

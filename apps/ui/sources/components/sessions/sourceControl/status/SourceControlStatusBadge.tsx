@@ -1,9 +1,11 @@
 import React from 'react';
-import { View, Text } from 'react-native';
+import { View } from 'react-native';
 import { Octicons } from '@expo/vector-icons';
 import { useSessionProjectScmSnapshot } from '@/sync/domains/state/storage';
 import { useUnistyles } from 'react-native-unistyles';
 import { buildScmStatusSummaryFromSnapshot } from './statusSummary';
+import { Text } from '@/components/ui/text/Text';
+
 
 // Custom hook to check if a source-control status badge should be shown.
 export function useHasMeaningfulScmStatus(sessionId: string): boolean {

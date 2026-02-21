@@ -1,5 +1,5 @@
 import React from 'react';
-import { Platform, Text, TextInput, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -12,6 +12,8 @@ import { Modal } from '@/modal';
 import type { SavedSecret } from '@/sync/domains/settings/settings';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 function newId(): string {
     try {
@@ -70,7 +72,7 @@ export function SecretsList(props: SecretsListProps) {
     const [isAddExpanded, setIsAddExpanded] = React.useState(false);
     const [draftName, setDraftName] = React.useState('');
     const [draftValue, setDraftValue] = React.useState('');
-    const nameInputRef = React.useRef<TextInput>(null);
+    const nameInputRef = React.useRef<React.ElementRef<typeof TextInput> | null>(null);
 
     const resetAddDraft = React.useCallback(() => {
         setDraftName('');

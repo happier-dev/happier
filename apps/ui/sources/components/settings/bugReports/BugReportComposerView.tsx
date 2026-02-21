@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { layout } from '@/components/ui/layout/layout';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 import { useFeatureDetails } from '@/hooks/server/useFeatureDetails';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';

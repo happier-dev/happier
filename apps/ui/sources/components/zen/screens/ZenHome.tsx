@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, ScrollView, Text, Platform } from 'react-native';
+import { View, ScrollView, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { layout } from '@/components/ui/layout/layout';
 import { ZenHeader } from '@/components/zen/navigation/ZenHeader';
@@ -13,6 +13,8 @@ import { useShallow } from 'zustand/react/shallow';
 import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { t } from '@/text';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { Text } from '@/components/ui/text/Text';
+
 
 export const ZenHome = () => {
     const insets = useSafeAreaInsets();

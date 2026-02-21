@@ -4,6 +4,23 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
 import { resetScopedSessionDataKeyCacheForTests } from './resolveScopedSessionDataKey';
 
+const sessionListByIdFixture = {
+  id: 'session-1',
+  seq: 1,
+  createdAt: 1,
+  updatedAt: 1,
+  active: false,
+  activeAt: 1,
+  archivedAt: null,
+  metadata: 'metadata',
+  metadataVersion: 1,
+  agentState: null,
+  agentStateVersion: 0,
+  pendingCount: 0,
+  pendingVersion: 0,
+  dataEncryptionKey: 'k1',
+} as const;
+
 const ioSpy = vi.hoisted(() => vi.fn());
 const sessionRpcSpy = vi.hoisted(() => vi.fn());
 const getCredentialsSpy = vi.hoisted(() => vi.fn());
@@ -97,7 +114,7 @@ describe('sessionRpcWithServerScope', () => {
       'fetch',
       vi.fn(async () => ({
         ok: true,
-        json: async () => ({ session: { id: 'session-1', dataEncryptionKey: 'k1' } }),
+        json: async () => ({ session: sessionListByIdFixture }),
       })),
     );
 

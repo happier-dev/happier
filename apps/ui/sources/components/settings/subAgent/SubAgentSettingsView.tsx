@@ -9,7 +9,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Switch } from '@/components/ui/forms/Switch';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
@@ -127,7 +127,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                     <Item
                         title="Enable Execution Runs"
                         subtitle="Open Features settings"
-                        icon={<Ionicons name="flask-outline" size={29} color="#FF9500" />}
+                        icon={<Ionicons name="flask-outline" size={29} color={theme.colors.accent.orange} />}
                         onPress={() => router.push('/(app)/settings/features')}
                     />
                 </ItemGroup>
@@ -144,7 +144,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                 <Item
                     title="Enable guidance injection"
                     subtitle={enabled === true ? 'Enabled' : 'Disabled'}
-                    icon={<Ionicons name="sparkles-outline" size={29} color="#FF9500" />}
+                    icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.orange} />}
                     rightElement={<Switch value={enabled === true} onValueChange={(v) => setEnabled(v as any)} />}
                     showChevron={false}
                     onPress={() => setEnabled((enabled !== true) as any)}

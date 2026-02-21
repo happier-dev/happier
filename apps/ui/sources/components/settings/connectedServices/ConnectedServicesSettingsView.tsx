@@ -2,11 +2,12 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { useProfile } from '@/sync/store/hooks';
 import { useSettings } from '@/sync/store/hooks';
@@ -19,6 +20,7 @@ import { useConnectedServiceQuotaBadges } from '@/hooks/server/connectedServices
 import { connectedServiceProfileKey, resolveConnectedServiceDefaultProfileId } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 
 export const ConnectedServicesSettingsView = React.memo(function ConnectedServicesSettingsView() {
+  const { theme } = useUnistyles();
   const profile = useProfile();
   const settings = useSettings();
   const router = useRouter();
@@ -65,7 +67,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
         <ItemGroup>
           <Item
             title={t('common.close') ?? 'Done'}
-            icon={<Ionicons name="close-outline" size={22} color="#007AFF" />}
+            icon={<Ionicons name="close-outline" size={22} color={theme.colors.accent.blue} />}
             onPress={() => router.back()}
             showChevron={false}
           />
@@ -111,7 +113,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
               key={serviceId}
               title={label}
               subtitle={subtitle}
-              icon={<Ionicons name="key-outline" size={22} color="#007AFF" />}
+              icon={<Ionicons name="key-outline" size={22} color={theme.colors.accent.blue} />}
               rightElement={badges.length > 0 ? <ConnectedServiceQuotaBadgesView badges={badges} /> : undefined}
               onPress={async () => {
                 try {
@@ -133,7 +135,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
       <ItemGroup>
         <Item
           title={t('common.close') ?? 'Done'}
-          icon={<Ionicons name="close-outline" size={22} color="#007AFF" />}
+          icon={<Ionicons name="close-outline" size={22} color={theme.colors.accent.blue} />}
           onPress={() => router.back()}
           showChevron={false}
         />

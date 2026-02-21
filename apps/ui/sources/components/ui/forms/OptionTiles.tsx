@@ -1,8 +1,10 @@
 import React from 'react';
-import { View, Text, Pressable, Platform } from 'react-native';
+import { View, Pressable, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
+import { Text } from '@/components/ui/text/Text';
+
 
 export interface OptionTile<T extends string> {
     id: T;

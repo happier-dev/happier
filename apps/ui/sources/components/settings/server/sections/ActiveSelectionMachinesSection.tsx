@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { Text as RNText, View } from 'react-native';
+import { View } from 'react-native';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -11,6 +11,8 @@ import { t } from '@/text';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
 import type { ActiveSelectionMachineGroup } from '../hooks/useActiveSelectionMachineGroups';
+import { Text as RNText } from '@/components/ui/text/Text';
+
 
 type ThemeColors = Readonly<{
     textSecondary: string;

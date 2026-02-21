@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { CodexMcpResumeDepData } from '@/sync/api/capabilities/capabilitiesProtocol';
+import { CODEX_MCP_RESUME_DEP_ID, CODEX_MCP_RESUME_DIST_TAG } from '@happier-dev/protocol/installables';
 
 import {
     buildCodexMcpResumeRegistryDetectRequest,
-    CODEX_MCP_RESUME_DEP_ID,
-    CODEX_MCP_RESUME_DIST_TAG,
     getCodexMcpResumeDepData,
     getCodexMcpResumeDetectResult,
     getCodexMcpResumeLatestVersion,

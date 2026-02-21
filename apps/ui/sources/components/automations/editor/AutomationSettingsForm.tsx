@@ -1,12 +1,12 @@
 import React from 'react';
-import { Platform, TextInput, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Switch } from '@/components/ui/forms/Switch';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text, TextInput } from '@/components/ui/text/Text';
 
 export type AutomationSettingsValue = Readonly<{
     enabled: boolean;

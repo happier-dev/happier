@@ -1,0 +1,163 @@
+import React from 'react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import renderer, { act } from 'react-test-renderer';
+import { createWelcomeFeaturesResponse } from './index.testHelpers';
+import type { ServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+
+type ReactActEnvironmentGlobal = typeof globalThis & {
+    IS_REACT_ACT_ENVIRONMENT?: boolean;
+};
+(globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('react-native-reanimated', () => ({}));
+vi.mock('react-native-typography', () => ({ iOSUIKit: { title3: {} } }));
+vi.mock('@/components/navigation/shell/HomeHeader', () => ({ HomeHeaderNotAuth: () => null }));
+vi.mock('@/components/navigation/shell/MainView', () => ({ MainView: () => null }));
+vi.mock('@/components/ui/buttons/RoundButton', () => ({ RoundButton: () => null }));
+vi.mock('@shopify/react-native-skia', () => ({}));
+vi.mock('react-native-safe-area-context', () => ({
+    useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+}));
+
+const openURL = vi.fn(async () => true);
+let externalSignupUrl = 'https://example.test/oauth';
+const getSuppressedUntilMock = vi.fn(async () => 0);
+const setPendingExternalAuthMock = vi.fn(async () => true);
+const clearPendingExternalAuthMock = vi.fn(async () => true);
+
+vi.mock('react-native', () => ({
+    ActivityIndicator: 'ActivityIndicator',
+    Text: 'Text',
+    View: 'View',
+    Image: 'Image',
+    useWindowDimensions: () => ({ width: 400, height: 800, scale: 1, fontScale: 1 }),
+    AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
+    Platform: {
+        OS: 'web',
+        select: (spec: Record<string, unknown>) => (spec && Object.prototype.hasOwnProperty.call(spec, 'web') ? spec.web : undefined),
+    },
+    Linking: { openURL },
+}));
+
+vi.mock('@/auth/context/AuthContext', () => ({
+    useAuth: () => ({
+        isAuthenticated: false,
+        credentials: null,
+        login: vi.fn(async () => {}),
+        logout: vi.fn(async () => {}),
+    }),
+}));
+
+vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
+    getPendingTerminalConnect: () => null,
+    setPendingTerminalConnect: vi.fn(),
+    clearPendingTerminalConnect: vi.fn(),
+}));
+
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: () => ({ serverUrl: '' }),
+}));
+
+vi.mock('@/platform/cryptoRandom', () => ({
+    getRandomBytesAsync: async (n: number) => new Uint8Array(n).fill(9),
+}));
+
+vi.mock('@/encryption/base64', () => ({
+    encodeBase64: () => 'x',
+}));
+
+vi.mock('@/encryption/libsodium.lib', () => ({
+    default: {
+        crypto_sign_seed_keypair: () => ({ publicKey: new Uint8Array([1]), privateKey: new Uint8Array([2]) }),
+    },
+}));
+
+vi.mock('@/auth/storage/tokenStorage', () => ({
+    TokenStorage: {
+        getAuthAutoRedirectSuppressedUntil: () => getSuppressedUntilMock(),
+        setPendingExternalAuth: () => setPendingExternalAuthMock(),
+        clearPendingExternalAuth: () => clearPendingExternalAuthMock(),
+    },
+    isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
+}));
+
+vi.mock('@/auth/providers/registry', () => ({
+    getAuthProvider: () => ({
+        id: 'github',
+        displayName: 'GitHub',
+        getExternalSignupUrl: async () => externalSignupUrl,
+    }),
+}));
+
+const getServerFeaturesMock = vi.fn(async () =>
+    createWelcomeFeaturesResponse({
+        signupMethods: [
+            { id: 'anonymous', enabled: false },
+            { id: 'github', enabled: true },
+        ],
+        requiredProviders: ['github'],
+        autoRedirectEnabled: true,
+        autoRedirectProviderId: 'github',
+        providerOffboardingIntervalSeconds: 86400,
+    }),
+);
+
+vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
+    getReadyServerFeatures: getServerFeaturesMock,
+}));
+
+const getServerFeaturesSnapshotMock = vi.fn(async (_params?: unknown): Promise<ServerFeaturesSnapshot> => ({
+    status: 'ready',
+    features: createWelcomeFeaturesResponse({
+        signupMethods: [
+            { id: 'anonymous', enabled: false },
+            { id: 'github', enabled: true },
+        ],
+        requiredProviders: ['github'],
+        autoRedirectEnabled: true,
+        autoRedirectProviderId: 'github',
+        providerOffboardingIntervalSeconds: 86400,
+    }),
+}));
+
+vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
+    getServerFeaturesSnapshot: getServerFeaturesSnapshotMock,
+}));
+
+describe('/ (welcome) auto redirect on web', () => {
+    beforeEach(() => {
+        openURL.mockClear();
+        getServerFeaturesMock.mockClear();
+        getServerFeaturesSnapshotMock.mockClear();
+        setPendingExternalAuthMock.mockClear();
+        clearPendingExternalAuthMock.mockClear();
+        getSuppressedUntilMock.mockReset();
+        getSuppressedUntilMock.mockResolvedValue(0);
+        externalSignupUrl = 'https://example.test/oauth';
+    });
+
+    it('navigates in the current tab on web to avoid popup-blocker failures', async () => {
+        vi.resetModules();
+
+        const assign = vi.fn();
+        const originalWindow = (globalThis as any).window;
+        (globalThis as any).window = { location: { assign } };
+
+        const { default: Screen } = await import('./index');
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        try {
+            await act(async () => {
+                tree = renderer.create(<Screen />);
+            });
+            await act(async () => {});
+
+            expect(assign).toHaveBeenCalledWith('https://example.test/oauth');
+            expect(openURL).not.toHaveBeenCalled();
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            (globalThis as any).window = originalWindow;
+        }
+    });
+});

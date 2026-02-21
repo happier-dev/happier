@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, Pressable, Platform } from 'react-native';
+import { View, Pressable, Platform } from 'react-native';
 import { useAuth } from '@/auth/context/AuthContext';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
@@ -28,6 +28,10 @@ import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
 import { ProviderIdentityItems } from '@/components/account/ProviderIdentityItems';
 import { isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { fetchAccountEncryptionMode, updateAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
+import { Text } from '@/components/ui/text/Text';
+
 
 export default React.memo(() => {
     const { theme } = useUnistyles();
@@ -40,6 +44,11 @@ export default React.memo(() => {
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
     const friendsEnabled = useFriendsEnabled();
     const applyProfile = storage((state) => state.applyProfile);
+    const encryptionAccountOptOutEnabled = useFeatureEnabled('encryption.accountOptOut');
+
+    const [accountEncryptionMode, setAccountEncryptionMode] = useState<'e2ee' | 'plain' | null>(null);
+    const [accountEncryptionModeLoading, setAccountEncryptionModeLoading] = useState(false);
+    const [accountEncryptionModeSaving, setAccountEncryptionModeSaving] = useState(false);
 
     // Get the current secret key
     const legacySecret =
@@ -54,6 +63,28 @@ export default React.memo(() => {
         friendsEnabled &&
         !friendsIdentityReadiness.isLoadingFeatures &&
         friendsIdentityReadiness.gate.gateVariant === 'username';
+
+    React.useEffect(() => {
+        if (!encryptionAccountOptOutEnabled) return;
+        const credentials = auth.credentials;
+        if (!credentials?.token) return;
+
+        let cancelled = false;
+        setAccountEncryptionModeLoading(true);
+        fetchAccountEncryptionMode(credentials)
+            .then((res) => {
+                if (cancelled) return;
+                setAccountEncryptionMode(res.mode);
+            })
+            .finally(() => {
+                if (cancelled) return;
+                setAccountEncryptionModeLoading(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [auth.credentials?.token, encryptionAccountOptOutEnabled]);
 
     const [savingUsername, saveUsername] = useHappyAction(async () => {
         if (!auth.credentials) return;
@@ -165,7 +196,7 @@ export default React.memo(() => {
                         <Item
                             title={t('settingsAccount.linkNewDevice')}
                             subtitle={isConnecting ? t('common.scanning') : t('settingsAccount.linkNewDeviceSubtitle')}
-                            icon={<Ionicons name="qr-code-outline" size={29} color="#007AFF" />}
+                            icon={<Ionicons name="qr-code-outline" size={29} color={theme.colors.accent.blue} />}
                             onPress={connectAccount}
                             disabled={isConnecting}
                             showChevron={false}
@@ -256,18 +287,19 @@ export default React.memo(() => {
                 {formattedSecret ? (
                     <ItemGroup title={t('settingsAccount.backup')} footer={t('settingsAccount.backupDescription')}>
                         <Item
+                            testID="settings-account-secret-key-item"
                             title={t('settingsAccount.secretKey')}
                             subtitle={showSecret ? t('settingsAccount.tapToHide') : t('settingsAccount.tapToReveal')}
                             icon={
                                 <Ionicons
                                     name={showSecret ? 'eye-off-outline' : 'eye-outline'}
                                     size={29}
-                                    color="#FF9500"
+                                    color={theme.colors.accent.orange}
                                 />
                             }
                             onPress={handleShowSecret}
                             rightElement={
-                                <Pressable onPress={handleCopySecret} hitSlop={12}>
+                                <Pressable testID="settings-account-secret-key-copy" onPress={handleCopySecret} hitSlop={12}>
                                     <Ionicons
                                         name="copy-outline"
                                         size={18}
@@ -283,7 +315,7 @@ export default React.memo(() => {
                 {/* Secret Key Display */}
                 {formattedSecret && showSecret && (
                     <ItemGroup>
-                        <Pressable onPress={handleCopySecret}>
+                        <Pressable testID="settings-account-secret-key-revealed" onPress={handleCopySecret}>
                             <View style={{
                                 backgroundColor: theme.colors.surface,
                                 paddingHorizontal: 16,
@@ -315,7 +347,7 @@ export default React.memo(() => {
                                     color: theme.colors.text,
                                     ...Typography.mono()
                                 }}>
-                                    {formattedSecret}
+                                    <Text testID="settings-account-secret-key-value">{formattedSecret}</Text>
                                 </Text>
                             </View>
                         </Pressable>
@@ -323,6 +355,47 @@ export default React.memo(() => {
                 )}
 
                 {/* Analytics Section */}
+                {encryptionAccountOptOutEnabled && (
+                    <ItemGroup title={t('terminal.encryption')}>
+                        <Item
+                            title={t('terminal.endToEndEncrypted')}
+                            rightElement={
+                                <Switch
+                                    testID="settings-account-encryption-mode-switch"
+                                    value={(accountEncryptionMode ?? 'e2ee') === 'e2ee'}
+                                    disabled={
+                                        accountEncryptionModeLoading ||
+                                        accountEncryptionModeSaving ||
+                                        !auth.credentials ||
+                                        accountEncryptionMode == null
+                                    }
+                                    onValueChange={async (enabled) => {
+                                        if (!auth.credentials) return;
+                                        if (accountEncryptionMode == null) return;
+
+                                        setAccountEncryptionModeSaving(true);
+                                        try {
+                                            const nextMode = enabled ? 'e2ee' : 'plain';
+                                            const next = await updateAccountEncryptionMode(auth.credentials, nextMode);
+                                            setAccountEncryptionMode(next.mode);
+                                        } catch (e) {
+                                            if (e instanceof HappyError) {
+                                                await Modal.alert(t('common.error'), e.message);
+                                                return;
+                                            }
+                                            await Modal.alert(t('common.error'), 'Failed to update encryption setting');
+                                            return;
+                                        } finally {
+                                            setAccountEncryptionModeSaving(false);
+                                        }
+                                    }}
+                                />
+                            }
+                            showChevron={false}
+                        />
+                    </ItemGroup>
+                )}
+
                 <ItemGroup
                     title={t('settingsAccount.privacy')}
                     footer={t('settingsAccount.privacyDescription')}
@@ -337,8 +410,11 @@ export default React.memo(() => {
                                     const optOut = !value;
                                     setAnalyticsOptOut(optOut);
                                 }}
-                                trackColor={{ false: '#767577', true: '#34C759' }}
-                                thumbColor="#FFFFFF"
+                                trackColor={{
+                                    false: theme.colors.switch.track.inactive,
+                                    true: theme.colors.switch.track.active,
+                                }}
+                                thumbColor={!analyticsOptOut ? theme.colors.switch.thumb.active : theme.colors.switch.thumb.inactive}
                             />
                         }
                         showChevron={false}
@@ -350,7 +426,7 @@ export default React.memo(() => {
                     <Item
                         title={t('settingsAccount.logout')}
                         subtitle={t('settingsAccount.logoutSubtitle')}
-                        icon={<Ionicons name="log-out-outline" size={29} color="#FF3B30" />}
+                        icon={<Ionicons name="log-out-outline" size={29} color={theme.colors.textDestructive} />}
                         destructive
                         onPress={handleLogout}
                     />

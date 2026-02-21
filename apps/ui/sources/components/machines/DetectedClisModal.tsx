@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Text, Pressable, ActivityIndicator } from 'react-native';
+import { View, Pressable, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
@@ -9,6 +9,8 @@ import { DetectedClisList } from '@/components/machines/DetectedClisList';
 import { t } from '@/text';
 import type { CustomModalInjectedProps } from '@/modal';
 import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
+import { Text } from '@/components/ui/text/Text';
+
 
 type Props = CustomModalInjectedProps & {
     machineId: string;

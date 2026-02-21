@@ -1,6 +1,6 @@
 import { useSocketStatus, useFriendRequests, useSetting, useSyncError } from '@/sync/domains/state/storage';
 import * as React from 'react';
-import { Platform, Text, View, Pressable, useWindowDimensions } from 'react-native';
+import { Platform, View, Pressable, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useHeaderHeight } from '@/utils/platform/responsive';
@@ -23,6 +23,8 @@ import { config } from '@/config';
 import { isStackContext } from '@/sync/domains/server/serverContext';
 import { isUsingCustomServer } from '@/sync/domains/server/serverConfig';
 import { resolveVisibleAppEnvironmentBadge } from '@/sync/runtime/appVariant';
+import { Text } from '@/components/ui/text/Text';
+
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
@@ -396,6 +398,7 @@ export const SidebarView = React.memo(() => {
                         <Pressable
                             onPress={handleNewSession}
                             hitSlop={15}
+                            testID="nav-new-session"
                             accessibilityRole="button"
                             accessibilityLabel={t('newSession.title')}
                             style={styles.iconButton}

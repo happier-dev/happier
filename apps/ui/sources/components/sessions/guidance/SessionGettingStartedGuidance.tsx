@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -19,6 +19,8 @@ import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBu
 import type { SessionGettingStartedDecisionKind } from './gettingStartedModel';
 import type { SessionGettingStartedViewModel } from './gettingStartedModel';
 import { buildSessionGettingStartedViewModel } from './gettingStartedModel';
+import { Text } from '@/components/ui/text/Text';
+
 
 export type SessionGettingStartedGuidanceVariant = 'phone' | 'sidebar' | 'primaryPane' | 'newSessionBlocking';
 
@@ -285,6 +287,7 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
             contentContainerStyle={styles.contentContainer}
             keyboardShouldPersistTaps="handled"
         >
+            <View testID={`session-getting-started-kind-${model.kind}`} style={{ width: 0, height: 0, overflow: 'hidden' }} />
             
             {steps.length > 0 ? (
                 <View style={styles.stepsContainer}>
@@ -319,6 +322,7 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
                 {model.kind === 'create_session' && model.onStartNewSession ? (
                     <View style={styles.buttonWrapper}>
                         <RoundButton
+                            testID="session-getting-started-start-new-session"
                             title={t('components.emptySessionsTablet.startNewSessionButton')}
                             onPress={model.onStartNewSession}
                             size="normal"

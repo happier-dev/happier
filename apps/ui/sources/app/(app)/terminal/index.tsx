@@ -1,6 +1,6 @@
 import React from 'react';
 import { View } from 'react-native';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -207,6 +207,7 @@ export default function TerminalScreen() {
                         gap: 12
                     }}>
                         <RoundButton
+                            testID="terminal-connect-approve"
                             title={isLoading ? t('terminal.connecting') : t('terminal.acceptConnection')}
                             onPress={handleConnect}
                             size="large"
@@ -214,6 +215,7 @@ export default function TerminalScreen() {
                             loading={isLoading}
                         />
                         <RoundButton
+                            testID="terminal-connect-reject"
                             title={t('terminal.reject')}
                             onPress={handleReject}
                             size="large"

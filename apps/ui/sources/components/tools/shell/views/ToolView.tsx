@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Text, View, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import { getToolViewComponent } from '@/components/tools/renderers/core/_registry';
@@ -22,6 +22,8 @@ import { normalizeToolCallForRendering } from '@/components/tools/normalization/
 import { useSetting } from '@/sync/domains/state/storage';
 import { resolveToolViewDetailLevel } from '@/components/tools/normalization/policy/resolveToolViewDetailLevel';
 import { ToolHeaderActionsContext } from '../presentation/ToolHeaderActionsContext';
+import { Text } from '@/components/ui/text/Text';
+
 
 const KNOWN_TOOL_KEYS = Object.keys(knownTools);
 

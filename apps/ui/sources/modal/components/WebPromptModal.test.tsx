@@ -15,7 +15,8 @@ vi.mock('react-native', () => {
         Text: (props: any) => React.createElement('Text', props, props.children),
         TextInput: (props: any) => React.createElement('TextInput', props, props.children),
         Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-        Platform: { OS: 'web' },
+        Platform: { OS: 'web', select: (values: any) => values?.default ?? values?.web ?? values?.ios ?? values?.android },
+        AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
     };
 });
 

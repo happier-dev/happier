@@ -1,14 +1,19 @@
 import React from 'react';
-import { View, Text, Pressable, ActivityIndicator } from 'react-native';
+import { View, Pressable, ActivityIndicator } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
+import { Text } from '@/components/ui/text/Text';
+
 
 export function FriendsGateCentered(props: { title: string; body?: string; children: React.ReactNode }) {
+    const { theme } = useUnistyles();
+
     return (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
-            <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 8 }}>
+            <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 8, color: theme.colors.text }}>
                 {props.title}
             </Text>
             {props.body ? (
-                <Text style={{ textAlign: 'center', opacity: 0.7, marginBottom: 16 }}>
+                <Text style={{ textAlign: 'center', marginBottom: 16, color: theme.colors.textSecondary }}>
                     {props.body}
                 </Text>
             ) : null}
@@ -28,6 +33,7 @@ export function FriendsProviderConnectControls(props: {
     connectButtonMarginBottom?: number;
     notAvailableMarginTop?: number;
 }) {
+    const { theme } = useUnistyles();
     const [showHint, setShowHint] = React.useState(false);
 
     return (
@@ -41,7 +47,7 @@ export function FriendsProviderConnectControls(props: {
                     paddingHorizontal: 16,
                     paddingVertical: 12,
                     borderRadius: 10,
-                    backgroundColor: props.connectButtonColor ?? '#111827',
+                    backgroundColor: props.connectButtonColor ?? theme.colors.button.primary.background,
                     minWidth: 180,
                     alignItems: 'center',
                     marginBottom: props.connectButtonMarginBottom ?? 12,
@@ -49,9 +55,9 @@ export function FriendsProviderConnectControls(props: {
                 }}
             >
                 {props.connecting ? (
-                    <ActivityIndicator size="small" color="#ffffff" />
+                    <ActivityIndicator size="small" color={theme.colors.button.primary.tint} />
                 ) : (
-                    <Text style={{ color: '#ffffff', fontWeight: '600' }}>
+                    <Text style={{ color: theme.colors.button.primary.tint, fontWeight: '600' }}>
                         {props.connectLabel}
                     </Text>
                 )}
@@ -67,13 +73,13 @@ export function FriendsProviderConnectControls(props: {
                     marginTop: props.notAvailableMarginTop ?? 0,
                 }}
             >
-                <Text style={{ opacity: 0.8 }}>
+                <Text style={{ color: theme.colors.textSecondary }}>
                     {props.notAvailableLabel}
                 </Text>
             </Pressable>
 
             {showHint && props.unavailableReason ? (
-                <Text style={{ textAlign: 'center', marginTop: 8, opacity: 0.7 }}>
+                <Text style={{ textAlign: 'center', marginTop: 8, color: theme.colors.textSecondary }}>
                     {props.unavailableReason}
                 </Text>
             ) : null}

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useLocalSearchParams, Stack, useRouter } from "expo-router";
-import { Text, View, ActivityIndicator } from "react-native";
+import { View, ActivityIndicator } from 'react-native';
 import { useMessage, useSession, useSessionMessages } from "@/sync/domains/state/storage";
 import { sync } from '@/sync/sync';
 import { Deferred } from "@/components/ui/forms/Deferred";
@@ -10,6 +10,8 @@ import { ToolStatusIndicator } from '@/components/tools/shell/presentation/ToolS
 import { Message } from '@/sync/domains/messages/messageTypes';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
+import { Text } from '@/components/ui/text/Text';
+
 
 const stylesheet = StyleSheet.create((theme) => ({
     loadingContainer: {

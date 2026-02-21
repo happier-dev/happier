@@ -41,8 +41,9 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/components/ui/text/StyledText', () => ({
+vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
+    TextInput: 'TextInput',
 }));
 
 describe('useCodeLinesReviewComments', () => {

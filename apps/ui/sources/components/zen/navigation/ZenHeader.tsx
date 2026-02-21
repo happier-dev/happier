@@ -7,9 +7,11 @@ import { useIsTablet } from '@/utils/platform/responsive';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import * as React from 'react';
-import { View, Text, Pressable } from 'react-native';
+import { View, Pressable } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { Text } from '@/components/ui/text/Text';
+
 
 export const ZenHeader = React.memo(() => {
     const isTablet = useIsTablet();

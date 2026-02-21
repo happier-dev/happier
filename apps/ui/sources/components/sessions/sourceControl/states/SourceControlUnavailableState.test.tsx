@@ -28,8 +28,9 @@ vi.mock('@/components/ui/buttons/RoundButton', () => ({
   RoundButton: (props: any) => React.createElement('RoundButton', props),
 }));
 
-vi.mock('@/components/ui/text/StyledText', () => ({
+vi.mock('@/components/ui/text/Text', () => ({
   Text: (props: any) => React.createElement('Text', props, props.children),
+  TextInput: 'TextInput',
 }));
 
 vi.mock('@/constants/Typography', () => ({

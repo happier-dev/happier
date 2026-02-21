@@ -25,12 +25,23 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 vi.mock('react-native-unistyles', () => ({
+    StyleSheet: { create: (factory: any) => factory({
+        colors: {
+            textSecondary: '#666',
+            divider: '#ddd',
+            text: '#111',
+            input: { placeholder: '#999' },
+        },
+    }, {}) },
     useUnistyles: () => ({
         theme: {
             colors: {
                 textSecondary: '#666',
                 divider: '#ddd',
                 text: '#111',
+                input: {
+                    placeholder: '#999',
+                },
             },
         },
     }),
@@ -86,6 +97,19 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => {
         const React = require('react');
         return React.createElement('Item', props);
+    },
+}));
+
+vi.mock('@/components/ui/text/Text', () => ({
+    Text: (props: any) => {
+        const React = require('react');
+        const { Text } = require('react-native');
+        return React.createElement(Text, props, props.children);
+    },
+    TextInput: (props: any) => {
+        const React = require('react');
+        const { TextInput } = require('react-native');
+        return React.createElement(TextInput, props, props.children);
     },
 }));
 
@@ -336,7 +360,8 @@ describe('DropdownMenu', () => {
 
     it('uses symmetric content padding and adds bottom padding under results', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
-        const { Text, TextInput, View } = await import('react-native');
+        const { Text, View } = await import('react-native');
+        const { TextInput } = await import('@/components/ui/text/Text');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         act(() => {
@@ -354,7 +379,7 @@ describe('DropdownMenu', () => {
 
         const input = tree?.root.findByType(TextInput as any);
         const inputWrapper = input?.parent;
-        expect(inputWrapper?.type === 'View' || inputWrapper?.type === View).toBe(true);
+        expect(inputWrapper?.type === ('View' as any) || inputWrapper?.type === (View as any)).toBe(true);
         expect(inputWrapper?.props?.style).toMatchObject({ paddingHorizontal: 12, paddingTop: 12, paddingBottom: 4 });
 
         const paddingNodes = tree?.root.findAll((node: any) => {

@@ -207,8 +207,8 @@ export interface CreateSessionShareRequest {
     accessLevel: ShareAccessLevel;
     /** Whether this recipient can approve permission prompts (edit/admin only) */
     canApprovePermissions?: boolean;
-    /** Base64 encoded (v0 + box bundle) */
-    encryptedDataKey: string;
+    /** Base64 encoded (v0 + box bundle); required for encrypted (`e2ee`) sessions only */
+    encryptedDataKey?: string;
 }
 
 /** Response containing a single session share */
@@ -236,8 +236,9 @@ export interface CreatePublicShareRequest {
      *
      * @remarks
      * Base64 encoded. Typically encrypted with a key derived from the token.
+     * Optional for plaintext (`plain`) sessions.
      */
-    encryptedDataKey: string;
+    encryptedDataKey?: string;
     /**
      * Optional expiration timestamp (milliseconds since epoch)
      *
@@ -282,6 +283,8 @@ export interface AccessPublicShareResponse {
         id: string;
         /** Session sequence number */
         seq: number;
+        /** Session encryption mode */
+        encryptionMode: 'e2ee' | 'plain';
         /** Creation timestamp (milliseconds since epoch) */
         createdAt: number;
         /** Last update timestamp (milliseconds since epoch) */
@@ -301,8 +304,8 @@ export interface AccessPublicShareResponse {
     };
     /** Access level (always 'view' for public shares) */
     accessLevel: 'view';
-    /** Encrypted data key for decrypting session (base64) */
-    encryptedDataKey: string;
+    /** Encrypted data key for decrypting session (base64); null for plaintext sessions */
+    encryptedDataKey: string | null;
     /** Session owner profile */
     owner: ShareUserProfile;
     /** Whether consent is required (echoed) */

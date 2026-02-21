@@ -40,8 +40,8 @@ describe('oauth/[provider] return', () => {
 
         await runWithOAuthScreen(async () => {
             await flushOAuthEffects();
-            expect(modal.alert).toHaveBeenCalledTimes(1);
-            expect(replaceSpy).toHaveBeenCalledWith('/restore');
+            expect(modal.alert).toHaveBeenCalledTimes(0);
+            expect(replaceSpy).toHaveBeenCalledWith('/restore?provider=github&reason=provider_already_linked');
             expect(loginSpy).not.toHaveBeenCalled();
         });
         vi.stubGlobal('fetch', originalFetch);

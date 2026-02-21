@@ -79,8 +79,9 @@ vi.mock('@/components/ui/feedback/UpdateBanner', () => ({
     UpdateBanner: 'UpdateBanner',
 }));
 
-vi.mock('@/components/ui/text/StyledText', () => ({
+vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
+    TextInput: 'TextInput',
 }));
 
 vi.mock('@/utils/sessions/sessionUtils', () => ({

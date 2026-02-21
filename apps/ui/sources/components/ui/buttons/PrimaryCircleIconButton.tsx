@@ -26,6 +26,7 @@ export const PrimaryCircleIconButton = React.memo(
       active: boolean;
       disabled?: boolean;
       loading?: boolean;
+      testID?: string;
       accessibilityLabel: string;
       accessibilityHint?: string;
       accessibilityState?: { disabled?: boolean } & Record<string, unknown>;
@@ -48,6 +49,7 @@ export const PrimaryCircleIconButton = React.memo(
     return (
       <View style={[styles.root, props.style]}>
         <Pressable
+          testID={props.testID}
           accessibilityRole="button"
           accessibilityLabel={props.accessibilityLabel}
           accessibilityHint={props.accessibilityHint}

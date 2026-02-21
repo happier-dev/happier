@@ -47,6 +47,18 @@ export class InvalidateSync {
         }
     }
 
+    invalidateCoalesced() {
+        if (this._stopped) {
+            return;
+        }
+        if (this._invalidated) {
+            return;
+        }
+        this._invalidated = true;
+        this._invalidatedDouble = false;
+        this._doSync();
+    }
+
     async invalidateAndAwait() {
         if (this._stopped) {
             return;
@@ -57,12 +69,35 @@ export class InvalidateSync {
         });
     }
 
-    async awaitQueue() {
+    async awaitQueue(opts?: { timeoutMs?: number }) {
         if (this._stopped || (!this._invalidated && this._pendings.length === 0)) {
             return;
         }
-        await new Promise<void>(resolve => {
-            this._pendings.push(resolve);
+        const timeoutMs = opts?.timeoutMs;
+        if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+            await new Promise<void>(resolve => {
+                this._pendings.push(resolve);
+            });
+            return;
+        }
+
+        await new Promise<void>((resolve) => {
+            let settled = false;
+            let timer: ReturnType<typeof setTimeout>;
+            const pending = () => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                resolve();
+            };
+
+            this._pendings.push(pending);
+            timer = setTimeout(() => {
+                if (settled) return;
+                settled = true;
+                this._pendings = this._pendings.filter((entry) => entry !== pending);
+                resolve();
+            }, timeoutMs);
         });
     }
 
@@ -145,12 +180,35 @@ export class ValueSync<T> {
         });
     }
 
-    async awaitQueue() {
+    async awaitQueue(opts?: { timeoutMs?: number }) {
         if (this._stopped || (!this._processing && this._pendings.length === 0)) {
             return;
         }
-        await new Promise<void>(resolve => {
-            this._pendings.push(resolve);
+        const timeoutMs = opts?.timeoutMs;
+        if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+            await new Promise<void>(resolve => {
+                this._pendings.push(resolve);
+            });
+            return;
+        }
+
+        await new Promise<void>((resolve) => {
+            let settled = false;
+            let timer: ReturnType<typeof setTimeout>;
+            const pending = () => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                resolve();
+            };
+
+            this._pendings.push(pending);
+            timer = setTimeout(() => {
+                if (settled) return;
+                settled = true;
+                this._pendings = this._pendings.filter((entry) => entry !== pending);
+                resolve();
+            }, timeoutMs);
         });
     }
 

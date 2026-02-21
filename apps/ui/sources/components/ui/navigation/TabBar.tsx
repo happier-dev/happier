@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Pressable, Text } from 'react-native';
+import { View, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Image } from 'expo-image';
@@ -8,6 +8,8 @@ import { Typography } from '@/constants/Typography';
 import { layout } from '@/components/ui/layout/layout';
 import { useInboxHasContent } from '@/hooks/inbox/useInboxHasContent';
 import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
+import { Text } from '@/components/ui/text/Text';
+
 
 export type TabType = 'zen' | 'inbox' | 'sessions' | 'settings';
 
@@ -66,7 +68,7 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
     },
     badgeText: {
-        color: '#FFFFFF',
+        color: theme.colors.button.primary.tint,
         fontSize: 10,
         ...Typography.default('semiBold'),
     },

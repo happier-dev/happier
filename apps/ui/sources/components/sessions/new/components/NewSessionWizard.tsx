@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, View } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { LinearGradient } from 'expo-linear-gradient';
 import Color from 'color';
@@ -34,6 +34,8 @@ import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/us
 import { useAttachmentDraftManager } from '@/components/sessions/attachments/useAttachmentDraftManager';
 import { formatAttachmentsBlock, uploadAttachmentDraftsToSession } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
 import { sync } from '@/sync/sync';
+import { Text } from '@/components/ui/text/Text';
+
 
 export interface NewSessionWizardLayoutProps {
     theme: any;
@@ -786,12 +788,12 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                 onModelModeChange={setModelMode}
                                 modelOptionsOverride={modelOptions}
                                 modelOptionsOverrideProbe={modelOptionsProbe}
-                                acpSessionModeOptionsOverride={props.agentProps.acpSessionModeOptions}
-                                acpSessionModeSelectedIdOverride={props.agentProps.acpSessionModeId ?? null}
-                                acpSessionModeOptionsOverrideProbe={props.agentProps.acpSessionModeProbe}
+                                acpSessionModeOptionsOverride={props.agent.acpSessionModeOptions}
+                                acpSessionModeSelectedIdOverride={props.agent.acpSessionModeId ?? null}
+                                acpSessionModeOptionsOverrideProbe={props.agent.acpSessionModeProbe}
                                 onAcpSessionModeChange={
-                                    (props.agentProps.acpSessionModeOptions?.length ?? 0) > 0 && props.agentProps.setAcpSessionModeId
-                                        ? (modeId) => props.agentProps.setAcpSessionModeId?.(modeId === 'default' ? null : modeId)
+                                    (props.agent.acpSessionModeOptions?.length ?? 0) > 0 && props.agent.setAcpSessionModeId
+                                        ? (modeId) => props.agent.setAcpSessionModeId?.(modeId === 'default' ? null : modeId)
                                         : undefined
                                 }
                                 connectionStatus={connectionStatus}

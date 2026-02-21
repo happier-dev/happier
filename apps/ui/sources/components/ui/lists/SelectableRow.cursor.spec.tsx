@@ -11,11 +11,6 @@ vi.mock('react-native', () => ({
   View: 'View',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-  useUnistyles: () => ({ theme: { colors: { surfacePressed: '#eee', surfacePressedOverlay: '#eee', divider: '#ddd', text: '#111', textSecondary: '#666', textDestructive: '#c00' } } }),
-  StyleSheet: { create: (fn: any) => fn({ colors: { surfacePressed: '#eee', surfacePressedOverlay: '#eee', divider: '#ddd', text: '#111', textSecondary: '#666', textDestructive: '#c00' } }, {}) },
-}));
-
 vi.mock('@/constants/Typography', () => ({
   Typography: { default: () => ({}) },
 }));

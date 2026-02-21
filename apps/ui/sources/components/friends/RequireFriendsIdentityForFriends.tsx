@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable, ActivityIndicator, TextInput, Linking } from 'react-native';
+import { View, Pressable, ActivityIndicator, Linking } from 'react-native';
 import { useOAuthProviderConfigured } from '@/hooks/server/useOAuthProviderConfigured';
 import { type FriendsUsernameHint } from './resolveFriendsIdentityGate';
 import { t } from '@/text';
@@ -14,6 +14,8 @@ import { Modal } from '@/modal';
 import { useUnistyles } from 'react-native-unistyles';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 function translateUsernameHint(hint: FriendsUsernameHint): string {
     switch (hint.key) {

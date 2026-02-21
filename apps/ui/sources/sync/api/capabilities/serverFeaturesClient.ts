@@ -137,19 +137,27 @@ export async function getServerFeaturesSnapshot(params?: {
         const timer = setTimeout(() => controller.abort(), timeoutMs);
 
         try {
-            const response = isExplicitServerRequest
-                ? await runtimeFetch(joinBaseAndPath(explicitServerUrl!, '/v1/features'), {
-                    method: 'GET',
-                    signal: controller.signal,
-                })
-                : await serverFetch(
-                    '/v1/features',
-                    {
+            let response: Response;
+            try {
+                response = isExplicitServerRequest
+                    ? await runtimeFetch(joinBaseAndPath(explicitServerUrl!, '/v1/features'), {
                         method: 'GET',
                         signal: controller.signal,
-                    },
-                    { includeAuth: false },
-                );
+                    })
+                    : await serverFetch(
+                        '/v1/features',
+                        {
+                            method: 'GET',
+                            signal: controller.signal,
+                        },
+                        { includeAuth: false },
+                    );
+            } catch (error) {
+                const aborted = controller.signal.aborted || (error instanceof Error && error.name === 'AbortError');
+                const value: ServerFeaturesSnapshot = { status: 'error', reason: aborted ? 'timeout' : 'network' };
+                cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
+                return value;
+            }
 
             if (!response.ok) {
                 const value: ServerFeaturesSnapshot = isEndpointMissing(response.status)
@@ -159,7 +167,22 @@ export async function getServerFeaturesSnapshot(params?: {
                 return value;
             }
 
-            const payload = await response.json();
+            const contentType = String(response.headers?.get?.('content-type') ?? '').toLowerCase();
+            if (contentType && !contentType.includes('application/json') && !contentType.includes('+json')) {
+                const value: ServerFeaturesSnapshot = { status: 'unsupported', reason: 'invalid_payload' };
+                cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
+                return value;
+            }
+
+            let payload: unknown;
+            try {
+                payload = await response.json();
+            } catch {
+                const value: ServerFeaturesSnapshot = { status: 'unsupported', reason: 'invalid_payload' };
+                cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
+                return value;
+            }
+
             const parsed = parseServerFeatures(payload);
             if (!parsed) {
                 const value: ServerFeaturesSnapshot = { status: 'unsupported', reason: 'invalid_payload' };

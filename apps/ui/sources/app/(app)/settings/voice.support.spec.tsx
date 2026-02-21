@@ -9,17 +9,6 @@ const setVoice = vi.fn();
 const decryptSecretValue = vi.fn<(value: unknown) => string | null>(() => null);
 const resetGlobalVoiceAgentPersistenceSpy = vi.fn(async () => {});
 
-vi.mock('react-native-unistyles', () => {
-    const theme = { colors: {} };
-    return {
-        useUnistyles: () => ({ theme }),
-        StyleSheet: {
-            create: (factory: any) => (typeof factory === 'function' ? {} : factory),
-            absoluteFillObject: {},
-        },
-    };
-});
-
 vi.mock('expo-router', () => ({
     useRouter: () => ({ push: vi.fn() }),
 }));

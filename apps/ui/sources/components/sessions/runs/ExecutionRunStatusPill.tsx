@@ -1,8 +1,10 @@
 import * as React from 'react';
-import { Text, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { ExecutionRunStatus } from '@happier-dev/protocol';
+import { Text } from '@/components/ui/text/Text';
+
 
 function normalizeStatus(status: unknown): ExecutionRunStatus | 'unknown' {
     switch (status) {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -7,6 +7,8 @@ import type { AIBackendProfile } from '@/sync/domains/settings/settings';
 import { t } from '@/text';
 import { useProfileEnvRequirements } from '@/hooks/session/useProfileEnvRequirements';
 import { hasRequiredSecret } from '@/sync/domains/profiles/profileSecrets';
+import { Text } from '@/components/ui/text/Text';
+
 
 export interface ProfileRequirementsBadgeProps {
     profile: AIBackendProfile;

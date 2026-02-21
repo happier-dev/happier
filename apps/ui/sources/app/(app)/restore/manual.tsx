@@ -1,19 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, ScrollView, ActivityIndicator } from 'react-native';
+import React, { useState } from 'react';
+import { View, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/auth/context/AuthContext';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Typography } from '@/constants/Typography';
 import { normalizeSecretKey } from '@/auth/recovery/secretKeyBackup';
 import { authGetToken } from '@/auth/flows/getToken';
-import { decodeBase64, encodeBase64 } from '@/encryption/base64';
-import { generateAuthKeyPair, authQRStart, QRAuthKeyPair } from '@/auth/flows/qrStart';
-import { authQRWait } from '@/auth/flows/qrWait';
+import { decodeBase64 } from '@/encryption/base64';
 import { layout } from '@/components/ui/layout/layout';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { QRCode } from '@/components/qr/QRCode';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {
@@ -27,13 +26,22 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     contentWrapper: {
         width: '100%',
-        maxWidth: layout.maxWidth,
-        paddingVertical: 24,
+        maxWidth: Math.min(560, layout.maxWidth),
+        paddingVertical: 28,
     },
-    instructionText: {
-        fontSize: 16,
+    noticeCard: {
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        borderRadius: 14,
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        backgroundColor: theme.colors.surface,
+        marginBottom: 16,
+    },
+    noticeText: {
+        fontSize: 15,
         color: theme.colors.textSecondary,
-        marginBottom: 20,
+        lineHeight: 21,
         ...Typography.default(),
     },
     secondInstructionText: {
@@ -98,8 +106,8 @@ export default function Restore() {
             // Login with new credentials
             await auth.login(token, normalizedKey);
 
-            // Dismiss
-            router.back();
+            // Navigate home after restore to avoid returning to the link-new-device QR screen.
+            router.replace('/');
 
         } catch (error) {
             console.error('Restore error:', error);
@@ -111,11 +119,12 @@ export default function Restore() {
         <ScrollView style={styles.scrollView}>
             <View style={styles.container}>
                 <View style={styles.contentWrapper}>
-                    <Text style={styles.instructionText}>
-                        {t('connect.restoreWithSecretKeyDescription')}
-                    </Text>
+                    <View style={styles.noticeCard}>
+                        <Text style={styles.noticeText}>{t('connect.restoreWithSecretKeyDescription')}</Text>
+                    </View>
 
                     <TextInput
+                        testID="restore-manual-secret-input"
                         style={styles.textInput}
                         placeholder={t('connect.secretKeyPlaceholder')}
                         placeholderTextColor={theme.colors.input.placeholder}
@@ -130,6 +139,7 @@ export default function Restore() {
                     />
 
                     <RoundButton
+                        testID="restore-manual-submit"
                         title={t('connect.restoreAccount')}
                         action={handleRestore}
                     />

@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useState } from 'react';
-import { View, Text, Pressable, useWindowDimensions, Switch } from 'react-native';
+import { View, Pressable, useWindowDimensions, Switch } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { Item } from '@/components/ui/lists/Item';
@@ -10,6 +10,8 @@ import { SessionShare, ShareAccessLevel } from '@/sync/domains/social/sharingTyp
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { BaseModal } from '@/modal/components/BaseModal';
 import { Typography } from '@/constants/Typography';
+import { Text } from '@/components/ui/text/Text';
+
 
 /**
  * Props for the SessionShareDialog component
@@ -108,12 +110,12 @@ export const SessionShareDialog = memo(function SessionShareDialog({
                         <ItemGroup>
                             <Item
                                 title={t('session.sharing.shareWith')}
-                                icon={<Ionicons name="person-add-outline" size={29} color="#007AFF" />}
+                                icon={<Ionicons name="person-add-outline" size={29} color={theme.colors.accent.blue} />}
                                 onPress={onAddShare}
                             />
                             <Item
                                 title={t('session.sharing.publicLink')}
-                                icon={<Ionicons name="link-outline" size={29} color="#007AFF" />}
+                                icon={<Ionicons name="link-outline" size={29} color={theme.colors.accent.blue} />}
                                 onPress={onManagePublicLink}
                                 showDivider={false}
                             />
@@ -195,7 +197,7 @@ export const SessionShareDialog = memo(function SessionShareDialog({
                         ) : (
                             <Item
                                 title={t('session.sharing.noShares')}
-                                icon={<Ionicons name="people-outline" size={29} color="#8E8E93" />}
+                                icon={<Ionicons name="people-outline" size={29} color={theme.colors.textSecondary} />}
                                 showChevron={false}
                                 showDivider={false}
                             />

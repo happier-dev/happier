@@ -4,7 +4,7 @@ import * as React from 'react';
 import * as Notifications from 'expo-notifications';
 import { Typography } from '@/constants/Typography';
 import { createHeader } from '@/components/navigation/Header';
-import { Platform, TouchableOpacity, Text } from 'react-native';
+import { Platform, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { coerceRelativeRoute } from '@/utils/path/routeUtils';
@@ -19,6 +19,8 @@ import { clearPendingNotificationNav, getPendingNotificationNav, setPendingNotif
 import { getPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { Text } from '@/components/ui/text/Text';
+
 
 export const unstable_settings = {
     initialRouteName: 'index',

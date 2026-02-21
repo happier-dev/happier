@@ -435,6 +435,10 @@ export const ja: TranslationStructure = {
     terminalUrlPlaceholder: "happier://terminal?...",
     restoreQrInstructions:
       "1. モバイル端末で Happier を開く\n2. 設定 → アカウント に移動\n3. 「新しいデバイスをリンク」をタップ\n4. この QR コードをスキャン",
+    externalAuthVerifiedTitle: ({ provider }: { provider: string }) =>
+      `${provider} の認証が完了しました`,
+    externalAuthVerifiedBody: ({ provider }: { provider: string }) =>
+      `${provider} に紐づく既存の Happier アカウントが見つかりました。この端末でサインインを完了するには、QRコードまたはシークレットキーでアカウントキーを復元してください。`,
     restoreWithSecretKeyInstead: "秘密鍵で復元する",
     restoreWithSecretKeyDescription:
       "アカウントへのアクセスを復元するには秘密鍵を入力してください。",
@@ -658,6 +662,19 @@ export const ja: TranslationStructure = {
     compactSessionViewMinimal: "最小コンパクト表示",
     compactSessionViewMinimalDescription:
       "アバターを非表示にして、より小さなセッション行レイアウトで表示",
+    text: "テキスト",
+    textDescription: "アプリ全体の文字サイズを調整します",
+    textSize: "文字サイズ",
+    textSizeDescription: "文字を大きくしたり小さくしたりします",
+    textSizeOptions: {
+      xxsmall: "超極小",
+      xsmall: "極小",
+      small: "小",
+      default: "標準",
+      large: "大",
+      xlarge: "特大",
+      xxlarge: "超特大",
+    },
   },
 
   settingsFeatures: {
@@ -845,11 +862,11 @@ export const ja: TranslationStructure = {
     codexResumeNotInstalledTitle:
       "このマシンには Codex resume がインストールされていません",
     codexResumeNotInstalledMessage:
-      "Codex の会話を再開するには、対象のマシンに Codex resume サーバーをインストールしてください（マシン詳細 → Codex resume）。",
+      "Codex の会話を再開するには、対象のマシンに Codex resume サーバーをインストールしてください（マシン詳細 → Installables）。",
     codexAcpNotInstalledTitle:
       "このマシンには Codex ACP がインストールされていません",
     codexAcpNotInstalledMessage:
-      "Codex ACP の実験機能を使うには、対象のマシンに codex-acp をインストールしてください（マシン詳細 → Codex ACP）。または実験機能を無効にしてください。",
+      "Codex ACP の実験機能を使うには、対象のマシンに codex-acp をインストールしてください（マシン詳細 → Installables）。または実験機能を無効にしてください。",
   },
 
   deps: {
@@ -2317,6 +2334,12 @@ export const ja: TranslationStructure = {
       `${provider}で続行`,
     linkOrRestoreAccount: "アカウントをリンクまたは復元",
     loginWithMobileApp: "モバイルアプリでログイン",
+    serverUnavailableTitle: "サーバーに接続できません",
+    serverUnavailableBody: ({ serverUrl }: { serverUrl: string }) =>
+      `${serverUrl} に接続できません。再試行するか、サーバーを変更して続行してください。`,
+    serverIncompatibleTitle: "サーバーが未対応です",
+    serverIncompatibleBody: ({ serverUrl }: { serverUrl: string }) =>
+      `${serverUrl} のサーバーから想定外の応答が返されました。サーバーを更新するか、サーバーを変更して続行してください。`,
   },
 
   review: {
@@ -2333,7 +2356,7 @@ export const ja: TranslationStructure = {
       `${label}がクリップボードにコピーされました`,
   },
 
-  machine: {
+	  machine: {
     launchNewSessionInDirectory: "ディレクトリで新しいセッションを起動",
     offlineUnableToSpawn: "マシンがオフラインのためランチャーは無効です",
     offlineHelp:
@@ -2350,13 +2373,22 @@ export const ja: TranslationStructure = {
     renameTitle: "マシン名を変更",
     renameDescription:
       "このマシンにカスタム名を設定します。空欄の場合はデフォルトのホスト名を使用します。",
-    renamePlaceholder: "マシン名を入力",
-    renamedSuccess: "マシン名を変更しました",
-    renameFailed: "マシン名の変更に失敗しました",
-    lastKnownPid: "最後に確認されたPID",
-    lastKnownHttpPort: "最後に確認されたHTTPポート",
-    startedAt: "開始時刻",
-    cliVersion: "CLIバージョン",
+	    renamePlaceholder: "マシン名を入力",
+	    renamedSuccess: "マシン名を変更しました",
+	    renameFailed: "マシン名の変更に失敗しました",
+	    actions: {
+	      removeMachine: "Remove Machine",
+	      removeMachineSubtitle:
+	        "Revokes this machine and removes it from your account.",
+	      removeMachineConfirmBody:
+	        "This will revoke access from this machine (including access keys and automation assignments). You can reconnect later by signing in again from the CLI.",
+	      removeMachineAlreadyRemoved:
+	        "This machine has already been removed from your account.",
+	    },
+	    lastKnownPid: "最後に確認されたPID",
+	    lastKnownHttpPort: "最後に確認されたHTTPポート",
+	    startedAt: "開始時刻",
+	    cliVersion: "CLIバージョン",
     daemonStateVersion: "デーモン状態バージョン",
     activeSessions: ({ count }: { count: number }) =>
       `アクティブセッション (${count})`,

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, Text, TextInput, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { getActionSpec, resolveEffectiveActionInputFields } from '@happier-dev/protocol';
 
@@ -13,6 +13,8 @@ import { t } from '@/text';
 import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
 import { buildAvailableReviewEngineOptions } from '@/sync/domains/reviews/reviewEngineCatalog';
 import { layout } from '@/components/ui/layout/layout';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 type EngineOption = Readonly<{ id: string; label: string; disabled?: boolean }>;
 

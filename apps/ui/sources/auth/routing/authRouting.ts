@@ -17,6 +17,9 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
     // Restore / link account flows must work unauthenticated.
     if (first === 'restore') return true;
 
+    // OAuth return routes must be reachable before authentication so the callback can finalize.
+    if (first === 'oauth') return true;
+
     // Public share links must work unauthenticated.
     if (first === 'share') return true;
 

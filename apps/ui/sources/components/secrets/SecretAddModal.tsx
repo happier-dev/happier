@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TextInput, Pressable, Platform } from 'react-native';
+import { View, Pressable, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -7,6 +7,8 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { ItemListStatic } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 export interface SecretAddModalResult {
     name: string;

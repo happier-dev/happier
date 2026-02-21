@@ -1,9 +1,13 @@
 import React from 'react';
-import { TextInput, View } from 'react-native';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { CodeEditorProps } from '../codeEditorTypes';
 import { resolveMonacoLanguageId } from '../codeEditorTypes';
+import { TextInput } from '@/components/ui/text/Text';
+import { useLocalSetting } from '@/sync/store/hooks';
+import { resolveCodeEditorFontMetrics } from '../codeEditorFontMetrics';
+
 
 type MonacoType = any;
 
@@ -88,6 +92,11 @@ async function ensureMonaco(): Promise<MonacoType> {
 
 export function MonacoEditorSurface(props: CodeEditorProps) {
     const { theme } = useUnistyles();
+    const uiFontScale = useLocalSetting('uiFontScale');
+    const fontMetrics = React.useMemo(
+        () => resolveCodeEditorFontMetrics({ uiFontScale }),
+        [uiFontScale],
+    );
     const containerRef = React.useRef<any>(null);
     const editorRef = React.useRef<any>(null);
     const modelRef = React.useRef<any>(null);
@@ -119,7 +128,8 @@ export function MonacoEditorSurface(props: CodeEditorProps) {
                     scrollBeyondLastLine: false,
                     wordWrap: wrapLines ? 'on' : 'off',
                     lineNumbers: showLineNumbers ? 'on' : 'off',
-                    fontSize: 13,
+                    fontSize: fontMetrics.fontSize,
+                    lineHeight: fontMetrics.lineHeight,
                     fontFamily:
                         'Menlo, ui-monospace, SFMono-Regular, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
                     tabSize: 2,
@@ -158,6 +168,19 @@ export function MonacoEditorSurface(props: CodeEditorProps) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [props.resetKey]);
 
+    React.useEffect(() => {
+        const editor = editorRef.current;
+        if (!editor?.updateOptions) return;
+        try {
+            editor.updateOptions({
+                fontSize: fontMetrics.fontSize,
+                lineHeight: fontMetrics.lineHeight,
+            });
+        } catch {
+            // ignore
+        }
+    }, [fontMetrics.fontSize, fontMetrics.lineHeight]);
+
     // Keep the Monaco model in sync when props.value changes externally.
     React.useEffect(() => {
         const model = modelRef.current;
@@ -188,6 +211,7 @@ export function MonacoEditorSurface(props: CodeEditorProps) {
                     onChangeText={props.onChange}
                     editable={!readOnly}
                     multiline
+                    disableUiFontScaling
                     style={{
                         flex: 1,
                         padding: 10,
@@ -195,8 +219,8 @@ export function MonacoEditorSurface(props: CodeEditorProps) {
                         backgroundColor: theme.colors.surfaceHighest,
                         fontFamily:
                             'Menlo, ui-monospace, SFMono-Regular, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                        fontSize: 13,
-                        lineHeight: 20,
+                        fontSize: fontMetrics.fontSize,
+                        lineHeight: fontMetrics.lineHeight,
                     }}
                 />
             </View>
@@ -210,4 +234,3 @@ export function MonacoEditorSurface(props: CodeEditorProps) {
         </View>
     );
 }
-

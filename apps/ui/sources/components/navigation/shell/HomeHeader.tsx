@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Header } from '@/components/navigation/Header';
 import { useSocketStatus } from '@/sync/domains/state/storage';
-import { Platform, Pressable, Text, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { Typography } from '@/constants/Typography';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,6 +11,8 @@ import { Image } from 'expo-image';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
+import { Text } from '@/components/ui/text/Text';
+
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
     headerButton: {
@@ -124,6 +126,7 @@ function HeaderRight() {
 
     return (
         <Pressable
+            testID="home-header-start-new-session"
             onPress={() => router.push('/new')}
             hitSlop={15}
             style={styles.headerButton}
@@ -158,10 +161,9 @@ function HeaderLeft(props: { showAutomations: boolean }) {
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <View style={styles.logoContainer}>
                 <Image
-                    source={require('@/assets/images/logo-black.png')}
+                    source={theme.dark ? require('@/assets/images/logo-white.png') : require('@/assets/images/logo-black.png')}
                     contentFit="contain"
                     style={[{ width: 24, height: 24 }]}
-                    tintColor={theme.colors.header.tint}
                 />
             </View>
             {props.showAutomations ? (

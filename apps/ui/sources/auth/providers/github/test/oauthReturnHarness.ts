@@ -7,12 +7,29 @@ export const replaceSpy = vi.fn();
 export const localSearchParamsMock = vi.fn();
 
 export const loginSpy = vi.fn(async () => {});
+export const upsertAndActivateServerSpy = vi.fn();
 const hoistedModal = vi.hoisted(() => ({
     alert: vi.fn(async () => {}),
     prompt: vi.fn<(title: string, message: string, opts: Record<string, unknown>) => Promise<string | null>>(async () => null),
     confirm: vi.fn(async () => true),
 }));
 export const modal = hoistedModal;
+
+let activeServerSnapshotState: {
+    serverId: string;
+    serverUrl: string;
+    kind: string;
+    generation: number;
+} = {
+    serverId: 'server-a',
+    serverUrl: 'http://default.example.test',
+    kind: 'custom',
+    generation: 1,
+};
+
+export function setActiveServerSnapshot(next: Partial<typeof activeServerSnapshotState>) {
+    activeServerSnapshotState = { ...activeServerSnapshotState, ...next };
+}
 
 let pendingExternalAuthState: PendingExternalAuth | null = {
     provider: 'github',
@@ -59,6 +76,11 @@ vi.mock('@/auth/context/AuthContext', () => ({
 }));
 
 vi.mock('@/modal', () => ({ Modal: modal }));
+
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: () => activeServerSnapshotState,
+    upsertAndActivateServer: upsertAndActivateServerSpy,
+}));
 
 vi.mock('@/sync/api/capabilities/sessionSharingSupport', () => ({
     isSessionSharingSupported: async () => false,
@@ -127,6 +149,7 @@ export async function renderOAuthReturnScreen() {
 export function resetOAuthHarness() {
     replaceSpy.mockReset();
     loginSpy.mockReset();
+    upsertAndActivateServerSpy.mockReset();
     if (typeof modal.alert.mockReset === 'function') {
         modal.alert.mockReset();
     } else {
@@ -156,5 +179,11 @@ export function resetOAuthHarness() {
     setAuthState({
         isAuthenticated: false,
         credentials: null,
+    });
+    setActiveServerSnapshot({
+        serverId: 'server-a',
+        serverUrl: 'http://default.example.test',
+        kind: 'custom',
+        generation: 1,
     });
 }

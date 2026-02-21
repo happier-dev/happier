@@ -17,7 +17,7 @@ let sessionPendingState: { messages: any[] } = { messages: [] };
 let sessionActionDraftsState: any[] = [];
 let sessionState: any = null;
 
-const buildChatListItemsMock = vi.fn(() => []);
+const buildChatListItemsMock = vi.fn((..._args: any[]) => []);
 
 vi.mock('react-native', async (importOriginal) => {
   const ReactMod = await import('react');
@@ -53,7 +53,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
 }));
 
 vi.mock('@/components/sessions/chatListItems', () => ({
-  buildChatListItems: (...args: any[]) => buildChatListItemsMock(...args),
+  buildChatListItems: buildChatListItemsMock,
 }));
 
 vi.mock('./ChatFooter', () => ({
@@ -82,7 +82,7 @@ vi.mock('@/utils/system/fireAndForget', () => ({
 
 vi.mock('@/sync/sync', () => ({
   sync: {
-    loadOlderMessages: (...args: any[]) => loadOlderMessagesMock(...args),
+    loadOlderMessages: loadOlderMessagesMock,
   },
 }));
 

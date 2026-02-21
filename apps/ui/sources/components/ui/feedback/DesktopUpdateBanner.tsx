@@ -1,9 +1,11 @@
 import * as React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useDesktopUpdater } from '@/desktop/updates/useDesktopUpdater';
 import { t } from '@/text';
 import { getDesktopUpdateBannerModel } from './desktopUpdateBannerModel';
+import { Text } from '@/components/ui/text/Text';
+
 
 export function DesktopUpdateBanner() {
     const styles = stylesheet;

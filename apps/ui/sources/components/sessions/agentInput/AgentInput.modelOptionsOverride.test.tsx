@@ -18,7 +18,7 @@ function nodeContainsExactText(node: renderer.ReactTestInstance, value: string):
 function findTextNode(tree: renderer.ReactTestRenderer, value: string): renderer.ReactTestInstance | undefined {
     return tree.root.findAll((node) => (
         typeof node.type === 'string' &&
-        node.type === 'Text' &&
+        String(node.type) === 'Text' &&
         nodeContainsExactText(node, value)
     ))[0];
 }
@@ -26,7 +26,7 @@ function findTextNode(tree: renderer.ReactTestRenderer, value: string): renderer
 function findPressableByLabel(tree: renderer.ReactTestRenderer, label: string): renderer.ReactTestInstance | undefined {
     return tree.root.findAll((node) => (
         typeof node.type === 'string' &&
-        node.type === 'Pressable' &&
+        String(node.type) === 'Pressable' &&
         nodeContainsExactText(node, label)
     ))[0];
 }
@@ -34,7 +34,7 @@ function findPressableByLabel(tree: renderer.ReactTestRenderer, label: string): 
 function findPressableByAccessibilityLabel(tree: renderer.ReactTestRenderer, label: string): renderer.ReactTestInstance | undefined {
     return tree.root.findAll((node) => (
         typeof node.type === 'string' &&
-        node.type === 'Pressable' &&
+        String(node.type) === 'Pressable' &&
         typeof (node.props as any)?.accessibilityLabel === 'string' &&
         (node.props as any).accessibilityLabel === label
     ))[0];
@@ -55,46 +55,6 @@ vi.mock('react-native', () => ({
     Dimensions: {
         get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
     },
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (styles: any) => {
-            const theme = {
-                colors: {
-                    input: { background: '#fff' },
-                    button: {
-                        primary: { background: '#000', tint: '#fff' },
-                        secondary: { tint: '#000', surface: '#fff' },
-                    },
-                    radio: { active: '#000', inactive: '#ddd' },
-                    text: '#000',
-                    textSecondary: '#666',
-                    divider: '#ddd',
-                    success: '#0a0',
-                    textDestructive: '#a00',
-                },
-            };
-            return typeof styles === 'function' ? styles(theme) : styles;
-        },
-    },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                input: { background: '#fff' },
-                button: {
-                    primary: { background: '#000', tint: '#fff' },
-                    secondary: { tint: '#000', surface: '#fff' },
-                },
-                radio: { active: '#000', inactive: '#ddd' },
-                text: '#000',
-                textSecondary: '#666',
-                divider: '#ddd',
-                success: '#0a0',
-                textDestructive: '#a00',
-            },
-        },
-    }),
 }));
 
 vi.mock('@expo/vector-icons', () => ({

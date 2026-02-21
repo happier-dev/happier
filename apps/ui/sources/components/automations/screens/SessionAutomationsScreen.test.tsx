@@ -33,34 +33,6 @@ vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: (props: any) => React.createElement('Switch', props),
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                groupped: { background: '#fff' },
-                text: '#111',
-                textSecondary: '#777',
-                surfaceHighest: '#eee',
-                divider: '#ddd',
-                fab: { background: '#0a84ff' },
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (factory: any) =>
-            factory({
-                colors: {
-                    groupped: { background: '#fff' },
-                    text: '#111',
-                    textSecondary: '#777',
-                    surfaceHighest: '#eee',
-                    divider: '#ddd',
-                    fab: { background: '#0a84ff' },
-                },
-            }),
-    },
-}));
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));

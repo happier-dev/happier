@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, View } from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
@@ -14,6 +14,8 @@ import { renderExecutionRunStructuredMeta } from '@/components/sessions/runs/ren
 import { ExecutionRunDetailsPanel } from '@/components/sessions/runs/ExecutionRunDetailsPanel';
 import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 type LoadState =
     | { status: 'loading' }

@@ -1,9 +1,11 @@
 import * as React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
+import { Text } from '@/components/ui/text/Text';
+
 
 export type ElevenLabsAgentReuseDecision = 'create_new' | 'update_existing' | 'cancel';
 

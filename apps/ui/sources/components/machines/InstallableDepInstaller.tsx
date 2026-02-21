@@ -9,8 +9,8 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
-import type { InstallSpecSettingKey } from '@/capabilities/installableDepsRegistry';
-import { compareVersions, parseVersion } from '@/utils/system/versionUtils';
+import type { InstallSpecSettingKey } from '@/capabilities/installablesRegistry';
+import { isInstallableDepUpdateAvailable } from '@/capabilities/installablesUpdateAvailable';
 import { useUnistyles } from 'react-native-unistyles';
 
 type InstallableDepData = {
@@ -20,17 +20,6 @@ type InstallableDepData = {
     lastInstallLogPath: string | null;
     registry?: { ok: true; latestVersion: string | null } | { ok: false; errorMessage: string };
 };
-
-function computeUpdateAvailable(data: InstallableDepData | null): boolean {
-    if (!data?.installed) return false;
-    const installed = data.installedVersion;
-    const latest = data.registry && data.registry.ok ? data.registry.latestVersion : null;
-    if (!installed || !latest) return false;
-    const installedParsed = parseVersion(installed);
-    const latestParsed = parseVersion(latest);
-    if (!installedParsed || !latestParsed) return false;
-    return compareVersions(installed, latest) < 0;
-}
 
 export type InstallableDepInstallerProps = {
     machineId: string;
@@ -42,6 +31,7 @@ export type InstallableDepInstallerProps = {
     depIconName: React.ComponentProps<typeof Ionicons>['name'];
     depStatus: InstallableDepData | null;
     capabilitiesStatus: 'idle' | 'loading' | 'loaded' | 'error' | 'not-supported';
+    extraItems?: React.ReactNode;
     installSpecSettingKey: InstallSpecSettingKey;
     installSpecTitle: string;
     installSpecDescription: string;
@@ -58,7 +48,7 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
 
     if (!props.enabled) return null;
 
-    const updateAvailable = computeUpdateAvailable(props.depStatus);
+    const updateAvailable = isInstallableDepUpdateAvailable(props.depStatus);
 
     const subtitle = (() => {
         if (props.capabilitiesStatus === 'loading') return t('common.loading');
@@ -142,6 +132,8 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
                 showChevron={false}
                 onPress={() => props.refreshRegistry?.()}
             />
+
+            {props.extraItems}
 
             {props.depStatus?.registry && props.depStatus.registry.ok && props.depStatus.registry.latestVersion && (
                 <Item

@@ -20,21 +20,6 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                text: '#111',
-                textSecondary: '#666',
-                status: { connected: '#0a0', disconnected: '#a00' },
-                divider: '#eee',
-                input: { placeholder: '#999', background: '#fff' },
-            },
-        },
-    }),
-    StyleSheet: { create: (v: any) => v, absoluteFillObject: {} },
-}));
-
 vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
@@ -63,8 +48,9 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
 }));
 
-vi.mock('@/components/ui/text/StyledText', () => ({
+vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
+    TextInput: 'TextInput',
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({

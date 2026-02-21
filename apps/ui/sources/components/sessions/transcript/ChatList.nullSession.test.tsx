@@ -1,5 +1,5 @@
 import * as React from 'react';
-import renderer from 'react-test-renderer';
+import renderer, { act } from 'react-test-renderer';
 import { describe, it, expect, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -58,6 +58,20 @@ describe('ChatList', () => {
             canApprovePermissions: true,
         } as any;
 
-        expect(() => renderer.create(<ChatList session={session} />)).not.toThrow();
+        let tree: renderer.ReactTestRenderer | undefined;
+        let thrown: unknown;
+        try {
+            await act(async () => {
+                tree = renderer.create(<ChatList session={session} />);
+            });
+        } catch (error) {
+            thrown = error;
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+        }
+
+        expect(thrown).toBeUndefined();
     });
 });

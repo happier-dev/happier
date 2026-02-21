@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Modal } from '@/modal';
@@ -8,6 +8,8 @@ import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { PendingMessagesModal } from './PendingMessagesModal';
 import { layout } from '@/components/ui/layout/layout';
+import { Text } from '@/components/ui/text/Text';
+
 
 export function PendingUserTextMessageView(props: {
     sessionId: string;

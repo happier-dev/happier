@@ -47,6 +47,39 @@ vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
     }),
 }));
 
+vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
+    getServerFeaturesSnapshot: async () => ({
+        status: 'ready',
+        features: {
+            features: {
+                sharing: { session: { enabled: true }, public: { enabled: true }, contentKeys: { enabled: true }, pendingQueueV2: { enabled: true } },
+                voice: { enabled: false, happierVoice: { enabled: false } },
+                social: { friends: { enabled: false } },
+                auth: { login: { keyChallenge: { enabled: true } }, recovery: { providerReset: { enabled: false } }, ui: { recoveryKeyReminder: { enabled: true } } },
+            },
+            capabilities: {
+                oauth: { providers: { github: { enabled: true, configured: true } } },
+                auth: {
+                    signup: { methods: [{ id: 'anonymous', enabled: true }] },
+                    login: { requiredProviders: ['github'], methods: [{ id: 'key_challenge', enabled: true }] },
+                    recovery: { providerReset: { providers: ['github'] } },
+                    ui: { autoRedirect: { enabled: false, providerId: null } },
+                    providers: {
+                        github: {
+                            enabled: true,
+                            configured: true,
+                            ui: { displayName: 'GitHub', iconHint: 'github', connectButtonColor: '#24292F', supportsProfileBadge: true, badgeIconName: 'github' },
+                            restrictions: { usersAllowlist: false, orgsAllowlist: false, orgMatch: 'any' },
+                            offboarding: { enabled: false, intervalSeconds: 600, mode: 'per-request-cache', source: 'github_app' },
+                        },
+                    },
+                    misconfig: [],
+                },
+            },
+        },
+    }),
+}));
+
 vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
     getPendingTerminalConnect: () => ({ publicKeyB64Url: 'abc123', serverUrl: 'https://company.example.test' }),
     setPendingTerminalConnect: vi.fn(),
@@ -63,6 +96,9 @@ describe('/ (welcome) terminal connect intent notice', () => {
             tree = renderer.create(<Screen />);
         });
         await act(async () => {});
+
+        const intentBlocks = tree!.root.findAll((n) => n.props?.testID === 'welcome-terminal-connect-intent');
+        expect(intentBlocks).toHaveLength(1);
 
         const textValues = tree!.root
             .findAll((n) => typeof n.props?.children === 'string')

@@ -1,7 +1,7 @@
 import { MarkdownSpan } from './parseMarkdown';
 import { Link } from 'expo-router';
 import * as React from 'react';
-import { Text } from '../ui/text/StyledText';
+import { Text } from '../ui/text/Text';
 
 export type MarkdownSpansViewProps = {
     spans: MarkdownSpan[];

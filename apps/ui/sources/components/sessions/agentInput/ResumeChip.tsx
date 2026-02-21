@@ -1,7 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { ActivityIndicator, Pressable, Text } from 'react-native';
+import { ActivityIndicator, Pressable } from 'react-native';
 import { t } from '@/text';
+import { Text } from '@/components/ui/text/Text';
+
 
 export const RESUME_CHIP_ICON_NAME = 'refresh-outline' as const;
 export const RESUME_CHIP_ICON_SIZE = 16 as const;

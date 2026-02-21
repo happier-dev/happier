@@ -39,9 +39,38 @@ describe('TokenStorage pending external auth (web)', () => {
 
         await expect(TokenStorage.getPendingExternalAuth()).resolves.toEqual({ provider: 'github', secret: 's' });
 
+        if (!localStorageHandle) {
+            throw new Error('Expected localStorage mock handle');
+        }
+        const pendingKeys = [...localStorageHandle.store.keys()].filter((k) => k.includes('pending_external_auth'));
+        expect(pendingKeys.length).toBe(2);
+        expect(pendingKeys.some((k) => k.includes('__srv_'))).toBe(true);
+        expect(pendingKeys.some((k) => k.includes('__global'))).toBe(true);
+
+        // If the server-scoped key can't be resolved on return (server selection changed / lost),
+        // TokenStorage should still recover the pending state from the global fallback.
+        for (const key of pendingKeys) {
+            if (key.includes('__srv_')) {
+                localStorageHandle.store.delete(key);
+            }
+        }
+        await expect(TokenStorage.getPendingExternalAuth()).resolves.toEqual({ provider: 'github', secret: 's' });
+
         const cleared = await TokenStorage.clearPendingExternalAuth();
         expect(cleared).toBe(true);
         await expect(TokenStorage.getPendingExternalAuth()).resolves.toBeNull();
+    });
+
+    it('round-trips pending external auth returnTo when it is an internal path', async () => {
+        const { TokenStorage } = await import('./tokenStorage');
+
+        const ok = await TokenStorage.setPendingExternalAuth({ provider: 'github', secret: 's', returnTo: '/settings/account' });
+        expect(ok).toBe(true);
+        await expect(TokenStorage.getPendingExternalAuth()).resolves.toEqual({
+            provider: 'github',
+            secret: 's',
+            returnTo: '/settings/account',
+        });
     });
 
     it('returns null for malformed pending external auth payloads', async () => {

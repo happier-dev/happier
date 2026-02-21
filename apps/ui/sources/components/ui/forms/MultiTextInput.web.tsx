@@ -28,6 +28,7 @@ export interface MultiTextInputHandle {
 }
 
 interface MultiTextInputProps {
+    testID?: string;
     value: string;
     onChangeText: (text: string) => void;
     placeholder?: string;
@@ -42,6 +43,7 @@ interface MultiTextInputProps {
     onStateChange?: (state: TextInputState) => void;
     onFilesPasted?: (files: readonly File[]) => void;
     onFilesDropped?: (files: readonly File[]) => void;
+    onFileDragActiveChange?: (active: boolean) => void;
 }
 
 export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextInputProps>((props, ref) => {
@@ -229,6 +231,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         <View style={{ width: '100%' }}>
             <TextareaAutosize
                 ref={textareaRef}
+                data-testid={props.testID}
                 style={{
                     width: '100%',
                     padding: '0',

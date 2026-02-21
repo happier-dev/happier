@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { CODEX_ACP_DEP_ID, CODEX_MCP_RESUME_DEP_ID, INSTALLABLE_KEYS } from '@happier-dev/protocol/installables';
 
 import {
     getAgentResumeExperimentsFromSettings,
@@ -14,7 +15,7 @@ describe('getNewSessionRelevantInstallableDepKeys', () => {
             agentId: 'codex',
             experiments: getAgentResumeExperimentsFromSettings('codex', mcpResume),
             resumeSessionId: 'x1',
-        })).toEqual(['codex-mcp-resume']);
+        })).toEqual([INSTALLABLE_KEYS.CODEX_MCP_RESUME]);
 
         expect(getNewSessionRelevantInstallableDepKeys({
             agentId: 'codex',
@@ -27,7 +28,7 @@ describe('getNewSessionRelevantInstallableDepKeys', () => {
             agentId: 'codex',
             experiments: getAgentResumeExperimentsFromSettings('codex', acp),
             resumeSessionId: '',
-        })).toEqual(['codex-acp']);
+        })).toEqual([INSTALLABLE_KEYS.CODEX_ACP]);
 
         const mcp = makeSettings({ codexBackendMode: 'mcp' });
         expect(getNewSessionRelevantInstallableDepKeys({
@@ -55,8 +56,8 @@ describe('getNewSessionPreflightIssues', () => {
             experiments: getAgentResumeExperimentsFromSettings('codex', settings),
             resumeSessionId: 'x1',
             results: makeResults({
-                'dep.codex-mcp-resume': okCapability({ installed: false }),
-                'dep.codex-acp': okCapability({ installed: false }),
+                [CODEX_MCP_RESUME_DEP_ID]: okCapability({ installed: false }),
+                [CODEX_ACP_DEP_ID]: okCapability({ installed: false }),
             }),
         });
         // Codex ACP can run via npx fallback now; do not block new sessions when the optional dep isn't installed.

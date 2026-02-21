@@ -1,5 +1,5 @@
 import React from 'react';
-import { Platform, Pressable, TextInput, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -13,7 +13,7 @@ import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { layout } from '@/components/ui/layout/layout';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text, TextInput } from '@/components/ui/text/Text';
 import { updateExistingSessionAutomationTemplateMessage } from '@/sync/domains/automations/automationExistingSessionTemplateUpdate';
 import { tryDecodeAutomationTemplateEnvelope } from '@/sync/domains/automations/automationTemplateTransport';
 import { decodeAutomationTemplate } from '@/sync/domains/automations/automationTemplateCodec';

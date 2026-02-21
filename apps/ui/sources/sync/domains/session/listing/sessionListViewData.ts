@@ -1,3 +1,4 @@
+import { isHiddenSystemSession } from '@happier-dev/protocol';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 
 export type SessionListViewItem =
@@ -267,7 +268,7 @@ export function buildSessionListViewData(
 
     Object.values(sessions).forEach((session) => {
         // Hide system sessions from user-facing lists by default.
-        if (session.metadata?.systemSessionV1?.hidden === true) {
+        if (isHiddenSystemSession({ metadata: session.metadata })) {
             return;
         }
         if (isSessionActive(session)) {

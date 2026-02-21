@@ -2,11 +2,12 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useAuth } from '@/auth/context/AuthContext';
@@ -36,6 +37,7 @@ function asStringParam(value: unknown): string {
 }
 
 export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDetailView() {
+  const { theme } = useUnistyles();
   const router = useRouter();
   const params = useLocalSearchParams();
   const auth = useAuth();
@@ -69,7 +71,7 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
         <ItemGroup>
           <Item
             title={t('common.close') ?? 'Done'}
-            icon={<Ionicons name="close-outline" size={22} color="#007AFF" />}
+            icon={<Ionicons name="close-outline" size={22} color={theme.colors.accent.blue} />}
             onPress={() => router.back()}
             showChevron={false}
           />
@@ -257,7 +259,7 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
         <ItemGroup>
           <Item
             title={t('common.close') ?? 'Done'}
-            icon={<Ionicons name="close-outline" size={22} color="#007AFF" />}
+            icon={<Ionicons name="close-outline" size={22} color={theme.colors.accent.blue} />}
             onPress={() => router.back()}
             showChevron={false}
           />
@@ -305,7 +307,7 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
       <ItemGroup>
         <Item
           title={t('common.close') ?? 'Done'}
-          icon={<Ionicons name="close-outline" size={22} color="#007AFF" />}
+          icon={<Ionicons name="close-outline" size={22} color={theme.colors.accent.blue} />}
           onPress={() => router.back()}
           showChevron={false}
         />

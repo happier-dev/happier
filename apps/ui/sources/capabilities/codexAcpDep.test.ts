@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { CodexAcpDepData } from '@/sync/api/capabilities/capabilitiesProtocol';
+import { CODEX_ACP_DEP_ID, CODEX_ACP_DIST_TAG } from '@happier-dev/protocol/installables';
 
 import {
     buildCodexAcpRegistryDetectRequest,
-    CODEX_ACP_DEP_ID,
-    CODEX_ACP_DIST_TAG,
     getCodexAcpDepData,
     getCodexAcpDetectResult,
     getCodexAcpLatestVersion,

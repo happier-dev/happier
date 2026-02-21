@@ -33,8 +33,8 @@ describe('formatFallbackIssueBody', () => {
             diagnosticsIncluded: false,
         });
 
-        expect(body).toContain('## Summary');
-        expect(body).toContain('## Reproduction Steps');
+        expect(body).toMatch(/(^|\n)#+\s+Summary\b/);
+        expect(body).toMatch(/(^|\n)#+\s+Reproduction steps\b/i);
         expect(body).toContain('Sessions drop after a minute.');
         expect(body).toContain('Diagnostics: not included');
         expect(body).toContain('Upgraded CLI yesterday');

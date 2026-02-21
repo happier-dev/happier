@@ -1,11 +1,13 @@
 import * as React from 'react';
-import { View, Text } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { CodeView } from '@/components/ui/media/CodeView';
 import { maybeParseJson } from '../../normalization/parse/parseJson';
 import { tailTextWithEllipsis } from '../../normalization/parse/stdStreams';
+import { Text } from '@/components/ui/text/Text';
+
 
 function truncate(text: string, maxChars: number): string {
     if (text.length <= maxChars) return text;

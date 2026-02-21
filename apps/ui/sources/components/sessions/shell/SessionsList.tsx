@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, FlatList, Pressable } from 'react-native';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 import { usePathname, useRouter } from 'expo-router';
 import { SessionListViewItem, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';

@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Platform, useWindowDimensions } from 'react-native';
+import { View, Platform, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -22,6 +22,8 @@ import { Typography } from '@/constants/Typography';
 import { hasRequiredSecret } from '@/sync/domains/profiles/profileSecrets';
 import { useSetting } from '@/sync/domains/state/storage';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
+import { Text } from '@/components/ui/text/Text';
+
 
 export interface ProfilesListProps {
     customProfiles: AIBackendProfile[];

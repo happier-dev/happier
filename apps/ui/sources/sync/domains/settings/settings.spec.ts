@@ -22,6 +22,11 @@ describe('settings', () => {
             expect(settingsParse({})).toEqual(settingsDefaults);
         });
 
+        it('includes installables policy map by default', () => {
+            const settings = settingsParse({});
+            expect((settings as any).installablesPolicyByMachineId).toEqual({});
+        });
+
         it('should parse valid settings object', () => {
             const validSettings = {
                 viewInline: true

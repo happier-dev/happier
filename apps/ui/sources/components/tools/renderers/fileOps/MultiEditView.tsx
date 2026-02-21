@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Text } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { ToolViewProps } from '../core/_registry';
@@ -8,6 +8,8 @@ import { knownTools } from '../../catalog';
 import { trimIdent } from '@/utils/strings/trimIdent';
 import { useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { Text } from '@/components/ui/text/Text';
+
 
 export const MultiEditView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
     const showLineNumbersInToolViews = useSetting('showLineNumbersInToolViews');
@@ -83,7 +85,7 @@ export const MultiEditView = React.memo<ToolViewProps>(({ tool, detailLevel }) =
     );
 });
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
     editHeader: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -92,10 +94,10 @@ const styles = StyleSheet.create({
     editNumber: {
         fontSize: 14,
         fontWeight: '600',
-        color: '#5856D6',
+        color: theme.colors.accent.indigo,
     },
     replaceAllBadge: {
-        backgroundColor: '#5856D6',
+        backgroundColor: theme.colors.accent.indigo,
         paddingHorizontal: 8,
         paddingVertical: 4,
         borderRadius: 12,
@@ -103,7 +105,7 @@ const styles = StyleSheet.create({
     },
     replaceAllText: {
         fontSize: 12,
-        color: '#fff',
+        color: theme.colors.button.primary.tint,
         fontWeight: '600',
     },
     separator: {
@@ -112,7 +114,7 @@ const styles = StyleSheet.create({
     more: {
         marginTop: 8,
         fontSize: 12,
-        color: '#8E8E93',
+        color: theme.colors.textSecondary,
         fontFamily: 'Menlo',
     },
-});
+}));

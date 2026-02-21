@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { Text, View } from 'react-native';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -12,6 +12,8 @@ import type {
     ServerScopedMachine,
     ServerScopedMachineGroup,
 } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
+import { Text } from '@/components/ui/text/Text';
+
 
 type ServerScopedMachineSelectorProps = Readonly<{
     groups: ReadonlyArray<ServerScopedMachineGroup>;

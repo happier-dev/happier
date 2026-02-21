@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Text, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
 import { Item } from '@/components/ui/lists/Item';
@@ -9,6 +9,8 @@ import type { MachineCapabilitiesCacheState } from '@/hooks/server/useMachineCap
 import type { CapabilityDetectResult, CapabilityId, CliCapabilityData, TmuxCapabilityData } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { getAgentCore } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
+import { Text } from '@/components/ui/text/Text';
+
 
 type Props = {
     state: MachineCapabilitiesCacheState;

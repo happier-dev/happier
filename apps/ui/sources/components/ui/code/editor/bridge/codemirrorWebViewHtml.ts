@@ -1,3 +1,5 @@
+import { resolveCodeEditorFontMetrics } from '../codeEditorFontMetrics';
+
 export type CodeMirrorWebViewTheme = Readonly<{
     backgroundColor: string;
     textColor: string;
@@ -11,12 +13,20 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
     showLineNumbers: boolean;
     changeDebounceMs: number;
     maxChunkBytes: number;
+    uiFontScale?: number;
+    osFontScale?: number;
 }>): string {
     const themeJson = JSON.stringify(params.theme);
     const wrapLines = params.wrapLines ? 'true' : 'false';
     const showLineNumbers = params.showLineNumbers ? 'true' : 'false';
     const changeDebounceMs = Math.max(0, Math.floor(params.changeDebounceMs));
     const maxChunkBytes = Math.max(8_000, Math.floor(params.maxChunkBytes));
+    const fontMetrics = resolveCodeEditorFontMetrics({
+        uiFontScale: typeof params.uiFontScale === 'number' && Number.isFinite(params.uiFontScale) ? params.uiFontScale : 1,
+        osFontScale: typeof params.osFontScale === 'number' && Number.isFinite(params.osFontScale) ? params.osFontScale : 1,
+    });
+    const fontSizePx = fontMetrics.fontSize;
+    const lineHeightPx = fontMetrics.lineHeight;
 
     // Notes:
     // - We load CodeMirror 6 via CDN ESM modules (experimental; best-effort).
@@ -38,8 +48,8 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
       .cm-editor {
         height: 100%;
         font-family: Menlo, ui-monospace, SFMono-Regular, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-        font-size: 13px;
-        line-height: 20px;
+        font-size: ${fontSizePx}px;
+        line-height: ${lineHeightPx}px;
       }
       .cm-gutters {
         border-right: 1px solid ${params.theme.dividerColor};
@@ -347,4 +357,3 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
   </body>
 </html>`;
 }
-

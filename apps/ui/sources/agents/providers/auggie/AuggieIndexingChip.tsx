@@ -1,10 +1,12 @@
 import { Octicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { Pressable, Text } from 'react-native';
+import { Pressable } from 'react-native';
 
 import { hapticsLight } from '@/components/ui/theme/haptics';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput';
 import { t } from '@/text';
+import { Text } from '@/components/ui/text/Text';
+
 
 export function createAuggieAllowIndexingChip(opts: Readonly<{
     allowIndexing: boolean;

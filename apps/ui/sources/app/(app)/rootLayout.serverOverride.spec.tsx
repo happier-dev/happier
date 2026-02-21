@@ -97,6 +97,7 @@ vi.mock('@/sync/domains/pending/pendingNotificationNav', () => ({
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerUrl: () => activeServerUrl,
+    getActiveServerSnapshot: () => ({ serverId: 'server-a', serverUrl: activeServerUrl, generation: 1 }),
 }));
 
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({

@@ -7,7 +7,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 import { layout } from '@/components/ui/layout/layout';
 import { Modal } from '@/modal';
 import { useAutomations } from '@/sync/domains/state/storage';
@@ -97,7 +97,7 @@ export function SessionAutomationsScreen(props: { sessionId: string }) {
                     <ItemGroup title="Actions">
                         <Item
                             title="Add automation"
-                            icon={<Ionicons name="add-outline" size={29} color="#007AFF" />}
+                            icon={<Ionicons name="add-outline" size={29} color={theme.colors.accent.blue} />}
                             onPress={() => router.push(`/session/${props.sessionId}/automations/new` as any)}
                         />
                     </ItemGroup>

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { ActivityIndicator, Platform, View } from 'react-native';
 import { Octicons } from '@expo/vector-icons';
 
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 import { Item } from '@/components/ui/lists/Item';
 import { FileIcon } from '@/components/ui/media/FileIcon';
 import { Typography } from '@/constants/Typography';
@@ -17,9 +17,9 @@ type SearchResultsListProps = {
     onFilePress: (file: FileItem) => void;
 };
 
-function renderFileIconForSearch(file: FileItem) {
+function renderFileIconForSearch(file: FileItem, theme: any) {
     if (file.fileType === 'folder') {
-        return <Octicons name="file-directory" size={29} color="#007AFF" />;
+        return <Octicons name="file-directory" size={29} color={theme.colors.accent.blue} />;
     }
 
     return <FileIcon fileName={file.fileName} size={29} />;
@@ -131,7 +131,7 @@ export function SearchResultsList({
                     key={`file-${file.fullPath}-${index}`}
                     title={file.fileName}
                     subtitle={file.filePath || t('files.projectRoot')}
-                    icon={renderFileIconForSearch(file)}
+                    icon={renderFileIconForSearch(file, theme)}
                     density="compact"
                     onPress={file.fileType === 'file' ? () => onFilePress(file) : undefined}
                     showDivider={index < searchResults.length - 1}

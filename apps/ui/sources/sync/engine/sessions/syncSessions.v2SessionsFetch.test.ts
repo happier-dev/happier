@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { HappyError } from '@/utils/errors/errors';
+import { encodeV2SessionListCursorV1, type V2SessionRecord } from '@happier-dev/protocol';
 
 import { fetchAndApplySessions, type SessionListEncryption } from './sessionSnapshot';
 
@@ -14,24 +15,7 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
     }),
 }));
 
-type SessionRow = {
-    id: string;
-    seq: number;
-    createdAt: number;
-    updatedAt: number;
-    active: boolean;
-    activeAt: number;
-    archivedAt?: number | null;
-    metadata: string;
-    metadataVersion: number;
-    agentState: string | null;
-    agentStateVersion: number;
-    dataEncryptionKey: string | null;
-    share: {
-        accessLevel: 'view' | 'edit' | 'admin';
-        canApprovePermissions: boolean;
-    } | null;
-};
+type SessionRow = V2SessionRecord;
 
 function buildSessionRow(overrides: Partial<SessionRow> & Pick<SessionRow, 'id'>): SessionRow {
     const { id, ...rest } = overrides;
@@ -88,6 +72,51 @@ afterEach(() => {
 });
 
 describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
+    it('bypasses decrypt for plaintext sessions and parses metadata/agentState JSON', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    buildSessionRow({
+                        id: 's_plain',
+                        dataEncryptionKey: null,
+                        encryptionMode: 'plain',
+                        metadata: JSON.stringify({ path: '/repo', host: 'dev' }),
+                        agentState: JSON.stringify({}),
+                    }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+
+        const { encryption, decryptMetadata, decryptAgentState } = createEncryptionHarness();
+        const appliedSessions: Array<Record<string, unknown>> = [];
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions: (sessions) => {
+                appliedSessions.push(...(sessions as unknown as Array<Record<string, unknown>>));
+            },
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(decryptMetadata).not.toHaveBeenCalled();
+        expect(decryptAgentState).not.toHaveBeenCalled();
+        expect(appliedSessions).toHaveLength(1);
+        expect(appliedSessions[0]).toEqual(
+            expect.objectContaining({
+                id: 's_plain',
+                encryptionMode: 'plain',
+                metadata: expect.objectContaining({ path: '/repo', host: 'dev' }),
+                agentState: {},
+            }),
+        );
+    });
+
     it('pages through /v2/sessions and applies decrypted sessions with share and key cache mapping', async () => {
         const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
             const parsed = new URL(typeof input === 'string' ? input : String(input));
@@ -105,12 +134,12 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                             share: { accessLevel: 'view', canApprovePermissions: true },
                         }),
                     ],
-                    nextCursor: 'cursor_v1_s1',
+                    nextCursor: encodeV2SessionListCursorV1('s1'),
                     hasNext: true,
                 });
             }
 
-            expect(cursor).toBe('cursor_v1_s1');
+            expect(cursor).toBe(encodeV2SessionListCursorV1('s1'));
             return jsonResponse({
                 sessions: [
                     buildSessionRow({ id: 's0', seq: 0, active: false, activeAt: 0, dataEncryptionKey: 'k0' }),

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { SourceControlOperationsHistorySection } from '@/components/sessions/files/SourceControlOperationsHistorySection';
 import { SourceControlOperationsLogSection } from '@/components/sessions/files/SourceControlOperationsLogSection';

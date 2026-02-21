@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, FlatList } from 'react-native';
+import { View, ActivityIndicator, KeyboardAvoidingView, Platform, FlatList } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { UserSearchResult } from '@/components/friends/UserSearchResult';
 import { searchUsersByUsername, sendFriendRequest } from '@/sync/api/social/apiFriends';
@@ -14,6 +14,8 @@ import { useSearch } from '@/hooks/search/useSearch';
 import { useRequireFriendsEnabled } from '@/hooks/friends/useRequireFriendsEnabled';
 import { HappyError } from '@/utils/errors/errors';
 import { RequireFriendsIdentityForFriends } from '@/components/friends/RequireFriendsIdentityForFriends';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 export default function SearchFriendsScreen() {
     const { theme } = useUnistyles();

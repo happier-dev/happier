@@ -1,9 +1,11 @@
 import React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import type { ReviewCommentsV1 } from '@/sync/domains/input/reviewComments/reviewCommentMeta';
 import type { ReviewCommentAnchor, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
+import { Text } from '@/components/ui/text/Text';
+
 
 export function ReviewCommentsMessageCard(props: {
     payload: ReviewCommentsV1;

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Text, TextInput, View, type ViewStyle, type StyleProp, type TextStyle } from 'react-native';
+import { Platform, View, ViewStyle, StyleProp, TextStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -11,6 +11,8 @@ import { SelectableMenuResults } from '@/components/ui/forms/dropdown/Selectable
 import type { SelectableMenuItem } from '@/components/ui/forms/dropdown/selectableMenuTypes';
 import { useSelectableMenu, CREATE_ITEM_ID } from '@/components/ui/forms/dropdown/useSelectableMenu';
 import { Item, type ItemProps } from '@/components/ui/lists/Item';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 export type DropdownMenuItem = Readonly<{
     id: string;
@@ -177,8 +179,8 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 ? item.rightElement
                 : item.shortcut
                     ? (
-                        <View style={{ paddingHorizontal: 10, paddingVertical: 5, backgroundColor: 'rgba(0, 0, 0, 0.04)', borderRadius: 6 }}>
-                            <Text style={{ fontSize: 12, color: '#666', fontWeight: '500' }}>
+                        <View style={{ paddingHorizontal: 10, paddingVertical: 5, backgroundColor: theme.colors.surfacePressedOverlay, borderRadius: 6 }}>
+                            <Text style={{ fontSize: 12, color: theme.colors.textSecondary, fontWeight: '500' }}>
                                 {item.shortcut}
                             </Text>
                         </View>
@@ -376,7 +378,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                         value={searchQuery}
                                         onChangeText={handleSearchChange}
                                         placeholder={props.searchPlaceholder ?? t('commandPalette.placeholder')}
-                                        placeholderTextColor="#999"
+                                        placeholderTextColor={theme.colors.input.placeholder}
                                         autoFocus={false}
                                         autoCorrect={false}
                                         autoCapitalize="none"

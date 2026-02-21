@@ -1,9 +1,11 @@
 import * as React from 'react';
-import { Text, View } from 'react-native';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { ExecutionRunRow, type ExecutionRunRowRun } from './ExecutionRunRow';
 import { t } from '@/text';
+import { Text } from '@/components/ui/text/Text';
+
 
 export const ExecutionRunList = React.memo((props: Readonly<{
     runs: readonly ExecutionRunRowRun[];

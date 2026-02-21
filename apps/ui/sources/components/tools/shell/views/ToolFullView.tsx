@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Text, View, ScrollView, Platform, useWindowDimensions } from 'react-native';
+import { View, ScrollView, Platform, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ToolCall, Message } from '@/sync/domains/messages/messageTypes';
 import { CodeView } from '@/components/ui/media/CodeView';
@@ -16,6 +16,9 @@ import { knownTools } from '@/components/tools/catalog';
 import { PermissionFooter } from '../permissions/PermissionFooter';
 import { useSetting } from '@/sync/domains/state/storage';
 import { MessageView } from '@/components/sessions/transcript/MessageView';
+import { useUnistyles } from 'react-native-unistyles';
+import { Text } from '@/components/ui/text/Text';
+
 
 const KNOWN_TOOL_KEYS = Object.keys(knownTools);
 
@@ -32,6 +35,7 @@ interface ToolFullViewProps {
 }
 
 export function ToolFullView({ tool, sessionId, metadata, messages = [], interaction }: ToolFullViewProps) {
+    const { theme } = useUnistyles();
     const toolForRendering = React.useMemo<ToolCall>(() => normalizeToolCallForRendering(tool), [tool]);
 
     const normalizedToolName = React.useMemo(() => {
@@ -96,7 +100,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], interac
                     {toolForRendering.description && (
                         <View style={styles.section}>
                             <View style={styles.sectionHeader}>
-                                <Ionicons name="information-circle" size={20} color="#5856D6" />
+                                <Ionicons name="information-circle" size={20} color={theme.colors.accent.indigo} />
                                 <Text style={styles.sectionTitle}>{t('tools.fullView.description')}</Text>
                             </View>
                             <Text style={styles.description}>{toolForRendering.description}</Text>
@@ -106,7 +110,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], interac
                     {toolForRendering.input && (
                         <View style={styles.section}>
                             <View style={styles.sectionHeader}>
-                                <Ionicons name="log-in" size={20} color="#5856D6" />
+                                <Ionicons name="log-in" size={20} color={theme.colors.accent.indigo} />
                                 <Text style={styles.sectionTitle}>{t('tools.fullView.inputParams')}</Text>
                             </View>
                             <CodeView code={JSON.stringify(toolForRendering.input, null, 2)} />
@@ -117,7 +121,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], interac
                     {toolForRendering.state === 'completed' && toolForRendering.result && (
                         <View style={styles.section}>
                             <View style={styles.sectionHeader}>
-                                <Ionicons name="log-out" size={20} color="#34C759" />
+                                <Ionicons name="log-out" size={20} color={theme.colors.success} />
                                 <Text style={styles.sectionTitle}>{t('tools.fullView.output')}</Text>
                             </View>
                             <CodeView
@@ -129,7 +133,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], interac
                     {toolForRendering.state === 'running' && toolForRendering.result && (
                         <View style={styles.section}>
                             <View style={styles.sectionHeader}>
-                                <Ionicons name="log-out" size={20} color="#34C759" />
+                                <Ionicons name="log-out" size={20} color={theme.colors.success} />
                                 <Text style={styles.sectionTitle}>{t('tools.fullView.output')}</Text>
                             </View>
                             <StructuredResultView tool={toolForRendering} metadata={metadata || null} messages={messages} sessionId={sessionId} />
@@ -140,7 +144,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], interac
                     {toolForRendering.state === 'error' && toolForRendering.result && (
                         <View style={styles.section}>
                             <View style={styles.sectionHeader}>
-                                <Ionicons name="close-circle" size={20} color="#FF3B30" />
+                                <Ionicons name="close-circle" size={20} color={theme.colors.warningCritical} />
                                 <Text style={styles.sectionTitle}>{t('tools.fullView.error')}</Text>
                             </View>
                             <View style={styles.errorContainer}>
@@ -157,7 +161,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], interac
                     {toolForRendering.state === 'completed' && !toolForRendering.result && (
                         <View style={styles.section}>
                             <View style={styles.emptyOutputContainer}>
-                                <Ionicons name="checkmark-circle-outline" size={48} color="#34C759" />
+                                <Ionicons name="checkmark-circle-outline" size={48} color={theme.colors.success} />
                                 <Text style={styles.emptyOutputText}>{t('tools.fullView.completed')}</Text>
                                 <Text style={styles.emptyOutputSubtext}>{t('tools.fullView.noOutput')}</Text>
                             </View>
@@ -183,7 +187,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], interac
                 {/* Debug/raw payloads (opt-in) */}
                 <View style={styles.section}>
                     <View style={styles.sectionHeader}>
-                        <Ionicons name="code-slash" size={20} color="#FF9500" />
+                        <Ionicons name="code-slash" size={20} color={theme.colors.accent.orange} />
                         <Text style={styles.sectionTitle}>{t('tools.fullView.debug')}</Text>
                         <Text
                             style={[styles.toolId, { marginLeft: 8 }]}

@@ -33,68 +33,6 @@ vi.mock('react-native', () => ({
   },
 }));
 
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: {
-    create: (styles: any) => {
-      const theme = {
-        colors: {
-          input: { background: '#fff' },
-          button: {
-            primary: { background: '#000', tint: '#fff', disabled: '#999' },
-            secondary: { tint: '#000', surface: '#fff' },
-          },
-          radio: { active: '#000', inactive: '#ddd', dot: '#000' },
-          text: '#000',
-          textSecondary: '#666',
-          textLink: '#06f',
-          divider: '#ddd',
-          surface: '#fff',
-          shadow: { color: '#000' },
-          success: '#0a0',
-          textDestructive: '#a00',
-          surfacePressed: '#eee',
-          permission: {
-            bypass: '#000',
-            plan: '#000',
-            readOnly: '#000',
-            safeYolo: '#000',
-            yolo: '#000',
-          },
-        },
-      };
-      return typeof styles === 'function' ? styles(theme) : styles;
-    },
-  },
-  useUnistyles: () => ({
-    theme: {
-      colors: {
-        input: { background: '#fff' },
-        button: {
-          primary: { background: '#000', tint: '#fff', disabled: '#999' },
-          secondary: { tint: '#000', surface: '#fff' },
-        },
-        radio: { active: '#000', inactive: '#ddd', dot: '#000' },
-        text: '#000',
-        textSecondary: '#666',
-        textLink: '#06f',
-        divider: '#ddd',
-        surface: '#fff',
-        shadow: { color: '#000' },
-        success: '#0a0',
-        textDestructive: '#a00',
-        surfacePressed: '#eee',
-        permission: {
-          bypass: '#000',
-          plan: '#000',
-          readOnly: '#000',
-          safeYolo: '#000',
-          yolo: '#000',
-        },
-      },
-    },
-  }),
-}));
-
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props, null),
   Octicons: (props: Record<string, unknown>) => React.createElement('Octicons', props, null),

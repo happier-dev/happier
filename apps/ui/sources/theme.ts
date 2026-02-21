@@ -42,6 +42,15 @@ export const lightTheme = {
         textDestructive: Platform.select({ ios: '#FF3B30', default: '#F44336' }),
         textSecondary: Platform.select({ ios: '#8E8E93', default: '#49454F' }),
         textLink: '#2BACCC',
+        accent: {
+            blue: '#007AFF',
+            green: '#34C759',
+            orange: '#FF9500',
+            yellow: '#FFCC00',
+            red: '#FF3B30',
+            indigo: Platform.select({ ios: '#5856D6', default: '#5C6BC0' }),
+            purple: Platform.select({ ios: '#AF52DE', default: '#9C27B0' }),
+        },
         deleteAction: '#FF6B6B', // Delete/remove button color
         warningCritical: '#FF3B30',
         warning: '#8E8E93',
@@ -251,6 +260,15 @@ export const darkTheme = {
         textDestructive: Platform.select({ ios: '#FF453A', default: '#F48FB1' }),
         textSecondary: Platform.select({ ios: '#8E8E93', default: '#CAC4D0' }),
         textLink: '#2BACCC',
+        accent: {
+            blue: '#0A84FF',
+            green: '#32D74B',
+            orange: '#FF9F0A',
+            yellow: '#FFD60A',
+            red: '#FF453A',
+            indigo: Platform.select({ ios: '#5E5CE6', default: '#9FA8DA' }),
+            purple: Platform.select({ ios: '#BF5AF2', default: '#CE93D8' }),
+        },
         deleteAction: '#FF6B6B', // Delete/remove button color (same in both themes)
         warningCritical: '#FF453A',
         warning: '#8E8E93',

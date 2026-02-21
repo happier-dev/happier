@@ -1,10 +1,12 @@
 import * as React from 'react';
-import { View, Text } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import type { ToolViewProps } from '../core/_registry';
 import { CodeView } from '@/components/ui/media/CodeView';
 import { maybeParseJson } from '../../normalization/parse/parseJson';
+import { Text } from '@/components/ui/text/Text';
+
 
 function extractReadContent(result: unknown): { content: string; numLines?: number } | null {
     const parsed = maybeParseJson(result);

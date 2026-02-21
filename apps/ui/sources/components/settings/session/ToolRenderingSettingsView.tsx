@@ -125,7 +125,7 @@ export const ToolRenderingSettingsView = React.memo(function ToolRenderingSettin
                     popoverBoundaryRef={popoverBoundaryRef}
                     itemTrigger={{
                         title: t('settingsSession.toolRendering.defaultToolDetailLevelTitle'),
-                        icon: <Ionicons name="construct-outline" size={29} color="#007AFF" />,
+                        icon: <Ionicons name="construct-outline" size={29} color={theme.colors.accent.blue} />,
                         // Preserve the compact label as fallback; selected option subtitle will override by default.
                         subtitle: (() => {
                             const key = TOOL_DETAIL_LEVEL_OPTIONS.find((opt) => opt.key === toolViewDetailLevelDefault)?.titleKey;
@@ -161,7 +161,7 @@ export const ToolRenderingSettingsView = React.memo(function ToolRenderingSettin
                     popoverBoundaryRef={popoverBoundaryRef}
                     itemTrigger={{
                         title: t('settingsSession.toolRendering.localControlDefaultTitle'),
-                        icon: <Ionicons name="shield-outline" size={29} color="#FF9500" />,
+                        icon: <Ionicons name="shield-outline" size={29} color={theme.colors.accent.orange} />,
                         subtitle: (() => {
                             const key = TOOL_DETAIL_LEVEL_OPTIONS.find((opt) => opt.key === toolViewDetailLevelDefaultLocalControl)?.titleKey;
                             return key ? tToolDetail(key) : String(toolViewDetailLevelDefaultLocalControl);
@@ -186,7 +186,7 @@ export const ToolRenderingSettingsView = React.memo(function ToolRenderingSettin
                 <Item
                     title={t('settingsSession.toolRendering.showDebugByDefaultTitle')}
                     subtitle={t('settingsSession.toolRendering.showDebugByDefaultSubtitle')}
-                    icon={<Ionicons name="code-slash-outline" size={29} color="#5856D6" />}
+                    icon={<Ionicons name="code-slash-outline" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={<Switch value={toolViewShowDebugByDefault} onValueChange={setToolViewShowDebugByDefault} />}
                     showChevron={false}
                     onPress={() => setToolViewShowDebugByDefault(!toolViewShowDebugByDefault)}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, Platform, useWindowDimensions } from 'react-native';
+import { View, ScrollView, Pressable, Platform, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
@@ -8,6 +8,8 @@ import { Item } from '@/components/ui/lists/Item';
 import { useEnvironmentVariables } from '@/hooks/server/useEnvironmentVariables';
 import { t } from '@/text';
 import { formatEnvVarTemplate, parseEnvVarTemplate } from '@/utils/profiles/envVarTemplate';
+import { Text } from '@/components/ui/text/Text';
+
 
 export interface EnvironmentVariablesPreviewModalProps {
     environmentVariables: Record<string, string>;

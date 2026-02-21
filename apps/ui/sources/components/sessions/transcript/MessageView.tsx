@@ -1,5 +1,5 @@
 import * as React from "react";
-import { View, Text, Pressable, Platform } from "react-native";
+import { View, Pressable, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
@@ -21,6 +21,8 @@ import { useRouter } from 'expo-router';
 import { buildSessionFileDeepLink } from '@/utils/url/sessionFileDeepLink';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useSetting } from '@/sync/domains/state/storage';
+import { Text } from '@/components/ui/text/Text';
+
 
 export const MessageView = (props: {
   message: Message;

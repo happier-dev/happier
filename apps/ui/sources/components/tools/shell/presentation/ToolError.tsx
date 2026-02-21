@@ -1,7 +1,9 @@
-import { Text, View } from "react-native";
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { parseToolUseError } from '@/utils/errors/toolErrorParser';
+import { Text } from '@/components/ui/text/Text';
+
 
 export function ToolError(props: { message: string }) {
     const { theme } = useUnistyles();

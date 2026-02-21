@@ -23,10 +23,6 @@ vi.mock('react-native', () => ({
     useWindowDimensions: () => ({ width: 800, height: 600 }),
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-}));
-
 vi.mock('@/sync/domains/state/storage', () => ({
     useLocalSetting: () => false,
     useSetting: () => false,

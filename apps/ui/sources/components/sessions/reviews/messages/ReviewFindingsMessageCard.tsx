@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, Text, TextInput, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import type { ReviewFindingsV1, ReviewTriageStatus } from '@happier-dev/protocol';
@@ -7,6 +7,8 @@ import type { ReviewFindingsV1, ReviewTriageStatus } from '@happier-dev/protocol
 import { sessionExecutionRunAction } from '@/sync/ops/sessionExecutionRuns';
 import { sync } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 function formatFindingLocation(finding: ReviewFindingsV1['findings'][number]): string | null {
     if (!finding.filePath) return null;

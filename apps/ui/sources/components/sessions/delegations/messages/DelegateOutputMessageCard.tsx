@@ -1,8 +1,10 @@
 import React from 'react';
-import { Text, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import type { DelegateOutputV1 } from '@happier-dev/protocol';
+import { Text } from '@/components/ui/text/Text';
+
 
 export function DelegateOutputMessageCard(props: Readonly<{ payload: DelegateOutputV1 }>) {
     const deliverables = props.payload.deliverables ?? [];

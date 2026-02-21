@@ -32,50 +32,11 @@ vi.mock('react-native', () => ({
         React.createElement('ScrollView', props, props.children),
     ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
     Platform: { OS: 'ios', select: (v: any) => v.ios },
+    AppState: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
     useWindowDimensions: () => ({ width: 800, height: 600 }),
     Dimensions: {
         get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
     },
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (styles: any) => {
-            const theme = {
-                colors: {
-                    input: { background: '#fff' },
-                    button: {
-                        primary: { background: '#000', tint: '#fff' },
-                        secondary: { tint: '#000', surface: '#fff' },
-                    },
-                    radio: { active: '#000', inactive: '#ddd' },
-                    text: '#000',
-                    textSecondary: '#666',
-                    divider: '#ddd',
-                    success: '#0a0',
-                    textDestructive: '#a00',
-                },
-            };
-            return typeof styles === 'function' ? styles(theme) : styles;
-        },
-    },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                input: { background: '#fff' },
-                button: {
-                    primary: { background: '#000', tint: '#fff' },
-                    secondary: { tint: '#000', surface: '#fff' },
-                },
-                radio: { active: '#000', inactive: '#ddd' },
-                text: '#000',
-                textSecondary: '#666',
-                divider: '#ddd',
-                success: '#0a0',
-                textDestructive: '#a00',
-            },
-        },
-    }),
 }));
 
 vi.mock('@expo/vector-icons', () => ({
@@ -278,5 +239,33 @@ describe('AgentInput (machine chip)', () => {
 
         const text = collectText(tree?.toJSON());
         expect(text.join(' ')).toContain('newSession.selectPathTitle');
+    });
+
+    it('exposes a stable testID for the connection status text (UI e2e locator)', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(AgentInput, {
+                    value: '',
+                    placeholder: 'placeholder',
+                    onChangeText: () => {},
+                    onSend: () => {},
+                    autocompletePrefixes: [],
+                    autocompleteSuggestions: async () => [],
+                    connectionStatus: {
+                        text: 'online',
+                        color: '#0a0',
+                        dotColor: '#0a0',
+                        isPulsing: false,
+                    },
+                }),
+            );
+        });
+
+        const matches = tree?.root.findAll((node) => node.props?.testID === 'agent-input-connection-status-text');
+        expect(matches).toHaveLength(1);
+        expect(collectText(matches?.[0]?.props?.children).join(' ')).toContain('online');
     });
 });

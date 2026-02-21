@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
@@ -12,6 +13,7 @@ export const MemorySettingsEmbeddingsSection = React.memo(function MemorySetting
     settings: MemorySettingsV1;
     writeSettings: (next: MemorySettingsV1) => void | Promise<void>;
 }>) {
+    const { theme } = useUnistyles();
     const { settings } = props;
 
     if (settings.indexMode !== 'deep') return null;
@@ -25,7 +27,7 @@ export const MemorySettingsEmbeddingsSection = React.memo(function MemorySetting
                 testID="memory-settings-embeddings-enabled-item"
                 title="Enable embeddings"
                 subtitle="Improves ranking for deep search (downloads a model on first use)"
-                icon={<Ionicons name="sparkles-outline" size={29} color="#34C759" />}
+                icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.success} />}
                 rightElement={(
                     <Switch
                         testID="memory-settings-embeddings-enabled"
@@ -43,7 +45,7 @@ export const MemorySettingsEmbeddingsSection = React.memo(function MemorySetting
             <Item
                 title="Embeddings model"
                 subtitle={settings.embeddings.modelId}
-                icon={<Ionicons name="cube-outline" size={29} color="#AF52DE" />}
+                icon={<Ionicons name="cube-outline" size={29} color={theme.colors.accent.purple} />}
                 onPress={async () => {
                     const next = await Modal.prompt(
                         'Embeddings model',
@@ -67,4 +69,3 @@ export const MemorySettingsEmbeddingsSection = React.memo(function MemorySetting
         </ItemGroup>
     );
 });
-

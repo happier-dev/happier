@@ -7,7 +7,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Modal } from '@/modal';
 import { useAutomations } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 import { layout } from '@/components/ui/layout/layout';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { AutomationListGroup } from '@/components/automations/list/AutomationListGroup';
@@ -105,7 +105,7 @@ export function AutomationsScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Create automation"
             >
-                <Ionicons name="add" size={28} color="#FFFFFF" />
+                <Ionicons name="add" size={28} color={theme.colors.fab.icon} />
             </Pressable>
         </View>
     );

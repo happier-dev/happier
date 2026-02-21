@@ -10,7 +10,7 @@ import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvP
 async function setupHarness() {
   const publishModeSpy = vi.fn(async (_params: any) => {});
   const sendMessageSpy = vi.fn(async () => {});
-  const machineSpawnNewSessionSpy = vi.fn(async () => ({ type: 'success', sessionId: 'sess_new' }));
+  const machineSpawnNewSessionSpy = vi.fn(async (..._args: any[]) => ({ type: 'success', sessionId: 'sess_new' }));
 
   vi.doMock('@/text', () => ({ t: (key: string) => key }));
   vi.doMock('@/modal', () => ({ Modal: { alert: vi.fn(), confirm: vi.fn(async () => false) } }));
@@ -71,7 +71,7 @@ async function setupHarness() {
   vi.doMock('@/agents/runtime/acpRuntimeResume', () => ({ describeAcpLoadSessionSupport: vi.fn(() => ({ kind: 'unknown' })) }));
   vi.doMock('@/agents/runtime/resumeCapabilities', () => ({ canAgentResume: vi.fn(() => false) }));
   vi.doMock('@/components/sessions/new/modules/formatResumeSupportDetailCode', () => ({ formatResumeSupportDetailCode: vi.fn(() => '') }));
-  vi.doMock('@/sync/ops', () => ({ machineSpawnNewSession: (...args: unknown[]) => machineSpawnNewSessionSpy(...args) }));
+  vi.doMock('@/sync/ops', () => ({ machineSpawnNewSession: machineSpawnNewSessionSpy }));
 
   const { useCreateNewSession } = await import('./useCreateNewSession');
   return { useCreateNewSession, publishModeSpy, sendMessageSpy, machineSpawnNewSessionSpy };
@@ -155,4 +155,3 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     expect(publishOrder).toBeLessThan(sendOrder);
   });
 });
-

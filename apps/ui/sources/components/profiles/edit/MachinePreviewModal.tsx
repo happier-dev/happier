@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable, useWindowDimensions } from 'react-native';
+import { View, Pressable, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
@@ -7,6 +7,8 @@ import { t } from '@/text';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
+import { Text } from '@/components/ui/text/Text';
+
 
 export interface MachinePreviewModalProps {
     machines: Machine[];

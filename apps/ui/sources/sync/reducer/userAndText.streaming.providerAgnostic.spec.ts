@@ -67,7 +67,7 @@ describe('runUserAndTextPhase (streaming merge)', () => {
                     isSidechain: false,
                     role: 'agent',
                     content: [{ type: 'text', text: 'Hello', uuid: 'u1', parentUUID: null }],
-                    meta: null,
+                    meta: undefined,
                 },
                 {
                     id: 'agent_msg_1',
@@ -76,7 +76,7 @@ describe('runUserAndTextPhase (streaming merge)', () => {
                     isSidechain: false,
                     role: 'agent',
                     content: [{ type: 'text', text: ' world', uuid: 'u2', parentUUID: 'u1' }],
-                    meta: null,
+                    meta: undefined,
                 },
             ],
             changed,

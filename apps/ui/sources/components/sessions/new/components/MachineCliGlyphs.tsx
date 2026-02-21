@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
@@ -9,6 +9,8 @@ import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
 import { getAgentCore, getAgentCliGlyph } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
+import { Text } from '@/components/ui/text/Text';
+
 
 type Props = {
     machineId: string;

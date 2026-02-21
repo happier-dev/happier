@@ -1,9 +1,11 @@
 import * as React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { ExecutionRunPublicState } from '@happier-dev/protocol';
 import { ExecutionRunStatusPill } from './ExecutionRunStatusPill';
+import { Text } from '@/components/ui/text/Text';
+
 
 export type ExecutionRunRowRun =
     Pick<ExecutionRunPublicState, 'runId' | 'intent' | 'backendId' | 'status' | 'display'>

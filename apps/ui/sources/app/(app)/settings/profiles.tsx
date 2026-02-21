@@ -305,7 +305,7 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
                     <Item
                         title={t('settingsFeatures.profiles')}
                         subtitle={t('settingsFeatures.profilesDisabled')}
-                        icon={<Ionicons name="person-outline" size={29} color="#AF52DE" />}
+                        icon={<Ionicons name="person-outline" size={29} color={theme.colors.accent.purple} />}
                         rightElement={
                             <Switch
                                 value={useProfiles}

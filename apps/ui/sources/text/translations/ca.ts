@@ -131,6 +131,9 @@ export const ca: TranslationStructure = {
         openMachine: 'Obrir màquina',
         terminalUrlPlaceholder: 'happier://terminal?...',
         restoreQrInstructions: '1. Obre Happier al teu dispositiu mòbil\n2. Ves a Configuració → Compte\n3. Toca "Vincular nou dispositiu"\n4. Escaneja aquest codi QR',
+        externalAuthVerifiedTitle: ({ provider }: { provider: string }) => `${provider} verificat`,
+        externalAuthVerifiedBody: ({ provider }: { provider: string }) =>
+            `Hem trobat un compte de Happier existent vinculat a ${provider}. Per acabar d'iniciar sessió en aquest dispositiu, restaura la clau del teu compte amb el codi QR o amb la teva clau secreta.`,
         restoreWithSecretKeyInstead: 'Restaura amb clau secreta',
         restoreWithSecretKeyDescription: 'Introdueix la teva clau secreta per recuperar l’accés al teu compte.',
         lostAccessLink: 'Sense accés?',
@@ -330,6 +333,19 @@ export const ca: TranslationStructure = {
         compactSessionViewDescription: 'Mostra les sessions actives en un disseny més compacte',
         compactSessionViewMinimal: 'Vista compacta mínima',
         compactSessionViewMinimalDescription: 'Amaga els avatars i mostra un disseny de fila de sessió molt compacte',
+        text: 'Text',
+        textDescription: 'Ajusta la mida del text a l’app',
+        textSize: 'Mida del text',
+        textSizeDescription: 'Fes el text més gran o més petit',
+        textSizeOptions: {
+            xxsmall: 'Molt molt petit',
+            xsmall: 'Molt petit',
+            small: 'Petit',
+            default: 'Per defecte',
+            large: 'Gran',
+            xlarge: 'Molt gran',
+            xxlarge: 'Molt molt gran',
+        },
     },
 
     settingsFeatures: {
@@ -490,7 +506,7 @@ export const ca: TranslationStructure = {
                 'Per reprendre una conversa de Codex, instal·la el servidor de represa de Codex a la màquina de destinació (Detalls de la màquina → Represa de Codex).',
         codexAcpNotInstalledTitle: 'Codex ACP no està instal·lat en aquesta màquina',
         codexAcpNotInstalledMessage:
-            'Per fer servir l’experiment de Codex ACP, instal·la codex-acp a la màquina de destinació (Detalls de la màquina → Codex ACP) o desactiva l’experiment.',
+            'Per fer servir l’experiment de Codex ACP, instal·la codex-acp a la màquina de destinació (Detalls de la màquina → Installables) o desactiva l’experiment.',
 },
 
 deps: {
@@ -1768,6 +1784,12 @@ deps: {
         signUpWithProvider: ({ provider }: { provider: string }) => `Continua amb ${provider}`,
         linkOrRestoreAccount: 'Enllaça o restaura un compte',
         loginWithMobileApp: 'Inicia sessió amb l\'aplicació mòbil',
+        serverUnavailableTitle: 'No es pot connectar al servidor',
+        serverUnavailableBody: ({ serverUrl }: { serverUrl: string }) =>
+            `No podem connectar-nos a ${serverUrl}. Torna-ho a provar o canvia de servidor per continuar.`,
+        serverIncompatibleTitle: 'Servidor no compatible',
+        serverIncompatibleBody: ({ serverUrl }: { serverUrl: string }) =>
+            `El servidor a ${serverUrl} ha retornat una resposta inesperada. Actualitza el servidor o canvia de servidor per continuar.`,
     },
 
     review: {
@@ -1783,11 +1805,11 @@ deps: {
         copiedToClipboard: ({ label }: { label: string }) => `${label} copiat al porta-retalls`
     },
 
-    machine: {
-        offlineUnableToSpawn: 'El llançador està desactivat mentre la màquina està fora de línia',
-        offlineHelp: '• Assegura\'t que l\'ordinador estigui en línia\n• Executa `happier daemon status` per diagnosticar\n• Fas servir l\'última versió del CLI? Actualitza amb `npm install -g @happier-dev/cli@latest`',
-        launchNewSessionInDirectory: 'Inicia una nova sessió al directori',
-        daemon: 'Dimoni',
+	    machine: {
+	        offlineUnableToSpawn: 'El llançador està desactivat mentre la màquina està fora de línia',
+	        offlineHelp: '• Assegura\'t que l\'ordinador estigui en línia\n• Executa `happier daemon status` per diagnosticar\n• Fas servir l\'última versió del CLI? Actualitza amb `npm install -g @happier-dev/cli@latest`',
+	        launchNewSessionInDirectory: 'Inicia una nova sessió al directori',
+	        daemon: 'Dimoni',
         status: 'Estat',
         stopDaemon: 'Atura el dimoni',
         stopDaemonConfirmTitle: 'Aturar el dimoni?',
@@ -1795,14 +1817,20 @@ deps: {
         daemonStoppedTitle: 'Dimoni aturat',
         stopDaemonFailed: 'No s’ha pogut aturar el dimoni. Pot ser que no estigui en execució.',
         renameTitle: 'Canvia el nom de la màquina',
-        renameDescription: 'Dona a aquesta màquina un nom personalitzat. Deixa-ho buit per usar el hostname per defecte.',
-        renamePlaceholder: 'Introdueix el nom de la màquina',
-        renamedSuccess: 'Màquina reanomenada correctament',
-        renameFailed: 'No s’ha pogut reanomenar la màquina',
-        lastKnownPid: 'Últim PID conegut',
-        lastKnownHttpPort: 'Últim port HTTP conegut',
-        startedAt: 'Iniciat a',
-        cliVersion: 'Versió del CLI',
+	        renameDescription: 'Dona a aquesta màquina un nom personalitzat. Deixa-ho buit per usar el hostname per defecte.',
+	        renamePlaceholder: 'Introdueix el nom de la màquina',
+	        renamedSuccess: 'Màquina reanomenada correctament',
+	        renameFailed: 'No s’ha pogut reanomenar la màquina',
+	        actions: {
+	            removeMachine: 'Remove Machine',
+	            removeMachineSubtitle: 'Revokes this machine and removes it from your account.',
+	            removeMachineConfirmBody: 'This will revoke access from this machine (including access keys and automation assignments). You can reconnect later by signing in again from the CLI.',
+	            removeMachineAlreadyRemoved: 'This machine has already been removed from your account.',
+	        },
+	        lastKnownPid: 'Últim PID conegut',
+	        lastKnownHttpPort: 'Últim port HTTP conegut',
+	        startedAt: 'Iniciat a',
+	        cliVersion: 'Versió del CLI',
         daemonStateVersion: 'Versió de l\'estat del dimoni',
         activeSessions: ({ count }: { count: number }) => `Sessions actives (${count})`,
         machineGroup: 'Màquina',

@@ -8,7 +8,7 @@ vi.mock('expo-router', () => ({
   Link: (props: any) => React.createElement('Link', props, props.children),
 }));
 
-vi.mock('../ui/text/StyledText', () => ({
+vi.mock('../ui/text/Text', () => ({
   Text: (props: any) => React.createElement('Text', props, props.children),
 }));
 

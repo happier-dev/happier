@@ -1,7 +1,14 @@
 import { z } from "zod";
-import { PERMISSION_MODES } from "@/constants/PermissionModes";
 import type { PermissionMode } from "@/constants/PermissionModes";
 import type { ModelMode } from "@/sync/domains/permissions/permissionTypes";
+import { 
+    createAcpConfigOptionOverridesV1Schema,
+    createAcpSessionModeOverrideV1Schema,
+    createModelOverrideV1Schema,
+    createSessionPermissionModeSchema,
+    createSessionTerminalMetadataSchema,
+    createSessionSystemSessionV1Schema,
+} from "@happier-dev/protocol";
 
 //
 // Agent states
@@ -96,38 +103,19 @@ export const MetadataSchema = z.object({
      * - `acpSessionModesV1` mirrors the agent-reported current state.
      * - `acpSessionModeOverrideV1` is the user's requested mode, applied by the runner when possible.
      */
-    acpSessionModeOverrideV1: z.object({
-        v: z.literal(1),
-        updatedAt: z.number(),
-        modeId: z.string(),
-    }).optional(),
+    acpSessionModeOverrideV1: createAcpSessionModeOverrideV1Schema(z).optional(),
     /**
      * Desired ACP config option overrides selected by the user (UI/CLI).
      */
-    acpConfigOptionOverridesV1: z.object({
-        v: z.literal(1),
-        updatedAt: z.number(),
-        overrides: z.record(z.string(), z.object({
-            updatedAt: z.number(),
-            value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
-        })),
-    }).optional(),
+    acpConfigOptionOverridesV1: createAcpConfigOptionOverridesV1Schema(z).optional(),
     homeDir: z.string().optional(), // User's home directory on the machine
     happyHomeDir: z.string().optional(), // Happy configuration directory 
     hostPid: z.number().optional(), // Process ID of the session
     sessionLogPath: z.string().optional(), // Session-specific CLI log file path
-    terminal: z.object({
-        mode: z.enum(['plain', 'tmux']),
-        requested: z.enum(['plain', 'tmux']).optional(),
-        fallbackReason: z.string().optional(),
-        tmux: z.object({
-            target: z.string(),
-            tmpDir: z.string().optional(),
-        }).optional(),
-    }).optional(),
+    terminal: createSessionTerminalMetadataSchema(z).optional(),
     flavor: z.string().nullish(), // Session flavor/variant identifier
     // Published by happy-cli so the app can seed permission state even before there are messages.
-    permissionMode: z.enum(PERMISSION_MODES).optional(),
+    permissionMode: createSessionPermissionModeSchema(z).optional(),
     permissionModeUpdatedAt: z.number().optional(),
     /**
      * Session-level model override selected by the user (UI/CLI).
@@ -136,11 +124,7 @@ export const MetadataSchema = z.object({
      * - Stored in session metadata for cross-device consistency
      * - Applied to outgoing user messages via `message.meta.model` where supported
      */
-    modelOverrideV1: z.object({
-        v: z.literal(1),
-        updatedAt: z.number(),
-        modelId: z.string(),
-    }).optional(),
+    modelOverrideV1: createModelOverrideV1Schema(z).optional(),
     /**
      * Local-only markers for committed transcript messages that should be treated as discarded
      * (e.g. when the user switches to terminal control and abandons unprocessed remote messages).
@@ -156,12 +140,8 @@ export const MetadataSchema = z.object({
      * System/hidden sessions created for internal control planes (voice, execution carrier, etc).
      * These should be excluded from user-facing lists by default.
      */
-    systemSessionV1: z.object({
-        v: z.literal(1),
-        key: z.string(),
-        hidden: z.boolean().optional(),
-    }).optional(),
-});
+    systemSessionV1: createSessionSystemSessionV1Schema(z).optional(),
+}).passthrough();
 
 export type Metadata = z.infer<typeof MetadataSchema>;
 
@@ -200,6 +180,10 @@ export type AgentState = z.infer<typeof AgentStateSchema>;
 export interface Session {
     id: string,
     seq: number,
+    /**
+     * Session content encryption mode. Missing means legacy/unknown and should be treated as `e2ee`.
+     */
+    encryptionMode?: 'e2ee' | 'plain',
     createdAt: number,
     updatedAt: number,
     active: boolean,

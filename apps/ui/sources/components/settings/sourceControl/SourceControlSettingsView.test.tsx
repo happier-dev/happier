@@ -23,16 +23,6 @@ vi.mock('react-native', () => ({
     TextInput: 'TextInput',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                textSecondary: '#999',
-            },
-        },
-    }),
-}));
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));

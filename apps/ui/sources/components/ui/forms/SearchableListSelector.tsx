@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Text, Pressable, Platform } from 'react-native';
+import { View, Pressable, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
@@ -8,6 +8,8 @@ import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { SearchHeader } from '@/components/ui/forms/SearchHeader';
+import { Text } from '@/components/ui/text/Text';
+
 
 /**
  * Configuration object for customizing the SearchableListSelector component.

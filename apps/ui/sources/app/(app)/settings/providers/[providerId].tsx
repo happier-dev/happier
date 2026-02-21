@@ -1,5 +1,5 @@
 import React from 'react';
-import { Platform, TextInput, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams } from 'expo-router';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
@@ -9,7 +9,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { sync } from '@/sync/sync';
 import { useAllMachines, useSettings } from '@/sync/domains/state/storage';
@@ -310,7 +310,7 @@ export default React.memo(function ProviderSettingsScreen() {
                         itemTrigger={{
                             title: t('settingsSession.permissions.defaultPermissionModeTitle'),
                             subtitle: getPermissionModeLabelForAgentType(providerId as any, permissionMode),
-                            icon: <Ionicons name="shield-checkmark-outline" size={29} color="#34C759" />,
+                            icon: <Ionicons name="shield-checkmark-outline" size={29} color={theme.colors.success} />,
                         }}
                         items={getPermissionModeOptionsForAgentType(providerId as any).map((opt) => ({
                             id: opt.value,

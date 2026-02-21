@@ -1,14 +1,5 @@
 import * as React from 'react';
-import { 
-    View, 
-    Text, 
-    Pressable, 
-    StyleProp, 
-    ViewStyle, 
-    TextStyle,
-    Platform,
-    ActivityIndicator
-} from 'react-native';
+import { View, Pressable, StyleProp, ViewStyle, TextStyle, Platform, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
 import * as Clipboard from 'expo-clipboard';
@@ -18,6 +9,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ItemGroupSelectionContext } from '@/components/ui/lists/ItemGroup';
 import { useItemGroupRowPosition } from '@/components/ui/lists/ItemGroupRowPosition';
 import { getItemGroupRowCornerRadii } from '@/components/ui/lists/itemGroupRowCorners';
+import { Text } from '@/components/ui/text/Text';
+
 
 export interface ItemProps {
     testID?: string;

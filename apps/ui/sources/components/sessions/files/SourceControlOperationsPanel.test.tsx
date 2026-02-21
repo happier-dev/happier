@@ -13,8 +13,9 @@ vi.mock('react-native', () => ({
     Platform: { select: (value: any) => value?.default ?? null },
 }));
 
-vi.mock('@/components/ui/text/StyledText', () => ({
+vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
+    TextInput: 'TextInput',
 }));
 
 vi.mock('@/constants/Typography', () => ({

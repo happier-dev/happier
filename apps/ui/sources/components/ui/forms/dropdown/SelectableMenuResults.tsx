@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Text, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { SelectableRow, type SelectableRowVariant } from '@/components/ui/lists/SelectableRow';
@@ -7,8 +7,10 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroupSelectionContext } from '@/components/ui/lists/ItemGroup';
 import { ItemGroupRowPositionBoundary } from '@/components/ui/lists/ItemGroupRowPosition';
 import type { SelectableMenuCategory, SelectableMenuItem } from './selectableMenuTypes';
+import { Text } from '@/components/ui/text/Text';
 
-const stylesheet = StyleSheet.create(() => ({
+
+const stylesheet = StyleSheet.create((theme) => ({
     container: {
         paddingVertical: 0,
     },
@@ -18,7 +20,7 @@ const stylesheet = StyleSheet.create(() => ({
     },
     emptyText: {
         fontSize: 15,
-        color: '#999',
+        color: theme.colors.input.placeholder,
         letterSpacing: -0.2,
         ...Typography.default(),
     },
@@ -27,7 +29,7 @@ const stylesheet = StyleSheet.create(() => ({
         paddingTop: 16,
         paddingBottom: 8,
         fontSize: 12,
-        color: '#999',
+        color: theme.colors.input.placeholder,
         textTransform: 'uppercase',
         letterSpacing: 0.8,
         fontWeight: '600',

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Pressable, TextInput, Platform } from 'react-native';
+import { View, Pressable, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -9,6 +9,8 @@ import { Typography } from '@/constants/Typography';
 import { formatPathRelativeToHome } from '@/utils/sessions/sessionUtils';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { t } from '@/text';
+import { TextInput } from '@/components/ui/text/Text';
+
 
 type PathSelectorBaseProps = {
     machineHomeDir: string;
@@ -96,8 +98,8 @@ export function PathSelector({
     const { theme, rt } = useUnistyles();
     const selectedIndicatorColor = rt.themeName === 'dark' ? theme.colors.text : theme.colors.button.primary.background;
     const styles = stylesheet;
-    const inputRef = useRef<TextInput>(null);
-    const searchInputRef = useRef<TextInput>(null);
+    const inputRef = useRef<React.ElementRef<typeof TextInput> | null>(null);
+    const searchInputRef = useRef<React.ElementRef<typeof TextInput> | null>(null);
     const searchWasFocusedRef = useRef(false);
 
     const [uncontrolledSearchQuery, setUncontrolledSearchQuery] = useState('');

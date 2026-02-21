@@ -19,20 +19,6 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                input: { placeholder: '#999', background: '#fff' },
-                text: '#111',
-                textSecondary: '#666',
-                divider: '#e5e5e5',
-            },
-        },
-    }),
-    StyleSheet: { create: (v: any) => v, absoluteFillObject: {} },
-}));
-
 vi.mock('expo-router', () => ({
     useRouter: () => ({ push: routerPushSpy }),
 }));
@@ -60,8 +46,9 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
             : null,
 }));
 
-vi.mock('@/components/ui/text/StyledText', () => ({
+vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
+    TextInput: 'TextInput',
 }));
 
 vi.mock('@/constants/Typography', () => ({
@@ -135,4 +122,3 @@ describe('Session settings (Tool rendering entry)', () => {
         expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/session/tool-rendering');
     });
 });
-

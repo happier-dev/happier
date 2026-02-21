@@ -1,8 +1,10 @@
 import * as React from 'react';
-import { Text, View } from 'react-native';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { ExecutionRunPublicState } from '@happier-dev/protocol';
+import { Text } from '@/components/ui/text/Text';
+
 
 export const ExecutionRunDetailsPanel = React.memo((props: Readonly<{
   run: ExecutionRunPublicState;

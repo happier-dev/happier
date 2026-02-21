@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 import { useAuth } from '@/auth/context/AuthContext';
 import { getConnectedServiceQuotaSnapshotSealed, requestConnectedServiceQuotaSnapshotRefresh } from '@/sync/api/account/apiConnectedServicesQuotasV2';
 import { openConnectedServiceQuotaSnapshot } from '@/sync/domains/connectedServices/openConnectedServiceQuotaSnapshot';
@@ -33,6 +34,7 @@ export const ConnectedServiceQuotaCard = React.memo(function ConnectedServiceQuo
   onSetPinnedMeterIds: (next: ReadonlyArray<string>) => void;
   onSnapshot?: (snapshot: ConnectedServiceQuotaSnapshotV1 | null) => void;
 }>) {
+  const { theme } = useUnistyles();
   const auth = useAuth();
   const credentials = auth.credentials;
 
@@ -119,7 +121,7 @@ export const ConnectedServiceQuotaCard = React.memo(function ConnectedServiceQuo
       <Item
         title="Refresh"
         subtitle={loading ? 'Loading…' : error ? `Error: ${error}` : snapshot ? `Last updated: ${formatTimestamp(snapshot.fetchedAt)}${isStale ? ' • stale' : ''}` : 'No quota data yet'}
-        icon={<Ionicons name="refresh-outline" size={22} color="#007AFF" />}
+        icon={<Ionicons name="refresh-outline" size={22} color={theme.colors.accent.blue} />}
         onPress={() => void requestRefreshAndReload()}
         showChevron={false}
       />

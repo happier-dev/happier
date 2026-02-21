@@ -1,19 +1,17 @@
 import { z } from 'zod';
 import { ChangeEntrySchema, ChangesResponseSchema } from '@happier-dev/protocol/changes';
+import { SessionStoredMessageContentSchema } from '@happier-dev/protocol';
 import { EphemeralUpdateSchema, type EphemeralUpdate, UpdateBodySchema, UpdateContainerSchema } from '@happier-dev/protocol/updates';
 
 //
-// Encrypted message
+// Session message
 //
 
 export const ApiMessageSchema = z.object({
     id: z.string(),
     seq: z.number(),
     localId: z.string().nullish(),
-    content: z.object({
-        t: z.literal('encrypted'),
-        c: z.string(), // Base64 encoded encrypted content
-    }),
+    content: SessionStoredMessageContentSchema,
     createdAt: z.number(),
 });
 

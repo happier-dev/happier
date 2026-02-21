@@ -1,5 +1,5 @@
 import React from 'react';
-import { TextInput, View } from 'react-native';
+import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -17,6 +17,8 @@ import type {
     ScmPushRejectPolicy,
     ScmRemoteConfirmPolicy,
 } from '@/scm/settings/preferences';
+import { TextInput } from '@/components/ui/text/Text';
+
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 
@@ -210,7 +212,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                         title={option.title}
                         subtitle={option.subtitle}
                         icon={renderIcon(option.iconName)}
-                        rightElement={scmCommitStrategy === option.id ? <Ionicons name="checkmark" size={20} color="#007AFF" /> : null}
+                        rightElement={scmCommitStrategy === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
                         onPress={() => setScmCommitStrategy(option.id)}
                         showChevron={false}
                     />
@@ -227,7 +229,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                         title={option.title}
                         subtitle={option.subtitle}
                         icon={renderIcon(option.iconName)}
-                        rightElement={scmGitRepoPreferredBackend === option.id ? <Ionicons name="checkmark" size={20} color="#007AFF" /> : null}
+                        rightElement={scmGitRepoPreferredBackend === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
                         onPress={() => setScmGitRepoPreferredBackend(option.id)}
                         showChevron={false}
                     />
@@ -244,7 +246,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                         title={option.title}
                         subtitle={option.subtitle}
                         icon={renderIcon(option.iconName)}
-                        rightElement={scmRemoteConfirmPolicy === option.id ? <Ionicons name="checkmark" size={20} color="#007AFF" /> : null}
+                        rightElement={scmRemoteConfirmPolicy === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
                         onPress={() => setScmRemoteConfirmPolicy(option.id)}
                         showChevron={false}
                     />
@@ -261,7 +263,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                         title={option.title}
                         subtitle={option.subtitle}
                         icon={renderIcon(option.iconName)}
-                        rightElement={scmPushRejectPolicy === option.id ? <Ionicons name="checkmark" size={20} color="#007AFF" /> : null}
+                        rightElement={scmPushRejectPolicy === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
                         onPress={() => setScmPushRejectPolicy(option.id)}
                         showChevron={false}
                     />
@@ -276,7 +278,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                     title="Commit message generator"
                     subtitle={effectiveCommitMessageGeneratorEnabled ? 'Enabled' : 'Disabled'}
                     icon={renderIcon('sparkles-outline')}
-                    rightElement={effectiveCommitMessageGeneratorEnabled ? <Ionicons name="checkmark" size={20} color="#007AFF" /> : null}
+                    rightElement={effectiveCommitMessageGeneratorEnabled ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
                     onPress={() => setScmCommitMessageGeneratorEnabled(!effectiveCommitMessageGeneratorEnabled)}
                     showChevron={false}
                 />
@@ -327,7 +329,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                     title="Include Co-Authored-By"
                     subtitle={effectiveIncludeCoAuthoredBy ? 'Enabled' : 'Disabled'}
                     icon={renderIcon('people-outline')}
-                    rightElement={effectiveIncludeCoAuthoredBy ? <Ionicons name="checkmark" size={20} color="#007AFF" /> : null}
+                    rightElement={effectiveIncludeCoAuthoredBy ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
                     onPress={() => setScmIncludeCoAuthoredBy(!effectiveIncludeCoAuthoredBy)}
                     showChevron={false}
                 />
@@ -343,7 +345,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                         title={option.title}
                         subtitle={option.subtitle}
                         icon={renderIcon(option.iconName)}
-                        rightElement={effectiveFilesDiffSyntaxHighlightingMode === option.id ? <Ionicons name="checkmark" size={20} color="#007AFF" /> : null}
+                        rightElement={effectiveFilesDiffSyntaxHighlightingMode === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
                         onPress={() => setFilesDiffSyntaxHighlightingMode(option.id)}
                         showChevron={false}
                     />
@@ -354,7 +356,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                         title={option.title}
                         subtitle={option.subtitle}
                         icon={renderIcon(option.iconName)}
-                        rightElement={effectiveFilesChangedFilesRowDensity === option.id ? <Ionicons name="checkmark" size={20} color="#007AFF" /> : null}
+                        rightElement={effectiveFilesChangedFilesRowDensity === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
                         onPress={() => setFilesChangedFilesRowDensity(option.id)}
                         showChevron={false}
                     />
@@ -376,7 +378,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                                     icon={renderIcon(option.iconName)}
                                     rightElement={
                                         currentDiffModeByBackend[plugin.backendId] === option.id
-                                            ? <Ionicons name="checkmark" size={20} color="#007AFF" />
+                                            ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} />
                                             : null
                                     }
                                     onPress={() => {

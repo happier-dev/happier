@@ -1,3 +1,4 @@
+import { type V2SessionByIdResponse, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 
 function normalizeId(raw: unknown): string {
@@ -75,8 +76,10 @@ async function fetchSessionDataKey(params: Readonly<{
     });
     if (!response.ok) return null;
 
-    const body = (await response.json()) as { session?: { id: string; dataEncryptionKey?: string | null } };
-    const session = body?.session ?? null;
+    const body = (await response.json()) as unknown;
+    const parsed = V2SessionByIdResponseSchema.safeParse(body);
+    if (!parsed.success) return null;
+    const session: V2SessionByIdResponse['session'] = parsed.data.session;
     if (!session) return null;
     if (normalizeId(session.id) !== params.sessionId) return null;
     const dek = typeof session.dataEncryptionKey === 'string' ? session.dataEncryptionKey : null;

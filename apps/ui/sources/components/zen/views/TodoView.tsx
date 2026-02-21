@@ -1,9 +1,11 @@
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { Platform, Text, View, Pressable } from 'react-native';
+import { Platform, View, Pressable } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 import { SharedValue, useAnimatedReaction, runOnJS } from 'react-native-reanimated';
+import { Text } from '@/components/ui/text/Text';
+
 
 export const TODO_HEIGHT = 56;
 
@@ -73,7 +75,7 @@ export const TodoView = React.memo<TodoViewProps>((props) => {
                 }}
             >
                 {props.done && (
-                    <Ionicons name="checkmark" size={16} color="#FFFFFF" />
+                    <Ionicons name="checkmark" size={16} color={theme.colors.button.primary.tint} />
                 )}
             </Pressable>
             <View style={{ flex: 1, flexDirection: 'row' }}>

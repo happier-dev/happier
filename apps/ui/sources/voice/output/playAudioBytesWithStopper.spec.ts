@@ -17,7 +17,7 @@ describe('playAudioBytesWithStopper (web)', () => {
 
     let endedHandler: (() => void) | null = null;
     const stop = vi.fn(() => {
-      endedHandler?.();
+      if (endedHandler) endedHandler();
     });
 
     class FakeAudioBufferSourceNode {
@@ -76,7 +76,8 @@ describe('playAudioBytesWithStopper (web)', () => {
     // Allow the async decode/play pipeline to attach handlers.
     await new Promise((r) => setTimeout(r, 0));
     if (!endedHandler) throw new Error('Expected onended to be set');
-    endedHandler();
+    const onEnded: () => void = endedHandler;
+    onEnded();
     await promise;
   });
 

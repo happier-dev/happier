@@ -1,10 +1,12 @@
 import React from 'react';
-import { Pressable, Text, TextInput, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { StyleProp, ViewStyle } from 'react-native';
 
 import { Item } from '@/components/ui/lists/Item';
 import { Typography } from '@/constants/Typography';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 export interface InlineAddExpanderProps {
     isOpen: boolean;
@@ -24,7 +26,7 @@ export interface InlineAddExpanderProps {
     cancelLabel: string;
     saveLabel: string;
 
-    autoFocusRef?: React.RefObject<TextInput | null>;
+    autoFocusRef?: React.RefObject<React.ElementRef<typeof TextInput> | null>;
     expandedContainerStyle?: StyleProp<ViewStyle>;
 }
 

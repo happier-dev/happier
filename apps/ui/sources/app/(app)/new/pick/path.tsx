@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { View, Text, Pressable, Platform } from 'react-native';
+import { View, Pressable, Platform } from 'react-native';
 import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { CommonActions } from '@react-navigation/native';
 import { Typography } from '@/constants/Typography';
@@ -12,6 +12,8 @@ import { layout } from '@/components/ui/layout/layout';
 import { PathSelector } from '@/components/sessions/new/components/PathSelector';
 import { SearchHeader } from '@/components/ui/forms/SearchHeader';
 import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
+import { Text } from '@/components/ui/text/Text';
+
 
 export default React.memo(function PathPickerScreen() {
     const { theme } = useUnistyles();

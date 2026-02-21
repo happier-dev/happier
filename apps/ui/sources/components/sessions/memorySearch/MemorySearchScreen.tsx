@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, Text, TextInput, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
@@ -9,6 +9,8 @@ import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverSc
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
 import { MemorySearchResultV1Schema, RPC_METHODS } from '@happier-dev/protocol';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
     const { theme } = useUnistyles();

@@ -2,11 +2,12 @@ import * as React from 'react';
 import { View } from 'react-native';
 
 import { Ionicons } from '@expo/vector-icons';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { resolveConnectedServiceDefaultProfileId } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
@@ -37,6 +38,7 @@ export const ConnectedServicesAuthModal = React.memo(function ConnectedServicesA
   defaultProfileIdByServiceId?: Readonly<Record<string, string | undefined>>;
   onOpenSettings?: () => void;
 }>) {
+  const { theme } = useUnistyles();
   const [bindingsByServiceId, setBindingsByServiceId] = React.useState<Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>>(
     props.bindingsByServiceId,
   );
@@ -88,14 +90,14 @@ export const ConnectedServicesAuthModal = React.memo(function ConnectedServicesA
             <Item
               title={'Backend native auth'}
               subtitle={'Use your local CLI login / API keys'}
-              icon={<Ionicons name={mode === 'native' ? 'checkmark-circle' : 'ellipse-outline'} size={22} color="#007AFF" />}
+              icon={<Ionicons name={mode === 'native' ? 'checkmark-circle' : 'ellipse-outline'} size={22} color={theme.colors.accent.blue} />}
               onPress={() => handleSetBindingForService(serviceId, { source: 'native' })}
               showChevron={false}
             />
             <Item
               title={'Use connected services'}
               subtitle={'Fetch and materialize from Happier cloud'}
-              icon={<Ionicons name={mode === 'connected' ? 'checkmark-circle' : 'ellipse-outline'} size={22} color="#007AFF" />}
+              icon={<Ionicons name={mode === 'connected' ? 'checkmark-circle' : 'ellipse-outline'} size={22} color={theme.colors.accent.blue} />}
               onPress={() => {
                 if (connected.length === 0) {
                   props.onOpenSettings?.();
@@ -111,7 +113,7 @@ export const ConnectedServicesAuthModal = React.memo(function ConnectedServicesA
                 <Item
                   title={'Not connected'}
                   subtitle={'Tap to open settings'}
-                  icon={<Ionicons name="warning-outline" size={20} color="#FF9500" />}
+                  icon={<Ionicons name="warning-outline" size={20} color={theme.colors.accent.orange} />}
                   onPress={props.onOpenSettings}
                 />
               ) : (
@@ -134,7 +136,7 @@ export const ConnectedServicesAuthModal = React.memo(function ConnectedServicesA
                           <Ionicons
                             name={effectiveProfileId === opt.profileId ? 'checkmark-circle' : 'ellipse-outline'}
                             size={20}
-                            color="#007AFF"
+                            color={theme.colors.accent.blue}
                           />
                         }
                         rightElement={badges.length > 0 ? <ConnectedServiceQuotaBadgesView badges={badges} /> : undefined}
@@ -153,7 +155,7 @@ export const ConnectedServicesAuthModal = React.memo(function ConnectedServicesA
       <ItemGroup>
         <Item
           title={t('common.close') ?? 'Done'}
-          icon={<Ionicons name="close-outline" size={22} color="#007AFF" />}
+          icon={<Ionicons name="close-outline" size={22} color={theme.colors.accent.blue} />}
           onPress={props.onClose}
           showChevron={false}
         />

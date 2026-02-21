@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { CODEX_ACP_DEP_ID, CODEX_MCP_RESUME_DEP_ID } from '@happier-dev/protocol/installables';
 
 import {
     buildResumeCapabilityOptionsFromUiState,
@@ -16,7 +17,7 @@ describe('getResumePreflightIssues', () => {
             agentId: 'codex',
             experiments: getAgentResumeExperimentsFromSettings('codex', settings),
             results: {
-                'dep.codex-mcp-resume': { ok: true, checkedAt: 1, data: { installed: false } },
+                [CODEX_MCP_RESUME_DEP_ID]: { ok: true, checkedAt: 1, data: { installed: false } },
             },
         })).toEqual([
             expect.objectContaining({
@@ -32,7 +33,7 @@ describe('getResumePreflightIssues', () => {
             agentId: 'codex',
             experiments: getAgentResumeExperimentsFromSettings('codex', settings),
             results: {
-                'dep.codex-acp': { ok: true, checkedAt: 1, data: { installed: false } },
+                [CODEX_ACP_DEP_ID]: { ok: true, checkedAt: 1, data: { installed: false } },
             },
         })).toEqual([]);
     });
@@ -43,8 +44,8 @@ describe('getResumePreflightIssues', () => {
             agentId: 'codex',
             experiments: getAgentResumeExperimentsFromSettings('codex', mcp),
             results: makeResults({
-                'dep.codex-acp': okCapability({ installed: false }),
-                'dep.codex-mcp-resume': okCapability({ installed: false }),
+                [CODEX_ACP_DEP_ID]: okCapability({ installed: false }),
+                [CODEX_MCP_RESUME_DEP_ID]: okCapability({ installed: false }),
             }),
         })).toEqual([
             expect.objectContaining({

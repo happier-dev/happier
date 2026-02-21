@@ -4,7 +4,7 @@ import { Octicons } from '@expo/vector-icons';
 
 import { Item } from '@/components/ui/lists/Item';
 import { FileIcon } from '@/components/ui/media/FileIcon';
-import { Text } from '@/components/ui/text/StyledText';
+import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useRepositoryTreeBrowser } from '@/hooks/session/files/useRepositoryTreeBrowser';
 import { SourceControlUnavailableState } from '@/components/sessions/sourceControl/states';

@@ -101,7 +101,7 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({ formatPathRelativeToHome: () =
 vi.mock('@/utils/path/pathUtils', () => ({ resolveAbsolutePath: () => '' }));
 vi.mock('@/sync/domains/settings/terminalSettings', () => ({ resolveTerminalSpawnOptions: () => ({}) }));
 vi.mock('@/sync/domains/session/spawn/windowsRemoteSessionConsole', () => ({ resolveWindowsRemoteSessionConsoleFromMachineMetadata: () => 'visible' }));
-vi.mock('@/capabilities/installableDepsRegistry', () => ({ getInstallableDepRegistryEntries: () => [] }));
+vi.mock('@/capabilities/installablesRegistry', () => ({ getInstallablesRegistryEntries: () => [] }));
 
 describe('MachineDetailScreen (serverId param switching)', () => {
     it('switches active server when serverId param is provided and differs from current active server', async () => {

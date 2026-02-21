@@ -12,7 +12,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import MaskedView from '@react-native-masked-view/masked-view';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 const AnimatedLinearGradient = Animated.createAnimatedComponent(LinearGradient);
 
@@ -26,13 +26,30 @@ interface ShimmerViewProps {
 
 export const ShimmerView = React.memo<ShimmerViewProps>(({
     children,
-    shimmerColors = ['#E0E0E0', '#F0F0F0', '#F8F8F8', '#F0F0F0', '#E0E0E0'],
+    shimmerColors,
     shimmerWidthPercent = 80,
     duration = 1500,
     style,
 }) => {
+    const { theme } = useUnistyles();
     const shimmerTranslate = useSharedValue(0);
     const containerRef = useAnimatedRef<View>();
+
+    const resolvedShimmerColors = React.useMemo<readonly [string, string, ...string[]]>(() => {
+        if (shimmerColors && shimmerColors.length >= 2) return shimmerColors as readonly [string, string, ...string[]];
+        return [
+            theme.colors.surfacePressed,
+            theme.colors.surfaceHigh,
+            theme.colors.surfaceHighest,
+            theme.colors.surfaceHigh,
+            theme.colors.surfacePressed,
+        ] as const;
+    }, [
+        shimmerColors,
+        theme.colors.surfaceHigh,
+        theme.colors.surfaceHighest,
+        theme.colors.surfacePressed,
+    ]);
 
     React.useEffect(() => {
         shimmerTranslate.value = withRepeat(
@@ -76,11 +93,11 @@ export const ShimmerView = React.memo<ShimmerViewProps>(({
                 }
             >
                 {/* Base background */}
-                <View style={[StyleSheet.absoluteFillObject, styles.background]} />
+                <View style={[StyleSheet.absoluteFillObject, { backgroundColor: resolvedShimmerColors[0] }]} />
 
                 {/* Animated shimmer */}
                 <AnimatedLinearGradient
-                    colors={shimmerColors}
+                    colors={resolvedShimmerColors}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 0 }}
                     style={[
@@ -97,9 +114,6 @@ const styles = StyleSheet.create({
     maskContainer: {
         flex: 1,
         backgroundColor: 'transparent',
-    },
-    background: {
-        backgroundColor: '#E0E0E0',
     },
     hiddenChildren: {
         opacity: 0,

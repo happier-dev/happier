@@ -1,5 +1,6 @@
 import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
+import { View } from 'react-native';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -8,7 +9,7 @@ import { useRouter } from 'expo-router';
 import * as Localization from 'expo-localization';
 import { useUnistyles, UnistylesRuntime } from 'react-native-unistyles';
 import { Switch } from '@/components/ui/forms/Switch';
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Appearance } from 'react-native';
 import * as SystemUI from 'expo-system-ui';
 import { darkTheme, lightTheme } from '@/theme';
@@ -40,10 +41,12 @@ export default React.memo(function AppearanceSettingsScreen() {
     const [sessionListActiveGroupingV1, setSessionListActiveGroupingV1] = useSettingMutable('sessionListActiveGroupingV1');
     const [sessionListInactiveGroupingV1, setSessionListInactiveGroupingV1] = useSettingMutable('sessionListInactiveGroupingV1');
     const [themePreference, setThemePreference] = useLocalSettingMutable('themePreference');
+    const [uiFontScale, setUiFontScale] = useLocalSettingMutable('uiFontScale');
     const [preferredLanguage] = useSettingMutable('preferredLanguage');
     const [openGroupingMenu, setOpenGroupingMenu] = React.useState<null | 'active' | 'inactive'>(null);
+    const [openTextSizeMenu, setOpenTextSizeMenu] = React.useState(false);
 
-    const groupingMenuItems = React.useMemo((): DropdownMenuItem[] => {
+    const groupingMenuItems = React.useMemo(() => {
         return [
             {
                 id: 'project',
@@ -66,7 +69,51 @@ export default React.memo(function AppearanceSettingsScreen() {
         }
         setSessionListInactiveGroupingV1(itemId);
     }, [setSessionListActiveGroupingV1, setSessionListInactiveGroupingV1]);
-    
+
+    const uiFontScalePresets = React.useMemo(() => {
+        return {
+            xxsmall: 0.8,
+            xsmall: 0.85,
+            small: 0.93,
+            default: 1,
+            large: 1.1,
+            xlarge: 1.2,
+            xxlarge: 1.3,
+        } as const;
+    }, []);
+
+    const textSizeMenuItems = React.useMemo(() => {
+        return [
+            { id: 'xxsmall', title: t('settingsAppearance.textSizeOptions.xxsmall') },
+            { id: 'xsmall', title: t('settingsAppearance.textSizeOptions.xsmall') },
+            { id: 'small', title: t('settingsAppearance.textSizeOptions.small') },
+            { id: 'default', title: t('settingsAppearance.textSizeOptions.default') },
+            { id: 'large', title: t('settingsAppearance.textSizeOptions.large') },
+            { id: 'xlarge', title: t('settingsAppearance.textSizeOptions.xlarge') },
+            { id: 'xxlarge', title: t('settingsAppearance.textSizeOptions.xxlarge') },
+        ];
+    }, []);
+
+    const selectedTextSizeId = React.useMemo(() => {
+        const entries = Object.entries(uiFontScalePresets) as Array<[keyof typeof uiFontScalePresets, number]>;
+        let best: keyof typeof uiFontScalePresets = 'default';
+        let bestDist = Number.POSITIVE_INFINITY;
+        for (const [id, scale] of entries) {
+            const dist = Math.abs((uiFontScale ?? 1) - scale);
+            if (dist < bestDist) {
+                bestDist = dist;
+                best = id;
+            }
+        }
+        return best;
+    }, [uiFontScale, uiFontScalePresets]);
+
+    const selectUiFontSize = React.useCallback((itemId: string) => {
+        const next = (uiFontScalePresets as any)[itemId];
+        if (typeof next !== 'number') return;
+        setUiFontScale(next as any);
+    }, [setUiFontScale, uiFontScalePresets]);
+
     // Ensure we have a valid style for display, defaulting to gradient for unknown values
     const displayStyle: KnownAvatarStyle = isKnownAvatarStyle(avatarStyle) ? avatarStyle : 'gradient';
     
@@ -126,9 +173,32 @@ export default React.memo(function AppearanceSettingsScreen() {
             <ItemGroup title={t('settingsLanguage.title')} footer={t('settingsLanguage.description')}>
                 <Item
                     title={t('settingsLanguage.currentLanguage')}
-                    icon={<Ionicons name="language-outline" size={29} color="#007AFF" />}
+                    icon={<Ionicons name="language-outline" size={29} color={theme.colors.accent.blue} />}
                     detail={getLanguageDisplayText()}
                     onPress={() => router.push('/settings/language')}
+                />
+            </ItemGroup>
+
+            {/* Text Settings */}
+            <ItemGroup title={t('settingsAppearance.text')} footer={t('settingsAppearance.textDescription')}>
+                <DropdownMenu
+                    open={openTextSizeMenu}
+                    onOpenChange={setOpenTextSizeMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={selectedTextSizeId as any}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    itemTrigger={{
+                        title: t('settingsAppearance.textSize'),
+                        subtitle: t('settingsAppearance.textSizeDescription'),
+                        icon: <Ionicons name="text-outline" size={29} color={theme.colors.accent.orange} />,
+                        showSelectedSubtitle: false,
+                    }}
+                    items={textSizeMenuItems as any}
+                    onSelect={selectUiFontSize}
                 />
             </ItemGroup>
 
@@ -137,7 +207,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                 <Item
                     title="Text Size"
                     subtitle="Make text larger or smaller"
-                    icon={<Ionicons name="text-outline" size={29} color="#FF9500" />}
+                    icon={<Ionicons name="text-outline" size={29} color={theme.colors.accent.orange} />}
                     detail="Default"
                     onPress={() => { }}
                     disabled
@@ -145,7 +215,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                 <Item
                     title="Font"
                     subtitle="Choose your preferred font"
-                    icon={<Ionicons name="text-outline" size={29} color="#FF9500" />}
+                    icon={<Ionicons name="text-outline" size={29} color={theme.colors.accent.orange} />}
                     detail="System"
                     onPress={() => { }}
                     disabled
@@ -157,7 +227,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                 <Item
                     title={t('settingsAppearance.compactSessionView')}
                     subtitle={t('settingsAppearance.compactSessionViewDescription')}
-                    icon={<Ionicons name="albums-outline" size={29} color="#5856D6" />}
+                    icon={<Ionicons name="albums-outline" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={
                         <Switch
                             value={compactSessionView}
@@ -169,7 +239,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                     <Item
                         title={t('settingsAppearance.compactSessionViewMinimal')}
                         subtitle={t('settingsAppearance.compactSessionViewMinimalDescription')}
-                        icon={<Ionicons name="remove-outline" size={29} color="#5856D6" />}
+                        icon={<Ionicons name="remove-outline" size={29} color={theme.colors.accent.indigo} />}
                         rightElement={
                             <Switch
                                 value={compactSessionViewMinimal}
@@ -181,7 +251,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                 <Item
                     title={t('settingsFeatures.hideInactiveSessions')}
                     subtitle={t('settingsFeatures.hideInactiveSessionsSubtitle')}
-                    icon={<Ionicons name="eye-off-outline" size={29} color="#FF9500" />}
+                    icon={<Ionicons name="eye-off-outline" size={29} color={theme.colors.accent.orange} />}
                     rightElement={
                         <Switch
                             value={hideInactiveSessions}
@@ -203,7 +273,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                     itemTrigger={{
                         title: t('settingsFeatures.sessionListActiveGrouping'),
                         subtitle: t('settingsFeatures.sessionListActiveGroupingSubtitle'),
-                        icon: <Ionicons name="folder-open-outline" size={29} color="#007AFF" />,
+                        icon: <Ionicons name="folder-open-outline" size={29} color={theme.colors.accent.blue} />,
                         showSelectedSubtitle: false,
                     }}
                     items={groupingMenuItems}
@@ -222,7 +292,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                     itemTrigger={{
                         title: t('settingsFeatures.sessionListInactiveGrouping'),
                         subtitle: t('settingsFeatures.sessionListInactiveGroupingSubtitle'),
-                        icon: <Ionicons name="calendar-outline" size={29} color="#34C759" />,
+                        icon: <Ionicons name="calendar-outline" size={29} color={theme.colors.success} />,
                         showSelectedSubtitle: false,
                     }}
                     items={groupingMenuItems}
@@ -231,7 +301,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                 <Item
                     title={t('settingsAppearance.inlineToolCalls')}
                     subtitle={t('settingsAppearance.inlineToolCallsDescription')}
-                    icon={<Ionicons name="code-slash-outline" size={29} color="#5856D6" />}
+                    icon={<Ionicons name="code-slash-outline" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={
                         <Switch
                             value={viewInline}
@@ -242,7 +312,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                 <Item
                     title={t('settingsAppearance.expandTodoLists')}
                     subtitle={t('settingsAppearance.expandTodoListsDescription')}
-                    icon={<Ionicons name="checkmark-done-outline" size={29} color="#5856D6" />}
+                    icon={<Ionicons name="checkmark-done-outline" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={
                         <Switch
                             value={expandTodos}
@@ -253,7 +323,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                 <Item
                     title={t('settingsAppearance.showLineNumbersInDiffs')}
                     subtitle={t('settingsAppearance.showLineNumbersInDiffsDescription')}
-                    icon={<Ionicons name="list-outline" size={29} color="#5856D6" />}
+                    icon={<Ionicons name="list-outline" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={
                         <Switch
                             value={showLineNumbers}
@@ -264,7 +334,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                 <Item
                     title={t('settingsAppearance.showLineNumbersInToolViews')}
                     subtitle={t('settingsAppearance.showLineNumbersInToolViewsDescription')}
-                    icon={<Ionicons name="code-working-outline" size={29} color="#5856D6" />}
+                    icon={<Ionicons name="code-working-outline" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={
                         <Switch
                             value={showLineNumbersInToolViews}
@@ -275,7 +345,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                 <Item
                     title={t('settingsAppearance.wrapLinesInDiffs')}
                     subtitle={t('settingsAppearance.wrapLinesInDiffsDescription')}
-                    icon={<Ionicons name="return-down-forward-outline" size={29} color="#5856D6" />}
+                    icon={<Ionicons name="return-down-forward-outline" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={
                         <Switch
                             value={wrapLinesInDiffs}
@@ -286,7 +356,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                 <Item
                     title={t('settingsAppearance.alwaysShowContextSize')}
                     subtitle={t('settingsAppearance.alwaysShowContextSizeDescription')}
-                    icon={<Ionicons name="analytics-outline" size={29} color="#5856D6" />}
+                    icon={<Ionicons name="analytics-outline" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={
                         <Switch
                             value={alwaysShowContextSize}
@@ -297,7 +367,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                 <Item
                     title={t('settingsAppearance.agentInputActionBarLayout')}
                     subtitle={t('settingsAppearance.agentInputActionBarLayoutDescription')}
-                    icon={<Ionicons name="menu-outline" size={29} color="#5856D6" />}
+                    icon={<Ionicons name="menu-outline" size={29} color={theme.colors.accent.indigo} />}
                     detail={
                         agentInputActionBarLayout === 'auto'
                             ? t('settingsAppearance.agentInputActionBarLayoutOptions.auto')
@@ -317,7 +387,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                 <Item
                     title={t('settingsAppearance.agentInputChipDensity')}
                     subtitle={t('settingsAppearance.agentInputChipDensityDescription')}
-                    icon={<Ionicons name="text-outline" size={29} color="#5856D6" />}
+                    icon={<Ionicons name="text-outline" size={29} color={theme.colors.accent.indigo} />}
                     detail={
                         agentInputChipDensity === 'auto'
                             ? t('settingsAppearance.agentInputChipDensityOptions.auto')
@@ -335,7 +405,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                 <Item
                     title={t('settingsAppearance.avatarStyle')}
                     subtitle={t('settingsAppearance.avatarStyleDescription')}
-                    icon={<Ionicons name="person-circle-outline" size={29} color="#5856D6" />}
+                    icon={<Ionicons name="person-circle-outline" size={29} color={theme.colors.accent.indigo} />}
                     detail={displayStyle === 'pixelated' ? t('settingsAppearance.avatarOptions.pixelated') : displayStyle === 'brutalist' ? t('settingsAppearance.avatarOptions.brutalist') : t('settingsAppearance.avatarOptions.gradient')}
                     onPress={() => {
                         const currentIndex = displayStyle === 'pixelated' ? 0 : displayStyle === 'gradient' ? 1 : 2;
@@ -347,7 +417,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                 <Item
                     title={t('settingsAppearance.showFlavorIcons')}
                     subtitle={t('settingsAppearance.showFlavorIconsDescription')}
-                    icon={<Ionicons name="apps-outline" size={29} color="#5856D6" />}
+                    icon={<Ionicons name="apps-outline" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={
                         <Switch
                             value={showFlavorIcons}
@@ -358,7 +428,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                 {/* <Item
                     title="Compact Mode"
                     subtitle="Reduce spacing between elements"
-                    icon={<Ionicons name="contract-outline" size={29} color="#5856D6" />}
+                    icon={<Ionicons name="contract-outline" size={29} color={theme.colors.accent.indigo} />}
                     disabled
                     rightElement={
                         <Switch
@@ -370,7 +440,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                 <Item
                     title="Show Avatars"
                     subtitle="Display user and assistant avatars"
-                    icon={<Ionicons name="person-circle-outline" size={29} color="#5856D6" />}
+                    icon={<Ionicons name="person-circle-outline" size={29} color={theme.colors.accent.indigo} />}
                     disabled
                     rightElement={
                         <Switch
@@ -386,7 +456,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                 <Item
                     title="Accent Color"
                     subtitle="Choose your accent color"
-                    icon={<Ionicons name="color-palette-outline" size={29} color="#FF3B30" />}
+                    icon={<Ionicons name="color-palette-outline" size={29} color={theme.colors.warningCritical} />}
                     detail="Blue"
                     onPress={() => { }}
                     disabled

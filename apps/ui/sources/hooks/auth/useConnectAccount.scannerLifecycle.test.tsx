@@ -122,14 +122,20 @@ describe('useConnectAccount (scanner lifecycle)', () => {
 
     const event = { data: 'happier:///account?abc123' };
     // Fire twice before the approval promise resolves.
-    void onBarcodeScannedHandler!(event);
-    void onBarcodeScannedHandler!(event);
-
-    // Allow microtasks to run.
-    await act(async () => {});
+    let firstResult: unknown;
+    let secondResult: unknown;
+    await act(async () => {
+      firstResult = onBarcodeScannedHandler!(event);
+      secondResult = onBarcodeScannedHandler!(event);
+    });
 
     expect(authAccountApproveSpy).toHaveBeenCalledTimes(1);
 
-    deferred.resolve(undefined);
+    await act(async () => {
+      deferred.resolve(undefined);
+      await Promise.resolve();
+      await (firstResult instanceof Promise ? firstResult : Promise.resolve());
+      await (secondResult instanceof Promise ? secondResult : Promise.resolve());
+    });
   });
 });

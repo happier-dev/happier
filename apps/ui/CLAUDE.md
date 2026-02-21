@@ -118,6 +118,16 @@ sources/
 - **Always apply layout width constraints** from `@/components/layout` to full-screen ScrollViews and content containers for responsive design across device sizes
 - Always run `yarn typecheck` after all changes to ensure type safety
 
+### Theme, Typography, and i18n (Required)
+
+- **No hardcoded colors**: do not introduce raw hex/rgb colors (e.g. `#000`, `#fff`) for UI styling. Use `useUnistyles()` theme tokens (`theme.colors.*`) or existing themed styles so light/dark/adaptive themes stay correct.
+- **Icons must be themed**: icon `color` and background/tint props must come from theme tokens (avoid `black`/`white`).
+- **Text must respect UI font scaling**:
+  - Prefer `@/components/ui/text/Text` and `@/components/ui/text/TextInput` over `react-native` `Text`/`TextInput`.
+  - Avoid hardcoded font sizes in new UI code. If you must set a base size, ensure it scales via `uiFontScale` (and stacks with OS Dynamic Type on native).
+  - For embedded editors, use `resolveCodeEditorFontMetrics(...)` and propagate scale to Monaco/CodeMirror surfaces.
+- **All user-facing copy must be translated**: use `t('...')` for UI strings, add keys to all supported locale files under `sources/text/translations/`, and avoid hardcoding English in components.
+
 ## Folder Structure & Naming Conventions (2026-01)
 
 These conventions are **additive** to the guidelines above. The goal is to keep screens and sync logic easy to reason about.
@@ -191,6 +201,8 @@ On native, stacking a React Navigation / Expo Router modal screen with an RN `<M
 Use the app `Popover` + `FloatingOverlay` for menus/tooltips/context menus.
 
 - Use `portal={{ web: { target: 'body' }, native: true }}` when the anchor is inside overflow-clipped containers (headers, lists, scrollviews).
+- For settings-style lists, prefer `ItemList` as the popover boundary (it provides a `PopoverBoundaryProvider` for the screen ScrollView). Avoid binding popover boundaries to `ItemGroup` containers, which can incorrectly clamp dropdown sizing/placement.
+- When a popover must be constrained to a scroll container, pass the **scroll container ref** as the boundary (`DropdownMenu popoverBoundaryRef=...` / `Popover boundaryRef=...`). Do not use a nested non-scroll wrapper `View` ref unless you intentionally want viewport-wide bounds and have validated scroll alignment on web.
 - When the backdrop is enabled (default), `onRequestClose` is required (Popover is controlled).
 - For context-menu style overlays, prefer `backdrop={{ effect: 'blur', anchorOverlay: ..., closeOnPan: true }}` so the trigger stays crisp above the blur without cutout seams.
 - On web, portaled popovers are wrapped in Radix `DismissableLayer.Branch` (via `radixCjs.ts`) so Expo Router/Vaul/Radix layers don’t treat them as “outside”.
@@ -380,16 +392,17 @@ Always use `StyleSheet.create` from 'react-native-unistyles':
 
 ```typescript
 import { StyleSheet } from 'react-native-unistyles'
+import { Text } from '@/components/ui/text/Text'
 
 const styles = StyleSheet.create((theme, runtime) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.background,
+        backgroundColor: theme.colors.groupped.background,
         paddingTop: runtime.insets.top,
         paddingHorizontal: theme.margins.md,
     },
     text: {
-        color: theme.colors.typography,
+        color: theme.colors.text,
         fontSize: 16,
     }
 }))
@@ -401,17 +414,18 @@ For React Native components, provide styles directly:
 
 ```typescript
 import React from 'react'
-import { View, Text } from 'react-native'
+import { View } from 'react-native'
 import { StyleSheet } from 'react-native-unistyles'
+import { Text } from '@/components/ui/text/Text'
 
 const styles = StyleSheet.create((theme, runtime) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.background,
+        backgroundColor: theme.colors.groupped.background,
         paddingTop: runtime.insets.top,
     },
     text: {
-        color: theme.colors.typography,
+        color: theme.colors.text,
         fontSize: 16,
     }
 }))
@@ -522,6 +536,12 @@ const MyComponent = () => {
 }
 ```
 
+## Typography and Font Size
+
+- Use `Text` / `TextInput` from `@/components/ui/text/Text` (do not import `Text` / `TextInput` from `react-native` in app UI code).
+- The app supports a user-selectable in-app font size (`localSettings.uiFontSize`), which scales `fontSize`, `lineHeight`, and `letterSpacing` on these primitives and **stacks with OS Dynamic Type**.
+- It’s OK to use numeric base `fontSize`/`lineHeight` in styles, but they must be rendered via the app text primitives so they scale correctly.
+
 ### Special Component Considerations
 
 #### Expo Image
@@ -536,7 +556,7 @@ import { StyleSheet, useStyles } from 'react-native-unistyles'
 const styles = StyleSheet.create((theme) => ({
     image: {
         borderRadius: 8,
-        backgroundColor: theme.colors.background, // Other styles use theme
+        backgroundColor: theme.colors.surface, // Other styles use theme
     }
 }))
 
@@ -546,7 +566,7 @@ const MyComponent = () => {
     return (
         <Image 
             style={[{ width: 100, height: 100 }, styles.image]}  // Size as inline styles
-            tintColor={theme.colors.primary}                     // tintColor goes on component
+            tintColor={theme.colors.textLink}                    // tintColor goes on component
             source={{ uri: 'https://example.com/image.jpg' }}
         />
     )

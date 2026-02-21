@@ -308,6 +308,12 @@ function getWebSameOriginServerUrl(): string | null {
     try {
         const parsed = new URL(origin);
         if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+        // Official hosted web app (app.happier.dev) is a static SPA; the API lives on api.happier.dev.
+        // When builds are missing EXPO_PUBLIC_HAPPY_SERVER_URL, this prevents the default server
+        // from incorrectly pointing at the web host.
+        if (parsed.hostname.toLowerCase() === 'app.happier.dev') {
+            return 'https://api.happier.dev';
+        }
         return origin;
     } catch {
         return null;

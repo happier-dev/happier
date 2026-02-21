@@ -7,6 +7,7 @@ import { encodeBase64 } from '@/encryption/base64';
 
 const AUTH_KEY = 'auth_credentials';
 const PENDING_EXTERNAL_AUTH_KEY = 'pending_external_auth';
+const PENDING_EXTERNAL_AUTH_GLOBAL_KEY = 'pending_external_auth__global';
 const PENDING_EXTERNAL_CONNECT_KEY = 'pending_external_connect';
 const AUTH_AUTO_REDIRECT_SUPPRESSED_UNTIL_KEY = 'auth_auto_redirect_suppressed_until';
 const AUTH_AUTO_REDIRECT_SUPPRESSED_UNTIL_GLOBAL_KEY = 'auth_auto_redirect_suppressed_until_global';
@@ -140,6 +141,11 @@ async function getPendingExternalAuthKey(): Promise<string> {
     return (await getServerScopedKeys(PENDING_EXTERNAL_AUTH_KEY)).primary;
 }
 
+function getPendingExternalAuthGlobalKey(): string {
+    const scope = Platform.OS === 'web' ? null : readStorageScopeFromEnv();
+    return scopedStorageId(PENDING_EXTERNAL_AUTH_GLOBAL_KEY, scope);
+}
+
 async function getPendingExternalConnectKey(): Promise<string> {
     return (await getServerScopedKeys(PENDING_EXTERNAL_CONNECT_KEY)).primary;
 }
@@ -181,6 +187,8 @@ export interface PendingExternalAuth {
     provider: string;
     secret: string;
     intent?: 'signup' | 'reset';
+    serverUrl?: string;
+    returnTo?: string;
 }
 
 export interface PendingExternalConnect {
@@ -192,10 +200,21 @@ function isNonEmptyString(value: unknown): value is string {
     return typeof value === 'string' && value.trim().length > 0;
 }
 
+function isInternalReturnTo(value: unknown): value is string {
+    if (!isNonEmptyString(value)) return false;
+    const trimmed = value.trim();
+    if (!trimmed.startsWith('/')) return false;
+    // Prevent protocol-relative URLs.
+    if (trimmed.startsWith('//')) return false;
+    return true;
+}
+
 function isPendingExternalAuthRecord(value: unknown): value is PendingExternalAuth {
     if (!value || typeof value !== 'object') return false;
     const maybe = value as Record<string, unknown>;
     if (!isNonEmptyString(maybe.provider) || !isNonEmptyString(maybe.secret)) return false;
+    if (maybe.serverUrl !== undefined && !isNonEmptyString(maybe.serverUrl)) return false;
+    if (maybe.returnTo !== undefined && !isInternalReturnTo(maybe.returnTo)) return false;
     if (maybe.intent === undefined) return true;
     return maybe.intent === 'signup' || maybe.intent === 'reset';
 }
@@ -621,17 +640,28 @@ export const TokenStorage = {
 
     async getPendingExternalAuth(): Promise<PendingExternalAuth | null> {
         const key = await getPendingExternalAuthKey();
-        return await readStoredJson(key, 'pending external auth', isPendingExternalAuthRecord);
+        const scoped = await readStoredJson(key, 'pending external auth', isPendingExternalAuthRecord);
+        if (scoped) return scoped;
+        const globalKey = getPendingExternalAuthGlobalKey();
+        return await readStoredJson(globalKey, 'pending external auth', isPendingExternalAuthRecord);
     },
 
     async setPendingExternalAuth(value: PendingExternalAuth): Promise<boolean> {
         const key = await getPendingExternalAuthKey();
-        return await writeStoredJson(key, 'pending external auth', value);
+        const ok = await writeStoredJson(key, 'pending external auth', value);
+        if (ok) {
+            const globalKey = getPendingExternalAuthGlobalKey();
+            await writeStoredJson(globalKey, 'pending external auth', value).catch(() => false);
+        }
+        return ok;
     },
 
     async clearPendingExternalAuth(): Promise<boolean> {
         const key = await getPendingExternalAuthKey();
-        return await removeStoredValue(key, 'pending external auth');
+        const ok = await removeStoredValue(key, 'pending external auth');
+        const globalKey = getPendingExternalAuthGlobalKey();
+        await removeStoredValue(globalKey, 'pending external auth').catch(() => false);
+        return ok;
     },
 
     async getPendingExternalConnect(): Promise<PendingExternalConnect | null> {

@@ -45,28 +45,6 @@ vi.mock('expo-router', () => {
     };
 });
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                header: { tint: '#000' },
-                input: { background: '#fff', text: '#000' },
-                groupped: { background: '#fff', sectionTitle: '#000' },
-                divider: '#ddd',
-                button: { primary: { background: '#000', tint: '#fff' } },
-                text: '#000',
-                textSecondary: '#666',
-                surface: '#fff',
-                surfaceHigh: '#fff',
-                shadow: { color: '#000', opacity: 0.1 },
-                status: { error: '#f00', connected: '#0f0', connecting: '#ff0', disconnected: '#999', default: '#999' },
-                permissionButton: { inactive: { background: '#ccc' } },
-            }
-        }
-    }),
-    StyleSheet: { create: (fn: any) => fn({ colors: { input: { background: '#fff', text: '#000' }, groupped: { background: '#fff', sectionTitle: '#000' }, divider: '#ddd', button: { primary: { background: '#000', tint: '#fff' } }, text: '#000', textSecondary: '#666', surface: '#fff', surfaceHigh: '#fff', shadow: { color: '#000', opacity: 0.1 }, status: { error: '#f00', connected: '#0f0', connecting: '#ff0', disconnected: '#999', default: '#999' }, permissionButton: { inactive: { background: '#ccc' } }, header: { tint: '#000' } } }) },
-}));
-
 vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 
@@ -160,7 +138,7 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({ formatPathRelativeToHome: () =
 vi.mock('@/utils/path/pathUtils', () => ({ resolveAbsolutePath: () => '' }));
 vi.mock('@/sync/domains/settings/terminalSettings', () => ({ resolveTerminalSpawnOptions: () => ({}) }));
 vi.mock('@/sync/domains/session/spawn/windowsRemoteSessionConsole', () => ({ resolveWindowsRemoteSessionConsoleFromMachineMetadata: () => 'visible' }));
-vi.mock('@/capabilities/installableDepsRegistry', () => ({ getInstallableDepRegistryEntries: () => [] }));
+vi.mock('@/capabilities/installablesRegistry', () => ({ getInstallablesRegistryEntries: () => [] }));
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     setActiveServerAndSwitch: vi.fn(async () => true),
 }));
@@ -211,6 +189,28 @@ describe('MachineDetailScreen (execution runs section)', () => {
         });
 
         expect(itemGroupSpy).toHaveBeenCalledWith(expect.objectContaining({ title: 'runs.title' }));
+    });
+
+    it('includes an Installables navigation item', async () => {
+        itemSpy.mockClear();
+        routerMock.push.mockClear();
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+
+        await act(async () => {
+            renderer.create(React.createElement(MachineDetailScreen));
+            await Promise.resolve();
+        });
+
+        const installablesItem = itemSpy.mock.calls
+            .map((c) => c[0])
+            .find((p) => p?.title === 'Installables');
+        expect(installablesItem).toBeTruthy();
+
+        await act(async () => {
+            installablesItem.onPress?.();
+        });
+
+        expect(routerMock.push).toHaveBeenCalled();
     });
 
     it('shows only running runs by default and includes finished when toggled', async () => {

@@ -1,9 +1,11 @@
 import * as React from 'react';
-import { Text, View } from 'react-native';
+import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ToolCall } from '@/sync/domains/messages/messageTypes';
 import { knownTools } from '@/components/tools/catalog';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Text } from '@/components/ui/text/Text';
+
 
 interface ToolHeaderProps {
     tool: ToolCall;

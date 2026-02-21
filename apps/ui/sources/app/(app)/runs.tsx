@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, View } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
@@ -18,6 +18,8 @@ import { machineExecutionRunsList } from '@/sync/ops/machineExecutionRuns';
 import { sessionExecutionRunStop } from '@/sync/ops/sessionExecutionRuns';
 import { machineStopSession } from '@/sync/ops/machines';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { Text } from '@/components/ui/text/Text';
+
 
 type MachineRunsState =
   | { status: 'idle' }
@@ -246,7 +248,7 @@ export default function RunsScreen() {
                                 {stoppingRunId === run.runId ? (
                                   <ActivityIndicator size="small" color={theme.colors.textSecondary} />
                                 ) : (
-                                  <Ionicons name="stop-circle-outline" size={20} color="#FF9500" />
+                                  <Ionicons name="stop-circle-outline" size={20} color={theme.colors.accent.orange} />
                                 )}
                               </Pressable>
                             ) : null}

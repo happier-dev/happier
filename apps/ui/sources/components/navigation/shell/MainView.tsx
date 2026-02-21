@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, ActivityIndicator, Text, Pressable } from 'react-native';
+import { View, ActivityIndicator, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useFriendRequests, useSocketStatus } from '@/sync/domains/state/storage';
 import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
@@ -27,6 +27,8 @@ import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityRe
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useTabState } from '@/hooks/ui/useTabState';
+import { Text } from '@/components/ui/text/Text';
+
 
 interface MainViewProps {
     variant: 'phone' | 'sidebar';
@@ -156,6 +158,7 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
                     </Pressable>
                 ) : null}
                 <Pressable
+                    testID="main-header-start-new-session"
                     onPress={() => router.push('/new')}
                     hitSlop={15}
                     style={styles.headerButton}

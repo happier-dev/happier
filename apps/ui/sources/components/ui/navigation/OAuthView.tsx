@@ -1,6 +1,6 @@
 import { parseOauthCallbackUrl, generatePkceCodes, generateOauthState, type PkceCodes } from '@/utils/auth/oauthCore';
 import * as React from 'react';
-import { ActivityIndicator, Platform, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Platform, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import Animated, {
     useSharedValue,
@@ -11,6 +11,8 @@ import { runOnJS } from 'react-native-worklets';
 import WebView from 'react-native-webview';
 import { t } from '@/text';
 import { Modal } from '@/modal';
+import { Text } from '@/components/ui/text/Text';
+
 
 const styles = StyleSheet.create((theme) => ({
     container: {
@@ -56,11 +58,11 @@ const styles = StyleSheet.create((theme) => ({
     retryButton: {
         paddingHorizontal: 20,
         paddingVertical: 10,
-        backgroundColor: '#007AFF',
+        backgroundColor: theme.colors.accent.blue,
         borderRadius: 8,
     },
     retryButtonText: {
-        color: '#FFFFFF',
+        color: theme.colors.button.primary.tint,
         fontSize: 16,
         fontWeight: '600',
     },
@@ -84,22 +86,22 @@ const styles = StyleSheet.create((theme) => ({
         marginBottom: 24,
     },
     terminalContainer: {
-        backgroundColor: '#1e1e1e',
+        backgroundColor: theme.colors.terminal.background,
         borderRadius: 8,
         padding: 16,
         minWidth: 280,
         borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.1)',
+        borderColor: theme.colors.modal.border,
     },
     terminalPrompt: {
         fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
         fontSize: 14,
-        color: '#00ff00',
+        color: theme.colors.terminal.prompt,
     },
     terminalCommand: {
         fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
         fontSize: 14,
-        color: '#ffffff',
+        color: theme.colors.terminal.command,
     },
 }));
 

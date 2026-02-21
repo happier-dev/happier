@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
@@ -11,6 +12,7 @@ export const MemorySettingsPrivacySection = React.memo(function MemorySettingsPr
     settings: MemorySettingsV1;
     writeSettings: (next: MemorySettingsV1) => void | Promise<void>;
 }>) {
+    const { theme } = useUnistyles();
     const { settings } = props;
 
     return (
@@ -22,7 +24,7 @@ export const MemorySettingsPrivacySection = React.memo(function MemorySettingsPr
                 testID="memory-settings-delete-on-disable-item"
                 title="Delete on disable"
                 subtitle="Remove local indexes and caches when memory search is turned off"
-                icon={<Ionicons name="trash-outline" size={29} color="#FF3B30" />}
+                icon={<Ionicons name="trash-outline" size={29} color={theme.colors.warningCritical} />}
                 rightElement={(
                     <Switch
                         testID="memory-settings-delete-on-disable"
@@ -37,4 +39,3 @@ export const MemorySettingsPrivacySection = React.memo(function MemorySettingsPr
         </ItemGroup>
     );
 });
-

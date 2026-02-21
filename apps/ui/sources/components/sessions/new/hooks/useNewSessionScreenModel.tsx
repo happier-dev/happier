@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Platform, useWindowDimensions, Pressable, Text } from 'react-native';
+import { View, Platform, useWindowDimensions, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAllMachines, storage, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
 import { useRouter, useLocalSearchParams, useNavigation, usePathname } from 'expo-router';
@@ -36,9 +36,12 @@ import { useMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';
 import { InteractionManager } from 'react-native';
 import { getMachineCapabilitiesSnapshot, prefetchMachineCapabilities, prefetchMachineCapabilitiesIfStale, useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
 import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
-import { getInstallableDepRegistryEntries } from '@/capabilities/installableDepsRegistry';
+import { getInstallablesRegistryEntries } from '@/capabilities/installablesRegistry';
+import { planInstallablesBackgroundActions } from '@/capabilities/installablesBackgroundPlan';
 import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
 import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
+import { machineCapabilitiesInvoke } from '@/sync/ops';
+import { resolveInstallablePolicy } from '@/sync/domains/settings/installablesPolicy';
 import {
     buildResumeCapabilityOptionsFromUiState,
     getAgentResumeExperimentsFromSettings,
@@ -90,6 +93,8 @@ import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hoo
 import { useNewSessionPreflightSessionModesState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightSessionModesState';
 import { getActionSpec } from '@happier-dev/protocol';
 import { buildActionDraftInput } from '@/sync/domains/actions/buildActionDraftInput';
+import { Text } from '@/components/ui/text/Text';
+
 
 // Configuration constants
 const RECENT_PATHS_DEFAULT_VISIBLE = 5;
@@ -676,10 +681,10 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         });
         if (relevantKeys.length === 0) return [];
 
-        const entries = getInstallableDepRegistryEntries().filter((e) => relevantKeys.includes(e.key));
+        const entries = getInstallablesRegistryEntries().filter((e) => relevantKeys.includes(e.key));
         const results = selectedMachineCapabilitiesSnapshot?.response.results;
         return entries.map((entry) => {
-            const depStatus = entry.getDepStatus(results);
+            const depStatus = entry.getStatus(results);
             const detectResult = entry.getDetectResult(results);
             return { entry, depStatus, detectResult };
         });
@@ -716,6 +721,65 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             });
         });
     }, [capabilityServerId, machines, selectedMachineId, wizardInstallableDeps]);
+
+    const requestedInstallableBackgroundActionsRef = React.useRef<Record<string, true>>({});
+
+    React.useEffect(() => {
+        if (!selectedMachineId) return;
+        if (wizardInstallableDeps.length === 0) return;
+
+        const machine = machines.find((m) => m.id === selectedMachineId);
+        if (!machine || !isMachineOnline(machine)) return;
+
+        const planned = planInstallablesBackgroundActions({
+            installables: wizardInstallableDeps.map(({ entry, depStatus }) => ({
+                entry,
+                status: depStatus,
+                policy: resolveInstallablePolicy({
+                    settings: settings as any,
+                    machineId: selectedMachineId,
+                    installableKey: entry.key,
+                    defaults: entry.defaultPolicy,
+                }),
+                installSpec: (() => {
+                    const raw = (settings as any)?.[entry.installSpecSettingKey];
+                    return typeof raw === 'string' ? raw : null;
+                })(),
+            })),
+        });
+
+        const actions = planned.filter((a) => {
+            const key = `${selectedMachineId}:${a.installableKey}:${a.request.method}`;
+            return requestedInstallableBackgroundActionsRef.current[key] !== true;
+        });
+
+        if (actions.length === 0) return;
+
+        for (const action of actions) {
+            requestedInstallableBackgroundActionsRef.current[`${selectedMachineId}:${action.installableKey}:${action.request.method}`] = true;
+        }
+
+        InteractionManager.runAfterInteractions(() => {
+            for (const action of actions) {
+                fireAndForget((async () => {
+                    try {
+                        await machineCapabilitiesInvoke(
+                            selectedMachineId,
+                            action.request,
+                            { serverId: capabilityServerId, timeoutMs: 5 * 60_000 },
+                        );
+                        await prefetchMachineCapabilities({
+                            machineId: selectedMachineId,
+                            serverId: capabilityServerId,
+                            request: CAPABILITIES_REQUEST_NEW_SESSION,
+                        });
+                    } catch {
+                        // Best-effort: avoid surfacing errors for background installs/updates.
+                    }
+                })(), { tag: `NewSessionScreenModel.installables.background.${action.installableKey}.${action.request.method}` });
+            }
+        });
+    }, [capabilityServerId, machines, selectedMachineId, settings, wizardInstallableDeps]);
 
     React.useEffect(() => {
         const results = selectedMachineCapabilitiesSnapshot?.response.results as any;

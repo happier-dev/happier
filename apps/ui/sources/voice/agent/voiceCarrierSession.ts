@@ -5,6 +5,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { DEFAULT_AGENT_ID, type AgentId } from '@happier-dev/agents';
 import { isAgentId } from '@/agents/registry/registryCore';
+import { buildSystemSessionMetadataV1, readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol';
 
 export const VOICE_CARRIER_SYSTEM_SESSION_KEY = 'voice_carrier';
 const VOICE_CARRIER_RETIRED_SYSTEM_SESSION_KEY = 'voice_carrier_retired';
@@ -14,6 +15,15 @@ function normalizeNonEmptyString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+export function isVoiceCarrierSystemSessionMetadata(metadata: unknown): boolean {
+  const systemSession = readSystemSessionMetadataFromMetadata({ metadata });
+  return systemSession?.hidden === true && String(systemSession.key ?? '') === VOICE_CARRIER_SYSTEM_SESSION_KEY;
+}
+
+function buildVoiceCarrierSystemSessionMetadata() {
+  return buildSystemSessionMetadataV1({ key: VOICE_CARRIER_SYSTEM_SESSION_KEY, hidden: true });
+}
+
 export function findVoiceCarrierSessionId(state: any): string | null {
   const sessionsObj = state?.sessions ?? {};
   let best: { id: string; updatedAt: number } | null = null;
@@ -21,8 +31,7 @@ export function findVoiceCarrierSessionId(state: any): string | null {
   for (const s of Object.values(sessionsObj) as any[]) {
     if (!s || typeof s.id !== 'string') continue;
     const meta = s.metadata ?? null;
-    const sys = meta?.systemSessionV1 ?? null;
-    if (!sys || sys.hidden !== true || String(sys.key ?? '') !== VOICE_CARRIER_SYSTEM_SESSION_KEY) continue;
+    if (!isVoiceCarrierSystemSessionMetadata(meta)) continue;
 
     const id = s.id;
     const updatedAt = typeof s.updatedAt === 'number' && Number.isFinite(s.updatedAt) ? s.updatedAt : 0;
@@ -122,7 +131,7 @@ async function touchVoiceCarrierSession(sessionId: string): Promise<void> {
     const summaryText = typeof metadata?.summary?.text === 'string' ? metadata.summary.text : 'Voice control (system)';
     return {
       ...metadata,
-      systemSessionV1: { v: 1, key: VOICE_CARRIER_SYSTEM_SESSION_KEY, hidden: true },
+      ...buildVoiceCarrierSystemSessionMetadata(),
       summary: { text: summaryText, updatedAt: Date.now() },
     };
   });
@@ -140,7 +149,7 @@ function resolveCarrierRetentionLimit(state: any): number {
 async function retireVoiceCarrierSession(sessionId: string): Promise<void> {
   await sync.patchSessionMetadataWithRetry(sessionId, (metadata: any) => ({
     ...metadata,
-    systemSessionV1: { v: 1, key: VOICE_CARRIER_RETIRED_SYSTEM_SESSION_KEY, hidden: true },
+    ...buildSystemSessionMetadataV1({ key: VOICE_CARRIER_RETIRED_SYSTEM_SESSION_KEY, hidden: true }),
     voiceAgentRunV1: null,
   }));
 }
@@ -157,8 +166,7 @@ async function applyVoiceCarrierRetentionPolicy(params: Readonly<{ keepSessionId
   for (const s of Object.values(sessionsObj) as any[]) {
     if (!s || typeof s.id !== 'string') continue;
     const meta = s.metadata ?? null;
-    const sys = meta?.systemSessionV1 ?? null;
-    if (!sys || sys.hidden !== true || String(sys.key ?? '') !== VOICE_CARRIER_SYSTEM_SESSION_KEY) continue;
+    if (!isVoiceCarrierSystemSessionMetadata(meta)) continue;
     if (s.id === keepSessionId) continue;
     const updatedAt = typeof s.updatedAt === 'number' && Number.isFinite(s.updatedAt) ? s.updatedAt : 0;
     carrierSessions.push({ id: s.id, updatedAt });
@@ -187,8 +195,7 @@ export async function ensureVoiceCarrierSessionForVoiceHome(): Promise<string> {
   for (const s of Object.values(state.sessions ?? {}) as any[]) {
     if (!s || typeof s.id !== 'string') continue;
     const meta = s.metadata ?? null;
-    const sys = meta?.systemSessionV1 ?? null;
-    if (!sys || sys.hidden !== true || String(sys.key ?? '') !== VOICE_CARRIER_SYSTEM_SESSION_KEY) continue;
+    if (!isVoiceCarrierSystemSessionMetadata(meta)) continue;
     if (normalizeNonEmptyString(meta?.machineId) !== target.machineId) continue;
     if (normalizeNonEmptyString(meta?.path) !== target.directory) continue;
     const updatedAt = typeof s.updatedAt === 'number' && Number.isFinite(s.updatedAt) ? s.updatedAt : 0;
@@ -259,8 +266,7 @@ export async function ensureVoiceCarrierSessionForSessionRoot(params: Readonly<{
   for (const s of Object.values(state.sessions ?? {}) as any[]) {
     if (!s || typeof s.id !== 'string') continue;
     const meta = s.metadata ?? null;
-    const sys = meta?.systemSessionV1 ?? null;
-    if (!sys || sys.hidden !== true || String(sys.key ?? '') !== VOICE_CARRIER_SYSTEM_SESSION_KEY) continue;
+    if (!isVoiceCarrierSystemSessionMetadata(meta)) continue;
     if (normalizeNonEmptyString(meta?.machineId) !== machineId) continue;
     if (normalizeNonEmptyString(meta?.path) !== directory) continue;
     const updatedAt = typeof s.updatedAt === 'number' && Number.isFinite(s.updatedAt) ? s.updatedAt : 0;

@@ -14,10 +14,6 @@ vi.mock('react-native-device-info', () => ({
     getDeviceType: () => 'Handset',
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-}));
-
 vi.mock('@/sync/domains/state/storage', () => ({
     useLocalSetting: () => false,
     useSetting: () => false,

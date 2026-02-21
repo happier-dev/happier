@@ -55,7 +55,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
 import * as React from 'react';
 import { useMemo } from 'react';
-import { ActivityIndicator, Platform, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUnistyles } from 'react-native-unistyles';
 import { sessionSwitch } from '@/sync/ops';
@@ -69,6 +69,8 @@ import { executeSessionComposerResolution } from '@/sync/domains/input/slashComm
 import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
 import { useAttachmentDraftManager } from '@/components/sessions/attachments/useAttachmentDraftManager';
 import { formatAttachmentsBlock, uploadAttachmentDraftsToSession } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
+import { Text } from '@/components/ui/text/Text';
+
 
 function formatResumeSupportDetailCode(code: 'cliNotDetected' | 'capabilityProbeFailed' | 'acpProbeFailed' | 'loadSessionFalse'): string {
     switch (code) {
@@ -1221,29 +1223,31 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
                         position: 'absolute',
                         top: 8, // Position at top of content area (padding handled by parent)
                         alignSelf: 'center',
-                        backgroundColor: '#FFF3CD',
+                        backgroundColor: theme.colors.box.warning.background,
+                        borderWidth: 1,
+                        borderColor: theme.colors.box.warning.border,
                         borderRadius: 100, // Fully rounded pill
                         paddingHorizontal: 14,
                         paddingVertical: 7,
                         flexDirection: 'row',
                         alignItems: 'center',
                         zIndex: 998, // Below voice bar but above content
-                        shadowColor: '#000',
+                        shadowColor: theme.colors.shadow.color,
                         shadowOffset: { width: 0, height: 2 },
                         shadowOpacity: 0.15,
                         shadowRadius: 4,
                         elevation: 4,
                     }}
                 >
-                    <Ionicons name="warning-outline" size={14} color="#FF9500" style={{ marginRight: 6 }} />
+                    <Ionicons name="warning-outline" size={14} color={theme.colors.box.warning.text} style={{ marginRight: 6 }} />
                     <Text style={{
                         fontSize: 12,
-                        color: '#856404',
+                        color: theme.colors.box.warning.text,
                         fontWeight: '600'
                     }}>
                         {t('sessionInfo.cliVersionOutdated')}
                     </Text>
-                    <Ionicons name="close" size={14} color="#856404" style={{ marginLeft: 8 }} />
+                    <Ionicons name="close" size={14} color={theme.colors.box.warning.text} style={{ marginLeft: 8 }} />
                 </Pressable>
             )}
 
@@ -1288,7 +1292,7 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
                         <Ionicons
                             name={Platform.OS === 'ios' ? 'chevron-back' : 'arrow-back'}
                             size={Platform.select({ ios: 28, default: 24 })}
-                            color="#000"
+                            color={theme.colors.text}
                         />
                     </Pressable>
                 )

@@ -9,6 +9,13 @@ vi.mock('@/utils/timing/time', () => ({
     backoff: async <T>(fn: () => Promise<T>) => await fn(),
 }));
 
+vi.mock('@/text', () => ({
+    t: (key: string, params?: Record<string, unknown>) => {
+        const provider = typeof params?.provider === 'string' ? params.provider : '';
+        return provider ? `${key}:${provider}` : key;
+    },
+}));
+
 import { githubAuthProvider } from './index';
 
 type MockFetchResponse = {
@@ -46,6 +53,13 @@ describe('githubAuthProvider', () => {
         expect(githubAuthProvider.badgeIconName).toBe('logo-github');
         expect(githubAuthProvider.supportsProfileBadge).toBe(true);
         expect(githubAuthProvider.connectButtonColor).toBe('#24292e');
+    });
+
+    it('provides a restore notice for provider_already_linked redirects', () => {
+        expect(githubAuthProvider.getRestoreRedirectNotice?.({ reason: 'provider_already_linked' })).toEqual({
+            title: 'connect.externalAuthVerifiedTitle:GitHub',
+            body: 'connect.externalAuthVerifiedBody:GitHub',
+        });
     });
 
     it.each([

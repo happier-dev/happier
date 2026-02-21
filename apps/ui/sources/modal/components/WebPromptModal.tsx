@@ -1,9 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, TextInput, Pressable, KeyboardTypeOptions, Platform } from 'react-native';
+import { View, Pressable, KeyboardTypeOptions, Platform } from 'react-native';
 import { BaseModal } from './BaseModal';
 import { PromptModalConfig } from '../types';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 interface WebPromptModalProps {
     config: PromptModalConfig;
@@ -16,7 +18,7 @@ interface WebPromptModalProps {
 export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true, zIndexBase }: WebPromptModalProps) {
     const { theme } = useUnistyles();
     const [inputValue, setInputValue] = useState(config.defaultValue || '');
-    const inputRef = useRef<TextInput>(null);
+    const inputRef = useRef<React.ElementRef<typeof TextInput> | null>(null);
 
     useEffect(() => {
         // Auto-focus the input when modal opens

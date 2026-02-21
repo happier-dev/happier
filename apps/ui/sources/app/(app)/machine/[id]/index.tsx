@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef } from 'react';
-import { View, Text, ScrollView, ActivityIndicator, RefreshControl, Platform, Pressable, TextInput } from 'react-native';
+import { View, ScrollView, ActivityIndicator, RefreshControl, Platform, Pressable } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -35,11 +35,11 @@ import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSet
 import { resolveWindowsRemoteSessionConsoleFromMachineMetadata } from '@/sync/domains/session/spawn/windowsRemoteSessionConsole';
 import { Switch } from '@/components/ui/forms/Switch';
 import { CAPABILITIES_REQUEST_MACHINE_DETAILS } from '@/capabilities/requests';
-import { InstallableDepInstaller } from '@/components/machines/InstallableDepInstaller';
-import { getInstallableDepRegistryEntries } from '@/capabilities/installableDepsRegistry';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import type { DaemonExecutionRunEntry } from '@happier-dev/protocol';
 import { ExecutionRunRow } from '@/components/sessions/runs/ExecutionRunRow';
+import { Text, TextInput } from '@/components/ui/text/Text';
+
 
 const styles = StyleSheet.create((theme) => ({
     pathInputContainer: {
@@ -415,37 +415,6 @@ export default function MachineDetailScreen() {
         return snapshot ?? null;
     }, [detectedCapabilities]);
 
-    const installableDepEntries = useMemo(() => {
-        const entries = getInstallableDepRegistryEntries();
-        const results = capabilitiesSnapshot?.response.results;
-        return entries.map((entry) => {
-            const enabled = Boolean(machineId && entry.enabledWhen(settings as any));
-            const depStatus = entry.getDepStatus(results);
-            const detectResult = entry.getDetectResult(results);
-            return { entry, enabled, depStatus, detectResult };
-        });
-    }, [capabilitiesSnapshot, machineId, settings]);
-
-    React.useEffect(() => {
-        if (!machineId) return;
-        if (!isOnline) return;
-
-        const results = capabilitiesSnapshot?.response.results;
-        if (!results) return;
-
-        const requests = installableDepEntries
-            .filter((d) => d.enabled)
-            .filter((d) => d.entry.shouldPrefetchRegistry({ requireExistingResult: true, result: d.detectResult, data: d.depStatus }))
-            .flatMap((d) => d.entry.buildRegistryDetectRequest().requests ?? []);
-
-        if (requests.length === 0) return;
-
-        refreshDetectedCapabilities({
-            request: { requests },
-            timeoutMs: 12_000,
-        });
-    }, [capabilitiesSnapshot, installableDepEntries, isOnline, machineId, refreshDetectedCapabilities]);
-
     const detectedClisTitle = useMemo(() => {
         const headerTextStyle = [
             Typography.default('regular'),
@@ -701,7 +670,7 @@ export default function MachineDetailScreen() {
                     options={notFoundScreenOptions}
                 />
                 <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                    <Text style={[Typography.default(), { fontSize: 16, color: '#666' }]}>
+                    <Text style={[Typography.default(), { fontSize: 16, color: theme.colors.textSecondary }]}>
                         {t('machine.notFound')}
                     </Text>
                 </View>
@@ -914,39 +883,17 @@ export default function MachineDetailScreen() {
                     <DetectedClisList state={detectedCapabilities} />
                 </ItemGroup>
 
-                {installableDepEntries.map(({ entry, enabled, depStatus }) => (
-                    <InstallableDepInstaller
-                        key={entry.key}
-                        machineId={machineId ?? ''}
-                        serverId={activeServerId}
-                        enabled={enabled}
-                        groupTitle={`${t(entry.groupTitleKey)}${entry.experimental ? ' (experimental)' : ''}`}
-                        depId={entry.depId}
-                        depTitle={entry.depTitle}
-                        depIconName={entry.depIconName as any}
-                        depStatus={depStatus}
-                        capabilitiesStatus={detectedCapabilities.status}
-                        installSpecSettingKey={entry.installSpecSettingKey}
-                        installSpecTitle={entry.installSpecTitle}
-                        installSpecDescription={entry.installSpecDescription}
-                        installLabels={{
-                            install: t(entry.installLabels.installKey),
-                            update: t(entry.installLabels.updateKey),
-                            reinstall: t(entry.installLabels.reinstallKey),
-                        }}
-                        installModal={{
-                            installTitle: t(entry.installModal.installTitleKey),
-                            updateTitle: t(entry.installModal.updateTitleKey),
-                            reinstallTitle: t(entry.installModal.reinstallTitleKey),
-                            description: t(entry.installModal.descriptionKey),
-                        }}
-                        refreshStatus={() => void refreshCapabilities()}
-                        refreshRegistry={() => {
+                <ItemGroup title="Tools">
+                    <Item
+                        title="Installables"
+                        subtitle="Manage installable tools for this machine."
+                        showChevron={true}
+                        onPress={() => {
                             if (!machineId) return;
-                            refreshDetectedCapabilities({ request: entry.buildRegistryDetectRequest(), timeoutMs: 12_000 });
+                            router.push(`/machine/${encodeURIComponent(machineId)}/installables?serverId=${encodeURIComponent(activeServerId)}`);
                         }}
                     />
-                ))}
+                </ItemGroup>
 
                 {/* Daemon */}
                 <ItemGroup title={t('machine.daemon')}>
@@ -1074,7 +1021,7 @@ export default function MachineDetailScreen() {
                                             subtitle={'Open session'}
                                             subtitleStyle={{ color: theme.colors.textSecondary }}
                                             onPress={() => navigateToSession(sessionId)}
-                                            rightElement={<Ionicons name="chevron-forward" size={20} color="#C7C7CC" />}
+                                            rightElement={<Ionicons name="chevron-forward" size={20} color={theme.colors.groupped.chevron} />}
                                         />
                                     );
 
@@ -1157,7 +1104,7 @@ export default function MachineDetailScreen() {
                                                         {stoppingRunId === run.runId ? (
                                                             <ActivityIndicator size="small" color={theme.colors.textSecondary} />
                                                         ) : (
-                                                            <Ionicons name="stop-circle-outline" size={20} color="#FF9500" />
+                                                            <Ionicons name="stop-circle-outline" size={20} color={theme.colors.accent.orange} />
                                                         )}
                                                     </Pressable>
                                                 ) : null}
@@ -1181,7 +1128,7 @@ export default function MachineDetailScreen() {
                                 title={getSessionName(session)}
                                 subtitle={getSessionSubtitle(session)}
                                 onPress={() => navigateToSession(session.id)}
-                                rightElement={<Ionicons name="chevron-forward" size={20} color="#C7C7CC" />}
+                                rightElement={<Ionicons name="chevron-forward" size={20} color={theme.colors.groupped.chevron} />}
                             />
                         ))}
                     </ItemGroup>

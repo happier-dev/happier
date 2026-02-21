@@ -450,6 +450,10 @@ export const it: TranslationStructure = {
     terminalUrlPlaceholder: "happier://terminal?...",
     restoreQrInstructions:
       '1. Apri Happier sul tuo dispositivo mobile\n2. Vai su Impostazioni → Account\n3. Tocca "Collega nuovo dispositivo"\n4. Scansiona questo codice QR',
+    externalAuthVerifiedTitle: ({ provider }: { provider: string }) =>
+      `${provider} verificato`,
+    externalAuthVerifiedBody: ({ provider }: { provider: string }) =>
+      `Abbiamo trovato un account Happier esistente collegato a ${provider}. Per completare l'accesso su questo dispositivo, ripristina la chiave del tuo account con il codice QR o con la tua chiave segreta.`,
     restoreWithSecretKeyInstead: "Ripristina con chiave segreta",
     restoreWithSecretKeyDescription:
       "Inserisci la chiave segreta per ripristinare l’accesso al tuo account.",
@@ -679,6 +683,19 @@ export const it: TranslationStructure = {
     compactSessionViewMinimal: "Vista compatta minima",
     compactSessionViewMinimalDescription:
       "Rimuovi gli avatar e mostra un layout di riga sessione molto compatto",
+    text: "Testo",
+    textDescription: "Regola la dimensione del testo nell'app",
+    textSize: "Dimensione testo",
+    textSizeDescription: "Rendi il testo più grande o più piccolo",
+    textSizeOptions: {
+      xxsmall: "Molto molto piccolo",
+      xsmall: "Molto piccolo",
+      small: "Piccolo",
+      default: "Predefinito",
+      large: "Grande",
+      xlarge: "Molto grande",
+      xxlarge: "Molto molto grande",
+    },
   },
 
   settingsFeatures: {
@@ -876,7 +893,7 @@ export const it: TranslationStructure = {
       "Per riprendere una conversazione di Codex, installa il server di ripresa di Codex sulla macchina di destinazione (Dettagli macchina → Ripresa Codex).",
     codexAcpNotInstalledTitle: "Codex ACP non è installato su questa macchina",
     codexAcpNotInstalledMessage:
-      "Per usare l'esperimento Codex ACP, installa codex-acp sulla macchina di destinazione (Dettagli macchina → Codex ACP) o disattiva l'esperimento.",
+      "Per usare l'esperimento Codex ACP, installa codex-acp sulla macchina di destinazione (Dettagli macchina → Installables) o disattiva l'esperimento.",
   },
 
   deps: {
@@ -2356,6 +2373,12 @@ export const it: TranslationStructure = {
       `Continua con ${provider}`,
     linkOrRestoreAccount: "Collega o ripristina account",
     loginWithMobileApp: "Accedi con l'app mobile",
+    serverUnavailableTitle: "Impossibile raggiungere il server",
+    serverUnavailableBody: ({ serverUrl }: { serverUrl: string }) =>
+      `Non riusciamo a connetterci a ${serverUrl}. Riprova o cambia server per continuare.`,
+    serverIncompatibleTitle: "Server non supportato",
+    serverIncompatibleBody: ({ serverUrl }: { serverUrl: string }) =>
+      `Il server su ${serverUrl} ha restituito una risposta inattesa. Aggiorna il server o cambia server per continuare.`,
   },
 
   review: {
@@ -2372,7 +2395,7 @@ export const it: TranslationStructure = {
       `${label} copiato negli appunti`,
   },
 
-  machine: {
+	  machine: {
     launchNewSessionInDirectory: "Avvia nuova sessione nella directory",
     offlineUnableToSpawn: "Avvio disabilitato quando la macchina è offline",
     offlineHelp:
@@ -2389,13 +2412,22 @@ export const it: TranslationStructure = {
     renameTitle: "Rinomina macchina",
     renameDescription:
       "Assegna a questa macchina un nome personalizzato. Lascia vuoto per usare l’hostname predefinito.",
-    renamePlaceholder: "Inserisci nome macchina",
-    renamedSuccess: "Macchina rinominata correttamente",
-    renameFailed: "Impossibile rinominare la macchina",
-    lastKnownPid: "Ultimo PID noto",
-    lastKnownHttpPort: "Ultima porta HTTP nota",
-    startedAt: "Avviato alle",
-    cliVersion: "Versione CLI",
+	    renamePlaceholder: "Inserisci nome macchina",
+	    renamedSuccess: "Macchina rinominata correttamente",
+	    renameFailed: "Impossibile rinominare la macchina",
+	    actions: {
+	      removeMachine: "Remove Machine",
+	      removeMachineSubtitle:
+	        "Revokes this machine and removes it from your account.",
+	      removeMachineConfirmBody:
+	        "This will revoke access from this machine (including access keys and automation assignments). You can reconnect later by signing in again from the CLI.",
+	      removeMachineAlreadyRemoved:
+	        "This machine has already been removed from your account.",
+	    },
+	    lastKnownPid: "Ultimo PID noto",
+	    lastKnownHttpPort: "Ultima porta HTTP nota",
+	    startedAt: "Avviato alle",
+	    cliVersion: "Versione CLI",
     daemonStateVersion: "Versione stato daemon",
     activeSessions: ({ count }: { count: number }) =>
       `Sessioni attive (${count})`,

@@ -125,6 +125,10 @@ export const ru: TranslationStructure = {
     terminalUrlPlaceholder: "happier://terminal?...",
     restoreQrInstructions:
       "1. Откройте Happier на мобильном устройстве\n2. Перейдите в Настройки → Аккаунт\n3. Нажмите «Подключить новое устройство»\n4. Отсканируйте этот QR‑код",
+    externalAuthVerifiedTitle: ({ provider }: { provider: string }) =>
+      `${provider} подтверждён`,
+    externalAuthVerifiedBody: ({ provider }: { provider: string }) =>
+      `Мы нашли существующий аккаунт Happier, связанный с ${provider}. Чтобы завершить вход на этом устройстве, восстановите ключ аккаунта с помощью QR‑кода или секретного ключа.`,
     restoreWithSecretKeyInstead: "Восстановить по секретному ключу",
     restoreWithSecretKeyDescription:
       "Введите секретный ключ, чтобы восстановить доступ к аккаунту.",
@@ -353,6 +357,19 @@ export const ru: TranslationStructure = {
     compactSessionViewMinimal: "Минимальный компактный вид",
     compactSessionViewMinimalDescription:
       "Скрыть аватары и показать очень компактный макет строки сессии",
+    text: "Текст",
+    textDescription: "Настройка размера текста в приложении",
+    textSize: "Размер текста",
+    textSizeDescription: "Сделать текст больше или меньше",
+    textSizeOptions: {
+      xxsmall: "Очень очень маленький",
+      xsmall: "Очень маленький",
+      small: "Маленький",
+      default: "По умолчанию",
+      large: "Большой",
+      xlarge: "Очень большой",
+      xxlarge: "Очень очень большой",
+    },
   },
 
   settingsFeatures: {
@@ -547,7 +564,7 @@ export const ru: TranslationStructure = {
       "Чтобы возобновить разговор Codex, установите сервер возобновления Codex на целевой машине (Детали машины → Возобновление Codex).",
     codexAcpNotInstalledTitle: "Codex ACP не установлен на этой машине",
     codexAcpNotInstalledMessage:
-      "Чтобы использовать эксперимент Codex ACP, установите codex-acp на целевой машине (Детали машины → Codex ACP) или отключите эксперимент.",
+      "Чтобы использовать эксперимент Codex ACP, установите codex-acp на целевой машине (Детали машины → Installables) или отключите эксперимент.",
   },
 
   deps: {
@@ -2048,6 +2065,12 @@ export const ru: TranslationStructure = {
       `Продолжить через ${provider}`,
     linkOrRestoreAccount: "Связать или восстановить аккаунт",
     loginWithMobileApp: "Войти через мобильное приложение",
+    serverUnavailableTitle: "Не удаётся подключиться к серверу",
+    serverUnavailableBody: ({ serverUrl }: { serverUrl: string }) =>
+      `Мы не можем подключиться к ${serverUrl}. Повторите попытку или смените сервер, чтобы продолжить.`,
+    serverIncompatibleTitle: "Сервер не поддерживается",
+    serverIncompatibleBody: ({ serverUrl }: { serverUrl: string }) =>
+      `Сервер по адресу ${serverUrl} вернул неожиданный ответ. Обновите сервер или смените сервер, чтобы продолжить.`,
   },
 
   review: {
@@ -2064,7 +2087,7 @@ export const ru: TranslationStructure = {
       `${label} скопировано в буфер обмена`,
   },
 
-  machine: {
+	  machine: {
     offlineUnableToSpawn: "Запуск отключён: машина офлайн",
     offlineHelp:
       "• Убедитесь, что компьютер онлайн\n• Выполните `happier daemon status` для диагностики\n• Используете последнюю версию CLI? Обновите командой `npm install -g @happier-dev/cli@latest`",
@@ -2080,13 +2103,22 @@ export const ru: TranslationStructure = {
     renameTitle: "Переименовать машину",
     renameDescription:
       "Дайте этой машине имя. Оставьте пустым, чтобы использовать hostname по умолчанию.",
-    renamePlaceholder: "Введите имя машины",
-    renamedSuccess: "Машина успешно переименована",
-    renameFailed: "Не удалось переименовать машину",
-    lastKnownPid: "Последний известный PID",
-    lastKnownHttpPort: "Последний известный HTTP порт",
-    startedAt: "Запущен в",
-    cliVersion: "Версия CLI",
+	    renamePlaceholder: "Введите имя машины",
+	    renamedSuccess: "Машина успешно переименована",
+	    renameFailed: "Не удалось переименовать машину",
+	    actions: {
+	      removeMachine: "Remove Machine",
+	      removeMachineSubtitle:
+	        "Revokes this machine and removes it from your account.",
+	      removeMachineConfirmBody:
+	        "This will revoke access from this machine (including access keys and automation assignments). You can reconnect later by signing in again from the CLI.",
+	      removeMachineAlreadyRemoved:
+	        "This machine has already been removed from your account.",
+	    },
+	    lastKnownPid: "Последний известный PID",
+	    lastKnownHttpPort: "Последний известный HTTP порт",
+	    startedAt: "Запущен в",
+	    cliVersion: "Версия CLI",
     daemonStateVersion: "Версия состояния daemon",
     activeSessions: ({ count }: { count: number }) =>
       `Активные сессии (${count})`,
