@@ -8,19 +8,17 @@ vi.mock('./BaseModal', () => ({
     BaseModal: ({ children }: any) => React.createElement('BaseModal', null, children),
 }));
 
-vi.mock('react-native', () => {
-    const React = require('react');
+vi.mock('react-native', async () => {
+    const rn = await import('@/dev/reactNativeStub');
     return {
+        ...rn,
+        AppState: rn.AppState,
         View: (props: any) => React.createElement('View', props, props.children),
         Text: (props: any) => React.createElement('Text', props, props.children),
         Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+        Platform: { ...rn.Platform, OS: 'web', select: (v: any) => v.web ?? v.default ?? null },
     };
 });
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
-    useUnistyles: () => {},
-}));
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
