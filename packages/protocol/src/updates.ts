@@ -170,7 +170,7 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
       avatar: z.unknown().nullable(),
     }).passthrough(),
     accessLevel: z.enum(['view', 'edit', 'admin']),
-    encryptedDataKey: Base64Schema,
+    encryptedDataKey: Base64Schema.optional(),
     createdAt: TimestampMsSchema,
   }).passthrough(),
   z.object({
