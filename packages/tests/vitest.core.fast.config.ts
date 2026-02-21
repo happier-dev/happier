@@ -7,8 +7,10 @@ export default defineConfig({
     environment: 'node',
     include: [
       'suites/core-e2e/**/*.test.ts',
+      'src/testkit/cliAccessKey.spec.ts',
       'src/testkit/process/serverLight.plan.spec.ts',
       'src/testkit/process/extendedDbDocker.plan.spec.ts',
+      'src/testkit/process/uiWebHtml.spec.ts',
       'src/testkit/env.spec.ts',
       'src/testkit/daemon/daemon.statePath.spec.ts',
       'src/testkit/providers/satisfaction/messageSatisfaction.spec.ts',

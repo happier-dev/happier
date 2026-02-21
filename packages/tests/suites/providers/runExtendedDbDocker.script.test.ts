@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseArgs, resolveExtendedDbCommandTimeoutMs } from '../../scripts/run-extended-db-docker.mjs';
+import { parseArgs, resolveExtendedDbCommandTimeoutMs, resolveExtendedDbStepTimeoutMs } from '../../scripts/run-extended-db-docker.mjs';
 
 describe('extended-db docker script args', () => {
   it('parses valid args', () => {
@@ -32,6 +32,13 @@ describe('extended-db docker script args', () => {
 });
 
 describe('extended-db docker script timeouts', () => {
+  it('uses a generous default step timeout (overrideable by env)', () => {
+    expect(resolveExtendedDbStepTimeoutMs({} as unknown as NodeJS.ProcessEnv)).toBe(3_600_000);
+    expect(
+      resolveExtendedDbStepTimeoutMs({ HAPPIER_E2E_EXTENDED_DB_STEP_TIMEOUT_MS: '120000' } as unknown as NodeJS.ProcessEnv),
+    ).toBe(120_000);
+  });
+
   it('uses fallback for missing/invalid values', () => {
     expect(resolveExtendedDbCommandTimeoutMs(undefined, 55_000)).toBe(55_000);
     expect(resolveExtendedDbCommandTimeoutMs('0', 55_000)).toBe(55_000);

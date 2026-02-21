@@ -59,10 +59,12 @@ describe('extended db docker plan', () => {
   it('plans the correct yarn commands for e2e and db-contract modes', () => {
     const databaseUrl = buildDatabaseUrlForContainer({ db: 'postgres', host: '127.0.0.1', port: 5432 });
     const e2e = buildExtendedDbCommandPlan({ db: 'postgres', mode: 'e2e', databaseUrl });
-    expect(e2e).toHaveLength(1);
-    expect(e2e[0].kind).toBe('e2e');
-    expect(e2e[0].env.HAPPIER_E2E_DB_PROVIDER).toBe('postgres');
-    expect(e2e[0].env.DATABASE_URL).toBe(databaseUrl);
+    expect(e2e).toHaveLength(3);
+    expect(e2e[0].kind).toBe('prebuild-cli-shared');
+    expect(e2e[1].kind).toBe('prebuild-cli');
+    expect(e2e[2].kind).toBe('e2e');
+    expect(e2e[2].env.HAPPIER_E2E_DB_PROVIDER).toBe('postgres');
+    expect(e2e[2].env.DATABASE_URL).toBe(databaseUrl);
 
     const contract = buildExtendedDbCommandPlan({ db: 'mysql', mode: 'contract', databaseUrl: 'mysql://root:happier@127.0.0.1:3306/happier' });
     expect(contract).toHaveLength(2);
@@ -74,15 +76,17 @@ describe('extended db docker plan', () => {
   it('plans the correct yarn commands for extended mode (all steps)', () => {
     const databaseUrl = buildDatabaseUrlForContainer({ db: 'postgres', host: '127.0.0.1', port: 5432 });
     const extended = buildExtendedDbCommandPlan({ db: 'postgres', mode: 'extended', databaseUrl });
-    expect(extended).toHaveLength(3);
-    expect(extended[0].kind).toBe('e2e');
-    expect(extended[0].env.HAPPIER_E2E_DB_PROVIDER).toBe('postgres');
-    expect(extended[0].env.DATABASE_URL).toBe(databaseUrl);
-    expect(extended[1].kind).toBe('migrate');
-    expect(extended[1].env.DATABASE_URL).toBe(databaseUrl);
-    expect(extended[2].kind).toBe('contract');
-    expect(extended[2].env.HAPPIER_DB_PROVIDER).toBe('postgres');
+    expect(extended).toHaveLength(5);
+    expect(extended[0].kind).toBe('prebuild-cli-shared');
+    expect(extended[1].kind).toBe('prebuild-cli');
+    expect(extended[2].kind).toBe('e2e');
+    expect(extended[2].env.HAPPIER_E2E_DB_PROVIDER).toBe('postgres');
     expect(extended[2].env.DATABASE_URL).toBe(databaseUrl);
+    expect(extended[3].kind).toBe('migrate');
+    expect(extended[3].env.DATABASE_URL).toBe(databaseUrl);
+    expect(extended[4].kind).toBe('contract');
+    expect(extended[4].env.HAPPIER_DB_PROVIDER).toBe('postgres');
+    expect(extended[4].env.DATABASE_URL).toBe(databaseUrl);
   });
 
   it('sanitizes docker env by dropping DOCKER_API_VERSION to allow negotiation', () => {

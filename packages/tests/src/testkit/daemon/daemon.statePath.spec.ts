@@ -54,5 +54,41 @@ describe('readDaemonState', () => {
       }),
     );
   });
-});
 
+  it('falls back to scanning servers/*/daemon.state.json when settings.json points elsewhere', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-daemon-state-fallback-'));
+
+    // Persisted selection points to "cloud" but the daemon wrote its state under env_deadbeef.
+    await writeFile(
+      join(dir, 'settings.json'),
+      JSON.stringify(
+        {
+          schemaVersion: 5,
+          activeServerId: 'cloud',
+          servers: {
+            cloud: { id: 'cloud', serverUrl: 'https://api.happier.dev', webappUrl: 'https://app.happier.dev' },
+          },
+        },
+        null,
+        2,
+      ) + '\n',
+      'utf8',
+    );
+
+    const serverId = 'env_deadbeef';
+    const serverDir = join(dir, 'servers', serverId);
+    await mkdir(serverDir, { recursive: true });
+    await writeFile(
+      join(serverDir, 'daemon.state.json'),
+      JSON.stringify({ pid: 111, httpPort: 222 }, null, 2) + '\n',
+      'utf8',
+    );
+
+    await expect(readDaemonState(dir)).resolves.toEqual(
+      expect.objectContaining({
+        pid: 111,
+        httpPort: 222,
+      }),
+    );
+  });
+});

@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -48,6 +48,27 @@ async function readDaemonStateFromPath(path: string): Promise<DaemonState | null
   }
 }
 
+async function listServerDaemonStateCandidates(happyHomeDir: string): Promise<Array<{ path: string; mtimeMs: number }>> {
+  const serversDir = join(happyHomeDir, 'servers');
+  try {
+    const entries = await readdir(serversDir, { withFileTypes: true });
+    const candidates: Array<{ path: string; mtimeMs: number }> = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const candidatePath = join(serversDir, entry.name, 'daemon.state.json');
+      try {
+        const s = await stat(candidatePath);
+        candidates.push({ path: candidatePath, mtimeMs: s.mtimeMs });
+      } catch {
+        // ignore missing / unreadable
+      }
+    }
+    return candidates;
+  } catch {
+    return [];
+  }
+}
+
 export async function readDaemonState(happyHomeDir: string): Promise<DaemonState | null> {
   const activeServerId = await resolveActiveServerIdFromSettings(happyHomeDir);
   const candidates: string[] = [];
@@ -56,6 +77,15 @@ export async function readDaemonState(happyHomeDir: string): Promise<DaemonState
 
   for (const candidate of candidates) {
     const state = await readDaemonStateFromPath(candidate);
+    if (state) return state;
+  }
+
+  // Fallback: if settings.json is stale/mismatched, find the newest per-server daemon state.
+  const perServerStates = await listServerDaemonStateCandidates(happyHomeDir);
+  if (perServerStates.length === 0) return null;
+  perServerStates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  for (const candidate of perServerStates) {
+    const state = await readDaemonStateFromPath(candidate.path);
     if (state) return state;
   }
   return null;

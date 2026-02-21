@@ -34,6 +34,10 @@ export function resolveExtendedDbCommandTimeoutMs(raw, fallbackMs) {
   return Math.max(5_000, parsed);
 }
 
+export function resolveExtendedDbStepTimeoutMs(env) {
+  return resolveExtendedDbCommandTimeoutMs(env?.HAPPIER_E2E_EXTENDED_DB_STEP_TIMEOUT_MS, 3_600_000);
+}
+
 function formatCommand(cmd, args) {
   return `${cmd} ${args.join(' ')}`.trim();
 }
@@ -136,10 +140,7 @@ export async function main(argv = process.argv) {
     process.env.HAPPIER_E2E_EXTENDED_DB_DOCKER_TIMEOUT_MS,
     120_000,
   );
-  const testStepTimeoutMs = resolveExtendedDbCommandTimeoutMs(
-    process.env.HAPPIER_E2E_EXTENDED_DB_STEP_TIMEOUT_MS,
-    2_400_000,
-  );
+  const testStepTimeoutMs = resolveExtendedDbStepTimeoutMs(process.env);
 
   const db = parsed.db;
   const mode = parsed.mode ?? 'extended';

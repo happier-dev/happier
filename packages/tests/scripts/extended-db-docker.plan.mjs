@@ -18,6 +18,18 @@ function resolveServerAppWorkspaceName() {
   }
 }
 
+function resolveCliAppWorkspaceName() {
+  try {
+    const pkgPath = resolve(REPO_ROOT, 'apps', 'cli', 'package.json');
+    const raw = readFileSync(pkgPath, 'utf8');
+    const json = JSON.parse(raw);
+    const name = typeof json?.name === 'string' ? json.name.trim() : '';
+    return name || '@happier-dev/cli';
+  } catch {
+    return '@happier-dev/cli';
+  }
+}
+
 export function sanitizeDockerEnv(env) {
   const out = { ...(env ?? {}) };
   // Allow docker client to negotiate with the daemon. On some machines, DOCKER_API_VERSION is pinned
@@ -105,6 +117,20 @@ export function buildExtendedDbCommandPlan({ db, mode, databaseUrl }) {
   /** @type {Array<{kind: string, command: string, args: string[], env: Record<string, string>}>} */
   const steps = [];
 
+  const prebuildCliSharedStep = {
+    kind: 'prebuild-cli-shared',
+    command: 'yarn',
+    args: ['-s', 'workspace', resolveCliAppWorkspaceName(), 'build:shared'],
+    env: { CI: '1' },
+  };
+
+  const prebuildCliStep = {
+    kind: 'prebuild-cli',
+    command: 'yarn',
+    args: ['-s', 'workspace', resolveCliAppWorkspaceName(), 'build'],
+    env: { CI: '1' },
+  };
+
   const e2eStep = {
     kind: 'e2e',
     command: 'yarn',
@@ -140,7 +166,7 @@ export function buildExtendedDbCommandPlan({ db, mode, databaseUrl }) {
     },
   };
 
-  if (mode === 'e2e') return [e2eStep];
+  if (mode === 'e2e') return [prebuildCliSharedStep, prebuildCliStep, e2eStep];
   if (mode === 'contract') return [migrateStep, contractStep];
-  return [e2eStep, migrateStep, contractStep];
+  return [prebuildCliSharedStep, prebuildCliStep, e2eStep, migrateStep, contractStep];
 }

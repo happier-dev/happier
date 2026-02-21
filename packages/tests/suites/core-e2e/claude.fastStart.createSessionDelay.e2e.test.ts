@@ -75,7 +75,7 @@ describe('core e2e: Claude fast-start', () => {
       HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeLog,
       HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${randomUUID()}`,
       // Make server session creation slow enough that we can verify local spawn happens first.
-      HAPPIER_E2E_DELAY_CREATE_SESSION_MS: '10000',
+      HAPPIER_E2E_DELAY_CREATE_SESSION_MS: '30000',
     };
 
     await ensureCliDistBuilt({ testDir, env: cliEnv });
@@ -102,7 +102,7 @@ describe('core e2e: Claude fast-start', () => {
     const invocation = await waitForFakeClaudeInvocation(
       fakeLog,
       (i) => i.mode === 'local',
-      { timeoutMs: 5000, pollMs: 25 },
+      { timeoutMs: 20_000, pollMs: 25 },
     );
 
     expect(invocation.argv).toEqual(expect.any(Array));

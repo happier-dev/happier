@@ -6,18 +6,15 @@ import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { createRunDirs } from '../../src/testkit/runDir';
-import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { createTestAuth } from '../../src/testkit/auth';
-import { sleep, waitFor } from '../../src/testkit/timing';
-import { repoRootDir } from '../../src/testkit/paths';
-import { runLoggedCommand } from '../../src/testkit/process/spawnProcess';
-import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
-import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
-import { yarnCommand } from '../../src/testkit/process/commands';
-import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
-import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
-import { seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
+	import { createRunDirs } from '../../src/testkit/runDir';
+	import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
+	import { createTestAuth } from '../../src/testkit/auth';
+	import { sleep, waitFor } from '../../src/testkit/timing';
+	import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
+	import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
+	import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
+	import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
+	import { seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
 
 function tmuxAvailable(): boolean {
   if (process.platform === 'win32') return false;
@@ -125,30 +122,20 @@ describe('core e2e: daemon tmux spawn respawn supervision', () => {
       const machineKey = Uint8Array.from(randomBytes(32));
       await seedCliDataKeyAuthForServer({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, token: auth.token, machineKey });
 
-      writeTestManifestForServer({
-        testDir,
-        server,
-        startedAt,
-        runId: run.runId,
-        testName: 'daemon-tmux-spawn-respawn',
-        sessionIds: [],
-        env: {
-          CI: process.env.CI,
-          HAPPIER_HOME_DIR: daemonHomeDir,
-          HAPPIER_SERVER_URL: serverBaseUrl,
-          HAPPIER_WEBAPP_URL: serverBaseUrl,
-        },
-      });
-
-      await runLoggedCommand({
-        command: yarnCommand(),
-        args: ['-s', 'workspace', '@happier-dev/cli', 'build'],
-        cwd: repoRootDir(),
-        env: { ...process.env, CI: '1' },
-        stdoutPath: resolve(join(testDir, 'cli.build.stdout.log')),
-        stderrPath: resolve(join(testDir, 'cli.build.stderr.log')),
-        timeoutMs: 240_000,
-      });
+	      writeTestManifestForServer({
+	        testDir,
+	        server,
+	        startedAt,
+	        runId: run.runId,
+	        testName: 'daemon-tmux-spawn-respawn',
+	        sessionIds: [],
+	        env: {
+	          CI: process.env.CI,
+	          HAPPIER_HOME_DIR: daemonHomeDir,
+	          HAPPIER_SERVER_URL: serverBaseUrl,
+	          HAPPIER_WEBAPP_URL: serverBaseUrl,
+	        },
+	      });
 
       try {
         daemon = await startTestDaemon({
@@ -291,7 +278,6 @@ describe('core e2e: daemon tmux spawn respawn supervision', () => {
           }
         }
       }
-    },
-    120_000,
-  );
-});
+	    },
+	  );
+	});
