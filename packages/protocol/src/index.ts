@@ -221,6 +221,15 @@ export {
   SessionStatusResultSchema,
   SessionStopEnvelopeSchema,
   SessionStopResultSchema,
+  SessionShareSchema,
+  V2SessionByIdNotFoundSchema,
+  V2SessionByIdResponseSchema,
+  V2SessionListResponseSchema,
+  V2SessionMessageResponseSchema,
+  V2SessionRecordSchema,
+  V2_SESSION_LIST_CURSOR_V1_PREFIX,
+  decodeV2SessionListCursorV1,
+  encodeV2SessionListCursorV1,
   SessionSummarySchema,
   SessionWaitEnvelopeSchema,
   SessionWaitResultSchema,
@@ -249,9 +258,58 @@ export {
   type SessionSendResult,
   type SessionStatusResult,
   type SessionStopResult,
+  type SessionShare,
+  type V2SessionByIdNotFound,
+  type V2SessionByIdResponse,
+  type V2SessionListResponse,
+  type V2SessionMessageResponse,
+  type V2SessionRecord,
   type SessionSummary,
+  SessionMetadataSchema,
+  type SessionMetadata,
+  SessionSystemSessionV1Schema,
+  type SessionSystemSessionV1,
+  createSessionMetadataSchema,
+  createSessionSystemSessionV1Schema,
+  isHiddenSystemSession,
+  readSystemSessionMetadataFromMetadata,
+  buildSystemSessionMetadataV1,
   type SessionWaitResult,
 } from './sessionControl/contract.js';
+
+export {
+  ModelOverrideV1Schema,
+  type ModelOverrideV1,
+  createModelOverrideV1Schema,
+  buildModelOverrideV1,
+  AcpSessionModeOverrideV1Schema,
+  type AcpSessionModeOverrideV1,
+  createAcpSessionModeOverrideV1Schema,
+  buildAcpSessionModeOverrideV1,
+  AcpConfigOptionOverridesV1Schema,
+  type AcpConfigOptionOverridesV1,
+  createAcpConfigOptionOverridesV1Schema,
+  buildAcpConfigOptionOverridesV1,
+} from './sessionMetadata/metadataOverridesV1.js';
+
+export {
+  SessionTerminalMetadataSchema,
+  type SessionTerminalMetadata,
+  createSessionTerminalMetadataSchema,
+} from './sessionMetadata/terminalMetadata.js';
+
+export {
+  SESSION_PERMISSION_MODES,
+  SessionPermissionModeSchema,
+  type SessionPermissionMode,
+  createSessionPermissionModeSchema,
+} from './sessionMetadata/sessionPermissionModes.js';
+
+export {
+  SessionMessageMetaSchema,
+  type SessionMessageMeta,
+  createSessionMessageMetaSchema,
+} from './sessionMessages/sessionMessageMeta.js';
 export {
   ServerAddEnvelopeSchema,
   ServerAddResultSchema,

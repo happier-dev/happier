@@ -112,4 +112,121 @@ describe('sessionControl contract exports', () => {
     });
     expect(parsed.success).toBe(true);
   });
+
+  it('validates v2 session list and session-by-id wire responses', () => {
+    const listSchema = (protocol as any).V2SessionListResponseSchema;
+    const listParsed = listSchema.safeParse({
+      sessions: [
+        {
+          id: 'sess_1',
+          seq: 10,
+          createdAt: 1,
+          updatedAt: 2,
+          active: true,
+          activeAt: 3,
+          archivedAt: null,
+          encryptionMode: 'plain',
+          metadata: 'm',
+          metadataVersion: 1,
+          agentState: null,
+          agentStateVersion: 0,
+          pendingCount: 0,
+          pendingVersion: 1,
+          dataEncryptionKey: 'a2V5',
+          share: { accessLevel: 'edit', canApprovePermissions: true },
+        },
+      ],
+      nextCursor: null,
+      hasNext: false,
+    });
+    expect(listParsed.success).toBe(true);
+
+    const invalidModeParsed = listSchema.safeParse({
+      sessions: [
+        {
+          id: 'sess_bad',
+          seq: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          active: true,
+          activeAt: 1,
+          archivedAt: null,
+          encryptionMode: 'nope',
+          metadata: 'm',
+          metadataVersion: 1,
+          agentState: null,
+          agentStateVersion: 0,
+          dataEncryptionKey: null,
+        },
+      ],
+      nextCursor: null,
+      hasNext: false,
+    });
+    expect(invalidModeParsed.success).toBe(false);
+
+    const byIdSchema = (protocol as any).V2SessionByIdResponseSchema;
+    const byIdParsed = byIdSchema.safeParse({
+      session: {
+        id: 'sess_1',
+        seq: 10,
+        createdAt: 1,
+        updatedAt: 2,
+        active: true,
+        activeAt: 3,
+        metadata: 'm',
+        metadataVersion: 1,
+        agentState: 'a',
+        agentStateVersion: 0,
+        pendingCount: 0,
+        dataEncryptionKey: null,
+        encryptionMode: 'e2ee',
+      },
+    });
+    expect(byIdParsed.success).toBe(true);
+  });
+
+  it('validates v2 session message responses', () => {
+    const schema = (protocol as any).V2SessionMessageResponseSchema;
+    const parsed = schema.safeParse({
+      didWrite: true,
+      message: {
+        id: 'msg_1',
+        seq: 12,
+        localId: null,
+        createdAt: 1700000000000,
+      },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('extracts system-session metadata safely', () => {
+    const parsed = (protocol as any).readSystemSessionMetadataFromMetadata({
+      metadata: {
+        systemSessionV1: {
+          v: 1,
+          key: 'voice_carrier',
+          hidden: true,
+        },
+      },
+    });
+    expect(parsed).toEqual({
+      v: 1,
+      key: 'voice_carrier',
+      hidden: true,
+    });
+
+    expect((protocol as any).isHiddenSystemSession({ metadata: null })).toBe(false);
+    expect((protocol as any).isHiddenSystemSession({ metadata: { systemSessionV1: { v: 1, key: 'carrier' } } })).toBe(false);
+    expect((protocol as any).isHiddenSystemSession({ metadata: { systemSessionV1: { v: 1, key: 'carrier', hidden: true } } })).toBe(true);
+  });
+
+  it('encodes and decodes v2 session list cursors', () => {
+    const encode = (protocol as any).encodeV2SessionListCursorV1;
+    const decode = (protocol as any).decodeV2SessionListCursorV1;
+
+    expect(encode('sess_123')).toBe('cursor_v1_sess_123');
+    expect(decode('cursor_v1_sess_123')).toBe('sess_123');
+    expect(decode('cursor_v1_')).toBe(null);
+    expect(decode('nope')).toBe(null);
+  });
 });

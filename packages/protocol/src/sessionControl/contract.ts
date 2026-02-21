@@ -8,18 +8,21 @@ import {
 import { ActionIdSchema, ActionInputHintsSchema, ActionSafetySchema, ActionSurfaceSchema } from '../actions/index.js';
 import { ActionUiPlacementSchema } from '../actions/actionUiPlacements.js';
 import { SubAgentRunResultV2Schema } from '../tools/v2/index.js';
+import { AccountEncryptionModeSchema } from '../features/payload/capabilities/encryptionCapabilities.js';
 
 export const SessionControlErrorCodeSchema = z.enum([
   'not_authenticated',
   'server_unreachable',
   'session_not_found',
   'session_id_ambiguous',
+  'session_active',
   'execution_run_not_found',
   'execution_run_action_not_supported',
   'execution_run_invalid_action_input',
   'execution_run_stream_not_found',
   'execution_run_not_allowed',
   'run_depth_exceeded',
+  'conflict',
   'timeout',
   'invalid_arguments',
   'unsupported',
@@ -76,8 +79,10 @@ export const SessionSummarySchema = z.object({
   updatedAt: z.number().int().nonnegative(),
   active: z.boolean(),
   activeAt: z.number().int().nonnegative(),
+  archivedAt: z.number().int().nonnegative().nullable().optional(),
   pendingCount: z.number().int().nonnegative().optional(),
   tag: z.string().optional(),
+  title: z.string().min(1).optional(),
   path: z.string().optional(),
   host: z.string().optional(),
   share: z.object({
@@ -86,11 +91,61 @@ export const SessionSummarySchema = z.object({
   }).nullable().optional(),
   isSystem: z.boolean().optional(),
   systemPurpose: z.string().nullable().optional(),
+  encryptionMode: AccountEncryptionModeSchema.optional(),
   encryption: z.object({
     type: z.enum(['legacy', 'dataKey']),
   }).passthrough(),
 }).passthrough();
 export type SessionSummary = z.infer<typeof SessionSummarySchema>;
+
+/**
+ * Factory form (accepts a caller-provided `z`) for nohoist/multi-zod-instance repos.
+ * Consumers that need to embed the schema into their own Zod objects should use this
+ * instead of importing `SessionSystemSessionV1Schema` directly.
+ */
+export function createSessionSystemSessionV1Schema(zod: typeof z) {
+  return zod.object({
+    v: zod.literal(1),
+    key: zod.string(),
+    hidden: zod.boolean().optional(),
+  }).passthrough();
+}
+
+export const SessionSystemSessionV1Schema = createSessionSystemSessionV1Schema(z);
+export type SessionSystemSessionV1 = z.infer<typeof SessionSystemSessionV1Schema>;
+
+export function createSessionMetadataSchema(zod: typeof z) {
+  return zod
+    .object({
+      systemSessionV1: createSessionSystemSessionV1Schema(zod).optional(),
+    })
+    .passthrough();
+}
+
+export const SessionMetadataSchema = createSessionMetadataSchema(z);
+export type SessionMetadata = z.infer<typeof SessionMetadataSchema>;
+
+export function readSystemSessionMetadataFromMetadata(params: Readonly<{ metadata: unknown }>): SessionSystemSessionV1 | null {
+  const parsed = SessionMetadataSchema.safeParse(params.metadata);
+  if (!parsed.success) return null;
+  return parsed.data.systemSessionV1 ?? null;
+}
+
+export function isHiddenSystemSession(params: Readonly<{ metadata: unknown }>): boolean {
+  const systemSession = readSystemSessionMetadataFromMetadata(params);
+  return Boolean(systemSession && systemSession.hidden === true);
+}
+
+export function buildSystemSessionMetadataV1(params: Readonly<{ key: string; hidden?: boolean }>): { systemSessionV1: SessionSystemSessionV1 } {
+  const hidden = params.hidden;
+  return {
+    systemSessionV1: {
+      v: 1,
+      key: params.key,
+      ...(typeof hidden === 'boolean' ? { hidden } : {}),
+    },
+  };
+}
 
 export const SessionListResultSchema = z.object({
   sessions: z.array(SessionSummarySchema),
@@ -98,6 +153,85 @@ export const SessionListResultSchema = z.object({
   hasNext: z.boolean().optional(),
 }).passthrough();
 export type SessionListResult = z.infer<typeof SessionListResultSchema>;
+
+export const SessionShareSchema = z
+  .object({
+    accessLevel: z.enum(['view', 'edit', 'admin']),
+    canApprovePermissions: z.boolean(),
+  })
+  .passthrough();
+export type SessionShare = z.infer<typeof SessionShareSchema>;
+
+export const V2SessionRecordSchema = z
+  .object({
+    id: z.string().min(1),
+    seq: z.number().int().nonnegative(),
+    createdAt: z.number().int().nonnegative(),
+    updatedAt: z.number().int().nonnegative(),
+    active: z.boolean(),
+    activeAt: z.number().int().nonnegative(),
+    archivedAt: z.number().int().nonnegative().nullable().optional(),
+    encryptionMode: AccountEncryptionModeSchema.optional(),
+    metadata: z.string(),
+    metadataVersion: z.number().int().nonnegative(),
+    agentState: z.string().nullable(),
+    agentStateVersion: z.number().int().nonnegative(),
+    pendingCount: z.number().int().min(0).optional(),
+    pendingVersion: z.number().int().min(0).optional(),
+    dataEncryptionKey: z.string().nullable(),
+    share: SessionShareSchema.nullable().optional(),
+  })
+  .passthrough();
+export type V2SessionRecord = z.infer<typeof V2SessionRecordSchema>;
+
+export const V2SessionListResponseSchema = z
+  .object({
+    sessions: z.array(V2SessionRecordSchema),
+    nextCursor: z.string().nullable().optional(),
+    hasNext: z.boolean().optional(),
+  })
+  .passthrough();
+export type V2SessionListResponse = z.infer<typeof V2SessionListResponseSchema>;
+
+export const V2_SESSION_LIST_CURSOR_V1_PREFIX = 'cursor_v1_' as const;
+
+export function encodeV2SessionListCursorV1(sessionId: string): string {
+  return `${V2_SESSION_LIST_CURSOR_V1_PREFIX}${sessionId}`;
+}
+
+export function decodeV2SessionListCursorV1(cursor: string): string | null {
+  if (typeof cursor !== 'string') return null;
+  if (!cursor.startsWith(V2_SESSION_LIST_CURSOR_V1_PREFIX)) return null;
+  const sessionId = cursor.slice(V2_SESSION_LIST_CURSOR_V1_PREFIX.length);
+  return sessionId.length > 0 ? sessionId : null;
+}
+
+export const V2SessionByIdResponseSchema = z
+  .object({
+    session: V2SessionRecordSchema,
+  })
+  .passthrough();
+export type V2SessionByIdResponse = z.infer<typeof V2SessionByIdResponseSchema>;
+
+export const V2SessionByIdNotFoundSchema = z.object({
+  error: z.literal('Session not found'),
+});
+export type V2SessionByIdNotFound = z.infer<typeof V2SessionByIdNotFoundSchema>;
+
+export const V2SessionMessageResponseSchema = z
+  .object({
+    didWrite: z.boolean(),
+    message: z
+      .object({
+        id: z.string().min(1),
+        seq: z.number().int().nonnegative(),
+        localId: z.string().nullable(),
+        createdAt: z.number().int().nonnegative(),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+export type V2SessionMessageResponse = z.infer<typeof V2SessionMessageResponseSchema>;
 
 export const SessionStatusResultSchema = z.object({
   session: SessionSummarySchema,
@@ -133,6 +267,38 @@ export const SessionStopResultSchema = z.object({
   stopped: z.literal(true),
 }).passthrough();
 export type SessionStopResult = z.infer<typeof SessionStopResultSchema>;
+
+export const SessionArchiveResultSchema = z.object({
+  sessionId: z.string().min(1),
+  archivedAt: z.number().int().nonnegative(),
+}).passthrough();
+export type SessionArchiveResult = z.infer<typeof SessionArchiveResultSchema>;
+
+export const SessionUnarchiveResultSchema = z.object({
+  sessionId: z.string().min(1),
+  archivedAt: z.null(),
+}).passthrough();
+export type SessionUnarchiveResult = z.infer<typeof SessionUnarchiveResultSchema>;
+
+export const SessionSetTitleResultSchema = z.object({
+  sessionId: z.string().min(1),
+  title: z.string().min(1),
+}).passthrough();
+export type SessionSetTitleResult = z.infer<typeof SessionSetTitleResultSchema>;
+
+export const SessionSetPermissionModeResultSchema = z.object({
+  sessionId: z.string().min(1),
+  permissionMode: z.string().min(1),
+  updatedAt: z.number().int().nonnegative(),
+}).passthrough();
+export type SessionSetPermissionModeResult = z.infer<typeof SessionSetPermissionModeResultSchema>;
+
+export const SessionSetModelResultSchema = z.object({
+  sessionId: z.string().min(1),
+  modelId: z.string().min(1),
+  updatedAt: z.number().int().nonnegative(),
+}).passthrough();
+export type SessionSetModelResult = z.infer<typeof SessionSetModelResultSchema>;
 
 export const SessionHistoryCompactMessageSchema = z.object({
   id: z.string().min(1),
@@ -284,6 +450,31 @@ export const SessionWaitEnvelopeSchema = SessionControlEnvelopeSuccessSchema.ext
 export const SessionStopEnvelopeSchema = SessionControlEnvelopeSuccessSchema.extend({
   kind: z.literal('session_stop'),
   data: SessionStopResultSchema,
+});
+
+export const SessionArchiveEnvelopeSchema = SessionControlEnvelopeSuccessSchema.extend({
+  kind: z.literal('session_archive'),
+  data: SessionArchiveResultSchema,
+});
+
+export const SessionUnarchiveEnvelopeSchema = SessionControlEnvelopeSuccessSchema.extend({
+  kind: z.literal('session_unarchive'),
+  data: SessionUnarchiveResultSchema,
+});
+
+export const SessionSetTitleEnvelopeSchema = SessionControlEnvelopeSuccessSchema.extend({
+  kind: z.literal('session_set_title'),
+  data: SessionSetTitleResultSchema,
+});
+
+export const SessionSetPermissionModeEnvelopeSchema = SessionControlEnvelopeSuccessSchema.extend({
+  kind: z.literal('session_set_permission_mode'),
+  data: SessionSetPermissionModeResultSchema,
+});
+
+export const SessionSetModelEnvelopeSchema = SessionControlEnvelopeSuccessSchema.extend({
+  kind: z.literal('session_set_model'),
+  data: SessionSetModelResultSchema,
 });
 
 export const SessionRunStartEnvelopeSchema = SessionControlEnvelopeSuccessSchema.extend({
