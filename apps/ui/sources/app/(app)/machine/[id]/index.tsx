@@ -23,6 +23,7 @@ import { formatPathRelativeToHome, getSessionName, getSessionSubtitle } from '@/
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { sync } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { tryShowDaemonUnavailableAlertForRpcError, tryShowDaemonUnavailableAlertForRpcFailure } from '@/utils/errors/daemonUnavailableAlert';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 import { t } from '@/text';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
@@ -39,6 +40,7 @@ import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwit
 import type { DaemonExecutionRunEntry } from '@happier-dev/protocol';
 import { ExecutionRunRow } from '@/components/sessions/runs/ExecutionRunRow';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { useMountedRef } from '@/hooks/ui/useMountedRef';
 
 
 const styles = StyleSheet.create((theme) => ({
@@ -120,6 +122,7 @@ export default function MachineDetailScreen() {
     const { theme } = useUnistyles();
     const { id: machineId, serverId: serverIdParam } = useLocalSearchParams<{ id: string; serverId?: string }>();
     const router = useRouter();
+    const mountedRef = useMountedRef();
     const sessions = useSessions();
     const machine = useMachine(machineId!);
     const navigateToSession = useNavigateToSession();
@@ -321,6 +324,30 @@ export default function MachineDetailScreen() {
     }, [machine]);
 
     const handleStopDaemon = async () => {
+        const runStopDaemon = async () => {
+            setIsStoppingDaemon(true);
+            try {
+                const result = await machineStopDaemon(machineId!, { serverId: activeServerId });
+                Modal.alert(t('machine.daemonStoppedTitle'), result.message);
+                // Refresh to get updated metadata
+                await sync.refreshMachines();
+            } catch (error) {
+                const shown = tryShowDaemonUnavailableAlertForRpcError({
+                    error,
+                    machine,
+                    onRetry: () => {
+                        void runStopDaemon();
+                    },
+                    shouldContinue: () => mountedRef.current,
+                });
+                if (!shown) {
+                    Modal.alert(t('common.error'), t('machine.stopDaemonFailed'));
+                }
+            } finally {
+                setIsStoppingDaemon(false);
+            }
+        };
+
         // Show confirmation modal using alert with buttons
         Modal.alert(
             t('machine.stopDaemonConfirmTitle'),
@@ -334,17 +361,7 @@ export default function MachineDetailScreen() {
                     text: t('machine.stopDaemon'),
                     style: 'destructive',
                     onPress: async () => {
-                        setIsStoppingDaemon(true);
-                        try {
-                            const result = await machineStopDaemon(machineId!);
-                            Modal.alert(t('machine.daemonStoppedTitle'), result.message);
-                            // Refresh to get updated metadata
-                            await sync.refreshMachines();
-                        } catch (error) {
-                            Modal.alert(t('common.error'), t('machine.stopDaemonFailed'));
-                        } finally {
-                            setIsStoppingDaemon(false);
-                        }
+                        await runStopDaemon();
                     }
                 }
             ]
@@ -1041,6 +1058,23 @@ export default function MachineDetailScreen() {
                                             if (!machineId) return;
                                             if (!canStop) return;
                                             setStoppingRunId(run.runId);
+                                            const stopSessionProcess = async () => {
+                                                const stopResult = await machineStopSession(machineId, run.happySessionId, { serverId: activeServerId });
+                                                if (stopResult.ok) return;
+
+                                                const shownDaemonUnavailable = tryShowDaemonUnavailableAlertForRpcFailure({
+                                                    rpcErrorCode: stopResult.errorCode ?? null,
+                                                    message: stopResult.error ?? null,
+                                                    machine,
+                                                    onRetry: () => {
+                                                        void stopSessionProcess();
+                                                    },
+                                                    shouldContinue: () => mountedRef.current,
+                                                });
+                                                if (!shownDaemonUnavailable) {
+                                                    Modal.alert(t('common.error'), stopResult.error || 'Failed to stop session');
+                                                }
+                                            };
                                             try {
                                                 const res = await sessionExecutionRunStop(
                                                     run.happySessionId,
@@ -1054,10 +1088,7 @@ export default function MachineDetailScreen() {
                                                         { confirmText: 'Stop session', cancelText: 'Cancel', destructive: true },
                                                     );
                                                     if (confirmed) {
-                                                        const stopResult = await machineStopSession(machineId, run.happySessionId, { serverId: activeServerId });
-                                                        if (!stopResult.ok) {
-                                                            Modal.alert(t('common.error'), stopResult.error || 'Failed to stop session');
-                                                        }
+                                                        await stopSessionProcess();
                                                     } else {
                                                         Modal.alert(t('common.error'), String((res as any).error ?? 'Failed to stop run'));
                                                     }
@@ -1069,10 +1100,7 @@ export default function MachineDetailScreen() {
                                                     { confirmText: 'Stop session', cancelText: 'Cancel', destructive: true },
                                                 );
                                                 if (confirmed) {
-                                                    const stopResult = await machineStopSession(machineId, run.happySessionId, { serverId: activeServerId });
-                                                    if (!stopResult.ok) {
-                                                        Modal.alert(t('common.error'), stopResult.error || 'Failed to stop session');
-                                                    }
+                                                    await stopSessionProcess();
                                                 } else {
                                                     Modal.alert(t('common.error'), error instanceof Error ? error.message : 'Failed to stop run');
                                                 }

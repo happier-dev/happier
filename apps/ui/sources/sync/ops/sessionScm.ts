@@ -29,7 +29,7 @@ function scmFallbackError<T extends { success: boolean; error?: string; errorCod
     if (error instanceof Error && error.message === SCM_UNSUPPORTED_RESPONSE_ERROR) {
         return {
             success: false,
-            error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
+            error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND,
             errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
         } as T;
     }
@@ -45,10 +45,17 @@ function scmFallbackError<T extends { success: boolean; error?: string; errorCod
                     : undefined,
         };
 
-        if (isRpcMethodNotAvailableError(rpcError) || isRpcMethodNotFoundError(rpcError)) {
+        if (isRpcMethodNotAvailableError(rpcError)) {
             return {
                 success: false,
                 error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
+                errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
+            } as T;
+        }
+        if (isRpcMethodNotFoundError(rpcError)) {
+            return {
+                success: false,
+                error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND,
                 errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
             } as T;
         }

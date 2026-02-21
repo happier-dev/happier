@@ -38,6 +38,9 @@ import {
     normalizeAutomationName,
     validateAutomationTemplateTarget,
 } from '@/sync/domains/automations/automationValidation';
+import { delay } from '@/utils/timing/time';
+import { showDaemonUnavailableAlert } from '@/utils/errors/daemonUnavailableAlert';
+import { useMountedRef } from '@/hooks/ui/useMountedRef';
 
 export function useCreateNewSession(params: Readonly<{
     router: { push: (options: any) => void; replace: (path: any, options?: any) => void };
@@ -83,6 +86,7 @@ export function useCreateNewSession(params: Readonly<{
 }>): Readonly<{
     handleCreateSession: (opts?: Readonly<{ initialMessage?: 'send' | 'skip'; afterCreated?: (sessionId: string) => void | Promise<void> }>) => void;
 }> {
+    const mountedRef = useMountedRef();
     const handleCreateSession = React.useCallback(async (opts?: Readonly<{ initialMessage?: 'send' | 'skip'; afterCreated?: (sessionId: string) => void | Promise<void> }>) => {
             if (!params.selectedMachineId) {
                 Modal.alert(t('common.error'), t('newSession.noMachineSelected'));
@@ -438,14 +442,27 @@ export function useCreateNewSession(params: Readonly<{
                         return 'session'
                     },
                 });
-            } else if (result.type === 'requestToApproveDirectoryCreation') {
-                Modal.alert(t('common.error'), t('newSession.failedToStart'));
-                params.setIsCreating(false);
-            } else if (result.type === 'error') {
-                const extraDetail = (() => {
-                    switch (result.errorCode) {
-                        case SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED:
-                            return 'Resume is not supported for this agent on this machine.';
+	            } else if (result.type === 'requestToApproveDirectoryCreation') {
+	                Modal.alert(t('common.error'), t('newSession.failedToStart'));
+	                params.setIsCreating(false);
+	            } else if (result.type === 'error') {
+                    if (result.errorCode === SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE) {
+                        params.setIsCreating(false);
+                        showDaemonUnavailableAlert({
+                            titleKey: 'newSession.daemonRpcUnavailableTitle',
+                            bodyKey: 'newSession.daemonRpcUnavailableBody',
+                            machine: params.selectedMachine,
+                            onRetry: () => {
+                                void handleCreateSession(opts);
+                            },
+                            shouldContinue: () => mountedRef.current,
+                        });
+                        return;
+                    }
+	                const extraDetail = (() => {
+	                    switch (result.errorCode) {
+	                        case SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED:
+	                            return 'Resume is not supported for this agent on this machine.';
                         case SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK:
                             return 'The agent process exited before it could connect. Check that the agent CLI is installed and available to the daemon (PATH).';
                         case SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT:
@@ -473,11 +490,12 @@ export function useCreateNewSession(params: Readonly<{
             Modal.alert(t('common.error'), errorMessage);
             params.setIsCreating(false);
         }
-	    }, [
-	        params.agentType,
-	        params.machineEnvPresence.meta,
-	        params.modelMode,
-	        params.permissionMode,
+		    }, [
+            mountedRef,
+		        params.agentType,
+		        params.machineEnvPresence.meta,
+		        params.modelMode,
+		        params.permissionMode,
         params.profileMap,
         params.recentMachinePaths,
         params.resumeSessionId,

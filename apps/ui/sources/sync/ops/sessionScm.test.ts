@@ -38,7 +38,7 @@ describe('sessionScm', () => {
 
         expect(response.success).toBe(false);
         expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
-        expect(response.error).toBe('RPC method not available');
+        expect(response.error).toBe(RPC_ERROR_MESSAGES.METHOD_NOT_FOUND);
     });
 
     it('applies sapling backend preference when configured', async () => {
@@ -83,7 +83,7 @@ describe('sessionScm', () => {
         const response = await sessionScmStatusSnapshot('session-1', {});
 
         expect(response.success).toBe(false);
-        expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
+        expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE);
         expect(response.error).toBe(RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE);
     });
 
@@ -104,6 +104,6 @@ describe('sessionScm', () => {
 
         expect(response.success).toBe(false);
         expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
-        expect(response.error).toBe(RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE);
+        expect(response.error).toBe(RPC_ERROR_MESSAGES.METHOD_NOT_FOUND);
     });
 });

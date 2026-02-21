@@ -17,6 +17,8 @@ import { withSessionProjectScmOperationLock } from '@/scm/operations/withOperati
 import { reportSessionScmOperation, trackBlockedScmOperation } from '@/scm/operations/reporting';
 import { tracking } from '@/track';
 import { applyFileStageAction } from '@/scm/operations/applyFileStageAction';
+import { tryShowDaemonUnavailableAlertForScmOperationFailure } from '@/scm/operations/scmDaemonUnavailableAlert';
+import { useMountedRef } from '@/hooks/ui/useMountedRef';
 
 type DiffMode = 'included' | 'pending' | 'both';
 
@@ -52,6 +54,12 @@ export function useFileScmStageActions(input: {
     } = input;
 
     const [isApplyingStage, setIsApplyingStage] = React.useState(false);
+    const mountedRef = useMountedRef();
+
+    const setIsApplyingStageSafe = React.useCallback((value: boolean) => {
+        if (!mountedRef.current) return;
+        setIsApplyingStage(value);
+    }, [mountedRef]);
 
     const handleStage = React.useCallback(async (stage: boolean) => {
         if (!sessionId) return;
@@ -65,11 +73,12 @@ export function useFileScmStageActions(input: {
                 commitStrategy: scmCommitStrategy,
                 stage,
                 surface: 'file',
+                shouldContinue: () => mountedRef.current,
             });
             return;
         }
 
-        setIsApplyingStage(true);
+        setIsApplyingStageSafe(true);
         try {
             await applyFileStageAction({
                 sessionId,
@@ -80,12 +89,16 @@ export function useFileScmStageActions(input: {
                 commitStrategy: scmCommitStrategy,
                 stage,
                 surface: 'file',
-                refreshAll,
+                refreshAll: async () => {
+                    if (!mountedRef.current) return;
+                    await refreshAll();
+                },
+                shouldContinue: () => mountedRef.current,
             });
         } finally {
-            setIsApplyingStage(false);
+            setIsApplyingStageSafe(false);
         }
-    }, [filePath, scmCommitStrategy, scmSnapshot, scmWriteEnabled, refreshAll, sessionId, sessionPath]);
+    }, [filePath, scmCommitStrategy, scmSnapshot, scmWriteEnabled, refreshAll, sessionId, sessionPath, mountedRef, setIsApplyingStageSafe]);
 
     const applySelectedLines = React.useCallback(async () => {
         if (!sessionId || !sessionPath || !diffContent) return;
@@ -153,7 +166,7 @@ export function useFileScmStageActions(input: {
             sessionId,
             operation: stageSelected ? 'stage' : 'unstage',
             run: async () => {
-                setIsApplyingStage(true);
+                setIsApplyingStageSafe(true);
                 try {
                     const response = stageSelected
                         ? await sessionScmChangeInclude(sessionId, { patch })
@@ -176,7 +189,16 @@ export function useFileScmStageActions(input: {
                             surface: 'file',
                             tracking,
                         });
-                        Modal.alert(t('common.error'), errorMessage);
+                        const shownDaemonUnavailable = tryShowDaemonUnavailableAlertForScmOperationFailure({
+                            errorCode: response.errorCode,
+                            onRetry: () => {
+                                void applySelectedLines();
+                            },
+                            shouldContinue: () => mountedRef.current,
+                        });
+                        if (!shownDaemonUnavailable) {
+                            Modal.alert(t('common.error'), errorMessage);
+                        }
                         return;
                     }
 
@@ -190,11 +212,15 @@ export function useFileScmStageActions(input: {
                         surface: 'file',
                         tracking,
                     });
-                    setSelectedLineIndexes(new Set());
+                    if (mountedRef.current) {
+                        setSelectedLineIndexes(new Set());
+                    }
                     await scmStatusSync.invalidateFromMutationAndAwait(sessionId);
-                    await refreshAll();
+                    if (mountedRef.current) {
+                        await refreshAll();
+                    }
                 } finally {
-                    setIsApplyingStage(false);
+                    setIsApplyingStageSafe(false);
                 }
             },
         });
@@ -222,6 +248,8 @@ export function useFileScmStageActions(input: {
         sessionId,
         sessionPath,
         setSelectedLineIndexes,
+        mountedRef,
+        setIsApplyingStageSafe,
     ]);
 
     return {

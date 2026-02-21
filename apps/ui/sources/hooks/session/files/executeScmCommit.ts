@@ -13,6 +13,8 @@ import { reportSessionScmOperation, type ScmOperationTracker, trackBlockedScmOpe
 import { storage } from '@/sync/domains/state/storage';
 import { sessionScmCommitCreate } from '@/sync/ops';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import { tryShowDaemonUnavailableAlertForRpcError } from '@/utils/errors/daemonUnavailableAlert';
+import { tryShowDaemonUnavailableAlertForScmOperationFailure } from '@/scm/operations/scmDaemonUnavailableAlert';
 
 export async function executeScmCommit(input: {
     sessionId: string;
@@ -24,6 +26,7 @@ export async function executeScmCommit(input: {
     setScmOperationBusy: (busy: boolean) => void;
     setScmOperationStatus: (status: string | null) => void;
     tracking: ScmOperationTracker | null;
+    shouldContinue?: () => boolean;
 }): Promise<void> {
     const lockResult = await withSessionProjectScmOperationLock({
         state: storage.getState(),
@@ -47,6 +50,15 @@ export async function executeScmCommit(input: {
                 });
 
                 if (!response.success) {
+                    const shownDaemonUnavailable = tryShowDaemonUnavailableAlertForScmOperationFailure({
+                        errorCode: response.errorCode,
+                        onRetry: () => {
+                            void executeScmCommit(input);
+                        },
+                        shouldContinue: input.shouldContinue ?? null,
+                    });
+                    if (shownDaemonUnavailable) return;
+
                     const errorMessage = buildScmCommitFailureMessage({
                         errorCode: response.errorCode,
                         error: response.error,
@@ -118,7 +130,16 @@ export async function executeScmCommit(input: {
                     surface: 'files',
                     tracking: input.tracking,
                 });
-                Modal.alert(t('common.error'), fallbackMessage);
+                const shownDaemonUnavailable = tryShowDaemonUnavailableAlertForRpcError({
+                    error,
+                    onRetry: () => {
+                        void executeScmCommit(input);
+                    },
+                    shouldContinue: input.shouldContinue ?? null,
+                });
+                if (!shownDaemonUnavailable) {
+                    Modal.alert(t('common.error'), fallbackMessage);
+                }
             } finally {
                 input.setScmOperationBusy(false);
                 input.setScmOperationStatus(null);

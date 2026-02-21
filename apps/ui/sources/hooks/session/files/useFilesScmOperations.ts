@@ -34,6 +34,8 @@ import { tracking } from '@/track';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 import { showScmCommitMessageEditorModal } from '@/components/sessions/files/commit/showScmCommitMessageEditorModal';
 import { generateScmCommitMessage } from '@/scm/operations/commitMessageGenerator';
+import { tryShowDaemonUnavailableAlertForScmOperationFailure } from '@/scm/operations/scmDaemonUnavailableAlert';
+import { useMountedRef } from '@/hooks/ui/useMountedRef';
 
 export function useFilesScmOperations(input: {
     sessionId: string;
@@ -60,6 +62,16 @@ export function useFilesScmOperations(input: {
 
     const [scmOperationBusy, setScmOperationBusy] = React.useState(false);
     const [scmOperationStatus, setScmOperationStatus] = React.useState<string | null>(null);
+    const mountedRef = useMountedRef();
+
+    const setScmOperationBusySafe = React.useCallback((value: boolean) => {
+        if (!mountedRef.current) return;
+        setScmOperationBusy(value);
+    }, [mountedRef]);
+    const setScmOperationStatusSafe = React.useCallback((value: string | null) => {
+        if (!mountedRef.current) return;
+        setScmOperationStatus(value);
+    }, [mountedRef]);
     const commitSelectionPaths = useSessionProjectScmCommitSelectionPaths(sessionId);
     const commitSelectionPatches = useSessionProjectScmCommitSelectionPatches(sessionId);
     const scmCommitMessageGeneratorEnabled = useSetting('scmCommitMessageGeneratorEnabled');
@@ -158,8 +170,8 @@ export function useFilesScmOperations(input: {
             sessionId,
             operation: kind,
             run: async () => {
-                setScmOperationBusy(true);
-                setScmOperationStatus(buildRemoteOperationBusyLabel(kind, remoteTarget, t('files.detachedHead')));
+                setScmOperationBusySafe(true);
+                setScmOperationStatusSafe(buildRemoteOperationBusyLabel(kind, remoteTarget, t('files.detachedHead')));
                 try {
                     const response = kind === 'fetch'
                         ? await sessionScmRemoteFetch(sessionId, { remote: remoteTarget.remote })
@@ -196,7 +208,16 @@ export function useFilesScmOperations(input: {
                             surface: 'files',
                             tracking,
                         });
-                        Modal.alert(t('common.error'), message);
+                        const shownDaemonUnavailable = tryShowDaemonUnavailableAlertForScmOperationFailure({
+                            errorCode: response.errorCode,
+                            onRetry: () => {
+                                void runRemoteOperation(kind);
+                            },
+                            shouldContinue: () => mountedRef.current,
+                        });
+                        if (!shownDaemonUnavailable) {
+                            Modal.alert(t('common.error'), message);
+                        }
                         return;
                     }
 
@@ -214,16 +235,20 @@ export function useFilesScmOperations(input: {
                         surface: 'files',
                         tracking,
                     });
-                    setScmOperationStatus('Refreshing repository status…');
+                    setScmOperationStatusSafe('Refreshing repository status…');
                     if (kind === 'pull' || kind === 'push') {
                         await scmStatusSync.invalidateFromMutationAndAwait(sessionId);
-                        await loadCommitHistory({ reset: true });
+                        if (mountedRef.current) {
+                            await loadCommitHistory({ reset: true });
+                        }
                     } else {
-                        await refreshScmData();
+                        if (mountedRef.current) {
+                            await refreshScmData();
+                        }
                     }
                 } finally {
-                    setScmOperationBusy(false);
-                    setScmOperationStatus(null);
+                    setScmOperationBusySafe(false);
+                    setScmOperationStatusSafe(null);
                 }
             },
             });
@@ -325,10 +350,14 @@ export function useFilesScmOperations(input: {
             scmCommitStrategy,
             commitSelectionPaths,
             commitSelectionPatches,
-            loadCommitHistory,
-            setScmOperationBusy,
-            setScmOperationStatus,
+            loadCommitHistory: async (opts?: { reset?: boolean }) => {
+                if (!mountedRef.current) return;
+                await loadCommitHistory(opts);
+            },
+            setScmOperationBusy: setScmOperationBusySafe,
+            setScmOperationStatus: setScmOperationStatusSafe,
             tracking,
+            shouldContinue: () => mountedRef.current,
         });
     }, [
         scmCommitMessageGeneratorBackendId,
@@ -343,6 +372,9 @@ export function useFilesScmOperations(input: {
         loadCommitHistory,
         sessionId,
         sessionPath,
+        mountedRef,
+        setScmOperationBusySafe,
+        setScmOperationStatusSafe,
     ]);
 
     return {

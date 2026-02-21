@@ -13,6 +13,7 @@ import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
 import { withSessionProjectScmOperationLock } from '@/scm/operations/withOperationLock';
 import { reportSessionScmOperation, trackBlockedScmOperation } from '@/scm/operations/reporting';
 import { tracking } from '@/track';
+import { tryShowDaemonUnavailableAlertForScmOperationFailure } from '@/scm/operations/scmDaemonUnavailableAlert';
 
 export async function applyFileStageAction(input: Readonly<{
     sessionId: string;
@@ -24,6 +25,7 @@ export async function applyFileStageAction(input: Readonly<{
     stage: boolean;
     surface: 'file' | 'files';
     refreshAll?: () => Promise<void>;
+    shouldContinue?: () => boolean;
 }>): Promise<void> {
     const {
         sessionId,
@@ -98,6 +100,15 @@ export async function applyFileStageAction(input: Readonly<{
                 : await sessionScmChangeExclude(sessionId, { paths: [filePath] });
 
             if (!response.success) {
+                const shownDaemonUnavailable = tryShowDaemonUnavailableAlertForScmOperationFailure({
+                    errorCode: response.errorCode,
+                    onRetry: () => {
+                        void applyFileStageAction(input);
+                    },
+                    shouldContinue: input.shouldContinue ?? null,
+                });
+                if (shownDaemonUnavailable) return;
+
                 const errorMessage = getScmUserFacingError({
                     errorCode: response.errorCode,
                     error: response.error,
@@ -147,4 +158,3 @@ export async function applyFileStageAction(input: Readonly<{
         Modal.alert(t('common.error'), lockResult.message);
     }
 }
-
