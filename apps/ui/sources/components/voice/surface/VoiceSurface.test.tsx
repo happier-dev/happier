@@ -71,6 +71,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
 const allSessionsState: { current: any[] } = { current: [] };
 vi.mock('@/sync/store/hooks', () => ({
   useAllSessions: () => allSessionsState.current,
+  useLocalSetting: () => 1,
 }));
 
 const teleportSpy = vi.fn(async (_args: any) => ({ ok: true }));

@@ -126,6 +126,7 @@ vi.mock('@/sync/store/hooks', () => ({
     { id: 'machine-1', active: true, createdAt: 1, updatedAt: 1, activeAt: 1, seq: 1, metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/h', homeDir: '/u' }, metadataVersion: 1, daemonState: null, daemonStateVersion: 1 },
     { id: 'machine-2', active: false, createdAt: 2, updatedAt: 2, activeAt: 2, seq: 1, metadata: { host: 'm2', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/h', homeDir: '/u' }, metadataVersion: 1, daemonState: null, daemonStateVersion: 1 },
   ],
+  useLocalSetting: () => 1,
 }));
 
 const featureEnabledState: Record<string, boolean> = { 'voice.agent': true };
