@@ -110,7 +110,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "$EVENT_NAME" != "workflow_dispatch" ] && [ "$EVENT_NAME" != "workflow_call" ]; then
+          # Called workflows inherit `github.event_name` from the caller (e.g. `push`), so we must accept it here.
+          if [ "$EVENT_NAME" != "workflow_dispatch" ] && [ "$EVENT_NAME" != "workflow_call" ] && [ "$EVENT_NAME" != "push" ]; then
             echo "Unsupported event for deploy workflow: $EVENT_NAME" >&2
             exit 1
           fi
