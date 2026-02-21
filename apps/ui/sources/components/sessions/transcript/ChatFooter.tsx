@@ -34,12 +34,14 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
         marginTop: 4,
     };
     const warningTextStyle: TextStyle = {
+        flex: 1,
         fontSize: 12,
         color: theme.colors.box.warning.text,
         marginLeft: 6,
         ...Typography.default()
     };
     const switchButtonStyle: ViewStyle = {
+        flexShrink: 0,
         marginLeft: 10,
         paddingHorizontal: 8,
         paddingVertical: 4,
