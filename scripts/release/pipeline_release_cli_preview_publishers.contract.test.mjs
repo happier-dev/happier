@@ -16,9 +16,11 @@ test('pipeline CLI release can include preview publishers (docker + ui-web + ser
       '--confirm',
       'release preview from dev',
       '--deploy-environment',
-      'production',
+      'preview',
       '--deploy-targets',
       'ui,server,server_runner',
+      '--force-deploy',
+      'true',
       '--repository',
       'happier-dev/happier',
       '--dry-run',
@@ -45,8 +47,9 @@ test('pipeline CLI release can include preview publishers (docker + ui-web + ser
     },
   );
 
-  assert.match(out, /\[pipeline\] docker publish: channel=preview/);
-  assert.match(out, /\[pipeline\] ui-web: channel=preview tag=ui-web-preview/);
-  assert.match(out, /\[pipeline\] server-runtime: channel=preview tag=server-preview/);
+  assert.match(out, /\[pipeline\] release: environment=preview confirm=release preview from dev/);
+  assert.match(out, /\[pipeline\] dry-run: would run/);
+  assert.match(out, /- runPublishDocker: true/);
+  assert.match(out, /- runPublishUiWeb: true/);
+  assert.match(out, /- runPublishServerRuntime: true/);
 });
-

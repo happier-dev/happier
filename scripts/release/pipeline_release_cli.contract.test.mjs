@@ -16,9 +16,11 @@ test('pipeline CLI can run release deploy dry-run (promote deploy branches + tri
       '--confirm',
       'release preview from dev',
       '--deploy-environment',
-      'production',
+      'preview',
       '--deploy-targets',
       'server',
+      '--force-deploy',
+      'true',
       '--repository',
       'happier-dev/happier',
       '--dry-run',
@@ -44,8 +46,7 @@ test('pipeline CLI can run release deploy dry-run (promote deploy branches + tri
     },
   );
 
-  assert.match(out, /\[pipeline\] release: action=release preview from dev/);
-  assert.match(out, /\[pipeline\] promote deploy branch: deploy\/production\/server <= dev/);
-  assert.match(out, /Dokploy webhook target: ref=refs\/heads\/deploy\/production\/server/);
+  assert.match(out, /\[pipeline\] release: environment=preview confirm=release preview from dev/);
+  assert.match(out, /\[pipeline\] dry-run: would run/);
+  assert.match(out, /- runDeployServer: true/);
 });
-

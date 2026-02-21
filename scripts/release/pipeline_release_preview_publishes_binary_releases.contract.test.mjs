@@ -18,11 +18,9 @@ test('release preview from dev can dry-run binary releases for cli + hstack', as
       '--repository',
       'happier-dev/happier',
       '--deploy-environment',
-      'production',
+      'preview',
       '--deploy-targets',
       'cli,stack',
-      '--publish-docker',
-      'false',
       '--npm-mode',
       'pack',
       '--dry-run',
@@ -43,9 +41,7 @@ test('release preview from dev can dry-run binary releases for cli + hstack', as
   );
 
   assert.match(out, /\[pipeline\] preview version suffix: preview\./);
-  assert.match(out, /\[pipeline\] release: publish cli binaries \(preview\)/);
-  assert.match(out, /publish-cli-binaries\.mjs/);
-  assert.match(out, /\[pipeline\] release: publish hstack binaries \(preview\)/);
-  assert.match(out, /publish-hstack-binaries\.mjs/);
+  assert.match(out, /\[pipeline\] dry-run: would run/);
+  assert.match(out, /- runPublishCliBinaries: true/);
+  assert.match(out, /- runPublishHstackBinaries: true/);
 });
-

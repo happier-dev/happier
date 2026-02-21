@@ -100,7 +100,7 @@ function anyMatch(patterns, paths) {
 function fetchRefs(cwd, remote, refs, required) {
   if (refs.length === 0) return;
   for (const ref of refs) {
-    run('git', ['fetch', remote, ref, '--prune', '--tags'], { cwd, stdio: 'pipe', allowFailure: !required });
+    run('git', ['fetch', remote, ref, '--prune', '--no-tags'], { cwd, stdio: 'pipe', allowFailure: !required });
   }
 }
 

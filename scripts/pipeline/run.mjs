@@ -3377,14 +3377,15 @@ function main() {
 			      );
 			    }
 
-			    // Plan: compute changed components (main..dev) and resolve bump/publish plan.
-			    console.log('[pipeline] release: fetching origin main/dev for plan');
-			    execFileSync('git', ['fetch', 'origin', 'main', 'dev', '--prune', '--tags'], {
-			      cwd: repoRoot,
-			      env: process.env,
-			      stdio: 'inherit',
-			      timeout: 120_000,
-			    });
+				    // Plan: compute changed components (main..dev) and resolve bump/publish plan.
+				    console.log('[pipeline] release: fetching origin main/dev for plan');
+				    const fetchTagsArg = dryRun ? '--no-tags' : '--tags';
+				    execFileSync('git', ['fetch', 'origin', 'main', 'dev', '--prune', fetchTagsArg], {
+				      cwd: repoRoot,
+				      env: process.env,
+				      stdio: 'inherit',
+				      timeout: 120_000,
+				    });
 
 			    const currentBranch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
 			      cwd: repoRoot,
