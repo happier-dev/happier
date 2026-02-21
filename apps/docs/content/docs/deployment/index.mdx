@@ -14,6 +14,8 @@ This section describes how to deploy **your own Happier Server** (the sync backe
 
 - **Managed self-host runtime** (installer + service + rollback + optional auto-update).
   - See: [Self-host runtime (installer vs runner)](./self-host-runtime)
+- **Run from a monorepo clone** (repo-local mode): use `yarn` from the repo root to run a stackless local stack, install a service, and configure Tailscale.
+  - See: [Run from a monorepo clone (repo-local mode)](./repo-local)
 - **Docker** (recommended starting point): build from this repo’s `Dockerfile` and run with Docker / Docker Compose.
   - See: [Docker](./docker)
 - **Configuration reference**: see [Environment variables](./env) for the complete server runtime env surface.

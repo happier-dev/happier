@@ -75,6 +75,20 @@ Core E2E slow naming convention:
 - All other `suites/core-e2e/**/*.test.ts` files run in `test:e2e:core:fast`.
 - `test:e2e` still runs the full core suite (fast + slow together).
 
+### 4b) UI E2E (Playwright)
+
+Browser-driven end-to-end tests against the Expo web UI, using the same server-light + daemon harness used by core E2E.
+
+**Root command:**
+```bash
+yarn test:e2e:ui
+```
+
+Notes:
+- These tests run Playwright against `expo start --web` and require Playwright browsers to be installed (see Playwright install docs).
+- UI E2E should stay small and focus on flows that are uniquely UI-driven (auth/login/connect, navigation, and key cross-app wiring). Lower-level server/daemon invariants belong in core E2E.
+- If you suspect stale Metro transforms, you can opt into clearing the Expo/Metro cache with `HAPPIER_E2E_EXPO_CLEAR=1` (default is off because `--clear` can occasionally crash Metro).
+
 ### 5) Providers
 
 Provider contract/baseline suites in `packages/tests` (real provider CLIs).

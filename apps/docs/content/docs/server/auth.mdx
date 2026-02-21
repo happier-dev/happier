@@ -10,12 +10,71 @@ For provider-specific setup guides, see:
 - [OIDC auth](./auth-oidc)
 - [mTLS auth](./auth-mtls)
 
+## Choosing an auth setup (private vs public servers)
+
+What you should configure depends mostly on **who can reach your server**.
+
+### Private server (Tailscale/VPN/LAN only)
+
+If your server is only reachable from a private network (for example via Tailscale), you often don’t need provider-based auth:
+
+- Recommended: keep **anonymous signup enabled** (default) and rely on network access control.
+- Make sure your server is **not** reachable from the public internet (firewall / security group / reverse proxy).
+
+Example config:
+
+```bash
+AUTH_ANONYMOUS_SIGNUP_ENABLED=true
+AUTH_SIGNUP_PROVIDERS=
+AUTH_REQUIRED_LOGIN_PROVIDERS=
+```
+
+Optional (private servers): you can also enable GitHub/OIDC **in addition** to anonymous signup, to offer multiple signup options:
+
+```bash
+AUTH_ANONYMOUS_SIGNUP_ENABLED=true
+AUTH_SIGNUP_PROVIDERS=github
+AUTH_REQUIRED_LOGIN_PROVIDERS=
+```
+
+### Public server (reachable from the internet)
+
+If your server is publicly reachable, leaving anonymous signup enabled makes it easy for anyone to create an account. In that setup, it’s usually better to require an identity provider:
+
+- Recommended: **disable anonymous signup**
+- Recommended: require a provider for ongoing access (`AUTH_REQUIRED_LOGIN_PROVIDERS`)
+- Optional: restrict eligibility with allowlists (for example “must be in GitHub org X”)
+
+Example (GitHub):
+
+```bash
+AUTH_ANONYMOUS_SIGNUP_ENABLED=false
+AUTH_SIGNUP_PROVIDERS=github
+AUTH_REQUIRED_LOGIN_PROVIDERS=github
+```
+
+Then follow the provider setup guide:
+- GitHub: [GitHub auth](./auth-github)
+- OIDC: [OIDC auth](./auth-oidc)
+
 ## Standard authentication (device-key accounts)
 
 Happier uses a **device-key** account model (each account is tied to a device secret).
 
 - Default behavior: users can create accounts via device-key signup (`POST /v1/auth`).
 - You can optionally require external providers (GitHub and/or OIDC) for signup and/or ongoing access.
+- External providers are **not** “password login”: if a user is trying to access an *existing* Happier account from a new device/browser, they still need to **restore** the account (for example “Login with mobile app”), then connect providers from settings.
+
+## OAuth return URL (required for GitHub/OIDC self-hosting)
+
+If you enable any external OAuth providers (GitHub and/or OIDC), the server must know where to redirect the browser **back to the client app** after OAuth completes.
+
+- If you use the hosted web app, you don’t need to set anything (default is `https://app.happier.dev`).
+- If you self-host the web app (or you’re using a local dev UI), you **must** configure one of:
+  - `HAPPIER_WEBAPP_URL` (most common for web)
+  - `HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE` (often used for mobile deep links or custom paths)
+
+Otherwise, users will be redirected to the wrong place (or the redirect may be rejected as unsafe).
 
 ## Auth policy (env vars)
 

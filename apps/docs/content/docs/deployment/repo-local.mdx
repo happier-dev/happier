@@ -1,0 +1,175 @@
+---
+title: Run From A Monorepo Clone (Repo-Local Mode)
+description: Use yarn commands from the Happier monorepo root to run a stackless local stack, install an OS service, and configure Tailscale.
+---
+
+If you cloned the Happier monorepo, you can run most day-to-day workflows directly from the repo root using `yarn` scripts.
+
+This mode is **repo-local** (stackless): it creates an isolated per-checkout stack under `~/.happier/stacks/<repo-stack>/...` and does **not** require you to pick a stack name.
+
+## Prerequisites
+
+- Node + Corepack enabled
+- `yarn install` in the monorepo root
+
+## Quick Start (Dev)
+
+```bash
+cd /path/to/happier
+yarn dev
+```
+
+For the interactive terminal UI:
+
+```bash
+yarn tui
+```
+
+With mobile (starts the dev stack with `--mobile` so the Expo dev-client QR flow is available):
+
+```bash
+yarn tui:with-mobile
+```
+
+## Run The Happier CLI From Anywhere (Use This Repo Checkout)
+
+If you want `hstack` / `happier` commands you run from any terminal to execute from **this** clone (instead of a runtime install),
+activate repo-local shims:
+
+```bash
+yarn cli:activate
+```
+
+To also add `~/.happier-stack/bin` to your shell `PATH` automatically (edits shell config):
+
+```bash
+yarn cli:activate:path
+```
+
+## Production-Like Start (Local)
+
+`yarn start` runs the local stack in a **prod-like** mode (server + daemon + optionally serving a prebuilt UI bundle).
+
+Before `yarn start`, build the static UI export:
+
+```bash
+yarn build
+yarn start
+```
+
+By default, `yarn build` writes the web UI export into your stack base dir:
+
+```text
+~/.happier/stacks/<repo-stack>/ui
+```
+
+## OS Service (Autostart)
+
+You can install an OS service that runs `hstack start` in the background (launchd on macOS; systemd on Linux).
+
+Recommended (build UI then install service):
+
+```bash
+yarn service:install
+yarn service:enable
+```
+
+Other service commands:
+
+```bash
+yarn service status
+yarn service logs
+yarn service tail
+yarn service restart
+yarn service:disable
+yarn service:uninstall
+```
+
+Linux system service (advanced):
+
+```bash
+yarn service:install:system
+```
+
+## Tailscale Serve (HTTPS Secure Context)
+
+If you use Tailscale, you can configure `tailscale serve` to expose your local stack over HTTPS.
+
+```bash
+yarn tailscale:enable
+yarn tailscale:url
+```
+
+Other Tailscale commands:
+
+```bash
+yarn tailscale status
+yarn tailscale:disable
+```
+
+## Logs
+
+Follow logs (defaults to `--component=auto` selection):
+
+```bash
+yarn logs
+```
+
+Common streams (no extra flags needed):
+
+```bash
+yarn logs:all
+yarn logs:server
+yarn logs:expo
+yarn logs:ui
+yarn logs:daemon
+yarn logs:service
+```
+
+Advanced: pass arguments to `hstack logs` (Yarn v1 requires `--` to forward args to the underlying command):
+
+```bash
+yarn logs -- --component=server --follow
+yarn logs -- --component=expo --follow
+yarn logs -- --component=daemon --lines 200 --no-follow
+```
+
+## Environment Variables (Per Repo-Local Stack)
+
+```bash
+yarn env list
+yarn env set KEY=VALUE
+yarn env unset KEY
+```
+
+These edits are persisted in:
+
+```text
+~/.happier/stacks/<repo-stack>/env
+```
+
+## Mobile
+
+Install the iOS release build (runs the full flow, no stack name required):
+
+```bash
+yarn mobile:install
+```
+
+Other repo-local mobile workflows:
+
+```bash
+yarn mobile
+yarn mobile-dev-client
+```
+
+## Full Command List (Repo Root)
+
+The monorepo root `package.json` exposes these entrypoints (all repo-local):
+
+- `yarn dev`, `yarn start`, `yarn stop`, `yarn build`, `yarn tui`
+- `yarn logs`, `yarn env`, `yarn auth`, `yarn daemon`
+- `yarn service` (and `yarn service:*` convenience scripts)
+- `yarn tailscale` (and `yarn tailscale:*` convenience scripts)
+- `yarn mobile`, `yarn mobile:install`, `yarn mobile-dev-client`
+- `yarn providers`, `yarn eas`, `yarn happier`, `yarn setup`, `yarn remote`, `yarn self-host`, `yarn menubar`

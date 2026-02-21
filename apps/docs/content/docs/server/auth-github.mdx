@@ -8,9 +8,15 @@ This guide covers GitHub auth on the Happier server:
 - Enforcing GitHub as a required login provider
 - Optional allowlists (users/orgs) and offboarding behavior
 
-## Quick start: GitHub login (recommended for self-hosting)
+## Quick start: GitHub signup (recommended for public servers)
 
-Use this when you want users to **sign up and sign in with GitHub**, and you want to **disable anonymous signup**.
+Use this when you want users to **sign up with GitHub** and you want to **disable anonymous signup**.
+
+Note: Happier accounts are still **device-key** accounts. GitHub acts as an attached identity provider (used for signup, connect, and policy enforcement), not as a replacement for device-key login.
+
+UI note:
+- If both anonymous signup and GitHub signup are enabled, the welcome screen shows **Create account** and **Continue with GitHub**.
+- If anonymous signup is disabled, the welcome screen shows **Continue with GitHub** (and no anonymous “Create account” option).
 
 ### 1) Create a GitHub OAuth App
 
@@ -26,6 +32,8 @@ Happier uses a **GitHub OAuth App** (not a GitHub App) for the OAuth redirect fl
 Notes:
 - The Happier server currently talks to `github.com` / `api.github.com` directly, so this setup is for **GitHub.com** (not GitHub Enterprise Server).
 - The callback URL must match exactly (scheme/host/path) what you put in `GITHUB_REDIRECT_URL`.
+- GitHub generally requires `https://` callback URLs, except for loopback development URLs like `http://localhost:PORT/...`.
+- You do **not** need GitHub’s “Device Flow / device authentication flow”. Our server uses the standard browser redirect OAuth flow, so you can leave “Enable Device Flow” **disabled**.
 
 ### 2) Configure the server
 
@@ -37,16 +45,20 @@ GITHUB_CLIENT_ID=...
 GITHUB_CLIENT_SECRET=...
 GITHUB_REDIRECT_URL=https://YOUR_SERVER/v1/oauth/github/callback
 
+# OAuth return redirect back to the client (required unless you are using https://app.happier.dev)
+# - Web: set this to the URL you open in the browser for the Happier web app (self-hosted or local dev).
+# - Mobile: use HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE + HAPPIER_OAUTH_RETURN_ALLOWED_SCHEMES instead.
+HAPPIER_WEBAPP_URL=https://YOUR_WEBAPP
+
 # Auth policy
 AUTH_ANONYMOUS_SIGNUP_ENABLED=false
 AUTH_SIGNUP_PROVIDERS=github
 AUTH_REQUIRED_LOGIN_PROVIDERS=github
 ```
 
-Optional (only if you are self-hosting the client web app / need custom deep links):
-- `HAPPIER_WEBAPP_URL` (default `https://app.happier.dev`)
-- `HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE`
-- `HAPPIER_OAUTH_RETURN_ALLOWED_SCHEMES` (for mobile deep links, e.g. `myapp`)
+Alternative (mobile deep link return):
+- `HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE=myapp://oauth`
+- `HAPPIER_OAUTH_RETURN_ALLOWED_SCHEMES=myapp`
 
 ### 3) Validate it works
 
@@ -54,6 +66,12 @@ Optional (only if you are self-hosting the client web app / need custom deep lin
 2. Check `GET /v1/features` and confirm:
    - `capabilities.oauth.providers.github.configured` is `true`
 3. Open the Happier app and confirm “Continue with GitHub” is available.
+4. If your GitHub login is already taken (or doesn’t match the username rules), Happier will ask you to choose a username during signup. This is expected.
+   - Important: this is **signup** (creating a new Happier account). If you’re trying to use GitHub to “log in” to an existing Happier account from another device, you must use **device-key restore** (“Login with mobile app”) and then connect GitHub from **Settings → Account**.
+
+Troubleshooting:
+- If you see an error like “provider already linked”, it means this GitHub identity is already connected to an existing Happier account on that server.
+  - Use **device-key restore** on this device/browser, then continue.
 
 ## Server env (GitHub OAuth)
 
@@ -63,8 +81,10 @@ Required:
 - `GITHUB_REDIRECT_URL` (preferred) or legacy `GITHUB_REDIRECT_URI`
   - Must be: `https://YOUR_SERVER/v1/oauth/github/callback`
 
-Optional:
+Required **unless** you are using the hosted client at `https://app.happier.dev`:
 - `HAPPIER_WEBAPP_URL` (default `https://app.happier.dev`)
+
+Optional (typically only needed for mobile deep links / custom schemes):
 - `HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE`
 - `HAPPIER_OAUTH_RETURN_ALLOWED_SCHEMES`
 - `OAUTH_STATE_TTL_SECONDS` (default `600`, clamp 60–3600)
@@ -74,6 +94,8 @@ Optional:
 Notes:
 - `GITHUB_REDIRECT_URL` must be reachable by GitHub (it’s where GitHub redirects the browser after the user approves OAuth).
 - If your server is behind a reverse proxy, `GITHUB_REDIRECT_URL` should be the **public** URL (not an internal container hostname).
+- `HAPPIER_WEBAPP_URL` / `HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE` are only “optional” if you are using the hosted client at `https://app.happier.dev`.
+  - If you are self-hosting the web app, or using a local dev web UI, you must set one of these so the server can redirect back to your client after OAuth.
 
 ## OAuth return URL to the client (advanced)
 
@@ -85,7 +107,10 @@ After the server handles the GitHub callback, it redirects the browser back to t
   - Example: `https://app.example.com/custom-oauth` → redirects to `https://app.example.com/custom-oauth/github?...`
 - Allow additional URL schemes for the return redirect: `HAPPIER_OAUTH_RETURN_ALLOWED_SCHEMES`
   - Use this for mobile deep links (e.g. `myapp`)
-  - `http://` is only allowed for loopback (like `http://localhost`) and is not allowed for non-loopback hosts.
+  - `http://` is only allowed for loopback hosts like `localhost`, `127.0.0.1`, and `*.localhost`, and is not allowed for non-loopback hosts.
+
+Troubleshooting:
+- If you get redirected to `https://app.happier.dev` even after setting `HAPPIER_WEBAPP_URL`, the server likely rejected your configured return URL as unsafe. For local web dev, use `http://localhost:PORT` or `http://*.localhost:PORT` (or use `https://`).
 
 ## OAuth scopes
 
@@ -173,6 +198,16 @@ AUTH_SIGNUP_PROVIDERS=github
 AUTH_REQUIRED_LOGIN_PROVIDERS=github
 ```
 
+### Hybrid (anonymous + GitHub signup)
+
+This is useful for **private servers** (VPN / Tailscale / LAN), where you want to keep anonymous accounts available but also offer “Continue with GitHub”.
+
+```bash
+AUTH_ANONYMOUS_SIGNUP_ENABLED=true
+AUTH_SIGNUP_PROVIDERS=github
+AUTH_REQUIRED_LOGIN_PROVIDERS=
+```
+
 ### GitHub-only + restrict to an org (GitHub App mode)
 ```bash
 AUTH_ANONYMOUS_SIGNUP_ENABLED=false
@@ -185,4 +220,3 @@ AUTH_GITHUB_APP_ID=...
 AUTH_GITHUB_APP_PRIVATE_KEY=...
 AUTH_GITHUB_APP_INSTALLATION_ID_BY_ORG=acme=123
 ```
-

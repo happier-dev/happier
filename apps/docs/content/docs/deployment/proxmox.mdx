@@ -18,9 +18,30 @@ This guide explains how to deploy Happier on **Proxmox VE** using the community-
 2. Copy the install command from the script page.
 3. Paste it into the **Proxmox Shell** (host) and follow the prompts.
 
-At the end, the installer prints the container IP and the local HTTP URL:
+At the end, the installer prints:
 
-- `http://<container-ip>:3005`
+- Your container IP and local HTTP URL
+- If applicable, your public HTTPS URL
+- “Configure server” links (web + mobile deep link) so your app/web UI points to the right server
+- Next steps to connect a terminal/daemon
+
+Local access:
+
+- `http://<container-ip>:3005` (LAN)
+
+If you select **Tailscale** during install, the stack typically binds to `loopback` and will not be reachable from your LAN IP. In that case, use the installer’s printed **HTTPS** URL instead.
+
+## Quick start (recommended)
+
+1. Run the Proxmox helper script install (above).
+2. Choose a remote access option:
+   - **Tailscale** (recommended) if you want an HTTPS URL without opening ports.
+   - **Reverse proxy** if you already have Caddy/Nginx/Traefik.
+3. Open the installer’s **Configure server** link on your phone (or `https://app.happier.dev`) and **sign in / create an account**.
+4. On the computer where you want to run the daemon/terminal, run:
+   - `happier server add --server-url https://<your-server-url> --use`
+   - `happier auth login`
+5. If you installed **Dev box**, follow the printed “connect daemon” step and restart the stack/service.
 
 ## After install: recommended onboarding flow
 
@@ -29,7 +50,7 @@ Happier has two separate “things to connect”:
 - Your **app/web UI** needs to be configured to talk to **your server**
 - Your **terminal/daemon** needs to be connected to **your account on that server**
 
-The Proxmox installer **does not** automatically authenticate for you. Instead, it prints a command you can run inside the container that will print **one-click links** (and a QR code) to guide you through the full flow.
+The Proxmox installer **does not** automatically authenticate for you. It prints the exact commands/links you need for the full flow.
 
 ### 1) Ensure you have a public HTTPS URL (remote access)
 
@@ -40,16 +61,85 @@ For remote access (phone / outside your LAN), the web UI requires **HTTPS** (sec
 - **Tailscale Serve** (recommended): easiest end-to-end HTTPS
 - **Reverse proxy** (Caddy / Nginx / Traefik): terminate TLS and proxy to the container
 
-If you use a reverse proxy, make sure your stack knows its public URL (so links/QR codes embed the right server URL):
+If you use a reverse proxy, the Proxmox installer will ask you for your public HTTPS URL and persist it in:
 
-- Edit `/home/happier/.happier/stacks/main/env` and set:
-  - `HAPPIER_STACK_SERVER_URL=https://<your-domain>`
+- `/home/happier/.happier/stacks/main/env` as `HAPPIER_STACK_SERVER_URL=https://<your-domain>`
+
+If you need to change it later, edit the same file and restart the stack/service.
+
+#### Advanced: reverse proxy (Caddy / Nginx)
+
+For a reverse proxy setup, you typically terminate TLS on your proxy and forward to:
+
+- `http://<container-ip>:3005`
+
+Make sure your proxy supports **WebSockets** and forwards the usual “real URL” headers:
+
+- `Host`
+- `X-Forwarded-Proto`
+- `X-Forwarded-Host`
+- `X-Forwarded-For`
+
+Also make sure the stack knows its public URL (for correct deep links/QR codes):
+
+- `HAPPIER_STACK_SERVER_URL=https://<your-domain>` in `/home/happier/.happier/stacks/main/env`
+
+Then restart:
+
+- `su - happier -c "/home/happier/.happier-stack/bin/hstack service restart --mode=system"` (if autostart enabled)
+- `su - happier -c "/home/happier/.happier-stack/bin/hstack start --restart"` (manual start)
+
+**Caddy** (recommended for simplest HTTPS)
+
+`Caddyfile`:
+
+```caddyfile
+happier.example.com {
+  reverse_proxy http://<container-ip>:3005
+}
+```
+
+If you’re running Caddy on the Proxmox host or another machine, replace `<container-ip>` with your container’s LAN IP.
+
+**Nginx** (manual config)
+
+Server block snippet:
+
+```nginx
+server {
+  listen 443 ssl http2;
+  server_name happier.example.com;
+
+  # TLS config omitted (use certbot, or your existing TLS setup)
+
+  location / {
+    proxy_pass http://<container-ip>:3005;
+    proxy_http_version 1.1;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host $host;
+
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+  }
+}
+```
+
+If you use a UI-driven reverse proxy (e.g. Nginx Proxy Manager / Traefik), make sure “WebSocket support” is enabled and the upstream is `http://<container-ip>:3005`.
 
 ### 2) Configure your app/web UI to use your server
 
-Inside the container, run:
+Use the installer’s printed “Configure server” links first. They:
 
-- `/home/happier/.happier-stack/bin/hstack auth login --context=selfhost --method=mobile --no-open`
+- pre-fill your server URL
+- help avoid “wrong server” confusion when you later connect a terminal/daemon
+
+If you missed the output, re-print the links from inside the container:
+
+- `/home/happier/.happier-stack/bin/hstack auth login --print --method=mobile --no-open`
 
 This will print:
 
@@ -57,6 +147,11 @@ This will print:
 - A **Connect terminal** link (web + mobile deep link) that includes `server=...`
 
 Open the configure link first, confirm, then sign in/create your account.
+
+If you chose **not** to serve the web UI from your Proxmox container, use:
+
+- the **mobile app** (recommended), or
+- the hosted web app at `https://app.happier.dev` and set the server there
 
 ### 3) Connect the terminal/daemon
 
@@ -73,8 +168,8 @@ If you installed **Dev box (server-light + daemon)**, the daemon is configured t
 
 After login completes:
 
-- If autostart is enabled: `systemctl restart happier-stack`
-- Otherwise: `/home/happier/.happier-stack/bin/hstack start --restart --bind=<loopback|lan> --no-browser`
+- If autostart is enabled: `/home/happier/.happier-stack/bin/hstack service restart --mode=system`
+- Otherwise: `/home/happier/.happier-stack/bin/hstack start --restart`
 
 ## Using Happier from another machine (common setup)
 
@@ -83,8 +178,9 @@ If you installed **Server only** on Proxmox, you’ll typically run the **daemon
 On your laptop/desktop:
 
 - Save and switch to your self-hosted server:
-  - `happier auth login --server-url https://<your-server-url> --webapp-url https://<your-webapp-url>`
-  - Use `--webapp-url https://app.happier.dev` only if you intentionally use the hosted web UI.
+  - `happier server add --server-url https://<your-server-url> --use`
+- Then connect your terminal/daemon:
+  - `happier auth login`
 
 This persists the server URL locally, then prints:
 
@@ -107,7 +203,7 @@ For ongoing profile switching and multi-server usage, see [Features → Multi-se
 
 ### Autostart at boot
 
-- **Yes**: Installs a systemd *system* unit inside the container (service name: `happier-stack.service`).
+- **Yes**: Installs a systemd *system* service inside the container.
 - **No**: You start it manually.
 
 ### Remote access / HTTPS
@@ -133,8 +229,9 @@ Enter the container from the Proxmox host:
 
 Service management (if you enabled autostart):
 
-- `systemctl status happier-stack`
-- `journalctl -u happier-stack -f`
+- `su - happier -c "/home/happier/.happier-stack/bin/hstack service status --mode=system"`
+- `su - happier -c "/home/happier/.happier-stack/bin/hstack service logs --mode=system"`
+- `su - happier -c "/home/happier/.happier-stack/bin/hstack service tail"`
 
 ## Dev box mode: connect the daemon (recommended)
 
@@ -145,14 +242,14 @@ If you chose **Dev box (server-light + daemon)**, the server/UI can run before t
 2. Switch to the `happier` user:
    - `su - happier`
 3. Run mobile login (recommended):
-   - `/home/happier/.happier-stack/bin/hstack auth login --context=selfhost --no-open --method=mobile`
+   - `/home/happier/.happier-stack/bin/hstack auth login --no-open --method=mobile`
 
 After login succeeds:
 
 - If autostart is enabled, restart the service so it starts the daemon too:
-  - `systemctl restart happier-stack`
-- Or start the daemon manually:
-  - `/home/happier/.happier-stack/bin/hstack daemon start`
+  - `/home/happier/.happier-stack/bin/hstack service restart --mode=system`
+- Or start the stack manually:
+  - `/home/happier/.happier-stack/bin/hstack start --restart`
 
 You can verify status with:
 

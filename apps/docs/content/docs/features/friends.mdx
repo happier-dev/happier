@@ -81,6 +81,7 @@ Required to enable GitHub connect:
 Optional:
 
 - `HAPPIER_WEBAPP_URL` (default `https://app.happier.dev`): base URL/scheme for the client. The server redirects to `${HAPPIER_WEBAPP_URL}/oauth/github` after the server callback completes.
+  - This is only “optional” if you are using the hosted client at `https://app.happier.dev`. If you are self-hosting the web app (or using a local dev web UI), set `HAPPIER_WEBAPP_URL` (or `HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE`) so OAuth can return to your client.
 - `GITHUB_STORE_ACCESS_TOKEN` (`true`/`false`, default `false`): whether to persist GitHub access tokens on the server (Friends does not require this). If you enforce org membership via `AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE=oauth_user_token` (membership checks via user OAuth token mode), token storage is required for offboarding checks. See `/docs/deployment/env#github-org-membership-source-recommended-github-app`.
 - `OAUTH_PENDING_TTL_SECONDS` (default `600`, min `60`, max `3600`): how long a “pending OAuth finalize” (e.g. waiting for username selection) can be finalized.
   - Legacy alias: `GITHUB_OAUTH_PENDING_TTL_SECONDS` (if `OAUTH_PENDING_TTL_SECONDS` is unset).
@@ -90,6 +91,7 @@ Optional:
 1. In GitHub, go to **Settings → Developer settings → OAuth Apps → New OAuth App**.
 2. Set **Authorization callback URL** to your server callback endpoint:
    - `https://YOUR_SERVER/v1/oauth/github/callback`
+   - You do **not** need GitHub’s “Device Flow / device authentication flow”. Happier uses the standard browser redirect OAuth flow, so you can leave “Enable Device Flow” **disabled**.
 3. Copy the **Client ID** and **Client secret** into your server environment as `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`.
 4. Set `GITHUB_REDIRECT_URL` to the same callback URL you registered above.
 5. (Self-hosting) Set `HAPPIER_WEBAPP_URL` to the URL/scheme that should receive the post-OAuth redirect.
