@@ -9,10 +9,39 @@ import { loadPipelineEnv } from './env/load-pipeline-env.mjs';
 import { loadSecrets } from './secrets/load-secrets.mjs';
 import { assertCleanWorktree } from './git/ensure-clean-worktree.mjs';
 import { computeReleaseExecutionPlan } from './release/lib/release-orchestrator.mjs';
+import { createAnsiStyle } from './cli/ansi-style.mjs';
+import { renderCommandHelp, renderPipelineHelp } from './cli/help.mjs';
 
 function fail(message) {
   console.error(message);
   process.exit(1);
+}
+
+/**
+ * @param {string[]} rawArgv
+ */
+function parseGlobalCliFlags(rawArgv) {
+  /** @type {null | boolean} */
+  let colorOverride = null;
+
+  const argv = [];
+  for (const arg of rawArgv) {
+    if (arg === '--no-color') {
+      colorOverride = false;
+      continue;
+    }
+    if (arg === '--color') {
+      colorOverride = true;
+      continue;
+    }
+    argv.push(arg);
+  }
+
+  const envNoColor = typeof process.env.NO_COLOR === 'string' && process.env.NO_COLOR.length >= 0;
+  const enabled =
+    colorOverride === true ? true : colorOverride === false ? false : Boolean(process.stdout.isTTY) && !envNoColor;
+
+  return { argv, style: createAnsiStyle({ enabled }) };
 }
 
 /**
@@ -773,18 +802,40 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
 function main() {
   const repoRoot = repoRootFromHere();
 
-  const [subcommandRaw, ...rest] = process.argv.slice(2);
+  const { argv, style } = parseGlobalCliFlags(process.argv.slice(2));
+  const [subcommandRaw, ...rest] = argv;
   const subcommand = String(subcommandRaw ?? '').trim();
-				  if (!subcommand) {
-				    fail(
-					      'Usage: node scripts/pipeline/run.mjs <deploy|npm-publish|npm-release|npm-set-preview-versions|publish-ui-web|publish-cli-binaries|publish-hstack-binaries|publish-server-runtime|checks-plan|checks|smoke-cli|release-bump-plan|release-bump-versions-dev|release-sync-installers|release-bump-version|release-build-cli-binaries|release-build-hstack-binaries|release-build-server-binaries|release-publish-manifests|release-verify-artifacts|release-compute-changed-components|release-resolve-bump-plan|release-compute-deploy-plan|release-build-ui-web-bundle|expo-ota|expo-native-build|expo-download-apk|expo-mobile-meta|expo-submit|expo-publish-apk-release|ui-mobile-release|tauri-prepare-assets|tauri-validate-updater-pubkey|tauri-build-updater-artifacts|tauri-notarize-macos-artifacts|tauri-collect-updater-artifacts|testing-create-auth-credentials|docker-publish|github-publish-release|github-audit-release-assets|github-commit-and-push|promote-branch|promote-deploy-branch|release> [args...]',
-					    );
-					  }
 
-		  if (
-			    subcommand !== 'deploy' &&
-		    subcommand !== 'npm-publish' &&
-			    subcommand !== 'npm-release' &&
+  const wantsGlobalHelp = subcommand === '--help' || subcommand === '-h' || subcommand === 'help';
+  if (wantsGlobalHelp) {
+    const target = subcommand === 'help' ? String(rest[0] ?? '').trim() : '';
+    const out = target ? renderCommandHelp({ style, command: target, cliRelPath: 'scripts/pipeline/run.mjs' }) : renderPipelineHelp({ style, cliRelPath: 'scripts/pipeline/run.mjs' });
+    process.stdout.write(out);
+    process.exit(0);
+  }
+
+  const wantsCommandHelp = rest.includes('--help') || rest.includes('-h');
+  if (subcommand && wantsCommandHelp) {
+    const out = renderCommandHelp({ style, command: subcommand, cliRelPath: 'scripts/pipeline/run.mjs' });
+    process.stdout.write(out);
+    process.exit(0);
+  }
+
+  if (!subcommand) {
+    fail(
+      [
+        'Missing command.',
+        '',
+        'Run:',
+        '  node scripts/pipeline/run.mjs --help',
+      ].join('\n'),
+    );
+  }
+
+			  if (
+				    subcommand !== 'deploy' &&
+			    subcommand !== 'npm-publish' &&
+				    subcommand !== 'npm-release' &&
 			    subcommand !== 'npm-set-preview-versions' &&
 			    subcommand !== 'publish-ui-web' &&
 			    subcommand !== 'publish-cli-binaries' &&
@@ -824,11 +875,18 @@ function main() {
 		    subcommand !== 'github-audit-release-assets' &&
 		    subcommand !== 'github-commit-and-push' &&
 		    subcommand !== 'promote-branch' &&
-		    subcommand !== 'promote-deploy-branch' &&
-		    subcommand !== 'release'
-		  ) {
-			    fail(`Unsupported subcommand: ${subcommand}`);
-			  }
+			    subcommand !== 'promote-deploy-branch' &&
+			    subcommand !== 'release'
+			  ) {
+				    fail(
+              [
+                `Unsupported subcommand: ${subcommand}`,
+                '',
+                'Run:',
+                '  node scripts/pipeline/run.mjs --help',
+              ].join('\n'),
+            );
+				  }
 
 			  if (subcommand === 'smoke-cli') {
 			    const { values } = parseArgs({
@@ -2194,14 +2252,22 @@ function main() {
       fail(`--platform must be 'ios', 'android', or 'all' (got: ${platform})`);
     }
 
-    const profile = String(values.profile ?? '').trim();
-    if ((action === 'native' || action === 'native_submit') && !profile) {
-      fail('--profile is required for native actions');
-    }
-    const publishApkReleaseMode = String(values['publish-apk-release'] ?? '').trim().toLowerCase() || 'auto';
-    if (publishApkReleaseMode !== 'auto' && publishApkReleaseMode !== 'true' && publishApkReleaseMode !== 'false') {
-      fail(`--publish-apk-release must be 'auto', 'true', or 'false' (got: ${values['publish-apk-release']})`);
-    }
+	    const profile = String(values.profile ?? '').trim();
+	    if ((action === 'native' || action === 'native_submit') && !profile) {
+	      fail('--profile is required for native actions');
+	    }
+	    if (action === 'native' || action === 'native_submit') {
+	      const expectedPrefix = environment === 'production' ? 'production' : 'preview';
+	      if (!profile.startsWith(expectedPrefix)) {
+	        fail(
+	          `--profile must start with '${expectedPrefix}' for --environment '${environment}' (got: ${profile || '<empty>'}).`,
+	        );
+	      }
+	    }
+	    const publishApkReleaseMode = String(values['publish-apk-release'] ?? '').trim().toLowerCase() || 'auto';
+	    if (publishApkReleaseMode !== 'auto' && publishApkReleaseMode !== 'true' && publishApkReleaseMode !== 'false') {
+	      fail(`--publish-apk-release must be 'auto', 'true', or 'false' (got: ${values['publish-apk-release']})`);
+	    }
 
 	    const buildJson = String(values['build-json'] ?? '').trim() || '/tmp/eas_build.json';
 	    const outDir = String(values['out-dir'] ?? '').trim() || 'dist/ui-mobile';

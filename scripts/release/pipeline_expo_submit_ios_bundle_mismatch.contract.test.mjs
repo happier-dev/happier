@@ -7,8 +7,8 @@ import { execFileSync } from 'node:child_process';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 
-test('pipeline CLI supports --path for expo-submit (dry-run)', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-pipeline-expo-submit-cli-'));
+test('expo-submit fails when iOS archive bundle id does not match requested environment', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-pipeline-expo-submit-bundle-'));
   const artifact = path.join(tmp, 'app.ipa');
 
   const pythonScript = [
@@ -38,30 +38,37 @@ test('pipeline CLI supports --path for expo-submit (dry-run)', () => {
     { cwd: repoRoot, stdio: 'ignore', timeout: 30_000 },
   );
 
-  const out = execFileSync(
-    process.execPath,
-    [
-      path.join(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
-      'expo-submit',
-      '--environment',
-      'preview',
-      '--platform',
-      'ios',
-      '--path',
-      artifact,
-      '--dry-run',
-      '--secrets-source',
-      'env',
-    ],
-    {
-      cwd: repoRoot,
-      env: { ...process.env, EXPO_TOKEN: '' },
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 30_000,
+  assert.throws(
+    () =>
+      execFileSync(
+        process.execPath,
+        [
+          path.join(repoRoot, 'scripts', 'pipeline', 'expo', 'submit.mjs'),
+          '--environment',
+          'production',
+          '--platform',
+          'ios',
+          '--profile',
+          'production',
+          '--path',
+          artifact,
+          '--dry-run',
+        ],
+        {
+          cwd: repoRoot,
+          env: { ...process.env, EXPO_TOKEN: '' },
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 30_000,
+        },
+      ),
+    (err) => {
+      assert.equal(typeof err, 'object');
+      const stderr = /** @type {any} */ (err).stderr?.toString?.() ?? '';
+      assert.match(stderr, /bundle identifier/i);
+      assert.match(stderr, /dev\.happier\.app\.preview/);
+      assert.match(stderr, /production/);
+      return true;
     },
   );
-
-  assert.match(out, /scripts\/pipeline\/expo\/submit\.mjs/);
-  assert.match(out, /\s--path\b/);
 });

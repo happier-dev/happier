@@ -2,6 +2,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
@@ -10,6 +11,151 @@ import { ensureAscApiKeyFile } from './ensure-asc-api-key-file.mjs';
 function fail(message) {
   console.error(message);
   process.exit(1);
+}
+
+/**
+ * @param {string} cmd
+ * @param {Record<string, string>} env
+ * @returns {boolean}
+ */
+function commandExists(cmd, env) {
+  try {
+    execFileSync('bash', ['-lc', `command -v ${JSON.stringify(cmd)} >/dev/null 2>&1`], {
+      env,
+      stdio: 'ignore',
+      timeout: 10_000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * @param {string} key
+ * @param {string} xml
+ * @returns {string}
+ */
+function readPlistXmlStringValue(key, xml) {
+  const re = new RegExp(`<key>${key}<\\/key>\\s*<string>([^<]*)<\\/string>`, 'm');
+  const m = xml.match(re);
+  return m ? String(m[1] ?? '').trim() : '';
+}
+
+/**
+ * @param {string} zipPath
+ * @param {Record<string, string>} env
+ * @returns {string[]}
+ */
+function listZipEntries(zipPath, env) {
+  const out = execFileSync('unzip', ['-Z1', zipPath], {
+    env,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 30_000,
+  });
+  return String(out ?? '')
+    .split('\n')
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+/**
+ * @param {string} zipPath
+ * @param {string} entry
+ * @param {Record<string, string>} env
+ * @returns {Buffer}
+ */
+function extractZipEntry(zipPath, entry, env) {
+  const out = execFileSync('unzip', ['-p', zipPath, entry], {
+    env,
+    encoding: null,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 30_000,
+  });
+  return Buffer.isBuffer(out) ? out : Buffer.from(out ?? '');
+}
+
+/**
+ * Resolves the expected iOS bundle identifier for the requested environment.
+ *
+ * We intentionally avoid executing `apps/ui/app.config.js` here because it mixes ESM exports with `require(...)`
+ * calls that are evaluated by Expo tooling, not by plain Node. Instead, we treat it as a configuration source and
+ * extract the stable bundle ids from the file.
+ *
+ * @param {{ repoRoot: string; environment: 'preview' | 'production'; env: Record<string, string> }} opts
+ * @returns {{ bundleIdentifier: string; source: string }}
+ */
+function resolveExpectedIosBundleId(opts) {
+  const override = String(opts.env.EXPO_APP_BUNDLE_ID ?? opts.env.HAPPY_STACKS_IOS_BUNDLE_ID ?? '').trim();
+  if (override) return { bundleIdentifier: override, source: 'env override' };
+
+  const configPath = path.join(opts.repoRoot, 'apps', 'ui', 'app.config.js');
+  if (!fs.existsSync(configPath)) return { bundleIdentifier: '', source: 'missing config' };
+  const raw = fs.readFileSync(configPath, 'utf8');
+
+  const prodMatch = raw.match(/iosBundleId:\s*"([^"]+)"/);
+  const prod = String(prodMatch?.[1] ?? '').trim();
+
+  const previewMatch = raw.match(/bundleIdsByVariant\s*=\s*\{[\s\S]*?\bpreview:\s*"([^"]+)"/m);
+  const preview = String(previewMatch?.[1] ?? '').trim();
+
+  const bundleIdentifier = opts.environment === 'production' ? prod : preview;
+  return { bundleIdentifier, source: 'apps/ui/app.config.js' };
+}
+
+/**
+ * @param {{ ipaPath: string; env: Record<string, string> }} opts
+ * @returns {{ bundleIdentifier: string; displayName: string; buildNumber: string; version: string } | null}
+ */
+function readIosIpaMetadata(opts) {
+  if (!opts.ipaPath.endsWith('.ipa')) return null;
+  if (!fs.existsSync(opts.ipaPath)) return null;
+  if (!commandExists('unzip', opts.env)) return null;
+
+  const entries = listZipEntries(opts.ipaPath, opts.env);
+  const infoEntry = entries.find((e) => /^Payload\/.+\.app\/Info\.plist$/.test(e));
+  if (!infoEntry) return null;
+
+  const plistBuf = extractZipEntry(opts.ipaPath, infoEntry, opts.env);
+  if (!plistBuf || plistBuf.length === 0) return null;
+
+  // Prefer plutil (handles binary plists from real IPAs). Fall back to XML parsing for simple test artifacts.
+  if (commandExists('plutil', opts.env)) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-ipa-info-'));
+    const plistPath = path.join(dir, 'Info.plist');
+    fs.writeFileSync(plistPath, plistBuf);
+
+    const readKey = (key) => {
+      try {
+        return execFileSync('plutil', ['-extract', key, 'raw', '-o', '-', plistPath], {
+          env: opts.env,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 10_000,
+        }).trim();
+      } catch {
+        return '';
+      }
+    };
+
+    return {
+      bundleIdentifier: readKey('CFBundleIdentifier'),
+      displayName: readKey('CFBundleDisplayName') || readKey('CFBundleName'),
+      version: readKey('CFBundleShortVersionString'),
+      buildNumber: readKey('CFBundleVersion'),
+    };
+  }
+
+  const asText = plistBuf.toString('utf8');
+  if (!asText.includes('<plist') || !asText.includes('CFBundleIdentifier')) return null;
+  return {
+    bundleIdentifier: readPlistXmlStringValue('CFBundleIdentifier', asText),
+    displayName:
+      readPlistXmlStringValue('CFBundleDisplayName', asText) || readPlistXmlStringValue('CFBundleName', asText),
+    version: readPlistXmlStringValue('CFBundleShortVersionString', asText),
+    buildNumber: readPlistXmlStringValue('CFBundleVersion', asText),
+  };
 }
 
 /**
@@ -161,7 +307,7 @@ function main() {
 
   const uiDir = path.join(repoRoot, 'apps', 'ui');
   const submitPathAbs = submitPathRaw ? path.resolve(repoRoot, submitPathRaw) : '';
-  if (submitPathAbs && !dryRun) {
+  if (submitPathAbs) {
     if (!fs.existsSync(submitPathAbs)) {
       fail(
         [
@@ -174,6 +320,30 @@ function main() {
           'Run: ls dist/ui-mobile',
         ].join('\n'),
       );
+    }
+
+    if (platforms.includes('ios')) {
+      const meta = readIosIpaMetadata({ ipaPath: submitPathAbs, env: process.env });
+      if (meta?.bundleIdentifier) {
+        const expected = resolveExpectedIosBundleId({ repoRoot, environment, env: process.env });
+        if (expected.bundleIdentifier && meta.bundleIdentifier !== expected.bundleIdentifier) {
+          fail(
+            [
+              `iOS archive bundle identifier mismatch for environment='${environment}'.`,
+              '',
+              `Expected (${expected.source}): ${expected.bundleIdentifier}`,
+              `Actual (archive):               ${meta.bundleIdentifier}${meta.displayName ? ` (${meta.displayName})` : ''}`,
+              meta.version || meta.buildNumber
+                ? `Archive version/build:         ${meta.version || '?'} (${meta.buildNumber || '?'})`
+                : '',
+              '',
+              'Fix: rebuild the iOS archive with the correct EAS build profile for the requested environment, then re-run expo-submit.',
+            ]
+              .filter(Boolean)
+              .join('\n'),
+          );
+        }
+      }
     }
   }
 
