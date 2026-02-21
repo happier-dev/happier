@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { getDevRepoDir, getRepoDir } from '../paths/paths.mjs';
+import { getDevRepoDir, getWorkspaceDir } from '../paths/paths.mjs';
 import { runCapture } from '../proc/proc.mjs';
 
 async function gitHasRemote({ repoDir, remote }) {
@@ -53,7 +53,8 @@ export async function resolveDevPushRemote({ repoDir, env = process.env, preferr
 }
 
 export async function ensureDevCheckout({ rootDir, env = process.env, remote = '' } = {}) {
-  const mainDir = getRepoDir(rootDir, { ...env, HAPPIER_STACK_REPO_DIR: '' });
+  const workspaceDir = getWorkspaceDir(rootDir, { ...env, HAPPIER_STACK_REPO_DIR: '' });
+  const mainDir = join(workspaceDir, 'main');
   const devDir = getDevRepoDir(rootDir, env);
   const devBranch = resolveDevBranchName(env);
 

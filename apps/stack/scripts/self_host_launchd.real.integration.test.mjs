@@ -108,6 +108,8 @@ test(
     const serverPort = await reserveLocalhostPort();
     const commonEnv = {
       PATH: process.env.PATH ?? '',
+      HOME: process.env.HOME ?? '',
+      USER: process.env.USER ?? '',
       HAPPIER_SELF_HOST_INSTALL_ROOT: installRoot,
       HAPPIER_SELF_HOST_BIN_DIR: binDir,
       HAPPIER_SELF_HOST_CONFIG_DIR: configDir,
@@ -127,7 +129,6 @@ test(
 
     let installSucceeded = false;
     t.after(() => {
-      if (!installSucceeded) return;
       run(
         hstackPath,
         ['self-host', 'uninstall', '--channel=preview', '--mode=user', '--yes', '--purge-data', '--json'],
@@ -160,7 +161,7 @@ test(
           ['self-host', 'status', '--channel=preview', '--mode=user', '--json'],
           { label: 'self-host-launchd', env: commonEnv, allowFail: true, timeoutMs: 45_000, cwd: sandboxDir }
         );
-        const launchctlList = run('launchctl', ['list'], { label: 'self-host-launchd', allowFail: true, timeoutMs: 20_000 });
+        const launchctlList = run('launchctl', ['list', serviceName], { label: 'self-host-launchd', allowFail: true, timeoutMs: 20_000 });
         const launchctlPrint = run('launchctl', ['print', launchctlPrintTarget(serviceName)], { label: 'self-host-launchd', allowFail: true, timeoutMs: 20_000 });
         const outTail = run('tail', ['-n', '200', serverOutLog], { label: 'self-host-launchd', allowFail: true, timeoutMs: 10_000 });
         const errTail = run('tail', ['-n', '200', serverErrLog], { label: 'self-host-launchd', allowFail: true, timeoutMs: 10_000 });

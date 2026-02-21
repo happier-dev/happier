@@ -1,7 +1,8 @@
 import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { ensureDir, readTextOrEmpty } from '../utils/fs/ops.mjs';
 import { parseEnvToObject } from '../utils/env/dotenv.mjs';
-import { getRepoDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
+import { getWorkspaceDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { stackExistsSync } from '../utils/stack/stacks.mjs';
 import { STACK_WRAPPER_PRESERVE_KEYS, scrubHappierStackEnv } from '../utils/env/scrub_env.mjs';
 import { applyStackActiveServerScopeEnv } from '../utils/auth/stable_scope_id.mjs';
@@ -43,7 +44,8 @@ export function resolveDefaultRepoEnv({ rootDir }) {
   //
   // Default: use the workspace clone (<workspace>/happier), regardless of any current
   // one-off repo/worktree selection in the user's environment.
-  const repoDir = getRepoDir(rootDir, { ...process.env, HAPPIER_STACK_REPO_DIR: '' });
+  const workspaceDir = getWorkspaceDir(rootDir, { ...process.env, HAPPIER_STACK_REPO_DIR: '' });
+  const repoDir = join(workspaceDir, 'main');
   return { HAPPIER_STACK_REPO_DIR: repoDir };
 }
 
