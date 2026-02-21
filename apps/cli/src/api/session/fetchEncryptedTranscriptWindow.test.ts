@@ -70,6 +70,30 @@ describe('fetchEncryptedTranscriptWindow', () => {
     expect(opts.params).toEqual({ limit: 2 });
   });
 
+  it('parses plaintext transcript rows (no filtering)', async () => {
+    mockGet.mockResolvedValue({
+      status: 200,
+      data: {
+        messages: [
+          {
+            seq: 1,
+            createdAt: 2,
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello' } } },
+          },
+        ],
+      },
+    });
+
+    const rows = await fetchEncryptedTranscriptPageLatest({
+      token: 't',
+      sessionId: 'sess_plain',
+      limit: 10,
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.content.t).toBe('plain');
+  });
+
   it('computes afterSeq and limit for a bounded range fetch', async () => {
     mockGet.mockResolvedValue({
       status: 200,

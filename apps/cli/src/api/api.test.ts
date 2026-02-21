@@ -24,6 +24,10 @@ vi.mock('@/ui/logger', () => ({
     }
 }));
 
+vi.mock('@/features/serverFeaturesClient', () => ({
+    fetchServerFeaturesSnapshot: async () => ({ status: 'unsupported', reason: 'endpoint_missing' }),
+}));
+
 // Mock encryption utilities
 vi.mock('./encryption', () => ({
     decodeBase64: vi.fn((data: string) => data),

@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import type { Credentials } from '@/persistence';
 import { fetchEncryptedTranscriptMessages } from '@/session/replay/fetchEncryptedTranscriptMessages';
 import { decodeBase64, decrypt } from '@/api/encryption';
+import { SessionMessageContentSchema } from '@/api/types';
 import { readIntFlagValue, readFlagValue, hasFlag } from '@/sessionControl/argvFlags';
 import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
 import { fetchSessionById } from '@/sessionControl/sessionsHttp';
@@ -86,6 +87,20 @@ function extractRawRow(params: Readonly<{
   };
 }
 
+function tryResolveDecryptedTranscriptPayload(params: Readonly<{
+  content: unknown;
+  ctx: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }>;
+}>): unknown | null {
+  const parsed = SessionMessageContentSchema.safeParse(params.content);
+  if (!parsed.success) return null;
+  if (parsed.data.t === 'plain') return parsed.data.v;
+  try {
+    return decrypt(params.ctx.encryptionKey, params.ctx.encryptionVariant, decodeBase64(parsed.data.c, 'base64'));
+  } catch {
+    return null;
+  }
+}
+
 export async function cmdSessionHistory(
   argv: string[],
   deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
@@ -150,10 +165,8 @@ export async function cmdSessionHistory(
     for (let i = 0; i < rows.length; i += 1) {
       const row = rows[i]!;
       const content = (row as any)?.content;
-      if (!content || typeof content !== 'object') continue;
-      if ((content as any).t !== 'encrypted' || typeof (content as any).c !== 'string') continue;
-
-      const decrypted = decrypt(ctx.encryptionKey, ctx.encryptionVariant, decodeBase64(String((content as any).c), 'base64'));
+      const decrypted = tryResolveDecryptedTranscriptPayload({ content, ctx });
+      if (!decrypted) continue;
       const createdAt = typeof (row as any)?.createdAt === 'number' ? (row as any).createdAt : 0;
       const seq = (row as any)?.seq;
       const id = typeof seq === 'number' || typeof seq === 'string' ? String(seq) : String(i);
@@ -187,10 +200,8 @@ export async function cmdSessionHistory(
   for (let i = 0; i < rows.length; i += 1) {
     const row = rows[i]!;
     const content = (row as any)?.content;
-    if (!content || typeof content !== 'object') continue;
-    if ((content as any).t !== 'encrypted' || typeof (content as any).c !== 'string') continue;
-
-    const decrypted = decrypt(ctx.encryptionKey, ctx.encryptionVariant, decodeBase64(String((content as any).c), 'base64'));
+    const decrypted = tryResolveDecryptedTranscriptPayload({ content, ctx });
+    if (!decrypted) continue;
     const createdAt = typeof (row as any)?.createdAt === 'number' ? (row as any).createdAt : 0;
     const seq = (row as any)?.seq;
     const id = typeof seq === 'number' || typeof seq === 'string' ? String(seq) : String(i);

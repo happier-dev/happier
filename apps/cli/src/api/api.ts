@@ -27,6 +27,7 @@ import type {
   SealedConnectedServiceCredentialV1,
   SealedConnectedServiceQuotaSnapshotV1,
 } from '@happier-dev/protocol';
+import { resolveSessionCreateEncryptionMode } from '@/api/session/resolveSessionCreateEncryptionMode';
 
 export class MachineIdConflictError extends Error {
   readonly machineId: string;
@@ -84,6 +85,14 @@ export class ApiClient {
     const { encryptionKey, encryptionVariant, dataEncryptionKey } = resolveSessionEncryptionContext(this.credential);
     const sessionsUrl = `${resolveServerHttpBaseUrl()}/v1/sessions`;
 
+    const serverBaseUrl = resolveServerHttpBaseUrl();
+    const { desiredSessionEncryptionMode, serverSupportsFeatureSnapshot } = await resolveSessionCreateEncryptionMode({
+      token: this.credential.token,
+      serverBaseUrl,
+      featuresTimeoutMs: 800,
+      accountTimeoutMs: 10_000,
+    });
+
     const resolvePositiveIntEnv = (raw: string | undefined, fallback: number, bounds: { min: number; max: number }): number => {
       const value = (raw ?? '').trim();
       if (!value) return fallback;
@@ -113,13 +122,28 @@ export class ApiClient {
     // Create session (retry transient 5xx, but do not enter offline mode for 5xx).
     for (let attempt = 1; attempt <= retryMaxAttempts; attempt += 1) {
       try {
+        const metadataPayload =
+          desiredSessionEncryptionMode === 'plain'
+            ? JSON.stringify(opts.metadata)
+            : encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.metadata));
+        const agentStatePayload =
+          desiredSessionEncryptionMode === 'plain'
+            ? (opts.state ? JSON.stringify(opts.state) : null)
+            : (opts.state ? encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.state)) : null);
+
         const response = await axios.post<CreateSessionResponse>(
           sessionsUrl,
           {
             tag: opts.tag,
-            metadata: encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.metadata)),
-            agentState: opts.state ? encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.state)) : null,
-            dataEncryptionKey: dataEncryptionKey ? encodeBase64(dataEncryptionKey) : null,
+            metadata: metadataPayload,
+            agentState: agentStatePayload,
+            dataEncryptionKey:
+              desiredSessionEncryptionMode === 'plain'
+                ? null
+                : dataEncryptionKey
+                  ? encodeBase64(dataEncryptionKey)
+                  : null,
+            ...(serverSupportsFeatureSnapshot ? { encryptionMode: desiredSessionEncryptionMode } : {}),
           },
           {
             headers: {
@@ -133,10 +157,13 @@ export class ApiClient {
         logger.debug(`Session created/loaded: ${response.data.session.id} (tag: ${opts.tag})`)
         let raw = response.data.session;
 
+      const sessionEncryptionMode: 'e2ee' | 'plain' =
+        (raw as any)?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+
       // Prefer the session's published data key, but keep backward compatibility with
       // older sessions that have no dataEncryptionKey (machineKey-as-session-key fallback).
       let sessionEncryptionKey = encryptionKey;
-      if (this.credential.encryption.type === 'dataKey') {
+      if (sessionEncryptionMode === 'e2ee' && this.credential.encryption.type === 'dataKey') {
         const serverEncryptedDataKeyRaw = (raw as any).dataEncryptionKey;
         const opened = openSessionDataEncryptionKey({
           credential: this.credential,
@@ -154,9 +181,18 @@ export class ApiClient {
       let session: Session = {
         id: raw.id,
         seq: raw.seq,
-        metadata: decrypt(sessionEncryptionKey, encryptionVariant, decodeBase64(raw.metadata)),
+        encryptionMode: sessionEncryptionMode,
+        metadata:
+          sessionEncryptionMode === 'plain'
+            ? JSON.parse(String(raw.metadata ?? 'null'))
+            : decrypt(sessionEncryptionKey, encryptionVariant, decodeBase64(raw.metadata)),
         metadataVersion: raw.metadataVersion,
-        agentState: raw.agentState ? decrypt(sessionEncryptionKey, encryptionVariant, decodeBase64(raw.agentState)) : null,
+        agentState:
+          !raw.agentState
+            ? null
+            : sessionEncryptionMode === 'plain'
+              ? JSON.parse(String(raw.agentState))
+              : decrypt(sessionEncryptionKey, encryptionVariant, decodeBase64(raw.agentState)),
         agentStateVersion: raw.agentStateVersion,
         encryptionKey: sessionEncryptionKey,
         encryptionVariant: encryptionVariant

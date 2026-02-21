@@ -1,13 +1,27 @@
 import chalk from 'chalk';
 import { randomUUID } from 'node:crypto';
 
+import { parsePermissionIntentAlias, resolveMetadataStringOverrideV1, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
+import type { PermissionIntent } from '@happier-dev/agents';
+
 import type { Credentials } from '@/persistence';
 import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { fetchSessionById, commitSessionEncryptedMessage } from '@/sessionControl/sessionsHttp';
-import { resolveSessionEncryptionContextFromCredentials, encryptSessionPayload } from '@/sessionControl/sessionEncryptionContext';
+import { fetchSessionById } from '@/sessionControl/sessionsHttp';
+import { resolveSessionEncryptionContextFromCredentials, encryptSessionPayload, resolveSessionStoredContentEncryptionMode, tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
 import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
-import { hasFlag, readIntFlagValue } from '@/sessionControl/argvFlags';
+import { hasFlag, readIntFlagValue, readFlagValue } from '@/sessionControl/argvFlags';
 import { waitForIdleViaSocket } from '@/sessionControl/sessionSocketAgentState';
+import { sendSessionMessageViaSocketCommitted } from '@/sessionControl/sessionSocketSendMessage';
+
+function parsePermissionIntentOrThrow(raw: string): PermissionIntent {
+  const parsed = parsePermissionIntentAlias(raw);
+  if (!parsed) {
+    const err = new Error(`Invalid permission mode: ${raw}`);
+    (err as any).code = 'invalid_arguments';
+    throw err;
+  }
+  return parsed;
+}
 
 export async function cmdSessionSend(
   argv: string[],
@@ -18,13 +32,17 @@ export async function cmdSessionSend(
   const message = String(argv[2] ?? '').trim();
   const wait = hasFlag(argv, '--wait');
   const timeoutSecondsRaw = readIntFlagValue(argv, '--timeout');
+  const permissionModeFlag = (readFlagValue(argv, '--permission-mode') ?? '').trim();
+  const modelFlagRaw = readFlagValue(argv, '--model');
+  const hasModelFlag = modelFlagRaw !== null;
+  const modelFlag = typeof modelFlagRaw === 'string' ? modelFlagRaw.trim() : '';
   const timeoutSeconds =
     typeof timeoutSecondsRaw === 'number' && Number.isFinite(timeoutSecondsRaw) && timeoutSecondsRaw > 0
       ? Math.min(3600, timeoutSecondsRaw)
       : 300;
 
   if (!idOrPrefix || !message) {
-    throw new Error('Usage: happier session send <session-id-or-prefix> <message> [--wait] [--timeout <seconds>] [--json]');
+    throw new Error('Usage: happier session send <session-id-or-prefix> <message> [--permission-mode <mode>] [--model <model-id>] [--wait] [--timeout <seconds>] [--json]');
   }
 
   const credentials = await deps.readCredentialsFn();
@@ -62,21 +80,53 @@ export async function cmdSessionSend(
   }
 
   const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
+  const storedMode = resolveSessionStoredContentEncryptionMode(rawSession as any);
   const localId = randomUUID();
-  const ciphertext = encryptSessionPayload({
-    ctx,
-    payload: {
-      role: 'user',
-      content: { type: 'text', text: message },
-      meta: { sentFrom: 'cli', source: 'cli' },
-    },
-  });
 
-  await commitSessionEncryptedMessage({
+  const decryptedMetadata = tryDecryptSessionMetadata({ credentials, rawSession });
+
+  const permissionIntent = (() => {
+    if (permissionModeFlag) return parsePermissionIntentOrThrow(permissionModeFlag);
+    const resolved = resolvePermissionIntentFromSessionMetadata(decryptedMetadata);
+    return resolved?.intent ?? 'default';
+  })();
+
+  const modelId = (() => {
+    if (hasModelFlag) {
+      if (!modelFlag) {
+        const err = new Error('Invalid --model');
+        (err as any).code = 'invalid_arguments';
+        throw err;
+      }
+      return modelFlag;
+    }
+    const resolved = resolveMetadataStringOverrideV1(decryptedMetadata, 'modelOverrideV1', 'modelId');
+    return resolved?.value ?? '';
+  })();
+
+  const record: any = {
+    role: 'user',
+    content: { type: 'text', text: message },
+    meta: {
+      sentFrom: 'cli',
+      source: 'cli',
+      permissionMode: permissionIntent,
+      ...(modelId && modelId !== 'default' ? { model: modelId } : {}),
+    },
+  };
+
+  const content =
+    storedMode === 'plain'
+      ? ({ t: 'plain', v: record } as const)
+      : ({ t: 'encrypted', c: encryptSessionPayload({ ctx, payload: record }) } as const);
+
+  await sendSessionMessageViaSocketCommitted({
     token: credentials.token,
     sessionId,
-    ciphertext,
+    content,
     localId,
+    sentFrom: 'cli',
+    permissionMode: permissionIntent,
   });
 
   let waited = false;
@@ -88,6 +138,7 @@ export async function cmdSessionSend(
         token: credentials.token,
         sessionId,
         ctx,
+        sessionEncryptionMode: storedMode,
         timeoutMs: timeoutSeconds * 1000,
         initialAgentStateCiphertextBase64: agentStateCiphertext && agentStateCiphertext.length > 0 ? agentStateCiphertext : null,
       });

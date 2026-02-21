@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import axios from 'axios';
+import { makeSessionFixtureListResponse, makeSessionFixtureRow } from './testFixtures';
 
 import { fetchSessionByIdCompat } from './sessionsHttp';
 
@@ -14,11 +15,9 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
       } as any)
       .mockResolvedValueOnce({
         status: 200,
-        data: {
-          sessions: [{ id: 's1', metadataVersion: 0, agentStateVersion: 0, dataEncryptionKey: 'dek' }],
-          hasNext: false,
-          nextCursor: null,
-        },
+        data: makeSessionFixtureListResponse([
+          makeSessionFixtureRow({ id: 's1', metadataVersion: 0, agentStateVersion: 0, dataEncryptionKey: 'dek' }),
+        ]),
       } as any);
 
     const res = await fetchSessionByIdCompat({ token: 't', sessionId: 's1' });
@@ -41,5 +40,17 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
     expect(getSpy).toHaveBeenCalledTimes(1);
     expect(String(getSpy.mock.calls[0]?.[0])).toContain('/v2/sessions/s1');
   });
-});
 
+  it('throws on malformed /v2/sessions payload when scanning fallback route', async () => {
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy
+      .mockResolvedValueOnce({ status: 404, data: { error: 'Not found', path: '/v2/sessions/s1', method: 'GET' } } as any)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { sessions: [{ id: 's1' }], nextCursor: null, hasNext: false },
+      } as any);
+
+    await expect(fetchSessionByIdCompat({ token: 't', sessionId: 's1' })).rejects.toThrow('Unexpected /v2/sessions response shape');
+    expect(getSpy).toHaveBeenCalledTimes(2);
+  });
+});

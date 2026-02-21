@@ -17,6 +17,10 @@ vi.mock('axios', () => ({
   isAxiosError: mockIsAxiosError,
 }));
 
+vi.mock('@/features/serverFeaturesClient', () => ({
+  fetchServerFeaturesSnapshot: async () => ({ status: 'unsupported', reason: 'endpoint_missing' }),
+}));
+
 describe('ApiClient loopback url resolution', () => {
   const originalEnv = {
     homeDir: process.env.HAPPIER_HOME_DIR,

@@ -7,7 +7,7 @@ import { logger } from '@/ui/logger';
 import { resolveLoopbackHttpUrl } from '../client/loopbackUrl';
 
 import { decodeBase64, decrypt } from '../encryption';
-import type { PermissionMode } from '../types';
+import { SessionMessageContentSchema, type PermissionMode } from '../types';
 
 type EncryptionVariant = 'legacy' | 'dataKey';
 
@@ -38,7 +38,8 @@ export async function fetchRecentTranscriptTextItemsForAcpImportFromServer(
       timeout: 10_000,
     });
 
-    const raw = (response?.data as any)?.messages;
+    const data = response?.data as unknown;
+    const raw = data && typeof data === 'object' ? (data as Record<string, unknown>).messages : null;
     if (!Array.isArray(raw)) return [];
 
     const sliced = raw.slice(0, take);
@@ -46,30 +47,46 @@ export async function fetchRecentTranscriptTextItemsForAcpImportFromServer(
 
     for (const msg of sliced) {
       const content = msg?.content;
-      if (!content || content.t !== 'encrypted' || typeof content.c !== 'string') continue;
+      const parsedContent = SessionMessageContentSchema.safeParse(content);
+      if (!parsedContent.success) continue;
 
-      const decrypted = decrypt(
-        params.encryptionKey,
-        params.encryptionVariant,
-        decodeBase64(content.c),
-      ) as any;
-      const role = decrypted?.role;
+      let decrypted: unknown;
+      if (parsedContent.data.t === 'plain') {
+        decrypted = parsedContent.data.v;
+      } else {
+        decrypted = decrypt(
+          params.encryptionKey,
+          params.encryptionVariant,
+          decodeBase64(parsedContent.data.c),
+        );
+      }
+      const decryptedObj = decrypted && typeof decrypted === 'object' ? (decrypted as Record<string, unknown>) : null;
+      const role = decryptedObj?.role;
       if (role !== 'user' && role !== 'agent') continue;
 
       let text: string | null = null;
-      const body = decrypted?.content;
+      const body = decryptedObj?.content;
+      const bodyObj = body && typeof body === 'object' ? (body as Record<string, unknown>) : null;
+      const bodyType = bodyObj?.type;
       if (role === 'user') {
-        if (body?.type === 'text' && typeof body.text === 'string') {
-          text = body.text;
+        if (bodyType === 'text') {
+          const rawText = bodyObj?.text;
+          if (typeof rawText === 'string') {
+            text = rawText;
+          }
         }
-      } else if (body?.type === 'text' && typeof body.text === 'string') {
-        text = body.text;
-      } else if (body?.type === 'acp') {
-        const data = body?.data;
-        if (data?.type === 'message' && typeof data.message === 'string') {
-          text = data.message;
-        } else if (data?.type === 'reasoning' && typeof data.message === 'string') {
-          text = data.message;
+      } else if (bodyType === 'text') {
+        const rawText = bodyObj?.text;
+        if (typeof rawText === 'string') {
+          text = rawText;
+        }
+      } else if (bodyType === 'acp') {
+        const data = bodyObj?.data;
+        const dataObj = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
+        const dataType = dataObj?.type;
+        const dataMessage = dataObj?.message;
+        if ((dataType === 'message' || dataType === 'reasoning') && typeof dataMessage === 'string') {
+          text = dataMessage;
         }
       }
 
@@ -106,7 +123,8 @@ export async function fetchLatestUserPermissionIntentFromEncryptedTranscript(
       timeout: 10_000,
     });
 
-    const raw = (response?.data as any)?.messages;
+    const data = response?.data as unknown;
+    const raw = data && typeof data === 'object' ? (data as Record<string, unknown>).messages : null;
     if (!Array.isArray(raw)) return null;
 
     const sliced = raw.slice(0, take);
@@ -116,17 +134,24 @@ export async function fetchLatestUserPermissionIntentFromEncryptedTranscript(
       const createdAt = typeof msg?.createdAt === 'number' ? msg.createdAt : null;
       if (createdAt === null) continue;
       const content = msg?.content;
-      if (!content || content.t !== 'encrypted' || typeof content.c !== 'string') continue;
+      const parsedContent = SessionMessageContentSchema.safeParse(content);
+      if (!parsedContent.success) continue;
 
-      const decrypted = decrypt(
-        params.encryptionKey,
-        params.encryptionVariant,
-        decodeBase64(content.c),
-      ) as any;
-      if (decrypted?.role !== 'user') continue;
+      let decrypted: unknown;
+      if (parsedContent.data.t === 'plain') {
+        decrypted = parsedContent.data.v;
+      } else {
+        decrypted = decrypt(
+          params.encryptionKey,
+          params.encryptionVariant,
+          decodeBase64(parsedContent.data.c),
+        );
+      }
+      const decryptedObj = decrypted && typeof decrypted === 'object' ? (decrypted as Record<string, unknown>) : null;
+      if (decryptedObj?.role !== 'user') continue;
 
-      const meta = decrypted?.meta;
-      const rawMode = meta && typeof meta === 'object' ? (meta as any).permissionMode : null;
+      const meta = decryptedObj?.meta;
+      const rawMode = meta && typeof meta === 'object' ? (meta as Record<string, unknown>).permissionMode : null;
       if (typeof rawMode !== 'string' || rawMode.trim().length === 0) continue;
 
       candidates.push({ rawMode, updatedAt: createdAt });

@@ -2,6 +2,8 @@ import { createSessionScopedSocket } from '@/api/session/sockets';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { decodeBase64, decrypt, encodeBase64, encrypt } from '@/api/encryption';
 import type { SessionEncryptionContext } from './sessionEncryptionContext';
+import { resolveSessionControlSocketConnectTimeoutMs } from './sessionControlTimeouts';
+import { waitForSocketConnect } from './waitForSocketConnect';
 
 export async function callSessionRpc(params: Readonly<{
   token: string;
@@ -13,21 +15,11 @@ export async function callSessionRpc(params: Readonly<{
 }>): Promise<unknown> {
   const socket = createSessionScopedSocket({ token: params.token, sessionId: params.sessionId });
   const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : 20_000;
+  const connectTimeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? timeoutMs : resolveSessionControlSocketConnectTimeoutMs();
 
-  const waitForConnect = new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Socket connect timeout')), timeoutMs);
-    socket.on('connect', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-    socket.on('connect_error', (err) => {
-      clearTimeout(timer);
-      reject(err instanceof Error ? err : new Error(String(err)));
-    });
-  });
-
+  const connectPromise = waitForSocketConnect(socket as unknown as import('socket.io-client').Socket, connectTimeoutMs);
   socket.connect();
-  await waitForConnect;
+  await connectPromise;
 
   const encryptedParams = encodeBase64(encrypt(params.ctx.encryptionKey, params.ctx.encryptionVariant, params.request), 'base64');
   const response = await new Promise<{ ok: boolean; result?: string; error?: string }>((resolve, reject) => {
@@ -57,4 +49,3 @@ export async function callSessionRpc(params: Readonly<{
   if (!encryptedResult) return null;
   return decrypt(params.ctx.encryptionKey, params.ctx.encryptionVariant, decodeBase64(encryptedResult, 'base64'));
 }
-

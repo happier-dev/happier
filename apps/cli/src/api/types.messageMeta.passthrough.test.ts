@@ -10,7 +10,7 @@ describe('MessageMetaSchema', () => {
             claudeRemoteAgentSdkEnabled: true,
         });
 
-        expect(parsed.sentFrom).toBe('unknown');
+        expect(parsed.sentFrom).toBe('e2e');
         expect((parsed as any).claudeRemoteAgentSdkEnabled).toBe(true);
     });
 });

@@ -287,20 +287,34 @@ describe('registerMachineRpcHandlers', () => {
     const encryptedTwo = encodeBase64(
       encrypt(sessionEncryptionKey, 'dataKey', { role: 'agent', content: { type: 'text', text: 'two' } }),
     );
-    const encryptedThree = encodeBase64(
-      encrypt(sessionEncryptionKey, 'dataKey', { role: 'user', content: { type: 'text', text: 'three' } }),
-    );
+	    const encryptedThree = encodeBase64(
+	      encrypt(sessionEncryptionKey, 'dataKey', { role: 'user', content: { type: 'text', text: 'three' } }),
+	    );
 
-    const getSpy = vi.spyOn(axios, 'get');
-    getSpy
-      .mockResolvedValueOnce({
-        status: 200,
-        data: { session: { id: 'sess_prev', dataEncryptionKey: encodeBase64(envelope) } },
-      } as any)
-      .mockResolvedValueOnce({
-        status: 200,
-        data: {
-          messages: [
+	    const getSpy = vi.spyOn(axios, 'get');
+	    getSpy
+	      .mockResolvedValueOnce({
+	        status: 200,
+	        data: {
+	          session: {
+	            id: 'sess_prev',
+	            seq: 0,
+	            createdAt: 1,
+	            updatedAt: 2,
+	            active: true,
+	            activeAt: 2,
+	            metadata: '',
+	            metadataVersion: 0,
+	            agentState: null,
+	            agentStateVersion: 0,
+	            dataEncryptionKey: encodeBase64(envelope),
+	          },
+	        },
+	      } as any)
+	      .mockResolvedValueOnce({
+	        status: 200,
+	        data: {
+	          messages: [
             { createdAt: 1, content: { t: 'encrypted', c: encryptedOne } },
             { createdAt: 2, content: { t: 'encrypted', c: encryptedTwo } },
             { createdAt: 3, content: { t: 'encrypted', c: encryptedThree } },
@@ -430,16 +444,30 @@ describe('registerMachineRpcHandlers', () => {
         encrypt(sessionEncryptionKey, 'dataKey', { role: 'user', content: { type: 'text', text: longText } }),
       );
 
-      const getSpy = vi.spyOn(axios, 'get');
-      getSpy
-        .mockResolvedValueOnce({
-          status: 200,
-          data: { session: { id: 'sess_prev', dataEncryptionKey: encodeBase64(envelope) } },
-        } as any)
-        .mockResolvedValueOnce({
-          status: 200,
-          data: {
-            messages: [
+	      const getSpy = vi.spyOn(axios, 'get');
+	      getSpy
+	        .mockResolvedValueOnce({
+	          status: 200,
+	          data: {
+	            session: {
+	              id: 'sess_prev',
+	              seq: 0,
+	              createdAt: 1,
+	              updatedAt: 2,
+	              active: true,
+	              activeAt: 2,
+	              metadata: '',
+	              metadataVersion: 0,
+	              agentState: null,
+	              agentStateVersion: 0,
+	              dataEncryptionKey: encodeBase64(envelope),
+	            },
+	          },
+	        } as any)
+	        .mockResolvedValueOnce({
+	          status: 200,
+	          data: {
+	            messages: [
               { seq: 1, createdAt: 1, content: { t: 'encrypted', c: encryptedOne } },
             ],
           },

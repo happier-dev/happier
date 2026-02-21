@@ -57,16 +57,20 @@ export function handleSessionNewMessageUpdate(params: {
     }
 
     let body: unknown;
-    try {
-        body = decrypt(params.encryptionKey, params.encryptionVariant, decodeBase64(parsedContent.data.c));
-    } catch (error) {
-        params.debug('[SOCKET] [UPDATE] Failed to decrypt new-message payload', {
-            error,
-            messageId: typeof messageId === 'string' ? messageId : null,
-            localId,
-            msgSeq: typeof msgSeq === 'number' && Number.isFinite(msgSeq) ? msgSeq : null,
-        });
-        return { handled: true, lastObservedMessageSeq: nextLastObservedMessageSeq };
+    if (parsedContent.data.t === 'plain') {
+        body = parsedContent.data.v;
+    } else {
+        try {
+            body = decrypt(params.encryptionKey, params.encryptionVariant, decodeBase64(parsedContent.data.c));
+        } catch (error) {
+            params.debug('[SOCKET] [UPDATE] Failed to decrypt new-message payload', {
+                error,
+                messageId: typeof messageId === 'string' ? messageId : null,
+                localId,
+                msgSeq: typeof msgSeq === 'number' && Number.isFinite(msgSeq) ? msgSeq : null,
+            });
+            return { handled: true, lastObservedMessageSeq: nextLastObservedMessageSeq };
+        }
     }
     const bodyWithLocalId =
         params.update.body.message.localId === undefined

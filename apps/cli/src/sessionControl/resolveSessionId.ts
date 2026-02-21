@@ -33,30 +33,39 @@ export async function resolveSessionIdOrPrefix(params: Readonly<{
   let cursor: string | undefined;
   const matches: string[] = [];
 
-  for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
-    const page = await fetchSessionsPage({ token: params.credentials.token, cursor, limit: 200 });
-    for (const row of page.sessions) {
-      const id = typeof (row as any)?.id === 'string' ? String((row as any).id) : '';
-      if (id.startsWith(input)) {
-        matches.push(id);
-        if (matches.length > 1) {
-          return { ok: false, code: 'session_id_ambiguous', candidates: matches.slice(0, 10) };
+  const scan = async (archivedOnly: boolean): Promise<ResolveSessionIdResult | null> => {
+    cursor = undefined;
+    for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+      const page = await fetchSessionsPage({ token: params.credentials.token, cursor, limit: 200, archivedOnly });
+      for (const row of page.sessions) {
+        const id = row.id;
+        if (id.startsWith(input)) {
+          matches.push(id);
+          if (matches.length > 1) {
+            return { ok: false, code: 'session_id_ambiguous', candidates: matches.slice(0, 10) };
+          }
         }
-      }
 
-      // Also support resolving by exact tag match when metadata is decryptable.
-      const meta = tryDecryptSessionMetadata({ credentials: params.credentials, rawSession: row });
-      const tag = typeof (meta as any)?.tag === 'string' ? String((meta as any).tag).trim() : '';
-      if (tag && tag === input) {
-        matches.push(id);
-        if (matches.length > 1) {
-          return { ok: false, code: 'session_id_ambiguous', candidates: matches.slice(0, 10) };
+        // Also support resolving by exact tag match when metadata is decryptable.
+        const meta = tryDecryptSessionMetadata({ credentials: params.credentials, rawSession: row });
+        const tag = typeof (meta as any)?.tag === 'string' ? String((meta as any).tag).trim() : '';
+        if (tag && tag === input) {
+          matches.push(id);
+          if (matches.length > 1) {
+            return { ok: false, code: 'session_id_ambiguous', candidates: matches.slice(0, 10) };
+          }
         }
       }
+      if (!page.hasNext || !page.nextCursor) break;
+      cursor = page.nextCursor;
     }
-    if (!page.hasNext || !page.nextCursor) break;
-    cursor = page.nextCursor;
-  }
+    return null;
+  };
+
+  const activeScan = await scan(false);
+  if (activeScan) return activeScan;
+  const archivedScan = await scan(true);
+  if (archivedScan) return archivedScan;
 
   if (matches.length === 1) return { ok: true, sessionId: matches[0]! };
   if (matches.length === 0) return { ok: false, code: 'session_not_found' };

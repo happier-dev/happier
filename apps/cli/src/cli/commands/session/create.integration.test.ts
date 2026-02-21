@@ -28,6 +28,13 @@ describe('happier session create (integration)', () => {
         return;
       }
 
+      if (req.method === 'GET' && url.pathname === `/v2/sessions/archived`) {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ sessions: [], nextCursor: null, hasNext: false }));
+        return;
+      }
+
       if (req.method === 'POST' && url.pathname === `/v1/sessions`) {
         const chunks: Buffer[] = [];
         for await (const c of req) chunks.push(Buffer.from(c));
@@ -111,7 +118,7 @@ describe('happier session create (integration)', () => {
     });
 
     try {
-      await handleSessionCommand(['create', '--tag', 'MyTag', '--json'], {
+      await handleSessionCommand(['create', '--tag', 'MyTag', '--title', 'My Title', '--json'], {
         readCredentialsFn: async () => ({
           token: 'token_test',
           encryption: {
@@ -129,6 +136,7 @@ describe('happier session create (integration)', () => {
       expect(parsed.data?.created).toBe(true);
       expect(parsed.data?.session?.id).toBe('sess_integration_create_123');
       expect(parsed.data?.session?.tag).toBe('MyTag');
+      expect(parsed.data?.session?.title).toBe('My Title');
       expect(parsed.data?.session?.encryption?.type).toBe('dataKey');
     } finally {
       logSpy.mockRestore();

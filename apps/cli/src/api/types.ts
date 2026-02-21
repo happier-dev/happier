@@ -2,6 +2,9 @@ import { z } from 'zod'
 import { UsageSchema } from '@/api/usage'
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc'
 import { SentFromSchema } from '@happier-dev/protocol'
+import type { AcpConfigOptionOverridesV1, AcpSessionModeOverrideV1, ModelOverrideV1, SessionTerminalMetadata } from '@happier-dev/protocol'
+import { SESSION_PERMISSION_MODES, createSessionPermissionModeSchema } from '@happier-dev/protocol'
+import { SessionStoredMessageContentSchema, type SessionStoredMessageContent } from '@happier-dev/protocol'
 
 export {
   EphemeralUpdateSchema,
@@ -37,18 +40,10 @@ import type {
  * - safe-yolo → default
  * - read-only → default
  */
+export const PERMISSION_MODES = SESSION_PERMISSION_MODES
+
 const CODEX_GEMINI_NON_DEFAULT_PERMISSION_MODES = ['read-only', 'safe-yolo', 'yolo'] as const
 export const CODEX_GEMINI_PERMISSION_MODES = ['default', ...CODEX_GEMINI_NON_DEFAULT_PERMISSION_MODES] as const
-
-const CLAUDE_ONLY_PERMISSION_MODES = ['acceptEdits', 'bypassPermissions', 'plan'] as const
-
-// Keep stable ordering for readability/help text:
-// default, claude-only, then codex/gemini-only.
-export const PERMISSION_MODES = [
-  'default',
-  ...CLAUDE_ONLY_PERMISSION_MODES,
-  ...CODEX_GEMINI_NON_DEFAULT_PERMISSION_MODES,
-] as const
 
 export type PermissionMode = (typeof PERMISSION_MODES)[number]
 
@@ -83,14 +78,10 @@ export function isCodexPermissionMode(value: PermissionMode): value is CodexPerm
 export type Usage = z.infer<typeof UsageSchema>
 
 /**
- * Base message content structure for encrypted messages
+ * Session message content envelopes
  */
-export const SessionMessageContentSchema = z.object({
-  c: z.string(), // Base64 encoded encrypted content
-  t: z.literal('encrypted')
-})
-
-export type SessionMessageContent = z.infer<typeof SessionMessageContentSchema>
+export const SessionMessageContentSchema = SessionStoredMessageContentSchema
+export type SessionMessageContent = SessionStoredMessageContent
 
 /**
  * Update events
@@ -127,7 +118,7 @@ export interface ServerToClientEvents {
  */
 export interface ClientToServerEvents {
   message: (
-    data: { sid: string, message: any, localId?: string | null },
+    data: { sid: string, message: string | SessionMessageContent, localId?: string | null, echoToSender?: boolean },
     cb?: (answer: MessageAckResponse) => void
   ) => void
   'session-alive': (data: {
@@ -167,6 +158,7 @@ export interface ClientToServerEvents {
 export type Session = {
   id: string,
   seq: number,
+  encryptionMode: 'e2ee' | 'plain',
   encryptionKey: Uint8Array;
   encryptionVariant: 'legacy' | 'dataKey';
   metadata: Metadata,
@@ -246,7 +238,7 @@ export const MessageMetaSchema = z.object({
    * Forward-compatible: unknown strings are allowed.
    */
   source: z.union([z.enum(['cli', 'ui']), z.string()]).optional(),
-  permissionMode: z.enum(PERMISSION_MODES).optional(), // Permission mode for this message
+  permissionMode: createSessionPermissionModeSchema(z).optional(), // Permission mode for this message
   model: z.string().nullable().optional(), // Model name for this message (null = reset)
   fallbackModel: z.string().nullable().optional(), // Fallback model for this message (null = reset)
   customSystemPrompt: z.string().nullable().optional(), // Custom system prompt for this message (null = reset)
@@ -322,15 +314,7 @@ export type Metadata = {
    * Terminal/attach metadata for this Happy session (non-secret).
    * Used by the UI (Session Details) and CLI attach flows.
    */
-  terminal?: {
-    mode: 'plain' | 'tmux',
-    requested?: 'plain' | 'tmux',
-    fallbackReason?: string,
-    tmux?: {
-      target: string,
-      tmpDir?: string | null,
-    },
-  },
+  terminal?: SessionTerminalMetadata,
   /**
    * Session-scoped profile identity (non-secret).
    * Used for display/debugging across devices; runtime behavior is still driven by env vars at spawn.
@@ -428,26 +412,13 @@ export type Metadata = {
    *
    * Distinct from `acpSessionModesV1` (which mirrors agent-reported current state).
    */
-  acpSessionModeOverrideV1?: {
-    v: 1,
-    updatedAt: number,
-    modeId: string,
-  },
+  acpSessionModeOverrideV1?: AcpSessionModeOverrideV1,
   /**
    * Desired ACP configuration option overrides selected by the user (UI/CLI).
    *
    * This is a best-effort mechanism to keep ACP "configOptions" selections consistent across devices.
    */
-  acpConfigOptionOverridesV1?: {
-    v: 1,
-    updatedAt: number,
-    overrides: {
-      [configId: string]: {
-        updatedAt: number,
-        value: string | number | boolean | null,
-      },
-    },
-  },
+  acpConfigOptionOverridesV1?: AcpConfigOptionOverridesV1,
   homeDir: string,
   happyHomeDir: string,
   happyLibDir: string,
@@ -475,11 +446,7 @@ export type Metadata = {
    * This is session-scoped and should be applied by runners in a capability-driven way
    * (some agents support live model switching; others may require a new session).
    */
-  modelOverrideV1?: {
-    v: 1,
-    updatedAt: number,
-    modelId: string,
-  },
+  modelOverrideV1?: ModelOverrideV1,
 };
 
 export type AgentState = {

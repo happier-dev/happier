@@ -12,9 +12,15 @@ export async function cmdSessionList(
 ): Promise<void> {
   const json = wantsJson(argv);
   const activeOnly = hasFlag(argv, '--active');
+  const archivedOnly = hasFlag(argv, '--archived');
+  const includeSystem = hasFlag(argv, '--include-system');
   const limitRaw = readIntFlagValue(argv, '--limit');
   const limit = typeof limitRaw === 'number' && Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 200) : undefined;
   const cursor = readFlagValue(argv, '--cursor') ?? '';
+
+  if (activeOnly && archivedOnly) {
+    throw new Error('Usage: happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--json]');
+  }
 
   const credentials = await deps.readCredentialsFn();
   if (!credentials) {
@@ -31,9 +37,12 @@ export async function cmdSessionList(
     ...(cursor ? { cursor } : {}),
     ...(limit ? { limit } : {}),
     activeOnly,
+    archivedOnly,
   });
 
-  const sessions = page.sessions.map((row) => summarizeSessionRow({ credentials, row }));
+  const sessions = page.sessions
+    .map((row) => summarizeSessionRow({ credentials, row }))
+    .filter((session) => includeSystem || session.isSystem !== true);
 
   if (json) {
     printJsonEnvelope({
@@ -49,7 +58,10 @@ export async function cmdSessionList(
   }
 
   for (const s of sessions) {
-    console.log(`${s.id}${s.tag ? ` ${chalk.gray(s.tag)}` : ''}${s.path ? ` ${chalk.gray(s.path)}` : ''}`);
+    const systemSuffix =
+      includeSystem && s.isSystem
+        ? ` ${chalk.yellow(`[system${s.systemPurpose ? `:${s.systemPurpose}` : ''}]`)}`
+        : '';
+    console.log(`${s.id}${systemSuffix}${s.tag ? ` ${chalk.gray(s.tag)}` : ''}${s.path ? ` ${chalk.gray(s.path)}` : ''}`);
   }
 }
-

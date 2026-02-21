@@ -10,6 +10,7 @@ export function createMockSession(overrides: RecordLike = {}) {
     const base = {
         id: 'test-session-id',
         seq: 0,
+        encryptionMode: 'e2ee' as const,
         metadata: {
             path: '/tmp',
             host: 'localhost',

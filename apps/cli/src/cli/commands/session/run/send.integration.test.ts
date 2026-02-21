@@ -51,7 +51,26 @@ describe('happier session run send (integration)', () => {
       if (req.method === 'GET' && url.pathname === `/v2/sessions/${sessionId}`) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ session: { id: sessionId, metadata: metadataCiphertext, metadataVersion: 0, agentState: null, agentStateVersion: 0, dataEncryptionKey: dataEncryptionKeyBase64 } }));
+        res.end(
+          JSON.stringify({
+            session: {
+              id: sessionId,
+              seq: 1,
+              createdAt: 1,
+              updatedAt: 2,
+              active: false,
+              activeAt: 0,
+              metadata: metadataCiphertext,
+              metadataVersion: 0,
+              agentState: null,
+              agentStateVersion: 0,
+              pendingCount: 0,
+              pendingVersion: 0,
+              dataEncryptionKey: dataEncryptionKeyBase64,
+              share: null,
+            },
+          }),
+        );
         return;
       }
       res.statusCode = 404;
@@ -137,4 +156,3 @@ describe('happier session run send (integration)', () => {
     }
   });
 });
-

@@ -2,11 +2,12 @@ import axios from 'axios';
 
 import { configuration } from '@/configuration';
 import { resolveLoopbackHttpUrl } from '@/api/client/loopbackUrl';
+import { SessionMessageContentSchema, type SessionMessageContent } from '../types';
 
-export type EncryptedTranscriptRow = Readonly<{
+export type TranscriptRow = Readonly<{
   seq: number;
   createdAt: number;
-  content: { t: 'encrypted'; c: string };
+  content: SessionMessageContent;
   id?: string;
   localId?: string | null;
 }>;
@@ -20,20 +21,19 @@ type RawTranscriptRow = Readonly<{
 }>;
 
 export type FetchEncryptedTranscriptRangeResult =
-  | Readonly<{ ok: true; rows: EncryptedTranscriptRow[] }>
+  | Readonly<{ ok: true; rows: TranscriptRow[] }>
   | Readonly<{ ok: false; errorCode: 'window_too_large'; maxMessages: number; requestedMessages: number }>;
 
-function parseEncryptedTranscriptRows(raw: unknown): EncryptedTranscriptRow[] {
+function parseTranscriptRows(raw: unknown): TranscriptRow[] {
   if (!Array.isArray(raw)) return [];
-  const out: EncryptedTranscriptRow[] = [];
+  const out: TranscriptRow[] = [];
   for (const entry of raw as RawTranscriptRow[]) {
     const seq = typeof entry?.seq === 'number' && Number.isFinite(entry.seq) ? Math.trunc(entry.seq) : null;
     const createdAt =
       typeof entry?.createdAt === 'number' && Number.isFinite(entry.createdAt) ? Math.trunc(entry.createdAt) : null;
-    const content = entry?.content as any;
-    const ciphertext = content && typeof content === 'object' && content.t === 'encrypted' ? content.c : null;
     if (seq === null || createdAt === null) continue;
-    if (typeof ciphertext !== 'string' || ciphertext.trim().length === 0) continue;
+    const parsedContent = SessionMessageContentSchema.safeParse(entry?.content);
+    if (!parsedContent.success) continue;
     const id = typeof entry?.id === 'string' ? entry.id : undefined;
     const localId = typeof entry?.localId === 'string' ? entry.localId : null;
     out.push({
@@ -41,7 +41,7 @@ function parseEncryptedTranscriptRows(raw: unknown): EncryptedTranscriptRow[] {
       localId,
       seq,
       createdAt,
-      content: { t: 'encrypted', c: ciphertext },
+      content: parsedContent.data,
     });
   }
   return out;
@@ -52,7 +52,7 @@ export async function fetchEncryptedTranscriptPageAfterSeq(params: Readonly<{
   sessionId: string;
   afterSeq: number;
   limit: number;
-}>): Promise<EncryptedTranscriptRow[]> {
+}>): Promise<TranscriptRow[]> {
   const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
   const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
     headers: {
@@ -71,14 +71,14 @@ export async function fetchEncryptedTranscriptPageAfterSeq(params: Readonly<{
     throw new Error(`Unexpected status from /v1/sessions/:id/messages: ${response.status}`);
   }
 
-  return parseEncryptedTranscriptRows((response.data as any)?.messages);
+  return parseTranscriptRows((response.data as any)?.messages);
 }
 
 export async function fetchEncryptedTranscriptPageLatest(params: Readonly<{
   token: string;
   sessionId: string;
   limit: number;
-}>): Promise<EncryptedTranscriptRow[]> {
+}>): Promise<TranscriptRow[]> {
   const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
   const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
     headers: {
@@ -97,7 +97,7 @@ export async function fetchEncryptedTranscriptPageLatest(params: Readonly<{
     throw new Error(`Unexpected status from /v1/sessions/:id/messages: ${response.status}`);
   }
 
-  return parseEncryptedTranscriptRows((response.data as any)?.messages);
+  return parseTranscriptRows((response.data as any)?.messages);
 }
 
 export async function fetchEncryptedTranscriptRange(params: Readonly<{

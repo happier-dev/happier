@@ -76,6 +76,12 @@ describe('happier session run start (integration)', () => {
         );
         return;
       }
+      if (req.method === 'GET' && url.pathname === `/v2/sessions/archived`) {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ sessions: [], nextCursor: null, hasNext: false }));
+        return;
+      }
       if (req.method === 'GET' && url.pathname === `/v2/sessions/${sessionId}`) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
@@ -83,11 +89,19 @@ describe('happier session run start (integration)', () => {
           JSON.stringify({
             session: {
               id: sessionId,
+              seq: 1,
+              createdAt: 1,
+              updatedAt: 2,
+              active: false,
+              activeAt: 0,
               metadata: metadataCiphertext,
               metadataVersion: 0,
               agentState: null,
               agentStateVersion: 0,
+              pendingCount: 0,
+              pendingVersion: 0,
               dataEncryptionKey: dataEncryptionKeyBase64,
+              share: null,
             },
           }),
         );

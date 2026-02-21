@@ -44,6 +44,7 @@ import { handleSessionStateUpdate } from './sessionStateUpdateHandling';
 import type { ACPMessageData, ACPProvider, SessionEventMessage } from './sessionMessageTypes';
 import { consumeDaemonInitialPromptFromEnv } from '@/agent/runtime/daemonInitialPrompt';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
+import { createKeyedSingleFlightScheduler, type KeyedSingleFlightScheduler } from './transcriptRecoveryScheduler';
 
 export class ApiSessionClient extends EventEmitter {
     private static readonly STARTUP_MESSAGE_CATCH_UP_RETRY_DELAYS_MS = [250, 1_000, 2_500] as const;
@@ -63,6 +64,7 @@ export class ApiSessionClient extends EventEmitter {
     private metadataLock = new AsyncLock();
     private encryptionKey: Uint8Array;
     private encryptionVariant: 'legacy' | 'dataKey';
+    private readonly sessionEncryptionMode: 'e2ee' | 'plain';
     private disconnectedSendLogged = false;
     private readonly pendingMaterializedLocalIds = new Set<string>();
     private readonly pendingQueueMaterializedLocalIds = new Set<string>();
@@ -85,6 +87,8 @@ export class ApiSessionClient extends EventEmitter {
     private startupMessageCatchUpRetryIndex = 0;
     private startupMessageCatchUpRetryTimer: ReturnType<typeof setTimeout> | null = null;
     private readonly startedByDaemonProcess: boolean;
+    private readonly materializationRecoveryScheduler: KeyedSingleFlightScheduler;
+    private readonly transcriptRecoveryErrorStateByLocalId = new Map<string, { lastLoggedAt: number; suppressed: number }>();
 
     /**
      * Returns the latest known agentState (may be stale if socket is disconnected).
@@ -113,7 +117,12 @@ export class ApiSessionClient extends EventEmitter {
         this.agentStateVersion = session.agentStateVersion;
         this.encryptionKey = session.encryptionKey;
         this.encryptionVariant = session.encryptionVariant;
+        this.sessionEncryptionMode = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
         this.daemonInitialPrompt = consumeDaemonInitialPromptFromEnv();
+        this.materializationRecoveryScheduler = createKeyedSingleFlightScheduler({
+            delayMs: configuration.transcriptRecoveryDelayMs,
+            maxConcurrent: configuration.transcriptRecoveryMaxConcurrent,
+        });
         this.startedByDaemonProcess = (() => {
             const idx = process.argv.indexOf('--started-by');
             if (idx < 0) return false;
@@ -257,6 +266,28 @@ export class ApiSessionClient extends EventEmitter {
         this.socket.connect();
     }
 
+    private debugTranscriptRecoveryFetchError(localId: string, error: unknown): void {
+        const now = Date.now();
+        const throttleMs = configuration.transcriptRecoveryErrorLogThrottleMs;
+        const state = this.transcriptRecoveryErrorStateByLocalId.get(localId) ?? { lastLoggedAt: 0, suppressed: 0 };
+
+        if (state.lastLoggedAt === 0 || now - state.lastLoggedAt >= throttleMs) {
+            const suppressed = state.suppressed;
+            state.lastLoggedAt = now;
+            state.suppressed = 0;
+            this.transcriptRecoveryErrorStateByLocalId.set(localId, state);
+            logger.debug('[API] Failed to fetch transcript messages for pending-queue recovery', {
+                localId,
+                suppressedSinceLastLog: suppressed,
+                error,
+            });
+            return;
+        }
+
+        state.suppressed += 1;
+        this.transcriptRecoveryErrorStateByLocalId.set(localId, state);
+    }
+
     private syncSessionSnapshotFromServer(opts: { reason: 'connect' | 'waitForMetadataUpdate' }): Promise<void> {
         if (this.closed) return Promise.resolve();
         if (this.snapshotSyncInFlight) return this.snapshotSyncInFlight;
@@ -341,6 +372,8 @@ export class ApiSessionClient extends EventEmitter {
     private deleteMaterializedLocalId(localId: string): void {
         this.pendingMaterializedLocalIds.delete(localId);
         this.pendingQueueMaterializedLocalIds.delete(localId);
+        this.materializationRecoveryScheduler.cancel(localId);
+        this.transcriptRecoveryErrorStateByLocalId.delete(localId);
         this.maybeScheduleUserSocketDisconnect();
     }
 
@@ -524,7 +557,7 @@ export class ApiSessionClient extends EventEmitter {
             localId,
             maxWaitMs: opts?.maxWaitMs,
             onError: (error) => {
-                logger.debug('[API] Failed to fetch transcript messages for pending-queue recovery', { error });
+                this.debugTranscriptRecoveryFetchError(localId, error);
             },
         });
         if (!found) return false;
@@ -555,12 +588,10 @@ export class ApiSessionClient extends EventEmitter {
     private scheduleMaterializationRecovery(localId: string): void {
         // Belt-and-suspenders: if we fail to observe the socket broadcast for a committed transcript row,
         // recover by scanning the transcript and re-injecting the message into the normal update pipeline.
-        const delayMs = 500;
-        const timer = setTimeout(() => {
+        this.materializationRecoveryScheduler.schedule(localId, async () => {
             if (!this.hasMaterializedLocalId(localId)) return;
-            void this.recoverMaterializedLocalId(localId, { maxWaitMs: 7_500 });
-        }, delayMs);
-        timer.unref?.();
+            await this.recoverMaterializedLocalId(localId, { maxWaitMs: configuration.transcriptRecoveryMaxWaitMs });
+        });
     }
 
     onUserMessage(callback: (data: UserMessage) => void) {
@@ -748,8 +779,8 @@ export class ApiSessionClient extends EventEmitter {
         });
     }
 
-    private async commitEncryptedSessionMessage(
-        params: { encryptedMessage: string; localId: string; requireCommit: boolean },
+    private async commitSessionMessage(
+        params: { message: string | { t: 'plain'; v: unknown }; localId: string; requireCommit: boolean },
     ): Promise<void> {
         const localId = params.localId;
         if (localId.length === 0) {
@@ -766,11 +797,12 @@ export class ApiSessionClient extends EventEmitter {
             this.pendingMaterializedLocalIds.add(localId);
             this.socket.emit('message', {
                 sid: this.sessionId,
-                message: params.encryptedMessage,
+                message: params.message,
                 localId,
+                echoToSender: true,
             });
             this.scheduleMaterializationRecovery(localId);
-            this.scheduleCommitRetry({ encryptedMessage: params.encryptedMessage, localId });
+            this.scheduleCommitRetry({ message: params.message, localId });
             return;
         }
 
@@ -781,8 +813,9 @@ export class ApiSessionClient extends EventEmitter {
                     .timeout(7_500)
                     .emitWithAck('message', {
                         sid: this.sessionId,
-                        message: params.encryptedMessage,
+                        message: params.message,
                         localId,
+                        echoToSender: true,
                     }) as unknown;
 
                 const parsed = MessageAckResponseSchema.safeParse(raw);
@@ -818,10 +851,10 @@ export class ApiSessionClient extends EventEmitter {
         }
 
         this.scheduleMaterializationRecovery(localId);
-        this.scheduleCommitRetry({ encryptedMessage: params.encryptedMessage, localId });
+        this.scheduleCommitRetry({ message: params.message, localId });
     }
 
-    private scheduleCommitRetry(params: { encryptedMessage: string; localId: string }): void {
+    private scheduleCommitRetry(params: { message: string | { t: 'plain'; v: unknown }; localId: string }): void {
         const localId = params.localId;
         if (!localId) return;
         if (!this.pendingMaterializedLocalIds.has(localId)) return;
@@ -839,8 +872,8 @@ export class ApiSessionClient extends EventEmitter {
                 this.pendingCommitRetryAttemptsByLocalId.delete(localId);
                 return;
             }
-            void this.commitEncryptedSessionMessage({
-                encryptedMessage: params.encryptedMessage,
+            void this.commitSessionMessage({
+                message: params.message,
                 localId,
                 requireCommit: false,
             }).catch(() => {
@@ -854,13 +887,20 @@ export class ApiSessionClient extends EventEmitter {
         return encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, content as any));
     }
 
-    private commitEncryptedSessionMessageBestEffort(params: {
-        encryptedMessage: string;
+    private buildOutboundSessionMessagePayload(content: unknown): string | { t: 'plain'; v: unknown } {
+        if (this.sessionEncryptionMode === 'plain') {
+            return { t: 'plain', v: content };
+        }
+        return this.encryptSessionContent(content);
+    }
+
+    private commitSessionMessageBestEffort(params: {
+        message: string | { t: 'plain'; v: unknown };
         localId: string;
         logErrorMessage: string;
     }): void {
-        void this.commitEncryptedSessionMessage({
-            encryptedMessage: params.encryptedMessage,
+        void this.commitSessionMessage({
+            message: params.message,
             localId: params.localId,
             requireCommit: false,
         }).catch((error) => {
@@ -919,10 +959,10 @@ export class ApiSessionClient extends EventEmitter {
 
         this.logSendWhileDisconnected('Claude session message', { type: body.type });
 
-        const encrypted = this.encryptSessionContent(content);
+        const payload = this.buildOutboundSessionMessagePayload(content);
         const localId = randomUUID();
-        this.commitEncryptedSessionMessageBestEffort({
-            encryptedMessage: encrypted,
+        this.commitSessionMessageBestEffort({
+            message: payload,
             localId,
             logErrorMessage: '[SOCKET] Failed to commit Claude session message (non-fatal)',
         });
@@ -971,10 +1011,10 @@ export class ApiSessionClient extends EventEmitter {
         
         this.logSendWhileDisconnected('Codex message', { type: normalizedBody?.type });
 
-        const encrypted = this.encryptSessionContent(content);
+        const payload = this.buildOutboundSessionMessagePayload(content);
         const localId = randomUUID();
-        this.commitEncryptedSessionMessageBestEffort({
-            encryptedMessage: encrypted,
+        this.commitSessionMessageBestEffort({
+            message: payload,
             localId,
             logErrorMessage: '[SOCKET] Failed to commit Codex message (non-fatal)',
         });
@@ -1052,9 +1092,9 @@ export class ApiSessionClient extends EventEmitter {
         
         logger.debug(`[SOCKET] Sending ACP message from ${provider}:`, { type: normalizedBody.type, hasMessage: 'message' in normalizedBody });
         this.logSendWhileDisconnected(`${provider} ACP message`, { type: normalizedBody.type });
-        const encrypted = this.encryptSessionContent(content);
-        this.commitEncryptedSessionMessageBestEffort({
-            encryptedMessage: encrypted,
+        const payload = this.buildOutboundSessionMessagePayload(content);
+        this.commitSessionMessageBestEffort({
+            message: payload,
             localId,
             logErrorMessage: '[SOCKET] Failed to commit agent message (non-fatal)',
         });
@@ -1080,10 +1120,10 @@ export class ApiSessionClient extends EventEmitter {
         const content = this.buildUserTextMessageContent(text, opts?.meta);
 
         this.logSendWhileDisconnected('User text message', { length: text.length });
-        const encrypted = this.encryptSessionContent(content);
+        const payload = this.buildOutboundSessionMessagePayload(content);
         const localId = typeof opts?.localId === 'string' && opts.localId.length > 0 ? opts.localId : randomUUID();
-        this.commitEncryptedSessionMessageBestEffort({
-            encryptedMessage: encrypted,
+        this.commitSessionMessageBestEffort({
+            message: payload,
             localId,
             logErrorMessage: '[SOCKET] Failed to commit user message (non-fatal)',
         });
@@ -1094,8 +1134,8 @@ export class ApiSessionClient extends EventEmitter {
         opts: { localId: string; meta?: Record<string, unknown> },
     ): Promise<void> {
         const content = this.buildUserTextMessageContent(text, opts.meta);
-        const encrypted = this.encryptSessionContent(content);
-        await this.commitEncryptedSessionMessage({ encryptedMessage: encrypted, localId: opts.localId, requireCommit: true });
+        const payload = this.buildOutboundSessionMessagePayload(content);
+        await this.commitSessionMessage({ message: payload, localId: opts.localId, requireCommit: true });
     }
 
     async sendAgentMessageCommitted(
@@ -1114,8 +1154,8 @@ export class ApiSessionClient extends EventEmitter {
             recordAcpToolTraceEventIfNeeded({ sessionId: this.sessionId, provider, body: normalizedBody, localId });
         }
 
-        const encrypted = this.encryptSessionContent(content);
-        await this.commitEncryptedSessionMessage({ encryptedMessage: encrypted, localId, requireCommit: true });
+        const payload = this.buildOutboundSessionMessagePayload(content);
+        await this.commitSessionMessage({ message: payload, localId, requireCommit: true });
     }
 
     async fetchRecentTranscriptTextItemsForAcpImport(opts?: { take?: number }): Promise<Array<{ role: 'user' | 'agent'; text: string }>> {
@@ -1150,10 +1190,10 @@ export class ApiSessionClient extends EventEmitter {
 
         this.logSendWhileDisconnected('session event', { eventType: event.type });
 
-        const encrypted = this.encryptSessionContent(content);
+        const payload = this.buildOutboundSessionMessagePayload(content);
         const localId = randomUUID();
-        this.commitEncryptedSessionMessageBestEffort({
-            encryptedMessage: encrypted,
+        this.commitSessionMessageBestEffort({
+            message: payload,
             localId,
             logErrorMessage: '[SOCKET] Failed to commit session event (non-fatal)',
         });
@@ -1237,6 +1277,7 @@ export class ApiSessionClient extends EventEmitter {
             await updateSessionMetadataWithAck({
                 socket: this.socket as any,
                 sessionId: this.sessionId,
+                sessionEncryptionMode: this.sessionEncryptionMode,
                 encryptionKey: this.encryptionKey,
                 encryptionVariant: this.encryptionVariant,
                 getMetadata: () => this.metadata,
@@ -1263,6 +1304,7 @@ export class ApiSessionClient extends EventEmitter {
             await updateSessionAgentStateWithAck({
                 socket: this.socket as any,
                 sessionId: this.sessionId,
+                sessionEncryptionMode: this.sessionEncryptionMode,
                 encryptionKey: this.encryptionKey,
                 encryptionVariant: this.encryptionVariant,
                 getAgentState: () => this.agentState,

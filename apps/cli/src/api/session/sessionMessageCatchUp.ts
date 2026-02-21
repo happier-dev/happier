@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 import { configuration } from '@/configuration';
-import type { Update } from '../types';
+import { SessionMessageContentSchema, type Update } from '../types';
 import { resolveLoopbackHttpUrl } from '../client/loopbackUrl';
 
 export async function catchUpSessionMessagesAfterSeq(params: {
@@ -37,7 +37,8 @@ export async function catchUpSessionMessagesAfterSeq(params: {
             const seq = (msg as any).seq;
             const content = (msg as any).content;
             if (typeof id !== 'string' || typeof seq !== 'number') continue;
-            if (!content || content.t !== 'encrypted' || typeof content.c !== 'string') continue;
+            const parsedContent = SessionMessageContentSchema.safeParse(content);
+            if (!parsedContent.success) continue;
 
             const localId = typeof (msg as any).localId === 'string' ? (msg as any).localId : undefined;
             const createdAt = typeof (msg as any).createdAt === 'number' ? (msg as any).createdAt : Date.now();
@@ -53,7 +54,7 @@ export async function catchUpSessionMessagesAfterSeq(params: {
                         id,
                         seq,
                         ...(localId ? { localId } : {}),
-                        content,
+                        content: parsedContent.data,
                     },
                 },
             } as Update;

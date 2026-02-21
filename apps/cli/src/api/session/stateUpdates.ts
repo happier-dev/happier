@@ -10,6 +10,7 @@ type AckableSocket = {
 export async function updateSessionMetadataWithAck(opts: {
     socket: AckableSocket;
     sessionId: string;
+    sessionEncryptionMode: 'e2ee' | 'plain';
     encryptionKey: Uint8Array;
     encryptionVariant: 'legacy' | 'dataKey';
     getMetadata: () => Metadata | null;
@@ -30,14 +31,22 @@ export async function updateSessionMetadataWithAck(opts: {
 
         const current = opts.getMetadata();
         const updated = opts.handler(current!);
+        const metadataPayload =
+            opts.sessionEncryptionMode === 'plain'
+                ? JSON.stringify(updated)
+                : encodeBase64(encrypt(opts.encryptionKey, opts.encryptionVariant, updated));
         const answer = await opts.socket.emitWithAck('update-metadata', {
             sid: opts.sessionId,
             expectedVersion: opts.getMetadataVersion(),
-            metadata: encodeBase64(encrypt(opts.encryptionKey, opts.encryptionVariant, updated)),
+            metadata: metadataPayload,
         });
 
         if (answer.result === 'success') {
-            opts.setMetadata(decrypt(opts.encryptionKey, opts.encryptionVariant, decodeBase64(answer.metadata)));
+            const next =
+                opts.sessionEncryptionMode === 'plain'
+                    ? JSON.parse(String(answer.metadata ?? 'null'))
+                    : decrypt(opts.encryptionKey, opts.encryptionVariant, decodeBase64(answer.metadata));
+            opts.setMetadata(next);
             opts.setMetadataVersion(answer.version);
             return;
         }
@@ -45,7 +54,11 @@ export async function updateSessionMetadataWithAck(opts: {
         if (answer.result === 'version-mismatch') {
             if (answer.version > opts.getMetadataVersion()) {
                 opts.setMetadataVersion(answer.version);
-                opts.setMetadata(decrypt(opts.encryptionKey, opts.encryptionVariant, decodeBase64(answer.metadata)));
+                const next =
+                    opts.sessionEncryptionMode === 'plain'
+                        ? JSON.parse(String(answer.metadata ?? 'null'))
+                        : decrypt(opts.encryptionKey, opts.encryptionVariant, decodeBase64(answer.metadata));
+                opts.setMetadata(next);
             }
             throw new Error('Metadata version mismatch');
         }
@@ -57,6 +70,7 @@ export async function updateSessionMetadataWithAck(opts: {
 export async function updateSessionAgentStateWithAck(opts: {
     socket: AckableSocket;
     sessionId: string;
+    sessionEncryptionMode: 'e2ee' | 'plain';
     encryptionKey: Uint8Array;
     encryptionVariant: 'legacy' | 'dataKey';
     getAgentState: () => AgentState | null;
@@ -76,14 +90,24 @@ export async function updateSessionAgentStateWithAck(opts: {
         }
 
         const updated = opts.handler(opts.getAgentState() || {});
+        const agentStatePayload =
+            opts.sessionEncryptionMode === 'plain'
+                ? JSON.stringify(updated)
+                : (updated ? encodeBase64(encrypt(opts.encryptionKey, opts.encryptionVariant, updated)) : null);
         const answer = await opts.socket.emitWithAck('update-state', {
             sid: opts.sessionId,
             expectedVersion: opts.getAgentStateVersion(),
-            agentState: updated ? encodeBase64(encrypt(opts.encryptionKey, opts.encryptionVariant, updated)) : null,
+            agentState: agentStatePayload,
         });
 
         if (answer.result === 'success') {
-            opts.setAgentState(answer.agentState ? decrypt(opts.encryptionKey, opts.encryptionVariant, decodeBase64(answer.agentState)) : null);
+            const next =
+                !answer.agentState
+                    ? null
+                    : opts.sessionEncryptionMode === 'plain'
+                        ? JSON.parse(String(answer.agentState))
+                        : decrypt(opts.encryptionKey, opts.encryptionVariant, decodeBase64(answer.agentState));
+            opts.setAgentState(next);
             opts.setAgentStateVersion(answer.version);
             logger.debug('Agent state updated', opts.getAgentState());
             return;
@@ -92,7 +116,13 @@ export async function updateSessionAgentStateWithAck(opts: {
         if (answer.result === 'version-mismatch') {
             if (answer.version > opts.getAgentStateVersion()) {
                 opts.setAgentStateVersion(answer.version);
-                opts.setAgentState(answer.agentState ? decrypt(opts.encryptionKey, opts.encryptionVariant, decodeBase64(answer.agentState)) : null);
+                const next =
+                    !answer.agentState
+                        ? null
+                        : opts.sessionEncryptionMode === 'plain'
+                            ? JSON.parse(String(answer.agentState))
+                            : decrypt(opts.encryptionKey, opts.encryptionVariant, decodeBase64(answer.agentState));
+                opts.setAgentState(next);
             }
             throw new Error('Agent state version mismatch');
         }
@@ -100,4 +130,3 @@ export async function updateSessionAgentStateWithAck(opts: {
         // Hard error - ignore
     });
 }
-

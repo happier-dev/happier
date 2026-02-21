@@ -53,6 +53,7 @@ describe('ApiSessionClient connection handling', () => {
         mockSession = {
             id: 'test-session-id',
             seq: 0,
+            encryptionMode: 'e2ee' as const,
             metadata: {
                 path: '/tmp',
                 host: 'localhost',
@@ -94,6 +95,21 @@ describe('ApiSessionClient connection handling', () => {
         expect(second).toBe('acc-1');
 
         expect(getSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('sends plaintext session messages when session.encryptionMode is plain', async () => {
+        const client = new ApiSessionClient('fake-token', { ...mockSession, encryptionMode: 'plain' as const });
+
+        client.sendUserTextMessage('hello');
+
+        expect(mockSocket.emit).toHaveBeenCalledWith(
+            'message',
+            expect.objectContaining({
+                sid: 'test-session-id',
+                message: expect.objectContaining({ t: 'plain', v: expect.anything() }),
+                localId: expect.any(String),
+            }),
+        );
     });
 
     it('normalizes outbound ACP tool-call names and inputs to V2 canonical keys', () => {
@@ -275,6 +291,44 @@ describe('ApiSessionClient connection handling', () => {
                     id: 'm-1',
                     seq: 1,
                     content: { t: 'encrypted', c: ciphertext },
+                },
+            },
+        };
+
+        (client as any).handleUpdate(update, { source: 'session-scoped' });
+
+        expect(received.length).toBe(1);
+        expect(received[0]).toMatchObject({
+            role: 'user',
+            content: { type: 'text', text: 'hello' },
+            meta: { permissionMode: 'read-only' },
+            createdAt: 1234,
+        });
+    });
+
+    it('delivers plaintext new-message updates without decrypting', () => {
+        const client = new ApiSessionClient('fake-token', mockSession);
+
+        const received: any[] = [];
+        client.onUserMessage((msg: any) => received.push(msg));
+
+        const plaintext = {
+            role: 'user',
+            content: { type: 'text', text: 'hello' },
+            meta: { source: 'ui', sentFrom: 'e2e', permissionMode: 'read-only' },
+        };
+
+        const update = {
+            id: 'u-1',
+            seq: 0,
+            createdAt: 1234,
+            body: {
+                t: 'new-message',
+                sid: mockSession.id,
+                message: {
+                    id: 'm-1',
+                    seq: 1,
+                    content: { t: 'plain', v: plaintext },
                 },
             },
         };
@@ -1162,10 +1216,20 @@ describe('ApiSessionClient connection handling', () => {
                     data: {
                         session: {
                             id: mockSession.id,
+                            seq: 0,
+                            createdAt: 0,
+                            updatedAt: 0,
+                            active: true,
+                            activeAt: 0,
+                            archivedAt: null,
                             metadataVersion: 5,
                             metadata: encryptedServerMetadata,
                             agentStateVersion: 0,
                             agentState: null,
+                            pendingCount: 0,
+                            pendingVersion: 0,
+                            dataEncryptionKey: null,
+                            share: null,
                         },
                     },
                 });

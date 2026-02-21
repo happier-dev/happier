@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createServer, type Server } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,12 +18,49 @@ describe('happier session stop (integration)', () => {
   const originalServerUrl = process.env.HAPPIER_SERVER_URL;
   const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
   const originalHomeDir = process.env.HAPPIER_HOME_DIR;
+  let server: Server | null = null;
   let happyHomeDir = '';
 
   beforeEach(async () => {
     happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-session-stop-'));
 
-    process.env.HAPPIER_SERVER_URL = 'http://127.0.0.1:12345';
+    server = createServer((req, res) => {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      if (req.method === 'GET' && url.pathname.startsWith('/v2/sessions/')) {
+        const sessionId = url.pathname.slice('/v2/sessions/'.length).trim();
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(
+          JSON.stringify({
+            session: {
+              id: sessionId,
+              seq: 1,
+              createdAt: 1,
+              updatedAt: 2,
+              active: false,
+              activeAt: 0,
+              metadata: 'metadata_ciphertext',
+              metadataVersion: 0,
+              agentState: null,
+              agentStateVersion: 0,
+              pendingCount: 0,
+              pendingVersion: 0,
+              dataEncryptionKey: null,
+              share: null,
+            },
+          }),
+        );
+        return;
+      }
+      res.statusCode = 404;
+      res.end();
+    });
+
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Failed to resolve integration server address');
+
+    process.env.HAPPIER_SERVER_URL = `http://127.0.0.1:${address.port}`;
     process.env.HAPPIER_WEBAPP_URL = 'http://127.0.0.1:3000';
     process.env.HAPPIER_HOME_DIR = happyHomeDir;
 
@@ -33,6 +71,13 @@ describe('happier session stop (integration)', () => {
   });
 
   afterEach(async () => {
+    if (server) {
+      await new Promise<void>((resolve, reject) => {
+        server!.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+    server = null;
+
     if (happyHomeDir) await rm(happyHomeDir, { recursive: true, force: true });
 
     if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;

@@ -2,8 +2,6 @@ import chalk from 'chalk';
 import os from 'node:os';
 
 import type { Credentials } from '@/persistence';
-import { resolveSessionEncryptionContext } from '@/api/client/encryptionKey';
-import { encodeBase64, encrypt } from '@/api/encryption';
 import { fetchSessionsPage, getOrCreateSessionByTag } from '@/sessionControl/sessionsHttp';
 import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
 import { summarizeSessionRecord } from '@/sessionControl/sessionSummary';
@@ -15,18 +13,23 @@ async function tagExists(params: Readonly<{ credentials: Credentials; tag: strin
   const maxPagesParsed = maxPagesRaw ? Number.parseInt(maxPagesRaw, 10) : NaN;
   const maxPages = Number.isFinite(maxPagesParsed) && maxPagesParsed > 0 ? Math.min(50, maxPagesParsed) : 10;
 
-  let cursor: string | undefined;
-  for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
-    const page = await fetchSessionsPage({ token: params.credentials.token, cursor, limit: 200 });
-    for (const row of page.sessions) {
-      const meta = tryDecryptSessionMetadata({ credentials: params.credentials, rawSession: row });
-      const rowTag = typeof (meta as any)?.tag === 'string' ? String((meta as any).tag).trim() : '';
-      if (rowTag && rowTag === params.tag) return true;
+  const scan = async (archivedOnly: boolean): Promise<boolean> => {
+    let cursor: string | undefined;
+    for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+      const page = await fetchSessionsPage({ token: params.credentials.token, cursor, limit: 200, archivedOnly });
+      for (const row of page.sessions) {
+        const meta = tryDecryptSessionMetadata({ credentials: params.credentials, rawSession: row });
+        const rowTag = typeof (meta as any)?.tag === 'string' ? String((meta as any).tag).trim() : '';
+        if (rowTag && rowTag === params.tag) return true;
+      }
+      if (!page.hasNext || !page.nextCursor) break;
+      cursor = page.nextCursor;
     }
-    if (!page.hasNext || !page.nextCursor) break;
-    cursor = page.nextCursor;
-  }
-  return false;
+    return false;
+  };
+
+  if (await scan(false)) return true;
+  return await scan(true);
 }
 
 export async function cmdSessionCreate(
@@ -37,10 +40,13 @@ export async function cmdSessionCreate(
   const tag = (readFlagValue(argv, '--tag') ?? '').trim();
   const path = (readFlagValue(argv, '--path') ?? process.cwd()).trim();
   const host = (readFlagValue(argv, '--host') ?? os.hostname()).trim();
+  const title = (readFlagValue(argv, '--title') ?? '').trim();
   const noLoadExisting = hasFlag(argv, '--no-load-existing');
 
   if (!tag) {
-    throw new Error('Usage: happier session create --tag <tag> [--path <path>] [--host <host>] [--no-load-existing] [--json]');
+    throw new Error(
+      'Usage: happier session create --tag <tag> [--title <text>] [--path <path>] [--host <host>] [--no-load-existing] [--json]',
+    );
   }
 
   const credentials = await deps.readCredentialsFn();
@@ -63,17 +69,16 @@ export async function cmdSessionCreate(
     process.exit(1);
   }
 
-  const { encryptionKey, encryptionVariant, dataEncryptionKey } = resolveSessionEncryptionContext(credentials);
-
-  const metadataCiphertext = encodeBase64(encrypt(encryptionKey, encryptionVariant, { tag, path, host }));
-  const dataEncryptionKeyBase64 = dataEncryptionKey ? encodeBase64(dataEncryptionKey) : null;
-
   const { session } = await getOrCreateSessionByTag({
     credentials,
     tag,
-    metadataCiphertext,
-    agentStateCiphertext: null,
-    dataEncryptionKey: dataEncryptionKeyBase64,
+    metadata: {
+      tag,
+      path,
+      host,
+      ...(title ? { summary: { text: title, updatedAt: Date.now() } } : {}),
+    },
+    agentState: null,
   });
 
   const summary = summarizeSessionRecord({ credentials, session });
@@ -87,4 +92,3 @@ export async function cmdSessionCreate(
   console.log(chalk.green('✓'), created ? 'session created' : 'session loaded');
   console.log(JSON.stringify({ created, session: summary }, null, 2));
 }
-

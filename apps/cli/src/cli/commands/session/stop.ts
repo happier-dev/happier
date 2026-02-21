@@ -4,6 +4,8 @@ import type { Credentials } from '@/persistence';
 import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
 import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
 import { createSessionScopedSocket } from '@/api/session/sockets';
+import { resolveSessionControlSocketAckTimeoutMs, resolveSessionControlSocketConnectTimeoutMs } from '@/sessionControl/sessionControlTimeouts';
+import { waitForSocketConnect } from '@/sessionControl/waitForSocketConnect';
 
 export async function cmdSessionStop(
   argv: string[],
@@ -41,24 +43,13 @@ export async function cmdSessionStop(
 
   const socket = createSessionScopedSocket({ token: credentials.token, sessionId });
 
-  const timeoutMs = 10_000;
-  const waitForConnect = new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Socket connect timeout')), timeoutMs);
-    socket.on('connect', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-    socket.on('connect_error', (err) => {
-      clearTimeout(timer);
-      reject(err instanceof Error ? err : new Error(String(err)));
-    });
-  });
-
+  const connectTimeoutMs = resolveSessionControlSocketConnectTimeoutMs();
+  const connectPromise = waitForSocketConnect(socket as unknown as import('socket.io-client').Socket, connectTimeoutMs);
   socket.connect();
-  await waitForConnect;
+  await connectPromise;
 
   await new Promise<void>((resolve) => {
-    const timer = setTimeout(() => resolve(), timeoutMs);
+    const timer = setTimeout(() => resolve(), resolveSessionControlSocketAckTimeoutMs());
     // socket.io supports ACK callbacks; our typed socket surface doesn't model it here.
     (socket as any).emit('session-end', { sid: sessionId, time: Date.now() }, () => {
       clearTimeout(timer);

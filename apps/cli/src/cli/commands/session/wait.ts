@@ -5,7 +5,7 @@ import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
 import { readIntFlagValue } from '@/sessionControl/argvFlags';
 import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
 import { fetchSessionById } from '@/sessionControl/sessionsHttp';
-import { resolveSessionEncryptionContextFromCredentials } from '@/sessionControl/sessionEncryptionContext';
+import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/sessionControl/sessionEncryptionContext';
 import { waitForIdleViaSocket } from '@/sessionControl/sessionSocketAgentState';
 
 export async function cmdSessionWait(
@@ -59,6 +59,7 @@ export async function cmdSessionWait(
   }
 
   const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
+  const storedMode = resolveSessionStoredContentEncryptionMode(rawSession as any);
   const agentStateCiphertext =
     typeof (rawSession as any).agentState === 'string' ? String((rawSession as any).agentState).trim() : null;
 
@@ -67,6 +68,7 @@ export async function cmdSessionWait(
       token: credentials.token,
       sessionId,
       ctx,
+      sessionEncryptionMode: storedMode,
       timeoutMs: timeoutSeconds * 1000,
       initialAgentStateCiphertextBase64: agentStateCiphertext && agentStateCiphertext.length > 0 ? agentStateCiphertext : null,
     });
@@ -84,4 +86,3 @@ export async function cmdSessionWait(
     throw error;
   }
 }
-

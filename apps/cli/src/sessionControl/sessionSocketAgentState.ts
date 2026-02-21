@@ -3,7 +3,7 @@ import type { Socket } from 'socket.io-client';
 import { createSessionScopedSocket } from '@/api/session/sockets';
 import { UpdateContainerSchema, type UpdateContainer } from '@happier-dev/protocol/updates';
 import { decodeBase64, decrypt } from '@/api/encryption';
-import type { SessionEncryptionContext } from './sessionEncryptionContext';
+import type { SessionEncryptionContext, SessionStoredContentEncryptionMode } from './sessionEncryptionContext';
 
 export type AgentStateSummary = Readonly<{
   controlledByUser?: boolean;
@@ -29,6 +29,7 @@ export async function waitForIdleViaSocket(params: Readonly<{
   token: string;
   sessionId: string;
   ctx: SessionEncryptionContext;
+  sessionEncryptionMode: SessionStoredContentEncryptionMode;
   timeoutMs: number;
   // Seed with the latest agentState ciphertext from snapshot, if available.
   initialAgentStateCiphertextBase64: string | null;
@@ -36,11 +37,14 @@ export async function waitForIdleViaSocket(params: Readonly<{
   const initial = (() => {
     if (!params.initialAgentStateCiphertextBase64) return null;
     try {
-      const decrypted = decrypt(
-        params.ctx.encryptionKey,
-        params.ctx.encryptionVariant,
-        decodeBase64(params.initialAgentStateCiphertextBase64, 'base64'),
-      );
+      const decrypted =
+        params.sessionEncryptionMode === 'plain'
+          ? JSON.parse(params.initialAgentStateCiphertextBase64)
+          : decrypt(
+              params.ctx.encryptionKey,
+              params.ctx.encryptionVariant,
+              decodeBase64(params.initialAgentStateCiphertextBase64, 'base64'),
+            );
       return summarizeAgentState(decrypted);
     } catch {
       return null;
@@ -99,11 +103,14 @@ export async function waitForIdleViaSocket(params: Readonly<{
       if (typeof agentStateCiphertext !== 'string' || agentStateCiphertext.trim().length === 0) return;
 
       try {
-        const decrypted = decrypt(
-          params.ctx.encryptionKey,
-          params.ctx.encryptionVariant,
-          decodeBase64(agentStateCiphertext, 'base64'),
-        );
+        const decrypted =
+          params.sessionEncryptionMode === 'plain'
+            ? JSON.parse(agentStateCiphertext)
+            : decrypt(
+                params.ctx.encryptionKey,
+                params.ctx.encryptionVariant,
+                decodeBase64(agentStateCiphertext, 'base64'),
+              );
         const summary = summarizeAgentState(decrypted);
         if (!isIdle(summary)) return;
       } catch {
@@ -127,6 +134,7 @@ export async function readLatestAgentStateSummaryViaSocket(params: Readonly<{
   token: string;
   sessionId: string;
   ctx: SessionEncryptionContext;
+  sessionEncryptionMode: SessionStoredContentEncryptionMode;
   timeoutMs: number;
 }>): Promise<AgentStateSummary | null> {
   const socket = createSessionScopedSocket({ token: params.token, sessionId: params.sessionId }) as unknown as Socket;
@@ -176,11 +184,14 @@ export async function readLatestAgentStateSummaryViaSocket(params: Readonly<{
       if (typeof agentStateCiphertext !== 'string' || agentStateCiphertext.trim().length === 0) return;
 
       try {
-        const decrypted = decrypt(
-          params.ctx.encryptionKey,
-          params.ctx.encryptionVariant,
-          decodeBase64(agentStateCiphertext, 'base64'),
-        );
+        const decrypted =
+          params.sessionEncryptionMode === 'plain'
+            ? JSON.parse(agentStateCiphertext)
+            : decrypt(
+                params.ctx.encryptionKey,
+                params.ctx.encryptionVariant,
+                decodeBase64(agentStateCiphertext, 'base64'),
+              );
         const summary = summarizeAgentState(decrypted);
         clearTimeout(timer);
         cleanup();

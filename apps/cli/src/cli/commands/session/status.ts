@@ -4,7 +4,7 @@ import type { Credentials } from '@/persistence';
 import { fetchSessionById } from '@/sessionControl/sessionsHttp';
 import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
 import { summarizeSessionRecord } from '@/sessionControl/sessionSummary';
-import { resolveSessionEncryptionContextFromCredentials, decryptSessionPayload } from '@/sessionControl/sessionEncryptionContext';
+import { resolveSessionEncryptionContextFromCredentials, decryptSessionPayload, resolveSessionStoredContentEncryptionMode } from '@/sessionControl/sessionEncryptionContext';
 import { summarizeAgentState, readLatestAgentStateSummaryViaSocket } from '@/sessionControl/sessionSocketAgentState';
 import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
 import { hasFlag } from '@/sessionControl/argvFlags';
@@ -56,11 +56,15 @@ export async function cmdSessionStatus(
 
   const summary = summarizeSessionRecord({ credentials, session: rawSession });
 
+  const storedMode = resolveSessionStoredContentEncryptionMode(rawSession as any);
   const agentStateCiphertext = typeof (rawSession as any).agentState === 'string' ? String((rawSession as any).agentState).trim() : '';
   let agentStateSummary = (() => {
     if (!agentStateCiphertext) return null;
-    const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
     try {
+      if (storedMode === 'plain') {
+        return summarizeAgentState(JSON.parse(agentStateCiphertext));
+      }
+      const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
       const decrypted = decryptSessionPayload({ ctx, ciphertextBase64: agentStateCiphertext });
       return summarizeAgentState(decrypted);
     } catch {
@@ -72,12 +76,13 @@ export async function cmdSessionStatus(
     const liveWaitRaw = String(process.env.HAPPIER_SESSION_STATUS_LIVE_WAIT_MS ?? '').trim();
     const liveWaitParsed = liveWaitRaw ? Number.parseInt(liveWaitRaw, 10) : NaN;
     const liveWaitMs = Number.isFinite(liveWaitParsed) && liveWaitParsed > 0 ? Math.min(30_000, liveWaitParsed) : 3_000;
-    const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
     try {
+      const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
       const liveSummary = await readLatestAgentStateSummaryViaSocket({
         token: credentials.token,
         sessionId,
         ctx,
+        sessionEncryptionMode: storedMode,
         timeoutMs: liveWaitMs,
       });
       if (liveSummary) {

@@ -7,6 +7,11 @@ import { cmdSessionCreate } from './create';
 import { cmdSessionSend } from './send';
 import { cmdSessionWait } from './wait';
 import { cmdSessionStop } from './stop';
+import { cmdSessionArchive } from './archive';
+import { cmdSessionUnarchive } from './unarchive';
+import { cmdSessionSetTitle } from './setTitle';
+import { cmdSessionSetPermissionMode } from './setPermissionMode';
+import { cmdSessionSetModel } from './setModel';
 import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
 import { cmdSessionRunGet } from './run/get';
 import { cmdSessionRunList } from './run/list';
@@ -32,9 +37,14 @@ function inferSessionKind(argv: readonly string[]): string {
   if (sub === 'list') return 'session_list';
   if (sub === 'status') return 'session_status';
   if (sub === 'create') return 'session_create';
+  if (sub === 'set-title') return 'session_set_title';
+  if (sub === 'set-permission-mode') return 'session_set_permission_mode';
+  if (sub === 'set-model') return 'session_set_model';
   if (sub === 'send') return 'session_send';
   if (sub === 'wait') return 'session_wait';
   if (sub === 'stop') return 'session_stop';
+  if (sub === 'archive') return 'session_archive';
+  if (sub === 'unarchive') return 'session_unarchive';
   if (sub === 'history') return 'session_history';
   if (sub === 'actions') {
     const actionSub = String(argv[1] ?? '').trim();
@@ -75,8 +85,13 @@ export async function handleSessionCommand(
   try {
     const subcommand = String(argv[0] ?? '').trim();
     if (!subcommand || subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
-      console.log('happier session list [--active] [--limit N] [--cursor C] [--json]');
+      console.log('happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--json]');
       console.log('happier session history <session-id> [--limit N] [--format compact|raw] [--include-meta] [--include-structured-payload] [--json]');
+      console.log('happier session set-title <session-id> <title> [--json]');
+      console.log('happier session set-permission-mode <session-id> <mode> [--json]');
+      console.log('happier session set-model <session-id> <model-id> [--json]');
+      console.log('happier session archive <session-id> [--json]');
+      console.log('happier session unarchive <session-id> [--json]');
       console.log('happier session review start <session-id> --engines <id1,id2> --instructions <text> [--json]');
       console.log('happier session plan start <session-id> --backends <id1,id2> --instructions <text> [--json]');
       console.log('happier session delegate start <session-id> --backends <id1,id2> --instructions <text> [--json]');
@@ -103,6 +118,15 @@ export async function handleSessionCommand(
       case 'create':
         await cmdSessionCreate(argv, { readCredentialsFn });
         return;
+      case 'set-title':
+        await cmdSessionSetTitle(argv, { readCredentialsFn });
+        return;
+      case 'set-permission-mode':
+        await cmdSessionSetPermissionMode(argv, { readCredentialsFn });
+        return;
+      case 'set-model':
+        await cmdSessionSetModel(argv, { readCredentialsFn });
+        return;
       case 'send':
         await cmdSessionSend(argv, { readCredentialsFn });
         return;
@@ -111,6 +135,12 @@ export async function handleSessionCommand(
         return;
       case 'stop':
         await cmdSessionStop(argv, { readCredentialsFn });
+        return;
+      case 'archive':
+        await cmdSessionArchive(argv, { readCredentialsFn });
+        return;
+      case 'unarchive':
+        await cmdSessionUnarchive(argv, { readCredentialsFn });
         return;
       case 'history':
         await cmdSessionHistory(argv, { readCredentialsFn });
