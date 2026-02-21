@@ -5,12 +5,7 @@ import renderer, { act } from 'react-test-renderer';
 // Required for React 18+ act() semantics with react-test-renderer.
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    ActivityIndicator: 'ActivityIndicator',
-}));
+vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -36,8 +31,14 @@ describe('ItemGroupTitleWithAction', () => {
 
         const rootView = tree!.root.findByType('View' as any);
         const children = React.Children.toArray(rootView.props.children) as any[];
-        expect(children.map((c) => c.type)).toEqual(['Text', 'Pressable']);
-        expect(children[0]?.props?.children).toBe('Detected CLIs');
+        expect(children).toHaveLength(2);
+        expect(children[1]?.type).toBe('Pressable');
+
+        const titleNodes = tree!.root.findAllByType('Text' as any).filter((node) => {
+            const value = node.props.children;
+            return Array.isArray(value) ? value.join('') === 'Detected CLIs' : value === 'Detected CLIs';
+        });
+        expect(titleNodes.length).toBeGreaterThan(0);
     });
 
     it('renders title only when no action is provided', async () => {

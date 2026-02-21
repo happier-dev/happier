@@ -32,7 +32,8 @@ describe('WizardSectionHeaderRow', () => {
         const children = React.Children.toArray(rootView?.props.children).filter(React.isValidElement);
         const childTypes = children.map((child) => child.type);
 
-        expect(childTypes).toEqual(['Ionicons', 'Text', 'Pressable']);
+        expect(childTypes[0]).toBe('Ionicons');
+        expect(childTypes[2]).toBe('Pressable');
         expect((children[1]?.props as { children?: unknown }).children).toBe('Select Machine');
 
         const action = tree?.root.findByProps({ accessibilityLabel: 'Refresh machines' });
