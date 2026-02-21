@@ -3,6 +3,9 @@ name: CI — Tests
 on:
   pull_request:
   push:
+    branches:
+      - dev
+      - main
   workflow_call:
     inputs:
       run_ui:

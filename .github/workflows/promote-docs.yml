@@ -153,6 +153,17 @@ jobs:
           npm_config_production: "false"
         run: yarn install --frozen-lockfile --ignore-engines
 
+      - name: Resolve deploy branch SHA (before)
+        id: deploy_before
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          ref="deploy/${{ inputs.environment }}/docs"
+          sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/${ref}" --jq .object.sha 2>/dev/null || true)"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+
       - name: Build docs
         if: inputs.run_build
         run: yarn workspace docs build
@@ -169,7 +180,19 @@ jobs:
             --sha "$(git rev-parse HEAD)" \
             --summary-file "${GITHUB_STEP_SUMMARY}"
 
-      - name: Trigger deploy webhook(s)
+      - name: Resolve deploy branch SHA (after)
+        id: deploy_after
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          ref="deploy/${{ inputs.environment }}/docs"
+          sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/${ref}" --jq .object.sha 2>/dev/null || true)"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger deploy webhook(s) (force_deploy, no branch change)
+        if: inputs.force_deploy && steps.deploy_before.outputs.sha == steps.deploy_after.outputs.sha
         env:
           CF_WEBHOOK_DEPLOY_CLIENT_ID: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_ID }}
           CF_WEBHOOK_DEPLOY_CLIENT_SECRET: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_SECRET }}
@@ -182,3 +205,10 @@ jobs:
             --component "docs" \
             --repository "${{ github.repository }}" \
             --ref-name "deploy/${{ inputs.environment }}/docs"
+
+      - name: Deploy note
+        run: |
+          set -euo pipefail
+          echo "Deployment is triggered automatically by pushes to deploy/${{ inputs.environment }}/docs." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- deploy_branch_sha: \`${{ steps.deploy_after.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
