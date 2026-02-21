@@ -117,6 +117,18 @@ export function registerOAuthCallbackRoute(app: Fastify) {
             const login = provider.getLogin(profile) ?? "";
 
             if (flow === "auth") {
+                const providerUserId = provider.getProviderUserId(profile);
+                const alreadyLinked = providerUserId
+                    ? await db.accountIdentity.findFirst({
+                          where: {
+                              provider: providerId,
+                              providerUserId,
+                          },
+                          select: { id: true },
+                      })
+                    : null;
+                const isAlreadyLinked = Boolean(alreadyLinked);
+
                 const loginUsername = login ? login.toLowerCase() : null;
                 let suggestedUsername: string | null = null;
                 let usernameRequired = false;
@@ -125,22 +137,28 @@ export function registerOAuthCallbackRoute(app: Fastify) {
                 if (loginUsername) {
                     const loginValidation = validateUsername(loginUsername, process.env);
                     if (!loginValidation.ok) {
-                        usernameRequired = true;
-                        usernameReason = "invalid_login";
+                        if (!isAlreadyLinked) {
+                            usernameRequired = true;
+                            usernameReason = "invalid_login";
+                        }
                     } else {
                         suggestedUsername = loginValidation.username;
-                        const taken = await db.account.findFirst({
-                            where: { username: suggestedUsername },
-                            select: { id: true },
-                        });
-                        if (taken) {
-                            usernameRequired = true;
-                            usernameReason = "login_taken";
+                        if (!isAlreadyLinked) {
+                            const taken = await db.account.findFirst({
+                                where: { username: suggestedUsername },
+                                select: { id: true },
+                            });
+                            if (taken) {
+                                usernameRequired = true;
+                                usernameReason = "login_taken";
+                            }
                         }
                     }
                 } else {
-                    usernameRequired = true;
-                    usernameReason = "invalid_login";
+                    if (!isAlreadyLinked) {
+                        usernameRequired = true;
+                        usernameReason = "invalid_login";
+                    }
                 }
 
                 const pendingKey = `oauth_pending_${randomKeyNaked(24)}`;
