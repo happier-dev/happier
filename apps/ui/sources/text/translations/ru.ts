@@ -839,7 +839,7 @@ export const ru: TranslationStructure = {
     serverGroupNamePlaceholder: "Моя группа серверов",
     serverGroupServersLabel: "Серверы",
     saveServerGroup: "Сохранить группу",
-    serverGroupMustHaveServer: "A server group must include at least one server.",
+    serverGroupMustHaveServer: "Группа серверов должна включать хотя бы один сервер.",
   },
 
   sessionTags: {
