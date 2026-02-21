@@ -118,7 +118,7 @@ jobs:
     permissions:
       contents: write
       id-token: write
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     environment: release-shared
     env:
       HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.channel == 'production' && 'production' || 'preview' }}

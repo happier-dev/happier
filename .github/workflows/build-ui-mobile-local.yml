@@ -108,22 +108,22 @@ jobs:
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
   validate_expo_token:
-    name: Validate EXPO_TOKEN (manual runs)
-    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'android' || inputs.platform == 'ios') }}
+    name: Validate EXPO_TOKEN
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'android' || inputs.platform == 'ios' }}
     runs-on: ubuntu-latest
     steps:
       - name: Fail when EXPO_TOKEN is missing
         run: |
           set -euo pipefail
           if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
-            echo "EXPO_TOKEN is required for BUILD — UI Mobile (local runner) workflow_dispatch runs." >&2
-            echo "Set the repository secret EXPO_TOKEN, or run via workflow_call from a trusted workflow that provides it." >&2
+            echo "EXPO_TOKEN is required for BUILD — UI Mobile (local runner)." >&2
+            echo "Set the repository secret EXPO_TOKEN, or call this workflow from a trusted workflow that provides it." >&2
             exit 1
           fi
 
   validate_apple_api_private_key:
     name: Validate APPLE_API_PRIVATE_KEY (iOS submit)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'build_and_submit' && (inputs.platform == 'all' || inputs.platform == 'ios') }}
+    if: ${{ inputs.action == 'build_and_submit' && (inputs.platform == 'all' || inputs.platform == 'ios') }}
     runs-on: ubuntu-latest
     steps:
       - name: Fail when APPLE_API_PRIVATE_KEY is missing
@@ -137,8 +137,8 @@ jobs:
 
   build_android:
     name: Build (android)
-    if: ${{ (inputs.platform == 'all' || inputs.platform == 'android') && secrets.EXPO_TOKEN != '' }}
-    needs: [release_actor_guard]
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'android' }}
+    needs: [release_actor_guard, validate_expo_token]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -225,8 +225,8 @@ jobs:
 
   build_ios:
     name: Build (ios)
-    if: ${{ (inputs.platform == 'all' || inputs.platform == 'ios') && secrets.EXPO_TOKEN != '' }}
-    needs: [release_actor_guard]
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'ios' }}
+    needs: [release_actor_guard, validate_expo_token]
     runs-on: macos-latest
     environment: release-shared
     env:
@@ -287,8 +287,8 @@ jobs:
 
   submit_android:
     name: Submit (android)
-    if: ${{ inputs.action == 'build_and_submit' && (inputs.platform == 'all' || inputs.platform == 'android') && secrets.EXPO_TOKEN != '' }}
-    needs: [release_actor_guard, build_android]
+    if: ${{ inputs.action == 'build_and_submit' && (inputs.platform == 'all' || inputs.platform == 'android') }}
+    needs: [release_actor_guard, validate_expo_token, build_android]
     runs-on: ubuntu-latest
     environment: release-shared
     env:
@@ -397,8 +397,8 @@ jobs:
 
   submit_ios:
     name: Submit (ios)
-    if: ${{ inputs.action == 'build_and_submit' && (inputs.platform == 'all' || inputs.platform == 'ios') && secrets.EXPO_TOKEN != '' }}
-    needs: [release_actor_guard, build_ios]
+    if: ${{ inputs.action == 'build_and_submit' && (inputs.platform == 'all' || inputs.platform == 'ios') }}
+    needs: [release_actor_guard, validate_expo_token, validate_apple_api_private_key, build_ios]
     runs-on: macos-latest
     environment: release-shared
     env:

@@ -13,7 +13,7 @@ concurrency:
 jobs:
   e2e-postgres:
     name: Core E2E (Postgres)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 120
     services:
       postgres:
@@ -82,7 +82,7 @@ jobs:
 
   e2e-mysql:
     name: Core E2E (MySQL)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 120
     services:
       mysql:
