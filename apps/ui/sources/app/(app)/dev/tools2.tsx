@@ -23,12 +23,13 @@ export default function Tools2Screen() {
             startedAt: Date.now() - 1900,
             completedAt: Date.now() - 1000,
             description: null,
-            result: `import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-
-export const Header = ({ title }) => {
-    return (
-        <View style={styles.container}>
+	            result: `import React from 'react';
+	import { View, Text } from 'react-native';
+	import { StyleSheet } from 'react-native-unistyles';
+	
+	export const Header = ({ title }) => {
+	    return (
+	        <View style={styles.container}>
             <Text style={styles.title}>{title}</Text>
         </View>
     );
