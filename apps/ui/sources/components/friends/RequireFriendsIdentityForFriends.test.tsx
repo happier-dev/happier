@@ -113,6 +113,11 @@ const hoistedStorage = vi.hoisted(() => {
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
     storage: hoistedStorage.storage,
+    getStorage: () => hoistedStorage.storage,
+}));
+
+vi.mock('@/sync/store/hooks', () => ({
+    useLocalSetting: () => 1,
 }));
 
 type BaseProps = React.ComponentProps<typeof RequireFriendsIdentityForFriendsBase>;

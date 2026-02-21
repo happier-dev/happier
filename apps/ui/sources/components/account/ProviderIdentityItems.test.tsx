@@ -43,11 +43,12 @@ vi.mock('@/sync/api/account/apiIdentity', () => ({
     setAccountIdentityShowOnProfile: async () => {},
 }));
 
-vi.mock('@/sync/domains/state/storageStore', () => ({
-    storage: {
+vi.mock('@/sync/domains/state/storageStore', () => {
+    const storage = {
         getState: () => ({ profile: profileDefaults }),
-    },
-}));
+    };
+    return { storage, getStorage: () => storage };
+});
 
 const modalAlert = vi.fn(async () => {});
 vi.mock('@/modal', () => ({

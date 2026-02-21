@@ -9,8 +9,10 @@ import { DetectedClisList } from './DetectedClisList';
 
 vi.mock('react-native', () => ({
     Platform: {
+        OS: 'ios',
         select: <T,>(options: { default?: T; ios?: T }) => options.default ?? options.ios ?? null,
     },
+    AppState: { addEventListener: () => ({ remove: () => {} }) },
     Text: 'Text',
     View: 'View',
 }));
@@ -23,9 +25,16 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { colors: { textSecondary: '#666', status: { connected: '#0a0' } } } }),
-}));
+vi.mock('react-native-unistyles', () => {
+    const theme = { colors: { textSecondary: '#666', shadow: { color: '#000', opacity: 0.2 }, status: { connected: '#0a0' } } };
+    return {
+        StyleSheet: {
+            create: (styles: any) => (typeof styles === 'function' ? styles(theme) : styles),
+            absoluteFillObject: {},
+        },
+        useUnistyles: () => ({ theme }),
+    };
+});
 
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: Record<string, unknown>) => React.createElement('Item', props),
@@ -36,6 +45,7 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
+    AGENT_IDS: ['claude', 'codex'],
     getAgentCore: (agentId: string) => {
         if (agentId === 'claude') {
             return { displayNameKey: 'agentInput.agent.claude', cli: { detectKey: 'claude' } };

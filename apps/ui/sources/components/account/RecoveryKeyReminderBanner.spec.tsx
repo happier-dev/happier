@@ -18,6 +18,7 @@ vi.mock('react-native', () => ({
         OS: 'ios',
         select: (options: { ios?: unknown; default?: unknown }) => options.ios ?? options.default,
     },
+    AppState: { addEventListener: () => ({ remove: () => {} }) },
 }));
 
 vi.mock('@expo/vector-icons', () => ({
