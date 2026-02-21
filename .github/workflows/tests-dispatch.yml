@@ -13,7 +13,7 @@ on:
           - fast
           - custom
       custom_checks:
-        description: "Custom — Comma-separated checks used only when profile=custom (ui,server,cli,stack,typecheck,daemon_e2e,e2e_core,e2e_core_slow,server_db_contract,providers,stress,release_contracts,installers_smoke,binary_smoke,self_host_systemd,self_host_launchd,self_host_schtasks,self_host_daemon)"
+        description: "Custom — Comma-separated checks used only when profile=custom (ui,ui_e2e,server,cli,stack,typecheck,daemon_e2e,e2e_core,e2e_core_slow,server_db_contract,providers,stress,release_contracts,installers_smoke,binary_smoke,self_host_systemd,self_host_launchd,self_host_schtasks,self_host_daemon)"
         required: true
         default: ""
         type: string
@@ -49,6 +49,7 @@ jobs:
     name: Resolve flags
     runs-on: ubuntu-latest
     outputs:
+      run_ui_e2e: ${{ steps.flags.outputs.run_ui_e2e }}
       run_ui: ${{ steps.flags.outputs.run_ui }}
       run_server: ${{ steps.flags.outputs.run_server }}
       run_cli: ${{ steps.flags.outputs.run_cli }}
@@ -89,6 +90,7 @@ jobs:
           fi
 
           if [ "${profile}" = "full" ]; then
+            run_ui_e2e=true
             run_ui=true
             run_server=true
             run_cli=true
@@ -108,6 +110,7 @@ jobs:
             run_self_host_schtasks=false
             run_self_host_daemon=false
           elif [ "${profile}" = "fast" ]; then
+            run_ui_e2e=true
             run_ui=true
             run_server=true
             run_cli=true
@@ -127,6 +130,7 @@ jobs:
             run_self_host_schtasks=false
             run_self_host_daemon=false
           else
+            run_ui_e2e=false
             run_ui=false
             run_server=false
             run_cli=false
@@ -147,6 +151,7 @@ jobs:
             run_self_host_daemon=false
 
             if has ui; then run_ui=true; fi
+            if has ui_e2e; then run_ui_e2e=true; fi
             if has server; then run_server=true; fi
             if has cli; then run_cli=true; fi
             if has stack; then run_stack=true; fi
@@ -167,6 +172,7 @@ jobs:
           fi
 
           {
+            echo "run_ui_e2e=${run_ui_e2e}"
             echo "run_ui=${run_ui}"
             echo "run_server=${run_server}"
             echo "run_cli=${run_cli}"
@@ -192,6 +198,7 @@ jobs:
     needs: [resolve]
     uses: ./.github/workflows/tests.yml
     with:
+      run_ui_e2e: ${{ needs.resolve.outputs.run_ui_e2e == 'true' }}
       run_ui: ${{ needs.resolve.outputs.run_ui == 'true' }}
       run_server: ${{ needs.resolve.outputs.run_server == 'true' }}
       run_cli: ${{ needs.resolve.outputs.run_cli == 'true' }}
