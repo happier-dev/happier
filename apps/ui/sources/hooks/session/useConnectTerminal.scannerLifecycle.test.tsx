@@ -94,11 +94,12 @@ vi.mock('@/auth/terminal/terminalProvisioning', () => ({
   buildTerminalResponseV2: vi.fn(() => new Uint8Array([1, 2, 3])),
 }));
 
-vi.mock('@/sync/domains/state/storageStore', () => ({
-  storage: {
+vi.mock('@/sync/domains/state/storageStore', () => {
+  const storage = {
     getState: () => ({ settings: { terminalConnectLegacySecretExportEnabled: false } }),
-  },
-}));
+  };
+  return { storage, getStorage: () => storage };
+});
 
 describe('useConnectTerminal (scanner lifecycle)', () => {
   beforeEach(() => {

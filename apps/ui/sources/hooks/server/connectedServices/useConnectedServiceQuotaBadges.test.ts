@@ -32,6 +32,7 @@ vi.mock('@/auth/context/AuthContext', () => ({
 
 vi.mock('@/sync/store/hooks', () => ({
   useSettings: () => useSettingsSpy(),
+  useLocalSetting: () => 1,
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({

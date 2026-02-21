@@ -90,11 +90,12 @@ vi.mock('@/sync/sync', () => ({
     sync: { encryption: { contentDataKey: contentPublicKey, getContentPrivateKey: () => contentPrivateKey } },
 }));
 
-vi.mock('@/sync/domains/state/storageStore', () => ({
-    storage: {
+vi.mock('@/sync/domains/state/storageStore', () => {
+    const storage = {
         getState: () => ({ settings: { terminalConnectLegacySecretExportEnabled: false } }),
-    },
-}));
+    };
+    return { storage, getStorage: () => storage };
+});
 
 function buildTerminalConnectUrl(params: Readonly<{ terminalPublicKey: Uint8Array; serverUrl?: string }>): string {
     const publicKeyB64Url = Buffer.from(params.terminalPublicKey).toString('base64url');
