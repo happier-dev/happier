@@ -9,6 +9,7 @@
     "test:core:slow": "node scripts/run-vitest-with-heartbeat.mjs --config vitest.core.slow.config.ts",
     "test:stress": "node scripts/run-vitest-with-heartbeat.mjs --config vitest.stress.config.ts",
     "test:providers": "node scripts/run-vitest-with-heartbeat.mjs --config vitest.providers.config.ts",
+    "test:ui:e2e": "playwright test -c playwright.ui.config.mjs",
     "typecheck": "tsc --noEmit",
     "providers:run": "node scripts/run-providers.mjs",
     "providers:run:parallel": "node scripts/run-providers-parallel.mjs",
@@ -52,6 +53,7 @@
     "privacy-kit": "^0.0.25"
   },
   "devDependencies": {
+    "@playwright/test": "^1.56.0",
     "@types/node": ">=20",
     "typescript": "5.9.3",
     "vitest": "^3.2.4"

@@ -122,6 +122,7 @@ Use these as canonical top-level lanes in this repository:
 - `yarn test:integration` (orchestration-heavy app integration lane)
 - `yarn test:e2e:core:fast` (default local core e2e loop)
 - `yarn test:e2e:core:slow` (long orchestration core e2e)
+- `yarn test:e2e:ui` (UI/browser e2e via Playwright; exercises real UI + server + CLI/daemon flows)
 - `yarn test:providers` (provider contracts; opt-in/flag-driven)
 - `yarn test:db-contract:docker` (server db contract via docker)
 
@@ -129,7 +130,17 @@ Naming and placement rules:
 - App integration tests: `*.integration.test.*`, `*.integration.spec.*`, `*.real.integration.test.*`
 - Core e2e slow tests: `packages/tests/suites/core-e2e/**/*.slow.e2e.test.ts`
 - Core e2e fast tests: other `packages/tests/suites/core-e2e/**/*.test.ts`
+- UI Playwright e2e: `packages/tests/suites/ui-e2e/**/*.spec.ts`
 - Provider/stress suites remain under `packages/tests/suites/providers` and `packages/tests/suites/stress`
+
+UI e2e authoring rules (Playwright + Expo web):
+- Prefer stable selectors via React Native `testID` (queried in Playwright with `getByTestId(...)`); avoid selecting by visible copy.
+- Treat `testID`s used by UI e2e as an API surface: avoid renames/removals unless you update the corresponding spec in the same PR.
+- When adding `testID`s to shared RN components, ensure the web implementation forwards them to the DOM (typically `data-testid`) so Playwright can reliably locate elements.
+- Keep UI e2e scenarios high-signal (onboarding, auth/terminal connect, session creation) and avoid duplicating core CLI-only e2e intent.
+- If you change a flow that has a UI e2e, update the spec in `packages/tests/suites/ui-e2e/` in the same PR.
+- UI e2e artifacts (screenshots/videos/diagnostics) are written under `packages/tests/.project/logs/e2e/ui-playwright/`.
+- UI e2e runtime process logs (server/ui-web/daemon) are written under `.project/logs/e2e/*ui-e2e*/`.
 
 When introducing or moving a lane/pattern, update all three in the same change:
 - package-level test config/scripts
@@ -289,6 +300,10 @@ This repo has a single canonical feature gating system. New code must use it ins
 - Resolve feature decisions via `apps/ui/sources/sync/domains/features/featureDecisionRuntime.ts`.
 - When you must read server bits directly (rare), use `readServerEnabledBit(snapshot.features, featureId) === true`.
 - Do not treat missing/undefined as enabled. Prefer decisions (`FeatureDecision.state`) over raw booleans.
+- UI design tokens:
+  - Colors must come from `apps/ui/sources/theme.ts` via Unistyles `theme.colors.*` (avoid hardcoded hex in UI code).
+  - Text must be rendered via `apps/ui/sources/components/ui/text/Text.tsx` so the user-selected in-app font size scales correctly (and stacks with OS Dynamic Type).
+  - All user-visible strings (including accessibility labels/placeholders) must use `t(...)` and be added to all locales under `apps/ui/sources/text/translations/`.
 
 ### Voice (Happier Voice) special note
 - `voice.happierVoice` is a first-class SERVER feature gate and must be explicitly provided by the server.

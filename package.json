@@ -56,6 +56,7 @@
     "test:e2e:core": "yarn -s test:e2e",
     "test:e2e:core:fast": "yarn workspace @happier-dev/tests test:core:fast",
     "test:e2e:core:slow": "yarn workspace @happier-dev/tests test:core:slow",
+    "test:e2e:ui": "yarn workspace @happier-dev/tests test:ui:e2e",
     "test:e2e:core:pglite": "HAPPIER_E2E_DB_PROVIDER=pglite yarn -s test:e2e",
     "test:e2e:core:sqlite": "HAPPIER_E2E_DB_PROVIDER=sqlite yarn -s test:e2e",
     "test:e2e:core:postgres:docker": "node packages/tests/scripts/run-extended-db-docker.mjs --db postgres --mode e2e",

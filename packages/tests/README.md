@@ -22,6 +22,7 @@ So these tests intentionally run **real components** (server-light, DB, sockets,
 - Core deterministic e2e: `yarn workspace @happier-dev/tests test`
 - Core deterministic e2e (fast lane): `yarn workspace @happier-dev/tests test:core:fast`
 - Core deterministic e2e (slow lane): `yarn workspace @happier-dev/tests test:core:slow`
+- UI E2E (Playwright, web UI): `yarn workspace @happier-dev/tests test:ui:e2e`
 - Stress (seeded chaos): `yarn workspace @happier-dev/tests test:stress`
 - Providers (real provider CLIs, opt-in): `yarn workspace @happier-dev/tests test:providers`
 - Typecheck: `yarn workspace @happier-dev/tests typecheck`
@@ -56,6 +57,7 @@ Baseline updates are explicit:
 ## Suites
 
 - `suites/core-e2e/*`: release-gate candidates (fast + slow split)
+- `suites/ui-e2e/*`: Playwright-driven browser E2E against Expo web (covers critical UI flows like auth + terminal connect)
 - `suites/stress/*`: nightly/on-demand (repeat + chaos + flake classification)
 - `suites/providers/*`: opt-in “real provider contract” tests (slow, may consume provider credits)
 
@@ -76,6 +78,10 @@ Common artifacts:
 Artifacts are written on failure by default. You can force keeping artifacts even on success:
 
 - `HAPPIER_E2E_SAVE_ARTIFACTS=1 yarn workspace @happier-dev/tests test`
+
+UI E2E (Playwright) notes:
+- Expo web is started via `expo start --web`; if you suspect stale Metro transforms, you can opt into cache clearing with `HAPPIER_E2E_EXPO_CLEAR=1` (default is off because `--clear` can occasionally crash Metro).
+- UI E2E artifacts live under `.project/logs/e2e/ui-playwright/...` and include screenshots + videos on failure.
 
 ## Core e2e suite: what each test ensures
 
