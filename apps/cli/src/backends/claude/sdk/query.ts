@@ -364,6 +364,7 @@ export function query(config: {
         // Use a shell on Windows only when needed to execute command-only or shell-script entrypoints.
         // Avoid shell for native binaries to reduce quoting and spawn-surface variability.
         shell: shouldUseShell,
+        windowsHide: true,
     }) as ChildProcessWithoutNullStreams
     const managedChild = createManagedChildProcess(child)
 

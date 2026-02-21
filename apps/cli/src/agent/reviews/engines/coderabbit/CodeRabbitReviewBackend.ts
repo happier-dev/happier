@@ -109,6 +109,7 @@ export class CodeRabbitReviewBackend implements AgentBackend {
         cwd: this.cwd,
         env: buildCodeRabbitEnv({ baseEnv: this.env, homeDir: this.config.homeDir }),
         stdio: 'pipe',
+        windowsHide: true,
       });
 
       childRef.current = child;

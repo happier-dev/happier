@@ -755,6 +755,7 @@ export async function startDaemon(): Promise<void> {
 		            cwd: directory,
 		            detached: true,  // Sessions stay alive when daemon stops
 	            stdio: ['ignore', 'pipe', 'pipe'],  // Capture stdout/stderr for debugging
+	            windowsHide: true,
 	            env: buildSpawnChildProcessEnv({
 	              processEnv: process.env,
 	              extraEnv: extraEnvForChildWithMessage,
