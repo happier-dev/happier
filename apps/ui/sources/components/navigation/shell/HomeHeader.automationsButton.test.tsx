@@ -24,41 +24,6 @@ vi.mock('react-native', async (importOriginal) => {
     };
 });
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                header: { tint: '#111' },
-                groupped: { background: '#fff' },
-                textSecondary: '#777',
-                status: {
-                    connected: '#0f0',
-                    connecting: '#ff0',
-                    disconnected: '#f00',
-                    error: '#f00',
-                    default: '#777',
-                },
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (factory: any) => factory({
-            colors: {
-                header: { tint: '#111' },
-                groupped: { background: '#fff' },
-                textSecondary: '#777',
-                status: {
-                    connected: '#0f0',
-                    connecting: '#ff0',
-                    disconnected: '#f00',
-                    error: '#f00',
-                    default: '#777',
-                },
-            },
-        }),
-    },
-}));
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));

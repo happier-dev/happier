@@ -16,31 +16,6 @@ vi.mock('react-native', async (importOriginal) => {
     };
 });
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                groupped: { background: '#fff' },
-                text: '#111',
-                textSecondary: '#666',
-                header: { tint: '#111' },
-                divider: '#ddd',
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (factory: any) => factory({
-            colors: {
-                groupped: { background: '#fff' },
-                text: '#111',
-                textSecondary: '#666',
-                header: { tint: '#111' },
-                divider: '#ddd',
-            },
-        }),
-    },
-}));
-
 vi.mock('expo-router', () => ({
     useRouter: () => ({ push: vi.fn() }),
 }));
@@ -72,9 +47,11 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useAllSessions: () => [],
 }));
 
-vi.mock('@/sync/domains/state/storageStore', () => ({
-    storage: (selector: (state: { profile: { id: string } }) => unknown) => selector({ profile: { id: 'me' } }),
-}));
+vi.mock('@/sync/domains/state/storageStore', () => {
+    const storage = (selector: (state: { profile: { id: string }; localSettings: { uiFontScale: number } }) => unknown) =>
+        selector({ profile: { id: 'me' }, localSettings: { uiFontScale: 1 } });
+    return { storage, getStorage: () => storage };
+});
 
 vi.mock('@/components/ui/cards/UserCard', () => ({
     UserCard: 'UserCard',

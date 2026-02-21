@@ -25,35 +25,6 @@ vi.mock('react-native', async (importOriginal) => {
     };
 });
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                groupped: { background: '#fff' },
-                header: { tint: '#111' },
-                text: '#111',
-                textSecondary: '#777',
-                status: { connected: '#0f0', connecting: '#ff0', disconnected: '#f00', error: '#f00', default: '#777' },
-                surface: '#fff',
-                fab: { background: '#0a84ff' },
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (factory: any) => factory({
-            colors: {
-                groupped: { background: '#fff' },
-                header: { tint: '#111' },
-                text: '#111',
-                textSecondary: '#777',
-                status: { connected: '#0f0', connecting: '#ff0', disconnected: '#f00', error: '#f00', default: '#777' },
-                surface: '#fff',
-                fab: { background: '#0a84ff' },
-            },
-        }),
-    },
-}));
-
 vi.mock('expo-router', () => ({
     useRouter: () => ({ push: routerPushSpy }),
 }));
