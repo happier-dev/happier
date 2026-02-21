@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -8,6 +10,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
 test('pipeline CLI can promote deploy branch in dry-run', async () => {
+  const tmpDir = fs.mkdtempSync(resolve(os.tmpdir(), 'happier-promote-deploy-branch-'));
+  const summaryPath = resolve(tmpDir, 'summary.md');
+
   const out = execFileSync(
     process.execPath,
     [
@@ -19,6 +24,8 @@ test('pipeline CLI can promote deploy branch in dry-run', async () => {
       'server',
       '--source-ref',
       'dev',
+      '--summary-file',
+      summaryPath,
       '--dry-run',
       '--secrets-source',
       'env',
@@ -37,4 +44,8 @@ test('pipeline CLI can promote deploy branch in dry-run', async () => {
   assert.match(out, /deploy%2Fproduction%2Fserver/, 'gh api ref path must URL-encode deploy branch slashes');
   assert.match(out, /-F force=true/, 'gh api PATCH should send boolean force with --field (typed)');
   assert.match(out, /-X PATCH/, 'dry-run should print the intended PATCH update call');
+
+  const summary = fs.readFileSync(summaryPath, 'utf8');
+  assert.match(summary, /^## Promote deploy branch/m);
+  assert.match(summary, /target: `deploy\/production\/server`/);
 });

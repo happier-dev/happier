@@ -3135,22 +3135,23 @@ function main() {
     return;
   }
 
-	  if (subcommand === 'promote-deploy-branch') {
-	    const { values } = parseArgs({
-	      args: rest,
-	      options: {
-	        'deploy-environment': { type: 'string' },
-	        component: { type: 'string' },
-	        'source-ref': { type: 'string', default: '' },
-	        sha: { type: 'string', default: '' },
-	        'allow-dirty': { type: 'string', default: 'false' },
-	        'dry-run': { type: 'boolean', default: false },
-	        'secrets-source': { type: 'string', default: 'auto' },
-	        'keychain-service': { type: 'string', default: 'happier/pipeline' },
-	        'keychain-account': { type: 'string', default: '' },
-	      },
-      allowPositionals: false,
-    });
+		  if (subcommand === 'promote-deploy-branch') {
+		    const { values } = parseArgs({
+		      args: rest,
+		      options: {
+		        'deploy-environment': { type: 'string' },
+		        component: { type: 'string' },
+		        'source-ref': { type: 'string', default: '' },
+		        sha: { type: 'string', default: '' },
+		        'summary-file': { type: 'string', default: '' },
+		        'allow-dirty': { type: 'string', default: 'false' },
+		        'dry-run': { type: 'boolean', default: false },
+		        'secrets-source': { type: 'string', default: 'auto' },
+		        'keychain-service': { type: 'string', default: 'happier/pipeline' },
+		        'keychain-account': { type: 'string', default: '' },
+		      },
+	      allowPositionals: false,
+	    });
 
     const deployEnvironment = String(values['deploy-environment'] ?? '').trim();
     if (!isDeployEnvironment(deployEnvironment)) {
@@ -3187,29 +3188,31 @@ function main() {
       console.log(`[pipeline] loaded secrets from Keychain service '${keychainService}'`);
     }
 
-	    const sourceRef = String(values['source-ref'] ?? '').trim();
-	    const sha = String(values.sha ?? '').trim();
-	    const allowDirty = parseBoolString(values['allow-dirty'], '--allow-dirty');
-	    const dryRun = values['dry-run'] === true;
-	    if (!dryRun) assertCleanWorktree({ cwd: repoRoot, allowDirty });
+		    const sourceRef = String(values['source-ref'] ?? '').trim();
+		    const sha = String(values.sha ?? '').trim();
+		    const summaryFile = String(values['summary-file'] ?? '').trim();
+		    const allowDirty = parseBoolString(values['allow-dirty'], '--allow-dirty');
+		    const dryRun = values['dry-run'] === true;
+		    if (!dryRun) assertCleanWorktree({ cwd: repoRoot, allowDirty });
 
 	    const deployBranch = `deploy/${deployEnvironment}/${component}`;
 	    console.log(`[pipeline] promote deploy branch: ${deployBranch} <= ${sourceRef || sha}`);
 
-    runGithubPromoteDeployBranch({
-      repoRoot,
-      env: mergedEnv,
-      dryRun,
-      args: [
-        '--deploy-environment',
-        deployEnvironment,
-        '--component',
-        component,
-        ...(sourceRef ? ['--source-ref', sourceRef] : []),
-        ...(sha ? ['--sha', sha] : []),
-        ...(dryRun ? ['--dry-run'] : []),
-      ],
-    });
+	    runGithubPromoteDeployBranch({
+	      repoRoot,
+	      env: mergedEnv,
+	      dryRun,
+	      args: [
+	        '--deploy-environment',
+	        deployEnvironment,
+	        '--component',
+	        component,
+	        ...(sourceRef ? ['--source-ref', sourceRef] : []),
+	        ...(sha ? ['--sha', sha] : []),
+	        ...(summaryFile ? ['--summary-file', summaryFile] : []),
+	        ...(dryRun ? ['--dry-run'] : []),
+	      ],
+	    });
 
     return;
   }
