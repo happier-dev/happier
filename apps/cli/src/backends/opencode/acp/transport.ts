@@ -198,7 +198,9 @@ export class OpenCodeTransport implements TransportHandler {
       const hasSubagentType =
         typeof (input as any)?.subagent_type === 'string' && String((input as any).subagent_type).trim().length > 0;
       const hasTitle = typeof (input as any)?.title === 'string' && String((input as any).title).trim().length > 0;
-      if ((hasPrompt || hasSubagentType) && !hasTitle) return 'Task';
+      const hasMemory = typeof (input as any)?.memory === 'string' && String((input as any).memory).trim().length > 0;
+      // If it's a task-shaped call and not obviously a title change, prefer Task.
+      if ((hasPrompt || hasSubagentType) && !hasTitle && !hasMemory) return 'Task';
     }
 
     const directToolName = findToolNameFromId(toolName, OPENCODE_TOOL_PATTERNS, { preferLongestMatch: true });

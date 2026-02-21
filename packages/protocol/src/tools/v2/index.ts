@@ -17,6 +17,8 @@ export {
   type ToolNormalizationProtocol,
 } from './meta.js';
 
+export { CHANGE_TITLE_TOOL_NAME_ALIASES, isChangeTitleToolNameAlias, type ChangeTitleToolNameAlias } from './aliases.js';
+
 export {
   getToolInputSchemaV2,
   getToolResultSchemaV2,

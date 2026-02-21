@@ -20,6 +20,8 @@ export function createGeminiTurnMessageState(): GeminiTurnMessageState {
   };
 }
 
+import { hasChangeTitleInstruction } from '../utils/promptUtils';
+
 export function resetGeminiTurnMessageStateForPrompt(
   state: GeminiTurnMessageState,
   prompt: string,
@@ -28,10 +30,7 @@ export function resetGeminiTurnMessageStateForPrompt(
   state.isResponseInProgress = false;
   state.hadToolCallInTurn = false;
   state.taskStartedSent = false;
-  state.pendingChangeTitle =
-    prompt.includes('change_title') ||
-    prompt.includes('happy__change_title') ||
-    prompt.includes('happier__change_title');
+  state.pendingChangeTitle = hasChangeTitleInstruction(prompt);
   state.changeTitleCompleted = false;
 }
 

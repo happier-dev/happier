@@ -9,17 +9,8 @@
 import { NormalizedMessage } from "../typesRaw";
 import { AgentEvent } from "../typesRaw";
 
-const CHANGE_TITLE_TOOL_NAMES = new Set([
-    // Preferred MCP naming
-    'mcp__happier__change_title',
-    // Legacy MCP naming during migration
-    'mcp__happy__change_title',
-    // Non-MCP-prefixed variants seen in some transports/providers
-    'happier__change_title',
-    'happy__change_title',
-    // Canonical tool name
-    'change_title',
-]);
+import { isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
+
 
 /**
  * Parses a normalized message to determine if it should be converted to an event.
@@ -56,8 +47,8 @@ export function parseMessageAsEvent(msg: NormalizedMessage): AgentEvent | null {
                 
             }
             
-            // Check for change_title tool calls (new + legacy names during migration)
-            if (content.type === 'tool-call' && CHANGE_TITLE_TOOL_NAMES.has(content.name)) {
+            // Check for change_title tool calls (supports MCP + canonical aliases)
+            if (content.type === 'tool-call' && isChangeTitleToolNameAlias(content.name)) {
                 const title = content.input?.title;
                 if (typeof title === 'string') {
                     return {

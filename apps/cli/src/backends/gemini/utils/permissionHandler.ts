@@ -5,6 +5,7 @@
  */
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
+import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
 import {
   CodexLikePermissionHandler,
   type PendingRequest,
@@ -21,13 +22,13 @@ export class GeminiPermissionHandler extends CodexLikePermissionHandler {
     super({ session, logPrefix: '[Gemini]', onAbortRequested: opts?.onAbortRequested ?? null });
     // Always-auto-approve safe internal tools that don't perform external side effects.
     this.alwaysAutoApproveToolNameIncludes = [
-      'happy__change_title',
-      'happier__change_title',
+      ...CHANGE_TITLE_TOOL_NAME_ALIASES,
       'geminireasoning',
       'codexreasoning',
     ];
     this.alwaysAutoApproveToolCallIdIncludes = [
-      'change_title',
+      // Some transports only expose the tool in the toolCallId; keep it permissive.
+      ...CHANGE_TITLE_TOOL_NAME_ALIASES,
       'save_memory',
     ];
   }

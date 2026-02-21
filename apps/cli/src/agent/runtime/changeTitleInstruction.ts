@@ -1,20 +1,30 @@
+import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
 import { trimIdent } from '@/utils/trimIdent';
 
-/**
- * Instruction for changing chat title.
- *
- * IMPORTANT: Different providers surface the same MCP tool under different names.
- * In practice, title changes may appear as one of:
- * - mcp__happier__change_title (preferred)
- * - mcp__happy__change_title (legacy)
- * - happier__change_title / happy__change_title (non-MCP-prefixed variants)
- * - change_title (canonical tool name)
- */
-export const CHANGE_TITLE_INSTRUCTION = trimIdent(
-  `Based on the user's message, use the chat title tool to set (or update) a short, descriptive session title.
+export type ChangeTitleInstructionOptions = {
+  /**
+   * Preferred tool name to mention first.
+   * Defaults to `mcp__happier__change_title` (MCP convention).
+   */
+  preferredToolName?: string;
+};
 
-The tool may be exposed under different names depending on the provider. Prefer "mcp__happier__change_title" when available; otherwise use the equivalent "change_title" tool.
+export function buildChangeTitleInstruction(opts: ChangeTitleInstructionOptions = {}): string {
+  const preferred = (opts.preferredToolName ?? 'mcp__happier__change_title').trim();
+  const fallbacks = CHANGE_TITLE_TOOL_NAME_ALIASES.filter((n) => n !== preferred);
+  const fallbackPreview = fallbacks.slice(0, 3).join(', ');
+
+  return trimIdent(
+    `Based on the user's message, use the chat title tool to set (or update) a short, descriptive session title.
+
+The tool may be exposed under different names depending on the provider. Prefer "${preferred}" when available; otherwise use an equivalent alias (for example: ${fallbackPreview}).
 
 Call this tool again if the task changes significantly.`
-);
+  );
+}
+
+/**
+ * Default instruction used by backends that inject title instructions.
+ */
+export const CHANGE_TITLE_INSTRUCTION = buildChangeTitleInstruction();
 
