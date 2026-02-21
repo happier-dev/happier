@@ -155,6 +155,7 @@ jobs:
 
       - name: Trigger deploy webhook(s)
         env:
+          GH_TOKEN: ${{ github.token }}
           CF_WEBHOOK_DEPLOY_CLIENT_ID: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_ID }}
           CF_WEBHOOK_DEPLOY_CLIENT_SECRET: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_SECRET }}
           DEPLOY_WEBHOOK_URL: ${{ vars.DEPLOY_WEBHOOK_URL != '' && vars.DEPLOY_WEBHOOK_URL || secrets.DEPLOY_WEBHOOK_URL }}

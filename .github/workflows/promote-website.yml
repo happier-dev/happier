@@ -283,6 +283,7 @@ jobs:
       - name: Trigger deploy webhook(s) (force_deploy, no branch change)
         if: inputs.force_deploy && steps.deploy_before.outputs.sha == steps.deploy_after.outputs.sha
         env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
           CF_WEBHOOK_DEPLOY_CLIENT_ID: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_ID }}
           CF_WEBHOOK_DEPLOY_CLIENT_SECRET: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_SECRET }}
           DEPLOY_WEBHOOK_URL: ${{ vars.DEPLOY_WEBHOOK_URL != '' && vars.DEPLOY_WEBHOOK_URL || secrets.DEPLOY_WEBHOOK_URL }}
