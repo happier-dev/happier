@@ -10,10 +10,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useSessionProjectScmSnapshot: () => snapshotMock,
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-}));
+vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
 
 vi.mock('react-native-unistyles', () => ({
     useUnistyles: () => ({
@@ -22,9 +19,25 @@ vi.mock('react-native-unistyles', () => ({
                 button: { secondary: { tint: '#999' } },
                 gitAddedText: '#0f0',
                 gitRemovedText: '#f00',
+                shadow: { color: '#000', opacity: 0.1 },
             },
         },
     }),
+    StyleSheet: {
+        create: (input: any) =>
+            typeof input === 'function'
+                ? input({
+                    colors: {
+                        button: { secondary: { tint: '#999' } },
+                        gitAddedText: '#0f0',
+                        gitRemovedText: '#f00',
+                        shadow: { color: '#000', opacity: 0.1 },
+                    },
+                })
+                : input,
+        configure: () => {},
+        absoluteFillObject: {},
+    },
 }));
 
 vi.mock('@expo/vector-icons', () => ({

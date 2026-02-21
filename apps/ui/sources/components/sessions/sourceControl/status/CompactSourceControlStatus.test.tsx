@@ -13,22 +13,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
 vi.mock('react-native', () => ({
     View: 'View',
     Text: 'Text',
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: {
-        create: (value: any) =>
-            typeof value === 'function'
-                ? value({
-                    colors: {
-                        surfaceHighest: '#222',
-                        textSecondary: '#999',
-                        gitAddedText: '#0f0',
-                        gitRemovedText: '#f00',
-                    },
-                })
-                : value,
-    },
+    Platform: { OS: 'web', select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? null },
+    AppState: { addEventListener: () => ({ remove: () => {} }) },
 }));
 
 vi.mock('@expo/vector-icons', () => ({
