@@ -187,9 +187,15 @@ class Logger {
         body: JSON.stringify({
           timestamp: new Date().toISOString(),
           level,
-          message: `${message} ${args.map(a => 
-            typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)
-          ).join(' ')}`,
+          message: `${message} ${args.map(a => {
+            if (a instanceof Error) return a.stack || a.message
+            if (typeof a === 'object') {
+              // Check for Error-like objects (cross-realm Errors where instanceof fails)
+              if (a && 'stack' in (a as object)) return (a as Error).stack || String(a)
+              try { return JSON.stringify(a, null, 2) } catch { return String(a) }
+            }
+            return String(a)
+          }).join(' ')}`,
           source: 'cli',
           platform: process.platform
         })
@@ -203,7 +209,13 @@ class Logger {
     const logLine = `${prefix} ${message} ${args.map(arg => {
       if (typeof arg === 'string') return arg
       if (arg instanceof Error) return arg.stack || arg.message
-      return JSON.stringify(arg)
+      try {
+        return JSON.stringify(arg)
+      } catch {
+        // Circular references, cross-realm Error objects, BigInt, etc.
+        if (arg && typeof arg === 'object' && 'stack' in arg) return (arg as Error).stack || String(arg)
+        return String(arg)
+      }
     }).join(' ')}\n`
     
     // Send to remote server if configured
