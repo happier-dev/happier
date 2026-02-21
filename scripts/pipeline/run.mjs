@@ -3129,6 +3129,7 @@ function main() {
 	        mode: { type: 'string' },
 	        confirm: { type: 'string', default: '' },
 	        'allow-reset': { type: 'string', default: 'false' },
+	        'summary-file': { type: 'string', default: '' },
 	        'allow-dirty': { type: 'string', default: 'false' },
 	        'dry-run': { type: 'boolean', default: false },
 	        'secrets-source': { type: 'string', default: 'auto' },
@@ -3143,6 +3144,7 @@ function main() {
 	    const mode = String(values.mode ?? '').trim();
 	    const confirm = String(values.confirm ?? '').trim();
 	    const allowReset = String(values['allow-reset'] ?? '').trim();
+	    const summaryFile = String(values['summary-file'] ?? '').trim();
 	    const allowDirty = parseBoolString(values['allow-dirty'], '--allow-dirty');
 	    const dryRun = values['dry-run'] === true;
 	    if (!dryRun) assertCleanWorktree({ cwd: repoRoot, allowDirty });
@@ -3194,6 +3196,7 @@ function main() {
         allowReset || 'false',
         '--confirm',
         confirm,
+        ...(summaryFile ? ['--summary-file', summaryFile] : []),
         ...(dryRun ? ['--dry-run'] : []),
       ],
     });

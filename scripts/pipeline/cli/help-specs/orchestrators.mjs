@@ -77,13 +77,14 @@ export const COMMAND_HELP_ORCHESTRATORS = {
   'promote-branch': {
     summary: 'Promote one branch to another (fast-forward or reset) via GitHub API.',
     usage:
-      'node scripts/pipeline/run.mjs promote-branch --source <branch> --target <branch> --mode <fast_forward|reset> --confirm <string> [--allow-reset true|false] [--dry-run]',
+      'node scripts/pipeline/run.mjs promote-branch --source <branch> --target <branch> --mode <fast_forward|reset> --confirm <string> [--allow-reset true|false] [--summary-file <path>] [--dry-run]',
     options: [
       '--source <branch>                 Required; e.g. dev.',
       '--target <branch>                 Required; e.g. main.',
       '--mode <fast_forward|reset>       Required.',
       '--confirm <text>                  Required safety text (free-form).',
       '--allow-reset <bool>              Required for --mode reset (default: false).',
+      '--summary-file <path>             Optional; append markdown summary (Actions: $GITHUB_STEP_SUMMARY).',
       '--allow-dirty <bool>              true|false (default: false).',
       '--dry-run',
       '--secrets-source <auto|env|keychain>',
@@ -118,4 +119,3 @@ export const COMMAND_HELP_ORCHESTRATORS = {
     ],
   },
 };
-
