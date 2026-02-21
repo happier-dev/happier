@@ -19,19 +19,21 @@ interface ChatFooterProps {
 export const ChatFooter = React.memo((props: ChatFooterProps) => {
     const { theme } = useUnistyles();
     const containerStyle: ViewStyle = {
-        alignItems: 'center',
+        // Allow children to take full width so long banners can wrap instead of overflowing
+        alignItems: 'stretch',
         paddingTop: 4,
         paddingBottom: 2,
     };
     const warningContainerStyle: ViewStyle = {
         flexDirection: 'row',
         alignItems: 'center',
+        flexWrap: 'wrap',
         paddingHorizontal: 12,
         paddingVertical: 4,
         backgroundColor: theme.colors.box.warning.background,
         borderRadius: 8,
-        marginHorizontal: 32,
         marginTop: 4,
+        marginHorizontal: 8,
     };
     const warningTextStyle: TextStyle = {
         flex: 1,
@@ -58,24 +60,32 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
     return (
         <View style={containerStyle}>
             {props.controlledByUser && (
-                <View style={warningContainerStyle}>
-                    <Ionicons
-                        name="information-circle"
-                        size={16}
-                        color={theme.colors.box.warning.text}
-                    />
-                    <Text style={warningTextStyle}>
-                        {t(props.permissionsInUiWhileLocal ? 'chatFooter.sessionRunningLocally' : 'chatFooter.permissionsTerminalOnly')}
-                    </Text>
-                    {props.onRequestSwitchToRemote && (
-                        <Pressable
-                            accessibilityLabel={t('chatFooter.switchToRemote')}
-                            onPress={props.onRequestSwitchToRemote}
-                            style={switchButtonStyle}
-                        >
-                            <Text style={switchButtonTextStyle}>{t('chatFooter.switchToRemote')}</Text>
-                        </Pressable>
-                    )}
+                <View style={{ width: '100%', flexDirection: 'row', justifyContent: 'center' }}>
+                    <View style={{ width: '100%', flexGrow: 1, flexBasis: 0, maxWidth: layout.maxWidth }}>
+                        <View style={warningContainerStyle}>
+                            <Ionicons
+                                name="information-circle"
+                                size={16}
+                                color={theme.colors.box.warning.text}
+                            />
+                            <Text style={warningTextStyle}>
+                                {t(
+                                    props.permissionsInUiWhileLocal
+                                        ? 'chatFooter.sessionRunningLocally'
+                                        : 'chatFooter.permissionsTerminalOnly'
+                                )}
+                            </Text>
+                            {props.onRequestSwitchToRemote && (
+                                <Pressable
+                                    accessibilityLabel={t('chatFooter.switchToRemote')}
+                                    onPress={props.onRequestSwitchToRemote}
+                                    style={switchButtonStyle}
+                                >
+                                    <Text style={switchButtonTextStyle}>{t('chatFooter.switchToRemote')}</Text>
+                                </Pressable>
+                            )}
+                        </View>
+                    </View>
                 </View>
             )}
             {props.notice && (
