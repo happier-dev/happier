@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { prepareMinisignSecretKeyFile } from './lib/binary-release.mjs';
+import { withCurrentVersionLine } from './lib/rolling-release-notes.mjs';
 
 function fail(message) {
   console.error(message);
@@ -166,7 +167,8 @@ async function main() {
   const tag = channel === 'preview' ? 'ui-web-preview' : 'ui-web-stable';
   const title = channel === 'preview' ? 'Happier UI Web Bundle Preview' : 'Happier UI Web Bundle Stable';
   const prerelease = channel === 'preview' ? 'true' : 'false';
-  const notes = channel === 'preview' ? 'Rolling preview UI web bundle release.' : 'Stable UI web bundle release.';
+  const notesBase = channel === 'preview' ? 'Rolling preview UI web bundle release.' : 'Rolling stable UI web bundle release.';
+  const notes = withCurrentVersionLine(notesBase, uiVersion);
   const versionTag = `ui-web-v${uiVersion}`;
   const versionTitle = `Happier UI Web Bundle v${uiVersion}`;
   const versionNotes =

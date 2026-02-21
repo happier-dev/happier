@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { prepareMinisignSecretKeyFile } from './lib/binary-release.mjs';
+import { withCurrentVersionLine } from './lib/rolling-release-notes.mjs';
 import { resolveGitHubRepoSlug } from '../github/resolve-github-repo-slug.mjs';
 
 function fail(message) {
@@ -200,7 +201,7 @@ async function main() {
   const rollingTag = channel === 'preview' ? 'cli-preview' : 'cli-stable';
   const rollingTitle = channel === 'preview' ? 'Happier CLI Preview' : 'Happier CLI Stable';
   const prerelease = channel === 'preview' ? 'true' : 'false';
-  const notes = channel === 'preview' ? 'Rolling preview CLI binaries.' : 'Stable CLI binaries.';
+  const notesBase = channel === 'preview' ? 'Rolling preview CLI binaries.' : 'Rolling stable CLI binaries.';
 
   const targetSha = run(opts, 'git', ['rev-parse', 'HEAD'], { cwd: repoRoot, stdio: 'pipe' }).trim() || 'UNKNOWN_SHA';
 
@@ -224,6 +225,7 @@ async function main() {
   const originalVersion = readCliVersion(repoRoot);
   const base = normalizeBase(originalVersion);
   const version = channel === 'preview' ? `${base}-${resolvePreviewSuffix()}` : originalVersion;
+  const notes = withCurrentVersionLine(notesBase, version);
 
   /** @type {null | (() => void)} */
   let restoreVersion = null;
@@ -346,6 +348,10 @@ async function main() {
       ],
       { cwd: repoRoot },
     );
+    if (!dryRun) {
+      console.log(`[pipeline] published GitHub rolling release: ${rollingTag}`);
+      console.log(`[pipeline] note: GitHub may not update 'Published' timestamps for rolling releases; verify assets on tag '${rollingTag}'.`);
+    }
 
     const versionTag = `cli-v${version}`;
     const versionTitle = `Happier CLI v${version}`;
@@ -382,6 +388,9 @@ async function main() {
       ],
       { cwd: repoRoot },
     );
+    if (!dryRun) {
+      console.log(`[pipeline] published GitHub versioned release: ${versionTag}`);
+    }
   } finally {
     if (restoreVersion) {
       restoreVersion();

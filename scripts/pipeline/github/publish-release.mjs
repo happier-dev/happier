@@ -5,6 +5,8 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { buildRollingReleaseEditArgs } from './lib/gh-release-commands.mjs';
+
 function fail(message) {
   console.error(message);
   process.exit(1);
@@ -250,7 +252,7 @@ function main() {
       }
     }
 
-    run('gh', ['release', 'edit', tag, '--title', title, '--notes', body], { env: ghEnv, dryRun });
+    run('gh', buildRollingReleaseEditArgs({ tag, title, notes: body, targetSha: sha }), { env: ghEnv, dryRun });
   }
 
   // Prune assets (rolling tags typically).

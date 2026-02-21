@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { prepareMinisignSecretKeyFile } from './lib/binary-release.mjs';
+import { withCurrentVersionLine } from './lib/rolling-release-notes.mjs';
 import { resolveGitHubRepoSlug } from '../github/resolve-github-repo-slug.mjs';
 
 function fail(message) {
@@ -147,7 +148,9 @@ async function main() {
   const tag = channel === 'preview' ? 'server-preview' : 'server-stable';
   const title = channel === 'preview' ? 'Happier Server Preview' : 'Happier Server Stable';
   const prerelease = channel === 'preview' ? 'true' : 'false';
-  const notes = channel === 'preview' ? 'Rolling preview server runtime release.' : 'Stable server runtime release.';
+  const notesBase =
+    channel === 'preview' ? 'Rolling preview server runtime release.' : 'Rolling stable server runtime release.';
+  const notes = withCurrentVersionLine(notesBase, serverVersion);
   const versionTag = `server-v${serverVersion}`;
   const versionTitle = `Happier Server v${serverVersion}`;
   const versionNotes =

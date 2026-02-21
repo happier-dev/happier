@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { prepareMinisignSecretKeyFile } from './lib/binary-release.mjs';
+import { withCurrentVersionLine } from './lib/rolling-release-notes.mjs';
 import { resolveGitHubRepoSlug } from '../github/resolve-github-repo-slug.mjs';
 
 function fail(message) {
@@ -200,7 +201,7 @@ async function main() {
   const rollingTag = channel === 'preview' ? 'stack-preview' : 'stack-stable';
   const rollingTitle = channel === 'preview' ? 'Happier Stack Preview' : 'Happier Stack Stable';
   const prerelease = channel === 'preview' ? 'true' : 'false';
-  const notes = channel === 'preview' ? 'Rolling preview hstack binaries.' : 'Stable hstack binaries.';
+  const notesBase = channel === 'preview' ? 'Rolling preview hstack binaries.' : 'Rolling stable hstack binaries.';
 
   const targetSha = run(opts, 'git', ['rev-parse', 'HEAD'], { cwd: repoRoot, stdio: 'pipe' }).trim() || 'UNKNOWN_SHA';
 
@@ -224,6 +225,7 @@ async function main() {
   const originalVersion = readHstackVersion(repoRoot);
   const base = normalizeBase(originalVersion);
   const version = channel === 'preview' ? `${base}-${resolvePreviewSuffix()}` : originalVersion;
+  const notes = withCurrentVersionLine(notesBase, version);
 
   /** @type {null | (() => void)} */
   let restoreVersion = null;
