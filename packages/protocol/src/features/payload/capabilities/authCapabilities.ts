@@ -5,7 +5,7 @@ export const AuthCapabilitiesSchema = z.object({
     methods: z.array(z.object({ id: z.string(), enabled: z.boolean() })),
   }),
   login: z.object({
-    methods: z.array(z.object({ id: z.string(), enabled: z.boolean() })),
+    methods: z.array(z.object({ id: z.string(), enabled: z.boolean() })).optional().default([]),
     requiredProviders: z.array(z.string()),
   }),
   recovery: z.object({
