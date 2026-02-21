@@ -146,6 +146,7 @@ async function resolveAvailablePort(): Promise<number> {
 export async function startUiWeb(params: {
   testDir: string;
   env: NodeJS.ProcessEnv;
+  port?: number;
 }): Promise<StartedUiWeb> {
   const stdoutPath = resolvePath(params.testDir, 'ui.web.stdout.log');
   const stderrPath = resolvePath(params.testDir, 'ui.web.stderr.log');
@@ -157,7 +158,9 @@ export async function startUiWeb(params: {
   const uiWorkspaceDir = resolvePath(repoRootDir(), 'apps', 'ui');
   const tmpDir = resolvePath(params.testDir, 'ui.web.tmp');
   await mkdir(tmpDir, { recursive: true });
-  const metroPort = await resolveAvailablePort();
+  const metroPort = typeof params.port === 'number' && Number.isFinite(params.port) && params.port > 0
+    ? params.port
+    : await resolveAvailablePort();
 
   const proc = spawnLoggedProcess({
     args: [

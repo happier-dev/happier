@@ -9,6 +9,10 @@ export type TestAuth = {
   publicKeyBase64: string;
 };
 
+export type TestAuthMtls = {
+  token: string;
+};
+
 export async function createTestAuth(baseUrl: string): Promise<TestAuth> {
   const kp = tweetnacl.sign.keyPair();
   // privacy-kit Bytes is `Uint8Array<ArrayBuffer>`; ensure our buffers are compatible across TS libs.
@@ -35,4 +39,44 @@ export async function createTestAuth(baseUrl: string): Promise<TestAuth> {
   }
 
   return { token: res.data.token, publicKeyBase64: body.publicKey };
+}
+
+export async function createTestAuthMtls(
+  baseUrl: string,
+  identity: {
+    email?: string;
+    upn?: string;
+    subject?: string;
+    fingerprint?: string;
+    issuer?: string;
+  },
+): Promise<TestAuthMtls> {
+  const headers: Record<string, string> = {};
+  if (typeof identity.email === 'string' && identity.email.trim()) {
+    headers['x-happier-client-cert-email'] = identity.email.trim();
+  }
+  if (typeof identity.upn === 'string' && identity.upn.trim()) {
+    headers['x-happier-client-cert-upn'] = identity.upn.trim();
+  }
+  if (typeof identity.subject === 'string' && identity.subject.trim()) {
+    headers['x-happier-client-cert-subject'] = identity.subject.trim();
+  }
+  if (typeof identity.fingerprint === 'string' && identity.fingerprint.trim()) {
+    headers['x-happier-client-cert-sha256'] = identity.fingerprint.trim();
+  }
+  if (typeof identity.issuer === 'string' && identity.issuer.trim()) {
+    headers['x-happier-client-cert-issuer'] = identity.issuer.trim();
+  }
+
+  const res = await fetchJson<{ token?: string; success?: boolean; error?: unknown }>(`${baseUrl}/v1/auth/mtls`, {
+    method: 'POST',
+    headers,
+    timeoutMs: 15_000,
+  });
+
+  if (res.status !== 200 || res.data?.success !== true || typeof res.data?.token !== 'string' || res.data.token.length === 0) {
+    throw new Error(`Failed to create test mTLS auth token (status=${res.status})`);
+  }
+
+  return { token: res.data.token };
 }
