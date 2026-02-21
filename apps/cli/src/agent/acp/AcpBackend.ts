@@ -1676,7 +1676,7 @@ export class AcpBackend implements AgentBackend {
       .map((model: unknown) => asRecord(model))
       .filter((model): model is Record<string, unknown> => Boolean(model))
       .map((model) => {
-        const id = getString(model, 'id');
+        const id = getString(model, 'id') ?? getString(model, 'modelId');
         const name = getString(model, 'name');
         if (!id || !name) return null;
         const description = getString(model, 'description');

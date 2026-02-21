@@ -905,6 +905,8 @@ deps: {
         kiloSessionIdCopied: 'ID de la sessió de Kilo copiat al porta-retalls',
         piSessionId: 'ID de la sessio de Pi',
         piSessionIdCopied: 'ID de la sessio de Pi copiat al porta-retalls',
+        copilotSessionId: 'Copilot Session ID',
+        copilotSessionIdCopied: 'Copilot Session ID copied to clipboard',
         metadataCopied: 'Metadades copiades al porta-retalls',
         failedToCopyMetadata: 'Ha fallat copiar les metadades',
         failedToKillSession: 'Ha fallat finalitzar la sessió',
@@ -1048,6 +1050,7 @@ deps: {
             kimi: 'Kimi',
             kilo: 'Kilo',
             pi: 'Pi',
+            copilot: 'Copilot',
         },
         auggieIndexingChip: {
             on: 'Indexing on',
@@ -2216,6 +2219,7 @@ deps: {
             kimiSubtitleExperimental: 'CLI de Kimi (experimental)',
             kiloSubtitleExperimental: 'CLI de Kilo (experimental)',
             piSubtitleExperimental: 'CLI de Pi (experimental)',
+            copilotSubtitleExperimental: 'GitHub Copilot CLI (experimental)',
         },
         tmux: {
             title: 'Tmux',

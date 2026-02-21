@@ -35,6 +35,7 @@ export const MetadataSchema = z.object({
     kimiSessionId: z.string().optional(), // Kimi ACP session ID (opaque)
     kiloSessionId: z.string().optional(), // Kilo ACP session ID (opaque)
     piSessionId: z.string().optional(), // Pi RPC session ID (opaque)
+    copilotSessionId: z.string().optional(), // Copilot ACP session ID (opaque)
     auggieAllowIndexing: z.boolean().optional(), // Auggie indexing enablement (spawn-time)
     tools: z.array(z.string()).optional(),
     slashCommands: z.array(z.string()).optional(),

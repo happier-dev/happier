@@ -1,6 +1,6 @@
 import { dirname, join } from 'node:path';
 import { chmod, mkdir, rename, writeFile } from 'node:fs/promises';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 
 import { buildLaunchdPath, buildLaunchdPlistXml } from './launchd.js';
 import { renderSystemdServiceUnit } from './systemd.js';
@@ -316,19 +316,53 @@ export async function applyServicePlan(plan: ServicePlan, options: Readonly<{ ru
     if (!commandExists(c.cmd, process.env.PATH)) {
       throw new Error(`[service] command not found: ${c.cmd}`);
     }
-    const res = spawnSync(c.cmd, [...c.args], { encoding: 'utf8', env: process.env });
+    let res = spawnSync(c.cmd, [...c.args], { encoding: 'utf8', env: process.env });
     if (res.error) {
       if (c.allowFail) continue;
       throw new Error(`[service] failed to run ${c.cmd}: ${res.error.message}`);
     }
-    const status = typeof res.status === 'number' ? res.status : null;
+
+    let status = typeof res.status === 'number' ? res.status : null;
+    if (status !== 0 && !c.allowFail && shouldRetryLaunchctlKickstart({ cmd: c.cmd, args: c.args, status, stderr: res.stderr })) {
+      res = await retryLaunchctlKickstart({ cmd: c.cmd, args: c.args });
+      status = typeof res.status === 'number' ? res.status : null;
+    }
+
     if (status !== 0) {
       if (c.allowFail) continue;
       const stderr = String(res.stderr ?? '').trim();
-      const suffix = stderr ? `\n${stderr}` : '';
-      throw new Error(`[service] command failed (${status ?? 'unknown'}): ${c.cmd} ${c.args.join(' ')}${suffix}`.trim());
+      const stdout = String(res.stdout ?? '').trim();
+      const suffix = [stdout ? `stdout:\n${stdout}` : '', stderr ? `stderr:\n${stderr}` : ''].filter(Boolean).join('\n');
+      const details = suffix ? `\n${suffix}` : '';
+      throw new Error(`[service] command failed (${status ?? 'unknown'}): ${c.cmd} ${c.args.join(' ')}${details}`.trim());
     }
   }
+}
+
+function shouldRetryLaunchctlKickstart(params: Readonly<{ cmd: string; args: readonly string[]; status: number | null; stderr: unknown }>): boolean {
+  if (params.cmd !== 'launchctl') return false;
+  if (params.status !== 113) return false;
+  const args = Array.isArray(params.args) ? params.args : [];
+  if (args[0] !== 'kickstart') return false;
+  const stderr = String(params.stderr ?? '');
+  return stderr.includes('Could not find service');
+}
+
+async function retryLaunchctlKickstart(params: Readonly<{ cmd: string; args: readonly string[] }>): Promise<SpawnSyncReturns<string>> {
+  const maxAttempts = 15;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    const res = spawnSync(params.cmd, [...params.args], { encoding: 'utf8', env: process.env });
+    if (res.error) return res;
+    const status = typeof res.status === 'number' ? res.status : null;
+    if (status === 0) return res;
+    if (!shouldRetryLaunchctlKickstart({ cmd: params.cmd, args: params.args, status, stderr: res.stderr })) {
+      return res;
+    }
+  }
+  return spawnSync(params.cmd, [...params.args], { encoding: 'utf8', env: process.env });
 }
 
 async function writeAtomicTextFile(path: string, contents: string, mode: number): Promise<void> {

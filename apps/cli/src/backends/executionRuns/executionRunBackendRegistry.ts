@@ -9,6 +9,7 @@ import { executionRunBackendFactory as auggie } from '@/backends/auggie/executio
 import { executionRunBackendFactory as qwen } from '@/backends/qwen/executionRuns/executionRunBackendFactory';
 import { executionRunBackendFactory as kimi } from '@/backends/kimi/executionRuns/executionRunBackendFactory';
 import { executionRunBackendFactory as kilo } from '@/backends/kilo/executionRuns/executionRunBackendFactory';
+import { executionRunBackendFactory as copilot } from '@/backends/copilot/executionRuns/executionRunBackendFactory';
 
 import { listNativeReviewEngineIds, resolveNativeReviewExecutionRunBackendFactory } from '@/agent/reviews/engines/nativeReviewEngines';
 
@@ -26,6 +27,7 @@ const REGISTRY: Record<string, ExecutionRunBackendDescriptor> = {
   qwen: { factory: qwen },
   kimi: { factory: kimi },
   kilo: { factory: kilo },
+  copilot: { factory: copilot },
 };
 
 for (const engineId of listNativeReviewEngineIds()) {

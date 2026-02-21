@@ -985,6 +985,8 @@ export const zhHans: TranslationStructure = {
     kiloSessionIdCopied: "Kilo 会话 ID 已复制到剪贴板",
     piSessionId: "Pi 会话 ID",
     piSessionIdCopied: "Pi 会话 ID 已复制到剪贴板",
+    copilotSessionId: "Copilot Session ID",
+    copilotSessionIdCopied: "Copilot Session ID copied to clipboard",
     metadataCopied: "元数据已复制到剪贴板",
     failedToCopyMetadata: "复制元数据失败",
     failedToKillSession: "终止会话失败",
@@ -1142,6 +1144,7 @@ export const zhHans: TranslationStructure = {
       kimi: "Kimi",
       kilo: "Kilo",
       pi: "Pi",
+      copilot: "Copilot",
     },
     auggieIndexingChip: {
       on: "已开启索引",
@@ -2414,6 +2417,7 @@ export const zhHans: TranslationStructure = {
       kimiSubtitleExperimental: "Kimi 命令行（实验）",
       kiloSubtitleExperimental: "Kilo 命令行（实验）",
       piSubtitleExperimental: "Pi 命令行（实验）",
+      copilotSubtitleExperimental: "GitHub Copilot CLI (experimental)",
     },
     tmux: {
       title: "tmux",

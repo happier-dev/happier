@@ -128,6 +128,16 @@ describe('createAcpRuntime (in-flight steer, real process)', () => {
     } as any;
 
     try {
+      const waitForMessage = async (): Promise<{ type: string; [k: string]: unknown } | null> => {
+        const deadlineMs = Date.now() + 2_000;
+        while (Date.now() < deadlineMs) {
+          const found = sent.find((m) => m.type === 'message' && typeof (m as any)?.message === 'string');
+          if (found) return found;
+          await new Promise((r) => setTimeout(r, 10));
+        }
+        return null;
+      };
+
       const runtime = createAcpRuntime({
         provider: 'codex',
         directory: dir,
@@ -150,9 +160,10 @@ describe('createAcpRuntime (in-flight steer, real process)', () => {
       await primaryPromise;
       runtime.flushTurn();
 
-      const message = sent.find((m) => m.type === 'message') as any;
-      expect(message?.message).toContain('primary=hello');
-      expect(message?.message).toContain('steer=steer-now');
+      const message = await waitForMessage();
+      expect(message).not.toBeNull();
+      expect((message as any)?.message).toContain('primary=hello');
+      expect((message as any)?.message).toContain('steer=steer-now');
     } finally {
       await backend.dispose().catch(() => {});
       rmSync(dir, { recursive: true, force: true });

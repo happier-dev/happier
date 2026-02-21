@@ -920,6 +920,8 @@ export const en = {
         kiloSessionIdCopied: 'Kilo Session ID copied to clipboard',
         piSessionId: 'Pi Session ID',
         piSessionIdCopied: 'Pi Session ID copied to clipboard',
+        copilotSessionId: 'Copilot Session ID',
+        copilotSessionIdCopied: 'Copilot Session ID copied to clipboard',
         metadataCopied: 'Metadata copied to clipboard',
         failedToCopyMetadata: 'Failed to copy metadata',
         failedToKillSession: 'Failed to kill session',
@@ -1063,6 +1065,7 @@ export const en = {
             kimi: 'Kimi',
             kilo: 'Kilo',
             pi: 'Pi',
+            copilot: 'Copilot',
         },
         auggieIndexingChip: {
             on: 'Indexing on',
@@ -2304,6 +2307,7 @@ export const en = {
             kimiSubtitleExperimental: 'Kimi CLI (experimental)',
             kiloSubtitleExperimental: 'Kilo CLI (experimental)',
             piSubtitleExperimental: 'Pi CLI (experimental)',
+            copilotSubtitleExperimental: 'GitHub Copilot CLI (experimental)',
         },
         tmux: {
             title: 'Tmux',
