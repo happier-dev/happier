@@ -1,5 +1,6 @@
 import { mkdir, readFile } from 'node:fs/promises';
 import { resolve as resolvePath } from 'node:path';
+import { createServer } from 'node:net';
 
 import { repoRootDir } from '../paths';
 import { waitFor } from '../timing';
@@ -47,23 +48,37 @@ async function looksLikeUiWebEntryPage(url: string): Promise<boolean> {
   }
 }
 
-async function resolveExpoWebBaseUrl(params: { stdoutPath: string; timeoutMs: number }): Promise<string> {
-  const candidates = new Set<string>([
+async function resolveExpoWebBaseUrl(params: { stdoutPath: string; timeoutMs: number; expectedPort?: number }): Promise<string> {
+  const defaultCandidates = [
     'http://localhost:19006',
     'http://127.0.0.1:19006',
     'http://localhost:8081',
     'http://127.0.0.1:8081',
-  ]);
+  ];
+
+  const expectedCandidates =
+    typeof params.expectedPort === 'number' && Number.isFinite(params.expectedPort) && params.expectedPort > 0
+      ? [`http://localhost:${params.expectedPort}`, `http://127.0.0.1:${params.expectedPort}`]
+      : [];
 
   let resolved: string | null = null;
   await waitFor(async () => {
     const text = await readFile(params.stdoutPath, 'utf8').catch(() => '');
-    for (const url of extractHttpUrls(text)) {
-      const normalized = url.replace(/\/+$/, '');
-      candidates.add(normalized);
+
+    const stdoutCandidates = extractHttpUrls(text).map((url) => url.replace(/\/+$/, ''));
+    const orderedCandidates: string[] = [];
+    const seen = new Set<string>();
+
+    const fallbacks = expectedCandidates.length > 0 ? [] : defaultCandidates;
+    for (const raw of [...stdoutCandidates, ...expectedCandidates, ...fallbacks]) {
+      const url = raw.trim().replace(/\/+$/, '');
+      if (!url) continue;
+      if (seen.has(url)) continue;
+      seen.add(url);
+      orderedCandidates.push(url);
     }
 
-    for (const url of candidates) {
+    for (const url of orderedCandidates) {
       if (await looksLikeUiWebEntryPage(url)) {
         resolved = url;
         return true;
@@ -75,7 +90,7 @@ async function resolveExpoWebBaseUrl(params: { stdoutPath: string; timeoutMs: nu
   if (resolved) return resolved;
 
   // The waitFor above succeeded but did not set a baseUrl (should be unreachable). Re-check candidates for safety.
-  for (const url of candidates) {
+  for (const url of expectedCandidates.length > 0 ? expectedCandidates : defaultCandidates) {
     if (await looksLikeUiWebEntryPage(url)) return url;
   }
 
@@ -108,6 +123,26 @@ async function isScriptReady(url: string): Promise<boolean> {
   }
 }
 
+async function resolveAvailablePort(): Promise<number> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  return await new Promise<number>((resolve, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      if (!address || typeof address !== 'object') {
+        server.close(() => reject(new Error('Failed to resolve available port (missing address)')));
+        return;
+      }
+      const port = address.port;
+      server.close((err) => {
+        if (err) reject(err);
+        else resolve(port);
+      });
+    });
+  });
+}
+
 export async function startUiWeb(params: {
   testDir: string;
   env: NodeJS.ProcessEnv;
@@ -122,15 +157,17 @@ export async function startUiWeb(params: {
   const uiWorkspaceDir = resolvePath(repoRootDir(), 'apps', 'ui');
   const tmpDir = resolvePath(params.testDir, 'ui.web.tmp');
   await mkdir(tmpDir, { recursive: true });
+  const metroPort = await resolveAvailablePort();
 
   const proc = spawnLoggedProcess({
     args: [
       expoCliPath,
       'start',
       '--web',
-      '--localhost',
-      '--no-dev',
-      '--minify',
+      '--host',
+      'localhost',
+      '--port',
+      String(metroPort),
       ...(clearCache ? ['--clear'] : []),
     ],
     command: process.execPath,
@@ -166,7 +203,7 @@ export async function startUiWeb(params: {
     });
 
     baseUrl = await Promise.race([
-      resolveExpoWebBaseUrl({ stdoutPath, timeoutMs: 180_000 }),
+      resolveExpoWebBaseUrl({ stdoutPath, timeoutMs: 180_000, expectedPort: metroPort }),
       exitedEarly,
     ]);
 
@@ -174,8 +211,8 @@ export async function startUiWeb(params: {
     // Ensure Metro is actually ready before handing back control to Playwright.
     await waitFor(
       async () =>
-        (await isMetroPackagerReady('http://localhost:8081'))
-        || (await isMetroPackagerReady('http://127.0.0.1:8081')),
+        (await isMetroPackagerReady(`http://localhost:${metroPort}`))
+        || (await isMetroPackagerReady(`http://127.0.0.1:${metroPort}`)),
       { timeoutMs: 120_000, intervalMs: 250, context: 'metro /status ready' },
     );
 

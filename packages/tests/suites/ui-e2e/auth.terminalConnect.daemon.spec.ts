@@ -9,6 +9,7 @@ import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
+import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -27,16 +28,6 @@ test.describe('ui e2e: auth + terminal connect', () => {
   let createdSessionId: string | null = null;
   let fakeClaudePath: string | null = null;
 
-  function normalizeLoopbackBaseUrl(input: string): string {
-    try {
-      const parsed = new URL(input);
-      if (parsed.hostname === 'localhost') parsed.hostname = '127.0.0.1';
-      return parsed.toString().replace(/\/+$/, '');
-    } catch {
-      return input.replace(/\/+$/, '');
-    }
-  }
-
   async function readAccountSecretKeyFromSettings(page: Page, baseUrl: string): Promise<string> {
     await page.goto(`${baseUrl}/settings/account`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByTestId('settings-account-secret-key-item')).toHaveCount(1, { timeout: 60_000 });
@@ -45,33 +36,6 @@ test.describe('ui e2e: auth + terminal connect', () => {
     const value = (await page.getByTestId('settings-account-secret-key-value').innerText()).trim();
     if (!value) throw new Error('settings-account-secret-key-value is empty');
     return value.replace(/\s+/g, ' ');
-  }
-
-  async function gotoDomContentLoadedWithRetries(page: Page, url: string, timeoutMs = 90_000): Promise<void> {
-    const retryable = (error: unknown): boolean => {
-      const message = error instanceof Error ? error.message : String(error);
-      return (
-        message.includes('net::ERR_NETWORK_CHANGED')
-        || message.includes('net::ERR_CONNECTION_REFUSED')
-        || message.includes('net::ERR_CONNECTION_RESET')
-        || message.includes('net::ERR_ABORTED')
-      );
-    };
-
-    const start = Date.now();
-    let attempt = 0;
-    // Metro can briefly restart or drop connections during bundling; retry a few times for stability.
-    while (attempt < 4) {
-      attempt += 1;
-      try {
-        const remaining = Math.max(5_000, timeoutMs - (Date.now() - start));
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: remaining });
-        return;
-      } catch (error) {
-        if (attempt >= 4 || !retryable(error)) throw error;
-        await page.waitForTimeout(500 * attempt);
-      }
-    }
   }
 
   async function restoreAccountUsingSecretKey(
@@ -474,6 +438,10 @@ test.describe('ui e2e: auth + terminal connect', () => {
       await restoreAccountUsingSecretKey(page, uiBaseUrl, accountSecretKeyFormatted);
       await page.goto(`${uiBaseUrl}/session/${createdSessionId}`, { waitUntil: 'domcontentloaded' });
       await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 120_000 });
+
+      // Ensure prior transcript content is loaded before we snapshot `okBefore`, otherwise
+      // late-arriving history can be mistaken for an offline daemon response.
+      await expect(page.getByText('FAKE_CLAUDE_OK_1')).toHaveCount(1, { timeout: 120_000 });
 
       const ok = page.getByText(/FAKE_CLAUDE_OK_/);
       const okBefore = await ok.count();
