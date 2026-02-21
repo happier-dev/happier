@@ -40,7 +40,10 @@ function findPressableByAccessibilityLabel(tree: renderer.ReactTestRenderer, lab
     ))[0];
 }
 
-vi.mock('react-native', () => ({
+vi.mock('react-native', async () => {
+    const rn = await import('@/dev/reactNativeStub');
+    return {
+    ...rn,
     View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('View', props, props.children),
     Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -50,12 +53,13 @@ vi.mock('react-native', () => ({
     ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('ScrollView', props, props.children),
     ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
-    Platform: { OS: 'ios', select: (v: any) => v.ios },
+    Platform: { ...rn.Platform, OS: 'ios', select: (v: any) => v.ios },
     useWindowDimensions: () => ({ width: 800, height: 600 }),
     Dimensions: {
         get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
     },
-}));
+    };
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props, null),
@@ -94,7 +98,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
 }));
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
-    getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
+    getStorage: () => (selector: any) => selector({ sessionMessages: {}, localSettings: { uiFontScale: 1 } }),
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({

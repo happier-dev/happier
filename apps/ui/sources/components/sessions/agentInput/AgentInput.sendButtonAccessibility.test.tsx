@@ -14,7 +14,10 @@ function findSendPressable(tree: renderer.ReactTestRenderer) {
     return matches[0]!;
 }
 
-vi.mock('react-native', () => ({
+vi.mock('react-native', async () => {
+    const rn = await import('@/dev/reactNativeStub');
+    return {
+    ...rn,
     View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('View', props, props.children),
     Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -24,12 +27,13 @@ vi.mock('react-native', () => ({
     ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('ScrollView', props, props.children),
     ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
-    Platform: { OS: 'web', select: (v: any) => v.web ?? v.default ?? null },
+    Platform: { ...rn.Platform, OS: 'web', select: (v: any) => v.web ?? v.default ?? null },
     useWindowDimensions: () => ({ width: 800, height: 600 }),
     Dimensions: {
         get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
     },
-}));
+    };
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props, null),

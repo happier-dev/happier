@@ -4,14 +4,20 @@ import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Pressable', props, props.children),
-    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Text', props, props.children),
-    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('View', props, props.children),
-}));
+vi.mock('react-native', async () => {
+    const rn = await import('@/dev/reactNativeStub');
+    return {
+        ...rn,
+        AppState: rn.AppState,
+        Platform: { ...rn.Platform, OS: 'web' },
+        Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+            React.createElement('Pressable', props, props.children),
+        Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+            React.createElement('Text', props, props.children),
+        View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+            React.createElement('View', props, props.children),
+    };
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props, null),

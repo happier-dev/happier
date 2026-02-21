@@ -79,6 +79,10 @@ vi.mock('@/sync/domains/state/storageStore', () => ({
     getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
 }));
 
+vi.mock('@/sync/store/hooks', () => ({
+    useLocalSetting: () => 1,
+}));
+
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
     DEFAULT_AGENT_ID: 'codex',
@@ -264,7 +268,9 @@ describe('AgentInput (machine chip)', () => {
             );
         });
 
-        const matches = tree?.root.findAll((node) => node.props?.testID === 'agent-input-connection-status-text');
+        const matches = tree?.root.findAll(
+            (node) => node.type === 'Text' && node.props?.testID === 'agent-input-connection-status-text'
+        );
         expect(matches).toHaveLength(1);
         expect(collectText(matches?.[0]?.props?.children).join(' ')).toContain('online');
     });

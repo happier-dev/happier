@@ -4,7 +4,10 @@ import renderer, { act } from 'react-test-renderer';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
+vi.mock('react-native', async () => {
+    const rn = await import('@/dev/reactNativeStub');
+    return {
+    ...rn,
     View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('View', props, props.children),
     Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -14,12 +17,13 @@ vi.mock('react-native', () => ({
     ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('ScrollView', props, props.children),
     ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props, null),
-    Platform: { OS: 'ios', select: (v: any) => v.ios },
+    Platform: { ...rn.Platform, OS: 'ios', select: (v: any) => v.ios },
     useWindowDimensions: () => ({ width: 800, height: 600 }),
     Dimensions: {
         get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
     },
-}));
+    };
+});
 
 vi.mock('react-native-unistyles', () => ({
     StyleSheet: {

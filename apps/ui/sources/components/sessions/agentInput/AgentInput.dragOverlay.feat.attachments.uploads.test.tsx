@@ -6,8 +6,8 @@ import renderer, { act } from 'react-test-renderer';
 
 let lastMultiTextInputProps: any = null;
 
-vi.mock('react-native', async (importOriginal) => {
-    const actual = await importOriginal<any>();
+vi.mock('react-native', async () => {
+    const actual = await import('@/dev/reactNativeStub');
     return {
         ...actual,
         TurboModuleRegistry: {
@@ -79,6 +79,10 @@ vi.mock('@/sync/domains/state/storage', () => ({
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
     getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
+}));
+
+vi.mock('@/sync/store/hooks', () => ({
+    useLocalSetting: () => 1,
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
