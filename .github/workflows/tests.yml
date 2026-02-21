@@ -6,6 +6,8 @@ on:
     branches:
       - dev
       - main
+    branches-ignore:
+      - "deploy/**"
   workflow_call:
     inputs:
       run_ui:
