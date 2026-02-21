@@ -6,15 +6,34 @@ import { describe, expect, it, vi } from 'vitest';
 
 const sessionExecutionRunActionSpy = vi.fn(async (..._args: any[]) => ({ ok: true }));
 
-vi.mock('react-native', () => ({
-  View: 'View',
-  Text: 'Text',
-  Pressable: 'Pressable',
-  TextInput: 'TextInput',
-}));
+vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
 
 vi.mock('react-native-unistyles', () => ({
-  StyleSheet: { create: (fn: any) => fn({ colors: { surfaceHighest: '#111', divider: '#333', text: '#eee', textSecondary: '#aaa' } }) },
+  useUnistyles: () => ({
+    theme: {
+      colors: {
+        surfaceHighest: '#111',
+        divider: '#333',
+        text: '#eee',
+        textSecondary: '#aaa',
+        shadow: { color: '#000', opacity: 0.1 },
+      },
+    },
+  }),
+  StyleSheet: {
+    create: (input: any) =>
+      typeof input === 'function'
+        ? input({
+          colors: {
+            surfaceHighest: '#111',
+            divider: '#333',
+            text: '#eee',
+            textSecondary: '#aaa',
+            shadow: { color: '#000', opacity: 0.1 },
+          },
+        })
+        : input,
+  },
 }));
 
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({

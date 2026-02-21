@@ -104,6 +104,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    getActiveServerSnapshot: () => ({ serverId: 's1', generation: 1 }),
     listServerProfiles: () => [{ id: 's1', name: 'cloud', serverUrl: 'https://api.happier.dev' }],
 }));
 
@@ -135,4 +136,3 @@ describe('SessionGettingStartedGuidance (feature gate)', () => {
         expect(tree.toJSON()).toBeNull();
     });
 });
-

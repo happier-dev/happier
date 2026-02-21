@@ -9,6 +9,8 @@ vi.mock('react-native', () => ({
     View: 'View',
     Text: 'Text',
     Pressable: 'Pressable',
+    Platform: { OS: 'web', select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? null },
+    AppState: { addEventListener: () => ({ remove: () => {} }) },
 }));
 
 vi.mock('@expo/vector-icons', () => ({
@@ -19,12 +21,16 @@ vi.mock('react-native-unistyles', () => ({
     useUnistyles: () => ({
         theme: {
             colors: {
+                surface: '#fff',
+                divider: '#ddd',
+                shadow: { color: '#000', opacity: 0.2 },
                 input: { background: '#fff' },
                 text: '#000',
                 textSecondary: '#666',
             },
         },
     }),
+    StyleSheet: { create: (input: any) => (typeof input === 'function' ? input({ colors: { shadow: { color: '#000', opacity: 0.2 } } }) : input) },
 }));
 
 vi.mock('@/constants/Typography', () => ({

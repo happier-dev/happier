@@ -15,7 +15,8 @@ vi.mock('react-native', () => ({
   Text: 'Text',
   Pressable: 'Pressable',
   TextInput: 'TextInput',
-  Platform: { OS: 'web' },
+  Platform: { OS: 'web', select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? null },
+  AppState: { addEventListener: () => ({ remove: () => {} }) },
   Dimensions: {
     get: () => ({ width: 1200, height: 800 }),
   },
@@ -43,7 +44,12 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
+  AGENT_IDS: ['claude'],
   getAgentCore: () => ({ displayNameKey: 'agent.claude' }),
+}));
+
+vi.mock('@/sync/store/hooks', () => ({
+  useLocalSetting: () => 1,
 }));
 
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({

@@ -17,7 +17,9 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (fn: any) => fn({ colors: { userMessageBackground: '#eee' } }) },
+    StyleSheet: {
+        create: (input: any) => (typeof input === 'function' ? input({ colors: { userMessageBackground: '#eee' } }) : input),
+    },
     useUnistyles: () => ({
         theme: {
             colors: {

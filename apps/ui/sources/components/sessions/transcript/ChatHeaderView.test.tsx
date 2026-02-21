@@ -36,6 +36,9 @@ vi.mock('react-native-unistyles', () => ({
         theme: {
             colors: {
                 header: { background: '#fff', tint: '#111' },
+                surface: '#fff',
+                divider: '#ddd',
+                shadow: { color: '#000', opacity: 0.2 },
             },
         },
     }),
@@ -44,6 +47,9 @@ vi.mock('react-native-unistyles', () => ({
             const theme = {
                 colors: {
                     header: { background: '#fff', tint: '#111' },
+                    surface: '#fff',
+                    divider: '#ddd',
+                    shadow: { color: '#000', opacity: 0.2 },
                 },
             };
             return typeof input === 'function' ? input(theme, {}) : input;

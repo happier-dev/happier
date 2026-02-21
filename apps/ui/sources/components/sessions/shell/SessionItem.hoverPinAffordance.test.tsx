@@ -125,6 +125,18 @@ function resolveOpacity(style: unknown): number | null {
     return null;
 }
 
+function triggerHoverEnter(node: renderer.ReactTestInstance) {
+    node.props.onMouseEnter?.();
+    node.props.onHoverIn?.();
+    node.props.onPointerEnter?.();
+}
+
+function triggerHoverLeave(node: renderer.ReactTestInstance) {
+    node.props.onMouseLeave?.();
+    node.props.onHoverOut?.();
+    node.props.onPointerLeave?.();
+}
+
 describe('SessionItem pin hover affordance (web)', () => {
     it('hides the pin action promptly after leaving the row', async () => {
         const { SessionItem } = await import('./SessionItem');
@@ -157,13 +169,13 @@ describe('SessionItem pin hover affordance (web)', () => {
         expect(resolveOpacity(overlay?.props.style)).toBe(0);
 
         await act(async () => {
-            row.props.onMouseEnter?.();
+            triggerHoverEnter(row);
         });
         expect(overlay?.props.pointerEvents).toBe('auto');
         expect(resolveOpacity(overlay?.props.style)).toBe(1);
 
         await act(async () => {
-            row.props.onMouseLeave?.();
+            triggerHoverLeave(row);
         });
         expect(overlay?.props.pointerEvents).toBe('none');
         expect(resolveOpacity(overlay?.props.style)).toBe(0);
@@ -198,13 +210,13 @@ describe('SessionItem pin hover affordance (web)', () => {
         const overlay = pin.parent;
 
         await act(async () => {
-            row.props.onMouseEnter?.();
+            triggerHoverEnter(row);
         });
         expect(overlay?.props.pointerEvents).toBe('auto');
         expect(resolveOpacity(overlay?.props.style)).toBe(1);
 
         await act(async () => {
-            row.props.onMouseLeave?.();
+            triggerHoverLeave(row);
         });
 
         expect(overlay?.props.pointerEvents).toBe('none');

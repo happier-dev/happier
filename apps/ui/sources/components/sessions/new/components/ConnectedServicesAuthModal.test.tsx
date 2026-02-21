@@ -40,6 +40,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 
 vi.mock('@/sync/store/hooks', () => ({
   useSettings: () => useSettingsSpy(),
+  useLocalSetting: () => 1,
 }));
 
 vi.mock('@/sync/api/account/apiConnectedServicesQuotasV2', () => ({

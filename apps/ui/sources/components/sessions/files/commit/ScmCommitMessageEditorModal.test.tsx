@@ -4,12 +4,13 @@ import renderer, { act } from 'react-test-renderer';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    TextInput: 'TextInput',
-    Pressable: 'Pressable',
-}));
+vi.mock('react-native', async () => {
+    const rn = await import('@/dev/reactNativeStub');
+    return {
+        ...rn,
+        Platform: { ...rn.Platform, OS: 'ios', select: (spec: any) => spec?.ios ?? spec?.default ?? spec?.web ?? spec?.android },
+    };
+});
 
 vi.mock('react-native-unistyles', () => ({
     useUnistyles: () => ({
