@@ -8,6 +8,13 @@ describe('isLoopbackHostname', () => {
         expect(isLoopbackHostname('localhost.')).toBe(true);
     });
 
+    it('treats *.localhost as loopback', () => {
+        expect(isLoopbackHostname('happier.localhost')).toBe(true);
+        expect(isLoopbackHostname('happier.localhost.')).toBe(true);
+        expect(isLoopbackHostname('a.b.c.localhost')).toBe(true);
+        expect(isLoopbackHostname('HAPPIER.LOCALHOST')).toBe(true);
+    });
+
     it('treats 127.0.0.0/8 as loopback', () => {
         expect(isLoopbackHostname('127.0.0.1')).toBe(true);
         expect(isLoopbackHostname('127.0.0.2')).toBe(true);

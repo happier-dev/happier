@@ -102,6 +102,9 @@ export function isLoopbackHostname(hostname: string): boolean {
     const normalized = withoutZoneId.toLowerCase();
 
     if (normalized === 'localhost') return true;
+    // RFC 6761: any name ending in ".localhost" is a special-use domain that resolves to loopback.
+    // This allows local dev setups to safely use `http://*.localhost` as an OAuth return URL.
+    if (normalized.endsWith('.localhost')) return true;
     const legacyIpv4Loopback = isLegacyIpv4LoopbackOrNull(normalized);
     if (legacyIpv4Loopback !== null) return legacyIpv4Loopback;
 
