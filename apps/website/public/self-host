@@ -9,6 +9,9 @@ if [[ -n "${HAPPIER_SELF_HOST_MODE:-}" ]]; then
 fi
 WITH_CLI="${HAPPIER_WITH_CLI:-1}"
 NONINTERACTIVE="${HAPPIER_NONINTERACTIVE:-0}"
+ACTION="${HAPPIER_INSTALLER_ACTION:-install}" # install|check|uninstall|restart
+DEBUG_MODE="${HAPPIER_INSTALLER_DEBUG:-0}"
+PURGE_DATA="${HAPPIER_SELF_HOST_PURGE_DATA:-0}"
 HAPPIER_HOME="${HAPPIER_HOME:-${HOME}/.happier}"
 STACK_INSTALL_DIR="${HAPPIER_STACK_INSTALL_ROOT:-}"
 STACK_BIN_DIR="${HAPPIER_STACK_BIN_DIR:-}"
@@ -101,6 +104,12 @@ Options:
   --channel <stable|preview>
   --stable
   --preview
+  --check
+  --restart
+  --uninstall [--purge-data]
+  --reset
+  --purge-data
+  --debug
   -h, --help
 EOF
 }
@@ -172,6 +181,31 @@ while [[ $# -gt 0 ]]; do
       CHANNEL="preview"
       shift 1
       ;;
+    --check)
+      ACTION="check"
+      shift 1
+      ;;
+    --restart)
+      ACTION="restart"
+      shift 1
+      ;;
+    --uninstall)
+      ACTION="uninstall"
+      shift 1
+      ;;
+    --reset)
+      ACTION="uninstall"
+      PURGE_DATA="1"
+      shift 1
+      ;;
+    --purge-data)
+      PURGE_DATA="1"
+      shift 1
+      ;;
+    --debug)
+      DEBUG_MODE="1"
+      shift 1
+      ;;
     --)
       shift 1
       break
@@ -183,6 +217,10 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "${DEBUG_MODE}" == "1" ]]; then
+  set -x
+fi
 
 if [[ "${MODE}" != "user" && "${MODE}" != "system" ]]; then
   echo "Invalid mode: ${MODE}. Expected user or system." >&2
@@ -255,6 +293,101 @@ esac
 TAG="stack-stable"
 if [[ "${CHANNEL}" == "preview" ]]; then
   TAG="stack-preview"
+fi
+
+resolve_hstack_path() {
+  if command -v hstack >/dev/null 2>&1; then
+    command -v hstack
+    return 0
+  fi
+  if [[ -x "${STACK_INSTALL_DIR}/bin/hstack" ]]; then
+    echo "${STACK_INSTALL_DIR}/bin/hstack"
+    return 0
+  fi
+  if [[ -x "${STACK_BIN_DIR}/hstack" ]]; then
+    echo "${STACK_BIN_DIR}/hstack"
+    return 0
+  fi
+  return 1
+}
+
+print_self_host_log_guidance() {
+  if [[ "${MODE}" == "system" ]]; then
+    SELF_HOST_LOG_DIR="${HAPPIER_SELF_HOST_LOG_DIR:-/var/log/happier}"
+    SELF_HOST_SERVICE_NAME="${HAPPIER_SELF_HOST_SERVICE_NAME:-happier-server}"
+  else
+    SELF_HOST_LOG_DIR="${HAPPIER_SELF_HOST_LOG_DIR:-${HAPPIER_HOME}/self-host/logs}"
+    SELF_HOST_SERVICE_NAME="${HAPPIER_SELF_HOST_SERVICE_NAME:-happier-server}"
+  fi
+  say "  - ${SELF_HOST_LOG_DIR}/server.err.log"
+  say "  - ${SELF_HOST_LOG_DIR}/server.out.log"
+  if [[ "${OS}" == "linux" ]]; then
+    if [[ "${MODE}" == "system" ]]; then
+      say "  - sudo journalctl -u ${SELF_HOST_SERVICE_NAME} -e --no-pager"
+    else
+      say "  - journalctl --user -u ${SELF_HOST_SERVICE_NAME} -e --no-pager"
+    fi
+  fi
+}
+
+action_check() {
+  local hstack=""
+  hstack="$(resolve_hstack_path 2>/dev/null || true)"
+  if [[ -z "${hstack}" ]]; then
+    warn "hstack is not installed."
+    warn "Run: curl -fsSL https://happier.dev/self-host-preview | bash"
+    return 1
+  fi
+  info "Checking Happier Self-Host..."
+  "${hstack}" self-host status --mode="${MODE}" --channel="${CHANNEL}" || true
+  "${hstack}" self-host doctor --mode="${MODE}" --channel="${CHANNEL}"
+  return $?
+}
+
+action_uninstall() {
+  local hstack=""
+  hstack="$(resolve_hstack_path 2>/dev/null || true)"
+  if [[ -z "${hstack}" ]]; then
+    warn "hstack is not installed."
+    return 1
+  fi
+  local args=(self-host uninstall --yes --non-interactive --channel="${CHANNEL}" --mode="${MODE}")
+  if [[ "${PURGE_DATA}" == "1" ]]; then
+    args+=(--purge-data)
+  fi
+  "${hstack}" "${args[@]}"
+  return $?
+}
+
+action_restart() {
+  local service="${HAPPIER_SELF_HOST_SERVICE_NAME:-happier-server}"
+  if [[ "${OS}" == "linux" ]] && command -v systemctl >/dev/null 2>&1; then
+    info "Restarting ${service}..."
+    if [[ "${MODE}" == "system" ]]; then
+      systemctl restart "${service}.service"
+    else
+      systemctl --user restart "${service}.service"
+    fi
+  fi
+  local hstack=""
+  hstack="$(resolve_hstack_path 2>/dev/null || true)"
+  if [[ -n "${hstack}" ]]; then
+    "${hstack}" self-host status --mode="${MODE}" --channel="${CHANNEL}" || true
+  fi
+  return 0
+}
+
+if [[ "${ACTION}" == "check" ]]; then
+  action_check
+  exit $?
+fi
+if [[ "${ACTION}" == "uninstall" ]]; then
+  action_uninstall
+  exit $?
+fi
+if [[ "${ACTION}" == "restart" ]]; then
+  action_restart
+  exit $?
 fi
 
 json_lookup_asset_url() {
@@ -439,6 +572,9 @@ fi
 
 TMP_DIR="$(mktemp -d)"
 cleanup() {
+  if [[ "${DEBUG_MODE}" == "1" ]]; then
+    return
+  fi
   rm -rf "${TMP_DIR}"
 }
 trap cleanup EXIT

@@ -8,6 +8,9 @@ BIN_DIR="${HAPPIER_BIN_DIR:-$HOME/.local/bin}"
 WITH_DAEMON="${HAPPIER_WITH_DAEMON:-1}"
 NO_PATH_UPDATE="${HAPPIER_NO_PATH_UPDATE:-0}"
 NONINTERACTIVE="${HAPPIER_NONINTERACTIVE:-0}"
+ACTION="${HAPPIER_INSTALLER_ACTION:-install}" # install|check|uninstall|restart
+DEBUG_MODE="${HAPPIER_INSTALLER_DEBUG:-0}"
+PURGE_INSTALL_DIR="${HAPPIER_INSTALLER_PURGE:-0}"
 GITHUB_REPO="${HAPPIER_GITHUB_REPO:-happier-dev/happier}"
 GITHUB_TOKEN="${HAPPIER_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}"
 DEFAULT_MINISIGN_PUBKEY="$(cat <<'EOF'
@@ -64,6 +67,168 @@ warn() {
   say "${COLOR_YELLOW}$*${COLOR_RESET}"
 }
 
+shell_command_cache_hint() {
+  local shell_name
+  shell_name="$(basename "${SHELL:-}")"
+  if [[ "${shell_name}" == "zsh" ]]; then
+    say "  rehash"
+  else
+    say "  hash -r"
+  fi
+}
+
+resolve_exe_name() {
+  if [[ "${PRODUCT}" == "server" ]]; then
+    echo "happier-server"
+  else
+    echo "happier"
+  fi
+}
+
+resolve_install_name() {
+  if [[ "${PRODUCT}" == "server" ]]; then
+    echo "Happier Server"
+  else
+    echo "Happier CLI"
+  fi
+}
+
+resolve_installed_binary() {
+  local exe
+  exe="$(resolve_exe_name)"
+  local candidate="${INSTALL_DIR}/bin/${exe}"
+  if [[ -x "${candidate}" ]]; then
+    printf '%s' "${candidate}"
+    return 0
+  fi
+  local from_path
+  from_path="$(command -v "${exe}" 2>/dev/null || true)"
+  if [[ -n "${from_path}" ]] && [[ -x "${from_path}" ]]; then
+    printf '%s' "${from_path}"
+    return 0
+  fi
+  return 1
+}
+
+action_check() {
+  local exe
+  exe="$(resolve_exe_name)"
+  local name
+  name="$(resolve_install_name)"
+
+  local ok="1"
+  local binary_path="${INSTALL_DIR}/bin/${exe}"
+  local shim_path="${BIN_DIR}/${exe}"
+
+  info "${name} check"
+  say "- product: ${PRODUCT}"
+  say "- binary: ${binary_path}"
+  say "- shim: ${shim_path}"
+
+  if [[ ! -x "${binary_path}" ]]; then
+    warn "Missing binary: ${binary_path}"
+    ok="0"
+  fi
+
+  if [[ ! -e "${shim_path}" ]]; then
+    warn "Missing shim: ${shim_path}"
+  fi
+
+  local resolved=""
+  resolved="$(command -v "${exe}" 2>/dev/null || true)"
+  if [[ -n "${resolved}" ]]; then
+    say "- command: ${resolved}"
+  else
+    warn "Command not found on PATH: ${exe}"
+  fi
+
+  local resolved_binary=""
+  resolved_binary="$(resolve_installed_binary 2>/dev/null || true)"
+  if [[ -n "${resolved_binary}" ]]; then
+    local version_out=""
+    version_out="$("${resolved_binary}" --version 2>/dev/null || true)"
+    if [[ -n "${version_out}" ]]; then
+      say "- version: ${version_out}"
+    else
+      warn "Failed to execute: ${resolved_binary}"
+      ok="0"
+    fi
+  fi
+
+  if command -v file >/dev/null 2>&1 && [[ -x "${binary_path}" ]]; then
+    say
+    say "file:"
+    file "${binary_path}" || true
+  fi
+  if command -v xattr >/dev/null 2>&1 && [[ -e "${binary_path}" ]]; then
+    say
+    say "xattr:"
+    xattr -l "${binary_path}" 2>/dev/null || true
+  fi
+
+  say
+  say "Shell tip (if PATH changed in this session):"
+  shell_command_cache_hint
+
+  if [[ "${ok}" == "1" ]]; then
+    success "OK"
+    return 0
+  fi
+  warn "${name} is not installed correctly."
+  return 1
+}
+
+action_restart() {
+  local exe
+  exe="$(resolve_exe_name)"
+  local name
+  name="$(resolve_install_name)"
+
+  local binary=""
+  binary="$(resolve_installed_binary 2>/dev/null || true)"
+  if [[ -z "${binary}" ]]; then
+    warn "${name} is not installed."
+    return 1
+  fi
+  if [[ "${PRODUCT}" != "cli" ]]; then
+    warn "Restart is only supported for the CLI daemon."
+    return 1
+  fi
+
+  info "Restarting daemon service (best-effort)..."
+  if ! "${binary}" daemon service restart >/dev/null 2>&1; then
+    warn "Daemon service restart failed (it may not be installed)."
+    warn "Try: ${binary} daemon service install"
+    return 1
+  fi
+  success "Daemon service restarted."
+  return 0
+}
+
+action_uninstall() {
+  local exe
+  exe="$(resolve_exe_name)"
+  local name
+  name="$(resolve_install_name)"
+
+  local binary=""
+  binary="$(resolve_installed_binary 2>/dev/null || true)"
+  if [[ -n "${binary}" && "${PRODUCT}" == "cli" ]]; then
+    "${binary}" daemon service uninstall >/dev/null 2>&1 || true
+  fi
+
+  rm -f "${BIN_DIR}/${exe}" "${INSTALL_DIR}/bin/${exe}.new" "${INSTALL_DIR}/bin/${exe}.previous" || true
+  rm -f "${INSTALL_DIR}/bin/${exe}" || true
+  if [[ "${PURGE_INSTALL_DIR}" == "1" ]]; then
+    rm -rf "${INSTALL_DIR}" || true
+  fi
+
+  success "${name} uninstalled."
+  say "Tip: if your shell still can't find changes, run:"
+  shell_command_cache_hint
+  return 0
+}
+
 tar_extract_gz() {
   local archive_path="$1"
   local dest_dir="$2"
@@ -90,6 +255,11 @@ Options:
   --preview
   --with-daemon
   --without-daemon
+  --check
+  --restart
+  --uninstall [--purge]
+  --reset
+  --debug
   -h, --help
 EOF
 }
@@ -130,6 +300,31 @@ while [[ $# -gt 0 ]]; do
       WITH_DAEMON="0"
       shift 1
       ;;
+    --check)
+      ACTION="check"
+      shift 1
+      ;;
+    --restart)
+      ACTION="restart"
+      shift 1
+      ;;
+    --uninstall)
+      ACTION="uninstall"
+      shift 1
+      ;;
+    --reset)
+      ACTION="uninstall"
+      PURGE_INSTALL_DIR="1"
+      shift 1
+      ;;
+    --purge)
+      PURGE_INSTALL_DIR="1"
+      shift 1
+      ;;
+    --debug)
+      DEBUG_MODE="1"
+      shift 1
+      ;;
     -h|--help)
       usage
       exit 0
@@ -146,13 +341,30 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "preview" ]]; then
-  echo "Invalid HAPPIER_CHANNEL='${CHANNEL}'. Expected stable or preview." >&2
-  exit 1
+if [[ "${DEBUG_MODE}" == "1" ]]; then
+  set -x
 fi
 
 if [[ "${PRODUCT}" != "cli" && "${PRODUCT}" != "server" ]]; then
   echo "Invalid HAPPIER_PRODUCT='${PRODUCT}'. Expected cli or server." >&2
+  exit 1
+fi
+
+if [[ "${ACTION}" == "check" ]]; then
+  action_check
+  exit $?
+fi
+if [[ "${ACTION}" == "restart" ]]; then
+  action_restart
+  exit $?
+fi
+if [[ "${ACTION}" == "uninstall" ]]; then
+  action_uninstall
+  exit $?
+fi
+
+if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "preview" ]]; then
+  echo "Invalid HAPPIER_CHANNEL='${CHANNEL}'. Expected stable or preview." >&2
   exit 1
 fi
 
@@ -393,6 +605,8 @@ append_path_hint() {
     else
       say "  source \"$HOME/.profile\""
     fi
+    say "If your shell still can't find ${EXE_NAME}, run:"
+    shell_command_cache_hint
     say "Or open a new terminal."
   elif [[ "${updated}" == "1" ]]; then
     echo
@@ -491,6 +705,9 @@ fi
 
 TMP_DIR="$(mktemp -d)"
 cleanup() {
+  if [[ "${DEBUG_MODE}" == "1" ]]; then
+    return
+  fi
   rm -rf "${TMP_DIR}"
 }
 trap cleanup EXIT
@@ -536,8 +753,18 @@ if [[ -z "${BINARY_PATH}" ]]; then
 fi
 
 mkdir -p "${INSTALL_DIR}/bin" "${BIN_DIR}"
-cp "${BINARY_PATH}" "${INSTALL_DIR}/bin/${EXE_NAME}"
-chmod +x "${INSTALL_DIR}/bin/${EXE_NAME}"
+TARGET_BIN="${INSTALL_DIR}/bin/${EXE_NAME}"
+STAGED_BIN="${TARGET_BIN}.new"
+PREVIOUS_BIN="${TARGET_BIN}.previous"
+cp "${BINARY_PATH}" "${STAGED_BIN}"
+chmod +x "${STAGED_BIN}"
+if [[ -f "${TARGET_BIN}" ]]; then
+  cp "${TARGET_BIN}" "${PREVIOUS_BIN}" >/dev/null 2>&1 || true
+  chmod +x "${PREVIOUS_BIN}" >/dev/null 2>&1 || true
+fi
+# Avoid ETXTBSY when replacing a running executable: swap the directory entry atomically.
+mv -f "${STAGED_BIN}" "${TARGET_BIN}"
+chmod +x "${TARGET_BIN}"
 ln -sf "${INSTALL_DIR}/bin/${EXE_NAME}" "${BIN_DIR}/${EXE_NAME}"
 
 append_path_hint
