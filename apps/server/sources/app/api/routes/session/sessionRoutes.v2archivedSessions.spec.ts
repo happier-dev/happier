@@ -20,6 +20,7 @@ describe("sessionRoutes v2 archived sessions listing", () => {
                 id: "s2",
                 seq: 2,
                 accountId: "u1",
+                encryptionMode: "e2ee",
                 createdAt: now,
                 updatedAt: now,
                 archivedAt: now,
@@ -53,6 +54,7 @@ describe("sessionRoutes v2 archived sessions listing", () => {
             sessions: [
                 expect.objectContaining({
                     id: "s2",
+                    encryptionMode: "e2ee",
                     archivedAt: now.getTime(),
                 }),
             ],
@@ -61,4 +63,3 @@ describe("sessionRoutes v2 archived sessions listing", () => {
         });
     });
 });
-

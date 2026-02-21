@@ -11,6 +11,18 @@ const conversationAggregate = vi.fn();
 
 vi.mock("@/storage/db", () => ({
     db: {
+        $transaction: async (fn: any) => fn({
+            voiceSessionLease: {
+                count: (...args: any[]) => leaseCount(...args),
+                create: (...args: any[]) => leaseCreate(...args),
+                findMany: (...args: any[]) => leaseFindMany(...args),
+                delete: (...args: any[]) => leaseDelete(...args),
+                deleteMany: (...args: any[]) => leaseDeleteMany(...args),
+            },
+            voiceConversation: {
+                aggregate: (...args: any[]) => conversationAggregate(...args),
+            },
+        }),
         voiceSessionLease: {
             count: (...args: any[]) => leaseCount(...args),
             create: (...args: any[]) => leaseCreate(...args),

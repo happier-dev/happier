@@ -9,6 +9,7 @@ interface SessionCacheEntry {
     pendingUpdate: number | null;
     userId: string;
     sessionId: string;
+    active: boolean;
 }
 
 interface MachineCacheEntry {
@@ -85,13 +86,23 @@ class ActivityCache {
             const access = await checkSessionAccess(userId, sessionId);
             
             if (access) {
+                const session = await db.session.findUnique({
+                    where: { id: sessionId },
+                    select: { lastActiveAt: true, active: true },
+                });
+                if (!session?.lastActiveAt) {
+                    // Fail closed: presence should not mark unknown sessions as valid.
+                    return false;
+                }
+
                 // Cache the result
                 this.sessionCache.set(cacheKey, {
                     validUntil: now + this.CACHE_TTL,
-                    lastUpdateSent: now,
+                    lastUpdateSent: session.lastActiveAt.getTime(),
                     pendingUpdate: null,
                     userId,
-                    sessionId
+                    sessionId,
+                    active: session.active,
                 });
                 return true;
             }
@@ -159,6 +170,14 @@ class ActivityCache {
         if (!cached) {
             return false; // Should validate first
         }
+
+        // If the session is currently marked inactive, force a DB write to flip it back to active
+        // even if `lastActiveAt` is already recent (e.g. after a restart or previously-buggy writes).
+        if (!cached.active) {
+            cached.pendingUpdate = timestamp;
+            cached.active = true;
+            return true;
+        }
         
         // Only queue if time difference is significant
         const timeDiff = Math.abs(timestamp - cached.lastUpdateSent);
@@ -203,6 +222,7 @@ class ActivityCache {
         if (!cached) return;
         cached.lastUpdateSent = timestamp;
         cached.pendingUpdate = null;
+        cached.active = true;
     }
 
     markMachineUpdateSent(machineId: string, timestamp: number): void {
@@ -244,7 +264,7 @@ class ActivityCache {
         if (sessionUpdatesById.size > 0) {
             try {
                 await Promise.all(Array.from(sessionUpdatesById.entries()).map(([sessionId, timestamp]) =>
-                    db.session.update({
+                    db.session.updateMany({
                         where: { id: sessionId },
                         data: { lastActiveAt: new Date(timestamp), active: true }
                     })

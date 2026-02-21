@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { encodeV2SessionListCursorV1 } from "@happier-dev/protocol";
+
 import {
     createSessionRouteReply,
     registerSessionRoutesAndGetHandler,
@@ -20,6 +22,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                 id: "s3",
                 seq: 3,
                 accountId: "u1",
+                encryptionMode: "e2ee",
                 createdAt: now,
                 updatedAt: now,
                 archivedAt: null,
@@ -36,6 +39,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                 id: "s2",
                 seq: 2,
                 accountId: "owner",
+                encryptionMode: "e2ee",
                 createdAt: now,
                 updatedAt: now,
                 archivedAt: null,
@@ -58,6 +62,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                 id: "s1",
                 seq: 1,
                 accountId: "u1",
+                encryptionMode: "plain",
                 createdAt: now,
                 updatedAt: now,
                 archivedAt: null,
@@ -87,18 +92,20 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             sessions: [
                 expect.objectContaining({
                     id: "s3",
+                    encryptionMode: "e2ee",
                     dataEncryptionKey: "AQID",
                     share: null,
                     archivedAt: null,
                 }),
                 expect.objectContaining({
                     id: "s2",
+                    encryptionMode: "e2ee",
                     dataEncryptionKey: "BAU=",
                     share: { accessLevel: "edit", canApprovePermissions: true },
                     archivedAt: null,
                 }),
             ],
-            nextCursor: "cursor_v1_s2",
+            nextCursor: encodeV2SessionListCursorV1("s2"),
             hasNext: true,
         });
     });

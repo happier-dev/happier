@@ -95,7 +95,7 @@ const ENCRYPTED_DATA_KEY = Buffer.from(Uint8Array.from([0, ...new Array(73).fill
 describe("shareRoutes (AccountChange integration)", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        dbSessionFindUnique.mockResolvedValue({ id: "s1" });
+        dbSessionFindUnique.mockResolvedValue({ id: "s1", encryptionMode: "e2ee" });
         dbAccountFindUnique.mockResolvedValue({ id: "recipient" });
 
         txSessionShareUpsert = vi.fn(async () => ({
@@ -160,6 +160,49 @@ describe("shareRoutes (AccountChange integration)", () => {
                     seq: 12,
                     body: expect.objectContaining({ t: "session-shared" }),
                 }),
+            }),
+        );
+    });
+
+    it("POST allows plaintext sessions without an encryptedDataKey", async () => {
+        dbSessionFindUnique.mockResolvedValue({ id: "s1", encryptionMode: "plain" });
+        txSessionShareUpsert = vi.fn(async (args: any) => ({
+            id: "share-1",
+            sessionId: "s1",
+            sharedWithUserId: "recipient",
+            accessLevel: "edit",
+            canApprovePermissions: false,
+            encryptedDataKey: null,
+            sharedWithUser: { id: "recipient" },
+            sharedByUser: { id: "owner" },
+            createdAt: new Date(1),
+            updatedAt: new Date(1),
+        }));
+
+        const { shareRoutes } = await import("./shareRoutes");
+        const app = createFakeRouteApp();
+        shareRoutes(app as any);
+
+        const handler = getRouteHandler(app, "POST", "/v1/sessions/:sessionId/shares");
+        const reply = createReplyStub();
+
+        await handler(
+            {
+                userId: "owner",
+                params: { sessionId: "s1" },
+                body: {
+                    userId: "recipient",
+                    accessLevel: "edit",
+                },
+            },
+            reply,
+        );
+
+        expect(reply.code).not.toHaveBeenCalledWith(400);
+        expect(txSessionShareUpsert).toHaveBeenCalledWith(
+            expect.objectContaining({
+                create: expect.objectContaining({ encryptedDataKey: null }),
+                update: expect.objectContaining({ encryptedDataKey: null }),
             }),
         );
     });

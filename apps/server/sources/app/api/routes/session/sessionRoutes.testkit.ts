@@ -42,6 +42,8 @@ export const sessionUpdate = vi.fn<(...args: any[]) => Promise<any>>(async () =>
     throw new Error("sessionUpdate not configured for test");
 });
 export const sessionMessageFindMany = vi.fn<(...args: any[]) => Promise<any[]>>(async () => []);
+export const sessionMessageFindFirst = vi.fn<(...args: any[]) => Promise<any | null>>(async () => null);
+export const sessionMessageFindUnique = vi.fn<(...args: any[]) => Promise<any | null>>(async () => null);
 export const sessionShareFindMany = vi.fn<(...args: any[]) => Promise<any[]>>(async () => []);
 
 export const txSessionFindFirst = vi.fn<(...args: any[]) => Promise<any | null>>(async () => null);
@@ -52,6 +54,7 @@ export const txSessionCreate = vi.fn<(...args: any[]) => Promise<any>>(async () 
 export const txSessionUpdate = vi.fn<(...args: any[]) => Promise<any>>(async () => {
     throw new Error("txSessionUpdate not configured for test");
 });
+export const txAccountFindUnique = vi.fn<(...args: any[]) => Promise<any | null>>(async () => null);
 
 export const catchupFetchesInc = vi.fn();
 export const catchupReturnedInc = vi.fn();
@@ -97,6 +100,8 @@ vi.mock("@/storage/db", () => ({
         sessionShare: { findMany: sessionShareFindMany },
         sessionMessage: {
             findMany: sessionMessageFindMany,
+            findFirst: sessionMessageFindFirst,
+            findUnique: sessionMessageFindUnique,
         },
     },
 }));
@@ -109,6 +114,9 @@ vi.mock("@/app/share/types", () => ({ PROFILE_SELECT: {}, toShareUserProfile: vi
 vi.mock("@/storage/inTx", () => ({
     inTx: vi.fn(async (fn: any) =>
         await fn({
+            account: {
+                findUnique: txAccountFindUnique,
+            },
             session: {
                 create: txSessionCreate,
                 findFirst: txSessionFindFirst,
@@ -132,9 +140,12 @@ export function resetSessionRouteMocks(): void {
         throw new Error("sessionUpdate not configured for test");
     });
     sessionMessageFindMany.mockResolvedValue([]);
+    sessionMessageFindFirst.mockResolvedValue(null);
+    sessionMessageFindUnique.mockResolvedValue(null);
     sessionShareFindMany.mockResolvedValue([]);
     txSessionFindFirst.mockResolvedValue(null);
     txSessionFindUnique.mockResolvedValue(null);
+    txAccountFindUnique.mockResolvedValue({ encryptionMode: "e2ee" });
     txSessionCreate.mockImplementation(async () => {
         throw new Error("txSessionCreate not configured for test");
     });

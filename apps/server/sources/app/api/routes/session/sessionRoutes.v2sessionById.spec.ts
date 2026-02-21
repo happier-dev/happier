@@ -19,6 +19,7 @@ describe("sessionRoutes v2 session by id", () => {
             id: "s1",
             seq: 1,
             accountId: "u1",
+            encryptionMode: "e2ee",
             createdAt: now,
             updatedAt: now,
             archivedAt: null,
@@ -40,6 +41,7 @@ describe("sessionRoutes v2 session by id", () => {
         expect(res).toEqual({
             session: expect.objectContaining({
                 id: "s1",
+                encryptionMode: "e2ee",
                 dataEncryptionKey: "AQID",
                 share: null,
                 archivedAt: null,
@@ -53,6 +55,7 @@ describe("sessionRoutes v2 session by id", () => {
             id: "s2",
             seq: 2,
             accountId: "owner",
+            encryptionMode: "e2ee",
             createdAt: now,
             updatedAt: now,
             archivedAt: null,
@@ -80,6 +83,7 @@ describe("sessionRoutes v2 session by id", () => {
         expect(res).toEqual({
             session: expect.objectContaining({
                 id: "s2",
+                encryptionMode: "e2ee",
                 dataEncryptionKey: "BAU=",
                 share: { accessLevel: "edit", canApprovePermissions: true },
                 archivedAt: null,

@@ -85,6 +85,7 @@ vi.mock("@/storage/inTx", () => {
                 update: vi.fn(async () => ({ seq: 55 })),
             },
             sessionMessage: {
+                findUnique: vi.fn(async () => null),
                 findFirst: vi.fn(async () => null),
                 create: vi.fn(async () => ({
                     id: "m1",

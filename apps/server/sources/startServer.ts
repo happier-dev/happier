@@ -96,7 +96,7 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
     if (filesBackend === 'local') {
         initFilesLocalFromEnv(process.env);
     } else if (filesBackend === 's3') {
-        initFilesS3FromEnv(process.env);
+        await initFilesS3FromEnv(process.env);
     } else {
         throw new Error(`Unsupported HAPPY_FILES_BACKEND/HAPPIER_FILES_BACKEND: ${String(filesBackend)}`);
     }

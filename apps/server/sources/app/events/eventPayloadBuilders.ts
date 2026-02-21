@@ -447,7 +447,7 @@ export function buildSessionSharedUpdate(share: {
         avatar: any | null;
     };
     accessLevel: 'view' | 'edit' | 'admin';
-    encryptedDataKey: Uint8Array;
+    encryptedDataKey: Uint8Array | null;
     createdAt: Date;
 }, updateSeq: number, updateId: string): UpdatePayload {
     return {
@@ -461,7 +461,7 @@ export function buildSessionSharedUpdate(share: {
             shareId: share.id,
             sharedBy: share.sharedByUser,
             accessLevel: share.accessLevel,
-            encryptedDataKey: Buffer.from(share.encryptedDataKey).toString('base64'),
+            ...(share.encryptedDataKey ? { encryptedDataKey: Buffer.from(share.encryptedDataKey).toString('base64') } : {}),
             createdAt: share.createdAt.getTime()
         },
         createdAt: Date.now()
