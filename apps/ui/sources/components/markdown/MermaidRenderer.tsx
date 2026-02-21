@@ -125,6 +125,9 @@ export const MermaidRenderer = React.memo((props: {
     }
 
     // For iOS/Android, use WebView
+    // Never interpolate Mermaid source into HTML; treat it as data to prevent XSS.
+    // Escape '<' so sequences like '</script>' can't terminate the script tag when embedding.
+    const mermaidContentLiteral = React.useMemo(() => JSON.stringify(props.content).replace(/</g, '\\u003c'), [props.content]);
     const html = `
         <!DOCTYPE html>
         <html>
@@ -144,25 +147,44 @@ export const MermaidRenderer = React.memo((props: {
                     align-items: center;
                     width: 100%;
                 }
-                .mermaid {
-                    text-align: center;
-                    width: 100%;
-                }
-                .mermaid svg {
+                #mermaid-container svg {
                     max-width: 100%;
                     height: auto;
+                }
+                .error {
+                    color: #ff6b6b;
+                    font-family: monospace;
+                    white-space: pre-wrap;
                 }
             </style>
         </head>
         <body>
-            <div id="mermaid-container" class="mermaid">
-                ${props.content}
-            </div>
+            <div id="mermaid-container"></div>
             <script>
-                mermaid.initialize({
-                    startOnLoad: true,
-                    theme: 'dark'
-                });
+                (async function() {
+                    const content = ${mermaidContentLiteral};
+                    const container = document.getElementById('mermaid-container');
+
+                    try {
+                        mermaid.initialize({
+                            startOnLoad: false,
+                            theme: 'dark',
+                            securityLevel: 'strict'
+                        });
+
+                        const { svg } = await mermaid.render('mermaid-diagram', content);
+                        container.innerHTML = svg;
+
+                        const height = Math.max(document.body.scrollHeight || 0, container.scrollHeight || 0);
+                        if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+                            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'dimensions', height: height }));
+                        }
+                    } catch (error) {
+                        const raw = (error && error.message) ? String(error.message) : String(error);
+                        const escaped = raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                        container.innerHTML = '<div class="error">Diagram error: ' + escaped + '</div>';
+                    }
+                })();
             </script>
         </body>
         </html>
