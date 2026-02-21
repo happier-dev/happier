@@ -6,11 +6,20 @@ import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { log } from "@/utils/logging/log";
 import * as privacyKit from "privacy-kit";
 import { createArtifact, deleteArtifact, updateArtifact } from "@/app/artifacts/artifactWriteService";
+import { resolveRouteRateLimit } from "@/app/api/utils/apiRateLimitPolicy";
 
 export function artifactsRoutes(app: Fastify) {
     // GET /v1/artifacts - List all artifacts for the account
     app.get('/v1/artifacts', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: resolveRouteRateLimit(process.env, {
+                maxEnvKey: "HAPPIER_ARTIFACTS_RATE_LIMIT_MAX",
+                windowEnvKey: "HAPPIER_ARTIFACTS_RATE_LIMIT_WINDOW",
+                defaultMax: 300,
+                defaultWindow: "1 minute",
+            }),
+        },
         schema: {
             response: {
                 200: z.array(z.object({
@@ -63,6 +72,14 @@ export function artifactsRoutes(app: Fastify) {
     // GET /v1/artifacts/:id - Get single artifact with full body
     app.get('/v1/artifacts/:id', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: resolveRouteRateLimit(process.env, {
+                maxEnvKey: "HAPPIER_ARTIFACTS_RATE_LIMIT_MAX",
+                windowEnvKey: "HAPPIER_ARTIFACTS_RATE_LIMIT_WINDOW",
+                defaultMax: 300,
+                defaultWindow: "1 minute",
+            }),
+        },
         schema: {
             params: z.object({
                 id: z.string()

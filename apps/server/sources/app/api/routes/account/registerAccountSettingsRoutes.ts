@@ -6,11 +6,20 @@ import { log } from "@/utils/logging/log";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { type Fastify } from "../../types";
+import { resolveRouteRateLimit } from "@/app/api/utils/apiRateLimitPolicy";
 
 export function registerAccountSettingsRoutes(app: Fastify): void {
     // Get Account Settings API
     app.get('/v1/account/settings', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: resolveRouteRateLimit(process.env, {
+                maxEnvKey: "HAPPIER_ACCOUNT_SETTINGS_RATE_LIMIT_MAX",
+                windowEnvKey: "HAPPIER_ACCOUNT_SETTINGS_RATE_LIMIT_WINDOW",
+                defaultMax: 300,
+                defaultWindow: "1 minute",
+            }),
+        },
         schema: {
             response: {
                 200: z.object({

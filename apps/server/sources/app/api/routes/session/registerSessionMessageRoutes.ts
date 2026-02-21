@@ -8,9 +8,75 @@ import { createSessionMessage } from "@/app/session/sessionWriteService";
 import { checkSessionAccess } from "@/app/share/accessControl";
 import { db } from "@/storage/db";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
+import { resolveRouteRateLimit } from "@/app/api/utils/apiRateLimitPolicy";
 import { type Fastify } from "../../types";
 
 export function registerSessionMessageRoutes(app: Fastify) {
+    app.get('/v2/sessions/:sessionId/messages/by-local-id/:localId', {
+        schema: {
+            params: z.object({
+                sessionId: z.string(),
+                localId: z.string().min(1),
+            }),
+            response: {
+                200: z.object({
+                    message: z.object({
+                        id: z.string(),
+                        seq: z.number().int().min(0),
+                        localId: z.string().nullable(),
+                        content: SessionStoredMessageContentSchema,
+                        createdAt: z.number().int().min(0),
+                        updatedAt: z.number().int().min(0),
+                    }).passthrough(),
+                }).passthrough(),
+                404: z.object({ error: z.string() }).passthrough(),
+            },
+        },
+        preHandler: app.authenticate,
+        config: {
+            rateLimit: resolveRouteRateLimit(process.env, {
+                maxEnvKey: "HAPPIER_SESSION_MESSAGES_BY_LOCAL_ID_RATE_LIMIT_MAX",
+                windowEnvKey: "HAPPIER_SESSION_MESSAGES_BY_LOCAL_ID_RATE_LIMIT_WINDOW",
+                defaultMax: 600,
+                defaultWindow: "1 minute",
+            }),
+        },
+    }, async (request, reply) => {
+        const userId = request.userId;
+        const { sessionId, localId } = request.params;
+
+        const access = await checkSessionAccess(userId, sessionId);
+        if (!access) {
+            return reply.code(404).send({ error: 'Session not found' });
+        }
+
+        const row = await db.sessionMessage.findUnique({
+            where: { sessionId_localId: { sessionId, localId } },
+            select: {
+                id: true,
+                seq: true,
+                localId: true,
+                content: true,
+                createdAt: true,
+                updatedAt: true,
+            },
+        });
+        if (!row) {
+            return reply.code(404).send({ error: 'Message not found' });
+        }
+
+        return reply.send({
+            message: {
+                id: row.id,
+                seq: row.seq,
+                localId: row.localId,
+                content: row.content,
+                createdAt: row.createdAt.getTime(),
+                updatedAt: row.updatedAt.getTime(),
+            },
+        });
+    });
+
     app.get('/v1/sessions/:sessionId/messages', {
         schema: {
             params: z.object({
@@ -29,7 +95,15 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 }
             }).optional(),
         },
-        preHandler: app.authenticate
+        preHandler: app.authenticate,
+        config: {
+            rateLimit: resolveRouteRateLimit(process.env, {
+                maxEnvKey: "HAPPIER_SESSION_MESSAGES_RATE_LIMIT_MAX",
+                windowEnvKey: "HAPPIER_SESSION_MESSAGES_RATE_LIMIT_WINDOW",
+                defaultMax: 600,
+                defaultWindow: "1 minute",
+            }),
+        },
     }, async (request, reply) => {
         const userId = request.userId;
         const { sessionId } = request.params;

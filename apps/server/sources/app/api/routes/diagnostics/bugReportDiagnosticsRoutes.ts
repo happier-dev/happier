@@ -6,6 +6,7 @@ import { redactBugReportSensitiveText } from "@happier-dev/protocol";
 
 import { parseBooleanEnv, parseIntEnv } from "@/config/env";
 import { isServerOwnerUserId, resolveServerOwnerUserIds } from "@/app/features/serverOwners";
+import { gateRateLimitConfig } from "@/app/api/utils/apiRateLimitPolicy";
 import { type Fastify } from "../../types";
 
 function resolveServerLogPath(): string | null {
@@ -83,10 +84,10 @@ export function bugReportDiagnosticsRoutes(app: Fastify) {
         },
         preHandler: app.authenticate,
         config: {
-            rateLimit: {
+            rateLimit: gateRateLimitConfig(process.env, {
                 max: resolveDiagnosticsRateLimitMax(process.env.HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_RATE_LIMIT_MAX),
                 timeWindow: resolveDiagnosticsRateLimitWindow(process.env.HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_RATE_LIMIT_WINDOW),
-            },
+            }),
         },
     }, async (request, reply) => {
         const enabled = parseBooleanEnv(process.env.HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_ENABLED, false);

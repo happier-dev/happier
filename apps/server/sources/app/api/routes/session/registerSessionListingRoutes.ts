@@ -1,6 +1,14 @@
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 
+import {
+  V2SessionByIdNotFoundSchema,
+  V2SessionByIdResponseSchema,
+  V2SessionListResponseSchema,
+  decodeV2SessionListCursorV1,
+  encodeV2SessionListCursorV1,
+} from "@happier-dev/protocol";
+import { resolveRouteRateLimit } from "@/app/api/utils/apiRateLimitPolicy";
 import { PROFILE_SELECT, toShareUserProfile } from "@/app/share/types";
 import { db } from "@/storage/db";
 import { type Fastify } from "../../types";
@@ -12,6 +20,14 @@ function encodeDataEncryptionKey(value: Uint8Array | null): string | null {
 export function registerSessionListingRoutes(app: Fastify) {
     app.get('/v1/sessions', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: resolveRouteRateLimit(process.env, {
+                maxEnvKey: "HAPPIER_SESSIONS_LIST_RATE_LIMIT_MAX",
+                windowEnvKey: "HAPPIER_SESSIONS_LIST_RATE_LIMIT_WINDOW",
+                defaultMax: 300,
+                defaultWindow: "1 minute",
+            }),
+        },
     }, async (request, reply) => {
         const userId = request.userId;
 
@@ -127,6 +143,9 @@ export function registerSessionListingRoutes(app: Fastify) {
     app.get('/v2/sessions/active', {
         preHandler: app.authenticate,
         schema: {
+            response: {
+                200: V2SessionListResponseSchema,
+            },
             querystring: z.object({
                 limit: z.coerce.number().int().min(1).max(500).default(150)
             }).optional()
@@ -182,22 +201,34 @@ export function registerSessionListingRoutes(app: Fastify) {
     app.get('/v2/sessions', {
         preHandler: app.authenticate,
         schema: {
+            response: {
+                200: V2SessionListResponseSchema,
+                400: z.object({ error: z.literal('Invalid cursor format') }),
+            },
             querystring: z.object({
                 cursor: z.string().optional(),
                 limit: z.coerce.number().int().min(1).max(200).default(50),
             }).optional()
-        }
+        },
+        config: {
+            rateLimit: resolveRouteRateLimit(process.env, {
+                maxEnvKey: "HAPPIER_SESSIONS_LIST_RATE_LIMIT_MAX",
+                windowEnvKey: "HAPPIER_SESSIONS_LIST_RATE_LIMIT_WINDOW",
+                defaultMax: 300,
+                defaultWindow: "1 minute",
+            }),
+        },
     }, async (request, reply) => {
         const userId = request.userId;
         const { cursor, limit = 50 } = request.query || {};
 
         let cursorSessionId: string | undefined;
         if (cursor) {
-            if (cursor.startsWith('cursor_v1_')) {
-                cursorSessionId = cursor.substring(10);
-            } else {
+            const decoded = decodeV2SessionListCursorV1(cursor);
+            if (!decoded) {
                 return reply.code(400).send({ error: 'Invalid cursor format' });
             }
+            cursorSessionId = decoded;
         }
 
         const where: Prisma.SessionWhereInput = {
@@ -247,7 +278,7 @@ export function registerSessionListingRoutes(app: Fastify) {
         let nextCursor: string | null = null;
         if (hasNext && resultSessions.length > 0) {
             const lastSession = resultSessions[resultSessions.length - 1];
-            nextCursor = `cursor_v1_${lastSession.id}`;
+            nextCursor = encodeV2SessionListCursorV1(lastSession.id);
         }
 
         return reply.send({
@@ -286,6 +317,10 @@ export function registerSessionListingRoutes(app: Fastify) {
     app.get('/v2/sessions/archived', {
         preHandler: app.authenticate,
         schema: {
+            response: {
+                200: V2SessionListResponseSchema,
+                400: z.object({ error: z.literal('Invalid cursor format') }),
+            },
             querystring: z.object({
                 cursor: z.string().optional(),
                 limit: z.coerce.number().int().min(1).max(200).default(50),
@@ -297,11 +332,11 @@ export function registerSessionListingRoutes(app: Fastify) {
 
         let cursorSessionId: string | undefined;
         if (cursor) {
-            if (cursor.startsWith('cursor_v1_')) {
-                cursorSessionId = cursor.substring(10);
-            } else {
+            const decoded = decodeV2SessionListCursorV1(cursor);
+            if (!decoded) {
                 return reply.code(400).send({ error: 'Invalid cursor format' });
             }
+            cursorSessionId = decoded;
         }
 
         const where: Prisma.SessionWhereInput = {
@@ -352,7 +387,7 @@ export function registerSessionListingRoutes(app: Fastify) {
         let nextCursor: string | null = null;
         if (hasNext && resultSessions.length > 0) {
             const lastSession = resultSessions[resultSessions.length - 1];
-            nextCursor = `cursor_v1_${lastSession.id}`;
+            nextCursor = encodeV2SessionListCursorV1(lastSession.id);
         }
 
         return reply.send({
@@ -395,31 +430,8 @@ export function registerSessionListingRoutes(app: Fastify) {
                 sessionId: z.string(),
             }),
             response: {
-                200: z.object({
-                    session: z.object({
-                        id: z.string(),
-                        seq: z.number(),
-                        createdAt: z.number(),
-                        updatedAt: z.number(),
-                        active: z.boolean(),
-                        activeAt: z.number(),
-                        archivedAt: z.number().nullable(),
-                        metadata: z.string(),
-                        metadataVersion: z.number(),
-                        agentState: z.string().nullable(),
-                        agentStateVersion: z.number(),
-                        pendingCount: z.number().int().min(0),
-                        pendingVersion: z.number().int().min(0),
-                        dataEncryptionKey: z.string().nullable(),
-                        share: z
-                            .object({
-                                accessLevel: z.string(),
-                                canApprovePermissions: z.boolean(),
-                            })
-                            .nullable(),
-                    }),
-                }),
-                404: z.object({ error: z.literal('Session not found') }),
+                200: V2SessionByIdResponseSchema,
+                404: V2SessionByIdNotFoundSchema,
             },
         },
     }, async (request, reply) => {

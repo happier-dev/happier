@@ -4,10 +4,19 @@ import { FeedBodySchema } from "@/app/feed/types";
 import { feedGet } from "@/app/feed/feedGet";
 import { Context } from "@/context";
 import { db } from "@/storage/db";
+import { resolveRouteRateLimit } from "@/app/api/utils/apiRateLimitPolicy";
 
 export function feedRoutes(app: Fastify) {
     app.get('/v1/feed', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: resolveRouteRateLimit(process.env, {
+                maxEnvKey: "HAPPIER_FEED_RATE_LIMIT_MAX",
+                windowEnvKey: "HAPPIER_FEED_RATE_LIMIT_WINDOW",
+                defaultMax: 300,
+                defaultWindow: "1 minute",
+            }),
+        },
         schema: {
             querystring: z.object({
                 before: z.string().optional(),

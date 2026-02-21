@@ -1,14 +1,16 @@
+import { createApiRateLimitKeyGenerator, gateRateLimitConfig } from "@/app/api/utils/apiRateLimitPolicy";
+
 export function oauthExternalRateLimitPerIp() {
-    return {
+    return gateRateLimitConfig(process.env, {
         max: 60,
         timeWindow: "1 minute",
-    };
+    });
 }
 
 export function oauthExternalRateLimitPerUser() {
-    return {
+    return gateRateLimitConfig(process.env, {
         max: 60,
         timeWindow: "1 minute",
-        keyGenerator: (request: any) => request?.userId?.toString?.() ?? request?.ip ?? "unknown",
-    };
+        keyGenerator: createApiRateLimitKeyGenerator(),
+    });
 }

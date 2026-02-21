@@ -9,6 +9,7 @@ import { activityCache } from "@/app/presence/sessionCache";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { timingSafeEqual } from "node:crypto";
+import { resolveRouteRateLimit } from "@/app/api/utils/apiRateLimitPolicy";
 
 function bytesEqual(a: Uint8Array | null, b: Uint8Array | null) {
     if (a === b) return true;
@@ -45,6 +46,12 @@ function serializeMachineRow(row: {
         createdAt: row.createdAt.getTime(),
         updatedAt: row.updatedAt.getTime(),
     };
+}
+
+function isMachineRevokedError(value: unknown): value is { error: 'machine_revoked' } {
+    if (typeof value !== 'object' || value === null) return false;
+    if (!('error' in value)) return false;
+    return (value as { error?: unknown }).error === 'machine_revoked';
 }
 
 export function machinesRoutes(app: Fastify) {
@@ -148,7 +155,7 @@ export function machinesRoutes(app: Fastify) {
                 return reply.code(404).send({ error: "machine_not_found" });
             }
 
-            if ('error' in updated && updated.error === 'machine_revoked') {
+            if (isMachineRevokedError(updated)) {
                 return reply.code(410).send({ error: 'machine_revoked' });
             }
 
@@ -314,6 +321,14 @@ export function machinesRoutes(app: Fastify) {
     // Machines API
     app.get('/v1/machines', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: resolveRouteRateLimit(process.env, {
+                maxEnvKey: "HAPPIER_MACHINES_RATE_LIMIT_MAX",
+                windowEnvKey: "HAPPIER_MACHINES_RATE_LIMIT_WINDOW",
+                defaultMax: 300,
+                defaultWindow: "1 minute",
+            }),
+        },
     }, async (request, reply) => {
         const userId = request.userId;
 
@@ -328,6 +343,14 @@ export function machinesRoutes(app: Fastify) {
     // GET /v1/machines/:id - Get single machine by ID
     app.get('/v1/machines/:id', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: resolveRouteRateLimit(process.env, {
+                maxEnvKey: "HAPPIER_MACHINES_RATE_LIMIT_MAX",
+                windowEnvKey: "HAPPIER_MACHINES_RATE_LIMIT_WINDOW",
+                defaultMax: 300,
+                defaultWindow: "1 minute",
+            }),
+        },
         schema: {
             params: z.object({
                 id: z.string()

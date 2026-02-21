@@ -5,6 +5,7 @@ import { kvList } from "@/app/kv/kvList";
 import { kvBulkGet } from "@/app/kv/kvBulkGet";
 import { kvMutate } from "@/app/kv/kvMutate";
 import { log } from "@/utils/logging/log";
+import { resolveRouteRateLimit } from "@/app/api/utils/apiRateLimitPolicy";
 
 export function kvRoutes(app: Fastify) {
     // GET /v1/kv/:key - Get single value
@@ -49,6 +50,14 @@ export function kvRoutes(app: Fastify) {
     // GET /v1/kv - List key-value pairs with optional prefix filter
     app.get('/v1/kv', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: resolveRouteRateLimit(process.env, {
+                maxEnvKey: "HAPPIER_KV_LIST_RATE_LIMIT_MAX",
+                windowEnvKey: "HAPPIER_KV_LIST_RATE_LIMIT_WINDOW",
+                defaultMax: 600,
+                defaultWindow: "1 minute",
+            }),
+        },
         schema: {
             querystring: z.object({
                 prefix: z.string().optional(),

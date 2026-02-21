@@ -5,6 +5,7 @@ import { parseIntEnv } from "@/config/env";
 import { resolveElevenLabsAgentId, resolveElevenLabsApiBaseUrl } from "@/voice/elevenLabsEnv";
 import { readVoiceFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveServerFeaturesForGating } from "@/app/features/catalog/serverFeatureGate";
+import { createApiRateLimitKeyGenerator, gateRateLimitConfig } from "@/app/api/utils/apiRateLimitPolicy";
 import { type Fastify } from "../../types";
 
 type VoiceDenyReason =
@@ -34,17 +35,17 @@ export function registerVoiceMintRoute(app: Fastify, path: "/v1/voice/token" | "
             const maxPerMinute = Math.max(0, parseIntEnv(process.env.VOICE_TOKEN_MAX_PER_MINUTE, 10));
             return {
                 rateLimit:
-                    maxPerMinute <= 0
-                        ? false
-                        : {
+                    gateRateLimitConfig(
+                        process.env,
+                        maxPerMinute <= 0
+                            ? false
+                            : {
                               max: maxPerMinute,
                               timeWindow: "1 minute",
-                              // Rate limit per authenticated user when possible.
-                              keyGenerator: (req: any) =>
-                                  req && typeof (req as any).userId === "string"
-                                      ? (req as any).userId
-                                      : req.ip,
+                              // Prefer Authorization-header-derived keys to avoid proxy/IP misconfig surprises.
+                              keyGenerator: createApiRateLimitKeyGenerator(),
                           },
+                    ),
             };
         })(),
         schema: {
@@ -251,56 +252,58 @@ export function registerVoiceMintRoute(app: Fastify, path: "/v1/voice/token" | "
             grantedBy = "free";
         }
 
-        // Persist a session lease before minting to close race windows.
         let leaseId: string | null = null;
+        // Persist the session lease + enforce concurrency/quota within the same transaction to
+        // avoid TOCTOU windows under concurrent requests (especially on sqlite).
         try {
-            const lease = await db.voiceSessionLease.create({
-                data: {
-                    accountId: userId,
-                    sessionId,
-                    periodKey,
-                    grantedBy,
-                    elevenLabsAgentId,
-                    expiresAt,
-                },
-                select: { id: true },
-            });
-            leaseId = lease.id;
-        } catch (e) {
-            log({ module: "voice" }, "Failed to create voice session lease", e);
-            return reply.code(503).send({ allowed: false, reason: "upstream_error" satisfies VoiceDenyReason });
-        }
-
-        // Enforce concurrency/quota after creating a lease to close TOCTOU race windows under concurrent requests.
-        try {
-            const activeWinners = await db.voiceSessionLease.findMany({
-                where: { accountId: userId, expiresAt: { gt: now }, conversation: null },
-                orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-                take: maxConcurrentSessions,
-                select: { id: true },
-            });
-            const isWithinConcurrency = activeWinners.some((l) => l.id === leaseId);
-            if (!isWithinConcurrency) {
-                await db.voiceSessionLease.delete({ where: { id: leaseId } }).catch(() => {});
-                return reply.code(429).send({ allowed: false, reason: "too_many_sessions" satisfies VoiceDenyReason });
-            }
-
-            if (requireSubscription && grantedBy === "free" && freeSessionsPerMonth > 0) {
-                const quotaWinners = await db.voiceSessionLease.findMany({
-                    where: { accountId: userId, periodKey, grantedBy: "free" },
-                    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-                    take: freeSessionsPerMonth,
+            const result = await db.$transaction(async (tx) => {
+                const lease = await tx.voiceSessionLease.create({
+                    data: {
+                        accountId: userId,
+                        sessionId,
+                        periodKey,
+                        grantedBy,
+                        elevenLabsAgentId,
+                        expiresAt,
+                    },
                     select: { id: true },
                 });
-                const isWithinQuota = quotaWinners.some((l) => l.id === leaseId);
-                if (!isWithinQuota) {
-                    await db.voiceSessionLease.delete({ where: { id: leaseId } }).catch(() => {});
-                    return reply.code(403).send({ allowed: false, reason: "quota_exceeded" satisfies VoiceDenyReason });
+
+                const activeWinners = await tx.voiceSessionLease.findMany({
+                    where: { accountId: userId, expiresAt: { gt: now }, conversation: null },
+                    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+                    take: maxConcurrentSessions,
+                    select: { id: true },
+                });
+                const isWithinConcurrency = activeWinners.some((l) => l.id === lease.id);
+                if (!isWithinConcurrency) {
+                    await tx.voiceSessionLease.delete({ where: { id: lease.id } }).catch(() => {});
+                    return { ok: false as const, statusCode: 429 as const, reason: "too_many_sessions" satisfies VoiceDenyReason };
                 }
+
+                if (requireSubscription && grantedBy === "free" && freeSessionsPerMonth > 0) {
+                    const quotaWinners = await tx.voiceSessionLease.findMany({
+                        where: { accountId: userId, periodKey, grantedBy: "free" },
+                        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+                        take: freeSessionsPerMonth,
+                        select: { id: true },
+                    });
+                    const isWithinQuota = quotaWinners.some((l) => l.id === lease.id);
+                    if (!isWithinQuota) {
+                        await tx.voiceSessionLease.delete({ where: { id: lease.id } }).catch(() => {});
+                        return { ok: false as const, statusCode: 403 as const, reason: "quota_exceeded" satisfies VoiceDenyReason };
+                    }
+                }
+
+                return { ok: true as const, leaseId: lease.id };
+            });
+
+            if (!result.ok) {
+                return reply.code(result.statusCode).send({ allowed: false, reason: result.reason });
             }
+            leaseId = result.leaseId;
         } catch (e) {
-            log({ module: "voice" }, "Failed to enforce voice concurrency/quota", e);
-            await db.voiceSessionLease.delete({ where: { id: leaseId } }).catch(() => {});
+            log({ module: "voice" }, "Failed to create/enforce voice session lease", e);
             return reply.code(503).send({ allowed: false, reason: "upstream_error" satisfies VoiceDenyReason });
         }
 

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { type Fastify } from "../../types";
 import { changesRequestsCounter, changesReturnedChangesCounter } from "@/app/monitoring/metrics2";
 import { debug, warn } from "@/utils/logging/log";
+import { resolveRouteRateLimit } from "@/app/api/utils/apiRateLimitPolicy";
 
 function redactIdForLogs(id: string): string {
     if (id.length <= 8) return `${id.slice(0, 2)}…`;
@@ -20,6 +21,14 @@ export function changesRoutes(app: Fastify) {
                 }),
                 404: z.object({ error: z.literal('account-not-found') }),
             },
+        },
+        config: {
+            rateLimit: resolveRouteRateLimit(process.env, {
+                maxEnvKey: "HAPPIER_CHANGES_RATE_LIMIT_MAX",
+                windowEnvKey: "HAPPIER_CHANGES_RATE_LIMIT_WINDOW",
+                defaultMax: 600,
+                defaultWindow: "1 minute",
+            }),
         },
     }, async (request, reply) => {
         const userId = request.userId;
@@ -42,6 +51,14 @@ export function changesRoutes(app: Fastify) {
                 after: z.coerce.number().int().min(0).optional(),
                 limit: z.coerce.number().int().min(1).max(500).default(200),
             }).optional(),
+        },
+        config: {
+            rateLimit: resolveRouteRateLimit(process.env, {
+                maxEnvKey: "HAPPIER_CHANGES_RATE_LIMIT_MAX",
+                windowEnvKey: "HAPPIER_CHANGES_RATE_LIMIT_WINDOW",
+                defaultMax: 600,
+                defaultWindow: "1 minute",
+            }),
         },
     }, async (request, reply) => {
         const userId = request.userId;

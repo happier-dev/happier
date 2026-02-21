@@ -56,6 +56,7 @@ describe("voiceRoutes (rate limit)", () => {
             }),
         );
         expect(opts?.config?.rateLimit?.keyGenerator).toEqual(expect.any(Function));
+        expect(opts?.config?.rateLimit?.keyGenerator?.({ headers: { authorization: "Bearer token_1" }, ip: "203.0.113.9" })).toMatch(/^auth:/);
     });
 
     it("registers /v1/voice/session/complete with a per-user rate limit by default", async () => {
@@ -71,5 +72,6 @@ describe("voiceRoutes (rate limit)", () => {
             }),
         );
         expect(opts?.config?.rateLimit?.keyGenerator).toEqual(expect.any(Function));
+        expect(opts?.config?.rateLimit?.keyGenerator?.({ headers: { authorization: "Bearer token_1" }, ip: "203.0.113.9" })).toMatch(/^auth:/);
     });
 });

@@ -4,6 +4,7 @@ import { db } from "@/storage/db";
 import { parseIntEnv } from "@/config/env";
 import { resolveElevenLabsApiBaseUrl } from "@/voice/elevenLabsEnv";
 import { resolveServerFeaturesForGating } from "@/app/features/catalog/serverFeatureGate";
+import { createApiRateLimitKeyGenerator, gateRateLimitConfig } from "@/app/api/utils/apiRateLimitPolicy";
 import { type Fastify } from "../../types";
 
 function extractConversationAgentId(payload: any): string | null {
@@ -30,16 +31,16 @@ export function registerVoiceSessionCompleteRoute(app: Fastify): void {
             const maxPerMinute = Math.max(0, parseIntEnv(process.env.VOICE_COMPLETE_MAX_PER_MINUTE, 60));
             return {
                 rateLimit:
-                    maxPerMinute <= 0
-                        ? false
-                        : {
+                    gateRateLimitConfig(
+                        process.env,
+                        maxPerMinute <= 0
+                            ? false
+                            : {
                               max: maxPerMinute,
                               timeWindow: "1 minute",
-                              keyGenerator: (req: any) =>
-                                  req && typeof (req as any).userId === "string"
-                                      ? (req as any).userId
-                                      : req.ip,
+                              keyGenerator: createApiRateLimitKeyGenerator(),
                           },
+                    ),
             };
         })(),
         schema: {

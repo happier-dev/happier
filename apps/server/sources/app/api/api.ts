@@ -29,6 +29,7 @@ import { featuresRoutes } from "./routes/features/featuresRoutes";
 import { sessionPendingRoutes } from "./routes/session/pendingRoutes";
 import { bugReportDiagnosticsRoutes } from "./routes/diagnostics/bugReportDiagnosticsRoutes";
 import { automationRoutes } from "./routes/automations/automationRoutes";
+import { resolveApiRateLimitPluginOptions, resolveApiTrustProxy } from "./utils/apiRateLimitPolicy";
 
 export function resolveApiListenHost(env: Record<string, string | undefined>): string {
     const host = (env.HAPPIER_SERVER_HOST ?? env.HAPPY_SERVER_HOST ?? '').toString().trim();
@@ -41,9 +42,11 @@ export async function startApi() {
     log('Starting API...');
 
     // Start API
+    const trustProxy = resolveApiTrustProxy(process.env);
     const app = fastify({
         loggerInstance: logger,
         bodyLimit: 1024 * 1024 * 100, // 100MB
+        ...(typeof trustProxy !== "undefined" ? { trustProxy } : null),
     });
     app.register(import('@fastify/cors'), {
         origin: '*',
@@ -52,9 +55,7 @@ export async function startApi() {
         allowedHeaders: ['authorization', 'content-type'],
         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
     });
-    app.register(import('@fastify/rate-limit'), {
-        global: false // Only apply to routes with explicit config
-    });
+    app.register(import('@fastify/rate-limit'), resolveApiRateLimitPluginOptions(process.env));
 
     enableOptionalStatics(app);
 
