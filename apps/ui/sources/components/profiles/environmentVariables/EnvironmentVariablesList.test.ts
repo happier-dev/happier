@@ -28,6 +28,7 @@ vi.mock('react-native', () => ({
         OS: 'web',
         select: (options: { web?: unknown; default?: unknown }) => options.web ?? options.default,
     },
+    AppState: { addEventListener: () => ({ remove: () => {} }) },
 }));
 
 type EnvironmentVariablesHookResult = {

@@ -53,6 +53,7 @@ vi.mock('react-native', () => {
             OS: 'ios',
             select: <T,>(obj: { ios?: T; default?: T }) => obj.ios ?? obj.default,
         },
+        AppState: { addEventListener: () => ({ remove: () => {} }) },
         Pressable,
         Text,
         View,

@@ -34,6 +34,7 @@ vi.mock('react-native', () => ({
     Text: 'Text',
     TextInput: 'TextInput',
     Pressable: 'Pressable',
+    AppState: { addEventListener: () => ({ remove: () => {} }) },
     Linking: {},
     useWindowDimensions: () => ({ height: 800, width: 400 }),
 }));
@@ -109,6 +110,7 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
+    AGENT_IDS: [],
     getAgentCore: () => ({ permissions: { modeGroup: 'default' } }),
 }));
 

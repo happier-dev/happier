@@ -23,61 +23,40 @@ vi.mock('react-native', () => ({
         select: (options: { web?: unknown; ios?: unknown; default?: unknown }) =>
             options.web ?? options.ios ?? options.default,
     },
+    AppState: { addEventListener: () => ({ remove: () => {} }) },
 }));
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props),
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            margins: { md: 8 },
-            iconSize: { small: 12, large: 16 },
-            colors: {
-                surface: '#fff',
-                groupped: { sectionTitle: '#666', background: '#fff' },
-                shadow: { color: '#000', opacity: 0.1 },
-                text: '#000',
-                textSecondary: '#666',
-                textDestructive: '#f00',
-                divider: '#ddd',
-                input: { background: '#fff', text: '#000', placeholder: '#999' },
-                button: {
-                    primary: { background: '#000', tint: '#fff' },
-                    secondary: { tint: '#000' },
-                },
-                deleteAction: '#f00',
-                warning: '#f90',
-                success: '#0a0',
+vi.mock('react-native-unistyles', () => {
+    const theme = {
+        margins: { md: 8 },
+        iconSize: { small: 12, large: 16 },
+        colors: {
+            surface: '#fff',
+            groupped: { sectionTitle: '#666', background: '#fff' },
+            shadow: { color: '#000', opacity: 0.1 },
+            text: '#000',
+            textSecondary: '#666',
+            textDestructive: '#f00',
+            divider: '#ddd',
+            input: { background: '#fff', text: '#000', placeholder: '#999' },
+            button: {
+                primary: { background: '#000', tint: '#fff' },
+                secondary: { tint: '#000' },
             },
+            deleteAction: '#f00',
+            warning: '#f90',
+            success: '#0a0',
         },
-    }),
-    StyleSheet: {
-        create: (factory: (theme: unknown) => unknown) =>
-            factory({
-                margins: { md: 8 },
-                iconSize: { small: 12, large: 16 },
-                colors: {
-                    surface: '#fff',
-                    groupped: { sectionTitle: '#666', background: '#fff' },
-                    shadow: { color: '#000', opacity: 0.1 },
-                    text: '#000',
-                    textSecondary: '#666',
-                    textDestructive: '#f00',
-                    divider: '#ddd',
-                    input: { background: '#fff', text: '#000', placeholder: '#999' },
-                    button: {
-                        primary: { background: '#000', tint: '#fff' },
-                        secondary: { tint: '#000' },
-                    },
-                    deleteAction: '#f00',
-                    warning: '#f90',
-                    success: '#0a0',
-                },
-            }),
-    },
-}));
+    };
+    return {
+        useUnistyles: () => ({ theme }),
+        StyleSheet: { create: (input: any) => (typeof input === 'function' ? input(theme, {}) : input) },
+    };
+});
 
 vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: (props: Record<string, unknown>) => React.createElement('Switch', props),
