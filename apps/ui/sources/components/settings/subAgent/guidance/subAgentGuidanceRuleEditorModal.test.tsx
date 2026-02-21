@@ -44,6 +44,7 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
+    AGENT_IDS: [],
     getAgentCore: () => ({ displayNameKey: 'agent.claude' }),
     isAgentId: () => true,
     DEFAULT_AGENT_ID: 'claude',
@@ -63,6 +64,7 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 
 vi.mock('@/sync/store/hooks', () => ({
     useAllMachines: () => [],
+    useLocalSetting: () => 1,
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
