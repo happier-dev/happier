@@ -18,6 +18,10 @@ inputs:
     description: GitHub App private key used to check team membership (optional; when omitted, guard falls back to repo-admin check)
     required: false
     default: ""
+  trusted_actors:
+    description: "Comma-separated list of explicitly trusted actors (e.g. a release bot) that can bypass team membership checks"
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -65,11 +69,24 @@ runs:
         ACTOR: ${{ steps.params.outputs.actor }}
         ORG: ${{ steps.params.outputs.org }}
         TEAM_SLUG: ${{ steps.params.outputs.team_slug }}
+        INPUT_TRUSTED_ACTORS: ${{ inputs.trusted_actors }}
         APP_TOKEN: ${{ steps.app_token.outputs.token }}
         REPO: ${{ github.repository }}
         REPO_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
+
+        trusted_csv="${INPUT_TRUSTED_ACTORS:-}"
+        if [ -n "${trusted_csv}" ]; then
+          IFS=',' read -r -a trusted <<< "${trusted_csv}"
+          for raw in "${trusted[@]}"; do
+            actor="$(echo "${raw}" | xargs)"
+            if [ -n "${actor}" ] && [ "${actor}" = "${ACTOR}" ]; then
+              echo "Actor '${ACTOR}' is explicitly trusted; allowing release workflow."
+              exit 0
+            fi
+          done
+        fi
 
         fallback_repo_admin() {
           if [ -z "${REPO_TOKEN:-}" ]; then
@@ -81,7 +98,8 @@ runs:
             exit 1
           fi
 
-          endpoint="https://api.github.com/repos/${REPO}/collaborators/${ACTOR}/permission"
+          actor_enc="$(jq -nr --arg v "${ACTOR}" '$v|@uri')"
+          endpoint="https://api.github.com/repos/${REPO}/collaborators/${actor_enc}/permission"
           resp_file="$(mktemp)"
           status="$(curl -sS \
             --connect-timeout 10 \
@@ -116,7 +134,8 @@ runs:
           exit 0
         fi
 
-        endpoint="https://api.github.com/orgs/${ORG}/teams/${TEAM_SLUG}/memberships/${ACTOR}"
+        actor_enc="$(jq -nr --arg v "${ACTOR}" '$v|@uri')"
+        endpoint="https://api.github.com/orgs/${ORG}/teams/${TEAM_SLUG}/memberships/${actor_enc}"
         resp_file="$(mktemp)"
         status="$(curl -sS \
           --connect-timeout 10 \

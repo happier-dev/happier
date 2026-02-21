@@ -25,6 +25,7 @@ jobs:
         uses: ./.github/actions/release-actor-guard
         with:
           team_slug: release-admins
+          trusted_actors: happier-release-bot[bot]
           app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
@@ -66,4 +67,3 @@ jobs:
       environment: ${{ needs.target.outputs.environment }}
       component: ${{ needs.target.outputs.component }}
       confirm: ${{ needs.target.outputs.confirm }}
-
