@@ -222,15 +222,53 @@ export async function claudeLocal(opts: {
                 args.push('--allowedTools', opts.allowedTools.join(','));
             }
 
+            // Claude CLI treats the first non-flag token as the prompt. If a positional prompt
+            // is provided before later flags, those flags can be mis-parsed as prompt text.
+            // Ensure positional args come after all flags (including our injected --settings).
+            const flagArgs: string[] = [];
+            const positionalArgs: string[] = [];
+            const flagsWithValue = new Set<string>([
+                '--model',
+                '--permission-mode',
+                '--settings',
+                '--mcp-config',
+                '--allowedTools',
+                '--disallowedTools',
+                '--output-format',
+                '--input-format',
+                '--print',
+                '--append-system-prompt',
+                '--resume',
+                '--session-id',
+            ]);
+
+            if (opts.claudeArgs) {
+                for (let i = 0; i < opts.claudeArgs.length; i++) {
+                    const arg = opts.claudeArgs[i];
+                    if (arg.startsWith('-')) {
+                        flagArgs.push(arg);
+                        if (flagsWithValue.has(arg) && i + 1 < opts.claudeArgs.length) {
+                            flagArgs.push(opts.claudeArgs[i + 1]!);
+                            i++;
+                        }
+                        continue;
+                    }
+                    positionalArgs.push(arg);
+                }
+            }
+
             // Add hook settings for session tracking (when available)
             if (opts.hookSettingsPath) {
                 args.push('--settings', opts.hookSettingsPath);
                 logger.debug(`[ClaudeLocal] Using hook settings: ${opts.hookSettingsPath}`);
             }
 
-            // Add custom Claude arguments LAST (so prompt/slash commands are at the end)
-            if (opts.claudeArgs) {
-                args.push(...opts.claudeArgs)
+            // Add flag arguments before positional prompts.
+            if (flagArgs.length > 0) {
+                args.push(...flagArgs);
+            }
+            if (positionalArgs.length > 0) {
+                args.push(...positionalArgs);
             }
 
             // Prepare environment variables

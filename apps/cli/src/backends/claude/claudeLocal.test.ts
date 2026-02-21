@@ -329,6 +329,33 @@ describe('claudeLocal --continue handling', () => {
             claudeArgs: [],
         })).resolves.toBeTruthy();
     });
+
+    it('places positional prompts after flags (so Claude can parse flags correctly)', async () => {
+        mockClaudeFindLastSession.mockReturnValue(null);
+
+        await claudeLocal({
+            abort: new AbortController().signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            hookSettingsPath: '/tmp/settings.json',
+            claudeArgs: ['--verbose', 'fix the bug in main.ts', '--model', 'opus'],
+        });
+
+        expect(mockSpawn).toHaveBeenCalled();
+        const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+
+        const settingsIndex = spawnArgs.indexOf('--settings');
+        const modelIndex = spawnArgs.indexOf('--model');
+        const promptIndex = spawnArgs.indexOf('fix the bug in main.ts');
+        expect(settingsIndex).toBeGreaterThan(-1);
+        expect(modelIndex).toBeGreaterThan(-1);
+        expect(promptIndex).toBeGreaterThan(-1);
+
+        // Prompt must be after all flags (including --settings).
+        expect(promptIndex).toBeGreaterThan(settingsIndex + 1);
+        expect(promptIndex).toBeGreaterThan(modelIndex + 1);
+    });
 });
 
 describe('claudeLocal launcher selection', () => {
