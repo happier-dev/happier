@@ -15,6 +15,7 @@ vi.mock('react-native', () => {
     type PlatformSelectOptions<T> = { web?: T; default?: T };
     return {
         Platform: { OS: 'web', select: <T,>(options: PlatformSelectOptions<T>) => options.web ?? options.default },
+        AppState: { addEventListener: () => ({ remove: () => {} }) },
         Dimensions: {
             get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
         },

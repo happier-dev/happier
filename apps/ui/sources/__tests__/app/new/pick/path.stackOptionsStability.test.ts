@@ -61,7 +61,8 @@ vi.mock('@/utils/sessions/recentPaths', () => ({
 }));
 
 vi.mock('react-native', () => ({
-    Platform: { OS: 'ios' },
+    Platform: { OS: 'ios', select: (options: any) => options?.ios ?? options?.default ?? options?.web ?? null },
+    AppState: { addEventListener: () => ({ remove: () => {} }) },
     View: 'View',
     Text: 'Text',
     Pressable: 'Pressable',
@@ -72,8 +73,8 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { colors: PICKER_THEME_COLORS } }),
-    StyleSheet: { create: () => ({}) },
+    useUnistyles: () => ({ theme: { colors: { ...PICKER_THEME_COLORS, shadow: { color: '#000', opacity: 0.2 } } } }),
+    StyleSheet: { create: (input: any) => (typeof input === 'function' ? input({ colors: { ...PICKER_THEME_COLORS, shadow: { color: '#000', opacity: 0.2 } } }) : input) },
 }));
 
 vi.mock('@react-navigation/native', () => ({

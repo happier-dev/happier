@@ -23,7 +23,8 @@ vi.mock('react-native', () => ({
     Text: 'Text',
     ScrollView: 'ScrollView',
     ActivityIndicator: 'ActivityIndicator',
-    Platform: { OS: 'web' },
+    Platform: { OS: 'web', select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android },
+    AppState: { addEventListener: () => ({ remove: () => {} }) },
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({

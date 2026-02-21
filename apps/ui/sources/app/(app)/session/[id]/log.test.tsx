@@ -17,17 +17,18 @@ vi.mock('expo-router', () => ({
     useLocalSearchParams: () => ({ id: 'session-1' }),
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    ScrollView: 'ScrollView',
-    Pressable: 'Pressable',
-    Platform: {
-        OS: 'ios',
-        select: (spec: Record<string, unknown>) =>
-            spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? (spec as any).ios : (spec as any).default,
-    },
-}));
+vi.mock('react-native', async () => {
+    const rn = await import('@/dev/reactNativeStub');
+    return {
+        ...rn,
+        Platform: {
+            ...rn.Platform,
+            OS: 'ios',
+            select: (spec: Record<string, unknown>) =>
+                spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? (spec as any).ios : (spec as any).default,
+        },
+    };
+});
 
 vi.mock('@expo/vector-icons', async () => {
     const Ionicons = (props: any) => React.createElement('Ionicons', props);

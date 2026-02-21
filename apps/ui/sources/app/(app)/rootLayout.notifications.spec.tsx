@@ -90,10 +90,11 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useProfile: () => ({ linkedProviders: [], username: 'u' }),
 }));
 
-vi.mock('@/sync/domains/state/storageStore', () => ({
-    storage: (selector: (state: { profile: { linkedProviders: []; username: string } }) => unknown) =>
-        selector({ profile: { linkedProviders: [], username: 'u' } }),
-}));
+vi.mock('@/sync/domains/state/storageStore', () => {
+    const storage = (selector: (state: { profile: { linkedProviders: []; username: string } }) => unknown) =>
+        selector({ profile: { linkedProviders: [], username: 'u' } });
+    return { storage, getStorage: () => storage };
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: {

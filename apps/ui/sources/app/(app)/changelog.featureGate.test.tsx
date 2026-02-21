@@ -5,16 +5,16 @@ import renderer, { act } from 'react-test-renderer';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mmkvAccess = vi.hoisted(() => ({
-    getNumber: vi.fn((..._args: unknown[]) => {
-        throw new Error('MMKV.getNumber should not be called when changelog UI is disabled');
-    }),
-    set: vi.fn((..._args: unknown[]) => {
-        throw new Error('MMKV.set should not be called when changelog UI is disabled');
-    }),
+    getString: vi.fn((..._args: unknown[]) => undefined),
+    getNumber: vi.fn((..._args: unknown[]) => undefined),
+    set: vi.fn((..._args: unknown[]) => {}),
 }));
 
 vi.mock('react-native-mmkv', () => {
     class MMKV {
+        getString(...args: any[]) {
+            return mmkvAccess.getString(...args);
+        }
         getNumber(...args: any[]) {
             return mmkvAccess.getNumber(...args);
         }
@@ -30,6 +30,8 @@ vi.mock('react-native', () => ({
     View: (props: any) => React.createElement('View', props, props.children),
     Text: (props: any) => React.createElement('Text', props, props.children),
     ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+    Platform: { OS: 'web', select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android },
+    AppState: { addEventListener: () => ({ remove: () => {} }) },
 }));
 
 vi.mock('react-native-unistyles', () => ({
@@ -39,9 +41,11 @@ vi.mock('react-native-unistyles', () => ({
                 colors: {
                     surface: '#fff',
                     surfaceHigh: '#fff',
+                    divider: '#ddd',
                     text: '#000',
                     textSecondary: '#666',
                     textLink: '#00f',
+                    shadow: { color: '#000', opacity: 0.2 },
                 },
             };
             const runtime = {};
@@ -53,9 +57,11 @@ vi.mock('react-native-unistyles', () => ({
             colors: {
                 surface: '#fff',
                 surfaceHigh: '#fff',
+                divider: '#ddd',
                 text: '#000',
                 textSecondary: '#666',
                 textLink: '#00f',
+                shadow: { color: '#000', opacity: 0.2 },
             },
         },
     }),

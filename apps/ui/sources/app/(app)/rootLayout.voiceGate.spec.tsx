@@ -74,9 +74,10 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useProfile: () => ({ linkedProviders: [], username: null }),
 }));
 
-vi.mock('@/sync/domains/state/storageStore', () => ({
-    storage: (selector: (state: { profile: { linkedProviders: []; username: null } }) => unknown) => selector({ profile: { linkedProviders: [], username: null } }),
-}));
+vi.mock('@/sync/domains/state/storageStore', () => {
+    const storage = (selector: (state: { profile: { linkedProviders: []; username: null } }) => unknown) => selector({ profile: { linkedProviders: [], username: null } });
+    return { storage, getStorage: () => storage };
+});
 
 vi.mock('@/sync/sync', () => ({
     sync: { applySettings: (delta: Record<string, unknown>) => applySettings(delta) },

@@ -23,27 +23,8 @@ const listRunsSpy = vi.fn(async (_sessionId: string, _params: Record<string, unk
 const routerPushSpy = vi.fn();
 const stackScreenSpy = vi.fn((_props: any) => null);
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    ActivityIndicator: 'ActivityIndicator',
-}));
+vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#111',
-                surfaceHigh: '#222',
-                divider: '#333',
-                text: '#eee',
-                textSecondary: '#aaa',
-            },
-        },
-    }),
-    StyleSheet: { create: (fn: any) => fn({ colors: { surfaceHigh: '#222', divider: '#333', text: '#eee', textSecondary: '#aaa' } }) },
-}));
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
 vi.mock('expo-router', () => ({

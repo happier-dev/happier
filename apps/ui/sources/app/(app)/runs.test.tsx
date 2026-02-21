@@ -12,15 +12,13 @@ const machineExecutionRunsListSpy = vi.fn(async (..._args: MachineExecutionRunsL
 }));
 const stackScreenSpy = vi.fn((_props: any) => null);
 
-vi.mock('react-native', () => ({
-  Platform: { OS: 'web', select: (values: any) => values?.web ?? values?.default },
-  View: 'View',
-  Text: 'Text',
-  ScrollView: 'ScrollView',
-  Pressable: 'Pressable',
-  ActivityIndicator: 'ActivityIndicator',
-  RefreshControl: 'RefreshControl',
-}));
+vi.mock('react-native', async () => {
+  const rn = await import('@/dev/reactNativeStub');
+  return {
+    ...rn,
+    Platform: { ...rn.Platform, OS: 'web', select: (values: any) => values?.web ?? values?.default },
+  };
+});
 
 const routerMock = { push: vi.fn(), back: vi.fn(), replace: vi.fn(), navigate: vi.fn() };
 vi.mock('expo-router', () => ({
@@ -28,22 +26,24 @@ vi.mock('expo-router', () => ({
   Stack: { Screen: (props: any) => stackScreenSpy(props) },
 }));
 
-vi.mock('react-native-unistyles', () => ({
-  useUnistyles: () => ({
-    theme: {
-      colors: {
-        surface: '#111',
-        surfaceHigh: '#222',
-        divider: '#333',
-        text: '#eee',
-        textSecondary: '#aaa',
-        header: { tint: '#eee' },
-        status: { error: '#f00' },
-      },
+vi.mock('react-native-unistyles', () => {
+  const theme = {
+    colors: {
+      surface: '#111',
+      surfaceHigh: '#222',
+      divider: '#333',
+      shadow: { color: '#000', opacity: 0.2 },
+      text: '#eee',
+      textSecondary: '#aaa',
+      header: { tint: '#eee' },
+      status: { error: '#f00' },
     },
-  }),
-  StyleSheet: { create: (fn: any) => (typeof fn === 'function' ? fn({ colors: {} }) : fn) },
-}));
+  };
+  return {
+    useUnistyles: () => ({ theme }),
+    StyleSheet: { create: (input: any) => (typeof input === 'function' ? input(theme) : input) },
+  };
+});
 
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 

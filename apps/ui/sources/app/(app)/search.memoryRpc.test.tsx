@@ -17,17 +17,28 @@ vi.mock('react-native', () => ({
         OS: 'web',
         select: (options: any) => (options && 'default' in options ? options.default : undefined),
     },
+    AppState: { addEventListener: () => ({ remove: () => {} }) },
 }));
 
 vi.mock('expo-router', () => ({
     useRouter: () => ({ push: routerPushSpy }),
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: { colors: { text: '#111', textSecondary: '#666', input: { placeholder: '#999', background: '#fff' } } },
-    }),
-}));
+vi.mock('react-native-unistyles', () => {
+    const theme = {
+        colors: {
+            text: '#111',
+            textSecondary: '#666',
+            shadow: { color: '#000', opacity: 0.2 },
+            input: { placeholder: '#999', background: '#fff' },
+        },
+    };
+
+    return {
+        StyleSheet: { create: (styles: any) => (typeof styles === 'function' ? styles(theme) : styles) },
+        useUnistyles: () => ({ theme }),
+    };
+});
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,

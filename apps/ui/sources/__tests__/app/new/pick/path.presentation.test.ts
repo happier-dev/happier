@@ -26,6 +26,7 @@ vi.mock('react-native', () => ({
     Text: 'Text',
     Pressable: 'Pressable',
     Platform: { OS: 'ios', select: <T,>(options: PlatformSelectOptions<T>) => options.ios ?? options.default },
+    AppState: { addEventListener: () => ({ remove: () => {} }) },
     TurboModuleRegistry: { getEnforcing: () => ({}) },
 }));
 
@@ -47,10 +48,14 @@ vi.mock('@react-navigation/native', () => ({
     },
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { colors: PICKER_THEME_COLORS } }),
-    StyleSheet: { create: (fn: any) => fn({ colors: PICKER_THEME_COLORS }) },
-}));
+vi.mock('react-native-unistyles', () => {
+    const colors = { ...PICKER_THEME_COLORS, shadow: { color: '#000', opacity: 0.2 } };
+    const theme = { colors };
+    return {
+        useUnistyles: () => ({ theme }),
+        StyleSheet: { create: (input: any) => (typeof input === 'function' ? input(theme) : input) },
+    };
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',

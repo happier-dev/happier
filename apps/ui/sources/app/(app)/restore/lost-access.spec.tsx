@@ -14,6 +14,7 @@ const canOpenURL = vi.fn(async () => true);
 const openURL = vi.fn(async () => true);
 vi.mock('react-native', () => ({
     Platform: { OS: 'ios' },
+    AppState: { addEventListener: () => ({ remove: () => {} }) },
     Dimensions: { get: () => ({ width: 800, height: 600 }) },
     ScrollView: 'ScrollView',
     View: 'View',

@@ -41,7 +41,33 @@ vi.mock('expo-router', () => {
 
 vi.mock('react-native-unistyles', () => ({
     useUnistyles: () => ({ theme: { colors: { header: { tint: '#000' }, input: { background: '#fff', text: '#000' }, groupped: { background: '#fff', sectionTitle: '#000' }, divider: '#ddd', button: { primary: { background: '#000', tint: '#fff' } }, text: '#000', textSecondary: '#666', surface: '#fff', surfaceHigh: '#fff', shadow: { color: '#000', opacity: 0.1 }, status: { error: '#f00', connected: '#0f0', connecting: '#ff0', disconnected: '#999', default: '#999' }, permissionButton: { inactive: { background: '#ccc' } } } } }),
-    StyleSheet: { create: (fn: any) => fn({ colors: { header: { tint: '#000' }, input: { background: '#fff', text: '#000' }, groupped: { background: '#fff', sectionTitle: '#000' }, divider: '#ddd', button: { primary: { background: '#000', tint: '#fff' } }, text: '#000', textSecondary: '#666', surface: '#fff', surfaceHigh: '#fff', shadow: { color: '#000', opacity: 0.1 }, status: { error: '#f00', connected: '#0f0', connecting: '#ff0', disconnected: '#999', default: '#999' }, permissionButton: { inactive: { background: '#ccc' } } } }) },
+    StyleSheet: {
+        create: (input: any) =>
+            typeof input === 'function'
+                ? input({
+                    colors: {
+                        header: { tint: '#000' },
+                        input: { background: '#fff', text: '#000' },
+                        groupped: { background: '#fff', sectionTitle: '#000' },
+                        divider: '#ddd',
+                        button: { primary: { background: '#000', tint: '#fff' } },
+                        text: '#000',
+                        textSecondary: '#666',
+                        surface: '#fff',
+                        surfaceHigh: '#fff',
+                        shadow: { color: '#000', opacity: 0.1 },
+                        status: {
+                            error: '#f00',
+                            connected: '#0f0',
+                            connecting: '#ff0',
+                            disconnected: '#999',
+                            default: '#999',
+                        },
+                        permissionButton: { inactive: { background: '#ccc' } },
+                    },
+                })
+                : input,
+    },
 }));
 
 vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
