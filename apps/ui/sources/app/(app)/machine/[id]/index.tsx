@@ -40,7 +40,7 @@ import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwit
 import type { DaemonExecutionRunEntry } from '@happier-dev/protocol';
 import { ExecutionRunRow } from '@/components/sessions/runs/ExecutionRunRow';
 import { Text, TextInput } from '@/components/ui/text/Text';
-import { useMountedRef } from '@/hooks/ui/useMountedRef';
+import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
 
 
 const styles = StyleSheet.create((theme) => ({
@@ -122,7 +122,7 @@ export default function MachineDetailScreen() {
     const { theme } = useUnistyles();
     const { id: machineId, serverId: serverIdParam } = useLocalSearchParams<{ id: string; serverId?: string }>();
     const router = useRouter();
-    const mountedRef = useMountedRef();
+    const shouldContinue = useMountedShouldContinue();
     const sessions = useSessions();
     const machine = useMachine(machineId!);
     const navigateToSession = useNavigateToSession();
@@ -338,7 +338,7 @@ export default function MachineDetailScreen() {
                     onRetry: () => {
                         void runStopDaemon();
                     },
-                    shouldContinue: () => mountedRef.current,
+                    shouldContinue,
                 });
                 if (!shown) {
                     Modal.alert(t('common.error'), t('machine.stopDaemonFailed'));
@@ -1069,7 +1069,7 @@ export default function MachineDetailScreen() {
                                                     onRetry: () => {
                                                         void stopSessionProcess();
                                                     },
-                                                    shouldContinue: () => mountedRef.current,
+                                                    shouldContinue,
                                                 });
                                                 if (!shownDaemonUnavailable) {
                                                     Modal.alert(t('common.error'), stopResult.error || 'Failed to stop session');

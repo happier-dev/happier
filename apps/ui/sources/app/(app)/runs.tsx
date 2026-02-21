@@ -20,7 +20,7 @@ import { sessionExecutionRunStop } from '@/sync/ops/sessionExecutionRuns';
 import { machineStopSession } from '@/sync/ops/machines';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { Text } from '@/components/ui/text/Text';
-import { useMountedRef } from '@/hooks/ui/useMountedRef';
+import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
 
 
 type MachineRunsState =
@@ -53,7 +53,7 @@ function formatRunDetails(run: DaemonExecutionRunEntry): string {
 export default function RunsScreen() {
   const { theme } = useUnistyles();
   const router = useRouter();
-  const mountedRef = useMountedRef();
+  const shouldContinue = useMountedShouldContinue();
   const machineListByServerId = useMachineListByServerId();
   const machineListStatusByServerId = useMachineListStatusByServerId();
   const [showFinished, setShowFinished] = React.useState(false);
@@ -208,7 +208,7 @@ export default function RunsScreen() {
                               onRetry: () => {
                                 void stopSessionProcess();
                               },
-                              shouldContinue: () => mountedRef.current,
+                              shouldContinue,
                             });
                             if (!shownDaemonUnavailable) {
                               Modal.alert(t('common.error'), stopResult.error || 'Failed to stop session');
