@@ -24,6 +24,11 @@ import {
   resolvePreferredStackDaemonStatePaths,
   resolveStackCredentialPaths,
 } from './utils/auth/credentials_paths.mjs';
+import {
+  resolveAutostartEnvFilePath,
+  resolveAutostartLogPaths,
+  resolveAutostartWorkingDirectory,
+} from './utils/service/stack_autostart_resolution.mjs';
 
 /**
  * Manage the autostart service installed by `hstack bootstrap -- --autostart`.
@@ -47,7 +52,7 @@ function getUid() {
   return Number.isFinite(n) ? n : null;
 }
 
-function getAutostartEnv({ rootDir, mode }) {
+function getAutostartEnv({ mode, systemUserHomeDir } = {}) {
   // IMPORTANT:
   // LaunchAgents should NOT bake the entire config into the plist, because that would require
   // reinstalling the service for any config change (server flavor, worktrees, ports, etc).
@@ -60,15 +65,14 @@ function getAutostartEnv({ rootDir, mode }) {
   // Main installs:
   // - default to the main stack env (outside the repo): ~/.happier/stacks/main/env
 
-  const stacksEnvFile = process.env.HAPPIER_STACK_ENV_FILE?.trim() ? process.env.HAPPIER_STACK_ENV_FILE.trim() : '';
-  const envFileRaw = stacksEnvFile || resolveStackEnvPath('main').envPath;
-
-  // For system services, prefer a dynamic %h-based default when no explicit env file is set.
-  // This avoids accidentally pinning root's stack env when the service will run as another user.
-  const envFile =
-    mode === 'system' && !stacksEnvFile
-      ? '%h/.happier/stacks/main/env'
-      : envFileRaw;
+  const explicitEnvFilePath = process.env.HAPPIER_STACK_ENV_FILE?.trim() ? process.env.HAPPIER_STACK_ENV_FILE.trim() : '';
+  const defaultMainEnvFilePath = resolveStackEnvPath('main').envPath;
+  const envFile = resolveAutostartEnvFilePath({
+    mode,
+    explicitEnvFilePath,
+    defaultMainEnvFilePath,
+    systemUserHomeDir,
+  });
 
   return {
     HAPPIER_STACK_ENV_FILE: envFile,
@@ -148,8 +152,19 @@ export async function installService({ mode = 'user', systemUser = null } = {}) 
   }
   ensureLinuxSystemModeSupported({ mode });
   const rootDir = getRootDir(import.meta.url);
-  const { label, stdoutPath, stderrPath, baseDir } = getDefaultAutostartPaths();
-  const env = getAutostartEnv({ rootDir, mode });
+  const systemUserHomeDir = mode === 'system' && systemUser ? await resolveHomeDirForUser(systemUser) : '';
+  const defaults = getDefaultAutostartPaths();
+  const env = getAutostartEnv({ mode, systemUserHomeDir });
+  const { baseDir, stdoutPath, stderrPath } = resolveAutostartLogPaths({
+    mode,
+    hasStorageDirOverride: Boolean((process.env.HAPPIER_STACK_STORAGE_DIR ?? '').trim()),
+    systemUserHomeDir,
+    stackName: defaults.stackName,
+    defaultBaseDir: defaults.baseDir,
+    defaultStdoutPath: defaults.stdoutPath,
+    defaultStderrPath: defaults.stderrPath,
+  });
+  const { label } = defaults;
   // Ensure the env file exists so the service never points at a missing path.
   try {
     const envFile = env.HAPPIER_STACK_ENV_FILE;
@@ -164,12 +179,14 @@ export async function installService({ mode = 'user', systemUser = null } = {}) 
     // ignore
   }
   const programArgs = await resolveStackAutostartProgramArgs({ rootDir, mode, systemUser });
-  const workingDirectory =
-    process.platform === 'linux'
-      ? '%h'
-      : process.platform === 'darwin'
-        ? resolveInstalledCliRoot(rootDir)
-        : baseDir;
+  const workingDirectory = resolveAutostartWorkingDirectory({
+    platform: process.platform,
+    mode,
+    defaultHomeDir: homedir(),
+    systemUserHomeDir,
+    baseDir,
+    installedCliRoot: resolveInstalledCliRoot(rootDir),
+  });
 
   await installManagedService({
     platform: process.platform,
@@ -250,109 +267,6 @@ export async function uninstallService({ mode = 'user' } = {}) {
 function systemdUnitName() {
   const { label } = getDefaultAutostartPaths();
   return `${label}.service`;
-}
-
-function systemdUnitPath() {
-  return join(homedir(), '.config', 'systemd', 'user', systemdUnitName());
-}
-
-function systemdEnvLines(env) {
-  return Object.entries(env)
-    .map(([k, v]) => `Environment=${k}=${String(v)}`)
-    .join('\n');
-}
-
-async function ensureSystemdUserServiceEnabled({ rootDir, label, env }) {
-  const unitPath = systemdUnitPath();
-  await mkdir(dirname(unitPath), { recursive: true });
-  const hstackShim = join(getCanonicalHomeDir(), 'bin', 'hstack');
-  const entry = existsSync(hstackShim) ? hstackShim : join(rootDir, 'bin', 'hstack.mjs');
-  const exec = existsSync(hstackShim) ? entry : `${process.execPath} ${entry}`;
-
-  const unit = `[Unit]
-Description=Happier Stack (${label})
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-WorkingDirectory=%h
-${systemdEnvLines(env)}
-ExecStart=${exec} start
-Restart=always
-RestartSec=2
-
-[Install]
-WantedBy=default.target
-`;
-
-  await writeFile(unitPath, unit, 'utf-8');
-  await runCapture('systemctl', ['--user', 'daemon-reload']).catch(() => {});
-  await run('systemctl', ['--user', 'enable', '--now', systemdUnitName()]);
-}
-
-async function ensureSystemdSystemServiceEnabled({ rootDir, label, env, systemUser }) {
-  const { unitName, unitPath } = getSystemdUnitInfo({ mode: 'system' });
-  let userLine = '';
-  let hstackShim = join(getCanonicalHomeDir(), 'bin', 'hstack');
-  if (systemUser) {
-    const home = await resolveHomeDirForUser(systemUser);
-    if (home) {
-      hstackShim = join(home, '.happier-stack', 'bin', 'hstack');
-    }
-    userLine = `User=${systemUser}\n`;
-  }
-
-  const entry = existsSync(hstackShim) ? hstackShim : join(rootDir, 'bin', 'hstack.mjs');
-  const exec = existsSync(hstackShim) ? entry : `${process.execPath} ${entry}`;
-
-  const unit = `[Unit]
-Description=Happier Stack (${label})
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-${userLine}WorkingDirectory=%h
-${systemdEnvLines(env)}
-ExecStart=${exec} start
-Restart=always
-RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-`;
-
-  try {
-    await writeFile(unitPath, unit, 'utf-8');
-  } catch (e) {
-    const code = e && typeof e === 'object' && 'code' in e ? String(e.code) : '';
-    if (code === 'EACCES' || code === 'EPERM') {
-      throw new Error(`[local] --mode=system requires root (run with sudo).`);
-    }
-    throw e;
-  }
-  await runCapture('systemctl', ['daemon-reload']).catch(() => {});
-  await run('systemctl', ['enable', '--now', unitName]);
-}
-
-async function ensureSystemdUserServiceDisabled({ remove } = {}) {
-  await runCapture('systemctl', ['--user', 'disable', '--now', systemdUnitName()]).catch(() => {});
-  await runCapture('systemctl', ['--user', 'stop', systemdUnitName()]).catch(() => {});
-  if (remove) {
-    await rm(systemdUnitPath(), { force: true }).catch(() => {});
-    await runCapture('systemctl', ['--user', 'daemon-reload']).catch(() => {});
-  }
-}
-
-async function ensureSystemdSystemServiceDisabled({ remove } = {}) {
-  const { unitName, unitPath } = getSystemdUnitInfo({ mode: 'system' });
-  await runCapture('systemctl', ['disable', '--now', unitName]).catch(() => {});
-  await runCapture('systemctl', ['stop', unitName]).catch(() => {});
-  if (remove) {
-    await rm(unitPath, { force: true }).catch(() => {});
-    await runCapture('systemctl', ['daemon-reload']).catch(() => {});
-  }
 }
 
 async function systemdStatus() {
