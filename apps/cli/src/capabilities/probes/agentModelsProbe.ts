@@ -94,6 +94,7 @@ async function probeModelsFromCliModelsCommand(params: {
       cwd: params.cwd,
       env: { ...process.env, CI: '1' },
       stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
     });
 
     const timer = setTimeout(() => {

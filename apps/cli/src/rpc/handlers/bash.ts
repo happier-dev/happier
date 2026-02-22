@@ -49,6 +49,7 @@ export function registerBashHandler(rpcHandlerManager: RpcHandlerRegistrar, work
             const options: ExecOptions = {
                 cwd,
                 timeout: data.timeout || 30000, // Default 30 seconds timeout
+                windowsHide: true,
             };
 
             logger.debug('Shell command executing...', { cwd: options.cwd, timeout: options.timeout });

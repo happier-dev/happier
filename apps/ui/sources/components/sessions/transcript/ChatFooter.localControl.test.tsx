@@ -66,6 +66,14 @@ describe('ChatFooter (local control)', () => {
             onRequestSwitchToRemote: vi.fn(),
         });
 
+        // Root container should allow full-width children so long notices wrap instead of overflowing.
+        const views = tree.root.findAllByType('View');
+        expect(views[0]?.props?.style?.alignItems).toBe('stretch');
+
+        const warningViews = views.filter((v) => v.props?.style?.backgroundColor === '#fff3cd');
+        expect(warningViews.length).toBe(1);
+        expect(warningViews[0].props.style.flexWrap).toBe('wrap');
+
         const pressables = tree.root.findAllByType('Pressable');
         expect(pressables.length).toBeGreaterThan(0);
         expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.switchToRemote')).toBe(true);

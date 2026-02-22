@@ -452,6 +452,10 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     actionButtonsLeftNoFlex: {
         flex: 0,
     },
+    actionItemWrapper: {
+        // Non-chip action items (e.g. SCM status) should align with chips on native.
+        ...(Platform.OS === 'web' ? {} : { marginRight: 6, marginBottom: 6 }),
+    },
     actionChip: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -537,6 +541,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingVertical: 6,
         justifyContent: 'center',
         height: 32,
+        // Keep vertical alignment consistent with `actionChip` on native.
+        ...(Platform.OS === 'web' ? {} : { marginRight: 6, marginBottom: 6 }),
     },
     actionButtonPressed: {
         opacity: 0.7,
@@ -2090,12 +2096,13 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     ) : null;
 
                                     const sourceControlStatusChip = !actionBarIsCollapsed ? (
-                                        <SourceControlStatusButton
-                                            key="git"
-                                            sessionId={props.sessionId}
-                                            onPress={props.onFileViewerPress}
-                                            compact={actionBarShouldScroll || !showChipLabels}
-                                        />
+                                        <View key="git" style={styles.actionItemWrapper}>
+                                            <SourceControlStatusButton
+                                                sessionId={props.sessionId}
+                                                onPress={props.onFileViewerPress}
+                                                compact={actionBarShouldScroll || !showChipLabels}
+                                            />
+                                        </View>
                                     ) : null;
 
                                     const chips = actionBarIsCollapsed

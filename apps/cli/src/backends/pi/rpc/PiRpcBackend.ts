@@ -466,6 +466,7 @@ export class PiRpcBackend implements AgentBackend {
         ...this.options.env,
       },
       stdio: 'pipe',
+      windowsHide: true,
     });
 
     if (!child.stdin || !child.stdout || !child.stderr) {
