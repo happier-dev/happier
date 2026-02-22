@@ -322,6 +322,7 @@ export class ClaudeLocalPermissionBridge {
                     sessionId: this.session.client.sessionId,
                     permissionId: params.requestId,
                     toolName: getToolName(params.toolName),
+                    permissionMode: this.session.lastPermissionMode,
                 });
             } catch (error) {
                 logger.debug('[claude-local-permissions] Failed to broadcast permission request', error);

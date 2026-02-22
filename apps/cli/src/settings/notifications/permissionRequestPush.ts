@@ -1,6 +1,7 @@
 import axios from 'axios';
 
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
+import { isDefaultWriteLikeToolName } from '@/agent/permissions/CodexLikePermissionHandler';
 import { logger } from '@/ui/logger';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
@@ -38,12 +39,25 @@ export function sendPermissionRequestPushNotification(params: Readonly<{
   }
 }
 
+/**
+ * Returns true when the given permission mode would auto-approve the tool,
+ * meaning a push notification would just be noise.
+ */
+function isAutoApprovedByMode(permissionMode: string | null | undefined, toolName: string): boolean {
+  if (!permissionMode) return false;
+  if (permissionMode === 'yolo' || permissionMode === 'bypassPermissions') return true;
+  if (permissionMode === 'safe-yolo' && !isDefaultWriteLikeToolName(toolName)) return true;
+  return false;
+}
+
 export function sendPermissionRequestPushNotificationForActiveAccount(params: Readonly<{
   pushSender: PushSender;
   sessionId: string;
   permissionId: string;
   toolName: string;
+  permissionMode?: string | null;
 }>): void {
+  if (isAutoApprovedByMode(params.permissionMode, params.toolName)) return;
   const settings = getActiveAccountSettingsSnapshot()?.settings ?? null;
   sendPermissionRequestPushNotification({ ...params, settings });
 }

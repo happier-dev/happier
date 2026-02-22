@@ -45,6 +45,7 @@ export function createCodexAcpRuntime(params: {
           sessionId: params.session.sessionId,
           permissionId,
           toolName,
+          permissionMode: params.getPermissionMode?.() ?? params.permissionMode,
         });
       },
     },

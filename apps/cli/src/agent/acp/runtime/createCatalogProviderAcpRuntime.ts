@@ -43,6 +43,7 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends object =
         sessionId: params.session.sessionId,
         permissionId: evt.permissionId,
         toolName: evt.toolName,
+        permissionMode: params.getPermissionMode?.(),
       });
     } catch {
       // best-effort
