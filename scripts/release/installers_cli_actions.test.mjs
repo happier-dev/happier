@@ -288,3 +288,79 @@ test('install.sh --reinstall is accepted and runs the install flow', async () =>
 
   await rm(root, { recursive: true, force: true });
 });
+
+test('install.sh --version prints release version without installing', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-version-'));
+  const homeDir = join(root, 'home');
+  const binDir = join(root, 'bin');
+  const installDir = join(root, 'install');
+  const outBinDir = join(root, 'out-bin');
+
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(binDir, { recursive: true });
+  await mkdir(installDir, { recursive: true });
+  await mkdir(outBinDir, { recursive: true });
+
+  const unameStubPath = join(binDir, 'uname');
+  await writeFile(
+    unameStubPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" = "-s" ]]; then
+  echo Linux
+  exit 0
+fi
+if [[ "$1" = "-m" ]]; then
+  echo x86_64
+  exit 0
+fi
+echo Linux
+`,
+    'utf8',
+  );
+  await chmod(unameStubPath, 0o755);
+
+  const curlStubPath = join(binDir, 'curl');
+  await writeFile(
+    curlStubPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+args="$*"
+if [[ "$args" == *" -o "* ]]; then
+  echo "curl should not download assets in --version" >&2
+  exit 99
+fi
+cat <<'JSON'
+{
+  "assets": [
+    { "name": "happier-v9.9.9-linux-x64.tar.gz", "browser_download_url": "https://example.invalid/happier-v9.9.9-linux-x64.tar.gz" }
+  ]
+}
+JSON
+exit 0
+`,
+    'utf8',
+  );
+  await chmod(curlStubPath, 0o755);
+
+  const installerPath = join(repoRoot, 'scripts', 'release', 'installers', 'install.sh');
+  const env = {
+    ...process.env,
+    HOME: homeDir,
+    SHELL: '/bin/bash',
+    PATH: `${binDir}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    HAPPIER_PRODUCT: 'cli',
+    HAPPIER_INSTALL_DIR: installDir,
+    HAPPIER_BIN_DIR: outBinDir,
+    HAPPIER_NONINTERACTIVE: '1',
+  };
+
+  const res = spawnSync('bash', [installerPath, '--version'], { env, encoding: 'utf8' });
+  const stdout = String(res.stdout ?? '');
+  const stderr = String(res.stderr ?? '');
+  assert.equal(res.status, 0, `version failed:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
+  assert.match(stdout + stderr, /\b9\.9\.9\b/);
+  assert.doesNotMatch(stdout + stderr, /Added .* to PATH/i);
+
+  await rm(root, { recursive: true, force: true });
+});

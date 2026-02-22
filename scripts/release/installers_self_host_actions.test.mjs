@@ -347,3 +347,71 @@ echo Linux
 
   await rm(root, { recursive: true, force: true });
 });
+
+test('self-host.sh --version prints stack version without installing', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-self-host-version-'));
+  const homeDir = join(root, 'home');
+  const binDir = join(root, 'bin');
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(binDir, { recursive: true });
+
+  const unameStubPath = join(binDir, 'uname');
+  await writeFile(
+    unameStubPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" = "-s" ]]; then
+  echo Darwin
+  exit 0
+fi
+if [[ "$1" = "-m" ]]; then
+  echo arm64
+  exit 0
+fi
+echo Darwin
+`,
+    'utf8',
+  );
+  await chmod(unameStubPath, 0o755);
+
+  const curlStubPath = join(binDir, 'curl');
+  await writeFile(
+    curlStubPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+args="$*"
+if [[ "$args" == *" -o "* ]]; then
+  echo "curl should not download assets in --version" >&2
+  exit 99
+fi
+cat <<'JSON'
+{
+  "assets": [
+    { "name": "hstack-v1.2.3-darwin-arm64.tar.gz", "browser_download_url": "https://example.invalid/hstack-v1.2.3-darwin-arm64.tar.gz" }
+  ]
+}
+JSON
+exit 0
+`,
+    'utf8',
+  );
+  await chmod(curlStubPath, 0o755);
+
+  const installerPath = join(repoRoot, 'scripts', 'release', 'installers', 'self-host.sh');
+  const env = {
+    ...process.env,
+    HOME: homeDir,
+    PATH: `${binDir}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    HAPPIER_HOME: join(homeDir, '.happier'),
+    HAPPIER_NONINTERACTIVE: '1',
+  };
+
+  const res = spawnSync('bash', [installerPath, '--version', '--mode', 'user', '--channel', 'preview'], { env, encoding: 'utf8' });
+  const stdout = String(res.stdout ?? '');
+  const stderr = String(res.stderr ?? '');
+  assert.equal(res.status, 0, `version failed:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
+  assert.match(stdout + stderr, /\b1\.2\.3\b/);
+  assert.doesNotMatch(stdout + stderr, /Starting Happier Self-Host guided installation/i);
+
+  await rm(root, { recursive: true, force: true });
+});
