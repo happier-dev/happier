@@ -30,6 +30,11 @@ export function bundleWorkspaceDeps(opts = {}) {
       srcDir: resolve(repoRoot, 'packages', 'protocol'),
       destDir: resolve(happyCliDir, 'node_modules', '@happier-dev', 'protocol'),
     },
+    {
+      packageName: '@happier-dev/release-runtime',
+      srcDir: resolve(repoRoot, 'packages', 'release-runtime'),
+      destDir: resolve(happyCliDir, 'node_modules', '@happier-dev', 'release-runtime'),
+    },
   ];
   bundleWorkspacePackages({ bundles });
 
