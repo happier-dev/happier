@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
+import type { McpServerConfig } from '@/agent/core/AgentBackend';
+
 import { logger } from '@/ui/logger';
 
 /**
@@ -10,7 +12,7 @@ import { logger } from '@/ui/logger';
  * Reads: `~/.claude/mcp_servers.json` (or `CLAUDE_CONFIG_DIR` override).
  * Format: `{ "mcpServers": { "<name>": { "command": "...", "args": [...] } } }`
  */
-export function loadClaudeMcpServers(claudeConfigDir?: string | null): Record<string, unknown> {
+export function loadClaudeMcpServers(claudeConfigDir?: string | null): Record<string, McpServerConfig> {
   const configDir = claudeConfigDir?.trim() || process.env.CLAUDE_CONFIG_DIR?.trim() || join(homedir(), '.claude');
   const filePath = join(configDir, 'mcp_servers.json');
   return loadMcpFromJsonFile(filePath, 'claude');
@@ -22,23 +24,23 @@ export function loadClaudeMcpServers(claudeConfigDir?: string | null): Record<st
  * Reads: `~/.codex/config.toml` (or `CODEX_HOME` override).
  * Parses `[mcp_servers.<name>]` sections with `command` and `args` fields.
  */
-export function loadCodexMcpServers(): Record<string, unknown> {
+export function loadCodexMcpServers(): Record<string, McpServerConfig> {
   const codexHome = process.env.CODEX_HOME?.trim() || join(homedir(), '.codex');
   const filePath = join(codexHome, 'config.toml');
   return loadMcpFromToml(filePath, 'codex');
 }
 
-function loadMcpFromJsonFile(filePath: string, label: string): Record<string, unknown> {
+function loadMcpFromJsonFile(filePath: string, label: string): Record<string, McpServerConfig> {
   if (!existsSync(filePath)) return {};
   try {
     const raw = JSON.parse(readFileSync(filePath, 'utf8'));
     const servers = raw?.mcpServers;
     if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return {};
-    const count = Object.keys(servers as Record<string, unknown>).length;
+    const count = Object.keys(servers as Record<string, McpServerConfig>).length;
     if (count > 0) {
       logger.debug(`[MCP] Loaded ${count} server(s) from ${label}: ${filePath}`);
     }
-    return servers as Record<string, unknown>;
+    return servers as Record<string, McpServerConfig>;
   } catch (err) {
     logger.debug(`[MCP] Failed to parse ${label} config: ${filePath}`, err);
     return {};
@@ -55,7 +57,7 @@ function loadMcpFromJsonFile(filePath: string, label: string): Record<string, un
  * Limitations: does not handle multiline basic strings (`"""..."""`),
  * literal strings (`'...'`), or inline tables.
  */
-function loadMcpFromToml(filePath: string, label: string): Record<string, unknown> {
+function loadMcpFromToml(filePath: string, label: string): Record<string, McpServerConfig> {
   if (!existsSync(filePath)) return {};
   try {
     const content = readFileSync(filePath, 'utf8');
