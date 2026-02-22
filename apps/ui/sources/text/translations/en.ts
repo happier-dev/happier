@@ -1282,6 +1282,19 @@ export const en = {
         noChanges: 'No changes to display',
     },
 
+	    settingsNotifications: {
+	        foregroundBehavior: {
+	            title: 'In-app notifications',
+	            footer: 'Controls notifications while you are using the app. Notifications for the session you are viewing are always silenced.',
+	            full: 'Full',
+	            fullDescription: 'Show banner and play sound',
+	            silent: 'Silent',
+	            silentDescription: 'Show banner without sound',
+	            off: 'Off',
+	            offDescription: 'Badge only, no banner',
+	        },
+	    },
+
 	    settingsSession: {
 	        messageSending: {
 	            title: 'Message sending',

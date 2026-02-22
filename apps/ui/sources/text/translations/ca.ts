@@ -1267,6 +1267,19 @@ deps: {
         noChanges: 'No hi ha canvis a mostrar',
     },
 
+	    settingsNotifications: {
+	        foregroundBehavior: {
+	            title: "Notificacions a l'app",
+	            footer: "Controla les notificacions mentre fas servir l'app. Les notificacions de la sessió que estàs veient sempre se silencien.",
+	            full: 'Completes',
+	            fullDescription: 'Mostra el banner i reprodueix el so',
+	            silent: 'Silencioses',
+	            silentDescription: 'Mostra el banner sense so',
+	            off: 'Desactivades',
+	            offDescription: 'Només la insígnia, sense banner',
+	        },
+	    },
+
 	    settingsSession: {
 	        messageSending: {
 	            title: 'Message sending',

@@ -1769,6 +1769,19 @@ export const it: TranslationStructure = {
     noChanges: "Nessuna modifica da mostrare",
   },
 
+  settingsNotifications: {
+    foregroundBehavior: {
+      title: "Notifiche in-app",
+      footer: "Controlla le notifiche mentre usi l'app. Le notifiche per la sessione che stai visualizzando vengono sempre silenziate.",
+      full: "Complete",
+      fullDescription: "Mostra banner e riproduci suono",
+      silent: "Silenziose",
+      silentDescription: "Mostra banner senza suono",
+      off: "Disattivate",
+      offDescription: "Solo badge, nessun banner",
+    },
+  },
+
   settingsSession: {
     messageSending: {
       title: "Message sending",

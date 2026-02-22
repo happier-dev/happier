@@ -1387,6 +1387,19 @@ export const zhHans: TranslationStructure = {
     noChanges: "没有要显示的更改",
   },
 
+  settingsNotifications: {
+    foregroundBehavior: {
+      title: "应用内通知",
+      footer: "控制您使用应用时的通知方式。当前正在查看的会话的通知始终会被静音。",
+      full: "完整",
+      fullDescription: "显示横幅并播放声音",
+      silent: "静音",
+      silentDescription: "显示横幅但不播放声音",
+      off: "关闭",
+      offDescription: "仅显示角标，不显示横幅",
+    },
+  },
+
   settingsSession: {
     messageSending: {
       title: "Message sending",
