@@ -6,7 +6,6 @@ import { join } from 'node:path';
 const ORIGINAL_ENV = {
   HAPPIER_CODEX_ACP_BIN: process.env.HAPPIER_CODEX_ACP_BIN,
   HAPPIER_CODEX_ACP_NPX_MODE: process.env.HAPPIER_CODEX_ACP_NPX_MODE,
-  HAPPIER_E2E_CODEX_HOME_SEED_LOG: process.env.HAPPIER_E2E_CODEX_HOME_SEED_LOG,
   PATH: process.env.PATH,
   CODEX_HOME: process.env.CODEX_HOME,
 };
@@ -30,8 +29,6 @@ afterEach(async () => {
   else process.env.HAPPIER_CODEX_ACP_BIN = ORIGINAL_ENV.HAPPIER_CODEX_ACP_BIN;
   if (ORIGINAL_ENV.HAPPIER_CODEX_ACP_NPX_MODE === undefined) delete process.env.HAPPIER_CODEX_ACP_NPX_MODE;
   else process.env.HAPPIER_CODEX_ACP_NPX_MODE = ORIGINAL_ENV.HAPPIER_CODEX_ACP_NPX_MODE;
-  if (ORIGINAL_ENV.HAPPIER_E2E_CODEX_HOME_SEED_LOG === undefined) delete process.env.HAPPIER_E2E_CODEX_HOME_SEED_LOG;
-  else process.env.HAPPIER_E2E_CODEX_HOME_SEED_LOG = ORIGINAL_ENV.HAPPIER_E2E_CODEX_HOME_SEED_LOG;
   if (ORIGINAL_ENV.PATH === undefined) delete process.env.PATH;
   else process.env.PATH = ORIGINAL_ENV.PATH;
   if (ORIGINAL_ENV.CODEX_HOME === undefined) delete process.env.CODEX_HOME;
@@ -114,17 +111,12 @@ describe('codexDaemonSpawnHooks.buildAuthEnv', () => {
     res.cleanupOnExit?.();
   });
 
-  it('logs seeding diagnostics without leaking config.toml contents (and chmods sensitive files on posix)', async () => {
+  it('chmods sensitive files on posix when seeding config.toml', async () => {
     const sourceHome = await mkdtemp(join(tmpdir(), 'happier-codex-source-home-log-'));
     tempDirs.add(sourceHome);
     const marker = `SEED_MARKER_${Date.now()}`;
     await writeFile(join(sourceHome, 'config.toml'), `# ${marker}\n[mcp_servers.context7]\ncommand = \"npx\"\n`, 'utf8');
     process.env.CODEX_HOME = sourceHome;
-
-    const logDir = await mkdtemp(join(tmpdir(), 'happier-codex-seed-log-'));
-    tempDirs.add(logDir);
-    const logPath = join(logDir, 'seed.jsonl');
-    process.env.HAPPIER_E2E_CODEX_HOME_SEED_LOG = logPath;
 
     const { codexDaemonSpawnHooks } = await import('./spawnHooks');
     const token = '{"accessToken":"token"}';
@@ -134,10 +126,6 @@ describe('codexDaemonSpawnHooks.buildAuthEnv', () => {
     // Assert config actually seeded, but is not echoed to the seam log.
     const seededConfig = await readFile(join(tempHome, 'config.toml'), 'utf8');
     expect(seededConfig).toContain(marker);
-
-    const rawLog = await readFile(logPath, 'utf8');
-    expect(rawLog).toContain('"kind":"codex.buildAuthEnv"');
-    expect(rawLog).not.toContain(marker);
 
     if (process.platform !== 'win32') {
       const authMode = (await stat(join(tempHome, 'auth.json'))).mode & 0o777;

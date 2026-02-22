@@ -88,29 +88,6 @@ export const codexDaemonSpawnHooks: DaemonSpawnHooks = {
           // best-effort
         }
       }
-
-      // Test seam: allow hermetic e2e tests to observe seeding behavior without depending on
-      // Codex starting a provider process.
-      const e2eLogPath =
-        typeof process.env.HAPPIER_E2E_CODEX_HOME_SEED_LOG === 'string'
-          ? process.env.HAPPIER_E2E_CODEX_HOME_SEED_LOG.trim()
-          : '';
-      if (e2eLogPath.length > 0) {
-        try {
-          await fs.appendFile(
-            e2eLogPath,
-            JSON.stringify({
-              kind: 'codex.buildAuthEnv',
-              sourceCodexHome,
-              tempCodexHome: codexHomeDir.name,
-              seededConfigCopied,
-            }) + '\n',
-            'utf8',
-          );
-        } catch {
-          // ignore (test-only diagnostics)
-        }
-      }
     } catch (error) {
       cleanup();
       throw error;

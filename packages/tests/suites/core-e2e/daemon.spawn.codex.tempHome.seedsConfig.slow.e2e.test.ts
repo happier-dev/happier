@@ -14,6 +14,7 @@ import { writeTestManifestForServer } from '../../src/testkit/manifestForServer'
 import { repoRootDir } from '../../src/testkit/paths';
 import { runLoggedCommand } from '../../src/testkit/process/spawnProcess';
 import { yarnCommand } from '../../src/testkit/process/commands';
+import { postEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -74,7 +75,7 @@ describe('core e2e: daemon spawn codex token auth seeds temp CODEX_HOME from hos
     });
 
     const wrapperPath = resolve(join(testDir, 'codex-acp-wrapper.mjs'));
-    const logPath = resolve(join(testDir, 'codex-home-seed-log.jsonl'));
+    const wrapperLogPath = resolve(join(testDir, 'codex-acp-wrapper-log.jsonl'));
     const stubProviderPath = resolve(
       join(repoRootDir(), 'packages', 'tests', 'fixtures', 'acp-stub-provider', 'acp-stub-provider.mjs'),
     );
@@ -83,6 +84,13 @@ describe('core e2e: daemon spawn codex token auth seeds temp CODEX_HOME from hos
       wrapperPath,
       `#!/usr/bin/env node
 import { pathToFileURL } from 'node:url';
+import { appendFileSync } from 'node:fs';
+
+try {
+  appendFileSync(${JSON.stringify(wrapperLogPath)}, JSON.stringify({ kind: 'codex-acp-wrapper', codexHome: process.env.CODEX_HOME ?? null }) + "\\n", 'utf8');
+} catch {
+  // ignore (best-effort test diagnostics)
+}
 
 await import(pathToFileURL(${JSON.stringify(stubProviderPath)}).href);
 `,
@@ -103,8 +111,6 @@ await import(pathToFileURL(${JSON.stringify(stubProviderPath)}).href);
         HAPPIER_WEBAPP_URL: serverBaseUrl,
         // Source CODEX_HOME that buildAuthEnv should seed from.
         CODEX_HOME: sourceCodexHomeDir,
-        // Test seam: let spawn hooks log which temp CODEX_HOME was created and whether config.toml was copied.
-        HAPPIER_E2E_CODEX_HOME_SEED_LOG: logPath,
         // Ensure Codex uses ACP so we can run with a deterministic stub provider.
         HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',
         HAPPIER_CODEX_ACP_NPX_MODE: 'never',
@@ -151,16 +157,31 @@ await import(pathToFileURL(${JSON.stringify(stubProviderPath)}).href);
     expect(spawnRes.data?.success).toBe(true);
     expect(typeof spawnRes.data?.sessionId).toBe('string');
 
-    const readSeedLogRecord = async (): Promise<any | null> => {
-      const raw = await readFile(logPath, 'utf8');
+    // Trigger the provider loop so Codex ACP is spawned (and our wrapper can observe CODEX_HOME).
+    await postEncryptedUiTextMessage({
+      baseUrl: serverBaseUrl,
+      token: auth.token,
+      sessionId: spawnRes.data!.sessionId!,
+      secret,
+      text: 'hi',
+      timeoutMs: 20_000,
+    });
+
+    const readWrapperLogRecord = async (): Promise<any | null> => {
+      let raw: string;
+      try {
+        raw = await readFile(wrapperLogPath, 'utf8');
+      } catch {
+        return null;
+      }
       const lines = raw.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
 
-      // The spawn hook appends JSONL; tolerate reading while the write is in-flight by
+      // The wrapper appends JSONL; tolerate reading while the write is in-flight by
       // skipping any line that isn't valid JSON yet.
       for (const line of lines) {
         try {
           const parsed = JSON.parse(line) as any;
-          if (parsed?.kind === 'codex.buildAuthEnv' && parsed?.seededConfigCopied === true && typeof parsed?.tempCodexHome === 'string') {
+          if (parsed?.kind === 'codex-acp-wrapper' && typeof parsed?.codexHome === 'string' && parsed.codexHome.trim().length > 0) {
             return parsed;
           }
         } catch {
@@ -171,24 +192,23 @@ await import(pathToFileURL(${JSON.stringify(stubProviderPath)}).href);
     };
 
     await waitFor(async () => {
-      const record = await readSeedLogRecord();
+      const record = await readWrapperLogRecord();
       if (!record) return false;
       try {
-        const seededConfig = await readFile(join(record.tempCodexHome, 'config.toml'), 'utf8');
+        const seededConfig = await readFile(join(record.codexHome, 'config.toml'), 'utf8');
         return seededConfig.includes(configMarker);
       } catch {
         return false;
       }
     }, { timeoutMs: 30_000 });
 
-    const parsed = await readSeedLogRecord();
+    const parsed = await readWrapperLogRecord();
     expect(parsed).toBeTruthy();
-    expect(parsed.kind).toBe('codex.buildAuthEnv');
-    expect(typeof parsed.tempCodexHome).toBe('string');
-    expect(parsed.tempCodexHome).not.toBe(sourceCodexHomeDir);
-    expect(parsed.seededConfigCopied).toBe(true);
+    expect(parsed.kind).toBe('codex-acp-wrapper');
+    expect(typeof parsed.codexHome).toBe('string');
+    expect(parsed.codexHome).not.toBe(sourceCodexHomeDir);
 
-    const seededConfig = await readFile(join(parsed.tempCodexHome, 'config.toml'), 'utf8');
+    const seededConfig = await readFile(join(parsed.codexHome, 'config.toml'), 'utf8');
     expect(seededConfig).toContain(configMarker);
 
     await daemonControlPostJson({
