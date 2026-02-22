@@ -270,32 +270,27 @@ function installReactJsxRuntimeUnexpectedTextNodeCaptureOnce() {
 // Suppresses same-session notifications and respects the foregroundBehavior setting.
 Notifications.setNotificationHandler({
     handleNotification: async (notification) => {
-        const data = notification.request.content.data as { sessionId?: string } | undefined;
-        const notifSessionId = typeof data?.sessionId === 'string' ? data.sessionId : null;
+        const { data } = notification.request.content;
+        const notifSessionId = typeof data.sessionId === 'string' ? data.sessionId : null;
 
         // Same-session suppression: user already sees real-time updates.
         if (notifSessionId && notifSessionId === getActiveViewingSessionId()) {
-            return { shouldShowAlert: false, shouldPlaySound: false, shouldSetBadge: true, shouldShowBanner: false, shouldShowList: false };
+            return { shouldPlaySound: false, shouldSetBadge: true, shouldShowBanner: false, shouldShowList: false };
         }
 
-        // Read the foregroundBehavior setting from the Zustand store (synchronous, safe outside React).
-        let foregroundBehavior: 'full' | 'silent' | 'off' = 'full';
-        try {
-            const raw = storage.getState().settings.notificationsSettingsV1;
-            const parsed = NotificationsSettingsV1Schema.safeParse(raw);
-            if (parsed.success) {
-                foregroundBehavior = parsed.data.foregroundBehavior;
-            }
-        } catch { /* default to 'full' (current behavior) */ }
+        // NotificationsSettingsV1Schema uses .catch(), so parse always succeeds.
+        const { foregroundBehavior } = NotificationsSettingsV1Schema.parse(
+            storage.getState().settings.notificationsSettingsV1,
+        );
 
         switch (foregroundBehavior) {
             case 'off':
-                return { shouldShowAlert: false, shouldPlaySound: false, shouldSetBadge: true, shouldShowBanner: false, shouldShowList: false };
+                return { shouldPlaySound: false, shouldSetBadge: true, shouldShowBanner: false, shouldShowList: false };
             case 'silent':
-                return { shouldShowAlert: true, shouldPlaySound: false, shouldSetBadge: true, shouldShowBanner: true, shouldShowList: true };
+                return { shouldPlaySound: false, shouldSetBadge: true, shouldShowBanner: true, shouldShowList: true };
             case 'full':
             default:
-                return { shouldShowAlert: true, shouldPlaySound: true, shouldSetBadge: true, shouldShowBanner: true, shouldShowList: true };
+                return { shouldPlaySound: true, shouldSetBadge: true, shouldShowBanner: true, shouldShowList: true };
         }
     },
 });
