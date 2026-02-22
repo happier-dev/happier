@@ -8,7 +8,7 @@ BIN_DIR="${HAPPIER_BIN_DIR:-$HOME/.local/bin}"
 WITH_DAEMON="${HAPPIER_WITH_DAEMON:-1}"
 NO_PATH_UPDATE="${HAPPIER_NO_PATH_UPDATE:-0}"
 NONINTERACTIVE="${HAPPIER_NONINTERACTIVE:-0}"
-ACTION="${HAPPIER_INSTALLER_ACTION:-install}" # install|reinstall|check|uninstall|restart
+ACTION="${HAPPIER_INSTALLER_ACTION:-install}" # install|reinstall|version|check|uninstall|restart
 DEBUG_MODE="${HAPPIER_INSTALLER_DEBUG:-0}"
 PURGE_INSTALL_DIR="${HAPPIER_INSTALLER_PURGE:-0}"
 GITHUB_REPO="${HAPPIER_GITHUB_REPO:-happier-dev/happier}"
@@ -75,6 +75,80 @@ shell_command_cache_hint() {
   else
     say "  hash -r"
   fi
+}
+
+detect_os() {
+  case "$(uname -s)" in
+    Linux) echo "linux" ;;
+    Darwin) echo "darwin" ;;
+    *) echo "unsupported" ;;
+  esac
+}
+
+detect_arch() {
+  case "$(uname -m)" in
+    x86_64|amd64) echo "x64" ;;
+    arm64|aarch64) echo "arm64" ;;
+    *) echo "unsupported" ;;
+  esac
+}
+
+json_lookup_asset_url() {
+  local json="$1"
+  local name_regex="$2"
+  # GitHub API JSON is typically pretty-printed (newlines + spaces). Avoid "minifying" into one
+  # giant line (which can overflow awk line-length limits on some platforms) and instead parse
+  # line-by-line within the assets array. We intentionally return the *last* match to support
+  # rolling tags that may contain multiple versions: newest assets are appended later in the JSON.
+  printf '%s' "$json" | awk -v re="$name_regex" '
+    BEGIN {
+      in_assets = 0
+      name = ""
+      last = ""
+    }
+    {
+      raw = $0
+      if (in_assets == 0) {
+        if (raw ~ /"assets"[[:space:]]*:[[:space:]]*\[/) {
+          in_assets = 1
+        }
+        next
+      }
+
+      # End of the assets array. The GitHub API pretty-prints `],` on its own line.
+      if (raw ~ /^[[:space:]]*][[:space:]]*,?[[:space:]]*$/) {
+        in_assets = 0
+        next
+      }
+
+      if (raw ~ /"name"[[:space:]]*:[[:space:]]*"/) {
+        v = raw
+        sub(/^.*"name"[[:space:]]*:[[:space:]]*"/, "", v)
+        q = index(v, "\"")
+        if (q > 0) {
+          name = substr(v, 1, q - 1)
+        }
+      }
+
+      if (raw ~ /"browser_download_url"[[:space:]]*:[[:space:]]*"/) {
+        v = raw
+        sub(/^.*"browser_download_url"[[:space:]]*:[[:space:]]*"/, "", v)
+        q = index(v, "\"")
+        url = ""
+        if (q > 0) {
+          url = substr(v, 1, q - 1)
+        }
+        if (name ~ re && url != "") {
+          last = url
+        }
+      }
+    }
+    END {
+      if (last != "") {
+        print last
+      }
+    }
+  '
 }
 
 resolve_exe_name() {
@@ -239,6 +313,82 @@ tar_extract_gz() {
   tar -xzf "${archive_path}" -C "${dest_dir}" 2> >(grep -v -E "^tar: Ignoring unknown extended header keyword" >&2 || true)
 }
 
+action_version() {
+  local name
+  name="$(resolve_install_name)"
+
+  if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "preview" ]]; then
+    echo "Invalid HAPPIER_CHANNEL='${CHANNEL}'. Expected stable or preview." >&2
+    return 1
+  fi
+
+  local os=""
+  local arch=""
+  os="$(detect_os)"
+  arch="$(detect_arch)"
+  if [[ "${os}" == "unsupported" || "${arch}" == "unsupported" ]]; then
+    echo "Unsupported platform: $(uname -s)/$(uname -m)" >&2
+    return 1
+  fi
+
+  local tag="cli-stable"
+  local asset_regex="^happier-v.*-${os}-${arch}[.]tar[.]gz$"
+  local version_prefix="happier-v"
+  if [[ "${PRODUCT}" == "server" ]]; then
+    tag="server-stable"
+    asset_regex="^happier-server-v.*-${os}-${arch}[.]tar[.]gz$"
+    version_prefix="happier-server-v"
+  fi
+  if [[ "${CHANNEL}" == "preview" ]]; then
+    if [[ "${PRODUCT}" == "server" ]]; then
+      tag="server-preview"
+    else
+      tag="cli-preview"
+    fi
+  fi
+
+  local api_url="https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${tag}"
+  info "Fetching ${tag} release metadata..."
+  curl_auth() {
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+      curl -fsSL \
+        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+        -H "X-GitHub-Api-Version: 2022-11-28" \
+        "$@"
+      return
+    fi
+    curl -fsSL "$@"
+  }
+
+  local release_json=""
+  if ! release_json="$(curl_auth "${api_url}")"; then
+    echo "Failed to fetch release metadata for ${name}." >&2
+    return 1
+  fi
+  local asset_url=""
+  asset_url="$(json_lookup_asset_url "${release_json}" "${asset_regex}")"
+  if [[ -z "${asset_url}" ]]; then
+    echo "Unable to locate release assets for ${OS}-${ARCH} on tag ${tag}." >&2
+    return 1
+  fi
+  local asset_name=""
+  asset_name="$(basename "${asset_url}")"
+  local version=""
+  version="${asset_name#${version_prefix}}"
+  version="${version%-${os}-${arch}.tar.gz}"
+  if [[ -z "${version}" || "${version}" == "${asset_name}" ]]; then
+    echo "Failed to infer release version from asset name: ${asset_name}" >&2
+    return 1
+  fi
+
+  say "${name} installer version check"
+  say "- channel: ${CHANNEL}"
+  say "- product: ${PRODUCT}"
+  say "- platform: ${os}-${arch}"
+  say "- version: ${version}"
+  return 0
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -256,6 +406,7 @@ Options:
   --with-daemon
   --without-daemon
   --check
+  --version
   --reinstall
   --restart
   --uninstall [--purge]
@@ -303,6 +454,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --check)
       ACTION="check"
+      shift 1
+      ;;
+    --version)
+      ACTION="version"
       shift 1
       ;;
     --reinstall)
@@ -359,6 +514,10 @@ if [[ "${ACTION}" == "check" ]]; then
   action_check
   exit $?
 fi
+if [[ "${ACTION}" == "version" ]]; then
+  action_version
+  exit $?
+fi
 if [[ "${ACTION}" == "restart" ]]; then
   action_restart
   exit $?
@@ -372,80 +531,6 @@ if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "preview" ]]; then
   echo "Invalid HAPPIER_CHANNEL='${CHANNEL}'. Expected stable or preview." >&2
   exit 1
 fi
-
-detect_os() {
-  case "$(uname -s)" in
-    Linux) echo "linux" ;;
-    Darwin) echo "darwin" ;;
-    *) echo "unsupported" ;;
-  esac
-}
-
-detect_arch() {
-  case "$(uname -m)" in
-    x86_64|amd64) echo "x64" ;;
-    arm64|aarch64) echo "arm64" ;;
-    *) echo "unsupported" ;;
-  esac
-}
-
-json_lookup_asset_url() {
-  local json="$1"
-  local name_regex="$2"
-  # GitHub API JSON is typically pretty-printed (newlines + spaces). Avoid "minifying" into one
-  # giant line (which can overflow awk line-length limits on some platforms) and instead parse
-  # line-by-line within the assets array. We intentionally return the *last* match to support
-  # rolling tags that may contain multiple versions: newest assets are appended later in the JSON.
-  printf '%s' "$json" | awk -v re="$name_regex" '
-    BEGIN {
-      in_assets = 0
-      name = ""
-      last = ""
-    }
-    {
-      raw = $0
-      if (in_assets == 0) {
-        if (raw ~ /"assets"[[:space:]]*:[[:space:]]*\[/) {
-          in_assets = 1
-        }
-        next
-      }
-
-      # End of the assets array. The GitHub API pretty-prints `],` on its own line.
-      if (raw ~ /^[[:space:]]*][[:space:]]*,?[[:space:]]*$/) {
-        in_assets = 0
-        next
-      }
-
-      if (raw ~ /"name"[[:space:]]*:[[:space:]]*"/) {
-        v = raw
-        sub(/^.*"name"[[:space:]]*:[[:space:]]*"/, "", v)
-        q = index(v, "\"")
-        if (q > 0) {
-          name = substr(v, 1, q - 1)
-        }
-      }
-
-      if (raw ~ /"browser_download_url"[[:space:]]*:[[:space:]]*"/) {
-        v = raw
-        sub(/^.*"browser_download_url"[[:space:]]*:[[:space:]]*"/, "", v)
-        q = index(v, "\"")
-        url = ""
-        if (q > 0) {
-          url = substr(v, 1, q - 1)
-        }
-        if (name ~ re && url != "") {
-          last = url
-        }
-      }
-    }
-    END {
-      if (last != "") {
-        print last
-      }
-    }
-  '
-}
 
 sha256_file() {
   local path="$1"

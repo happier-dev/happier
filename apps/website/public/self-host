@@ -9,7 +9,7 @@ if [[ -n "${HAPPIER_SELF_HOST_MODE:-}" ]]; then
 fi
 WITH_CLI="${HAPPIER_WITH_CLI:-1}"
 NONINTERACTIVE="${HAPPIER_NONINTERACTIVE:-0}"
-ACTION="${HAPPIER_INSTALLER_ACTION:-install}" # install|reinstall|check|uninstall|restart
+ACTION="${HAPPIER_INSTALLER_ACTION:-install}" # install|reinstall|version|check|uninstall|restart
 DEBUG_MODE="${HAPPIER_INSTALLER_DEBUG:-0}"
 PURGE_DATA="${HAPPIER_SELF_HOST_PURGE_DATA:-0}"
 HAPPIER_HOME="${HAPPIER_HOME:-${HOME}/.happier}"
@@ -70,6 +70,132 @@ warn() {
   say "${COLOR_YELLOW}$*${COLOR_RESET}"
 }
 
+json_lookup_asset_url() {
+  local json="$1"
+  local name_regex="$2"
+  # GitHub API JSON is typically pretty-printed (newlines + spaces). Avoid "minifying" into one
+  # giant line (which can overflow awk line-length limits on some platforms) and instead parse
+  # line-by-line within the assets array. We intentionally return the *last* match to support
+  # rolling tags that may contain multiple versions: newest assets are appended later in the JSON.
+  printf '%s' "$json" | awk -v re="$name_regex" '
+    BEGIN {
+      in_assets = 0
+      name = ""
+      last = ""
+    }
+    {
+      raw = $0
+      if (in_assets == 0) {
+        if (raw ~ /"assets"[[:space:]]*:[[:space:]]*\[/) {
+          in_assets = 1
+        }
+        next
+      }
+
+      # End of the assets array. The GitHub API pretty-prints `],` on its own line.
+      if (raw ~ /^[[:space:]]*][[:space:]]*,?[[:space:]]*$/) {
+        in_assets = 0
+        next
+      }
+
+      if (raw ~ /"name"[[:space:]]*:[[:space:]]*"/) {
+        v = raw
+        sub(/^.*"name"[[:space:]]*:[[:space:]]*"/, "", v)
+        q = index(v, "\"")
+        if (q > 0) {
+          name = substr(v, 1, q - 1)
+        }
+      }
+
+      if (raw ~ /"browser_download_url"[[:space:]]*:[[:space:]]*"/) {
+        v = raw
+        sub(/^.*"browser_download_url"[[:space:]]*:[[:space:]]*"/, "", v)
+        q = index(v, "\"")
+        url = ""
+        if (q > 0) {
+          url = substr(v, 1, q - 1)
+        }
+        if (name ~ re && url != "") {
+          last = url
+        }
+      }
+    }
+    END {
+      if (last != "") {
+        print last
+      }
+    }
+  '
+}
+
+action_version() {
+  if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "preview" ]]; then
+    echo "Invalid HAPPIER_CHANNEL='${CHANNEL}'. Expected stable or preview." >&2
+    return 1
+  fi
+
+  local tag="stack-stable"
+  if [[ "${CHANNEL}" == "preview" ]]; then
+    tag="stack-preview"
+  fi
+
+  local uname_os=""
+  uname_os="$(uname -s)"
+  local os=""
+  case "${uname_os}" in
+    Linux) os="linux" ;;
+    Darwin) os="darwin" ;;
+    *)
+      echo "Unsupported platform: ${uname_os}" >&2
+      return 1
+      ;;
+  esac
+
+  local arch_raw=""
+  arch_raw="$(uname -m)"
+  local arch=""
+  case "${arch_raw}" in
+    x86_64|amd64) arch="x64" ;;
+    arm64|aarch64) arch="arm64" ;;
+    *)
+      echo "Unsupported architecture: ${arch_raw}" >&2
+      return 1
+      ;;
+  esac
+
+  local api_url="https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${tag}"
+  info "Fetching ${tag} release metadata..."
+  local release_json=""
+  if ! release_json="$(curl -fsSL "${api_url}")"; then
+    echo "Failed to fetch release metadata for Happier Stack." >&2
+    return 1
+  fi
+
+  local asset_regex="^hstack-v.*-${os}-${arch}[.]tar[.]gz$"
+  local asset_url=""
+  asset_url="$(json_lookup_asset_url "${release_json}" "${asset_regex}")"
+  if [[ -z "${asset_url}" ]]; then
+    echo "Unable to locate release assets for ${os}-${arch} on tag ${tag}." >&2
+    return 1
+  fi
+  local asset_name=""
+  asset_name="$(basename "${asset_url}")"
+  local version=""
+  version="${asset_name#hstack-v}"
+  version="${version%-${os}-${arch}.tar.gz}"
+  if [[ -z "${version}" || "${version}" == "${asset_name}" ]]; then
+    echo "Failed to infer release version from asset name: ${asset_name}" >&2
+    return 1
+  fi
+
+  say "Happier Stack installer version check"
+  say "- channel: ${CHANNEL}"
+  say "- mode: ${MODE}"
+  say "- platform: ${os}-${arch}"
+  say "- version: ${version}"
+  return 0
+}
+
 tar_extract_gz() {
   local archive_path="$1"
   local dest_dir="$2"
@@ -105,6 +231,7 @@ Options:
   --stable
   --preview
   --check
+  --version
   --reinstall
   --restart
   --uninstall [--purge-data]
@@ -186,6 +313,10 @@ while [[ $# -gt 0 ]]; do
       ACTION="check"
       shift 1
       ;;
+    --version)
+      ACTION="version"
+      shift 1
+      ;;
     --reinstall)
       ACTION="install"
       shift 1
@@ -237,6 +368,11 @@ if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "preview" ]]; then
   exit 1
 fi
 
+if [[ "${ACTION}" == "version" ]]; then
+  action_version
+  exit $?
+fi
+
 UNAME="$(uname -s)"
 OS=""
 case "${UNAME}" in
@@ -277,11 +413,6 @@ if [[ "${MODE}" == "system" && "${EUID}" -ne 0 ]]; then
     exit 1
   fi
   echo "Please run as root (or install sudo) for --mode system." >&2
-  exit 1
-fi
-
-if [[ "${OS}" == "linux" ]] && ! command -v systemctl >/dev/null 2>&1; then
-  echo "systemctl is required for self-host installation on Linux." >&2
   exit 1
 fi
 
@@ -395,51 +526,10 @@ if [[ "${ACTION}" == "restart" ]]; then
   exit $?
 fi
 
-json_lookup_asset_url() {
-  local json="$1"
-  local name_regex="$2"
-  # GitHub API JSON is typically pretty-printed (newlines + spaces). Minify and then parse using a
-  # tiny jq-free state machine that pairs `"name":"..."` with the next `"browser_download_url":"..."`.
-  # We intentionally return the *last* match to support rolling tags that may contain multiple
-  # versions: newest assets are appended later in the release JSON.
-  printf '%s' "$json" | tr -d '[:space:]' | awk -v re="$name_regex" '
-    {
-      s = $0
-      assets_key = "\"assets\":["
-      a = index(s, assets_key)
-      if (a > 0) {
-        s = substr(s, a + length(assets_key))
-      }
-      name_key = "\"name\":\""
-      url_key = "\"browser_download_url\":\""
-      last = ""
-      while (1) {
-        p = index(s, name_key)
-        if (p == 0) break
-        s = substr(s, p + length(name_key))
-        q = index(s, "\"")
-        if (q == 0) break
-        name = substr(s, 1, q - 1)
-        s = substr(s, q + 1)
-
-        u = index(s, url_key)
-        if (u == 0) continue
-        s = substr(s, u + length(url_key))
-        v = index(s, "\"")
-        if (v == 0) break
-        url = substr(s, 1, v - 1)
-        s = substr(s, v + 1)
-
-        if (name ~ re && url != "") {
-          last = url
-        }
-      }
-      if (last != "") {
-        print last
-      }
-    }
-  '
-}
+if [[ "${OS}" == "linux" ]] && ! command -v systemctl >/dev/null 2>&1; then
+  echo "systemctl is required for self-host installation on Linux." >&2
+  exit 1
+fi
 
 sha256_file() {
   local path="$1"
