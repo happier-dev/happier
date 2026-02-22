@@ -518,7 +518,7 @@ export class PermissionHandler {
                 this.onPermissionRequestCallback(id);
             }
             
-            // Send push notification (best-effort; gated by per-account preferences).
+            // Send push notification (best-effort; gated by per-account preferences and permission mode).
             if (this.session.pushSender) {
                 try {
                     sendPermissionRequestPushNotificationForActiveAccount({
@@ -526,6 +526,7 @@ export class PermissionHandler {
                         sessionId: this.session.client.sessionId,
                         permissionId: id,
                         toolName: getToolName(toolName),
+                        permissionMode: this.permissionMode,
                     });
                 } catch {
                     // ignore
