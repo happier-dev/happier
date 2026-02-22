@@ -127,6 +127,24 @@ describe('claudeRemote', () => {
     expect((call?.options as any)?.extraArgs).toEqual(['--mcp-config', mcpRaw]);
   });
 
+  it('passes through --mcp-config=<json> to the underlying Claude Code CLI (no parsing/merging)', async () => {
+    mockQuery.mockReturnValue(messageStream(resultMessage()));
+
+    const { claudeRemote } = await import('./claudeRemote');
+
+    const mcpRaw = JSON.stringify({ mcpServers: { fixture: { type: 'stdio', command: 'node', args: ['server.mjs'] } } });
+    const arg = `--mcp-config=${mcpRaw}`;
+    await claudeRemote(
+      createBaseOptions({
+        claudeArgs: [arg],
+      }),
+    );
+
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    const call = mockQuery.mock.calls[0]?.[0];
+    expect((call?.options as any)?.extraArgs).toEqual([arg]);
+  });
+
   it('treats --resume (no id) as resume-last-session in remote mode', async () => {
     mockQuery.mockReturnValue(messageStream(resultMessage()));
 

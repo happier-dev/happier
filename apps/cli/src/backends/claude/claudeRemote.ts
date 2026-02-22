@@ -17,6 +17,11 @@ function extractMcpConfigPassthroughArgs(args?: string[]): string[] | undefined 
     const out: string[] = [];
     for (let i = 0; i < input.length; i++) {
         const arg = input[i];
+        if (typeof arg === 'string' && arg.startsWith('--mcp-config=')) {
+            // Support the equals form (`--mcp-config=<json>`).
+            out.push(arg);
+            continue;
+        }
         if (arg !== '--mcp-config') continue;
         const next = i + 1 < input.length ? input[i + 1] : undefined;
         // Pass the flag through as-is; do not parse/merge.
