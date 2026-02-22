@@ -407,7 +407,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         justifyContent: 'space-between',
     },
     actionButtonsRowWithBelow: {
-        marginBottom: Platform.OS === 'web' ? 3 : 8,
+        // Keep vertical spacing consistent with chip row spacing (mobile especially).
+        marginBottom: Platform.OS === 'web' ? 3 : 6,
     },
     pathRow: {
         flexDirection: 'row',
@@ -415,7 +416,9 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     actionButtonsLeft: {
         flexDirection: 'row',
-        ...(Platform.OS === 'web' ? { columnGap: 6, rowGap: 3 } : {}),
+        // Use gap to control spacing so we don't add extra bottom margin after the last wrapped row on native.
+        columnGap: 6,
+        rowGap: Platform.OS === 'web' ? 3 : 6,
         flex: 1,
         flexWrap: 'wrap',
         overflow: 'visible',
@@ -427,7 +430,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     actionButtonsLeftScrollContent: {
         flexDirection: 'row',
         alignItems: 'center',
-        ...(Platform.OS === 'web' ? { columnGap: 6 } : {}),
+        columnGap: 6,
         paddingRight: 6 + ACTION_BAR_SCROLL_END_GUTTER_WIDTH,
     },
     actionButtonsFadeLeft: {
@@ -453,8 +456,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         flex: 0,
     },
     actionItemWrapper: {
-        // Non-chip action items (e.g. SCM status) should align with chips on native.
-        ...(Platform.OS === 'web' ? {} : { marginRight: 6, marginBottom: 6 }),
+        // Non-chip action items (e.g. SCM status) should align with chips.
+        // Spacing is handled by `actionButtonsLeft` gaps.
     },
     actionChip: {
         flexDirection: 'row',
@@ -465,7 +468,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         justifyContent: 'center',
         height: 32,
         gap: 6,
-        ...(Platform.OS === 'web' ? {} : { marginRight: 6, marginBottom: 6 }),
     },
     actionChipIconOnly: {
         paddingHorizontal: 8,
@@ -541,8 +543,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingVertical: 6,
         justifyContent: 'center',
         height: 32,
-        // Keep vertical alignment consistent with `actionChip` on native.
-        ...(Platform.OS === 'web' ? {} : { marginRight: 6, marginBottom: 6 }),
+        // Spacing is handled by the parent container gaps (avoids extra bottom padding on wrapped rows).
     },
     actionButtonPressed: {
         opacity: 0.7,
