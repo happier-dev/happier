@@ -10,6 +10,15 @@ import {
   setStdioTtyForTest,
 } from '@/ui/testkit/authNonInteractiveGlobals.testkit';
 
+const runTailscaleServeStatusMock = vi.fn<
+  (params: Readonly<{ timeoutMs: number; env: NodeJS.ProcessEnv; tailscaleBin: string }>) => Promise<string>
+>();
+
+vi.mock('@/integrations/tailscale/tailscaleCommand', () => ({
+  runTailscaleServeStatus: (params: Readonly<{ timeoutMs: number; env: NodeJS.ProcessEnv; tailscaleBin: string }>) =>
+    runTailscaleServeStatusMock(params),
+}));
+
 type AxiosRequestResponse = { state: 'requested' };
 type AxiosClaimResponse = { state: 'authorized'; token: string; response: string };
 type AxiosStatusResponse = { status: 'authorized' };
@@ -74,6 +83,7 @@ describe.sequential('doAuth (non-interactive)', () => {
     'HAPPIER_HOME_DIR',
     'HAPPIER_SERVER_URL',
     'HAPPIER_WEBAPP_URL',
+    'HAPPIER_PUBLIC_SERVER_URL',
     'HAPPIER_NO_BROWSER_OPEN',
     'HAPPIER_AUTH_POLL_INTERVAL_MS',
     'HAPPIER_AUTH_METHOD',
@@ -115,6 +125,49 @@ describe.sequential('doAuth (non-interactive)', () => {
       restoreTty();
       envScope.restore();
       await rm(home, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it('prefers Tailscale Serve https:// URL for QR/deep links when serverUrl is loopback and public url is unset', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-cli-auth-noninteractive-tailscale-'));
+    const envScope = createEnvKeyScope(envKeys);
+    const restoreTty = setStdioTtyForTest({ stdin: false, stdout: false });
+    const output = captureConsoleLogAndMuteStdout();
+
+    runTailscaleServeStatusMock.mockResolvedValueOnce(
+      [
+        'https://my-machine.tailnet.ts.net',
+        '|-- / proxy http://127.0.0.1:53545',
+        '',
+      ].join('\n'),
+    );
+
+    try {
+      envScope.patch({
+        HAPPIER_HOME_DIR: home,
+        HAPPIER_SERVER_URL: 'http://127.0.0.1:53545',
+        HAPPIER_WEBAPP_URL: 'https://webapp.example.test',
+        HAPPIER_PUBLIC_SERVER_URL: undefined,
+        HAPPIER_NO_BROWSER_OPEN: '1',
+        HAPPIER_AUTH_POLL_INTERVAL_MS: '1',
+        HAPPIER_AUTH_METHOD: undefined,
+      });
+
+      vi.resetModules();
+      const { doAuth } = await import('./auth');
+
+      const creds = await doAuth();
+      expect(creds?.token).toBe('tok');
+
+      const out = output.logs.join('\n');
+      expect(out).toContain(encodeURIComponent('https://my-machine.tailnet.ts.net'));
+      expect(out).not.toContain(encodeURIComponent('http://127.0.0.1:53545'));
+    } finally {
+      output.restore();
+      restoreTty();
+      envScope.restore();
+      await rm(home, { recursive: true, force: true });
+      runTailscaleServeStatusMock.mockReset();
     }
   }, 15_000);
 

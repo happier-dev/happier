@@ -39,6 +39,7 @@ class Configuration {
   public readonly isExperimentalEnabled: boolean
   public readonly disableCaffeinate: boolean
   public readonly socketForceWebsocketOnly: boolean
+  public readonly socketIoTransports: string[]
 
   // Session connection keep-alive (ephemeral thinking state + online presence).
   public readonly sessionKeepAliveIdleMs: number
@@ -124,7 +125,7 @@ class Configuration {
     });
 
     this.serverUrl = resolved.serverUrl
-    this.publicServerUrl = (envPublicServerUrl || resolved.serverUrl).replace(/\/+$/, '')
+    this.publicServerUrl = (envPublicServerUrl || resolved.publicServerUrl).replace(/\/+$/, '')
     this.webappUrl = resolved.webappUrl
     this.activeServerId = sanitizeServerIdForFilesystem(resolved.activeServerId, 'cloud')
 
@@ -138,6 +139,27 @@ class Configuration {
     this.disableCaffeinate = ['true', '1', 'yes'].includes(process.env.HAPPIER_DISABLE_CAFFEINATE?.toLowerCase() || '');
     const forceWebsocketRaw = (process.env.HAPPIER_SOCKET_FORCE_WEBSOCKET ?? '').toString().trim().toLowerCase();
     this.socketForceWebsocketOnly = ['true', '1', 'yes', 'on'].includes(forceWebsocketRaw);
+
+    const socketTransportsRaw = (process.env.HAPPIER_SOCKET_TRANSPORTS ?? '').toString().trim().toLowerCase();
+    const parsedSocketTransports = (() => {
+      if (!socketTransportsRaw) return null;
+      const allowed = new Set(['websocket', 'polling']);
+      const seen = new Set<string>();
+      const out: string[] = [];
+      for (const raw of socketTransportsRaw.split(',')) {
+        const value = raw.trim().toLowerCase();
+        if (!value) continue;
+        if (!allowed.has(value)) continue;
+        if (seen.has(value)) continue;
+        seen.add(value);
+        out.push(value);
+      }
+      return out.length > 0 ? out : null;
+    })();
+
+    this.socketIoTransports =
+      parsedSocketTransports
+      ?? (this.socketForceWebsocketOnly ? ['websocket'] : ['websocket', 'polling']);
 
     const idleMsRaw = Number.parseInt(String(process.env.HAPPIER_SESSION_KEEPALIVE_IDLE_MS ?? ''), 10);
     const thinkingMsRaw = Number.parseInt(String(process.env.HAPPIER_SESSION_KEEPALIVE_THINKING_MS ?? ''), 10);
@@ -383,6 +405,7 @@ class Configuration {
 type PersistedServerProfile = Readonly<{
   id: string;
   serverUrl: string;
+  publicServerUrl?: string;
   webappUrl: string;
 }>;
 
@@ -405,9 +428,15 @@ function readActiveServerFromSettingsFile(path: string): PersistedServerSettings
     for (const [id, v] of Object.entries(serversRaw as Record<string, any>)) {
       const sid = sanitizeServerIdForFilesystem((v as any)?.id ?? id, '');
       const serverUrl = String((v as any)?.serverUrl ?? '').trim();
+      const publicServerUrl = String((v as any)?.publicServerUrl ?? '').trim();
       const webappUrl = String((v as any)?.webappUrl ?? '').trim();
       if (!sid || !serverUrl || !webappUrl) continue;
-      servers[sid] = { id: sid, serverUrl, webappUrl };
+      servers[sid] = {
+        id: sid,
+        serverUrl,
+        ...(publicServerUrl ? { publicServerUrl } : {}),
+        webappUrl,
+      };
     }
     if (!servers[activeServerId]) return null;
     return { activeServerId, servers };
@@ -436,7 +465,7 @@ function resolveServerSelection(params: Readonly<{
   envWebappUrl: string | null;
   envActiveServerId: string | null;
   persisted: PersistedServerSettings | null;
-}>): Readonly<{ activeServerId: string; serverUrl: string; webappUrl: string }> {
+}>): Readonly<{ activeServerId: string; serverUrl: string; publicServerUrl: string; webappUrl: string }> {
   const DEFAULT_SERVER_URL = 'https://api.happier.dev';
   const DEFAULT_WEBAPP_URL = 'https://app.happier.dev';
   const resolveActiveServerId = (fallbackId: string): string =>
@@ -448,6 +477,7 @@ function resolveServerSelection(params: Readonly<{
     const persistedMatch = params.persisted
       ? Object.values(params.persisted.servers).find((s) => normalizeServerUrl(s.serverUrl) === serverUrl) ?? null
       : null;
+    const publicServerUrl = normalizeServerUrl(persistedMatch?.publicServerUrl ?? serverUrl);
     let webappUrl = params.envWebappUrl;
     if (!webappUrl) {
       if (persistedMatch?.webappUrl) {
@@ -463,7 +493,7 @@ function resolveServerSelection(params: Readonly<{
       }
     }
     const activeServerId = resolveActiveServerId(persistedMatch?.id ?? deriveServerIdFromUrl(serverUrl));
-    return { activeServerId, serverUrl, webappUrl };
+    return { activeServerId, serverUrl, publicServerUrl, webappUrl };
   }
 
   if (params.persisted) {
@@ -472,6 +502,7 @@ function resolveServerSelection(params: Readonly<{
       return {
         activeServerId: resolveActiveServerId(active.id),
         serverUrl: normalizeServerUrl(active.serverUrl),
+        publicServerUrl: normalizeServerUrl(active.publicServerUrl ?? active.serverUrl),
         webappUrl: active.webappUrl,
       };
     }
@@ -480,6 +511,7 @@ function resolveServerSelection(params: Readonly<{
   return {
     activeServerId: resolveActiveServerId('cloud'),
     serverUrl: DEFAULT_SERVER_URL,
+    publicServerUrl: DEFAULT_SERVER_URL,
     webappUrl: DEFAULT_WEBAPP_URL,
   };
 }

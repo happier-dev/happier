@@ -29,6 +29,10 @@
     "./providers": {
       "types": "./dist/providers/index.d.ts",
       "default": "./dist/providers/index.js"
+    },
+    "./tailscale": {
+      "types": "./dist/tailscale/index.d.ts",
+      "default": "./dist/tailscale/index.js"
     }
   },
   "files": [

@@ -1,5 +1,5 @@
 import { decodeBase64, encodeBase64, encodeBase64Url } from "@/api/encryption";
-import { configuration } from "@/configuration";
+import { configuration, reloadConfiguration } from "@/configuration";
 import { createHash, randomBytes } from "node:crypto";
 import tweetnacl from 'tweetnacl';
 import axios from 'axios';
@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto';
 import { logger } from './logger';
 import { ensureDaemonRunningForSessionCommand, shouldAutoStartDaemonAfterAuth } from '@/daemon/ensureDaemon';
 import { buildConfigureServerLinks, buildTerminalConnectLinks } from '@happier-dev/cli-common/links';
+import { tailscaleServeHttpsUrlForInternalServerUrl } from '@/integrations/tailscale/tailscaleServe';
 
 export type PostTerminalAuthRequestCompatibleResponse =
     | { state: 'requested' }
@@ -32,6 +33,82 @@ function isAuthorizedWithTokenAndResponse(
         'response' in value &&
         typeof (value as any).response === 'string'
     );
+}
+
+function isLoopbackHttpServerUrl(serverUrl: string): boolean {
+    try {
+        const url = new URL(serverUrl);
+        if (url.protocol !== 'http:') return false;
+        const host = url.hostname;
+        return host === '127.0.0.1' || host === 'localhost' || host === '0.0.0.0' || host === '::1';
+    } catch {
+        return false;
+    }
+}
+
+function shouldAutoInferPublicServerUrl(): boolean {
+    const raw = String(process.env.HAPPIER_TAILSCALE_AUTO_PUBLIC_URL ?? '').trim().toLowerCase();
+    if (!raw) return true;
+    return ['1', 'true', 'yes', 'on'].includes(raw);
+}
+
+function resolveTailscaleServeStatusTimeoutMs(): number {
+    const raw = Number.parseInt(String(process.env.HAPPIER_TAILSCALE_SERVE_STATUS_TIMEOUT_MS ?? ''), 10);
+    return Number.isFinite(raw) && raw > 0 ? raw : 750;
+}
+
+async function applyAutoPublicServerUrlFromTailscaleServeBestEffort(): Promise<void> {
+    if (!shouldAutoInferPublicServerUrl()) return;
+    if (String(process.env.HAPPIER_PUBLIC_SERVER_URL ?? '').trim()) return;
+
+    const serverUrl = String(configuration.serverUrl ?? '').trim();
+    const publicServerUrl = String(configuration.publicServerUrl ?? '').trim();
+    if (!serverUrl) return;
+    if (publicServerUrl && publicServerUrl !== serverUrl) return;
+    if (!isLoopbackHttpServerUrl(serverUrl)) return;
+
+    const inferred = await tailscaleServeHttpsUrlForInternalServerUrl({
+        internalServerUrl: serverUrl,
+        timeoutMs: resolveTailscaleServeStatusTimeoutMs(),
+        env: process.env,
+    });
+    if (!inferred) return;
+
+    process.env.HAPPIER_PUBLIC_SERVER_URL = inferred;
+    reloadConfiguration();
+
+    const serverId = String(configuration.activeServerId ?? '').trim();
+    if (!serverId) return;
+
+    try {
+        await updateSettings((current: any) => {
+            const servers = current?.servers && typeof current.servers === 'object' ? current.servers : {};
+            const existing = servers[serverId];
+            if (!existing || typeof existing !== 'object') return current;
+
+            const existingServerUrl = String((existing as any).serverUrl ?? '').trim();
+            if (!existingServerUrl || existingServerUrl !== serverUrl) return current;
+
+            const existingPublic = String((existing as any).publicServerUrl ?? '').trim();
+            // Don't override an explicit non-loopback public URL.
+            if (existingPublic && existingPublic !== existingServerUrl) return current;
+
+            const now = Date.now();
+            return {
+                ...current,
+                servers: {
+                    ...servers,
+                    [serverId]: {
+                        ...existing,
+                        publicServerUrl: inferred,
+                        updatedAt: now,
+                    },
+                },
+            };
+        });
+    } catch {
+        // best-effort
+    }
 }
 
 export async function doAuth(): Promise<Credentials | null> {
@@ -52,6 +129,8 @@ export async function doAuth(): Promise<Credentials | null> {
         console.log('\nAuthentication cancelled.\n');
         process.exit(0);
     }
+
+    await applyAutoPublicServerUrlFromTailscaleServeBestEffort();
 
     // Generating ephemeral key
     const secret = new Uint8Array(randomBytes(32));

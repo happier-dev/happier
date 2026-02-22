@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 describe('generateWebAuthUrl', () => {
   const prevServerUrl = process.env.HAPPIER_SERVER_URL;
@@ -53,5 +56,58 @@ describe('generateWebAuthUrl', () => {
     expect(url).toBe(
       `https://app.happier.dev/terminal/connect#key=${key}&server=${encodeURIComponent('https://my-stack.example.test')}`,
     );
+  });
+
+  it('uses persisted publicServerUrl from the active server profile when HAPPIER_PUBLIC_SERVER_URL is unset', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-webAuth-public-profile-'));
+
+    try {
+      process.env.HAPPIER_HOME_DIR = home;
+      delete process.env.HAPPIER_SERVER_URL;
+      delete process.env.HAPPIER_WEBAPP_URL;
+      delete process.env.HAPPIER_PUBLIC_SERVER_URL;
+
+      await writeFile(
+        join(home, 'settings.json'),
+        JSON.stringify(
+          {
+            schemaVersion: 5,
+            onboardingCompleted: true,
+            activeServerId: 'local',
+            servers: {
+              local: {
+                id: 'local',
+                name: 'Local',
+                serverUrl: 'http://127.0.0.1:53545',
+                publicServerUrl: 'https://my-stack.example.test',
+                webappUrl: 'https://app.happier.dev',
+                createdAt: 1,
+                updatedAt: 1,
+                lastUsedAt: 1,
+              },
+            },
+            machineIdByServerId: {},
+            machineIdConfirmedByServerByServerId: {},
+            lastChangesCursorByServerIdByAccountId: {},
+          },
+          null,
+          2,
+        ),
+        { mode: 0o600 },
+      );
+
+      vi.resetModules();
+      const { generateWebAuthUrl } = await import('./webAuth');
+      const { encodeBase64 } = await import('./encryption');
+
+      const publicKey = new Uint8Array(32).fill(11);
+      const key = encodeBase64(publicKey, 'base64url');
+      const url = generateWebAuthUrl(publicKey);
+      expect(url).toBe(
+        `https://app.happier.dev/terminal/connect#key=${key}&server=${encodeURIComponent('https://my-stack.example.test')}`,
+      );
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });

@@ -53,6 +53,12 @@ interface Settings {
     id: string
     name: string
     serverUrl: string
+    /**
+     * Public URL for deep links/QR codes (defaults to serverUrl when unset).
+     * Useful when the CLI can reach a server via an internal address (e.g. loopback),
+     * but other devices must use a different public hostname (e.g. Tailscale).
+     */
+    publicServerUrl?: string
     webappUrl: string
     createdAt: number
     updatedAt: number
@@ -100,6 +106,7 @@ const defaultSettings: Settings = {
       id: 'cloud',
       name: 'Happier Cloud',
       serverUrl: 'https://api.happier.dev',
+      publicServerUrl: 'https://api.happier.dev',
       webappUrl: 'https://app.happier.dev',
       createdAt: 0,
       updatedAt: 0,

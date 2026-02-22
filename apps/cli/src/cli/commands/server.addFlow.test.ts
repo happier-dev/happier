@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -26,6 +26,15 @@ vi.mock('@/utils/spawnHappyCLI', () => ({
 
 import { handleServerCommand } from './server';
 import { runServerSubcommand } from './server/subcommands';
+
+const runTailscaleServeStatusMock = vi.fn<
+  (params: Readonly<{ timeoutMs: number; env: NodeJS.ProcessEnv; tailscaleBin: string }>) => Promise<string>
+>();
+
+vi.mock('@/integrations/tailscale/tailscaleCommand', () => ({
+  runTailscaleServeStatus: (params: Readonly<{ timeoutMs: number; env: NodeJS.ProcessEnv; tailscaleBin: string }>) =>
+    runTailscaleServeStatusMock(params),
+}));
 
 function setTtyMode(stdinIsTTY: boolean, stdoutIsTTY: boolean): () => void {
   const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
@@ -248,6 +257,81 @@ describe('happier server add guided flow', () => {
       else process.env.HAPPIER_HOME_DIR = prevHome;
       reloadConfiguration();
       await rm(home, { recursive: true, force: true });
+      spawnHappyCLIMock.mockReset();
+    }
+  });
+
+  it('persists --public-server-url for QR/deep links', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-server-add-public-url-'));
+    const prevHome = process.env.HAPPIER_HOME_DIR;
+    const restoreTty = setTtyMode(false, false);
+
+    try {
+      process.env.HAPPIER_HOME_DIR = home;
+      reloadConfiguration();
+
+      await handleServerCommand([
+        'add',
+        '--name',
+        'Company',
+        '--server-url',
+        'http://127.0.0.1:53545',
+        '--public-server-url',
+        'https://company.example.test',
+        '--webapp-url',
+        'https://app.company.example',
+        '--use',
+      ]);
+
+      const raw = JSON.parse(await readFile(join(home, 'settings.json'), 'utf-8'));
+      expect(raw?.servers?.Company?.publicServerUrl).toBe('https://company.example.test');
+    } finally {
+      restoreTty();
+      if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = prevHome;
+      reloadConfiguration();
+      await rm(home, { recursive: true, force: true });
+      spawnHappyCLIMock.mockReset();
+    }
+  });
+
+  it('auto-detects public URL from Tailscale Serve when serverUrl is loopback and --public-server-url is omitted', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-server-add-auto-public-url-'));
+    const prevHome = process.env.HAPPIER_HOME_DIR;
+    const restoreTty = setTtyMode(false, false);
+
+    runTailscaleServeStatusMock.mockResolvedValueOnce(
+      [
+        'https://my-machine.tailnet.ts.net',
+        '|-- / proxy http://127.0.0.1:53545',
+        '',
+      ].join('\n'),
+    );
+
+    try {
+      process.env.HAPPIER_HOME_DIR = home;
+      reloadConfiguration();
+
+      await handleServerCommand([
+        'add',
+        '--name',
+        'Local',
+        '--server-url',
+        'http://127.0.0.1:53545',
+        '--webapp-url',
+        'https://app.company.example',
+        '--use',
+      ]);
+
+      const raw = JSON.parse(await readFile(join(home, 'settings.json'), 'utf-8'));
+      expect(raw?.servers?.Local?.publicServerUrl).toBe('https://my-machine.tailnet.ts.net');
+    } finally {
+      restoreTty();
+      if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = prevHome;
+      reloadConfiguration();
+      await rm(home, { recursive: true, force: true });
+      runTailscaleServeStatusMock.mockReset();
       spawnHappyCLIMock.mockReset();
     }
   });
