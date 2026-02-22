@@ -43,7 +43,7 @@ import type { AgentBackend } from '@/agent';
 import { GeminiDiffProcessor } from '@/backends/gemini/utils/diffProcessor';
 import type { GeminiMode, CodexMessagePayload } from '@/backends/gemini/types';
 import type { PermissionMode } from '@/api/types';
-import { GEMINI_MODEL_ENV } from '@/backends/gemini/constants';
+import { DEFAULT_GEMINI_MODEL, GEMINI_MODEL_ENV } from '@/backends/gemini/constants';
 import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
 import { normalizePermissionModeToIntent, resolvePermissionModeUpdatedAtFromMessage } from '@/agent/runtime/permission/permissionModeCanonical';
 import {
@@ -739,7 +739,7 @@ export async function runGemini(opts: {
             currentModeHash = message.hash;
             
             // Model info is already shown in status bar via updateDisplayedModel
-            logger.debug(`[gemini] Displaying model in UI: ${geminiTerminalUi.getDisplayedModel() || 'gemini-2.5-pro'}, displayedModel: ${geminiTerminalUi.getDisplayedModel()}`);
+            logger.debug(`[gemini] Displaying model in UI: ${geminiTerminalUi.getDisplayedModel() || DEFAULT_GEMINI_MODEL}, displayedModel: ${geminiTerminalUi.getDisplayedModel()}`);
           }
         }
         

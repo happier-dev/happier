@@ -22,6 +22,7 @@ import type {
 import type { AgentMessage } from '@/agent/core';
 import { logger } from '@/ui/logger';
 import { filterJsonObjectOrArrayLine } from '@/agent/transport/utils/jsonStdoutFilter';
+import { getSuggestedGeminiModelsForUi } from '@/backends/gemini/models/suggestedGeminiModelsForUi';
 import {
   findEmptyInputDefaultToolName,
   findToolNameFromId,
@@ -116,15 +117,6 @@ const GEMINI_TOOL_PATTERNS: ToolPatternWithInputFields[] = [
 ];
 
 /**
- * Available Gemini models for error messages
- */
-const AVAILABLE_MODELS = [
-  'gemini-2.5-pro',
-  'gemini-2.5-flash',
-  'gemini-2.5-flash-lite',
-];
-
-/**
  * Gemini CLI transport handler.
  *
  * Handles all Gemini-specific quirks:
@@ -188,10 +180,11 @@ export class GeminiTransport implements TransportHandler {
 
     // Model not found (404) - show error with available models
     if (trimmed.includes('status 404') || trimmed.includes('code":404')) {
+      const suggested = getSuggestedGeminiModelsForUi();
       const errorMessage: AgentMessage = {
         type: 'status',
         status: 'error',
-        detail: `Model not found. Available models: ${AVAILABLE_MODELS.join(', ')}`,
+        detail: `Model not found. Suggested models: ${suggested.join(', ')}`,
       };
       return { message: errorMessage };
     }

@@ -93,11 +93,19 @@ export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = O
   },
   gemini: {
     supportsSelection: true,
+    supportsFreeform: true,
     nonAcpApplyScope: 'next_prompt',
     acpApplyBehavior: 'restart_session',
     acpModelConfigOptionId: 'model',
     defaultMode: 'gemini-2.5-pro',
-    allowedModes: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'],
+    allowedModes: [
+      'gemini-2.5-pro',
+      'gemini-2.5-flash',
+      'gemini-2.5-flash-lite',
+      'gemini-3-flash-preview',
+      'gemini-3-pro-preview',
+      'gemini-3.1-pro-preview',
+    ],
   },
   auggie: {
     supportsSelection: true,

@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
 import { geminiTransport } from './transport';
+import type { StderrContext } from '@/agent/transport/TransportHandler';
 
 const DEFAULT_CONTEXT = {
   recentPromptHadChangeTitle: false,
   toolCallCountSincePrompt: 0,
+};
+
+const DEFAULT_STDERR_CONTEXT: StderrContext = {
+  activeToolCalls: new Set<string>(),
+  hasActiveInvestigation: false,
 };
 
 describe('GeminiTransport extractToolNameFromId', () => {
@@ -76,5 +82,17 @@ describe('GeminiTransport determineToolName', () => {
         DEFAULT_CONTEXT,
       ),
     ).toBe(expected);
+  });
+});
+
+describe('GeminiTransport handleStderr', () => {
+  it('formats 404 model-not-found errors with catalog suggestions', () => {
+    const res = geminiTransport.handleStderr?.('request failed with status 404', DEFAULT_STDERR_CONTEXT);
+    expect(res?.message?.type).toBe('status');
+    if (!res?.message || res.message.type !== 'status') {
+      throw new Error('Expected a status message');
+    }
+    expect(res.message.detail ?? '').toContain('Model not found');
+    expect(res.message.detail ?? '').toContain('gemini-3.1-pro-preview');
   });
 });

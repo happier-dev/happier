@@ -109,7 +109,7 @@ happier gemini project set <id>     # Set Google Cloud Project ID (for Workspace
 happier gemini project get          # Show current Google Cloud Project ID
 ```
 
-**Available models:** `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`
+**Suggested models:** `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-3-flash-preview`, `gemini-3-pro-preview`, `gemini-3.1-pro-preview` (freeform model ids are also supported)
 
 ## Options
 

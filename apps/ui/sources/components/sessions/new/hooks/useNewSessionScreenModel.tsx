@@ -58,6 +58,7 @@ import { computeNewSessionInputMaxHeight } from '@/components/sessions/agentInpu
 import { useProfileMap, transformProfileToEnvironmentVars } from '@/components/sessions/new/modules/profileHelpers';
 import { newSessionScreenStyles } from '@/components/sessions/new/newSessionScreenStyles';
 import { useSecretRequirementFlow } from '@/components/sessions/new/hooks/useSecretRequirementFlow';
+import { coerceNewSessionModelMode, resolveInitialNewSessionModelMode } from '@/components/sessions/new/hooks/newSessionModelModePolicy';
 import { useNewSessionCapabilitiesPrefetch } from '@/components/sessions/new/hooks/useNewSessionCapabilitiesPrefetch';
 import { useNewSessionDraftAutoPersist } from '@/components/sessions/new/hooks/useNewSessionDraftAutoPersist';
 import { useCreateNewSession } from '@/components/sessions/new/hooks/useCreateNewSession';
@@ -473,10 +474,10 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const [modelMode, setModelMode] = React.useState<ModelMode>(() => {
         const core = getAgentCore(agentType);
         const draftMode = typeof persistedDraft?.modelMode === 'string' ? persistedDraft.modelMode : null;
-        if (draftMode && (core.model.allowedModes as readonly string[]).includes(draftMode)) {
-            return draftMode as ModelMode;
-        }
-        return core.model.defaultMode;
+        return resolveInitialNewSessionModelMode({
+            draftModelMode: draftMode,
+            modelConfig: { defaultMode: core.model.defaultMode, allowedModes: core.model.allowedModes, supportsFreeform: core.model.supportsFreeform },
+        }) as ModelMode;
     });
 
     const [acpSessionModeId, setAcpSessionModeId] = React.useState<string | null>(null);
@@ -1399,16 +1400,19 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     // Reset model mode when agent type changes to appropriate default
     React.useEffect(() => {
         const core = getAgentCore(agentType);
-        if (preflightModels && Array.isArray(preflightModels.availableModels) && preflightModels.availableModels.length > 0) {
-            if (preflightModels.supportsFreeform === true) return;
-            const allowed = new Set<string>(['default', ...preflightModels.availableModels.map((m) => m.id)]);
-            if (allowed.has(String(modelMode))) return;
-            setModelMode(core.model.defaultMode);
-            return;
+        const next = coerceNewSessionModelMode({
+            modelMode: String(modelMode),
+            modelConfig: { defaultMode: core.model.defaultMode, allowedModes: core.model.allowedModes, supportsFreeform: core.model.supportsFreeform },
+            preflight: preflightModels
+                ? {
+                    availableModels: preflightModels.availableModels.map((m) => ({ id: m.id })),
+                    supportsFreeform: preflightModels.supportsFreeform === true,
+                }
+                : null,
+        });
+        if (next !== modelMode) {
+            setModelMode(next as ModelMode);
         }
-
-        if ((core.model.allowedModes as readonly ModelMode[]).includes(modelMode)) return;
-        setModelMode(core.model.defaultMode);
     }, [agentType, modelMode, preflightModels]);
 
     const openProfileEnvVarsPreview = React.useCallback((profile: AIBackendProfile) => {
