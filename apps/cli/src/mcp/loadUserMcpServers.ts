@@ -50,10 +50,10 @@ function loadMcpFromJsonFile(filePath: string, label: string): Record<string, un
  *
  * Avoids adding a TOML dependency for a single config file.
  * Only extracts `command = "..."` and `args = [ "...", ... ]` fields.
+ * Handles common TOML escape sequences (`\\`, `\"`, `\n`, `\t`, `\r`).
  *
- * Limitations: does not handle multiline strings, escaped quotes in values,
- * or commas inside quoted array elements.  Sufficient for MCP server configs
- * which only use simple `command`/`args` fields.
+ * Limitations: does not handle multiline basic strings (`"""..."""`),
+ * literal strings (`'...'`), or inline tables.
  */
 function loadMcpFromToml(filePath: string, label: string): Record<string, unknown> {
   if (!existsSync(filePath)) return {};
@@ -96,16 +96,25 @@ function loadMcpFromToml(filePath: string, label: string): Record<string, unknow
 
 const TOML_ESCAPES: Record<string, string> = { '\\"': '"', '\\\\': '\\', '\\n': '\n', '\\t': '\t', '\\r': '\r' };
 
+function escapeForRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function unescapeToml(s: string): string {
+  return s.replace(/\\./g, (m) => TOML_ESCAPES[m] ?? m);
+}
+
 function parseTomlString(block: string, key: string): string | null {
-  const re = new RegExp(`^${key}\\s*=\\s*"((?:[^"\\\\]|\\\\.)*)"`, 'm');
-  return block.match(re)?.[1]?.replace(/\\./g, (m) => TOML_ESCAPES[m] ?? m) ?? null;
+  const re = new RegExp(`^${escapeForRegExp(key)}\\s*=\\s*"((?:[^"\\\\]|\\\\.)*)"`, 'm');
+  const captured = block.match(re)?.[1];
+  return captured != null ? unescapeToml(captured) : null;
 }
 
 function parseTomlStringArray(block: string, key: string): string[] {
-  const re = new RegExp(`^${key}\\s*=\\s*\\[([^\\]]*)]`, 'm');
+  const re = new RegExp(`^${escapeForRegExp(key)}\\s*=\\s*\\[([^\\]]*)]`, 'm');
   const match = block.match(re);
   if (!match) return [];
   return (match[1].match(/"(?:[^"\\]|\\.)*"|[^,]+/g) ?? [])
-    .map((s) => s.trim().replace(/^"|"$/g, ''))
+    .map((s) => unescapeToml(s.trim().replace(/^"|"$/g, '')))
     .filter(Boolean);
 }
