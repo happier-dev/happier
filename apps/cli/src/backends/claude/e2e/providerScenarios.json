@@ -13,6 +13,7 @@
     "host": {
       "smoke": ["bash_echo_trace_ok"],
       "extended": [
+        "mcp_merge_preserves_user_tools",
         "read_known_file",
         "agent_sdk_read_known_file",
         "permission_surface_outside_workspace",
@@ -29,6 +30,7 @@
     "env": {
       "smoke": ["bash_echo_trace_ok"],
       "extended": [
+        "mcp_merge_preserves_user_tools",
         "read_known_file",
         "agent_sdk_read_known_file",
         "permission_surface_outside_workspace",

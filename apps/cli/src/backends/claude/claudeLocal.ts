@@ -35,13 +35,11 @@ export const claudeCliPath = resolve(join(projectPath(), 'scripts', 'claude_loca
 export async function claudeLocal(opts: {
     abort: AbortSignal,
     sessionId: string | null,
-    mcpServers?: Record<string, any>,
     path: string,
     onSessionFound: (id: string) => void,
     onThinkingChange?: (thinking: boolean) => void,
     claudeEnvVars?: Record<string, string>,
     claudeArgs?: string[],
-    allowedTools?: string[],
     /** Path to temporary settings file with SessionStart hook (optional - for session tracking) */
     hookSettingsPath?: string
 }) {
@@ -214,14 +212,6 @@ export async function claudeLocal(opts: {
             // If hasResumeFlag && !startFrom: --resume is in claudeArgs, let Claude handle it
 
             args.push('--append-system-prompt', systemPrompt());
-
-            if (opts.mcpServers && Object.keys(opts.mcpServers).length > 0) {
-                args.push('--mcp-config', JSON.stringify({ mcpServers: opts.mcpServers }));
-            }
-
-            if (opts.allowedTools && opts.allowedTools.length > 0) {
-                args.push('--allowedTools', opts.allowedTools.join(','));
-            }
 
             // Claude CLI treats the first non-flag token as the prompt. If a positional prompt
             // is provided before later flags, those flags can be mis-parsed as prompt text.

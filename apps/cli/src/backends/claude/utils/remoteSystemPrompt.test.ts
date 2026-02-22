@@ -4,6 +4,11 @@ import { systemPrompt } from '@/backends/claude/utils/systemPrompt';
 import { getClaudeRemoteSystemPrompt } from './remoteSystemPrompt';
 
 describe('getClaudeRemoteSystemPrompt', () => {
+  it('does not reference Happier-only MCP tools (Claude is responsible for loading MCP from its own config)', () => {
+    process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY = '0';
+    expect(systemPrompt()).not.toContain('mcp__happier__change_title');
+  });
+
   it('returns the base prompt unchanged when disableTodos is false', () => {
     process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY = '0';
     const prompt = getClaudeRemoteSystemPrompt({ disableTodos: false });

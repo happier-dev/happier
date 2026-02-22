@@ -270,34 +270,32 @@ export function query(config: {
     options?: QueryOptions
     onMessageReceived?: (message: SDKMessage) => void
 }): Query {
-    const {
-        prompt,
-        options: {
-            allowedTools = [],
-            appendSystemPrompt,
-            customSystemPrompt,
-            cwd,
-            disallowedTools = [],
-            // Prefer the currently-running Node binary when available to avoid PATH-dependent
-            // failures on Windows (and GUI-launched shells). When running under Bun we keep
-            // the historical default ("node") because process.execPath would be Bun.
-            executable = typeof process.versions.bun === 'string' ? 'node' : process.execPath,
-            executableArgs = [],
-            maxTurns,
-            mcpServers,
-            pathToClaudeCodeExecutable = getDefaultClaudeCodePath(),
-            permissionMode = 'default',
-            continue: continueConversation,
-            resume,
-            model,
-            fallbackModel,
-            strictMcpConfig,
-            canCallTool,
-            settingsPath,
-            env,
-            stderr,
-        } = {}
-    } = config
+	    const {
+	        prompt,
+	        options: {
+	            appendSystemPrompt,
+	            customSystemPrompt,
+	            cwd,
+	            // Prefer the currently-running Node binary when available to avoid PATH-dependent
+	            // failures on Windows (and GUI-launched shells). When running under Bun we keep
+	            // the historical default ("node") because process.execPath would be Bun.
+	            executable = typeof process.versions.bun === 'string' ? 'node' : process.execPath,
+	            executableArgs = [],
+	            maxTurns,
+	            pathToClaudeCodeExecutable = getDefaultClaudeCodePath(),
+	            permissionMode = 'default',
+	            continue: continueConversation,
+	            resume,
+	            model,
+	            fallbackModel,
+	            strictMcpConfig,
+	            canCallTool,
+	            settingsPath,
+	            extraArgs,
+	            env,
+	            stderr,
+	        } = {}
+	    } = config
 
     const envOverlay = env ?? {}
 
@@ -314,28 +312,28 @@ export function query(config: {
         }
         args.push('--permission-prompt-tool', 'stdio')
     }
-    if (continueConversation) args.push('--continue')
-    if (resume) args.push('--resume', resume)
-    if (allowedTools.length > 0) args.push('--allowedTools', allowedTools.join(','))
-    if (disallowedTools.length > 0) args.push('--disallowedTools', disallowedTools.join(','))
-    if (mcpServers && Object.keys(mcpServers).length > 0) {
-        args.push('--mcp-config', JSON.stringify({ mcpServers }))
-    }
-    if (strictMcpConfig) args.push('--strict-mcp-config')
-    if (permissionMode) args.push('--permission-mode', permissionMode)
-    if (settingsPath) args.push('--settings', settingsPath)
+	    if (continueConversation) args.push('--continue')
+	    if (resume) args.push('--resume', resume)
+	    if (strictMcpConfig) args.push('--strict-mcp-config')
+	    if (permissionMode) args.push('--permission-mode', permissionMode)
+	    if (settingsPath) args.push('--settings', settingsPath)
 
-    if (fallbackModel) {
+	    if (fallbackModel) {
         if (model && fallbackModel === model) {
             throw new Error('Fallback model cannot be the same as the main model. Please specify a different model for fallbackModel option.')
         }
         args.push('--fallback-model', fallbackModel)
-    }
+	    }
 
-    // Handle prompt input
-    if (typeof prompt === 'string') {
-        args.push('--print', prompt.trim())
-    } else {
+	    if (Array.isArray(extraArgs) && extraArgs.length > 0) {
+	        // Forward raw args before the prompt/positional payload is appended.
+	        args.push(...extraArgs);
+	    }
+
+	    // Handle prompt input
+	    if (typeof prompt === 'string') {
+	        args.push('--print', prompt.trim())
+	    } else {
         args.push('--input-format', 'stream-json')
     }
 

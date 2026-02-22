@@ -25,8 +25,6 @@ export class Session {
     readonly queue: MessageQueue2<EnhancedMode>;
     readonly claudeEnvVars?: Record<string, string>;
     claudeArgs?: string[];  // Made mutable to allow filtering
-    readonly mcpServers: Record<string, any>;
-    readonly allowedTools?: string[];
     readonly _onModeChange: (mode: 'local' | 'remote') => void;
     /** Path to temporary settings file with SessionStart hook (required for session tracking) */
     readonly hookSettingsPath: string;
@@ -65,10 +63,8 @@ export class Session {
         sessionId: string | null,
         claudeEnvVars?: Record<string, string>,
         claudeArgs?: string[],
-        mcpServers: Record<string, any>,
         messageQueue: MessageQueue2<EnhancedMode>,
         onModeChange: (mode: 'local' | 'remote') => void,
-        allowedTools?: string[],
         /** Path to temporary settings file with SessionStart hook (required for session tracking) */
         hookSettingsPath: string,
         /** JavaScript runtime to use for spawning Claude Code (default: 'node') */
@@ -83,8 +79,6 @@ export class Session {
         this.queue = opts.messageQueue;
         this.claudeEnvVars = opts.claudeEnvVars;
         this.claudeArgs = opts.claudeArgs;
-        this.mcpServers = opts.mcpServers;
-        this.allowedTools = opts.allowedTools;
         this._onModeChange = opts.onModeChange;
         this.hookSettingsPath = opts.hookSettingsPath;
         this.jsRuntime = opts.jsRuntime ?? 'node';

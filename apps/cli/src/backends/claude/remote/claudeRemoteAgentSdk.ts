@@ -236,15 +236,13 @@ function stripSeenToolBlocksFromMessage(message: SDKMessage, seen: { toolUseIds:
 }
 
 export async function claudeRemoteAgentSdk(opts: {
-    // Fixed parameters
-    sessionId: string | null;
-    transcriptPath: string | null;
-    path: string;
-    mcpServers?: Record<string, any>;
-    claudeEnvVars?: Record<string, string>;
-    claudeArgs?: string[];
+	    // Fixed parameters
+	    sessionId: string | null;
+	    transcriptPath: string | null;
+	    path: string;
+	    claudeEnvVars?: Record<string, string>;
+	    claudeArgs?: string[];
     claudeExecutablePath?: string;
-    allowedTools: string[];
     signal?: AbortSignal;
     canCallTool: (
         toolName: string,
@@ -323,8 +321,6 @@ export async function claudeRemoteAgentSdk(opts: {
     const argOverrides = parseClaudeSdkFlagOverridesFromArgs(opts.claudeArgs);
     const customSystemPrompt = argOverrides.customSystemPrompt ?? mode.customSystemPrompt;
     const appendSystemPrompt = argOverrides.appendSystemPrompt ?? mode.appendSystemPrompt;
-    const allowedTools = argOverrides.allowedTools ?? mode.allowedTools;
-    const disallowedTools = argOverrides.disallowedTools ?? mode.disallowedTools;
     const remoteSystemPrompt = getClaudeRemoteSystemPrompt({ disableTodos: mode.claudeRemoteDisableTodos === true });
     const enableFileCheckpointing = mode.claudeRemoteEnableFileCheckpointing === true;
     const settingSources = (() => {
@@ -542,24 +538,18 @@ export async function claudeRemoteAgentSdk(opts: {
     };
 
     const mappedPermissionMode = mapToClaudeMode(mode.permissionMode);
-    const queryOptions: Record<string, unknown> = {
-        abortController,
-        cwd: opts.path,
-        continue: shouldContinue || undefined,
-        resume: startFrom ?? undefined,
-        mcpServers: opts.mcpServers,
-        settingSources,
-        permissionMode: mappedPermissionMode,
-        allowDangerouslySkipPermissions: mappedPermissionMode === 'bypassPermissions',
-        model: argOverrides.model ?? mode.model,
+	    const queryOptions: Record<string, unknown> = {
+	        abortController,
+	        cwd: opts.path,
+	        continue: shouldContinue || undefined,
+	        resume: startFrom ?? undefined,
+	        settingSources,
+	        permissionMode: mappedPermissionMode,
+	        allowDangerouslySkipPermissions: mappedPermissionMode === 'bypassPermissions',
+	        model: argOverrides.model ?? mode.model,
         fallbackModel: argOverrides.fallbackModel ?? mode.fallbackModel,
         maxTurns: argOverrides.maxTurns,
         systemPrompt: buildSystemPrompt(),
-        // Only pass an explicit allowlist when one is requested via mode/CLI overrides.
-        // Otherwise we would inadvertently block Claude Code built-in tools like Read/Edit/Write/Bash
-        // (breaking agent-sdk scenarios that require filesystem operations).
-        allowedTools: allowedTools ? allowedTools.concat(opts.allowedTools) : undefined,
-        disallowedTools,
         strictMcpConfig: mode.claudeRemoteStrictMcpServerConfig === true || argOverrides.strictMcpConfig,
         canUseTool,
         env: buildClaudeSubprocessEnv(),

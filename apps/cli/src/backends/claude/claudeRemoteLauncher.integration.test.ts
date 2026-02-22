@@ -136,7 +136,6 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
     path: '/tmp',
     logPath: '/tmp/log',
     sessionId: options?.sessionId ?? null,
-    mcpServers: {},
     messageQueue: new MessageQueue2<EnhancedMode>(() => 'mode'),
     onModeChange: () => {},
     hookSettingsPath: '/tmp/hooks.json',

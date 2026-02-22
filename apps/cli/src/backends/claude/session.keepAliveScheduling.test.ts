@@ -42,7 +42,6 @@ async function createSessionWithEnv(client: SessionClientPort, env: Record<strin
     path: '/tmp',
     logPath: '/tmp/log',
     sessionId: null,
-    mcpServers: {},
     messageQueue: new MessageQueue2<EnhancedMode>(() => 'mode'),
     onModeChange: () => {},
     hookSettingsPath: '/tmp/hooks.json',

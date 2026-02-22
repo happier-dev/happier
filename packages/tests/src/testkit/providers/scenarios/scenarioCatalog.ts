@@ -10,6 +10,7 @@ import { fetchMessagesSince, fetchSessionV2, patchSessionMetadataWithRetry } fro
 import { decryptLegacyBase64, encryptLegacyBase64 } from '../../messageCrypto';
 import { sleep } from '../../timing';
 import { enqueuePendingQueueV2 } from '../../pendingQueueV2';
+import { repoRootDir } from '../../paths';
 import {
   resolveAcpOutsideWorkspaceWriteAllowed,
   resolveAcpOutsideWorkspaceRequireTaskComplete,
@@ -667,7 +668,7 @@ function makeAcpPermissionModeOutsideWorkspaceScenario(
 
 const agentSdkRemoteMetaBase = {
   claudeRemoteAgentSdkEnabled: true,
-  claudeRemoteSettingSources: 'project',
+  claudeRemoteSettingSources: 'user_project',
 } as const;
 
 function withAgentSdkRemoteMeta(
@@ -705,6 +706,109 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
   // --------------------
   // Claude (local/remote)
   // --------------------
+  mcp_merge_preserves_user_tools: () => {
+    const sentinel = `FIXTURE_MCP_PONG_${randomUUID()}`;
+    // This fixture script uses ESM + top-level await, so it must be .mjs for Node.
+    const scriptFilename = 'fixture-mcp-server.mjs';
+    return {
+      id: 'mcp_merge_preserves_user_tools',
+      title: 'mcp: injected Happy MCP config does not hide user MCP tools (merge + no forced allowlist)',
+      tier: 'extended',
+      yolo: true,
+      maxTraceEvents: { toolCalls: 1, toolResults: 1, permissionRequests: 1 },
+      setup: async ({ workspaceDir }) => {
+        const scriptPath = join(workspaceDir, scriptFilename);
+
+        const sdkMcpPath = join(
+          repoRootDir(),
+          'apps',
+          'cli',
+          'node_modules',
+          '@modelcontextprotocol',
+          'sdk',
+          'dist',
+          'esm',
+          'server',
+          'mcp.js',
+        );
+        const sdkStdioPath = join(
+          repoRootDir(),
+          'apps',
+          'cli',
+          'node_modules',
+          '@modelcontextprotocol',
+          'sdk',
+          'dist',
+          'esm',
+          'server',
+          'stdio.js',
+        );
+        const zodPath = join(repoRootDir(), 'apps', 'cli', 'node_modules', 'zod', 'index.js');
+
+        await writeFile(
+          scriptPath,
+          `#!/usr/bin/env node
+import { pathToFileURL } from 'node:url';
+
+const sdkMcpPath = ${JSON.stringify(sdkMcpPath)};
+const sdkStdioPath = ${JSON.stringify(sdkStdioPath)};
+const zodPath = ${JSON.stringify(zodPath)};
+const sentinel = ${JSON.stringify(sentinel)};
+
+const { McpServer } = await import(pathToFileURL(sdkMcpPath).href);
+const { StdioServerTransport } = await import(pathToFileURL(sdkStdioPath).href);
+const { z } = await import(pathToFileURL(zodPath).href);
+
+const server = new McpServer({ name: 'fixture-mcp', version: '0.0.0' });
+
+server.registerTool(
+  'ping',
+  {
+    title: 'ping',
+    description: 'Fixture MCP ping tool',
+    inputSchema: {
+      // Use a non-redacted key so provider tool traces can assert the sentinel substring
+      // without disabling any redaction logic.
+      sentinel: z.string(),
+    },
+  },
+  async () => ({
+    content: [{ type: 'text', text: sentinel }],
+  }),
+);
+
+await server.connect(new StdioServerTransport());
+`,
+          'utf8',
+        );
+      },
+      cliArgs: ({ workspaceDir }) => {
+        const scriptPath = join(workspaceDir, scriptFilename);
+        return [
+          '--mcp-config',
+          JSON.stringify({
+            mcpServers: {
+              fixture: {
+                command: process.execPath,
+                args: [scriptPath],
+              },
+            },
+          }),
+        ];
+      },
+      prompt: () =>
+        [
+          'Run exactly one tool call:',
+          '- Use the tool mcp__fixture__ping.',
+          `- Pass this exact JSON input: {"sentinel":${JSON.stringify(sentinel)}}`,
+          '- Do not use any other tool.',
+          '- Then reply DONE.',
+        ].join('\n'),
+      requiredFixtureKeys: ['claude/claude/tool-call/mcp__fixture__ping', 'claude/claude/tool-result/mcp__fixture__ping'],
+      requiredTraceSubstrings: [sentinel],
+    };
+  },
+
   bash_echo_trace_ok: () => ({
     id: 'bash_echo_trace_ok',
     title: 'Bash: echo CLAUDE_TRACE_OK',

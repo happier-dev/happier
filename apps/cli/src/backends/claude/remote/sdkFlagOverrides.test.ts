@@ -28,18 +28,6 @@ describe('parseClaudeSdkFlagOverridesFromArgs', () => {
     });
   });
 
-  it('extracts tool arrays and ignores empty values', () => {
-    const parsed = parseClaudeSdkFlagOverridesFromArgs([
-      '--allowedTools',
-      'read, write,',
-      '--disallowedTools',
-      ' edit ,',
-    ]);
-
-    expect(parsed.allowedTools).toEqual(['read', 'write']);
-    expect(parsed.disallowedTools).toEqual(['edit']);
-  });
-
   it('ignores invalid max-turns values', () => {
     const parsed = parseClaudeSdkFlagOverridesFromArgs([
       '--max-turns',
@@ -47,5 +35,17 @@ describe('parseClaudeSdkFlagOverridesFromArgs', () => {
     ]);
 
     expect(parsed.maxTurns).toBeUndefined();
+  });
+
+  it('ignores tool allow/deny flag overrides (do not hide user MCP tools)', () => {
+    const parsed = parseClaudeSdkFlagOverridesFromArgs([
+      '--allowedTools',
+      'read,write',
+      '--disallowedTools',
+      'Edit',
+    ]);
+
+    expect((parsed as any).allowedTools).toBeUndefined();
+    expect((parsed as any).disallowedTools).toBeUndefined();
   });
 });

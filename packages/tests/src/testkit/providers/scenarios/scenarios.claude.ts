@@ -11,7 +11,7 @@ import { cleanupOutsideWorkspacePath, makeOutsideWorkspacePath } from '../harnes
 
 const agentSdkRemoteMetaBase = {
   claudeRemoteAgentSdkEnabled: true,
-  claudeRemoteSettingSources: 'project',
+  claudeRemoteSettingSources: 'user_project',
 } as const;
 
 function withAgentSdkRemoteMeta(base: ProviderScenario, params: { id: string; title: string; metaExtras?: Record<string, unknown> }): ProviderScenario {

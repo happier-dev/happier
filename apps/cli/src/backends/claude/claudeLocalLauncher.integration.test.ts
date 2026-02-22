@@ -140,7 +140,6 @@ function createLocalHarness(options?: { metadataSnapshot?: MetadataSnapshot }): 
     path: '/tmp',
     logPath: '/tmp/log',
     sessionId: null,
-    mcpServers: {},
     messageQueue: new MessageQueue2<EnhancedMode>(() => 'mode'),
     onModeChange: () => {},
     hookSettingsPath: '/tmp/hooks.json',
@@ -225,6 +224,22 @@ describe('claudeLocalLauncher', () => {
     const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
     const result = await claudeLocalLauncher(session);
 
+    expect(result).toEqual({ type: 'exit', code: 0 });
+  });
+
+  it('does not pass a strict allowedTools allowlist to local Claude spawns by default', async () => {
+    const { session } = createLocalHarness();
+
+    let captured: LocalLaunchOptions | null = null;
+    mockClaudeLocal.mockImplementationOnce(async (opts: LocalLaunchOptions) => {
+      captured = opts;
+    });
+
+    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+    const result = await claudeLocalLauncher(session);
+
+    expect(mockClaudeLocal).toHaveBeenCalledTimes(1);
+    expect((captured as any)?.allowedTools).toBeUndefined();
     expect(result).toEqual({ type: 'exit', code: 0 });
   });
 

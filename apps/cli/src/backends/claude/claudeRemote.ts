@@ -12,16 +12,31 @@ import { getClaudeRemoteSystemPrompt } from "./utils/remoteSystemPrompt";
 import { parseClaudeSdkFlagOverridesFromArgs } from "./remote/sdkFlagOverrides";
 import { resolveClaudeRemoteSessionStartPlan } from "./remote/sessionStartPlan";
 
+function extractMcpConfigPassthroughArgs(args?: string[]): string[] | undefined {
+    const input = args ?? [];
+    const out: string[] = [];
+    for (let i = 0; i < input.length; i++) {
+        const arg = input[i];
+        if (arg !== '--mcp-config') continue;
+        const next = i + 1 < input.length ? input[i + 1] : undefined;
+        // Pass the flag through as-is; do not parse/merge.
+        out.push('--mcp-config');
+        if (typeof next === 'string' && next.length > 0 && !next.startsWith('-')) {
+            out.push(next);
+            i++;
+        }
+    }
+    return out.length > 0 ? out : undefined;
+}
+
 export async function claudeRemote(opts: {
 
     // Fixed parameters
     sessionId: string | null,
     transcriptPath: string | null,
     path: string,
-    mcpServers?: Record<string, any>,
     claudeEnvVars?: Record<string, string>,
     claudeArgs?: string[],
-    allowedTools: string[],
     signal?: AbortSignal,
     canCallTool: (toolName: string, input: unknown, mode: EnhancedMode, options: { signal: AbortSignal }) => Promise<PermissionResult>,
     /** Path to temporary settings file with SessionStart hook (required for session tracking) */
@@ -98,23 +113,19 @@ export async function claudeRemote(opts: {
     const argOverrides = parseClaudeSdkFlagOverridesFromArgs(opts.claudeArgs);
     const customSystemPrompt = argOverrides.customSystemPrompt ?? initial.mode.customSystemPrompt;
     const appendSystemPrompt = argOverrides.appendSystemPrompt ?? initial.mode.appendSystemPrompt;
-    const allowedTools = argOverrides.allowedTools ?? initial.mode.allowedTools;
-    const disallowedTools = argOverrides.disallowedTools ?? initial.mode.disallowedTools;
     const remoteSystemPrompt = getClaudeRemoteSystemPrompt({ disableTodos: initial.mode.claudeRemoteDisableTodos === true });
 
     const sdkOptions: QueryOptions = {
         cwd: opts.path,
         continue: shouldContinue || undefined,
         resume: startFrom ?? undefined,
-        mcpServers: opts.mcpServers,
         permissionMode: mapToClaudeMode(initial.mode.permissionMode),
         model: argOverrides.model ?? initial.mode.model,
         fallbackModel: argOverrides.fallbackModel ?? initial.mode.fallbackModel,
         maxTurns: argOverrides.maxTurns,
         customSystemPrompt: customSystemPrompt || undefined,
         appendSystemPrompt: (appendSystemPrompt ? appendSystemPrompt + '\n\n' : '') + remoteSystemPrompt,
-        allowedTools: allowedTools ? allowedTools.concat(opts.allowedTools) : opts.allowedTools,
-        disallowedTools,
+        extraArgs: extractMcpConfigPassthroughArgs(opts.claudeArgs),
         strictMcpConfig: argOverrides.strictMcpConfig,
         canCallTool: (toolName: string, input: unknown, options: { signal: AbortSignal }) =>
             opts.canCallTool(toolName, input, mode, options),

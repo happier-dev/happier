@@ -28,7 +28,9 @@ export function normalizeClaudeRemoteAdvancedOptionsJson(raw: unknown): string {
 
 export const CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS = Object.freeze({
   claudeRemoteAgentSdkEnabled: true,
-  claudeRemoteSettingSources: 'project' as 'project' | 'user_project' | 'none',
+  // Default to loading user + project settings so Claude remote mode matches the
+  // behavior users see when launching Claude Code directly (including user-global MCP servers).
+  claudeRemoteSettingSources: 'user_project' as 'project' | 'user_project' | 'none',
   claudeRemoteIncludePartialMessages: false,
   claudeLocalPermissionBridgeEnabled: true,
   claudeLocalPermissionBridgeWaitIndefinitely: false,
@@ -61,7 +63,7 @@ export function buildClaudeRemoteProviderSettingsShape(zod: typeof z): ProviderS
 export function buildClaudeRemoteOutgoingMessageMetaExtras(settings: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
   return {
     claudeRemoteAgentSdkEnabled: Boolean(settings.claudeRemoteAgentSdkEnabled),
-    claudeRemoteSettingSources: typeof settings.claudeRemoteSettingSources === 'string' ? settings.claudeRemoteSettingSources : 'project',
+    claudeRemoteSettingSources: typeof settings.claudeRemoteSettingSources === 'string' ? settings.claudeRemoteSettingSources : 'user_project',
     claudeRemoteIncludePartialMessages: Boolean(settings.claudeRemoteIncludePartialMessages),
     claudeLocalPermissionBridgeEnabled: Boolean(settings.claudeLocalPermissionBridgeEnabled),
     claudeLocalPermissionBridgeWaitIndefinitely: Boolean(settings.claudeLocalPermissionBridgeWaitIndefinitely),

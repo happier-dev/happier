@@ -23,8 +23,6 @@ export interface EnhancedMode {
     fallbackModel?: string;
     customSystemPrompt?: string;
     appendSystemPrompt?: string;
-    allowedTools?: string[];
-    disallowedTools?: string[];
 
     // Claude remote-mode (provider-scoped) settings forwarded via message meta.
     claudeRemoteAgentSdkEnabled?: boolean;
@@ -44,13 +42,11 @@ interface LoopOptions {
     permissionModeUpdatedAt?: number
     startingMode?: 'local' | 'remote'
     onModeChange: (mode: 'local' | 'remote') => void
-    mcpServers: Record<string, any>
     session: SessionClientPort
     pushSender?: PushNotificationClient | null
     claudeEnvVars?: Record<string, string>
     claudeArgs?: string[]
     messageQueue: MessageQueue2<EnhancedMode>
-    allowedTools?: string[]
     onSessionReady?: (session: Session) => void
     /** Path to temporary settings file with SessionStart hook (required for session tracking) */
     hookSettingsPath: string
@@ -70,10 +66,8 @@ export async function loop(opts: LoopOptions): Promise<number> {
         sessionId: null,
         claudeEnvVars: opts.claudeEnvVars,
         claudeArgs: opts.claudeArgs,
-        mcpServers: opts.mcpServers,
         logPath: logPath,
         messageQueue: opts.messageQueue,
-        allowedTools: opts.allowedTools,
         onModeChange: opts.onModeChange,
         hookSettingsPath: opts.hookSettingsPath,
         jsRuntime: opts.jsRuntime,

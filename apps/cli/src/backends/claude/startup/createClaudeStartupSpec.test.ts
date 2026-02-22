@@ -38,7 +38,6 @@ describe('createClaudeStartupSpec', () => {
       deps: {
         startHookServer: async () => ({ port: 123, stop: () => {} }),
         generateHookSettingsFile: () => '/tmp/hooks.json',
-        startHappyServer: async () => ({ url: 'http://127.0.0.1:1', toolNames: [], stop: () => {} }),
         cleanupHookSettingsFile: () => {},
         registerRpcHandlers: () => {},
         initializeSessionInBackground: async () => {

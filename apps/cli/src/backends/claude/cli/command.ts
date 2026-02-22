@@ -206,6 +206,10 @@ ${chalk.bold('Examples:')}
   happier auth login --force Authenticate
   happier doctor             Run diagnostics
 
+${chalk.bold('Server selection (global flags; prefix-only; no persistence):')}
+  happier --server <name-or-id> ...
+  happier --server-url <url> [--webapp-url <url>] [--public-server-url <url>] ...
+
 ${chalk.bold('Happier supports ALL Claude options!')}
   Use any claude flag with happier as you would with claude. Our favorite:
 

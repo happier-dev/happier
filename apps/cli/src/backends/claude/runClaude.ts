@@ -15,7 +15,6 @@ import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 import { getEnvironmentInfo } from '@/ui/doctor';
 import { configuration } from '@/configuration';
 import { initialMachineMetadata } from '@/daemon/startDaemon';
-import { startHappyServer } from '@/mcp/startHappyServer';
 import { startHookServer } from '@/backends/claude/utils/startHookServer';
 import { generateHookSettingsFile, cleanupHookSettingsFile } from '@/backends/claude/utils/generateHookSettings';
 import { registerKillSessionHandler } from '@/rpc/handlers/killSession';
@@ -84,64 +83,6 @@ export interface StartOptions {
      * Used for resuming inactive sessions.
      */
     existingSessionId?: string
-}
-
-export function extractMcpServersFromClaudeArgs(args?: string[]): { claudeArgs?: string[]; mcpServers: Record<string, any> } {
-    const input = args ?? [];
-    if (input.length === 0) return { claudeArgs: args, mcpServers: {} };
-
-    const output: string[] = [];
-    const mcpServers: Record<string, any> = {};
-    let strippedAny = false;
-
-    for (let i = 0; i < input.length; i++) {
-        const arg = input[i];
-        if (arg !== '--mcp-config') {
-            output.push(arg);
-            continue;
-        }
-
-        const raw = i + 1 < input.length ? input[i + 1] : undefined;
-        if (typeof raw !== 'string' || raw.length === 0) {
-            // Keep as-is so upstream Claude can surface a helpful error message.
-            output.push(arg);
-            continue;
-        }
-
-        // Consume value
-        i++;
-
-        try {
-            const parsed = JSON.parse(raw) as any;
-            const servers = parsed && typeof parsed === 'object' ? (parsed as any).mcpServers : null;
-            if (!servers || typeof servers !== 'object' || Array.isArray(servers)) {
-                // Not a supported shape; keep as-is for upstream Claude.
-                output.push('--mcp-config', raw);
-                continue;
-            }
-
-            for (const [name, config] of Object.entries(servers as Record<string, any>)) {
-                if (typeof name !== 'string' || name.length === 0) continue;
-                mcpServers[name] = config;
-            }
-
-            // Preserve any non-mcp keys so upstream Claude still sees them.
-            const extras = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? { ...(parsed as Record<string, unknown>) } : null;
-            if (extras) {
-                delete (extras as any).mcpServers;
-                if (Object.keys(extras).length > 0) {
-                    output.push('--mcp-config', JSON.stringify(extras));
-                }
-            }
-            strippedAny = true;
-        } catch {
-            // Invalid JSON; keep as-is for upstream Claude.
-            output.push('--mcp-config', raw);
-        }
-    }
-
-    if (!strippedAny) return { claudeArgs: args, mcpServers };
-    return { claudeArgs: output.length > 0 ? output : undefined, mcpServers };
 }
 
 export async function runClaude(credentials: Credentials, options: StartOptions = {}): Promise<void> {
@@ -283,18 +224,16 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             process.once('SIGTERM', abortOnSignal);
 
             try {
-                await claudeLocal({
-                    path: workingDirectory,
-                    sessionId: null,
-                    onSessionFound: (id) => { offlineSessionId = id; },
-                    onThinkingChange: () => {},
-                    abort: abortController.signal,
-                    claudeEnvVars: options.claudeEnvVars,
-                    claudeArgs: options.claudeArgs,
-                    mcpServers: {},
-                    allowedTools: []
-                });
-            } finally {
+		                await claudeLocal({
+		                    path: workingDirectory,
+		                    sessionId: null,
+		                    onSessionFound: (id) => { offlineSessionId = id; },
+		                    onThinkingChange: () => {},
+		                    abort: abortController.signal,
+		                    claudeEnvVars: options.claudeEnvVars,
+		                    claudeArgs: options.claudeArgs,
+		                });
+	            } finally {
                 process.removeListener('SIGINT', abortOnSignal);
                 process.removeListener('SIGTERM', abortOnSignal);
                 reconnection.cancel();
@@ -431,21 +370,6 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         );
     });
 
-    // Extract user-provided MCP servers from --mcp-config so we can:
-    // - merge them with Happy's built-in MCP server
-    // - keep MCP servers consistent across local↔remote mode switches
-    // - avoid passing multiple --mcp-config flags to Claude
-    //
-    // IMPORTANT: do this only after we've confirmed the server is reachable.
-    // If the server is unreachable and we fall back to offline local mode, we must
-    // preserve the user's raw `--mcp-config` flag for upstream Claude.
-    const extractedMcp = extractMcpServersFromClaudeArgs(options.claudeArgs);
-    options.claudeArgs = extractedMcp.claudeArgs;
-
-    // Start Happier MCP server
-    const happyServer = await startHappyServer(session);
-    logger.debug(`[START] Happier MCP server started at ${happyServer.url}`);
-
     // Variable to track current session instance (updated via onSessionReady callback)
     // Used by hook server to notify Session when Claude changes session ID
     let currentSession: import('./session').Session | null = null;
@@ -552,13 +476,11 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     // Permission modes: Use the unified 7-mode type, mapping happens at SDK boundary in claudeRemote.ts
     let currentPermissionMode: PermissionMode = options.permissionMode ?? 'default';
     let currentModel = options.model; // Track current model state
-    let currentModelUpdatedAt = typeof options.modelUpdatedAt === 'number' ? options.modelUpdatedAt : 0;
-    let currentFallbackModel: string | undefined = undefined; // Track current fallback model
-    let currentCustomSystemPrompt: string | undefined = undefined; // Track current custom system prompt
-    let currentAppendSystemPrompt: string | undefined = undefined; // Track current append system prompt
-    let currentAllowedTools: string[] | undefined = undefined; // Track current allowed tools
-    let currentDisallowedTools: string[] | undefined = undefined; // Track current disallowed tools
-    session.onUserMessage((message) => {
+	    let currentModelUpdatedAt = typeof options.modelUpdatedAt === 'number' ? options.modelUpdatedAt : 0;
+	    let currentFallbackModel: string | undefined = undefined; // Track current fallback model
+	    let currentCustomSystemPrompt: string | undefined = undefined; // Track current custom system prompt
+	    let currentAppendSystemPrompt: string | undefined = undefined; // Track current append system prompt
+	    session.onUserMessage((message) => {
         const adoptedModel = adoptModelOverrideFromMetadata({
             currentModelId: currentModel,
             currentUpdatedAt: currentModelUpdatedAt,
@@ -624,27 +546,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             logger.debug(`[loop] User message received with no append system prompt override, using current: ${currentAppendSystemPrompt ? 'set' : 'none'}`);
         }
 
-        // Resolve allowed tools - use message.meta.allowedTools if provided, otherwise use current
-        let messageAllowedTools = currentAllowedTools;
-        if (message.meta?.hasOwnProperty('allowedTools')) {
-            messageAllowedTools = message.meta.allowedTools || undefined; // null becomes undefined
-            currentAllowedTools = messageAllowedTools;
-            logger.debug(`[loop] Allowed tools updated from user message: ${messageAllowedTools ? messageAllowedTools.join(', ') : 'reset to none'}`);
-        } else {
-            logger.debug(`[loop] User message received with no allowed tools override, using current: ${currentAllowedTools ? currentAllowedTools.join(', ') : 'none'}`);
-        }
-
-        // Resolve disallowed tools - use message.meta.disallowedTools if provided, otherwise use current
-        let messageDisallowedTools = currentDisallowedTools;
-        if (message.meta?.hasOwnProperty('disallowedTools')) {
-            messageDisallowedTools = message.meta.disallowedTools || undefined; // null becomes undefined
-            currentDisallowedTools = messageDisallowedTools;
-            logger.debug(`[loop] Disallowed tools updated from user message: ${messageDisallowedTools ? messageDisallowedTools.join(', ') : 'reset to none'}`);
-        } else {
-            logger.debug(`[loop] User message received with no disallowed tools override, using current: ${currentDisallowedTools ? currentDisallowedTools.join(', ') : 'none'}`);
-        }
-
-        currentClaudeRemoteMetaState = applyClaudeRemoteMetaState(currentClaudeRemoteMetaState, message.meta);
+	        currentClaudeRemoteMetaState = applyClaudeRemoteMetaState(currentClaudeRemoteMetaState, message.meta);
         const nextLocalPermissionBridgeEnabled = currentClaudeRemoteMetaState.claudeLocalPermissionBridgeEnabled === true;
         const nextLocalPermissionBridgeWaitIndefinitely = currentClaudeRemoteMetaState.claudeLocalPermissionBridgeWaitIndefinitely === true;
         const nextLocalPermissionBridgeTimeoutMs = nextLocalPermissionBridgeWaitIndefinitely
@@ -683,17 +585,15 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
 
         if (specialCommand.type === 'compact') {
             logger.debug('[start] Detected /compact command');
-            const enhancedMode: EnhancedMode = {
-                permissionMode: messagePermissionMode || 'default',
-                localId: message.localId ?? null,
-                model: messageModel,
-                fallbackModel: messageFallbackModel,
-                customSystemPrompt: messageCustomSystemPrompt,
-                appendSystemPrompt: messageAppendSystemPrompt,
-                allowedTools: messageAllowedTools,
-                disallowedTools: messageDisallowedTools,
-                ...currentClaudeRemoteMetaState,
-            };
+	            const enhancedMode: EnhancedMode = {
+	                permissionMode: messagePermissionMode || 'default',
+	                localId: message.localId ?? null,
+	                model: messageModel,
+	                fallbackModel: messageFallbackModel,
+	                customSystemPrompt: messageCustomSystemPrompt,
+	                appendSystemPrompt: messageAppendSystemPrompt,
+	                ...currentClaudeRemoteMetaState,
+	            };
             messageQueue.pushIsolateAndClear(specialCommand.originalMessage || message.content.text, enhancedMode);
             logger.debugLargeJson('[start] /compact command pushed to queue:', message);
             return;
@@ -701,34 +601,30 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
 
         if (specialCommand.type === 'clear') {
             logger.debug('[start] Detected /clear command');
-            const enhancedMode: EnhancedMode = {
-                permissionMode: messagePermissionMode || 'default',
-                localId: message.localId ?? null,
-                model: messageModel,
-                fallbackModel: messageFallbackModel,
-                customSystemPrompt: messageCustomSystemPrompt,
-                appendSystemPrompt: messageAppendSystemPrompt,
-                allowedTools: messageAllowedTools,
-                disallowedTools: messageDisallowedTools,
-                ...currentClaudeRemoteMetaState,
-            };
+	            const enhancedMode: EnhancedMode = {
+	                permissionMode: messagePermissionMode || 'default',
+	                localId: message.localId ?? null,
+	                model: messageModel,
+	                fallbackModel: messageFallbackModel,
+	                customSystemPrompt: messageCustomSystemPrompt,
+	                appendSystemPrompt: messageAppendSystemPrompt,
+	                ...currentClaudeRemoteMetaState,
+	            };
             messageQueue.pushIsolateAndClear(specialCommand.originalMessage || message.content.text, enhancedMode);
             logger.debugLargeJson('[start] /clear command pushed to queue:', message);
             return;
         }
 
         // Push with resolved permission mode, model, system prompts, and tools
-        const enhancedMode: EnhancedMode = {
-            permissionMode: messagePermissionMode || 'default',
-            localId: message.localId ?? null,
-            model: messageModel,
-            fallbackModel: messageFallbackModel,
-            customSystemPrompt: messageCustomSystemPrompt,
-            appendSystemPrompt: messageAppendSystemPrompt,
-            allowedTools: messageAllowedTools,
-            disallowedTools: messageDisallowedTools,
-            ...currentClaudeRemoteMetaState,
-        };
+	        const enhancedMode: EnhancedMode = {
+	            permissionMode: messagePermissionMode || 'default',
+	            localId: message.localId ?? null,
+	            model: messageModel,
+	            fallbackModel: messageFallbackModel,
+	            customSystemPrompt: messageCustomSystemPrompt,
+	            appendSystemPrompt: messageAppendSystemPrompt,
+	            ...currentClaudeRemoteMetaState,
+	        };
         messageQueue.push(message.content.text, enhancedMode);
         logger.debugLargeJson('User message pushed to queue:', message)
     });
@@ -775,9 +671,6 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             // Stop caffeinate
             stopCaffeinate();
 
-            // Stop Happier MCP server
-            happyServer.stop();
-
             // Stop Hook server and cleanup settings file
             disposeLocalPermissionBridge();
             hookServer.stop();
@@ -811,7 +704,6 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
 	        messageQueue,
 	        session,
 	        pushSender: api.push(),
-	        allowedTools: happyServer.toolNames.map(toolName => `mcp__happy__${toolName}`),
 	        onModeChange: (newMode) => {
 	            session.sendSessionEvent({ type: 'switch', mode: newMode });
             updateAgentStateBestEffort(
@@ -837,19 +729,11 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
                 rebuildLocalPermissionBridge();
             }
         },
-	        mcpServers: {
-	            ...extractedMcp.mcpServers,
-	            // Keep Happy MCP server last so a user-provided "happy" entry cannot override it.
-	            happy: {
-	                type: 'http' as const,
-	                url: happyServer.url,
-	            },
-	        },
-	        claudeEnvVars: options.claudeEnvVars,
-	        claudeArgs: options.claudeArgs,
-	        hookSettingsPath,
-	        jsRuntime: options.jsRuntime
-	    });
+		        claudeEnvVars: options.claudeEnvVars,
+		        claudeArgs: options.claudeArgs,
+		        hookSettingsPath,
+		        jsRuntime: options.jsRuntime
+		    });
 
     terminationHandlers.dispose();
 
@@ -871,10 +755,6 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     // Stop caffeinate before exiting
     stopCaffeinate();
     logger.debug('Stopped sleep prevention');
-
-    // Stop Happier MCP server
-    happyServer.stop();
-    logger.debug('Stopped Happier MCP server');
 
     // Stop Hook server and cleanup settings file
     disposeLocalPermissionBridge();
@@ -937,9 +817,6 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
         options.modelUpdatedAt = initialModelUpdatedAt;
     }
 
-    const extractedMcp = extractMcpServersFromClaudeArgs(options.claudeArgs);
-    options.claudeArgs = extractedMcp.claudeArgs;
-
     // Fast-start uses a deferred session client so we can spawn Claude before the server session exists.
     const messageQueue = new MessageQueue2<EnhancedMode>(hashClaudeEnhancedModeForQueue);
 
@@ -989,9 +866,6 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
         deps: {
             registerRpcHandlers: ({ artifacts }) => {
                 registerSessionHandlers(artifacts.deferredSession.rpcHandlerManager, workingDirectory);
-            },
-            startHappyServer: async (client) => {
-                return await startHappyServer(client);
             },
             startHookServer: async () => {
                 return await startHookServer(hookServerOptions);
@@ -1134,12 +1008,10 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                 // Forward messages from server to the local queue.
                 let currentPermissionMode: PermissionMode = options.permissionMode ?? 'default';
                 let currentModel = options.model;
-                let currentModelUpdatedAt = typeof options.modelUpdatedAt === 'number' ? options.modelUpdatedAt : 0;
-                let currentFallbackModel: string | undefined = undefined;
-                let currentCustomSystemPrompt: string | undefined = undefined;
-                let currentAppendSystemPrompt: string | undefined = undefined;
-                let currentAllowedTools: string[] | undefined = undefined;
-                let currentDisallowedTools: string[] | undefined = undefined;
+	                let currentModelUpdatedAt = typeof options.modelUpdatedAt === 'number' ? options.modelUpdatedAt : 0;
+	                let currentFallbackModel: string | undefined = undefined;
+	                let currentCustomSystemPrompt: string | undefined = undefined;
+	                let currentAppendSystemPrompt: string | undefined = undefined;
 
                 session.onUserMessage((message) => {
                     const adoptedModel = adoptModelOverrideFromMetadata({
@@ -1187,19 +1059,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         currentAppendSystemPrompt = messageAppendSystemPrompt;
                     }
 
-                    let messageAllowedTools = currentAllowedTools;
-                    if (message.meta?.hasOwnProperty('allowedTools')) {
-                        messageAllowedTools = message.meta.allowedTools || undefined;
-                        currentAllowedTools = messageAllowedTools;
-                    }
-
-                    let messageDisallowedTools = currentDisallowedTools;
-                    if (message.meta?.hasOwnProperty('disallowedTools')) {
-                        messageDisallowedTools = message.meta.disallowedTools || undefined;
-                        currentDisallowedTools = messageDisallowedTools;
-                    }
-
-                    currentClaudeRemoteMetaState = applyClaudeRemoteMetaState(currentClaudeRemoteMetaState, message.meta);
+	                    currentClaudeRemoteMetaState = applyClaudeRemoteMetaState(currentClaudeRemoteMetaState, message.meta);
                     const nextLocalPermissionBridgeEnabled = currentClaudeRemoteMetaState.claudeLocalPermissionBridgeEnabled === true;
                     const nextLocalPermissionBridgeWaitIndefinitely = currentClaudeRemoteMetaState.claudeLocalPermissionBridgeWaitIndefinitely === true;
                     const nextLocalPermissionBridgeTimeoutMs = nextLocalPermissionBridgeWaitIndefinitely
@@ -1233,33 +1093,29 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     }
 
                     const specialCommand = parseSpecialCommand(message.content.text);
-                    if (specialCommand.type === 'compact' || specialCommand.type === 'clear') {
-                        const enhancedMode: EnhancedMode = {
-                            permissionMode: messagePermissionMode || 'default',
-                            localId: message.localId ?? null,
-                            model: messageModel,
-                            fallbackModel: messageFallbackModel,
-                            customSystemPrompt: messageCustomSystemPrompt,
-                            appendSystemPrompt: messageAppendSystemPrompt,
-                            allowedTools: messageAllowedTools,
-                            disallowedTools: messageDisallowedTools,
-                            ...currentClaudeRemoteMetaState,
-                        };
+	                    if (specialCommand.type === 'compact' || specialCommand.type === 'clear') {
+	                        const enhancedMode: EnhancedMode = {
+	                            permissionMode: messagePermissionMode || 'default',
+	                            localId: message.localId ?? null,
+	                            model: messageModel,
+	                            fallbackModel: messageFallbackModel,
+	                            customSystemPrompt: messageCustomSystemPrompt,
+	                            appendSystemPrompt: messageAppendSystemPrompt,
+	                            ...currentClaudeRemoteMetaState,
+	                        };
                         messageQueue.pushIsolateAndClear(specialCommand.originalMessage || message.content.text, enhancedMode);
                         return;
                     }
 
-                    const enhancedMode: EnhancedMode = {
-                        permissionMode: messagePermissionMode || 'default',
-                        localId: message.localId ?? null,
-                        model: messageModel,
-                        fallbackModel: messageFallbackModel,
-                        customSystemPrompt: messageCustomSystemPrompt,
-                        appendSystemPrompt: messageAppendSystemPrompt,
-                        allowedTools: messageAllowedTools,
-                        disallowedTools: messageDisallowedTools,
-                        ...currentClaudeRemoteMetaState,
-                    };
+	                    const enhancedMode: EnhancedMode = {
+	                        permissionMode: messagePermissionMode || 'default',
+	                        localId: message.localId ?? null,
+	                        model: messageModel,
+	                        fallbackModel: messageFallbackModel,
+	                        customSystemPrompt: messageCustomSystemPrompt,
+	                        appendSystemPrompt: messageAppendSystemPrompt,
+	                        ...currentClaudeRemoteMetaState,
+	                    };
                     messageQueue.push(message.content.text, enhancedMode);
                 });
 
@@ -1323,9 +1179,8 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
             spawnLoop: async ({ artifacts, signal }) => {
                 if (signal.aborted) return 0;
 
-                const happyServer = artifacts.happyServer;
                 const hookSettingsPath = artifacts.hookSettingsPath;
-                if (!happyServer || !hookSettingsPath) {
+                if (!hookSettingsPath) {
                     throw new Error('Claude startup prerequisites missing');
                 }
 
@@ -1337,7 +1192,6 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     startingMode: options.startingMode,
                     startedBy: options.startedBy,
                     messageQueue,
-                    allowedTools: happyServer.toolNames.map(toolName => `mcp__happy__${toolName}`),
                     onModeChange: (newMode) => {
                         artifacts.deferredSession.sendSessionEvent({ type: 'switch', mode: newMode });
                         updateAgentStateBestEffort(
@@ -1366,13 +1220,6 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         if (pushSender) {
                             sessionInstance.setPushSender(pushSender);
                         }
-                    },
-                    mcpServers: {
-                        ...extractedMcp.mcpServers,
-                        happy: {
-                            type: 'http' as const,
-                            url: happyServer.url,
-                        },
                     },
                     session: artifacts.deferredSession,
                     claudeEnvVars: options.claudeEnvVars,
@@ -1419,7 +1266,6 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
 
             try {
                 stopCaffeinate();
-                coordinator.artifacts.happyServer?.stop();
                 disposeLocalPermissionBridge();
                 coordinator.artifacts.hookServer?.stop();
                 if (coordinator.artifacts.hookSettingsPath) {
@@ -1459,7 +1305,6 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
     }
     try {
         stopCaffeinate();
-        coordinator.artifacts.happyServer?.stop();
         disposeLocalPermissionBridge();
         coordinator.artifacts.hookServer?.stop();
         if (coordinator.artifacts.hookSettingsPath) {

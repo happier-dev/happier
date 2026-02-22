@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { applyClaudeRemoteMetaState, DEFAULT_CLAUDE_REMOTE_META_STATE } from './claudeRemoteMetaState';
 
 describe('applyClaudeRemoteMetaState', () => {
+  it('defaults claudeRemoteSettingSources to user_project (so user + project config is loaded)', () => {
+    expect(DEFAULT_CLAUDE_REMOTE_META_STATE.claudeRemoteSettingSources).toBe('user_project');
+  });
+
   it('accepts null for claudeRemoteMaxThinkingTokens', () => {
     const next = applyClaudeRemoteMetaState(
       { ...DEFAULT_CLAUDE_REMOTE_META_STATE, claudeRemoteMaxThinkingTokens: 123 },

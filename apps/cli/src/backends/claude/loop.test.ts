@@ -64,7 +64,6 @@ async function runLoop(options?: Partial<LoopOptions>): Promise<{ code: number; 
   const code = await loop({
     path: '/tmp',
     onModeChange: () => {},
-    mcpServers: {},
     session: client,
     messageQueue,
     hookSettingsPath: '/tmp/hooks.json',

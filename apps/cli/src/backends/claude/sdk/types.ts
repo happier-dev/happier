@@ -163,15 +163,19 @@ export interface QueryOptions {
     abort?: AbortSignal
     /** Environment variables to merge into the spawned Claude Code process. */
     env?: NodeJS.ProcessEnv
-    allowedTools?: string[]
+    /**
+     * Raw CLI args to forward to the Claude Code subprocess.
+     * Use this for flags that Happier does not model explicitly (for example: `--mcp-config`).
+     *
+     * Note: callers are responsible for avoiding duplicates with other modeled options.
+     */
+    extraArgs?: string[]
     appendSystemPrompt?: string
     customSystemPrompt?: string
     cwd?: string
-    disallowedTools?: string[]
     executable?: string
     executableArgs?: string[]
     maxTurns?: number
-    mcpServers?: Record<string, unknown>
     pathToClaudeCodeExecutable?: string
     permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan'
     continue?: boolean

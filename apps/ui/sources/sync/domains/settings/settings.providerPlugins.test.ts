@@ -7,7 +7,7 @@ describe('settingsParse provider plugin defaults', () => {
         const settings = settingsParse({});
 
         expect((settings as any).claudeRemoteAgentSdkEnabled).toBe(true);
-        expect((settings as any).claudeRemoteSettingSources).toBe('project');
+        expect((settings as any).claudeRemoteSettingSources).toBe('user_project');
         expect((settings as any).claudeRemoteIncludePartialMessages).toBe(false);
         expect((settings as any).claudeLocalPermissionBridgeEnabled).toBe(true);
         expect((settings as any).claudeLocalPermissionBridgeWaitIndefinitely).toBe(false);

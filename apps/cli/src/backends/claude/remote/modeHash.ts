@@ -12,8 +12,6 @@ export function hashClaudeEnhancedModeForQueue(mode: EnhancedMode): string {
             fallbackModel: mode.fallbackModel,
             customSystemPrompt: mode.customSystemPrompt,
             appendSystemPrompt: mode.appendSystemPrompt,
-            allowedTools: mode.allowedTools,
-            disallowedTools: mode.disallowedTools,
             claudeRemoteDisableTodos: mode.claudeRemoteDisableTodos,
         });
     }
@@ -29,7 +27,5 @@ export function hashClaudeEnhancedModeForQueue(mode: EnhancedMode): string {
         fallbackModel: mode.fallbackModel,
         customSystemPrompt: mode.customSystemPrompt,
         appendSystemPrompt: mode.appendSystemPrompt,
-        allowedTools: mode.allowedTools,
-        disallowedTools: mode.disallowedTools,
     });
 }

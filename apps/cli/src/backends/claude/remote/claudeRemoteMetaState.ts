@@ -14,7 +14,9 @@ export type ClaudeRemoteMetaState = Readonly<{
 
 export const DEFAULT_CLAUDE_REMOTE_META_STATE: ClaudeRemoteMetaState = Object.freeze({
     claudeRemoteAgentSdkEnabled: true,
-    claudeRemoteSettingSources: 'project',
+    // Default to loading BOTH user + project settings so Claude Code can see the user's
+    // globally configured MCP servers (and other preferences) when launched by Happier.
+    claudeRemoteSettingSources: 'user_project',
     claudeRemoteIncludePartialMessages: false,
     claudeLocalPermissionBridgeEnabled: true,
     claudeLocalPermissionBridgeWaitIndefinitely: false,

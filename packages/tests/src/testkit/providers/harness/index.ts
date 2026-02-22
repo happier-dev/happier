@@ -67,6 +67,33 @@ import {
   waitForSessionActiveBestEffort,
 } from './harnessSignals';
 
+export function buildProviderDevCommandArgs(params: Readonly<{
+  providerSubcommand: string;
+  sessionId: string;
+  yoloCliArgs: readonly string[];
+  permissionCliArgs: readonly string[];
+  modelCliArgs: readonly string[];
+  extraCliArgs: readonly string[];
+  scenarioCliArgs: readonly string[];
+  providerCliExtraArgs: readonly string[];
+}>): string[] {
+  return [
+    '-s',
+    'workspace',
+    '@happier-dev/cli',
+    'dev',
+    params.providerSubcommand,
+    '--existing-session',
+    params.sessionId,
+    ...params.yoloCliArgs,
+    ...params.permissionCliArgs,
+    ...params.modelCliArgs,
+    ...params.extraCliArgs,
+    ...params.scenarioCliArgs,
+    ...params.providerCliExtraArgs,
+  ];
+}
+
 export {
   extractFatalAgentErrorMessage,
   isSkippableProviderUnavailabilityError,
@@ -942,7 +969,7 @@ async function runOneScenario(params: {
   await mkdir(workspaceDir, { recursive: true });
 
   if (scenario.setup) {
-    await scenario.setup({ workspaceDir });
+    await scenario.setup({ workspaceDir, cliHome });
   }
 
   const startedAt = new Date().toISOString();
@@ -1076,6 +1103,18 @@ async function runOneScenario(params: {
       });
       const modelIdFromCliArgs = resolveModelIdFromCliArgs(modelCliArgs);
 
+      const scenarioCliArgs: string[] = (() => {
+        const raw = scenario.cliArgs;
+        if (!raw) return [];
+        try {
+          const resolved = typeof raw === 'function' ? raw({ workspaceDir }) : raw;
+          if (!Array.isArray(resolved)) return [];
+          return resolved.map((v) => (typeof v === 'string' ? v.trim() : '')).filter((v) => v.length > 0);
+        } catch {
+          return [];
+        }
+      })();
+
       const attachFile = await writeCliSessionAttachFile({
         cliHome,
         sessionId: params.sessionId,
@@ -1119,20 +1158,16 @@ async function runOneScenario(params: {
 
       const proc: SpawnedProcess = spawnLoggedProcess({
         command: yarnCommand(),
-        args: [
-          '-s',
-          'workspace',
-          '@happier-dev/cli',
-          'dev',
-          provider.cli.subcommand,
-          '--existing-session',
-          params.sessionId,
-          ...yoloCliArgs,
-          ...cliPermissionArgs,
-          ...modelCliArgs,
-          ...(params.extraCliArgs ?? []),
-          ...(provider.cli.extraArgs ?? []),
-        ],
+        args: buildProviderDevCommandArgs({
+          providerSubcommand: provider.cli.subcommand,
+          sessionId: params.sessionId,
+          yoloCliArgs,
+          permissionCliArgs: cliPermissionArgs,
+          modelCliArgs,
+          extraCliArgs: params.extraCliArgs ?? [],
+          scenarioCliArgs,
+          providerCliExtraArgs: provider.cli.extraArgs ?? [],
+        }),
         cwd: repoRootDir(),
       env: cliEnv,
       stdoutPath: params.stdoutPath,
