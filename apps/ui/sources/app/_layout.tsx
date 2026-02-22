@@ -271,7 +271,7 @@ function installReactJsxRuntimeUnexpectedTextNodeCaptureOnce() {
 Notifications.setNotificationHandler({
     handleNotification: async (notification) => {
         const { data } = notification.request.content;
-        const notifSessionId = typeof data.sessionId === 'string' ? data.sessionId : null;
+        const notifSessionId = typeof data?.sessionId === 'string' ? data.sessionId : null;
 
         // Same-session suppression: user already sees real-time updates.
         if (notifSessionId && notifSessionId === getActiveViewingSessionId()) {
