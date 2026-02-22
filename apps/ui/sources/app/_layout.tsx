@@ -281,8 +281,11 @@ Notifications.setNotificationHandler({
         // Read the foregroundBehavior setting from the Zustand store (synchronous, safe outside React).
         let foregroundBehavior: 'full' | 'silent' | 'off' = 'full';
         try {
-            const raw = (storage.getState() as any).settings?.notificationsSettingsV1;
-            foregroundBehavior = NotificationsSettingsV1Schema.parse(raw).foregroundBehavior;
+            const raw = storage.getState().settings.notificationsSettingsV1;
+            const parsed = NotificationsSettingsV1Schema.safeParse(raw);
+            if (parsed.success) {
+                foregroundBehavior = parsed.data.foregroundBehavior;
+            }
         } catch { /* default to 'full' (current behavior) */ }
 
         switch (foregroundBehavior) {
