@@ -2,17 +2,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/utils/spawnHappyCLI', () => {
   return {
-    buildHappyCliSubprocessInvocation: vi.fn((args: string[]) => {
+    buildHappyCliSubprocessLaunchSpec: vi.fn((args: string[]) => {
       const runtime = process.env.HAPPIER_CLI_SUBPROCESS_RUNTIME === 'bun' ? 'bun' : 'node';
       if (runtime === 'bun') {
         return {
           runtime,
-          argv: ['/virtual/dist/index.mjs', ...args],
+          filePath: 'bun',
+          args: ['/virtual/dist/index.mjs', ...args],
         };
       }
       return {
         runtime,
-        argv: ['--no-warnings', '--no-deprecation', '/virtual/dist/index.mjs', ...args],
+        filePath: 'node',
+        args: ['--no-warnings', '--no-deprecation', '/virtual/dist/index.mjs', ...args],
       };
     }),
   };

@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 
-import { buildHappyCliSubprocessInvocation } from '@/utils/spawnHappyCLI';
+import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
 import { isTmuxAvailable, selectPreferredTmuxSessionName, TmuxUtilities } from '@/integrations/tmux';
 import { AGENTS } from '@/backends/catalog';
 import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
@@ -67,8 +67,8 @@ export async function startHappyHeadlessInTmux(argv: string[]): Promise<void> {
     tmuxTarget,
   ];
 
-  const inv = buildHappyCliSubprocessInvocation([...childArgs, ...terminalRuntimeArgs]);
-  const commandTokens = [inv.runtime, ...inv.argv];
+  const launchSpec = buildHappyCliSubprocessLaunchSpec([...childArgs, ...terminalRuntimeArgs]);
+  const commandTokens = [launchSpec.filePath, ...launchSpec.args];
 
   const tmux = new TmuxUtilities(resolvedSessionName);
   const result = await tmux.spawnInTmux(
@@ -78,7 +78,7 @@ export async function startHappyHeadlessInTmux(argv: string[]): Promise<void> {
       windowName,
       cwd: process.cwd(),
     },
-    { ...buildWindowEnv(), ...(inv.env ?? {}) },
+    { ...buildWindowEnv(), ...(launchSpec.env ?? {}) },
   );
 
   if (!result.success) {

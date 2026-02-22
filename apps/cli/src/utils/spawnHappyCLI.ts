@@ -50,13 +50,12 @@
  */
 
 import { spawn, SpawnOptions, type ChildProcess } from 'child_process';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { projectPath } from '@/projectPath';
 import { logger } from '@/ui/logger';
 import { existsSync } from 'node:fs';
 import { isBun } from './runtime';
 import { createRequire } from 'node:module';
-import { dirname } from 'node:path';
 
 function getSubprocessRuntime(): 'node' | 'bun' {
   const override = process.env.HAPPIER_CLI_SUBPROCESS_RUNTIME;
@@ -124,11 +123,56 @@ function shouldAllowDevTsxFallback(): boolean {
   return true;
 }
 
-export function buildHappyCliSubprocessInvocation(args: string[]): {
-  runtime: 'node' | 'bun';
+export type HappyCliSubprocessRuntime = 'node' | 'bun';
+
+export type HappyCliSubprocessInvocation = {
+  runtime: HappyCliSubprocessRuntime;
   argv: string[];
   env?: Record<string, string>;
-} {
+};
+
+export type HappyCliSubprocessLaunchSpec = {
+  runtime: HappyCliSubprocessRuntime;
+  filePath: string;
+  args: string[];
+  env?: Record<string, string>;
+};
+
+function isRuntimeExecutablePath(pathLike: string): boolean {
+  const base = basename(String(pathLike ?? '').trim()).toLowerCase();
+  return base === 'node' || base === 'node.exe' || base === 'bun' || base === 'bun.exe';
+}
+
+function isCurrentProcessSelfContainedBinary(): boolean {
+  const execPath = String(process.execPath ?? '').trim();
+  if (!execPath) return false;
+  return !isRuntimeExecutablePath(execPath);
+}
+
+function resolveCurrentProcessBundledScriptPath(): string | null {
+  const scriptPath = String(process.argv[1] ?? '').trim();
+  if (!scriptPath) return null;
+  const normalized = scriptPath.replaceAll('\\', '/');
+  if (normalized.startsWith('/$bunfs/root/')) return scriptPath;
+  if (!existsSync(scriptPath)) return null;
+  const lowered = normalized.toLowerCase();
+  const base = basename(lowered);
+  if (base.includes('happier')) return scriptPath;
+  if (base === 'index.mjs' && (lowered.includes('/@happier-dev/cli/') || lowered.includes('/happier/'))) {
+    return scriptPath;
+  }
+  return null;
+}
+
+function resolveSubprocessRuntimeExecutable(runtime: HappyCliSubprocessRuntime): string {
+  // Prefer the currently-running runtime binary when possible. This avoids PATH
+  // issues on Windows (and GUI-launched shells) where `node`/`bun` may not resolve.
+  if (runtime === 'node' && !isBun()) return process.execPath;
+  if (runtime === 'bun' && isBun()) return process.execPath;
+  return runtime;
+}
+
+export function buildHappyCliSubprocessInvocation(args: string[]): HappyCliSubprocessInvocation {
   const entrypoint = resolveSubprocessEntrypoint();
   const runtime = getSubprocessRuntime();
 
@@ -159,6 +203,15 @@ export function buildHappyCliSubprocessInvocation(args: string[]): {
         };
       }
     }
+    if (runtime === 'bun') {
+      const bundledScriptPath = resolveCurrentProcessBundledScriptPath();
+      if (bundledScriptPath) {
+        return { runtime: 'bun', argv: [bundledScriptPath, ...args] };
+      }
+      if (isCurrentProcessSelfContainedBinary()) {
+        return { runtime: 'bun', argv: [...args] };
+      }
+    }
     const errorMessage = `Entrypoint ${entrypoint} does not exist`;
     logger.debug(`[SPAWN HAPPIER CLI] ${errorMessage}`);
     throw new Error(errorMessage);
@@ -166,6 +219,16 @@ export function buildHappyCliSubprocessInvocation(args: string[]): {
 
   const argv = runtime === 'node' ? nodeArgs : [entrypoint, ...args];
   return { runtime, argv };
+}
+
+export function buildHappyCliSubprocessLaunchSpec(args: string[]): HappyCliSubprocessLaunchSpec {
+  const invocation = buildHappyCliSubprocessInvocation(args);
+  return {
+    runtime: invocation.runtime,
+    filePath: resolveSubprocessRuntimeExecutable(invocation.runtime),
+    args: invocation.argv,
+    env: invocation.env,
+  };
 }
 
 /**
@@ -194,19 +257,9 @@ export function spawnHappyCLI(args: string[], options: SpawnOptions = {}): Child
   const fullCommand = `happier ${args.join(' ')}`;
   logger.debug(`[SPAWN HAPPIER CLI] Spawning: ${fullCommand} in ${directory}`);
 
-  const { runtime, argv, env } = buildHappyCliSubprocessInvocation(args);
-  const spawnOptions: SpawnOptions = env
-    ? { ...options, env: { ...(options.env ?? process.env), ...env } }
+  const launchSpec = buildHappyCliSubprocessLaunchSpec(args);
+  const spawnOptions: SpawnOptions = launchSpec.env
+    ? { ...options, env: { ...(options.env ?? process.env), ...launchSpec.env } }
     : options;
-
-  // Prefer the currently-running runtime binary when possible. This avoids PATH
-  // issues on Windows (and GUI-launched shells) where `node` may not resolve.
-  const runtimeExecutable =
-    runtime === 'node' && !isBun()
-      ? process.execPath
-      : runtime === 'bun' && isBun()
-        ? process.execPath
-        : runtime;
-
-  return spawn(runtimeExecutable, argv, spawnOptions);
+  return spawn(launchSpec.filePath, launchSpec.args, spawnOptions);
 }

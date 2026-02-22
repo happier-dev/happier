@@ -112,6 +112,7 @@ vi.mock('@/ui/doctor', () => ({
 
 vi.mock('@/utils/spawnHappyCLI', () => ({
   buildHappyCliSubprocessInvocation: vi.fn(),
+  buildHappyCliSubprocessLaunchSpec: vi.fn(),
   spawnHappyCLI: vi.fn(),
 }));
 
