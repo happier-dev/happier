@@ -750,6 +750,19 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         noChanges: '沒有要顯示的更改',
     },
 
+    settingsNotifications: {
+        foregroundBehavior: {
+            title: '應用程式內通知',
+            footer: '控制您使用應用程式時的通知方式。目前正在檢視的工作階段通知一律會靜音。',
+            full: '完整',
+            fullDescription: '顯示橫幅並播放音效',
+            silent: '靜音',
+            silentDescription: '顯示橫幅但不播放音效',
+            off: '關閉',
+            offDescription: '僅顯示徽章，不顯示橫幅',
+        },
+    },
+
     settingsSession: {
         messageSending: {
             title: 'Message sending',

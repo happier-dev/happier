@@ -1473,6 +1473,19 @@ export const pl: TranslationStructure = {
     noChanges: "Brak zmian do wyświetlenia",
   },
 
+  settingsNotifications: {
+    foregroundBehavior: {
+      title: "Powiadomienia w aplikacji",
+      footer: "Kontroluje powiadomienia podczas korzystania z aplikacji. Powiadomienia dla aktualnie przeglądanej sesji są zawsze wyciszane.",
+      full: "Pełne",
+      fullDescription: "Pokaż baner i odtwórz dźwięk",
+      silent: "Ciche",
+      silentDescription: "Pokaż baner bez dźwięku",
+      off: "Wyłączone",
+      offDescription: "Tylko plakietka, bez banera",
+    },
+  },
+
   settingsSession: {
     messageSending: {
       title: "Message sending",
