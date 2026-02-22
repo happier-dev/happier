@@ -1,4 +1,4 @@
-import { buildHappyCliSubprocessInvocation } from '@/utils/spawnHappyCLI';
+import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
 import type { CatalogAgentId } from '@/backends/types';
 
 export function buildTmuxWindowEnv(
@@ -49,10 +49,10 @@ export function buildTmuxSpawnConfig(params: {
     ...(params.extraArgs ?? []),
   ];
 
-  const { runtime, argv, env } = buildHappyCliSubprocessInvocation(args);
-  const commandTokens = [runtime, ...argv];
+  const launchSpec = buildHappyCliSubprocessLaunchSpec(args);
+  const commandTokens = [launchSpec.filePath, ...launchSpec.args];
 
-  const tmuxEnv = buildTmuxWindowEnv(process.env, { ...params.extraEnv, ...(env ?? {}) });
+  const tmuxEnv = buildTmuxWindowEnv(process.env, { ...params.extraEnv, ...(launchSpec.env ?? {}) });
 
   const tmuxCommandEnv: Record<string, string> = { ...(params.tmuxCommandEnv ?? {}) };
   const tmuxTmpDir = tmuxCommandEnv.TMUX_TMPDIR;

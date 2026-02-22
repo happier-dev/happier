@@ -16,7 +16,7 @@ import { configuration } from '@/configuration';
 import { startCaffeinate, stopCaffeinate } from '@/integrations/caffeinate';
 import packageJson from '../../package.json';
 import { getEnvironmentInfo } from '@/ui/doctor';
-import { buildHappyCliSubprocessInvocation, spawnHappyCLI } from '@/utils/spawnHappyCLI';
+import { buildHappyCliSubprocessLaunchSpec, spawnHappyCLI } from '@/utils/spawnHappyCLI';
 import { AGENTS, getVendorResumeSupport, resolveAgentCliSubcommand, resolveCatalogAgentId } from '@/backends/catalog';
 import {
   writeDaemonState,
@@ -643,20 +643,18 @@ export async function startDaemon(): Promise<void> {
 		            env: process.env,
 		          });
 
-			          if (windowsConsoleMode === 'visible') {
-			            const { runtime, argv, env } = buildHappyCliSubprocessInvocation(args);
-			            const filePath = runtime === 'node' ? process.execPath : runtime;
-
-			            const started = await startHappySessionInVisibleWindowsConsole({
-			              filePath,
-			              args: argv,
-			              workingDirectory: directory,
-			              env: {
-			                ...process.env,
-			                ...extraEnvForChildWithMessage,
-			                ...(env ?? {}),
-			              },
-			            });
+				          if (windowsConsoleMode === 'visible') {
+				            const launchSpec = buildHappyCliSubprocessLaunchSpec(args);
+				            const started = await startHappySessionInVisibleWindowsConsole({
+				              filePath: launchSpec.filePath,
+				              args: launchSpec.args,
+				              workingDirectory: directory,
+				              env: {
+				                ...process.env,
+				                ...extraEnvForChildWithMessage,
+				                ...(launchSpec.env ?? {}),
+				              },
+				            });
 
 		            if (!started.ok) {
 		              logger.debug('[DAEMON RUN] Failed to spawn visible Windows console session', { error: started.errorMessage });

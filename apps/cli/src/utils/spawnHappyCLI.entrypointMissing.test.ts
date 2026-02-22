@@ -54,4 +54,22 @@ describe('buildHappyCliSubprocessInvocation (missing entrypoint)', () => {
     expect(invocation.env?.TSX_TSCONFIG_PATH).toEqual(expect.stringMatching(/[\\/]apps[\\/]cli[\\/]tsconfig\.json$/));
     expect(process.env.TSX_TSCONFIG_PATH).toBeUndefined();
   });
+
+  it('falls back to current bun script path when dist entrypoint is missing in bundled runtime', async () => {
+    vi.resetModules();
+    vi.stubEnv('HAPPIER_CLI_SUBPROCESS_RUNTIME', 'bun');
+    vi.stubEnv('HAPPIER_CLI_SUBPROCESS_ENTRYPOINT', '/$bunfs/dist/index.mjs');
+
+    const originalArgv = [...process.argv];
+    process.argv = ['bun', '/$bunfs/root/happier-darwin-arm64', 'daemon', 'start-sync'];
+
+    try {
+      const mod = (await import('./spawnHappyCLI')) as typeof import('./spawnHappyCLI');
+      const invocation = mod.buildHappyCliSubprocessInvocation(['daemon', 'start-sync']);
+      expect(invocation.runtime).toBe('bun');
+      expect(invocation.argv).toEqual(['/$bunfs/root/happier-darwin-arm64', 'daemon', 'start-sync']);
+    } finally {
+      process.argv = originalArgv;
+    }
+  });
 });

@@ -31,7 +31,7 @@ vi.mock('@/integrations/tmux', () => {
 });
 
 vi.mock('@/utils/spawnHappyCLI', () => ({
-  buildHappyCliSubprocessInvocation: () => ({ runtime: 'node', argv: ['happy'] }),
+  buildHappyCliSubprocessLaunchSpec: () => ({ runtime: 'node', filePath: 'node', args: ['happy'] }),
 }));
 
 describe.sequential('startHappyHeadlessInTmux', () => {
