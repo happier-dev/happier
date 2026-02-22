@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
-import { handleEphemeralSocketUpdate, handleUpdateContainer } from './socket';
+import { flushMachineActivityUpdates, handleEphemeralSocketUpdate, handleUpdateContainer } from './socket';
 
 const initialStorageState = storage.getState();
 
@@ -86,13 +86,34 @@ describe('socket update handling: machine-activity for unknown machine', () => {
     });
 
     it('creates a placeholder machine so active status is not dropped', () => {
+        const addMachineActivityUpdate = vi.fn();
         expect(storage.getState().machines['m_unknown']).toBeUndefined();
 
         handleEphemeralSocketUpdate({
             update: { type: 'machine-activity', id: 'm_unknown', active: true, activeAt: 999 },
             addActivityUpdate: () => {},
+            addMachineActivityUpdate,
         });
 
+        expect(addMachineActivityUpdate).toHaveBeenCalledWith({ id: 'm_unknown', active: true, activeAt: 999 });
+        expect(storage.getState().machines['m_unknown']).toBeUndefined();
+    });
+});
+
+describe('flushMachineActivityUpdates', () => {
+    beforeEach(() => {
+        storage.setState(initialStorageState, true);
+    });
+
+    it('applies a placeholder machine so active status is not dropped', () => {
+        const updates = new Map<string, { id: string; active: boolean; activeAt: number }>([
+            ['m_unknown', { id: 'm_unknown', active: true, activeAt: 999 }],
+        ]);
+        const applyMachines = vi.fn((machines: Machine[]) => storage.getState().applyMachines(machines));
+
+        flushMachineActivityUpdates({ updates, applyMachines });
+
+        expect(applyMachines).toHaveBeenCalledTimes(1);
         const machine = storage.getState().machines['m_unknown'] as Machine | undefined;
         expect(machine).toBeTruthy();
         expect(machine?.active).toBe(true);
