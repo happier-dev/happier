@@ -3,6 +3,7 @@ import type { Encryption } from '@/sync/encryption/encryption';
 import type { NormalizedMessage } from '@/sync/typesRaw';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import type { MachineActivityUpdate } from '../../reducer/machineActivityAccumulator';
 import { storage } from '@/sync/domains/state/storage';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { scmStatusSync } from '@/scm/scmStatusSync';
@@ -454,26 +455,14 @@ export function flushActivityUpdates(params: { updates: Map<string, ApiEphemeral
     }
 }
 
-export function handleEphemeralSocketUpdate(params: {
-    update: unknown;
-    addActivityUpdate: (update: any) => void;
+export function flushMachineActivityUpdates(params: {
+    updates: Map<string, MachineActivityUpdate>;
+    applyMachines: (machines: Machine[]) => void;
 }): void {
-    const { update, addActivityUpdate } = params;
+    const { updates, applyMachines } = params;
+    const machines: Machine[] = [];
 
-    const updateData = parseEphemeralUpdate(update);
-    if (!updateData) return;
-
-    // Process activity updates through smart debounce accumulator
-    if (updateData.type === 'activity') {
-        addActivityUpdate(updateData);
-    }
-
-    // Handle machine activity updates
-    if (updateData.type === 'machine-activity') {
-        // Update machine's active status and lastActiveAt.
-        // Important: the server can emit machine-activity ephemerals immediately after a daemon connects,
-        // before the UI has fetched or applied the corresponding machine entity. Create a minimal placeholder
-        // so we don't drop the online signal.
+    for (const [, updateData] of updates) {
         const existing = storage.getState().machines[updateData.id];
         const machine: Machine = existing ?? {
             id: updateData.id,
@@ -488,8 +477,32 @@ export function handleEphemeralSocketUpdate(params: {
             daemonState: null,
             daemonStateVersion: 0,
         };
-        const updatedMachine: Machine = buildMachineFromMachineActivityEphemeralUpdate({ machine, updateData });
-        storage.getState().applyMachines([updatedMachine]);
+        machines.push(buildMachineFromMachineActivityEphemeralUpdate({ machine, updateData }));
+    }
+
+    if (machines.length > 0) {
+        applyMachines(machines);
+    }
+}
+
+export function handleEphemeralSocketUpdate(params: {
+    update: unknown;
+    addActivityUpdate: (update: any) => void;
+    addMachineActivityUpdate: (update: { id: string; active: boolean; activeAt: number }) => void;
+}): void {
+    const { update, addActivityUpdate, addMachineActivityUpdate } = params;
+
+    const updateData = parseEphemeralUpdate(update);
+    if (!updateData) return;
+
+    // Process activity updates through smart debounce accumulator
+    if (updateData.type === 'activity') {
+        addActivityUpdate(updateData);
+    }
+
+    // Handle machine activity updates through batching accumulator
+    if (updateData.type === 'machine-activity') {
+        addMachineActivityUpdate({ id: updateData.id, active: updateData.active, activeAt: updateData.activeAt });
     }
 
     // daemon-status ephemeral updates are deprecated, machine status is handled via machine-activity
