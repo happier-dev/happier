@@ -29,7 +29,7 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
         alignItems: 'center',
         flexWrap: 'wrap',
         paddingHorizontal: 12,
-        paddingVertical: 4,
+        paddingVertical: 8,
         backgroundColor: theme.colors.box.warning.background,
         borderRadius: 8,
         marginTop: 4,
