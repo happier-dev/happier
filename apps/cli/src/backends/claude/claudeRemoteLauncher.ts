@@ -429,12 +429,16 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                     getQueueSize: () => session.queue.size(),
                 });
 
+                const { mcpServers, mcpConfigJson } = await session.getOrCreateHappierMcpBridge();
+
                 const remoteResult = await claudeRemoteDispatch({
                     sessionId: session.sessionId,
                     transcriptPath: session.transcriptPath,
                     path: session.path,
                     hookSettingsPath: session.hookSettingsPath,
                     jsRuntime: session.jsRuntime,
+                    happierMcpServers: mcpServers,
+                    happierMcpConfigJson: mcpConfigJson,
                     canCallTool: permissionHandler.handleToolCall,
                     isAborted: (toolCallId: string) => {
                         return permissionHandler.isAborted(toolCallId);

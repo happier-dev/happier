@@ -40,6 +40,8 @@ export async function claudeLocal(opts: {
     onThinkingChange?: (thinking: boolean) => void,
     claudeEnvVars?: Record<string, string>,
     claudeArgs?: string[],
+    /** Optional MCP config JSON to inject into the Claude Code CLI invocation (e.g. Happier MCP). */
+    happierMcpConfigJson?: string,
     /** Path to temporary settings file with SessionStart hook (optional - for session tracking) */
     hookSettingsPath?: string
 }) {
@@ -252,6 +254,11 @@ export async function claudeLocal(opts: {
             if (opts.hookSettingsPath) {
                 args.push('--settings', opts.hookSettingsPath);
                 logger.debug(`[ClaudeLocal] Using hook settings: ${opts.hookSettingsPath}`);
+            }
+
+            // Inject additional MCP servers (additive unless the user passes --strict-mcp-config).
+            if (typeof opts.happierMcpConfigJson === 'string' && opts.happierMcpConfigJson.trim().length > 0) {
+                args.push('--mcp-config', opts.happierMcpConfigJson.trim());
             }
 
             // Add flag arguments before positional prompts.

@@ -11,6 +11,8 @@ import { ClaudePermissionRpcRouter } from './utils/permissionRpcRouter';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import type { PushNotificationClient } from '@/api/pushNotifications';
+import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge';
+import type { McpServerConfig } from '@/agent';
 
 export type SessionFoundInfo = {
     sessionId: string;
@@ -39,6 +41,14 @@ export class Session {
     thinking: boolean = false;
     private currentTaskId: string | null = null;
     private permissionRpcRouter: ClaudePermissionRpcRouter | null = null;
+    private happierMcpBridge:
+        | {
+              mcpServers: Record<string, McpServerConfig>;
+              mcpConfigJson: string;
+              stop: () => void;
+          }
+        | null = null;
+    private happierMcpBridgePromise: Promise<NonNullable<Session['happierMcpBridge']>> | null = null;
 
     /**
      * Last known permission mode for this session, derived from message metadata / permission responses.
@@ -118,9 +128,41 @@ export class Session {
             clearTimeout(this.keepAliveTimer);
             this.keepAliveTimer = null;
         }
+        if (this.happierMcpBridge) {
+            try {
+                this.happierMcpBridge.stop();
+            } catch {
+                // ignore
+            }
+            this.happierMcpBridge = null;
+            this.happierMcpBridgePromise = null;
+        }
         this.sessionFoundCallbacks = [];
         this.permissionRpcRouter = null;
         logger.debug('[Session] Cleaned up resources');
+    }
+
+    async getOrCreateHappierMcpBridge(): Promise<{ mcpServers: Record<string, McpServerConfig>; mcpConfigJson: string }> {
+        if (this.happierMcpBridge) {
+            return { mcpServers: this.happierMcpBridge.mcpServers, mcpConfigJson: this.happierMcpBridge.mcpConfigJson };
+        }
+
+        if (!this.happierMcpBridgePromise) {
+            this.happierMcpBridgePromise = (async () => {
+                const bridge = await createHappierMcpBridge(this.client);
+                const mcpConfigJson = JSON.stringify({ mcpServers: bridge.mcpServers });
+                const stored = {
+                    mcpServers: bridge.mcpServers,
+                    mcpConfigJson,
+                    stop: bridge.happierMcpServer.stop,
+                };
+                this.happierMcpBridge = stored;
+                return stored;
+            })();
+        }
+
+        const stored = await this.happierMcpBridgePromise;
+        return { mcpServers: stored.mcpServers, mcpConfigJson: stored.mcpConfigJson };
     }
 
     getOrCreatePermissionRpcRouter(): ClaudePermissionRpcRouter {

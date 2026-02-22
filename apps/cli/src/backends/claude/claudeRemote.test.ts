@@ -63,6 +63,7 @@ function createBaseOptions(overrides?: Partial<RemoteOptions>): RemoteOptions {
     transcriptPath: null,
     path: '/tmp',
     hookSettingsPath: '/tmp/hooks.json',
+    happierMcpConfigJson: undefined,
     canCallTool: vi.fn(async () => ({ behavior: 'allow' as const, updatedInput: {} })),
     isAborted: () => false,
     nextMessage: async () => ({ message: 'hello', mode: defaultMode() }),
@@ -143,6 +144,28 @@ describe('claudeRemote', () => {
     expect(mockQuery).toHaveBeenCalledTimes(1);
     const call = mockQuery.mock.calls[0]?.[0];
     expect((call?.options as any)?.extraArgs).toEqual([arg]);
+  });
+
+  it('prepends Happier MCP config when provided, while preserving user --mcp-config passthrough', async () => {
+    mockQuery.mockReturnValue(messageStream(resultMessage()));
+
+    const { claudeRemote } = await import('./claudeRemote');
+
+    const happierMcp = JSON.stringify({
+      mcpServers: { happier: { type: 'stdio', command: 'node', args: ['happier-mcp.mjs', '--url', 'http://127.0.0.1:1234'] } },
+    });
+    const userMcp = JSON.stringify({ mcpServers: { fixture: { type: 'stdio', command: 'node', args: ['server.mjs'] } } });
+
+    await claudeRemote(
+      createBaseOptions({
+        happierMcpConfigJson: happierMcp,
+        claudeArgs: ['--mcp-config', userMcp],
+      }),
+    );
+
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    const call = mockQuery.mock.calls[0]?.[0];
+    expect((call?.options as any)?.extraArgs).toEqual(['--mcp-config', happierMcp, '--mcp-config', userMcp]);
   });
 
   it('treats --resume (no id) as resume-last-session in remote mode', async () => {

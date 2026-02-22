@@ -115,6 +115,27 @@ describe('claudeLocal --continue handling', () => {
         expect(onSessionFound).toHaveBeenCalledWith('123e4567-e89b-12d3-a456-426614174000');
     });
 
+    it('injects --mcp-config when happierMcpConfigJson is provided', async () => {
+        const mcpJson = JSON.stringify({
+            mcpServers: { happier: { command: 'node', args: ['happier-mcp.mjs', '--url', 'http://127.0.0.1:1234'] } },
+        });
+
+        await claudeLocal({
+            abort: new AbortController().signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            claudeArgs: [],
+            happierMcpConfigJson: mcpJson,
+        } as any);
+
+        expect(mockSpawn).toHaveBeenCalled();
+        const spawnArgs = mockSpawn.mock.calls[0][1];
+        const idx = spawnArgs.indexOf('--mcp-config');
+        expect(idx).toBeGreaterThan(-1);
+        expect(spawnArgs[idx + 1]).toBe(mcpJson);
+    });
+
     it('should spawn the Node launcher using process.execPath when running under Node', async () => {
         mockClaudeFindLastSession.mockReturnValue(null);
 

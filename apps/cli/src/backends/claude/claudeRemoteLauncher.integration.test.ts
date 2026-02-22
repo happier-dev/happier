@@ -7,6 +7,18 @@ import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { Session } from './session';
 import type { EnhancedMode } from './loop';
 
+vi.mock('@/agent/runtime/createHappierMcpBridge', () => ({
+  createHappierMcpBridge: vi.fn(async () => ({
+    happierMcpServer: { url: 'http://127.0.0.1:1234', stop: vi.fn() },
+    mcpServers: {
+      happier: {
+        command: 'node',
+        args: ['happier-mcp.mjs', '--url', 'http://127.0.0.1:1234'],
+      },
+    },
+  })),
+}));
+
 type RpcHandler = (params?: any) => any | Promise<any>;
 type SessionFoundHookData = NonNullable<Parameters<Session['onSessionFound']>[1]>;
 type RemoteDispatchMockOptions = {
@@ -244,6 +256,27 @@ describe.sequential('claudeRemoteLauncher', () => {
     const switchHandler = await switchHandlerReady;
 
     expect(await switchHandler({ to: 'remote' })).toBe(false);
+    expect(await switchHandler({ to: 'local' })).toBe(true);
+    await expect(launcherPromise).resolves.toBe('switch');
+  });
+
+  it('injects Happier MCP servers into the remote dispatch options', async () => {
+    const { session, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
+
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
+      const dispatchOpts = opts as any;
+      expect(dispatchOpts?.happierMcpServers?.happier).toBeTruthy();
+      await waitForAbort(dispatchOpts.signal);
+    });
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(session);
+
+    await vi.waitFor(() => {
+      expect(mockClaudeRemoteDispatch).toHaveBeenCalledTimes(1);
+    });
+
+    const switchHandler = await switchHandlerReady;
     expect(await switchHandler({ to: 'local' })).toBe(true);
     await expect(launcherPromise).resolves.toBe('switch');
   });

@@ -1,12 +1,11 @@
 import { join } from 'node:path'
 
-import type { ApiSessionClient } from '@/api/session/sessionClient'
 import { projectPath } from '@/projectPath'
-import { startHappyServer } from '@/mcp/startHappyServer'
+import { startHappyServer, type HappyMcpSessionClient } from '@/mcp/startHappyServer'
 import type { McpServerConfig } from '@/agent'
 
 export async function createHappierMcpBridge(
-  session: ApiSessionClient,
+  session: HappyMcpSessionClient,
   opts: {
     commandMode?: 'direct-script' | 'current-process'
   } = {},
@@ -18,7 +17,7 @@ export async function createHappierMcpBridge(
 }
 
 export async function createHappierMcpBridgeWithOptions(
-  session: ApiSessionClient,
+  session: HappyMcpSessionClient,
   opts: {
     commandMode?: 'direct-script' | 'current-process'
   } = {},

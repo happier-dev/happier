@@ -42,6 +42,11 @@ export async function claudeRemote(opts: {
     path: string,
     claudeEnvVars?: Record<string, string>,
     claudeArgs?: string[],
+    /**
+     * Optional MCP config JSON to inject into the Claude Code CLI invocation (e.g. Happier MCP).
+     * When set, this is prepended to any user-provided `--mcp-config` passthrough args.
+     */
+    happierMcpConfigJson?: string,
     signal?: AbortSignal,
     canCallTool: (toolName: string, input: unknown, mode: EnhancedMode, options: { signal: AbortSignal }) => Promise<PermissionResult>,
     /** Path to temporary settings file with SessionStart hook (required for session tracking) */
@@ -120,6 +125,13 @@ export async function claudeRemote(opts: {
     const appendSystemPrompt = argOverrides.appendSystemPrompt ?? initial.mode.appendSystemPrompt;
     const remoteSystemPrompt = getClaudeRemoteSystemPrompt({ disableTodos: initial.mode.claudeRemoteDisableTodos === true });
 
+    const passthroughMcpArgs = extractMcpConfigPassthroughArgs(opts.claudeArgs);
+    const injectedMcpArgs =
+        typeof opts.happierMcpConfigJson === 'string' && opts.happierMcpConfigJson.trim().length > 0
+            ? ['--mcp-config', opts.happierMcpConfigJson.trim()]
+            : null;
+    const extraArgs = [...(injectedMcpArgs ?? []), ...(passthroughMcpArgs ?? [])];
+
     const sdkOptions: QueryOptions = {
         cwd: opts.path,
         continue: shouldContinue || undefined,
@@ -130,7 +142,7 @@ export async function claudeRemote(opts: {
         maxTurns: argOverrides.maxTurns,
         customSystemPrompt: customSystemPrompt || undefined,
         appendSystemPrompt: (appendSystemPrompt ? appendSystemPrompt + '\n\n' : '') + remoteSystemPrompt,
-        extraArgs: extractMcpConfigPassthroughArgs(opts.claudeArgs),
+        extraArgs: extraArgs.length > 0 ? extraArgs : undefined,
         strictMcpConfig: argOverrides.strictMcpConfig,
         canCallTool: (toolName: string, input: unknown, options: { signal: AbortSignal }) =>
             opts.canCallTool(toolName, input, mode, options),

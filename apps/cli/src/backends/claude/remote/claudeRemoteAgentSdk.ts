@@ -19,6 +19,7 @@ import type { PermissionResult } from '@/backends/claude/sdk/types';
 import type { JsRuntime } from '@/backends/claude/runClaude';
 import { createSubprocessStderrAppender, resolveSubprocessArtifactsDir } from '@/agent/runtime/subprocessArtifacts';
 import { join } from 'node:path';
+import type { McpServerConfig } from '@/agent';
 
 type AgentSdkQueryFactory = (params: {
     prompt: string | AsyncIterable<any>;
@@ -243,6 +244,11 @@ export async function claudeRemoteAgentSdk(opts: {
 	    claudeEnvVars?: Record<string, string>;
 	    claudeArgs?: string[];
     claudeExecutablePath?: string;
+    /**
+     * Optional MCP servers to inject into the Claude Agent SDK invocation (e.g. Happier MCP).
+     * This should be additive with the user's config (no strict MCP unless explicitly requested).
+     */
+    happierMcpServers?: Record<string, McpServerConfig>;
     signal?: AbortSignal;
     canCallTool: (
         toolName: string,
@@ -327,7 +333,10 @@ export async function claudeRemoteAgentSdk(opts: {
         const value = mode.claudeRemoteSettingSources;
         if (value === 'none') return [];
         if (value === 'user_project') return ['user', 'project'];
-        return ['project'];
+        if (value === 'project') return ['project'];
+        // Default: do not force settingSources so Claude can apply its own defaults
+        // (which includes loading user configuration).
+        return undefined;
     })();
     const advancedOptionsJsonRaw = typeof mode.claudeRemoteAdvancedOptionsJson === 'string'
         ? mode.claudeRemoteAdvancedOptionsJson.trim()
@@ -543,7 +552,6 @@ export async function claudeRemoteAgentSdk(opts: {
 	        cwd: opts.path,
 	        continue: shouldContinue || undefined,
 	        resume: startFrom ?? undefined,
-	        settingSources,
 	        permissionMode: mappedPermissionMode,
 	        allowDangerouslySkipPermissions: mappedPermissionMode === 'bypassPermissions',
 	        model: argOverrides.model ?? mode.model,
@@ -552,6 +560,7 @@ export async function claudeRemoteAgentSdk(opts: {
         systemPrompt: buildSystemPrompt(),
         strictMcpConfig: mode.claudeRemoteStrictMcpServerConfig === true || argOverrides.strictMcpConfig,
         canUseTool,
+        ...(opts.happierMcpServers ? { mcpServers: opts.happierMcpServers } : {}),
         env: buildClaudeSubprocessEnv(),
         executable: opts.jsRuntime ?? 'node',
         pathToClaudeCodeExecutable: opts.claudeExecutablePath ?? getDefaultClaudeCodePathForAgentSdk(),
@@ -561,6 +570,10 @@ export async function claudeRemoteAgentSdk(opts: {
         maxThinkingTokens: typeof mode.claudeRemoteMaxThinkingTokens === 'number' ? mode.claudeRemoteMaxThinkingTokens : undefined,
         hooks,
     };
+
+    if (settingSources !== undefined) {
+        queryOptions.settingSources = settingSources;
+    }
 
     if (debugFilePath) {
         queryOptions.debugFile = debugFilePath;

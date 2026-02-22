@@ -6,6 +6,18 @@ import { Session } from './session';
 import { EventEmitter } from 'node:events';
 import type { EnhancedMode } from './loop';
 
+vi.mock('@/agent/runtime/createHappierMcpBridge', () => ({
+  createHappierMcpBridge: vi.fn(async () => ({
+    happierMcpServer: { url: 'http://127.0.0.1:1234', stop: vi.fn() },
+    mcpServers: {
+      happier: {
+        command: 'node',
+        args: ['happier-mcp.mjs', '--url', 'http://127.0.0.1:1234'],
+      },
+    },
+  })),
+}));
+
 type MetadataSnapshot = { permissionMode?: PermissionMode; permissionModeUpdatedAt?: number };
 type RpcHandler = (params?: unknown) => unknown | Promise<unknown>;
 type SessionFoundHookData = NonNullable<Parameters<Session['onSessionFound']>[1]>;
@@ -240,6 +252,9 @@ describe('claudeLocalLauncher', () => {
 
     expect(mockClaudeLocal).toHaveBeenCalledTimes(1);
     expect((captured as any)?.allowedTools).toBeUndefined();
+    expect(typeof (captured as any)?.happierMcpConfigJson).toBe('string');
+    const parsed = JSON.parse(String((captured as any)?.happierMcpConfigJson ?? 'null'));
+    expect(parsed?.mcpServers?.happier).toBeTruthy();
     expect(result).toEqual({ type: 'exit', code: 0 });
   });
 

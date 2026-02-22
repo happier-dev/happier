@@ -49,6 +49,149 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(capturedOptions.allowedTools).toBeUndefined();
     });
 
+    it('does not force settingSources by default (so Claude can load user + project config by default)', async () => {
+        let capturedOptions: any = null;
+
+        const createQuery = vi.fn((_params: any) => {
+            capturedOptions = _params.options;
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeEnvVars: {},
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            createQuery,
+        } as any);
+
+        expect(capturedOptions).toBeTruthy();
+        expect(capturedOptions.settingSources).toBeUndefined();
+    });
+
+    it('forwards settingSources when explicitly set on the mode', async () => {
+        let capturedOptions: any = null;
+
+        const createQuery = vi.fn((_params: any) => {
+            capturedOptions = _params.options;
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return {
+                message: 'hello',
+                mode: makeMode({ permissionMode: 'default', claudeRemoteSettingSources: 'project' } as any),
+            };
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeEnvVars: {},
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            createQuery,
+        } as any);
+
+        expect(capturedOptions).toBeTruthy();
+        expect(capturedOptions.settingSources).toEqual(['project']);
+    });
+
+    it('injects Happier MCP servers when provided', async () => {
+        let capturedOptions: any = null;
+
+        const createQuery = vi.fn((_params: any) => {
+            capturedOptions = _params.options;
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
+        });
+
+        const happierMcpServers = {
+            happier: { command: 'node', args: ['happier-mcp.mjs', '--url', 'http://127.0.0.1:1234'] },
+        };
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeEnvVars: {},
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            happierMcpServers,
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            createQuery,
+        } as any);
+
+        expect(capturedOptions).toBeTruthy();
+        expect(capturedOptions.mcpServers).toEqual(happierMcpServers);
+    });
+
     it('sets allowDangerouslySkipPermissions only when permissionMode is bypassPermissions', async () => {
         let capturedOptions: any = null;
 

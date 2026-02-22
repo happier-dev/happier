@@ -227,9 +227,11 @@ export async function claudeLocalLauncher(
 	            try {
                     syncLastPermissionModeFromMetadata?.();
 
-	                // Ensure local Claude Code is spawned with the current session permission mode.
-	                // This is essential for remote → local switches where the app-selected mode must carry over.
-	                session.claudeArgs = upsertClaudePermissionModeArgs(session.claudeArgs, session.lastPermissionMode);
+                // Ensure local Claude Code is spawned with the current session permission mode.
+                // This is essential for remote → local switches where the app-selected mode must carry over.
+                session.claudeArgs = upsertClaudePermissionModeArgs(session.claudeArgs, session.lastPermissionMode);
+
+                const { mcpConfigJson } = await session.getOrCreateHappierMcpBridge();
 
                 await claudeLocal({
                     path: session.path,
@@ -239,6 +241,7 @@ export async function claudeLocalLauncher(
                     abort: processAbortController.signal,
                     claudeEnvVars: session.claudeEnvVars,
                     claudeArgs: session.claudeArgs,
+                    happierMcpConfigJson: mcpConfigJson,
                     hookSettingsPath: session.hookSettingsPath,
                 });
 
