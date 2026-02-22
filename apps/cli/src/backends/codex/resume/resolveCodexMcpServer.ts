@@ -9,8 +9,11 @@ export type CodexMcpServerSpawn = Readonly<{ mode: 'codex-cli' | 'mcp-server'; c
 /**
  * Resolve the codex binary on PATH, respecting PATHEXT on Windows.
  *
+ * On non-Windows platforms we can rely on Node's PATH resolution by passing
+ * `codex` directly to `execFile`/`execFileSync`.
+ *
  * Node.js `execFileSync('codex', ...)` does NOT try `.cmd`/`.exe` extensions,
- * so on Windows we must resolve the full filename ourselves.
+ * so on Windows we must resolve the full filename ourselves (respecting PATHEXT).
  */
 function resolveCodexOnPath(): string {
   const override = typeof process.env.HAPPIER_CODEX_PATH === 'string'
@@ -18,8 +21,10 @@ function resolveCodexOnPath(): string {
     : '';
   if (override) return override;
 
-  const pathEnv = typeof process.env.PATH === 'string' ? process.env.PATH : '';
   const isWindows = process.platform === 'win32';
+  if (!isWindows) return 'codex';
+
+  const pathEnv = typeof process.env.PATH === 'string' ? process.env.PATH : '';
   const extensions: string[] = isWindows
     ? (process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM')
         .split(';')
