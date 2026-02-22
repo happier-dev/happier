@@ -45,6 +45,9 @@ export class MachineActivityAccumulator {
             clearTimeout(this.timeoutId);
             this.timeoutId = null;
         }
+        // Pending updates are intentionally dropped without flushing.
+        // Only safe when the corresponding storage state is also being discarded
+        // (e.g. via resetServerScopedRuntimeState).
         this.pendingUpdates.clear();
     }
 

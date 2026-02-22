@@ -3,7 +3,7 @@ import type { Encryption } from '@/sync/encryption/encryption';
 import type { NormalizedMessage } from '@/sync/typesRaw';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import type { MachineActivityUpdate } from '../../reducer/machineActivityAccumulator';
+import type { MachineActivityUpdate } from '@/sync/reducer/machineActivityAccumulator';
 import { storage } from '@/sync/domains/state/storage';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { scmStatusSync } from '@/scm/scmStatusSync';
@@ -487,8 +487,8 @@ export function flushMachineActivityUpdates(params: {
 
 export function handleEphemeralSocketUpdate(params: {
     update: unknown;
-    addActivityUpdate: (update: any) => void;
-    addMachineActivityUpdate: (update: { id: string; active: boolean; activeAt: number }) => void;
+    addActivityUpdate: (update: ApiEphemeralActivityUpdate) => void;
+    addMachineActivityUpdate: (update: MachineActivityUpdate) => void;
 }): void {
     const { update, addActivityUpdate, addMachineActivityUpdate } = params;
 
@@ -498,10 +498,8 @@ export function handleEphemeralSocketUpdate(params: {
     // Process activity updates through smart debounce accumulator
     if (updateData.type === 'activity') {
         addActivityUpdate(updateData);
-    }
-
-    // Handle machine activity updates through batching accumulator
-    if (updateData.type === 'machine-activity') {
+    } else if (updateData.type === 'machine-activity') {
+        // Handle machine activity updates through batching accumulator
         addMachineActivityUpdate({ id: updateData.id, active: updateData.active, activeAt: updateData.activeAt });
     }
 

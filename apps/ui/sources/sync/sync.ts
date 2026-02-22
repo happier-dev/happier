@@ -10,7 +10,7 @@ import type { ApiEphemeralActivityUpdate } from './api/types/apiTypes';
 import { Session, Machine, MetadataSchema, type Metadata } from './domains/state/storageTypes';
 import { InvalidateSync } from '@/utils/sessions/sync';
 import { ActivityUpdateAccumulator } from './reducer/activityUpdateAccumulator';
-import { MachineActivityAccumulator } from './reducer/machineActivityAccumulator';
+import { MachineActivityAccumulator, type MachineActivityUpdate } from './reducer/machineActivityAccumulator';
 import { randomUUID } from '@/platform/randomUUID';
 import { Platform, AppState } from 'react-native';
 import { resolveSentFrom } from './domains/messages/sentFrom';
@@ -2028,9 +2028,7 @@ class Sync {
         flushActivityUpdatesEngine({ updates, applySessions: (sessions) => this.applySessions(sessions) });
     }
 
-    private flushMachineActivityUpdates = (
-        updates: Map<string, import('./reducer/machineActivityAccumulator').MachineActivityUpdate>
-    ) => {
+    private flushMachineActivityUpdates = (updates: Map<string, MachineActivityUpdate>) => {
         flushMachineActivityUpdatesEngine({ updates, applyMachines: (machines) => storage.getState().applyMachines(machines) });
     }
 

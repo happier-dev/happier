@@ -85,7 +85,7 @@ describe('socket update handling: machine-activity for unknown machine', () => {
         storage.setState(initialStorageState, true);
     });
 
-    it('creates a placeholder machine so active status is not dropped', () => {
+    it('routes update to addMachineActivityUpdate callback without directly writing to storage', () => {
         const addMachineActivityUpdate = vi.fn();
         expect(storage.getState().machines['m_unknown']).toBeUndefined();
 
