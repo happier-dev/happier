@@ -236,7 +236,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 
     // Set up callback to release delayed messages when permission is requested
     permissionHandler.setOnPermissionRequest((toolCallId: string) => {
-        messageQueue.releaseToolCall(toolCallId);
+        void messageQueue.releaseToolCall(toolCallId);
     });
 
     // Create SDK to Log converter (pass responses from permissions)
@@ -248,6 +248,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 
 
     function onMessage(message: SDKMessage) {
+        let releaseIds: string[] = [];
 
         // Write to message log
         formatClaudeMessageForInk(message, messageBuffer);
@@ -264,7 +265,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                 for (let c of umessage.message.content) {
                     if (c.type === 'tool_result' && c.tool_use_id) {
                         // When tool result received, release any delayed messages for this tool call
-                        messageQueue.releaseToolCall(c.tool_use_id);
+                        releaseIds.push(c.tool_use_id);
                     }
                 }
             }
@@ -349,7 +350,8 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                         // Top-level tool call - queue with delay
                         messageQueue.enqueue(logMessage, {
                             delay: 250,
-                            toolCallIds
+                            toolCallIds,
+                            releaseToolCallIds: releaseIds.length > 0 ? releaseIds : undefined,
                         });
                         return; // Don't queue again below
                     }
@@ -357,7 +359,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             }
 
             // Queue all other messages immediately (no delay)
-            messageQueue.enqueue(logMessage);
+            messageQueue.enqueue(logMessage, releaseIds.length > 0 ? { releaseToolCallIds: releaseIds } : undefined);
         }
 
         for (const imported of taskOutputIngest.imported) {
@@ -526,7 +528,10 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                         forceNewSession = true;
                         session.clearSessionId();
                     },
-                    onReady: readyHandler,
+                    onReady: async () => {
+                        await messageQueue.flush();
+                        readyHandler();
+                    },
                     signal: abortController.signal,
                 });
                 

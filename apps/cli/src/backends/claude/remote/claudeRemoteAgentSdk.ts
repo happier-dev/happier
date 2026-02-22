@@ -264,7 +264,7 @@ export async function claudeRemoteAgentSdk(opts: {
 
     // Dynamic parameters
     nextMessage: () => Promise<{ message: string; mode: EnhancedMode } | null>;
-    onReady: () => void;
+    onReady: () => void | Promise<void>;
     isAborted: (toolCallId: string) => boolean;
 
     // Callbacks
@@ -638,6 +638,11 @@ export async function claudeRemoteAgentSdk(opts: {
     });
 
     let response: any;
+    let nextMessagePump: Promise<void> | null = null;
+    const swallowOptionalPromise = async (promise: Promise<void> | null): Promise<void> => {
+        if (!promise) return;
+        await promise.catch(() => {});
+    };
     try {
         response = createQuery({
             prompt: messages,
@@ -661,6 +666,163 @@ export async function claudeRemoteAgentSdk(opts: {
             checkpointIdSet.add(id);
             checkpointIds.push(id);
         }
+
+        const ABORTED = Symbol('aborted');
+        const waitForAbort = (signal: AbortSignal): Promise<typeof ABORTED> =>
+            new Promise((resolve) => {
+                if (signal.aborted) {
+                    resolve(ABORTED);
+                    return;
+                }
+                signal.addEventListener('abort', () => resolve(ABORTED), { once: true });
+            });
+
+        const scheduleNextMessagePump = () => {
+            if (nextMessagePump) return;
+
+            nextMessagePump = (async () => {
+                try {
+                    while (!abortSignal.aborted) {
+                        const nextOrAbort = await Promise.race([opts.nextMessage(), waitForAbort(abortSignal)]);
+                        if (nextOrAbort === ABORTED) {
+                            return;
+                        }
+
+                        const next = nextOrAbort as { message: string; mode: EnhancedMode } | null;
+                        if (!next) {
+                            messages.end();
+                            try {
+                                response?.close?.();
+                            } catch {
+                                // ignore
+                            }
+                            return;
+                        }
+
+                        const checkpointsCommand = parseCheckpointsCommand(next.message);
+                        if (checkpointsCommand) {
+                            if (!enableFileCheckpointing) {
+                                opts.onCompletionEvent?.('No checkpoints are available unless file checkpointing is enabled.');
+                                continue;
+                            }
+
+                            if (checkpointIds.length === 0) {
+                                opts.onCompletionEvent?.('No checkpoints have been captured yet.');
+                                continue;
+                            }
+
+                            opts.onCompletionEvent?.(
+                                [
+                                    'Available checkpoints (newest first):',
+                                    ...checkpointIds
+                                        .slice()
+                                        .reverse()
+                                        .map((id) => `- ${id}`),
+                                    '',
+                                    'Note: Agent SDK rewind restores files only; it does not rewind the conversation.',
+                                    'To rewind: /rewind <checkpoint-id> --confirm',
+                                ].join('\n'),
+                            );
+                            continue;
+                        }
+
+                        const rewindCommand = parseRewindCommand(next.message);
+                        if (rewindCommand) {
+                            if (!enableFileCheckpointing) {
+                                opts.onCompletionEvent?.('Rewind is not available unless file checkpointing is enabled.');
+                                continue;
+                            }
+
+                            const checkpointId = rewindCommand.checkpointId ?? lastCheckpointId;
+                            if (!checkpointId) {
+                                opts.onCompletionEvent?.('No checkpoint id is available yet. Send a normal message first, then try /rewind again.');
+                                continue;
+                            }
+
+                            if (!rewindCommand.confirmed) {
+                                opts.onCompletionEvent?.(
+                                    [
+                                        'Rewind is a destructive filesystem operation.',
+                                        'It restores files to a previous checkpoint and may discard your local file edits.',
+                                        '',
+                                        'Important: Agent SDK rewind restores files only; it does not rewind the conversation.',
+                                        '',
+                                        `To confirm, re-run: /rewind ${checkpointId} --confirm`,
+                                    ].join('\n'),
+                                );
+                                continue;
+                            }
+
+                            const result = await (response as any).rewindFiles?.(checkpointId, undefined);
+                            if (result && typeof result === 'object' && (result as any).canRewind === false) {
+                                const error = typeof (result as any).error === 'string' ? (result as any).error : 'Rewind failed';
+                                opts.onCompletionEvent?.(error);
+                                continue;
+                            }
+
+                            opts.onMessage({
+                                type: 'system',
+                                subtype: 'happier',
+                                happierTraceMarker: 'checkpoint-rewind',
+                                checkpointId,
+                            } as any);
+                            recordTraceMarker({ kind: 'checkpoint-rewind', payload: { marker: 'checkpoint-rewind', checkpointId } });
+                            opts.onCompletionEvent?.(`Rewound files to checkpoint ${checkpointId}`);
+                            continue;
+                        }
+
+                        const nextSpecial = parseSpecialCommand(next.message);
+                        if (nextSpecial.type === 'clear') {
+                            opts.onCompletionEvent?.('Context was reset');
+                            opts.onSessionReset?.();
+                            messages.end();
+                            try {
+                                response?.close?.();
+                            } catch {
+                                // ignore
+                            }
+                            return;
+                        }
+
+                        if (nextSpecial.type === 'compact') {
+                            isCompactCommand = true;
+                            opts.onCompletionEvent?.('Compaction started');
+                        }
+
+                        mode = next.mode;
+
+                        try {
+                            await (response as any).setPermissionMode?.(mapToClaudeMode(mode.permissionMode));
+                            await (response as any).setModel?.(mode.model ?? undefined);
+                            if (
+                                typeof mode.claudeRemoteMaxThinkingTokens === 'number' ||
+                                mode.claudeRemoteMaxThinkingTokens === null
+                            ) {
+                                await (response as any).setMaxThinkingTokens?.(mode.claudeRemoteMaxThinkingTokens ?? null);
+                            }
+                        } catch (e) {
+                            logger.debug('[claudeRemoteAgentSdk] Failed to update runtime settings (non-fatal)', e);
+                            opts.onCompletionEvent?.('Failed to update runtime settings (non-fatal); continuing.');
+                        }
+
+                        messages.push({
+                            type: 'user',
+                            session_id: '',
+                            parent_tool_use_id: null,
+                            message: {
+                                role: 'user',
+                                content: [{ type: 'text', text: next.message }],
+                            },
+                        });
+
+                        updateThinking(true);
+                        return;
+                    }
+                } finally {
+                    nextMessagePump = null;
+                }
+            })();
+        };
 
         // Fire-and-forget capability publication.
         // This must not block the main streaming loop.
@@ -914,125 +1076,8 @@ export async function claudeRemoteAgentSdk(opts: {
                     isCompactCommand = false;
                 }
 
-                opts.onReady();
-
-                while (true) {
-                    const next = await opts.nextMessage();
-                    if (!next) {
-                        messages.end();
-                        return;
-                    }
-
-                    const checkpointsCommand = parseCheckpointsCommand(next.message);
-                    if (checkpointsCommand) {
-                        if (!enableFileCheckpointing) {
-                            opts.onCompletionEvent?.('No checkpoints are available unless file checkpointing is enabled.');
-                            continue;
-                        }
-
-                        if (checkpointIds.length === 0) {
-                            opts.onCompletionEvent?.('No checkpoints have been captured yet.');
-                            continue;
-                        }
-
-                        opts.onCompletionEvent?.(
-                            [
-                                'Available checkpoints (newest first):',
-                                ...checkpointIds
-                                    .slice()
-                                    .reverse()
-                                    .map((id) => `- ${id}`),
-                                '',
-                                'Note: Agent SDK rewind restores files only; it does not rewind the conversation.',
-                                'To rewind: /rewind <checkpoint-id> --confirm',
-                            ].join('\n'),
-                        );
-                        continue;
-                    }
-
-                    const rewindCommand = parseRewindCommand(next.message);
-                    if (rewindCommand) {
-                        if (!enableFileCheckpointing) {
-                            opts.onCompletionEvent?.('Rewind is not available unless file checkpointing is enabled.');
-                            continue;
-                        }
-
-                        const checkpointId = rewindCommand.checkpointId ?? lastCheckpointId;
-                        if (!checkpointId) {
-                            opts.onCompletionEvent?.('No checkpoint id is available yet. Send a normal message first, then try /rewind again.');
-                            continue;
-                        }
-
-                        if (!rewindCommand.confirmed) {
-                            opts.onCompletionEvent?.(
-                                [
-                                    'Rewind is a destructive filesystem operation.',
-                                    'It restores files to a previous checkpoint and may discard your local file edits.',
-                                    '',
-                                    'Important: Agent SDK rewind restores files only; it does not rewind the conversation.',
-                                    '',
-                                    `To confirm, re-run: /rewind ${checkpointId} --confirm`,
-                                ].join('\n'),
-                            );
-                            continue;
-                        }
-
-                        const result = await (response as any).rewindFiles?.(checkpointId, undefined);
-                        if (result && typeof result === 'object' && (result as any).canRewind === false) {
-                            const error = typeof (result as any).error === 'string' ? (result as any).error : 'Rewind failed';
-                            opts.onCompletionEvent?.(error);
-                            continue;
-                        }
-
-                        opts.onMessage({
-                            type: 'system',
-                            subtype: 'happier',
-                            happierTraceMarker: 'checkpoint-rewind',
-                            checkpointId,
-                        } as any);
-                        recordTraceMarker({ kind: 'checkpoint-rewind', payload: { marker: 'checkpoint-rewind', checkpointId } });
-                        opts.onCompletionEvent?.(`Rewound files to checkpoint ${checkpointId}`);
-                        continue;
-                    }
-
-                    const nextSpecial = parseSpecialCommand(next.message);
-                    if (nextSpecial.type === 'clear') {
-                        opts.onCompletionEvent?.('Context was reset');
-                        opts.onSessionReset?.();
-                        return;
-                    }
-
-                    if (nextSpecial.type === 'compact') {
-                        isCompactCommand = true;
-                        opts.onCompletionEvent?.('Compaction started');
-                    }
-
-                    mode = next.mode;
-
-                    try {
-                        await (response as any).setPermissionMode?.(mapToClaudeMode(mode.permissionMode));
-                        await (response as any).setModel?.(mode.model ?? undefined);
-                        if (typeof mode.claudeRemoteMaxThinkingTokens === 'number' || mode.claudeRemoteMaxThinkingTokens === null) {
-                            await (response as any).setMaxThinkingTokens?.(mode.claudeRemoteMaxThinkingTokens ?? null);
-                        }
-                    } catch (e) {
-                        logger.debug('[claudeRemoteAgentSdk] Failed to update runtime settings (non-fatal)', e);
-                        opts.onCompletionEvent?.('Failed to update runtime settings (non-fatal); continuing.');
-                    }
-
-                    messages.push({
-                        type: 'user',
-                        session_id: '',
-                        parent_tool_use_id: null,
-                        message: {
-                            role: 'user',
-                            content: [{ type: 'text', text: next.message }],
-                        },
-                    });
-
-                    updateThinking(true);
-                    break;
-                }
+                await opts.onReady();
+                scheduleNextMessagePump();
             }
         }
     } catch (e) {
@@ -1044,6 +1089,8 @@ export async function claudeRemoteAgentSdk(opts: {
     } finally {
         opts.setUserMessageSender?.(null);
         updateThinking(false);
+        abortController.abort();
+        await swallowOptionalPromise(nextMessagePump);
         try {
             response?.close();
         } catch {

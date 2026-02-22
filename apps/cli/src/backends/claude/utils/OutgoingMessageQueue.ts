@@ -30,13 +30,34 @@ export class OutgoingMessageQueue {
     
     /**
      * Add message to queue
+     *
+     * @param releaseToolCallIds - Tool call IDs to release atomically before enqueuing.
+     *   This ensures the release and enqueue happen within the same lock acquisition,
+     *   preventing head-of-line blocking race conditions.
      */
     enqueue(logMessage: any, options?: {
         delay?: number,
         toolCallIds?: string[],
+        releaseToolCallIds?: string[],
         meta?: Record<string, unknown>,
     }) {
         void this.lock.inLock(async () => {
+            if (options?.releaseToolCallIds && options.releaseToolCallIds.length > 0) {
+                for (const toolCallId of options.releaseToolCallIds) {
+                    for (const existing of this.queue) {
+                        if (existing.toolCallIds?.includes(toolCallId) && !existing.released) {
+                            existing.released = true;
+
+                            const timer = this.delayTimers.get(existing.id);
+                            if (timer) {
+                                clearTimeout(timer);
+                                this.delayTimers.delete(existing.id);
+                            }
+                        }
+                    }
+                }
+            }
+
             const item: QueueItem = {
                 id: this.nextId++,
                 logMessage,

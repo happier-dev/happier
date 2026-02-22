@@ -63,6 +63,27 @@ describe('OutgoingMessageQueue', () => {
     expect(send.mock.calls[1]?.[0]?.message?.content).toBe('after');
   });
 
+  it('can release delayed head items atomically with enqueue (releaseToolCallIds)', async () => {
+    vi.useFakeTimers();
+    const send = vi.fn();
+    const queue = new OutgoingMessageQueue((message: any) => send(message));
+
+    queue.enqueue(
+      { type: 'assistant', message: { role: 'assistant', content: 'delayed' } },
+      { delay: 10_000, toolCallIds: ['t1'] },
+    );
+    queue.enqueue(
+      { type: 'assistant', message: { role: 'assistant', content: 'after' } },
+      { releaseToolCallIds: ['t1'] },
+    );
+
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[0]?.[0]?.message?.content).toBe('delayed');
+    expect(send.mock.calls[1]?.[0]?.message?.content).toBe('after');
+  });
+
   it('does not surface send errors as unhandled promise rejections', async () => {
     vi.useFakeTimers();
 

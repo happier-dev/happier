@@ -24,6 +24,14 @@ import { configuration } from '@/configuration';
 
 type PermissionResponse = PermissionRpcPayload;
 
+function isInteractiveTool(toolName: string): boolean {
+    return (
+        toolName === 'AskUserQuestion' ||
+        toolName === 'ask_user_question' ||
+        toolName === 'ExitPlanMode' ||
+        toolName === 'exit_plan_mode'
+    );
+}
 
 interface PendingRequest {
     resolve: (value: PermissionResult) => void;
@@ -406,7 +414,7 @@ export class PermissionHandler {
         // hasn't been updated yet (e.g. metadata update arrives slightly later).
         const effectiveMode: PermissionMode = mode?.permissionMode ?? this.permissionMode;
 
-        if (effectiveMode === 'bypassPermissions') {
+        if (effectiveMode === 'bypassPermissions' && !isInteractiveTool(toolName)) {
             return { behavior: 'allow', updatedInput: rewrittenInput as Record<string, unknown> };
         }
 
@@ -672,10 +680,8 @@ export class PermissionHandler {
      */
     isAborted(toolCallId: string): boolean {
 
-        // ExitPlanMode is used to negotiate a plan; even if the user rejects it (or requests changes),
-        // Claude should be allowed to continue the current turn to revise the plan.
         const toolCall = this.toolCalls.find(tc => tc.id === toolCallId);
-        if (toolCall && (toolCall.name === 'exit_plan_mode' || toolCall.name === 'ExitPlanMode')) {
+        if (toolCall && isInteractiveTool(toolCall.name)) {
             return false;
         }
 
