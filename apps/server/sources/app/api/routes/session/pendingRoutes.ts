@@ -1,4 +1,3 @@
-import type { PrismaJson } from "@prisma/client";
 import { z } from "zod";
 import { type Fastify } from "../../types";
 import { buildNewMessageUpdate, buildPendingChangedUpdate, eventRouter } from "@/app/events/eventRouter";
