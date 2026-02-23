@@ -66,21 +66,6 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     })();
     const canApproveExecPolicy = isCodexDecision && isNativeCodexAgent && execPolicyCommand.length > 0;
 
-    const sendStopAndExplainMessage = async () => {
-        // UX: the stop/abort action promises an explanation. Ensure we ask the agent explicitly,
-        // otherwise aborting the run can leave the user with no response.
-        try {
-            const summary = formatPermissionRequestSummary({ toolName, toolInput });
-            await sync.sendMessage(
-                sessionId,
-                `I denied the permission request (${summary}). ` +
-                    `Please explain what I should do manually to achieve the same result, without running any tools.`,
-            );
-        } catch (error) {
-            console.error('Failed to request explanation after abort:', error);
-        }
-    };
-
     if (!canApprovePermissions && permission.status === 'pending') {
         const summary = formatPermissionRequestSummary({ toolName, toolInput });
         const disabledMessage =
@@ -227,11 +212,9 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             if (shouldForceReadOnlyAfterStop) {
                 storage.getState().updateSessionPermissionMode(sessionId, 'read-only');
             }
-            // Codex can deadlock the turn when we auto-send a synthetic follow-up immediately
-            // after an abort decision. Leave Codex ready for the next user-authored message.
-            if (!isNativeCodexAgent) {
-                await sendStopAndExplainMessage();
-            }
+            // Do not auto-send synthetic follow-up chat messages on deny.
+            // Deny/abort should be fully represented by the permission decision itself;
+            // injecting a user-message is surprising and can disrupt planning/iteration flows.
         } catch (error) {
             console.error('Failed to deny permission:', error);
         } finally {
