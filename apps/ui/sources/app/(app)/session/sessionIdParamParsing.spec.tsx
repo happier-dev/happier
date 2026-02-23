@@ -18,8 +18,8 @@ vi.mock('@react-navigation/native', () => ({
 }));
 
 vi.mock('@/components/sessions/shell/SessionView', () => ({
-    SessionView: ({ id, jumpToSeq }: { id: string; jumpToSeq?: number | null }) =>
-        React.createElement('SessionView', { id, jumpToSeq }),
+    SessionView: ({ id, jumpToSeq, paneUrlState }: { id: string; jumpToSeq?: number | null; paneUrlState?: any }) =>
+        React.createElement('SessionView', { id, jumpToSeq, paneUrlState }),
 }));
 
 describe('session/[id] param parsing', () => {
@@ -77,5 +77,22 @@ describe('session/[id] param parsing', () => {
 
     const sessionView = tree!.root.findByType('SessionView');
     expect(sessionView.props.jumpToSeq).toBe(42);
+  });
+
+  it('passes pane url params through to SessionView as paneUrlState', async () => {
+    vi.resetModules();
+    searchParams = { id: 'session-123', right: 'files', details: 'file', path: 'src/app.ts' } as any;
+
+    const Screen = (await import('./[id]')).default;
+    let tree: renderer.ReactTestRenderer | null = null;
+    await act(async () => {
+      tree = renderer.create(React.createElement(Screen));
+    });
+
+    const sessionView = tree!.root.findByType('SessionView');
+    expect(sessionView.props.paneUrlState).toEqual({
+      rightTabId: 'files',
+      details: { kind: 'file', path: 'src/app.ts' },
+    });
   });
 });
