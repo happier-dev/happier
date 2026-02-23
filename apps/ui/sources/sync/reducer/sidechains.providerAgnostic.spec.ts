@@ -439,4 +439,102 @@ describe('sidechains (provider-agnostic)', () => {
     expect(rootKinds2).toContain('tool-call');
     expect(rootKinds2).not.toContain('agent-text');
   });
+
+  it('does not split sidechain thinking when a whitespace-only agent text keepalive interleaves', () => {
+    const state = createReducer();
+
+    const taskTool: NormalizedMessage = {
+      id: 'msg_task',
+      localId: null,
+      createdAt: 1000,
+      role: 'agent',
+      isSidechain: false,
+      content: [
+        {
+          type: 'tool-call',
+          id: 'tool_task_1',
+          name: 'Task',
+          input: { prompt: 'Search for files', run_in_background: true },
+          description: null,
+          uuid: 'uuid_task',
+          parentUUID: null,
+        },
+      ],
+    };
+
+    const sidechainRoot: NormalizedMessage = {
+      id: 'msg_sc_root',
+      localId: null,
+      createdAt: 1100,
+      role: 'agent',
+      isSidechain: true,
+      content: [
+        {
+          type: 'sidechain',
+          uuid: 'uuid_sc_root',
+          prompt: 'Search for files',
+        },
+      ],
+    } as any;
+    (sidechainRoot as any).sidechainId = 'tool_task_1';
+
+    const sidechainThinking1: NormalizedMessage = {
+      id: 'msg_sc_thinking_1',
+      localId: null,
+      createdAt: 1200,
+      role: 'agent',
+      isSidechain: true,
+      content: [
+        {
+          type: 'thinking',
+          thinking: 'Respond',
+          uuid: 'uuid_sc_thinking_1',
+          parentUUID: 'uuid_sc_root',
+        },
+      ],
+    } as any;
+    (sidechainThinking1 as any).sidechainId = 'tool_task_1';
+
+    const sidechainKeepalive: NormalizedMessage = {
+      id: 'msg_sc_keepalive',
+      localId: null,
+      createdAt: 1250,
+      role: 'agent',
+      isSidechain: true,
+      content: [
+        {
+          type: 'text',
+          text: '\n',
+          uuid: 'uuid_sc_keepalive',
+          parentUUID: 'uuid_sc_root',
+        },
+      ],
+    } as any;
+    (sidechainKeepalive as any).sidechainId = 'tool_task_1';
+
+    const sidechainThinking2: NormalizedMessage = {
+      id: 'msg_sc_thinking_2',
+      localId: null,
+      createdAt: 1300,
+      role: 'agent',
+      isSidechain: true,
+      content: [
+        {
+          type: 'thinking',
+          thinking: 'ing',
+          uuid: 'uuid_sc_thinking_2',
+          parentUUID: 'uuid_sc_root',
+        },
+      ],
+    } as any;
+    (sidechainThinking2 as any).sidechainId = 'tool_task_1';
+
+    const result = reducer(state, [taskTool, sidechainRoot, sidechainThinking1, sidechainKeepalive, sidechainThinking2]);
+    const toolMessage = result.messages.find((m) => m.kind === 'tool-call' && m.tool?.name === 'Task') as any;
+    expect(toolMessage).toBeTruthy();
+
+    const thinkingChildren = toolMessage.children.filter((m: any) => m.kind === 'agent-text' && m.isThinking);
+    expect(thinkingChildren).toHaveLength(1);
+    expect(thinkingChildren[0]?.text).toBe('Responding');
+  });
 });

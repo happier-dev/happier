@@ -4,6 +4,7 @@ import type { ToolCall } from '../../domains/messages/messageTypes';
 import { equalOptionalStringArrays } from '../helpers/arrays';
 import type { ReducerState } from '../reducer';
 import { drainAndApplyOrphanToolResultsToMessage } from '../helpers/drainAndApplyOrphanToolResultsToMessage';
+import { setThinkingMergeCursor } from '../helpers/mergeCursors';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -143,16 +144,17 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                         }
                     };
 
-                    state.messages.set(mid, {
-                        id: mid,
-                        realID: null,
-                        seq: null,
-                        role: 'agent',
-                        createdAt: request.createdAt || Date.now(),
-                        text: null,
-                        tool: toolCall,
-                        event: null,
-                    });
+	                    state.messages.set(mid, {
+	                        id: mid,
+	                        realID: null,
+	                        seq: null,
+	                        role: 'agent',
+	                        createdAt: request.createdAt || Date.now(),
+	                        text: null,
+	                        tool: toolCall,
+	                        event: null,
+	                    });
+	                    setThinkingMergeCursor(state, null, 'agentstate-permission-create');
 
                     // Store by permission ID (which will match tool ID)
                     state.toolIdToMessageId.set(permId, mid);
@@ -341,16 +343,17 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                         }
                     };
 
-                    state.messages.set(mid, {
-                        id: mid,
-                        realID: null,
-                        seq: null,
-                        role: 'agent',
-                        createdAt: completed.createdAt || Date.now(),
-                        text: null,
-                        tool: toolCall,
-                        event: null,
-                    });
+	                    state.messages.set(mid, {
+	                        id: mid,
+	                        realID: null,
+	                        seq: null,
+	                        role: 'agent',
+	                        createdAt: completed.createdAt || Date.now(),
+	                        text: null,
+	                        tool: toolCall,
+	                        event: null,
+	                    });
+	                    setThinkingMergeCursor(state, null, 'agentstate-permission-create');
 
                     state.toolIdToMessageId.set(permId, mid);
 

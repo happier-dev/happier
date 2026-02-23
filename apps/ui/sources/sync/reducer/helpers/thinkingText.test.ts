@@ -168,5 +168,37 @@ describe('thinkingText', () => {
       expect(String(thinkingMessages[0]!.text)).toBe('Hello');
       expect(String(thinkingMessages[1]!.text)).toBe('World');
     });
+
+    it('does not split thinking when a whitespace-only agent text keepalive interleaves', () => {
+      const state = createReducer();
+
+      const mkThinking = (id: string, createdAt: number, thinking: string): NormalizedMessage => ({
+        id,
+        localId: null,
+        createdAt,
+        role: 'agent',
+        isSidechain: false,
+        content: [{ type: 'thinking', thinking, uuid: id, parentUUID: null }],
+      });
+
+      const mkText = (id: string, createdAt: number, text: string): NormalizedMessage => ({
+        id,
+        localId: null,
+        createdAt,
+        role: 'agent',
+        isSidechain: false,
+        content: [{ type: 'text', text, uuid: id, parentUUID: null }],
+      });
+
+      reducer(state, [mkThinking('t1', 1000, 'Respond')]);
+      reducer(state, [mkText('a2', 1010, '\n')]);
+      reducer(state, [mkThinking('t3', 1020, 'ing')]);
+
+      const thinkingMessages = [...state.messages.values()].filter(
+        (m) => m.role === 'agent' && m.isThinking && typeof m.text === 'string',
+      );
+      expect(thinkingMessages).toHaveLength(1);
+      expect(String(thinkingMessages[0]!.text)).toBe('Responding');
+    });
   });
 });

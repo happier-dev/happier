@@ -131,6 +131,7 @@ describe('reducerTracer sidechain linking', () => {
         // as a main-timeline message to avoid folding main transcript messages into sub-agent threads.
         expect(traced[0].sidechainId).toBeUndefined();
         expect(state.uuidToSidechainId.get('child-uuid-2')).toBeUndefined();
+        expect(state.telemetry).toHaveProperty('sidechainParentMappedButMissingHint', 1);
     });
 
     it('buffers sidechain roots until Task prompt mapping exists (prevents main transcript leakage)', () => {

@@ -2,6 +2,7 @@ import type { TracedMessage } from '../reducerTracer';
 import type { UsageData } from '../../typesRaw';
 import type { ReducerState } from '../reducer';
 import type { ToolCall } from '../../domains/messages/messageTypes';
+import { clearAllMainMergeCursors, setStreamMergeCursor, setThinkingMergeCursor } from '../helpers/mergeCursors';
 import { normalizeThinkingChunk, unwrapThinkingText } from '../helpers/thinkingText';
 import { cancelRunningTools } from '../helpers/cancelRunningApprovedTools';
 import { drainAndApplyOrphanToolResultsToMessage } from '../helpers/drainAndApplyOrphanToolResultsToMessage';
@@ -30,10 +31,22 @@ export function runUserAndTextPhase(params: Readonly<{
     let lastMainStreamMessageId: string | null = params.lastMainStreamMessageId;
     let lastMainStreamKey: string | null = params.lastMainStreamKey;
 
-    const setStreamCursor = (next: { messageId: string; streamKey: string } | null) => {
-        state.streamMergeCursor = next;
+    const setThinkingCursor = (next: string | null, reason: string) => {
+        setThinkingMergeCursor(state, next, reason);
+        lastMainThinkingMessageId = next;
+    };
+
+    const setStreamCursor = (next: { messageId: string; streamKey: string } | null, reason: string) => {
+        setStreamMergeCursor(state, next, reason);
         lastMainStreamMessageId = next?.messageId ?? null;
         lastMainStreamKey = next?.streamKey ?? null;
+    };
+
+    const clearAllCursors = (reason: string) => {
+        clearAllMainMergeCursors(state, reason);
+        lastMainThinkingMessageId = null;
+        lastMainStreamMessageId = null;
+        lastMainStreamKey = null;
     };
 
     //
@@ -72,8 +85,7 @@ export function runUserAndTextPhase(params: Readonly<{
             state.messageIds.set(msg.id, mid);
 
             changed.add(mid);
-            lastMainThinkingMessageId = null;
-            setStreamCursor(null);
+            clearAllCursors('user-message');
         } else if (msg.role === 'agent') {
             // Process usage data if present
             if (msg.usage) {
@@ -91,14 +103,17 @@ export function runUserAndTextPhase(params: Readonly<{
                     // Provider-agnostic fallback: some transports reuse the same agent message id for
                     // incremental chunks but do not attach a stable stream key. Use the transport id
                     // as a merge key so streaming remains coherent until the server snapshot reload.
-                    const shouldUseIdFallback = !streamKeyFromMeta && msg.content.length === 1 && Boolean(msg.id);
-                    const streamKey = streamKeyFromMeta ?? (shouldUseIdFallback ? `id:${msg.id}` : null);
+	                    const shouldUseIdFallback = !streamKeyFromMeta && msg.content.length === 1 && Boolean(msg.id);
+	                    const streamKey = streamKeyFromMeta ?? (shouldUseIdFallback ? `id:${msg.id}` : null);
 
-                    const canMerge =
-                        streamKey
-                        && lastMainStreamMessageId
-                        && lastMainStreamKey === streamKey
-                        && (() => {
+	                    const textDelta = String(c.text ?? '');
+                        const hasVisibleText = textDelta.trim().length > 0;
+
+	                    const canMerge =
+	                        streamKey
+	                        && lastMainStreamMessageId
+	                        && lastMainStreamKey === streamKey
+	                        && (() => {
                             const prev = state.messages.get(lastMainStreamMessageId!);
                             return prev?.role === 'agent' && !prev.isThinking && typeof prev.text === 'string';
                         })();
@@ -116,8 +131,10 @@ export function runUserAndTextPhase(params: Readonly<{
                             changed.add(lastMainStreamMessageId!);
                         }
                         // Keep the cursor stable even if thinking/tool deltas arrive between text chunks.
-                        setStreamCursor({ messageId: lastMainStreamMessageId!, streamKey });
-                        lastMainThinkingMessageId = null;
+                        setStreamCursor({ messageId: lastMainStreamMessageId!, streamKey }, 'agent-text-merge');
+                        if (hasVisibleText) {
+                            setThinkingCursor(null, 'agent-text-merge');
+                        }
                         continue;
                     }
 
@@ -143,8 +160,10 @@ export function runUserAndTextPhase(params: Readonly<{
                         meta: msg.meta,
                     });
                     changed.add(mid);
-                    lastMainThinkingMessageId = null;
-                    setStreamCursor(streamKey ? { messageId: mid, streamKey } : null);
+                    if (hasVisibleText) {
+                        setThinkingCursor(null, 'agent-text-create');
+                    }
+                    setStreamCursor(streamKey ? { messageId: mid, streamKey } : null, 'agent-text-create');
                 } else if (c.type === 'thinking') {
                     const chunk = typeof c.thinking === 'string' ? normalizeThinkingChunk(c.thinking) : '';
                     const hasVisibleText = chunk.trim().length > 0;
@@ -161,11 +180,11 @@ export function runUserAndTextPhase(params: Readonly<{
                             return prev?.role === 'agent' && prev.isThinking && typeof prev.text === 'string';
                         })();
 
-                    if (canAppendToPrevious) {
-                        const prev = prevThinkingId ? state.messages.get(prevThinkingId) : null;
-                        if (prev && typeof prev.text === 'string') {
-                            const merged = unwrapThinkingText(prev.text) + chunk;
-                            prev.text = merged;
+	                    if (canAppendToPrevious) {
+	                        const prev = prevThinkingId ? state.messages.get(prevThinkingId) : null;
+	                        if (prev && typeof prev.text === 'string') {
+	                            const merged = unwrapThinkingText(prev.text) + chunk;
+	                            prev.text = merged;
                             if (typeof msg.seq === 'number') {
                                 const nextSeq = Math.trunc(msg.seq);
                                 if (prev.seq === null || nextSeq > prev.seq) {
@@ -174,6 +193,7 @@ export function runUserAndTextPhase(params: Readonly<{
                             }
                             changed.add(prevThinkingId!);
                         }
+                        setThinkingCursor(prevThinkingId!, 'agent-thinking-append');
                     } else {
                         let mid = allocateId();
                         state.messages.set(mid, {
@@ -189,14 +209,13 @@ export function runUserAndTextPhase(params: Readonly<{
                             meta: msg.meta,
                         });
                         changed.add(mid);
-                        lastMainThinkingMessageId = mid;
+                        setThinkingCursor(mid, 'agent-thinking-create');
                     }
                 } else if (c.type === 'tool-call') {
                     // Tool calls are handled in Phase 2 for permission matching and late-arriving updates,
                     // but we still materialize the tool-call message here to preserve the intra-message
                     // timeline ordering (thinking → tool → thinking).
-                    lastMainThinkingMessageId = null;
-                    setStreamCursor(null);
+                    clearAllCursors('agent-tool-call');
 
                     const existingMessageId = state.toolIdToMessageId.get(c.id);
                     if (existingMessageId) {

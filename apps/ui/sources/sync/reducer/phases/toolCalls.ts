@@ -3,6 +3,7 @@ import type { ToolCall } from '../../domains/messages/messageTypes';
 import { compareToolCalls } from '../../../utils/tools/toolComparison';
 import type { ReducerState } from '../reducer';
 import { drainAndApplyOrphanToolResultsToMessage } from '../helpers/drainAndApplyOrphanToolResultsToMessage';
+import { setThinkingMergeCursor } from '../helpers/mergeCursors';
 
 export function runToolCallsPhase(params: Readonly<{
     state: ReducerState;
@@ -174,17 +175,18 @@ export function runToolCallsPhase(params: Readonly<{
                         }
 
                         let mid = allocateId();
-                        state.messages.set(mid, {
-                            id: mid,
-                            realID: msg.id,
-                            seq: typeof msg.seq === 'number' ? msg.seq : null,
-                            role: 'agent',
-                            createdAt: msg.createdAt,
-                            text: null,
-                            tool: toolCall,
-                            event: null,
-                            meta: msg.meta,
-                        });
+	                        state.messages.set(mid, {
+	                            id: mid,
+	                            realID: msg.id,
+	                            seq: typeof msg.seq === 'number' ? msg.seq : null,
+	                            role: 'agent',
+	                            createdAt: msg.createdAt,
+	                            text: null,
+	                            tool: toolCall,
+	                            event: null,
+	                            meta: msg.meta,
+	                        });
+	                        setThinkingMergeCursor(state, null, 'tool-call-phase');
 
                         state.toolIdToMessageId.set(c.id, mid);
                         changed.add(mid);

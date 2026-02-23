@@ -1,6 +1,7 @@
 import type { AgentEvent, NormalizedMessage } from '../../typesRaw';
 import type { ReducerState } from '../reducer';
 import { parseMessageAsEvent } from '../messageToEvent';
+import { setThinkingMergeCursor } from '../helpers/mergeCursors';
 
 export function runMessageToEventConversion({
   state,
@@ -112,19 +113,20 @@ export function runMessageToEventConversion({
   // Process converted events immediately
   for (const { message, event } of convertedEvents) {
     const mid = allocateId();
-    state.messages.set(mid, {
-      id: mid,
-      realID: message.id,
+	    state.messages.set(mid, {
+	      id: mid,
+	      realID: message.id,
       seq: typeof message.seq === 'number' ? message.seq : null,
       role: 'agent',
       createdAt: message.createdAt,
       event: event,
       tool: null,
       text: null,
-      meta: message.meta,
-    });
-    changed.add(mid);
-  }
+	      meta: message.meta,
+	    });
+	    setThinkingMergeCursor(state, null, 'message-to-event');
+	    changed.add(mid);
+	  }
 
   // Update nonSidechainMessages to only include messages that weren't converted
   nonSidechainMessages = messagesToProcess;

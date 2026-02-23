@@ -60,6 +60,7 @@
 // ============================================================================
 
 import { NormalizedMessage } from '../typesRaw';
+import { isDebugFlagEnabled } from './helpers/debugFlags';
 
 type OrphanBucket = {
     updatedAt: number;
@@ -121,6 +122,15 @@ export interface TracerState {
     // item type + uuid when present. This allows incremental streaming updates that reuse message.id
     // while still preventing double-application of the same delta.
     processedIds: Set<string>;
+
+    telemetry: {
+        orphanBuffered: number;
+        orphanFlushed: number;
+        sidechainBufferedByPrompt: number;
+        sidechainDroppedUnlinked: number;
+        sidechainParentMappedButMissingHint: number;
+        agentMultiContentSeen: number;
+    };
 }
 
 // Create a new tracer state with empty collections
@@ -130,8 +140,30 @@ export function createTracer(): TracerState {
         promptToTaskId: new Map(),
         uuidToSidechainId: new Map(),
         orphanMessages: new Map(),
-        processedIds: new Set()
+        processedIds: new Set(),
+        telemetry: {
+            orphanBuffered: 0,
+            orphanFlushed: 0,
+            sidechainBufferedByPrompt: 0,
+            sidechainDroppedUnlinked: 0,
+            sidechainParentMappedButMissingHint: 0,
+            agentMultiContentSeen: 0,
+        },
     };
+}
+
+function isTracerDebugEnabled(): boolean {
+    return isDebugFlagEnabled({
+        globalKey: '__HAPPIER_DEBUG_TRACER__',
+        localStorageKey: 'happier.debug.tracer',
+    });
+}
+
+function maybeLog(event: unknown): void {
+    if (!isTracerDebugEnabled()) return;
+    // Never log message bodies or prompts. Tracer events are intended for diagnosing classification bugs.
+    // eslint-disable-next-line no-console
+    console.log('[reducer-tracer]', event);
 }
 
 function pruneOrphans(state: TracerState, now = Date.now()): void {
@@ -168,6 +200,7 @@ function addOrphan(state: TracerState, parentUuid: string, message: NormalizedMe
     const bucket = state.orphanMessages.get(parentUuid) ?? { updatedAt: now, messages: [] };
     bucket.updatedAt = now;
     bucket.messages.push(message);
+    state.telemetry.orphanBuffered += 1;
     if (bucket.messages.length > MAX_ORPHANS_PER_PARENT) {
         bucket.messages.splice(0, bucket.messages.length - MAX_ORPHANS_PER_PARENT);
     }
@@ -226,6 +259,7 @@ function processOrphans(state: TracerState, parentUuid: string, sidechainId: str
     
     // Remove from orphan map
     state.orphanMessages.delete(parentUuid);
+    state.telemetry.orphanFlushed += bucket.messages.length;
     
     // Process each orphan
     for (const orphan of bucket.messages) {
@@ -263,6 +297,9 @@ export function traceMessages(state: TracerState, messages: NormalizedMessage[])
     pruneOrphans(state);
     
     for (const message of messages) {
+        if (message.role === 'agent' && message.content.length > 1) {
+            state.telemetry.agentMultiContentSeen += 1;
+        }
         const uuid = getMessageUuid(message);
         const key = getProcessedKey(message);
 
@@ -321,6 +358,17 @@ export function traceMessages(state: TracerState, messages: NormalizedMessage[])
         // - explicit sidechainId from provider metadata
         // - parent already mapped to a sidechain (when isSidechain flag is missing)
         if (!shouldTreatAsSidechain) {
+            if (inferredFromParent) {
+                state.telemetry.sidechainParentMappedButMissingHint += 1;
+                maybeLog({
+                    kind: 'sidechain-parent-mapped-missing-hint',
+                    messageId: message.id,
+                    parentUuid,
+                    inferredSidechainId: inferredFromParent,
+                    role: message.role,
+                    firstType: (message as any)?.content?.[0]?.type,
+                });
+            }
             state.processedIds.add(key);
             const tracedMessage: TracedMessage = {
                 ...message
@@ -402,9 +450,11 @@ export function traceMessages(state: TracerState, messages: NormalizedMessage[])
             // - If it's a sidechain root with a prompt, buffer until the Task tool-call arrives.
             // - Otherwise drop it to avoid leaking sidechain tool execution into the main transcript.
             if (pendingPromptKey) {
+                state.telemetry.sidechainBufferedByPrompt += 1;
                 addOrphan(state, promptOrphanKey(pendingPromptKey), message);
             } else {
                 state.processedIds.add(key);
+                state.telemetry.sidechainDroppedUnlinked += 1;
             }
         }
     }

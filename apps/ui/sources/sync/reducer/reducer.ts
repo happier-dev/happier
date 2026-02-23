@@ -127,6 +127,7 @@ import { equalOptionalStringArrays } from "./helpers/arrays";
 import { coerceStreamingToolResultChunk, mergeExistingStdStreamsIntoFinalResultIfMissing, mergeStreamingChunkIntoResult } from "./helpers/streamingToolResult";
 import { cancelRunningTools } from "./helpers/cancelRunningApprovedTools";
 import type { OrphanToolResultBucket } from "./helpers/orphanToolResults";
+import { isDebugFlagEnabled } from "./helpers/debugFlags";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -206,8 +207,18 @@ export type ReducerState = {
     messages: Map<string, ReducerMessage>;
     sidechains: Map<string, ReducerMessage[]>;
     tracerState: TracerState; // Tracer state for sidechain processing
-    streamMergeCursor: { messageId: string; streamKey: string } | null;
-    latestTodos?: {
+	    streamMergeCursor: { messageId: string; streamKey: string } | null;
+	    /**
+	     * Tracks the most recent main-timeline thinking message so streamed thinking deltas can append
+	     * even when server sequence metadata is missing or arrives later than the deltas.
+	     */
+	    thinkingMergeCursor: string | null;
+	    /**
+	     * Tracks the most recent thinking message for each sidechain. This allows streamed deltas to append
+	     * even when providers emit interleaved keepalive chunks or the reducer processes messages in separate invocations.
+	     */
+	    sidechainThinkingMergeCursors: Map<string, string>;
+	    latestTodos?: {
         todos: Array<{
             content: string;
             status: 'pending' | 'in_progress' | 'completed';
@@ -236,10 +247,12 @@ export function createReducer(): ReducerState {
         localIds: new Map(),
         messageIds: new Map(),
         sidechains: new Map(),
-        tracerState: createTracer(),
-        streamMergeCursor: null,
-    }
-};
+	        tracerState: createTracer(),
+	        streamMergeCursor: null,
+	        thinkingMergeCursor: null,
+	        sidechainThinkingMergeCursors: new Map(),
+	    }
+	};
 
 const ENABLE_LOGGING = false;
 
@@ -262,18 +275,17 @@ export type ReducerResult = {
 };
 
 export function reducer(state: ReducerState, messages: NormalizedMessage[], agentState?: AgentState | null): ReducerResult {
-    const DEBUG_SIDECHAINS =
-        typeof globalThis !== 'undefined' &&
-        // Enable in browser devtools via: `window.__HAPPIER_DEBUG_SIDECHAINS__ = true`
-        // (kept off by default to avoid noisy logs for users).
-        (globalThis as any).__HAPPIER_DEBUG_SIDECHAINS__ === true;
+	    const DEBUG_SIDECHAINS = isDebugFlagEnabled({
+	        // Enable in browser devtools via: `window.__HAPPIER_DEBUG_SIDECHAINS__ = true`
+	        // (kept off by default to avoid noisy logs for users).
+	        globalKey: '__HAPPIER_DEBUG_SIDECHAINS__',
+	        localStorageKey: 'happier.debug.sidechains',
+	    });
 
-    const DEBUG_MESSAGE_DECRYPT =
-        typeof globalThis !== 'undefined'
-        && (
-            (globalThis as any).__HAPPIER_DEBUG_MESSAGE_DECRYPT__ === true
-            || (typeof localStorage !== 'undefined' && localStorage.getItem('happier.debug.messageDecrypt') === '1')
-        );
+	    const DEBUG_MESSAGE_DECRYPT = isDebugFlagEnabled({
+	        globalKey: '__HAPPIER_DEBUG_MESSAGE_DECRYPT__',
+	        localStorageKey: 'happier.debug.messageDecrypt',
+	    });
 
     if (ENABLE_LOGGING) {
         console.log(`[REDUCER] Called with ${messages.length} messages, agentState: ${agentState ? 'YES' : 'NO'}`);
@@ -344,10 +356,15 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
     }
 
     const lastMain = lastMainMessageId ? state.messages.get(lastMainMessageId) : null;
+    const cursorThinking = state.thinkingMergeCursor ? state.messages.get(state.thinkingMergeCursor) : null;
     const lastMainThinkingMessageId =
-        lastMain && lastMain.role === 'agent' && lastMain.isThinking && typeof lastMain.text === 'string'
-            ? lastMainMessageId
-            : null;
+        cursorThinking && cursorThinking.role === 'agent' && cursorThinking.isThinking && typeof cursorThinking.text === 'string'
+            ? state.thinkingMergeCursor
+            : (
+                lastMain && lastMain.role === 'agent' && lastMain.isThinking && typeof lastMain.text === 'string'
+                    ? lastMainMessageId
+                    : null
+            );
 
     // Seed streaming merge from a cursor that persists across reducer invocations.
     // This avoids losing the merge position when thinking deltas arrive between text chunks.
