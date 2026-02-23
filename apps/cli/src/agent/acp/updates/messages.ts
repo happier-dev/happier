@@ -16,36 +16,25 @@ export function handleAgentMessageChunk(
   // Dropping these avoids spammy blank lines and reduces unnecessary UI churn.
   if (!text.trim()) return { handled: true };
 
-  // Filter out "thinking" messages (start with **...**)
-  const isThinking = /^\*\*[^*]+\*\*\n/.test(text);
+  logger.debug(`[AcpBackend] Received message chunk (length: ${text.length}): ${text.substring(0, 50)}...`);
+  ctx.emit({
+    type: 'model-output',
+    textDelta: text,
+  });
 
-  if (isThinking) {
-    ctx.emit({
-      type: 'event',
-      name: 'thinking',
-      payload: { text },
-    });
-  } else {
-    logger.debug(`[AcpBackend] Received message chunk (length: ${text.length}): ${text.substring(0, 50)}...`);
-    ctx.emit({
-      type: 'model-output',
-      textDelta: text,
-    });
+  // Reset idle timeout - more chunks are coming.
+  ctx.clearIdleTimeout();
 
-    // Reset idle timeout - more chunks are coming.
-    ctx.clearIdleTimeout();
-
-    // Set timeout to emit 'idle' after a short delay when no more chunks arrive.
-    const idleTimeoutMs = ctx.transport.getIdleTimeout?.() ?? DEFAULT_IDLE_TIMEOUT_MS;
-    ctx.setIdleTimeout(() => {
-      if (ctx.activeToolCalls.size === 0) {
-        logger.debug('[AcpBackend] No more chunks received, emitting idle status');
-        ctx.emitIdleStatus();
-      } else {
-        logger.debug(`[AcpBackend] Delaying idle status - ${ctx.activeToolCalls.size} active tool calls`);
-      }
-    }, idleTimeoutMs);
-  }
+  // Set timeout to emit 'idle' after a short delay when no more chunks arrive.
+  const idleTimeoutMs = ctx.transport.getIdleTimeout?.() ?? DEFAULT_IDLE_TIMEOUT_MS;
+  ctx.setIdleTimeout(() => {
+    if (ctx.activeToolCalls.size === 0) {
+      logger.debug('[AcpBackend] No more chunks received, emitting idle status');
+      ctx.emitIdleStatus();
+    } else {
+      logger.debug(`[AcpBackend] Delaying idle status - ${ctx.activeToolCalls.size} active tool calls`);
+    }
+  }, idleTimeoutMs);
 
   return { handled: true };
 }
