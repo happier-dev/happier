@@ -1,4 +1,4 @@
-import type { Prisma, PrismaJson } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 
 import { buildNewMessageUpdate, eventRouter } from "@/app/events/eventRouter";
