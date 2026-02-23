@@ -67,6 +67,8 @@ RUN apt-get update && apt-get install -y python3 ffmpeg make g++ build-essential
 WORKDIR /repo
 ENV REDISMS_DISABLE_POSTINSTALL=1
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
+ENV YARN_PRODUCTION=false
+ENV npm_config_production=false
 
 COPY package.json yarn.lock ./
 RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/protocol packages/release-runtime packages/audio-stream-native packages/sherpa-native
@@ -233,6 +235,7 @@ ARG HAPPIER_EMBEDDED_POLICY_ENV=preview
 ARG HAPPIER_BUILD_DB_PROVIDERS=""
 ENV HAPPIER_BUILD_DB_PROVIDERS=$HAPPIER_BUILD_DB_PROVIDERS
 ENV HAPPIER_EMBEDDED_POLICY_ENV=$HAPPIER_EMBEDDED_POLICY_ENV
+ENV DATABASE_URL="postgresql://postgres@127.0.0.1:5432/postgres?sslmode=disable"
 COPY .github/feature-policy ./.github/feature-policy
 COPY apps/server ./apps/server
 COPY packages/agents ./packages/agents
