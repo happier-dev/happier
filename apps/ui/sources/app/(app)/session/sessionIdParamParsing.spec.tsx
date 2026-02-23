@@ -2,7 +2,7 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
-type SearchParams = { id?: string };
+type SearchParams = { id?: string; jumpSeq?: string };
 let searchParams: SearchParams = {};
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -40,6 +40,20 @@ describe('session/[id] param parsing', () => {
   it('does not pass jumpToSeq when jumpSeq is missing', async () => {
     vi.resetModules();
     searchParams = { id: 'session-123' };
+
+    const Screen = (await import('./[id]')).default;
+    let tree: renderer.ReactTestRenderer | null = null;
+    await act(async () => {
+      tree = renderer.create(React.createElement(Screen));
+    });
+
+    const sessionView = tree!.root.findByType('SessionView');
+    expect(sessionView.props.jumpToSeq ?? null).toBeNull();
+  });
+
+  it('does not pass jumpToSeq when jumpSeq is empty or whitespace', async () => {
+    vi.resetModules();
+    searchParams = { id: 'session-123', jumpSeq: '   ' };
 
     const Screen = (await import('./[id]')).default;
     let tree: renderer.ReactTestRenderer | null = null;
