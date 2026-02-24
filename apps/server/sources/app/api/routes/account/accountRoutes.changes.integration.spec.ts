@@ -39,7 +39,7 @@ vi.mock("@/storage/db", () => ({ db: {} }));
 
 describe("accountRoutes (AccountChange integration)", () => {
     it("marks account settings change and emits update using returned cursor", async () => {
-        txAccountFindUnique = vi.fn(async () => ({ settings: "old", settingsVersion: 1 }));
+        txAccountFindUnique = vi.fn(async () => ({ settings: "old", settingsVersion: 1, publicKey: "pub", encryptionMode: "e2ee" }));
         txAccountUpdateMany = vi.fn(async () => ({ count: 1 }));
 
         const { accountRoutes } = await import("./accountRoutes");

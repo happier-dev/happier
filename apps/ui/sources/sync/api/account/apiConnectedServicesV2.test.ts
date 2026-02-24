@@ -61,6 +61,35 @@ describe('apiConnectedServicesV2', () => {
     expect((init.headers as Headers).get('Authorization')).toBe('Bearer t');
   });
 
+  it('fetches a sealed credential record from the v2 endpoint', async () => {
+    mockServerConfig();
+    const fetchMock = vi.fn(async (_input: unknown, _init?: RequestInit) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        sealed: { format: 'account_scoped_v1', ciphertext: 'cipher-1' },
+        metadata: { kind: 'oauth', providerEmail: 'user@example.com', providerAccountId: null, expiresAt: 123 },
+      }),
+    }));
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    const { getConnectedServiceCredentialSealed } = await import('./apiConnectedServicesV2');
+    const result = await getConnectedServiceCredentialSealed(credentials, { serviceId: 'openai-codex', profileId: 'work' });
+
+    expect(result.sealed.format).toBe('account_scoped_v1');
+    expect(result.sealed.ciphertext).toBe('cipher-1');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.example.test/v2/connect/openai-codex/profiles/work/credential',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.any(Headers),
+      }),
+    );
+    const init = fetchMock.mock.calls[0]?.[1];
+    if (!init) throw new Error('Expected fetch init');
+    expect((init.headers as Headers).get('Authorization')).toBe('Bearer t');
+  });
+
   it('throws HappyError when disconnect receives 404 not found', async () => {
     mockServerConfig();
     vi.stubGlobal(

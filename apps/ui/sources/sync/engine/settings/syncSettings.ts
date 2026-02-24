@@ -10,24 +10,134 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
-import { sealSecretsDeep } from '@/sync/encryption/secretSettings';
+import { sealSecretsDeep, unsealSecretsDeep } from '@/sync/encryption/secretSettings';
 import { serverFetch } from '@/sync/http/client';
 import { getRandomBytes } from '@/platform/cryptoRandom';
-import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
+import {
+    AccountEncryptionModeResponseSchema,
+    AccountSettingsV2GetResponseSchema,
+    AccountSettingsV2UpdateResponseSchema,
+    openAccountScopedBlobCiphertext,
+    sealAccountScopedBlobCiphertext,
+} from '@happier-dev/protocol';
+import { applyCrashReportsOptOut } from '@/utils/system/sentry';
 
 export async function syncSettings(params: {
     credentials: AuthCredentials;
     encryption: Encryption;
     pendingSettings: Partial<Settings>;
     clearPendingSettings: () => void;
+    settingsSecretsKey?: Uint8Array | null;
 }): Promise<void> {
     const { credentials, encryption, pendingSettings, clearPendingSettings } = params;
+    const settingsSecretsKey = params.settingsSecretsKey ?? null;
 
     const activeServerUrl = getActiveServerSnapshot().serverUrl;
     const maxRetries = 3;
     let retryCount = 0;
     let lastVersionMismatch: { expectedVersion: number; currentVersion: number; pendingKeys: string[] } | null = null;
     const pendingServerSettings = stripLocalOnlyAccountSettings(pendingSettings);
+
+    const encryptionModeResponse = await serverFetch('/v1/account/encryption', {
+        method: 'GET',
+        headers: {
+            'Authorization': `Bearer ${credentials.token}`,
+            'Content-Type': 'application/json',
+        },
+    }, { includeAuth: false });
+
+    if (!encryptionModeResponse.ok) {
+        if (encryptionModeResponse.status >= 400 && encryptionModeResponse.status < 500 && encryptionModeResponse.status !== 408 && encryptionModeResponse.status !== 429) {
+            throw new HappyError(`Failed to fetch encryption setting (${encryptionModeResponse.status})`, false);
+        }
+        throw new Error(`Failed to fetch encryption setting: ${encryptionModeResponse.status}`);
+    }
+
+    const encryptionModeJson: unknown = await encryptionModeResponse.json();
+    const encryptionModeParsed = AccountEncryptionModeResponseSchema.safeParse(encryptionModeJson);
+    if (!encryptionModeParsed.success) {
+        throw new Error('Failed to parse encryption setting response');
+    }
+    const accountMode = encryptionModeParsed.data.mode === 'plain' ? 'plain' : 'e2ee';
+
+    async function fetchSettingsV2(): Promise<{ content: unknown; version: number }> {
+        const response = await serverFetch('/v2/account/settings', {
+            headers: {
+                'Authorization': `Bearer ${credentials.token}`,
+                'Content-Type': 'application/json',
+            },
+        }, { includeAuth: false });
+
+        if (!response.ok) {
+            if (response.status === 404) {
+                // Back-compat: old servers only support v1.
+                throw Object.assign(new Error('settings_v2_not_supported'), { code: 'settings_v2_not_supported' });
+            }
+            if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
+                throw new HappyError(`Failed to fetch settings (${response.status})`, false);
+            }
+            throw new Error(`Failed to fetch settings: ${response.status}`);
+        }
+
+        const data: unknown = await response.json();
+        const parsed = AccountSettingsV2GetResponseSchema.safeParse(data);
+        if (!parsed.success) {
+            throw new Error('Failed to parse account settings v2 response');
+        }
+        return { content: parsed.data.content, version: parsed.data.version };
+    }
+
+    async function updateSettingsV2(params: { content: unknown; expectedVersion: number }): Promise<unknown> {
+        const response = await serverFetch('/v2/account/settings', {
+            method: 'POST',
+            body: JSON.stringify({
+                content: params.content,
+                expectedVersion: params.expectedVersion,
+            }),
+            headers: {
+                'Authorization': `Bearer ${credentials.token}`,
+                'Content-Type': 'application/json',
+            },
+        }, { includeAuth: false });
+
+        const data: unknown = await response.json().catch(() => null);
+        const parsed = AccountSettingsV2UpdateResponseSchema.safeParse(data);
+        if (response.ok && parsed.success) return parsed.data;
+        if (response.status === 404) {
+            throw Object.assign(new Error('settings_v2_not_supported'), { code: 'settings_v2_not_supported' });
+        }
+        if (parsed.success) return parsed.data;
+        throw new Error(`Failed to update settings (v2): ${response.status}`);
+    }
+
+    async function decryptSettingsCiphertext(ciphertext: string): Promise<Record<string, unknown> | null> {
+        const machineKey = encryption.getContentPrivateKey();
+        const opened = openAccountScopedBlobCiphertext({
+            kind: 'account_settings',
+            material: { type: 'dataKey', machineKey },
+            ciphertext,
+        });
+        if (opened?.value && typeof opened.value === 'object' && !Array.isArray(opened.value)) {
+            return opened.value as Record<string, unknown>;
+        }
+        return await decryptAccountSettingsCiphertextForUi(encryption, ciphertext);
+    }
+
+    function normalizeSettingsForLocalStorage(params: { raw: Record<string, unknown>; mode: 'plain' | 'e2ee' }): Settings {
+        const parsed = settingsParse(params.raw);
+        if (params.mode === 'plain') {
+            return sealSecretsDeep(parsed, settingsSecretsKey);
+        }
+        return parsed;
+    }
+
+    function normalizeSettingsForServerStorage(params: { raw: Settings; mode: 'plain' | 'e2ee' }): Record<string, unknown> {
+        const stripped = stripLocalOnlyAccountSettings(params.raw);
+        if (params.mode === 'plain') {
+            return unsealSecretsDeep(stripped, settingsSecretsKey) as any;
+        }
+        return stripped as any;
+    }
 
     // Apply pending settings
     if (Object.keys(pendingServerSettings).length > 0) {
@@ -42,42 +152,33 @@ export async function syncSettings(params: {
         while (retryCount < maxRetries) {
             const version = storage.getState().settingsVersion;
             const mergedSettings = applySettings(storage.getState().settings, pendingServerSettings);
-            const settings = stripLocalOnlyAccountSettings(mergedSettings);
-            const settingsCiphertext = sealAccountScopedBlobCiphertext({
-                kind: 'account_settings',
-                material: { type: 'dataKey', machineKey: encryption.getContentPrivateKey() },
-                payload: settings,
-                randomBytes: getRandomBytes,
-            });
+            const settingsForServer = normalizeSettingsForServerStorage({ raw: mergedSettings, mode: accountMode });
+
+            const content =
+                accountMode === 'plain'
+                    ? ({ t: 'plain', v: settingsForServer } as const)
+                    : ({ t: 'encrypted', c: sealAccountScopedBlobCiphertext({
+                        kind: 'account_settings',
+                        material: { type: 'dataKey', machineKey: encryption.getContentPrivateKey() },
+                        payload: settingsForServer,
+                        randomBytes: getRandomBytes,
+                    }) } as const);
             dbgSettings('syncSettings: POST attempt', {
                 endpoint: activeServerUrl,
                 attempt: retryCount + 1,
                 expectedVersion: version ?? 0,
-                merged: summarizeSettings(settings, { version }),
+                merged: summarizeSettings(settingsForServer as any, { version }),
             });
 
-            const response = await serverFetch('/v1/account/settings', {
-                method: 'POST',
-                body: JSON.stringify({
-                    settings: settingsCiphertext,
-                    expectedVersion: version ?? 0,
-                }),
-                headers: {
-                    'Authorization': `Bearer ${credentials.token}`,
-                    'Content-Type': 'application/json',
-                },
-            }, { includeAuth: false });
-
-            const data = (await response.json()) as
-                | {
-                      success: false;
-                      error: string;
-                      currentVersion: number;
-                      currentSettings: string | null;
-                  }
-                | {
-                      success: true;
-                  };
+            let data: any;
+            try {
+                data = await updateSettingsV2({ content, expectedVersion: version ?? 0 });
+            } catch (e: any) {
+                if (e?.code === 'settings_v2_not_supported') {
+                    throw new Error('Settings v2 is required but not supported by this server');
+                }
+                throw e;
+            }
 
             if (data.success) {
                 clearPendingSettings();
@@ -95,9 +196,16 @@ export async function syncSettings(params: {
                     pendingKeys: Object.keys(pendingServerSettings).sort(),
                 };
 
-                // Parse server settings
-                const serverSettings = data.currentSettings
-                    ? settingsParse((await decryptAccountSettingsCiphertextForUi(encryption, data.currentSettings)) ?? {})
+                const currentContent = data.currentContent as any;
+                const serverRaw = await (async () => {
+                    if (!currentContent) return null;
+                    if (currentContent.t === 'plain') return currentContent.v as Record<string, unknown>;
+                    if (currentContent.t === 'encrypted') return await decryptSettingsCiphertext(String(currentContent.c ?? ''));
+                    return null;
+                })();
+
+                const serverSettings = serverRaw
+                    ? normalizeSettingsForLocalStorage({ raw: serverRaw, mode: accountMode })
                     : { ...settingsDefaults };
 
                 // Merge: server base + our pending changes (our changes win)
@@ -126,6 +234,7 @@ export async function syncSettings(params: {
                 if (tracking) {
                     mergedSettings.analyticsOptOut ? tracking.optOut() : tracking.optIn();
                 }
+                applyCrashReportsOptOut(mergedSettings.crashReportsOptOut);
 
                 // Log and retry
                 retryCount++;
@@ -152,52 +261,48 @@ export async function syncSettings(params: {
         throw new Error(`Settings sync failed after ${maxRetries} retries due to version conflicts${mismatchHint}`);
     }
 
-    // Run request
-    const response = await serverFetch('/v1/account/settings', {
-        headers: {
-            'Authorization': `Bearer ${credentials.token}`,
-            'Content-Type': 'application/json',
-        },
-    }, { includeAuth: false });
+    let fetched: { content: any; version: number };
+    try {
+        fetched = await fetchSettingsV2();
+    } catch (e: any) {
+        if (e?.code === 'settings_v2_not_supported') {
+            // Back-compat: fall back to v1 (E2EE-only).
+            const response = await serverFetch('/v1/account/settings', {
+                headers: {
+                    'Authorization': `Bearer ${credentials.token}`,
+                    'Content-Type': 'application/json',
+                },
+            }, { includeAuth: false });
 
-    if (!response.ok) {
-        if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
-            throw new HappyError(`Failed to fetch settings (${response.status})`, false);
+            if (!response.ok) {
+                if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
+                    throw new HappyError(`Failed to fetch settings (${response.status})`, false);
+                }
+                throw new Error(`Failed to fetch settings: ${response.status}`);
+            }
+
+            const data = (await response.json()) as { settings: string | null; settingsVersion: number };
+            fetched = { content: data.settings ? { t: 'encrypted', c: data.settings } : null, version: data.settingsVersion };
+        } else {
+            throw e;
         }
-        throw new Error(`Failed to fetch settings: ${response.status}`);
     }
 
-    const data = (await response.json()) as {
-        settings: string | null;
-        settingsVersion: number;
-    };
-
-    // Parse response
-    const machineKey = encryption.getContentPrivateKey();
-    const opened = data.settings
-        ? openAccountScopedBlobCiphertext({
-              kind: 'account_settings',
-              material: { type: 'dataKey', machineKey },
-              ciphertext: data.settings,
-          })
-        : null;
-    const fallbackDecrypted = !opened && data.settings
-        ? await decryptAccountSettingsCiphertextForUi(encryption, data.settings)
-        : null;
-    const decryptedSettings = (() => {
-        const value = opened?.value ?? fallbackDecrypted;
-        return value && typeof value === 'object' && !Array.isArray(value)
-            ? (value as Record<string, unknown>)
-            : null;
+    const decryptedSettings = await (async () => {
+        if (!fetched.content) return null;
+        if (fetched.content.t === 'plain') return fetched.content.v as Record<string, unknown>;
+        if (fetched.content.t === 'encrypted') return await decryptSettingsCiphertext(String(fetched.content.c ?? ''));
+        return null;
     })();
+
     const parsedSettings = decryptedSettings
-        ? settingsParse(decryptedSettings)
+        ? normalizeSettingsForLocalStorage({ raw: decryptedSettings, mode: accountMode })
         : { ...settingsDefaults };
 
     dbgSettings('syncSettings: GET applied', {
         endpoint: activeServerUrl,
-        serverVersion: data.settingsVersion,
-        parsed: summarizeSettings(parsedSettings, { version: data.settingsVersion }),
+        serverVersion: fetched.version,
+        parsed: summarizeSettings(parsedSettings, { version: fetched.version }),
     });
 
     const nextSettings = applySettings(
@@ -206,48 +311,44 @@ export async function syncSettings(params: {
     );
 
     // Apply settings to storage
-    storage.getState().applySettings(nextSettings, data.settingsVersion);
+    storage.getState().applySettings(nextSettings, fetched.version);
 
     // Sync PostHog opt-out state with settings
     if (tracking) {
         nextSettings.analyticsOptOut ? tracking.optOut() : tracking.optIn();
     }
+    applyCrashReportsOptOut(nextSettings.crashReportsOptOut);
 
-    // Best-effort migration: if settings were readable but not in the canonical v1 account-scoped format,
-    // rewrite them so other clients (e.g. terminals/daemons) can decrypt them reliably.
-    if (data.settings && decryptedSettings && (!opened || opened.format !== 'account_scoped_v1')) {
-        try {
-            const migrateCiphertext = sealAccountScopedBlobCiphertext({
-                kind: 'account_settings',
-                material: { type: 'dataKey', machineKey },
-                payload: stripLocalOnlyAccountSettings(parsedSettings),
-                randomBytes: getRandomBytes,
-            });
-            const migrateRes = await serverFetch('/v1/account/settings', {
-                method: 'POST',
-                body: JSON.stringify({
-                    settings: migrateCiphertext,
-                    expectedVersion: data.settingsVersion,
-                }),
-                headers: {
-                    'Authorization': `Bearer ${credentials.token}`,
-                    'Content-Type': 'application/json',
-                },
-            }, { includeAuth: false });
-
-            if (migrateRes.ok) {
-                const migrateData = await migrateRes.json() as { success?: unknown; version?: unknown } | undefined;
-                const ok = Boolean(migrateData && typeof migrateData === 'object' && (migrateData as any).success === true);
-                const nextVersion =
-                    typeof (migrateData as any)?.version === 'number'
-                        ? (migrateData as any).version
-                        : data.settingsVersion + 1;
-                if (ok) {
-                    storage.getState().applySettings(nextSettings, nextVersion);
+    // Best-effort migration: if settings were readable but not in canonical `account_scoped_v1` format,
+    // rewrite them so other clients can decrypt them reliably.
+    if (accountMode === 'e2ee' && fetched.content?.t === 'encrypted' && decryptedSettings) {
+        const ciphertext = String(fetched.content.c ?? '');
+        const machineKey = encryption.getContentPrivateKey();
+        const opened = ciphertext
+            ? openAccountScopedBlobCiphertext({
+                  kind: 'account_settings',
+                  material: { type: 'dataKey', machineKey },
+                  ciphertext,
+              })
+            : null;
+        if (!opened || opened.format !== 'account_scoped_v1') {
+            try {
+                const migrateCiphertext = sealAccountScopedBlobCiphertext({
+                    kind: 'account_settings',
+                    material: { type: 'dataKey', machineKey },
+                    payload: normalizeSettingsForServerStorage({ raw: parsedSettings, mode: 'e2ee' }),
+                    randomBytes: getRandomBytes,
+                });
+                const migrateRes = await updateSettingsV2({
+                    content: { t: 'encrypted', c: migrateCiphertext },
+                    expectedVersion: fetched.version,
+                });
+                if ((migrateRes as any)?.success) {
+                    storage.getState().applySettings(nextSettings, (migrateRes as any).version);
                 }
+            } catch {
+                // ignore migration failures (non-fatal)
             }
-        } catch {
-            // ignore migration failures (non-fatal)
         }
     }
 }
@@ -354,6 +455,10 @@ export function applySettingsLocalDelta(params: {
     if (tracking && 'analyticsOptOut' in delta) {
         const currentSettings = storage.getState().settings;
         currentSettings.analyticsOptOut ? tracking.optOut() : tracking.optIn();
+    }
+    if ('crashReportsOptOut' in delta) {
+        const currentSettings = storage.getState().settings;
+        applyCrashReportsOptOut(currentSettings.crashReportsOptOut);
     }
 
     schedulePendingSettingsFlush();

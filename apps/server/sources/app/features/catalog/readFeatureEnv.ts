@@ -42,6 +42,7 @@ export type SocialFriendsFeatureEnv = Readonly<{
 export type AuthFeatureEnv = Readonly<{
   recoveryProviderResetEnabled: boolean;
   loginKeyChallengeEnabled: boolean;
+  pairingDesktopQrMobileScanEnabled: boolean;
   uiAutoRedirectEnabled: boolean;
   uiAutoRedirectProviderId: string;
   uiRecoveryKeyReminderEnabled: boolean;
@@ -75,6 +76,8 @@ export type EncryptionFeatureEnv = Readonly<{
   storagePolicy: "required_e2ee" | "optional" | "plaintext_only";
   allowAccountOptOut: boolean;
   defaultAccountMode: "e2ee" | "plain";
+  plainAccountSettingsAtRest: "none" | "server_sealed";
+  plainAccountCredentialsAtRest: "none" | "server_sealed";
 }>;
 
 export type E2eeFeatureEnv = Readonly<{
@@ -223,6 +226,7 @@ export function readAuthFeatureEnv(env: NodeJS.ProcessEnv): AuthFeatureEnv {
   return {
     recoveryProviderResetEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.authRecoveryProviderResetEnabled], true),
     loginKeyChallengeEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.authLoginKeyChallengeEnabled], true),
+    pairingDesktopQrMobileScanEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.authPairingDesktopQrMobileScanEnabled], true),
     uiAutoRedirectEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.authUiAutoRedirectEnabled], false),
     uiAutoRedirectProviderId: (env[FEATURE_ENV_KEYS.authUiAutoRedirectProviderId] ?? '').trim().toLowerCase(),
     uiRecoveryKeyReminderEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.authUiRecoveryKeyReminderEnabled], true),
@@ -318,10 +322,20 @@ export function readEncryptionFeatureEnv(env: NodeJS.ProcessEnv): EncryptionFeat
   const defaultAccountMode: EncryptionFeatureEnv["defaultAccountMode"] =
     rawDefaultAccountMode === "plain" || rawDefaultAccountMode === "e2ee" ? rawDefaultAccountMode : "e2ee";
 
+  const rawSettingsAtRest = (env[FEATURE_ENV_KEYS.encryptionPlainAccountSettingsAtRest] ?? "").toString().trim().toLowerCase();
+  const plainAccountSettingsAtRest: EncryptionFeatureEnv["plainAccountSettingsAtRest"] =
+    rawSettingsAtRest === "none" || rawSettingsAtRest === "server_sealed" ? (rawSettingsAtRest as any) : "server_sealed";
+
+  const rawCredentialsAtRest = (env[FEATURE_ENV_KEYS.encryptionPlainAccountCredentialsAtRest] ?? "").toString().trim().toLowerCase();
+  const plainAccountCredentialsAtRest: EncryptionFeatureEnv["plainAccountCredentialsAtRest"] =
+    rawCredentialsAtRest === "none" || rawCredentialsAtRest === "server_sealed" ? (rawCredentialsAtRest as any) : "server_sealed";
+
   return {
     storagePolicy,
     allowAccountOptOut,
     defaultAccountMode,
+    plainAccountSettingsAtRest,
+    plainAccountCredentialsAtRest,
   };
 }
 

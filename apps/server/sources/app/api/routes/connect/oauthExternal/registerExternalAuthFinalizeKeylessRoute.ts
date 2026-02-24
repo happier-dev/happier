@@ -15,6 +15,7 @@ import { authPendingSchema } from "./oauthExternalSchemas";
 import { readAuthOauthKeylessFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveKeylessAutoProvisionEligibility } from "@/app/auth/keyless/resolveKeylessAutoProvisionEligibility";
 import { resolveKeylessAccountsAvailability } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
+import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
 
 function sha256Hex(value: string): string {
     return createHash("sha256").update(value, "utf8").digest("hex");
@@ -76,13 +77,17 @@ export function registerExternalAuthFinalizeKeylessRoute(app: Fastify) {
         if (parsedValue.flow !== "auth" || parsedValue.provider.toString().trim().toLowerCase() !== providerId) {
             return reply.code(400).send({ error: "invalid-pending" });
         }
-        if (parsedValue.authMode !== "keyless") {
-            return reply.code(400).send({ error: "invalid-pending" });
-        }
+        const pendingFormat =
+            (parsedValue as any)?.v === 2
+                ? ("v2" as const)
+                : (parsedValue as any)?.authMode === "keyless"
+                    ? ("legacy_keyless" as const)
+                    : null;
+        if (!pendingFormat) return reply.code(400).send({ error: "invalid-pending" });
 
         const proof = request.body.proof.toString();
         const proofHash = sha256Hex(proof);
-        if (!parsedValue.proofHash || proofHash !== parsedValue.proofHash) {
+        if (!(parsedValue as any).proofHash || proofHash !== (parsedValue as any).proofHash) {
             return reply.code(400).send({ error: "invalid-proof" });
         }
 
@@ -90,16 +95,17 @@ export function registerExternalAuthFinalizeKeylessRoute(app: Fastify) {
         let refreshToken: string | undefined;
         let pendingProfile: unknown;
         try {
-            const tokenBytes = privacyKit.decodeBase64(parsedValue.accessTokenEnc);
-            accessToken = decryptString(["auth", "external", providerId, "pending_keyless", pendingKey, "token"], tokenBytes);
-            if (typeof parsedValue.refreshTokenEnc === "string" && parsedValue.refreshTokenEnc.trim()) {
-                const refreshBytes = privacyKit.decodeBase64(parsedValue.refreshTokenEnc);
-                refreshToken = decryptString(["auth", "external", providerId, "pending_keyless", pendingKey, "refresh"], refreshBytes);
+            const tokenBytes = privacyKit.decodeBase64((parsedValue as any).accessTokenEnc);
+            const prefix = pendingFormat === "v2" ? "pending_v2" : "pending_keyless";
+            accessToken = decryptString(["auth", "external", providerId, prefix, pendingKey, "token"], tokenBytes);
+            if (typeof (parsedValue as any).refreshTokenEnc === "string" && (parsedValue as any).refreshTokenEnc.trim()) {
+                const refreshBytes = privacyKit.decodeBase64((parsedValue as any).refreshTokenEnc);
+                refreshToken = decryptString(["auth", "external", providerId, prefix, pendingKey, "refresh"], refreshBytes);
             }
 
-            const profileBytes = privacyKit.decodeBase64(parsedValue.profileEnc);
+            const profileBytes = privacyKit.decodeBase64((parsedValue as any).profileEnc);
             const profileJson = decryptString(
-                ["auth", "external", providerId, "pending_keyless", pendingKey, "profile"],
+                ["auth", "external", providerId, prefix, pendingKey, "profile"],
                 profileBytes,
             );
             pendingProfile = JSON.parse(profileJson);
@@ -120,9 +126,12 @@ export function registerExternalAuthFinalizeKeylessRoute(app: Fastify) {
         if (existingIdentity) {
             const existingAccount = await db.account.findUnique({
                 where: { id: existingIdentity.accountId },
-                select: { publicKey: true },
+                select: { publicKey: true, encryptionMode: true },
             });
-            if (existingAccount?.publicKey) {
+            const requiresRestore = existingAccount
+                ? resolveEffectiveAccountEncryptionModeFromAccountRow(existingAccount) === "e2ee"
+                : false;
+            if (requiresRestore) {
                 await db.repeatKey.deleteMany({ where: { key: pendingKey } });
                 return reply.code(409).send({ error: "restore-required" });
             }

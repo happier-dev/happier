@@ -103,6 +103,60 @@ export async function deleteConnectedServiceCredential(
   });
 }
 
+export async function getConnectedServiceCredentialSealed(
+  credentials: AuthCredentials,
+  params: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>,
+): Promise<Readonly<{ sealed: SealedConnectedServiceCredentialV1; metadata: ConnectedServiceCredentialMetadataInput }>> {
+  return await backoff(async () => {
+    const response = await serverFetch(
+      `/v2/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/credential`,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${credentials.token}`,
+          'Content-Type': 'application/json',
+        },
+      },
+      { includeAuth: false },
+    );
+
+    const json = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
+        let message = 'connect_credential_not_found';
+        message = extractErrorCode(json) ?? message;
+        throw new HappyError(message, false, { status: response.status, kind: 'server' });
+      }
+      throw new Error(`Failed to fetch connected service credential: ${response.status}`);
+    }
+
+    if (!json || typeof json !== 'object') {
+      throw new HappyError('invalid response', false, { status: response.status, kind: 'server' });
+    }
+    const sealed = (json as any).sealed;
+    const metadata = (json as any).metadata;
+    if (!sealed || typeof sealed !== 'object') {
+      throw new HappyError('invalid response', false, { status: response.status, kind: 'server' });
+    }
+    if (typeof (sealed as any).format !== 'string' || typeof (sealed as any).ciphertext !== 'string') {
+      throw new HappyError('invalid response', false, { status: response.status, kind: 'server' });
+    }
+    if (!metadata || typeof metadata !== 'object') {
+      throw new HappyError('invalid response', false, { status: response.status, kind: 'server' });
+    }
+    return {
+      sealed: { format: (sealed as any).format, ciphertext: (sealed as any).ciphertext } as SealedConnectedServiceCredentialV1,
+      metadata: {
+        kind: (metadata as any).kind === 'token' ? 'token' : 'oauth',
+        providerEmail: typeof (metadata as any).providerEmail === 'string' ? (metadata as any).providerEmail : null,
+        providerAccountId: typeof (metadata as any).providerAccountId === 'string' ? (metadata as any).providerAccountId : null,
+        expiresAt: typeof (metadata as any).expiresAt === 'number' ? (metadata as any).expiresAt : null,
+      },
+    };
+  });
+}
+
 export async function exchangeConnectedServiceOauthViaProxy(
   credentials: AuthCredentials,
   params: Readonly<{

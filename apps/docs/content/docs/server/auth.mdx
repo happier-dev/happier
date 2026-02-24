@@ -101,6 +101,15 @@ Keyless account auto-provisioning is intentionally guarded:
 - ensure new accounts default to plaintext: `HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=optional|plaintext_only` and `HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE=plain`
 - for OAuth keyless login: `HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED=1` + allowlist providers via `HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS`
 
+### OAuth keyless provisioning choice (optional encryption servers)
+
+When the server storage policy is `optional` and keyless OAuth login is enabled, new users coming back from OAuth (GitHub/OIDC) may be prompted to choose:
+
+- **End-to-end encrypted (E2EE)**: creates a device-key account; users must back up a secret key to restore on new devices.
+- **Not encrypted (plaintext)**: creates a keyless/plain account; sign-in is seamless across devices, but the server can read stored content.
+
+On `plaintext_only` servers, clients should automatically choose plaintext. On `required_e2ee` servers, clients should automatically choose E2EE.
+
 ## OAuth return URL (required for GitHub/OIDC self-hosting)
 
 If you enable any external OAuth providers (GitHub and/or OIDC), the server must know where to redirect the browser **back to the client app** after OAuth completes.

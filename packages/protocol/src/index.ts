@@ -56,6 +56,11 @@ export {
 } from './sessionMessages/sessionStoredMessageContent.js';
 
 export {
+  StoredJsonContentEnvelopeSchema,
+  type StoredJsonContentEnvelope,
+} from './storage/storedJsonContentEnvelope.js';
+
+export {
   isSessionEncryptionModeAllowedByStoragePolicy,
   isStoredContentKindAllowedForSessionByStoragePolicy,
   resolveEffectiveDefaultAccountEncryptionMode,
@@ -770,12 +775,20 @@ export {
 export {
   ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
   AccountSettingsSchema,
+  AccountSettingsStoredContentEnvelopeSchema,
+  AccountSettingsV2GetResponseSchema,
+  AccountSettingsV2UpdateRequestSchema,
+  AccountSettingsV2UpdateResponseSchema,
   NotificationsSettingsV1Schema,
   DEFAULT_ACTIONS_SETTINGS_V1,
   DEFAULT_NOTIFICATIONS_SETTINGS_V1,
   accountSettingsParse,
   getNotificationsSettingsV1FromAccountSettings,
   type AccountSettings,
+  type AccountSettingsStoredContentEnvelope,
+  type AccountSettingsV2GetResponse,
+  type AccountSettingsV2UpdateRequest,
+  type AccountSettingsV2UpdateResponse,
   type NotificationsSettingsV1,
 } from './account/settings/index.js';
 
@@ -849,3 +862,12 @@ export {
   type BugReportServiceSubmitInput,
   type BugReportSeverity,
 } from './bugReports.js';
+
+export {
+  DoctorSnapshotSchema,
+  DoctorSnapshotServerProfileSchema,
+  parseDoctorSnapshotSafe,
+  sanitizeDoctorSnapshotUrls,
+  type DoctorSnapshot,
+  type DoctorSnapshotServerProfile,
+} from './diagnostics/doctorSnapshot.js';

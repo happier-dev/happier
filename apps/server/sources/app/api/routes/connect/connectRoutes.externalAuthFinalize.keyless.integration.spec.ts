@@ -253,6 +253,82 @@ describe("connectRoutes (external auth finalize keyless) (integration)", () => {
         await app.close();
     });
 
+    it("POST /v1/auth/external/:provider/finalize-keyless succeeds when the external identity is linked to a keyed-but-plain account", async () => {
+        process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED = "1";
+        process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS = "github";
+        process.env.HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED = "1";
+        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
+
+        const keyedPlainAccount = await db.account.create({
+            data: { publicKey: "pk_hex_2", encryptionMode: "plain" },
+            select: { id: true },
+        });
+        await db.accountIdentity.create({
+            data: {
+                accountId: keyedPlainAccount.id,
+                provider: "github",
+                providerUserId: "123",
+                providerLogin: "octocat",
+                profile: { id: 123, login: "octocat" },
+                showOnProfile: false,
+            },
+        });
+
+        const pendingKey = "oauth_pending_keylessB2";
+        const proof = "proof_secret_2b";
+        const proofHash = createHash("sha256").update(proof, "utf8").digest("hex");
+
+        const githubProfile = {
+            id: 123,
+            login: "octocat",
+            avatar_url: "",
+            name: "The Octocat",
+        };
+
+        await db.repeatKey.create({
+            data: {
+                key: pendingKey,
+                value: JSON.stringify({
+                    flow: "auth",
+                    provider: "github",
+                    authMode: "keyless",
+                    proofHash,
+                    profileEnc: privacyKit.encodeBase64(
+                        encryptString(["auth", "external", "github", "pending_keyless", pendingKey, "profile"], JSON.stringify(githubProfile)),
+                    ),
+                    accessTokenEnc: privacyKit.encodeBase64(
+                        encryptString(["auth", "external", "github", "pending_keyless", pendingKey, "token"], "tok_2b"),
+                    ),
+                    suggestedUsername: "octocat",
+                    usernameRequired: false,
+                    usernameReason: null,
+                }),
+                expiresAt: new Date(Date.now() + 60_000),
+            },
+        });
+
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const res = await app.inject({
+            method: "POST",
+            url: "/v1/auth/external/github/finalize-keyless",
+            headers: { "content-type": "application/json" },
+            payload: { pending: pendingKey, proof },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const json = res.json();
+        expect(json).toMatchObject({ success: true });
+        expect(typeof json.token).toBe("string");
+
+        const pending = await db.repeatKey.findUnique({ where: { key: pendingKey } });
+        expect(pending).toBeNull();
+
+        await app.close();
+    });
+
     it("POST /v1/auth/external/:provider/finalize-keyless returns 403 e2ee-required when server storagePolicy=required_e2ee", async () => {
         process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED = "1";
         process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS = "github";

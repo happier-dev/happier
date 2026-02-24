@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 describe('oauth/[provider] return (keyless)', () => {
-    it('finalizes keyless oauth auth and logs in with data-key credentials', async () => {
+    it('finalizes keyless oauth auth for a plaintext account and logs in with data-key credentials', async () => {
         replaceSpy.mockReset();
         loginWithCredentialsSpy.mockReset();
         clearPendingExternalAuthMock.mockReset();
@@ -28,10 +28,10 @@ describe('oauth/[provider] return (keyless)', () => {
         localSearchParamsMock.mockReturnValue({
             provider: 'github',
             flow: 'auth',
-            mode: 'keyless',
+            accountMode: 'plain',
             pending: 'p1',
         });
-        setPendingExternalAuthState({ provider: 'github', proof: 'proof_1', mode: 'keyless' });
+        setPendingExternalAuthState({ provider: 'github', proof: 'proof_1' });
 
         const originalFetch = globalThis.fetch;
         const fetchMock = vi.fn(async (url: any, init?: any) => {
@@ -68,7 +68,7 @@ describe('oauth/[provider] return (keyless)', () => {
         vi.stubGlobal('fetch', originalFetch);
     });
 
-    it('redirects to /restore when keyless finalize returns restore-required for a keyed account', async () => {
+    it('redirects to /restore for an e2ee account (without attempting keyless finalize)', async () => {
         replaceSpy.mockReset();
         loginWithCredentialsSpy.mockReset();
         clearPendingExternalAuthMock.mockReset();
@@ -76,27 +76,19 @@ describe('oauth/[provider] return (keyless)', () => {
         localSearchParamsMock.mockReturnValue({
             provider: 'github',
             flow: 'auth',
-            mode: 'keyless',
+            accountMode: 'e2ee',
             pending: 'p2',
         });
-        setPendingExternalAuthState({ provider: 'github', proof: 'proof_2', mode: 'keyless' });
+        setPendingExternalAuthState({ provider: 'github', proof: 'proof_2' });
 
         const originalFetch = globalThis.fetch;
-        const fetchMock = vi.fn(async (url: any) => {
-            if (typeof url === 'string' && url.includes('/v1/auth/external/github/finalize-keyless')) {
-                return new Response(JSON.stringify({ error: 'restore-required' }), {
-                    status: 409,
-                    headers: { 'Content-Type': 'application/json' },
-                });
-            }
-            return new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 });
-        });
+        const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 }));
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
         await runWithOAuthScreen(async () => {
             await flushOAuthEffects();
-            expect(fetchMock).toHaveBeenCalled();
-            expect(clearPendingExternalAuthMock).toHaveBeenCalled();
+            expect(fetchMock).not.toHaveBeenCalled();
+            expect(clearPendingExternalAuthMock).not.toHaveBeenCalled();
             expect(loginWithCredentialsSpy).not.toHaveBeenCalled();
             expect(replaceSpy).toHaveBeenCalledWith('/restore');
         });

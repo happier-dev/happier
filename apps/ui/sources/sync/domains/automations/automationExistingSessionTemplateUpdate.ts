@@ -1,5 +1,5 @@
 import { decodeAutomationTemplate } from './automationTemplateCodec';
-import { sealAutomationTemplateForTransport, tryDecodeAutomationTemplateEnvelope } from './automationTemplateTransport';
+import { AUTOMATION_TEMPLATE_ENVELOPE_KIND, encodeAutomationTemplateForTransport, tryDecodeAutomationTemplateEnvelope } from './automationTemplateTransport';
 import type { AutomationTemplate } from './automationTypes';
 
 function normalizeMessage(input: string): string {
@@ -26,11 +26,13 @@ export async function updateExistingSessionAutomationTemplateMessage(params: {
 }): Promise<string> {
     const envelope = tryDecodeAutomationTemplateEnvelope(params.templateCiphertext);
     if (!envelope) {
-        throw new Error('Invalid encrypted automation template envelope payload');
+        throw new Error('Invalid automation template envelope payload');
     }
 
-    const decrypted = await params.decryptRaw(envelope.payloadCiphertext);
-    const template = decodeTemplateFromDecryptedRaw(decrypted);
+    const payload = envelope.kind === AUTOMATION_TEMPLATE_ENVELOPE_KIND
+        ? await params.decryptRaw(envelope.payloadCiphertext)
+        : envelope.payload;
+    const template = decodeTemplateFromDecryptedRaw(payload);
 
     const existingSessionId = template.existingSessionId?.trim() ?? '';
     if (!existingSessionId) {
@@ -44,9 +46,9 @@ export async function updateExistingSessionAutomationTemplateMessage(params: {
         displayText: message,
     };
 
-    return sealAutomationTemplateForTransport({
+    return await encodeAutomationTemplateForTransport({
+        accountMode: envelope.kind === AUTOMATION_TEMPLATE_ENVELOPE_KIND ? 'e2ee' : 'plain',
         template: nextTemplate,
         encryptRaw: params.encryptRaw,
     });
 }
-

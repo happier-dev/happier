@@ -18,6 +18,7 @@ import { buildContentKeyBinding } from '@/auth/oauth/contentKeyBinding';
 import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { buildDataKeyCredentialsForToken } from '@/auth/flows/buildDataKeyCredentialsForToken';
+import { getRandomBytes } from '@/platform/cryptoRandom';
 
 
 function paramString(params: Record<string, unknown>, key: string): string | null {
@@ -116,15 +117,21 @@ export default function OAuthProviderReturn() {
     const [busy, setBusy] = React.useState(false);
     const [usernameHint, setUsernameHint] = React.useState<string | null>(null);
     const [usernameValue, setUsernameValue] = React.useState<string>('');
-    const pendingUsernameContextRef = React.useRef<null | Readonly<{
+    const [provisioningChoiceOpen, setProvisioningChoiceOpen] = React.useState(false);
+    const pendingAuthContextRef = React.useRef<null | Readonly<{
         providerId: string;
         providerName: string;
-        mode: 'keyed' | 'keyless';
-        secret: string | null;
+        pending: string;
         proof: string | null;
+        secret: string | null;
+        intent: 'signup' | 'reset' | null;
         returnTo: string;
         serverUrl?: string;
-        basePayload: Record<string, unknown>;
+        storagePolicy: string | null;
+        provisioning: string | null;
+        accountMode: string | null;
+        username: string | null;
+        chosenMode: 'plain' | 'e2ee' | null;
     }>>(null);
 
     const resolvedProviderId =
@@ -138,9 +145,145 @@ export default function OAuthProviderReturn() {
     const resolvedLogin = paramString(params, 'login') ?? '';
     const resolvedReason = paramString(params, 'reason');
     const resolvedMode = paramString(params, 'mode');
+    const resolvedStoragePolicy = paramString(params, 'storagePolicy');
+    const resolvedProvisioning = paramString(params, 'provisioning');
+    const resolvedAccountMode = paramString(params, 'accountMode');
+
+    const finalizeAuth = React.useCallback((params: { mode: 'plain' | 'e2ee' }) => {
+        const ctx = pendingAuthContextRef.current;
+        if (!ctx) {
+            router.replace('/');
+            return;
+        }
+
+        fireAndForget((async () => {
+            setBusy(true);
+            try {
+                if (params.mode === 'plain' && !ctx.proof) {
+                    await Modal.alert(t('common.error'), t('errors.oauthInitializationFailed'));
+                    await TokenStorage.clearPendingExternalAuth();
+                    pendingAuthContextRef.current = null;
+                    router.replace('/');
+                    return;
+                }
+
+                let secret = ctx.secret;
+                if (params.mode === 'e2ee' && !secret) {
+                    const seed = getRandomBytes(32);
+                    secret = encodeBase64(seed, 'base64url');
+                    await TokenStorage.setPendingExternalAuth({
+                        provider: ctx.providerId,
+                        ...(ctx.proof ? { proof: ctx.proof } : {}),
+                        secret,
+                        ...(ctx.intent ? { intent: ctx.intent } : {}),
+                        ...(ctx.serverUrl ? { serverUrl: ctx.serverUrl } : {}),
+                        ...(ctx.returnTo ? { returnTo: ctx.returnTo } : {}),
+                    });
+                    pendingAuthContextRef.current = { ...ctx, secret };
+                }
+
+                const base = typeof ctx.serverUrl === 'string' ? ctx.serverUrl.trim().replace(/\/+$/, '') : '';
+                const finalizePath =
+                    params.mode === 'plain'
+                        ? `/v1/auth/external/${encodeURIComponent(ctx.providerId)}/finalize-keyless`
+                        : `/v1/auth/external/${encodeURIComponent(ctx.providerId)}/finalize`;
+                const url = base ? `${base}${finalizePath}` : finalizePath;
+
+                const payload: any =
+                    params.mode === 'plain'
+                        ? {
+                            pending: ctx.pending,
+                            proof: ctx.proof,
+                            ...(ctx.username ? { username: ctx.username } : {}),
+                        }
+                        : (() => {
+                            const secretBytes = decodeBase64(secret!, 'base64url');
+                            const { challenge, signature, publicKey } = authChallenge(secretBytes);
+                            const keyedBody: any = {
+                                pending: ctx.pending,
+                                publicKey: encodeBase64(publicKey),
+                                challenge: encodeBase64(challenge),
+                                signature: encodeBase64(signature),
+                                ...(ctx.proof ? { proof: ctx.proof } : {}),
+                                ...(ctx.username ? { username: ctx.username } : {}),
+                            };
+                            if (ctx.intent === 'reset') {
+                                keyedBody.reset = true;
+                            }
+                            return keyedBody;
+                        })();
+
+                if (params.mode === 'e2ee') {
+                    const secretBytes = decodeBase64(secret!, 'base64url');
+                    const supportsSharing = await isSessionSharingSupported({ timeoutMs: 800 });
+                    if (supportsSharing) {
+                        const binding = await buildContentKeyBinding(secretBytes);
+                        payload.contentPublicKey = binding.contentPublicKey;
+                        payload.contentPublicKeySig = binding.contentPublicKeySig;
+                    }
+                }
+
+                const response = await serverFetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                }, { includeAuth: false });
+                const json = await response.json().catch(() => ({}));
+
+                if (response.ok && json?.token) {
+                    await TokenStorage.clearPendingExternalAuth();
+                    pendingAuthContextRef.current = null;
+                    setUsernameHint(null);
+                    setProvisioningChoiceOpen(false);
+                    maybeActivateServerUrl(ctx.serverUrl);
+                    if (params.mode === 'plain') {
+                        const credentials = await buildDataKeyCredentialsForToken(json.token);
+                        await (auth as any).loginWithCredentials(credentials);
+                    } else {
+                        await auth.login(json.token, secret!);
+                    }
+                    router.replace(ctx.returnTo);
+                    return;
+                }
+
+                const err = typeof json?.error === 'string' ? json.error : 'token-exchange-failed';
+                if (err === 'provider-already-linked') {
+                    await TokenStorage.clearPendingExternalAuth();
+                    pendingAuthContextRef.current = null;
+                    router.replace(buildRestoreRedirectUrl({ providerId: ctx.providerId, reason: 'provider_already_linked' }));
+                    return;
+                }
+                if (err === 'restore-required') {
+                    await TokenStorage.clearPendingExternalAuth();
+                    pendingAuthContextRef.current = null;
+                    router.replace('/restore');
+                    return;
+                }
+                if (err === 'username-required' || err === 'username-taken') {
+                    const initialHint = err === 'username-taken' ? t('friends.username.taken') : t('friends.username.invalid');
+                    setUsernameHint(initialHint);
+                    return;
+                }
+                if (err === 'invalid-pending') {
+                    await Modal.alert(t('common.error'), t('errors.oauthStateMismatch'));
+                    await TokenStorage.clearPendingExternalAuth();
+                    pendingAuthContextRef.current = null;
+                    router.replace('/');
+                    return;
+                }
+
+                await Modal.alert(t('common.error'), mapFinalizeErrorToMessage(err));
+                await TokenStorage.clearPendingExternalAuth();
+                pendingAuthContextRef.current = null;
+                router.replace('/');
+            } finally {
+                setBusy(false);
+            }
+        })(), { tag: 'OAuthProviderReturn.finalizeAuth' });
+    }, [auth, router]);
 
     const submitUsername = React.useCallback(() => {
-        const ctx = pendingUsernameContextRef.current;
+        const ctx = pendingAuthContextRef.current;
         if (!ctx) {
             router.replace('/');
             return;
@@ -151,89 +294,55 @@ export default function OAuthProviderReturn() {
             return;
         }
 
-        fireAndForget((async () => {
-            setBusy(true);
-            try {
-                const base = typeof ctx.serverUrl === 'string' ? ctx.serverUrl.trim().replace(/\/+$/, '') : '';
-                const finalizePath =
-                    ctx.mode === 'keyless'
-                        ? `/v1/auth/external/${encodeURIComponent(ctx.providerId)}/finalize-keyless`
-                        : `/v1/auth/external/${encodeURIComponent(ctx.providerId)}/finalize`;
-                const url = base ? `${base}${finalizePath}` : finalizePath;
-                const response = await serverFetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ...ctx.basePayload, username: nextUsername }),
-                }, { includeAuth: false });
-                const json = await response.json().catch(() => ({}));
+        const nextCtx = { ...ctx, username: nextUsername };
+        pendingAuthContextRef.current = nextCtx;
+        setUsernameHint(null);
 
-                if (response.ok && json?.token) {
-                    await TokenStorage.clearPendingExternalAuth();
-                    pendingUsernameContextRef.current = null;
-                    setUsernameHint(null);
-                    maybeActivateServerUrl(ctx.serverUrl);
-                    if (ctx.mode === 'keyless') {
-                        const credentials = await buildDataKeyCredentialsForToken(json.token);
-                        await (auth as any).loginWithCredentials(credentials);
-                    } else {
-                        await auth.login(json.token, ctx.secret!);
-                    }
-                    router.replace(ctx.returnTo);
-                    return;
-                }
-
-                const err = typeof json?.error === 'string' ? json.error : 'token-exchange-failed';
-                if (err === 'provider-already-linked') {
-                    await TokenStorage.clearPendingExternalAuth();
-                    pendingUsernameContextRef.current = null;
-                    setUsernameHint(null);
-                    router.replace(buildRestoreRedirectUrl({ providerId: ctx.providerId, reason: 'provider_already_linked' }));
-                    return;
-                }
-                if (err === 'restore-required') {
-                    await TokenStorage.clearPendingExternalAuth();
-                    pendingUsernameContextRef.current = null;
-                    setUsernameHint(null);
-                    router.replace('/restore');
-                    return;
-                }
-                if (err === 'username-taken') {
-                    setUsernameHint(t('friends.username.taken'));
-                    return;
-                }
-                if (err === 'invalid-username' || err === 'username-required') {
-                    setUsernameHint(t('friends.username.invalid'));
-                    return;
-                }
-                if (err === 'invalid-pending') {
-                    await Modal.alert(t('common.error'), t('errors.oauthStateMismatch'));
-                    await TokenStorage.clearPendingExternalAuth();
-                    pendingUsernameContextRef.current = null;
-                    setUsernameHint(null);
-                    router.replace('/');
-                    return;
-                }
-
-                await Modal.alert(t('common.error'), mapFinalizeErrorToMessage(err));
-                await TokenStorage.clearPendingExternalAuth();
-                pendingUsernameContextRef.current = null;
-                setUsernameHint(null);
-                router.replace('/');
-            } finally {
-                setBusy(false);
+        if (nextCtx.accountMode === 'e2ee') {
+            router.replace('/restore');
+            return;
+        }
+        if (nextCtx.accountMode === 'plain') {
+            finalizeAuth({ mode: 'plain' });
+            return;
+        }
+        if (nextCtx.provisioning === 'required') {
+            if (nextCtx.storagePolicy === 'optional') {
+                setProvisioningChoiceOpen(true);
+                return;
             }
-        })(), { tag: 'OAuthProviderReturn.submitUsername' });
-    }, [auth, router, usernameValue]);
+            if (nextCtx.storagePolicy === 'plaintext_only') {
+                finalizeAuth({ mode: 'plain' });
+                return;
+            }
+            finalizeAuth({ mode: 'e2ee' });
+            return;
+        }
+
+        finalizeAuth({ mode: nextCtx.secret ? 'e2ee' : 'plain' });
+    }, [finalizeAuth, router, usernameValue]);
 
     const cancelUsername = React.useCallback(() => {
         fireAndForget((async () => {
             await TokenStorage.clearPendingExternalAuth();
         })(), { tag: 'OAuthProviderReturn.cancelUsername' });
-        pendingUsernameContextRef.current = null;
+        pendingAuthContextRef.current = null;
         setUsernameHint(null);
         setUsernameValue('');
+        setProvisioningChoiceOpen(false);
         router.replace('/');
     }, [router]);
+
+    const chooseProvisioningMode = React.useCallback((mode: 'plain' | 'e2ee') => {
+        const ctx = pendingAuthContextRef.current;
+        if (!ctx) {
+            router.replace('/');
+            return;
+        }
+        pendingAuthContextRef.current = { ...ctx, chosenMode: mode };
+        setProvisioningChoiceOpen(false);
+        finalizeAuth({ mode });
+    }, [finalizeAuth, router]);
 
     React.useEffect(() => {
         const providerId = resolvedProviderId;
@@ -295,13 +404,10 @@ export default function OAuthProviderReturn() {
             if (flow === 'auth') {
                 const pending = pendingFromParams;
                 const state = await TokenStorage.getPendingExternalAuth();
-                const keyless =
-                    (resolvedMode ?? '').toString().trim().toLowerCase() === 'keyless'
-                    || state?.mode === 'keyless';
                 const secret = typeof state?.secret === 'string' ? state.secret : null;
                 const proof = typeof state?.proof === 'string' ? state.proof : null;
 
-                if (!pending || !state || state.provider !== providerId || (keyless ? !proof : !secret)) {
+                if (!pending || !state || state.provider !== providerId || (!proof && !secret)) {
                     await Modal.alert(t('common.error'), t('errors.oauthInitializationFailed'));
                     safeReplace('/');
                     return;
@@ -309,126 +415,61 @@ export default function OAuthProviderReturn() {
                 const returnTo = normalizeInternalReturnTo(state.returnTo) ?? '/';
 
                 try {
-                    const body: any = keyless
-                        ? {
-                            pending,
-                            proof,
-                        }
-                        : (() => {
-                            const secretBytes = decodeBase64(secret!, 'base64url');
-                            const { challenge, signature, publicKey } = authChallenge(secretBytes);
-                            const keyedBody: any = {
-                                pending,
-                                publicKey: encodeBase64(publicKey),
-                                challenge: encodeBase64(challenge),
-                                signature: encodeBase64(signature),
-                            };
-                            if (state.intent === 'reset') {
-                                keyedBody.reset = true;
-                            }
-                            return keyedBody;
-                        })();
-
-                    if (!keyless) {
-                        const secretBytes = decodeBase64(secret!, 'base64url');
-                        const supportsSharing = await isSessionSharingSupported({ timeoutMs: 800 });
-                        if (supportsSharing) {
-                            const binding = await buildContentKeyBinding(secretBytes);
-                            body.contentPublicKey = binding.contentPublicKey;
-                            body.contentPublicKeySig = binding.contentPublicKeySig;
-                        }
-                    }
-
                     const login = loginFromParams;
-                    const reason = reasonFromParams;
-
-                    const finalize = async (payload: any) => {
-                        safeSetBusy(true);
-                        try {
-                            const base = typeof state.serverUrl === 'string' ? state.serverUrl.trim().replace(/\/+$/, '') : '';
-                            const finalizePath = keyless
-                                ? `/v1/auth/external/${encodeURIComponent(providerId)}/finalize-keyless`
-                                : `/v1/auth/external/${encodeURIComponent(providerId)}/finalize`;
-                            const url = base ? `${base}${finalizePath}` : finalizePath;
-                            const response = await serverFetch(url, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                signal: controller.signal,
-                                body: JSON.stringify(payload),
-                            }, { includeAuth: false });
-                            const json = await response.json().catch(() => ({}));
-                            return { ok: response.ok, status: response.status, json };
-                        } finally {
-                            safeSetBusy(false);
-                        }
-	                    };
+                    pendingAuthContextRef.current = {
+                        providerId,
+                        providerName: provider.displayName ?? providerId,
+                        pending,
+                        proof,
+                        secret,
+                        intent: (state.intent as any) ?? null,
+                        returnTo,
+                        serverUrl: state.serverUrl,
+                        storagePolicy: resolvedStoragePolicy,
+                        provisioning: resolvedProvisioning,
+                        accountMode: resolvedAccountMode,
+                        username: null,
+                        chosenMode: null,
+                    };
 
                     if (status === 'username_required') {
+                        const reason = reasonFromParams;
                         const initialHint = reason === 'invalid_login' ? t('friends.username.invalid') : t('friends.username.taken');
-                        pendingUsernameContextRef.current = {
-                            providerId,
-                            providerName: provider.displayName ?? providerId,
-                            mode: keyless ? 'keyless' : 'keyed',
-                            secret,
-                            proof,
-                            returnTo,
-                            serverUrl: state.serverUrl,
-                            basePayload: body,
-                        };
                         setUsernameHint(initialHint);
                         setUsernameValue(login || '');
                         return;
                     }
 
-                    const res = await finalize(body);
-                    if (!res.ok || !res.json?.token) {
-                        const err =
-                            typeof res.json?.error === 'string'
-                                ? res.json.error
-                                : 'token-exchange-failed';
-                        if (err === 'provider-already-linked') {
-                            const providerName = provider.displayName ?? providerId;
-                            await TokenStorage.clearPendingExternalAuth();
-                            safeReplace(buildRestoreRedirectUrl({ providerId, reason: 'provider_already_linked' }));
-                            return;
-                        }
-                        if (err === 'restore-required') {
-                            await TokenStorage.clearPendingExternalAuth();
-                            safeReplace('/restore');
-                            return;
-                        }
-                        if (err === 'username-required' || err === 'username-taken') {
-                            const initialHint = err === 'username-taken' ? t('friends.username.taken') : t('friends.username.invalid');
-                            pendingUsernameContextRef.current = {
-                                providerId,
-                                providerName: provider.displayName ?? providerId,
-                                mode: keyless ? 'keyless' : 'keyed',
-                                secret,
-                                proof,
-                                returnTo,
-                                serverUrl: state.serverUrl,
-                                basePayload: body,
-                            };
-                            setUsernameHint(initialHint);
-                            setUsernameValue(login || '');
-                            return;
-                        }
-
-                        await Modal.alert(t('common.error'), mapFinalizeErrorToMessage(err));
-                        await TokenStorage.clearPendingExternalAuth();
-                        safeReplace('/');
+                    if (resolvedAccountMode === 'e2ee') {
+                        safeReplace('/restore');
                         return;
                     }
 
-                    await TokenStorage.clearPendingExternalAuth();
-                    maybeActivateServerUrl(state.serverUrl);
-                    if (keyless) {
-                        const credentials = await buildDataKeyCredentialsForToken(res.json.token);
-                        await (auth as any).loginWithCredentials(credentials);
-                    } else {
-                        await loginFn(res.json.token, state.secret!);
+                    if (resolvedAccountMode === 'plain') {
+                        finalizeAuth({ mode: 'plain' });
+                        return;
                     }
-                    safeReplace(returnTo);
+
+                    if (resolvedProvisioning === 'required') {
+                        if (resolvedStoragePolicy === 'optional') {
+                            setProvisioningChoiceOpen(true);
+                            return;
+                        }
+                        if (resolvedStoragePolicy === 'plaintext_only') {
+                            finalizeAuth({ mode: 'plain' });
+                            return;
+                        }
+                        finalizeAuth({ mode: 'e2ee' });
+                        return;
+                    }
+
+                    const fallbackKeyless = (resolvedMode ?? '').toString().trim().toLowerCase() === 'keyless';
+                    if (fallbackKeyless && proof) {
+                        finalizeAuth({ mode: 'plain' });
+                        return;
+                    }
+
+                    finalizeAuth({ mode: secret ? 'e2ee' : 'plain' });
                     return;
                 } catch (e) {
                     if (isAbort(e)) return;
@@ -547,6 +588,57 @@ export default function OAuthProviderReturn() {
         auth.login,
         resolvedFlow === 'auth' ? '' : auth.credentials?.token ?? '',
     ]);
+
+    if (provisioningChoiceOpen) {
+        return (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 }}>
+                <View style={{ width: '100%', maxWidth: 420 }}>
+                    <Text style={{ fontSize: 18, marginBottom: 8, color: theme.colors.text }}>
+                        {t('welcome.chooseEncryptionTitle')}
+                    </Text>
+                    <Text style={{ fontSize: 14, marginBottom: 16, color: theme.colors.textSecondary }}>
+                        {t('welcome.chooseEncryptionBody')}
+                    </Text>
+
+                    <View style={{ flexDirection: 'column', gap: 12 }}>
+                        <Pressable
+                            testID="oauth-provisioning-choice-e2ee"
+                            onPress={() => chooseProvisioningMode('e2ee')}
+                            style={{
+                                paddingVertical: 10,
+                                borderRadius: 8,
+                                backgroundColor: theme.colors.button.primary.background,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                            }}
+                        >
+                            <Text style={{ color: theme.colors.button.primary.tint }}>
+                                {t('welcome.chooseEncryptionEncrypted')}
+                            </Text>
+                        </Pressable>
+
+                        <Pressable
+                            testID="oauth-provisioning-choice-plain"
+                            onPress={() => chooseProvisioningMode('plain')}
+                            style={{
+                                paddingVertical: 10,
+                                borderRadius: 8,
+                                borderWidth: 1,
+                                borderColor: theme.colors.divider,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                            }}
+                        >
+                            <Text style={{ color: theme.colors.text }}>
+                                {t('welcome.chooseEncryptionPlain')}
+                            </Text>
+                        </Pressable>
+                    </View>
+                </View>
+                {busy ? <ActivityIndicator size="small" style={{ marginTop: 16 }} /> : null}
+            </View>
+        );
+    }
 
     if (usernameHint != null) {
         return (

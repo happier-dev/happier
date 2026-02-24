@@ -54,14 +54,207 @@ export const ru: TranslationStructure = {
   runs: {
     title: "Запуски",
     empty: "Запусков пока нет.",
+    showFinished: "Показывать завершённые",
+    unknownMachine: "Неизвестная машина",
+    failedToLoad: "Не удалось загрузить запуски",
+    noMachinesAvailable: "Нет доступных машин.",
+    groupLabel: ({ groupId }: { groupId: string }) => `Группа ${groupId}`,
+    serverTitle: ({ serverId }: { serverId: string }) => `Сервер ${serverId}`,
+    machinesSubtitle: "Машины",
+    openMachine: "Открыть машину",
+    a11y: {
+      toggleFinished: "Переключить завершённые запуски",
+      refresh: "Обновить запуски",
+    },
+    openSession: "Открыть сессию",
+    sessionTitle: ({ sessionId }: { sessionId: string }) => `Сессия ${sessionId}`,
+    runLabel: ({ runId }: { runId: string }) => `запуск ${runId}`,
+    detail: {
+      pid: ({ pid }: { pid: number }) => `PID ${pid}`,
+      cpu: ({ percent }: { percent: string }) => `${percent}% CPU`,
+      memory: ({ megabytes }: { megabytes: number }) => `${megabytes} MB`,
+    },
+    runDetails: {
+      failedToLoad: "Не удалось загрузить запуск",
+      latestToolResultTitle: "Последний результат инструмента",
+      a11y: {
+        refreshRun: "Обновить запуск",
+      },
+    },
+    stop: {
+      stopRunA11y: "Остановить запуск",
+      stopLabel: "Остановить запуск",
+      stoppingLabel: "Остановка…",
+      stopRunFailedTitle: "Не удалось остановить запуск",
+      stopRunFailedBody:
+        "Остановка этого запуска через RPC сессии не удалась. Остановить весь процесс сессии вместо этого? Это разрушительно и остановит все запуски в этой сессии.",
+      stopSession: "Остановить сессию",
+      failedToStopRun: "Не удалось остановить запуск",
+      failedToStopSession: "Не удалось остановить сессию",
+    },
+    send: {
+      placeholder: "Отправить в запуск…",
+      a11y: {
+        sendToRun: "Отправить в запуск",
+      },
+      sendLabel: "Отправить",
+      sendingLabel: "Отправка…",
+      failedToSend: "Не удалось отправить",
+    },
+  },
+
+  sessionLog: {
+    title: "Лог сессии",
+    devModeRequiredTitle: "Требуется режим разработчика",
+    devModeRequiredBody:
+      "Включите режим разработчика в настройках, чтобы просматривать логи сессии.",
+    logPathTitle: "Путь к логу",
+    unavailable: "Недоступно",
+    logPathCopyLabel: "Путь к логу сессии",
+    refreshTailTitle: "Обновить хвост лога",
+    refreshTailSubtitle: ({ maxBytes }: { maxBytes: string }) =>
+      `Прочитать последние ${maxBytes} байт`,
+    copyVisibleTitle: "Скопировать видимый лог",
+    copyVisibleSubtitleLoaded:
+      "Скопировать текущий хвост в буфер обмена",
+    copyVisibleSubtitleEmpty: "Лог не загружен",
+    copyLogLabel: "Лог сессии",
+    statusTitle: "Статус лога",
+    readErrorTitle: "Ошибка чтения",
+    tailTitle: "Хвост лога",
+    tailTitleTruncated: "Хвост лога (усечён)",
+    noOutputYet: "(Пока нет вывода лога)",
+    readFailed: "Не удалось прочитать лог сессии",
+  },
+
+  automations: {
+    openA11y: "Открыть автоматизации",
+    gate: {
+      disabledTitle: "Автоматизации отключены",
+      disabledBody:
+        "Включите их в Настройках, затем включите Эксперименты и Автоматизации.",
+    },
+    edit: {
+      title: "Редактировать автоматизацию",
+      saveAutomationLabel: "Сохранить автоматизацию",
+      messageLabel: "СООБЩЕНИЕ",
+      messagePlaceholder: "Сообщение для отправки",
+      messageHelpText:
+        "Это сообщение будет поставлено в очередь в сессию как ожидающее сообщение пользователя.",
+      updateFailed: "Не удалось обновить автоматизацию.",
+      loadTemplateFailed: "Не удалось загрузить шаблон автоматизации.",
+    },
+    form: {
+      groupAutomationTitle: "Автоматизация",
+      groupScheduleTitle: "Расписание",
+      toggleEnableTitle: "Включить автоматизацию",
+      toggleEnableSubtitle:
+        "Создайте этот новый шаблон сессии как запланированную автоматизацию вместо немедленного запуска.",
+      toggleEnabledTitle: "Включено",
+      toggleEnabledSubtitle:
+        "При отключении запланированные запуски выполняться не будут.",
+      labels: {
+        name: "ИМЯ",
+        descriptionOptional: "ОПИСАНИЕ (НЕОБЯЗАТЕЛЬНО)",
+        everyMinutes: "КАЖДЫЕ (МИНУТЫ)",
+        cronExpression: "CRON-ВЫРАЖЕНИЕ",
+        timezoneOptional: "ЧАСОВОЙ ПОЯС (НЕОБЯЗАТЕЛЬНО)",
+      },
+      placeholders: {
+        name: "Запланированная сессия",
+        description: "Что должна делать эта автоматизация?",
+        everyMinutes: "60",
+        cronExpression: "*/5 * * * *",
+        timezone: "UTC или America/New_York",
+      },
+      schedule: {
+        intervalTitle: "Интервал",
+        intervalSubtitle: "Запускать каждые N минут.",
+        cronTitle: "Cron-выражение",
+        cronSubtitle: "Продвинутое выражение расписания.",
+        cronHelpText:
+          "Стандартный cron из 5 полей: минута час день-месяца месяц день-недели.",
+      },
+    },
+    session: {
+      emptyTitle: "Нет автоматизаций",
+      emptyBody:
+        "Добавьте автоматизацию, чтобы ставить запланированные сообщения в очередь этой сессии.",
+      addAutomation: "Добавить автоматизацию",
+      failedToLoad: "Не удалось загрузить автоматизации.",
+    },
+    screen: {
+      emptyTitle: "Автоматизаций пока нет",
+      emptyBody:
+        "Создайте её через поток «Новая сессия», чтобы запускать запланированные сессии на ваших машинах.",
+      createAutomationA11y: "Создать автоматизацию",
+    },
+    detail: {
+      invalidId: "Недопустимый идентификатор автоматизации.",
+      notFound: "Автоматизация не найдена.",
+      unknownDate: "Неизвестно",
+      notScheduled: "Не запланировано",
+      overviewGroupTitle: "Обзор",
+      overview: {
+        nameTitle: "Имя",
+        scheduleTitle: "Расписание",
+        statusTitle: "Статус",
+        nextRunTitle: "Следующий запуск",
+      },
+      status: {
+        active: "Активна",
+        paused: "Приостановлена",
+      },
+      actionsGroupTitle: "Действия",
+      runNowTitle: "Запустить сейчас",
+      runNowQueuedBadge: "В очереди",
+      runNowQueuedLine: "В очереди.",
+      runNowQueuedSubtitle:
+        "В очереди. Назначенный демон выполнит запуск, когда будет доступен.",
+      pauseAutomation: "Приостановить автоматизацию",
+      resumeAutomation: "Возобновить автоматизацию",
+      editAutomation: "Редактировать автоматизацию",
+      deleteAutomation: "Удалить автоматизацию",
+      deleteConfirmTitle: "Удалить автоматизацию",
+      deleteConfirmMessage: "Эта автоматизация и её расписание будут удалены.",
+      deleteConfirmButton: "Удалить",
+      machineAssignmentsTitle: "Назначения машин",
+      machineAssignmentsFooter:
+        "Включите хотя бы одну машину, чтобы автоматизация могла выполняться.",
+      refreshFailed: "Не удалось обновить автоматизацию.",
+      runFailed: "Не удалось запустить автоматизацию.",
+      deleteFailed: "Не удалось удалить автоматизацию.",
+      assignmentsUpdateFailed: "Не удалось обновить назначения машин.",
+      recentRunsTitle: "Недавние запуски",
+      runMeta: {
+        scheduled: ({ time }: { time: string }) => `Запланировано: ${time}`,
+        updated: ({ time }: { time: string }) => `Обновлено: ${time}`,
+        error: ({ message }: { message: string }) => `Ошибка: ${message}`,
+      },
+    },
+    create: {
+      defaultName: "Запланированное сообщение",
+      createFailed: "Не удалось создать автоматизацию.",
+      unavailableGroupTitle: "Недоступно",
+      cannotCreateForSession: "Нельзя создать автоматизацию для этой сессии",
+      sessionNotFound: "Сессия не найдена.",
+      missingMachineId: "У этой сессии отсутствует идентификатор машины.",
+      missingResumeKey:
+        "Для этой сессии ещё не загружен ключ шифрования для возобновления.",
+      createButtonTitle: "Создать автоматизацию",
+    },
   },
 
   common: {
     // Simple string constants
     add: "Добавить",
+    edit: "Редактировать",
     actions: "Действия",
+    moreActions: "Другие действия",
+    moreActionsHint: "Открывает меню с другими действиями",
     cancel: "Отмена",
     close: "Закрыть",
+    done: "Готово",
     authenticate: "Авторизация",
     save: "Сохранить",
     saveAs: "Сохранить как",
@@ -70,15 +263,22 @@ export const ru: TranslationStructure = {
     ok: "ОК",
     continue: "Продолжить",
     back: "Назад",
+    start: "Запустить",
     create: "Создать",
     rename: "Переименовать",
     remove: "Удалить",
+    update: "Обновить",
+    commit: "Коммит",
+    history: "История",
+    applied: "Применено",
     signOut: "Выйти",
     keep: "Оставить",
     reset: "Сбросить",
     logout: "Выйти",
     yes: "Да",
     no: "Нет",
+    on: "Вкл.",
+    off: "Выкл.",
     discard: "Отменить",
     discardChanges: "Отменить изменения",
     unsavedChangesWarning: "У вас есть несохранённые изменения.",
@@ -87,23 +287,44 @@ export const ru: TranslationStructure = {
     details: "Детали",
     copied: "Скопировано",
     copy: "Копировать",
+    copyWithLabel: ({ label }: { label: string }) => `Копировать ${label}`,
+    command: "Команда",
     scanning: "Сканирование...",
     urlPlaceholder: "https://example.com",
     home: "Главная",
     message: "Сообщение",
     send: "Отправить",
+    attach: "Прикрепить",
+    linkFile: "Связать файл",
     files: "Файлы",
+    path: "Путь",
     fileViewer: "Просмотр файла",
     loading: "Загрузка...",
+    none: "—",
+    unavailable: "Недоступно",
+    dialog: "Диалог",
     retry: "Повторить",
     or: "или",
     delete: "Удалить",
+    deleted: "Удалено",
     optional: "необязательно",
     noMatches: "Нет совпадений",
     all: "Все",
     machine: "машина",
     clearSearch: "Очистить поиск",
     refresh: "Обновить",
+    default: "По умолчанию",
+    enabled: "Включено",
+    disabled: "Отключено",
+    requestFailed: "Запрос не выполнен.",
+  },
+
+  ui: {
+    resizableDockedPane: {
+      resizeA11y: "Изменить размер панели",
+      resizeHint:
+        "Используйте стрелки влево и вправо, чтобы изменить размер",
+    },
   },
 
   dropdown: {
@@ -121,6 +342,17 @@ export const ru: TranslationStructure = {
     enterSecretKey: "Пожалуйста, введите секретный ключ",
     invalidSecretKey: "Неверный секретный ключ. Проверьте и попробуйте снова.",
     enterUrlManually: "Ввести URL вручную",
+    scanComputerQrInstructions: "Отсканируйте QR-код, показанный в Happier на компьютере (Настройки → Добавить телефон).",
+    scanComputerQrButton: "Сканировать QR для входа",
+    waitingForApproval: "Ожидание подтверждения…",
+    showQrInstead: "Показать QR‑код вместо этого",
+    addPhoneQrInstructions: "Отсканируйте этот QR‑код в мобильном приложении Happier, чтобы войти на телефоне.",
+    pairingRequestTitle: "Запрос на привязку",
+    pairingRequestBody: "Убедитесь, что этот код совпадает с тем, что отображается на телефоне, затем подтвердите.",
+    deviceLabel: "Устройство",
+    confirmCodeLabel: "Код подтверждения",
+    approveButton: "Подтвердить",
+    generateNewQrCode: "Сгенерировать новый QR‑код",
     openMachine: "Открыть машину",
     terminalUrlPlaceholder: "happier://terminal?...",
     restoreQrInstructions:
@@ -150,8 +382,393 @@ export const ru: TranslationStructure = {
     unsupported: {
       connectTitle: ({ name }: { name: string }) => `Подключить ${name}`,
       runCommandInTerminal: "Выполните следующую команду в терминале:",
+      command: ({ name }: { name: string }) => `happier connect ${name}`,
     },
   },
+
+  bugReports: {
+    composer: {
+      alerts: {
+        previewUnavailableTitle: "Предпросмотр недоступен",
+        previewUnavailableBody: "Не удалось собрать предпросмотр диагностики.",
+        submittedTitle: "Отчёт об ошибке отправлен",
+        submittedExistingIssueBody: ({
+          issueNumber,
+          reportId,
+        }: {
+          issueNumber: number;
+          reportId: string;
+        }) =>
+          `Комментарий опубликован в issue #${issueNumber}.\n\nID отчёта: ${reportId}`,
+        submittedNewIssueBody: ({
+          issueNumber,
+          reportId,
+        }: {
+          issueNumber: number;
+          reportId: string;
+        }) => `Issue #${issueNumber} создан.\n\nID отчёта: ${reportId}`,
+        submitFailedTitle: "Отправка не удалась",
+        submitFailedFallbackMessage: "Не удалось отправить этот отчёт.",
+        submitFailedBody: ({ message }: { message: string }) =>
+          `${message}\n\nОткрыть вместо этого предварительно заполненное GitHub issue?`,
+        openFallbackIssueButton: "Открыть fallback issue",
+      },
+      diagnostics: {
+        title: "Диагностика",
+        subtitle:
+          "Выберите, что включить, и предварительно просмотрите перед отправкой.",
+        includeTitle: "Включить диагностику",
+        includeSubtitle:
+          "Приложите обезличенные артефакты отладки для более быстрого разбора.",
+        disabledByServerSuffix: " (отключено сервером)",
+        pasteDoctorJson: {
+          title: "CLI doctor JSON (необязательно)",
+          subtitle:
+            "Если машина недоступна из UI, выполните `happier doctor --json` на компьютере и вставьте сюда.",
+          placeholder: '{ "capturedAt": "...", ... }',
+          invalid: ({ error }: { error: string }) => `Некорректный doctor JSON: ${error}`,
+          valid: "Doctor JSON выглядит корректным и будет приложен к отчёту.",
+        },
+        previewButton: "Предпросмотр диагностики",
+        preview: {
+          title: "Предпросмотр диагностики",
+          helper:
+            "Эти артефакты будут загружены вместе с отчётом (санитизированы и с ограничением размера). Нажмите на элемент, чтобы посмотреть его содержимое целиком.",
+          empty: "Артефакты диагностики не будут отправлены.",
+          openArtifactA11y: ({ filename }: { filename: string }) =>
+            `Открыть ${filename}`,
+        },
+        kinds: {
+          app: {
+            title: "Диагностика приложения",
+            detail:
+              "Логи приложения, недавние действия пользователя и сводка сессии.",
+          },
+          daemon: {
+            title: "Диагностика демона",
+            detail:
+              "Сводка демона и последние логи демона с выбранных машин.",
+          },
+          stackService: {
+            title: "Диагностика Stack-сервиса",
+            detail: "Контекст стека и последние логи стека (если доступны).",
+          },
+          server: {
+            title: "Диагностика сервера",
+            detail: "Снимок текущего активного сервера.",
+          },
+        },
+      },
+      issueDetails: {
+        title: "Опишите проблему",
+        subtitle:
+          "Добавьте достаточно деталей, чтобы мы могли быстро воспроизвести и диагностировать.",
+        titleLabel: "Заголовок (обязательно)",
+        titlePlaceholder: "Короткий заголовок",
+        githubUsernameLabel: "Имя пользователя GitHub (необязательно)",
+        githubUsernamePlaceholder:
+          "Используется как контактная информация в тексте issue",
+        summaryLabel: "Краткое описание (обязательно)",
+        summaryPlaceholder: "Описание в один абзац",
+        currentBehaviorLabel: "Текущее поведение (необязательно)",
+        currentBehaviorPlaceholder: "Что происходит на самом деле?",
+        expectedBehaviorLabel: "Ожидаемое поведение (необязательно)",
+        expectedBehaviorPlaceholder: "Что должно происходить вместо этого?",
+        reproductionStepsLabel: "Шаги воспроизведения (необязательно)",
+        reproductionStepsPlaceholder:
+          "1. Откройте Happier\n2. Запустите сессию\n3. ...",
+        whatChangedLabel: "Что изменилось недавно (необязательно)",
+        whatChangedPlaceholder:
+          "Обновления, изменения конфигурации, новые шаги настройки...",
+      },
+      similarIssues: {
+        title: "Возможные дубликаты",
+        subtitle:
+          "Если один из этих вариантов подходит, вы можете оставить отчёт в комментарии вместо открытия нового issue.",
+        searching: "Поиск issues…",
+        selectedTitle: ({ number }: { number: number }) =>
+          `Используется issue #${number}`,
+        selectedSubtitle: "Нажмите, чтобы вернуться к созданию нового issue.",
+        useIssueA11y: ({ number }: { number: number }) => `Использовать issue #${number}`,
+        issueState: {
+          open: "Открытое issue",
+          closed: "Закрытое issue",
+        },
+      },
+      frequencySeverity: {
+        title: "Частота и серьёзность",
+        frequencyLabel: "Частота",
+        severityLabel: "Серьёзность",
+        frequency: {
+          always: "Всегда",
+          often: "Часто",
+          sometimes: "Иногда",
+          once: "Один раз",
+        },
+        severity: {
+          blocker: "Блокирует",
+          high: "Высокая",
+          medium: "Средняя",
+          low: "Низкая",
+        },
+      },
+      environment: {
+        title: "Окружение (можно редактировать)",
+        appVersionLabel: "Версия приложения",
+        platformLabel: "Платформа",
+        osVersionLabel: "Версия ОС",
+        deviceModelLabel: "Модель устройства",
+        serverUrlLabel: "URL сервера",
+        serverVersionLabel: "Версия сервера (необязательно)",
+        deploymentTypeLabel: "Тип развертывания",
+        deploymentType: {
+          cloud: "Облако",
+          selfHosted: "Самостоятельный хостинг",
+          enterprise: "Корпоративный",
+        },
+      },
+      consent: {
+        title: "Согласие",
+        understandTitle:
+          "Я понимаю, что диагностика может включать технические метаданные",
+        understandSubtitle:
+          "Не включайте пароли, токены доступа или приватные ключи.",
+      },
+      submit: {
+        requiredFieldsHint:
+          "Заполните обязательные поля, чтобы включить отправку.",
+        submitting: "Отправка отчёта…",
+        addToIssue: ({ number }: { number: number }) =>
+          `Добавить в issue #${number}`,
+        submitNew: "Отправить отчёт об ошибке",
+      },
+    },
+  },
+
+  memorySearchSettings: {
+    disabled: {
+      footer:
+        "Включите поиск по памяти в «Функции», чтобы настроить локальную индексацию.",
+      title: "Поиск по памяти отключён",
+      subtitle: "Откройте Настройки → Функции и включите memory.search",
+      openFeatureSettings: "Открыть настройки функций",
+      alertTitle: "Поиск по памяти отключён",
+      alertBody: "Включите memory.search в Настройки → Функции.",
+    },
+    enabled: {
+      title: "Включено",
+      subtitle: "Создавать и поддерживать локальный индекс на этой машине",
+      footer:
+        "Когда включено, Happier строит локальный индекс на устройстве на основе расшифрованных транскриптов для быстрого поиска и восстановления.",
+    },
+    budgets: {
+      groupTitle: "Лимит диска",
+      groupFooter:
+        "Ограничивает объём диска, который может использовать локальный индекс памяти (вытеснение best-effort).",
+      mbLabel: ({ mb }: { mb: number }) => `${mb} МБ`,
+      lightTitle: "Лимит лёгкого индекса",
+      lightPromptTitle: "Лимит лёгкого индекса",
+      lightPromptBody:
+        "Макс. МБ для лёгкого (сводных шардов) индекса на этой машине.",
+      deepTitle: "Лимит глубокого индекса",
+      deepPromptTitle: "Лимит глубокого индекса",
+      deepPromptBody:
+        "Макс. МБ для глубокого (chunk) индекса на этой машине.",
+    },
+    privacy: {
+      groupTitle: "Конфиденциальность",
+      groupFooter:
+        "Удаляет локальные производные индексы и кэши моделей при отключении поиска по памяти.",
+      deleteOnDisableTitle: "Удалять при отключении",
+      deleteOnDisableSubtitle:
+        "Удаляет локальные индексы и кэши, когда поиск по памяти отключён",
+    },
+    screen: {
+      machineLabel: ({ machine }: { machine: string }) => `Машина: ${machine}`,
+      searchPlaceholder: "Поиск по памяти",
+      enableLocalSearch: "Включить локальный поиск по памяти",
+    },
+    machine: {
+      title: "Машина",
+      changeTitle: "Сменить машину",
+      noMachine: "Нет машины",
+    },
+    indexMode: {
+      title: "Режим индексации",
+      footer:
+        "Лёгкий режим хранит небольшие фрагменты-сводки. Глубокий может находить больше, но использует больше диска.",
+      triggerTitle: "Режим",
+      options: {
+        lightTitle: "Лёгкий (рекомендуется)",
+        lightSubtitle: "Только фрагменты-сводки",
+        deepTitle: "Глубокий",
+        deepSubtitle: "Индексировать фрагменты сообщений локально",
+      },
+    },
+    backfill: {
+      title: "Дозаполнение",
+      footer:
+        "Определяет, сколько истории индексировать при включении локальной памяти.",
+      triggerTitle: "Политика",
+      options: {
+        newOnlyTitle: "Только новое (рекомендуется)",
+        newOnlySubtitle: "Индексировать только созданное после включения",
+        last30DaysTitle: "Последние 30 дней",
+        last30DaysSubtitle: "Дозаполнить недавние сессии",
+        allHistoryTitle: "Вся история",
+        allHistorySubtitle: "Дозаполнить всё (может занять время)",
+      },
+    },
+    hints: {
+      title: "Генерация подсказок памяти",
+      footer:
+        "Управляет тем, как создаются фрагменты-сводки для лёгкого поиска по памяти.",
+      backend: {
+        title: "Бэкенд суммаризации",
+        promptTitle: "Бэкенд суммаризации",
+        promptBody:
+          "Введите id бэкенда для execution-run (например, claude, codex).",
+      },
+      model: {
+        title: "Модель суммаризации",
+        promptTitle: "Модель суммаризации",
+        promptBody: "Введите id модели, который будет передан в бэкенд.",
+      },
+      permissions: {
+        triggerTitle: "Разрешения суммаризатора",
+        options: {
+          noToolsTitle: "Без инструментов (рекомендуется)",
+          noToolsSubtitle: "Только суммаризация текста",
+          readOnlyTitle: "Только чтение",
+          readOnlySubtitle:
+            "Разрешить не изменяющие инструменты (если поддерживается)",
+        },
+      },
+    },
+    embeddings: {
+      groupTitle: "Эмбеддинги",
+      groupFooter:
+        "Необязательно: загрузите локальную модель, чтобы улучшить семантические совпадения в режиме Deep.",
+      enableTitle: "Включить эмбеддинги",
+      enableSubtitle:
+        "Улучшает ранжирование для глубокого поиска (скачает модель при первом использовании)",
+      modelTitle: "Модель эмбеддингов",
+      promptBody: "Введите id локальной модели transformers.",
+      modelPlaceholder: "Xenova/all-MiniLM-L6-v2",
+    },
+  },
+
+	  subAgentGuidance: {
+	    ruleEditor: {
+      header: {
+        newRule: "Новое правило",
+        editRule: "Редактировать правило",
+      },
+      enabled: {
+        title: "Включено",
+      },
+      enabledState: {
+        enabled: "Включено",
+        disabled: "Отключено",
+      },
+      common: {
+        noPreference: "Без предпочтений",
+      },
+      titleField: {
+        label: "Название (необязательно)",
+        placeholder: "например, работа с UI",
+      },
+      descriptionField: {
+        label: "Когда агенту следует делегировать?",
+        placeholder: "Опишите, когда/как делегировать…",
+      },
+      backendPicker: {
+        title: "Предпочтительный бэкенд (необязательно)",
+        searchPlaceholder: "Поиск бэкендов",
+        noPreference: {
+          subtitle: "Пусть агент выберет бэкенд.",
+        },
+      },
+      modelPicker: {
+        title: "Предпочтительная модель (необязательно)",
+        searchPlaceholder: "Поиск моделей",
+        noPreference: {
+          subtitle: "Пусть бэкенд выберет модель по умолчанию.",
+        },
+      },
+      intent: {
+        title: "Предпочтительное намерение (необязательно)",
+        noPreference: {
+          subtitle: "Пусть агент решит намерение.",
+        },
+        options: {
+          review: {
+            title: "Ревью",
+            subtitle: "Код-ревью / находки.",
+          },
+          plan: {
+            title: "Планирование",
+            subtitle: "Планирование / архитектура.",
+          },
+          delegate: {
+            title: "Делегирование",
+            subtitle: "Делегирование / выполнение.",
+          },
+        },
+      },
+	      exampleToolCalls: {
+	        label: "Примеры вызовов инструментов (необязательно, по одному в строке)",
+	        placeholder: "например: execution.run.start …",
+	      },
+	    },
+	    settings: {
+	      groupTitle: "Субагент",
+	      disabled: {
+	        footer:
+	          "Execution runs отключены. Включите Execution Runs в Настройки → Функции, чтобы использовать подсказки для делегирования.",
+	        enableExecutionRuns: {
+	          title: "Включить Execution Runs",
+	          subtitle: "Открыть настройки «Функции»",
+	        },
+	      },
+	      footer:
+	        "Правила добавляются к системному промпту, чтобы основной агент знал, когда и как вы предпочитаете запускать саб-агентные прогоны.",
+	      enableInjection: {
+	        title: "Включить внедрение подсказок",
+	      },
+	      characterBudget: {
+	        title: "Лимит символов",
+	        subtitle: ({ value }: { value: string }) => `${value} символов`,
+	        promptTitle: "Лимит символов",
+	        promptBody:
+	          "Максимум символов, которые будут добавлены в системный промпт.",
+	      },
+	      rules: {
+	        groupTitle: "Правила подсказок",
+	        footerEnabled:
+	          "Нажмите на правило, чтобы изменить. Агент использует их как подсказки для делегирования.",
+	        footerDisabled: "Включите внедрение, чтобы активировать правила.",
+	        emptyTitle: "Пока нет правил",
+	        emptySubtitle: "Добавьте правило, чтобы направлять делегирование.",
+	        addRuleTitle: "Добавить правило",
+	        addRuleSubtitle: "Создать новое правило подсказок",
+	        untitled: "Без названия",
+	        descriptionFallback: "Опишите, когда делегировать.",
+	        tapToEdit: "Нажмите, чтобы изменить",
+	        meta: {
+	          target: ({ value }: { value: string }) => `Цель: ${value}`,
+	          model: ({ value }: { value: string }) => `Модель: ${value}`,
+	          intent: ({ value }: { value: string }) => `Намерение: ${value}`,
+	        },
+	      },
+	      preview: {
+	        title: "Предпросмотр",
+	        footer:
+	          "Это (обрезанный) текст, который добавляется к системному промпту.",
+	        systemPromptLabel: "Системный промпт (добавлено)",
+	      },
+	    },
+	  },
 
   settings: {
     title: "Настройки",
@@ -164,17 +781,32 @@ export const ru: TranslationStructure = {
     social: "Социальное",
     account: "Аккаунт",
     accountSubtitle: "Управление учетной записью",
+    addYourPhone: "Добавить телефон",
+    addYourPhoneSubtitle: "Показать QR‑код, чтобы войти на телефоне",
     appearance: "Внешний вид",
     appearanceSubtitle: "Настройка внешнего вида приложения",
-    voiceAssistant: "Голосовой ассистент",
-    voiceAssistantSubtitle: "Настройка предпочтений голосового взаимодействия",
-    memorySearch: "Локальный поиск по памяти",
-    memorySearchSubtitle: "Поиск по прошлым разговорам (локально на устройстве)",
-    featuresTitle: "Возможности",
-    featuresSubtitle: "Включить или отключить функции приложения",
+	    voiceAssistant: "Голосовой ассистент",
+	    voiceAssistantSubtitle: "Настройка предпочтений голосового взаимодействия",
+	    memorySearch: "Локальный поиск по памяти",
+	    memorySearchSubtitle: "Поиск по прошлым разговорам (локально на устройстве)",
+	    notifications: "Уведомления",
+	    notificationsSubtitle: "Настройки push-уведомлений",
+	    attachments: "Вложения",
+	    attachmentsSubtitle: "Настройки загрузки файлов",
+	    sourceControl: "Контроль версий",
+	    sourceControlSubtitle: "Стратегия коммитов и поведение бэкенда",
+	    automations: "Автоматизации",
+	    automationsSubtitle: "Управление расписаниями и повторяющимися запусками",
+	    executionRunsSubtitle: "Execution runs на разных машинах",
+	    connectedServices: "Подключенные сервисы",
+	    connectedServicesSubtitle: "Подписки Claude/Codex и OAuth‑профили",
+	    featuresTitle: "Возможности",
+	    featuresSubtitle: "Включить или отключить функции приложения",
     developer: "Разработчик",
     developerTools: "Инструменты разработчика",
     about: "О программе",
+    actionsSettingsAboutSubtitle:
+      "Включайте или отключайте действия глобально, по поверхности (UI/голос/MCP) и по размещению (где они отображаются в интерфейсе). Отключённые действия блокируются по принципу fail‑closed во время выполнения.",
     aboutFooter:
       "Happier Coder — мобильное приложение для работы с Codex и Claude Code. Использует сквозное шифрование, все данные аккаунта хранятся только на вашем устройстве. Не связано с Anthropic.",
     whatsNew: "Что нового",
@@ -186,7 +818,7 @@ export const ru: TranslationStructure = {
     supportUs: "Поддержите нас",
     supportUsSubtitlePro: "Спасибо за вашу поддержку!",
     supportUsSubtitle: "Поддержать разработку проекта",
-    scanQrCodeToAuthenticate: "Отсканируйте QR-код для авторизации",
+    scanQrCodeToAuthenticate: "Отсканируйте QR‑код, чтобы подключить терминал",
     githubConnected: ({ login }: { login: string }) =>
       `Подключен как @${login}`,
     connectGithubAccount: "Подключить аккаунт GitHub",
@@ -205,6 +837,8 @@ export const ru: TranslationStructure = {
     sessionSubtitleMessageSendingAndTmux: "Отправка сообщений и tmux",
     servers: "Серверы",
     serversSubtitle: "Сохранённые серверы, группы и значения по умолчанию",
+    systemStatus: "Состояние системы",
+    systemStatusSubtitle: "Серверы, аккаунт, машины, демон",
 
     // Dynamic settings messages
     accountConnected: ({ service }: { service: string }) =>
@@ -216,13 +850,591 @@ export const ru: TranslationStructure = {
       name: string;
       status: "online" | "offline";
     }) => `${name} ${status === "online" ? "в сети" : "не в сети"}`,
-    featureToggled: ({
+  featureToggled: ({
       feature,
       enabled,
     }: {
       feature: string;
       enabled: boolean;
     }) => `${feature} ${enabled ? "включена" : "отключена"}`,
+  },
+
+  systemStatus: {
+    sections: {
+      appHealth: "Состояние приложения и синхронизации",
+      currentServer: "Текущий сервер",
+      identity: "Вход в аккаунт",
+      configuredServers: "Настроенные серверы",
+      machinesActiveServer: "Машины (активный сервер)",
+      machinesOtherServer: ({ server }: { server: string }) => `Машины (${server})`,
+      actions: "Действия",
+    },
+    ui: {
+      dataReady: "Данные готовы",
+      realtime: "В реальном времени",
+      socket: "Сокет",
+      socketLastError: ({ error }: { error: string }) => `Последняя ошибка: ${error}`,
+      lastSync: "Последняя синхронизация",
+    },
+    server: {
+      activeServer: "Активный сервер",
+    },
+    identity: {
+      accountId: "ID аккаунта",
+      username: "Имя пользователя",
+    },
+    servers: {
+      noneConfigured: "Серверы не настроены",
+      active: "Активный",
+    },
+    machines: {
+      none: "Нет машин",
+      status: ({ status }: { status: string }) => `Статус: ${status}`,
+    },
+    machine: {
+      unknownHost: "Неизвестная машина",
+      online: "В сети",
+      offline: "Не в сети",
+      fetchDoctorSnapshot: {
+        loading: "Получаем сервер/аккаунт демона…",
+        invalid: "Не удалось прочитать doctor snapshot с машины",
+      },
+      daemonAttributionUnknown: "Сервер/аккаунт демона: неизвестно",
+      daemonAttribution: ({ serverUrl, accountId }: { serverUrl: string; accountId: string }) =>
+        `Демон: ${serverUrl} • ${accountId}`,
+      daemonAttributionAge: ({ age }: { age: string }) => `Проверено: ${age}`,
+      cliVersionBullet: ({ version }: { version: string }) => ` • v${version}`,
+    },
+    mismatch: "Несоответствие",
+    time: {
+      secondsAgo: ({ count }: { count: number }) => `${count}с назад`,
+      minutesAgo: ({ count }: { count: number }) => `${count}м назад`,
+      hoursAgo: ({ count }: { count: number }) => `${count}ч назад`,
+      daysAgo: ({ count }: { count: number }) => `${count}д назад`,
+    },
+    actions: {
+      runDiagnosis: "Запустить диагностику",
+      runDiagnosisSubtitle: "Выявляет несоответствия сервер/аккаунт/демон",
+      refreshMachineAttribution: "Обновить атрибуцию демона",
+      refreshMachineAttributionSubtitle: "Получить сервер/аккаунт демона для нескольких машин в сети",
+      copyJson: "Скопировать JSON состояния системы",
+      copyJsonSubtitle: "Поделиться безопасным снимком для поддержки",
+    },
+  },
+
+  diagnosis: {
+    title: "Диагностика",
+    sections: {
+      overview: "Обзор",
+      actions: "Действия",
+      pasteDoctorJson: "Вставить CLI doctor JSON",
+      machineRuns: "Машины",
+      serverProbe: "Проверка сервера",
+      findings: "Результаты",
+    },
+    overview: {
+      activeServer: "Активный сервер",
+      account: "Аккаунт",
+      onlineMachines: "Машины в сети (активный сервер)",
+      cachedAttribution: ({ count }: { count: number }) => `Доступно doctor snapshot в кэше: ${count}`,
+    },
+    actions: {
+      run: "Запустить диагностику",
+      runSubtitle: "Проверяет сервер, аккаунт, машины и куда подключён демон",
+      copyReport: "Скопировать отчёт диагностики",
+      copyReportSubtitle: "Скопировать безопасный JSON‑отчёт для поддержки",
+    },
+    pasteDoctorJson: {
+      footer: "Совет: выполните `happier doctor --json` на компьютере и вставьте сюда.",
+      placeholder: '{ "capturedAt": "...", ... }',
+      parse: "Проверить вставленный JSON",
+      ok: "Вставленный doctor JSON выглядит корректным.",
+      helper: "Необязательно: вставьте doctor JSON, чтобы диагностировать несоответствия, если машина недоступна.",
+      error: ({ error }: { error: string }) => `Некорректный doctor JSON: ${error}`,
+    },
+    machine: {
+      invalidDoctorSnapshot: "Машина вернула некорректный doctor snapshot",
+    },
+    machineRuns: {
+      none: "Нет доступных машин в сети",
+      idle: "Ожидание",
+      loading: "Выполняется…",
+      ready: "Готово",
+      error: "Ошибка",
+    },
+    serverProbe: {
+      title: "Диагностика сервера",
+      httpError: ({ status }: { status: string }) => `HTTP ${status}`,
+    },
+    findings: {
+      notRun: "Запустите диагностику, чтобы увидеть результаты",
+      notRunSubtitle: "Запускаются безопасные, редактированные проверки (без логов, если не включать диагностику в баг‑репорт).",
+      none: "Проблем не обнаружено",
+      noneSubtitle: "Если проблема остаётся, отправьте баг‑репорт с диагностикой.",
+      code: ({ code }: { code: string }) => `Код: ${code}`,
+      generic: {
+        subtitle: ({ code }: { code: string }) => `Детали для ${code}`,
+        steps: {
+          reportIssue: "Отправьте баг‑репорт и приложите этот отчёт диагностики.",
+        },
+      },
+      serverMismatch: {
+        title: "Несоответствие сервера (UI vs демон)",
+        subtitle: ({ ui, machine }: { ui: string; machine: string }) => `UI: ${ui} • Демон: ${machine}`,
+        steps: {
+          chooseAccount: "Определитесь, какой сервер/аккаунт использовать.",
+          switchUiServer: "Сделайте так, чтобы UI и демон использовали один и тот же сервер.",
+          restartDaemon: "Перезапустите демон с правильным сервером и попробуйте снова.",
+        },
+      },
+      serverMismatchPasted: {
+        title: "Несоответствие сервера (UI vs вставленное)",
+        subtitle: ({ ui, pasted }: { ui: string; pasted: string }) => `UI: ${ui} • Вставлено: ${pasted}`,
+      },
+      settingsMismatch: {
+        title: "Несоответствие настроек CLI и фактического сервера",
+        subtitle: ({ settings, resolved }: { settings: string; resolved: string }) => `settings.json: ${settings} • resolved: ${resolved}`,
+      },
+      accountMismatch: {
+        title: "Несоответствие аккаунта (UI vs демон)",
+        subtitle: ({ ui, machine }: { ui: string; machine: string }) => `UI: ${ui} • Демон: ${machine}`,
+        steps: {
+          signInSameAccount: "Убедитесь, что UI и CLI входят в один и тот же аккаунт на одном сервере.",
+          cliReauth: "В CLI: выйдите и заново выполните авторизацию на нужном сервере.",
+        },
+      },
+      machineMissingAccount: {
+        title: "У машины нет информации об аккаунте",
+      },
+      noOnlineMachines: {
+        title: "Нет машин в сети",
+        steps: {
+          startDaemon: "Запустите демон (и убедитесь, что он работает постоянно).",
+          checkNetwork: "Проверьте сеть и попробуйте снова.",
+        },
+      },
+      serverDiagnosticsDisabled: {
+        title: "Диагностика сервера отключена",
+        steps: {
+          ok: "Это нормально, если на вашем сервере диагностика отключена.",
+        },
+      },
+      serverAuthError: {
+        title: "Ошибка авторизации сервера (401)",
+      },
+      serverUnreachable: {
+        title: "Сервер недоступен",
+        steps: {
+          checkServerUrl: "Проверьте URL сервера и подключение к сети.",
+          tryAgain: "Повторите попытку чуть позже.",
+        },
+      },
+      serverHttpError: {
+        title: "HTTP‑ошибка диагностики сервера",
+        subtitle: ({ status }: { status: string }) => `Сервер ответил: ${status}`,
+      },
+      activeServerNotInProfiles: {
+        title: "Активный сервер не найден в сохранённых профилях",
+      },
+      multipleServers: {
+        title: "Обнаружено несколько серверов на разных машинах",
+      },
+    },
+  },
+
+  connectedServices: {
+    fallbackName: "Подключённый сервис",
+    title: "Подключённые сервисы",
+    authChip: {
+      label: "Авторизация",
+      labelWithCount: ({ count }: { count: number }) => `Авторизация: ${count}`,
+    },
+    list: {
+      empty: "Пока нет подключённых сервисов.",
+      connectedCount: ({ count }: { count: number }) =>
+        `${count} ${plural({ count, one: "подключённый", few: "подключённых", many: "подключённых" })}`,
+      needsReauth: "нужна повторная авторизация",
+      notConnected: "не подключено",
+    },
+    quota: {
+      loading: "Загрузка…",
+      error: ({ message }: { message: string }) => `Ошибка: ${message}`,
+      lastUpdated: ({ time }: { time: string }) => `Обновлено: ${time}`,
+      lastUpdatedStale: ({ time }: { time: string }) =>
+        `Обновлено: ${time} • устарело`,
+      noData: "Пока нет данных по квоте",
+      planLabel: ({ plan }: { plan: string }) => `План: ${plan}`,
+    },
+    oauthPaste: {
+      invalidConfig: "Неверная конфигурация подключённого сервиса.",
+      connectWebGroupTitle: "Подключить (web)",
+      connectWebDescription:
+        "Этот поток использует шаг редиректа через копирование/вставку (как в OpenClaw) и прокси сервера Happier для безопасного обмена токенами.",
+      openAuthorizationUrl: "Открыть URL авторизации",
+      opensInNewTab: "Откроется в новой вкладке",
+      preparing: "Подготовка…",
+      pasteRedirectUrl: "Вставить URL редиректа",
+      pasteRedirectUrlPromptBody:
+        "После завершения OAuth скопируйте итоговый URL редиректа из адресной строки браузера и вставьте его сюда.",
+      working: "Выполняется…",
+      alerts: {
+        connectedTitle: "Подключено",
+        connectedBody: ({ serviceId, profileId }: { serviceId: string; profileId: string }) =>
+          `${serviceId} (${profileId}) подключено.`,
+        failedToConnect: "Не удалось подключиться",
+      },
+    },
+    detail: {
+      unknownService: "Неизвестный подключённый сервис.",
+      actionsGroupTitle: "Действия",
+      setDefaultProfileTitle: "Назначить профиль по умолчанию",
+      setDefaultProfileSubtitleDefault: ({ profileId }: { profileId: string }) =>
+        `По умолчанию: ${profileId}`,
+      setDefaultProfileSubtitleChoose:
+        "Выберите профиль, который будет выбран по умолчанию",
+      setProfileLabelTitle: "Задать метку профиля",
+      setProfileLabelSubtitle:
+        "Необязательная метка, отображаемая в списках авторизации",
+      addOauthProfileTitle: "Добавить профиль OAuth",
+      addOauthProfileSubtitle: "Подключить новый профиль аккаунта",
+      connectSetupTokenTitle: "Подключить через setup-token",
+      connectSetupTokenSubtitle: "Вставьте setup-token Claude",
+      disconnectConfirmBody: ({ service, profileId }: { service: string; profileId: string }) =>
+        `Отключить ${service} (${profileId})?`,
+      prompts: {
+        profileIdTitle: "ID профиля",
+        profileIdBody: "Используйте короткую метку, например work, personal, alt.",
+        setupTokenTitle: "Setup-token",
+        setupTokenBody: "Вставьте ваш Claude setup-token.",
+        profileLabelTitle: "Метка профиля",
+        profileLabelBody: "Необязательно. Показывается в списках авторизации.",
+        profileLabelPlaceholder: "Рабочий аккаунт",
+      },
+      alerts: {
+        invalidProfileIdTitle: "Недопустимый ID профиля",
+        invalidProfileIdBody:
+          "Используйте буквы, цифры, дефис или подчёркивание (макс. 64).",
+        unknownProfileTitle: "Неизвестный профиль",
+        unknownProfileBody: ({ profileId, service }: { profileId: string; service: string }) =>
+          `Профиля «${profileId}» не существует для ${service}.`,
+      },
+      profiles: {
+        empty: "Профилей пока нет.",
+        connected: "Подключён",
+        defaultBadge: "По умолчанию",
+        needsReauth: "Нужна повторная авторизация",
+      },
+    },
+    authModal: {
+      nativeAuthTitle: "Нативная авторизация бэкенда",
+      nativeAuthSubtitle: "Используйте локальный логин CLI / API‑ключи",
+      connectedServicesTitle: "Использовать подключённые сервисы",
+      connectedServicesSubtitle: "Загрузить и материализовать из облака Happier",
+      notConnectedTitle: "Не подключено",
+      notConnectedSubtitle: "Нажмите, чтобы открыть настройки",
+      profileLabel: "Профиль",
+    },
+  },
+
+  attachments: {
+    alerts: {
+      fileTooLargeTitle: "Файл слишком большой",
+      fileTooLargeBody: ({ count }: { count: number }) =>
+        `Пропущено ${count} ${plural({ count, one: "файл", few: "файла", many: "файлов" })}, превышающих максимальный размер вложений.`,
+    },
+  },
+
+  settingsAttachments: {
+    disabled: {
+      title: "Вложения",
+      footer: "Эта функция отключена сервером или политикой сборки.",
+    },
+    fileUploads: {
+      title: "Загрузка файлов",
+    },
+    uploadLocation: {
+      title: "Место загрузки",
+      footer:
+        "Загрузки в директорию workspace — самый совместимый вариант. Загрузки во временную директорию ОС могут помочь избежать артефактов в репозитории, но могут быть недоступны для чтения в более строгих песочницах.",
+      options: {
+        workspace: {
+          title: "Директория workspace (рекомендуется)",
+          subtitle:
+            "Загрузки записываются в директорию относительно workspace, чтобы песочница агента могла надёжно читать их.",
+        },
+        osTemp: {
+          title: "Временная директория ОС",
+          subtitle:
+            "Загрузки записываются во временную директорию ОС. Это может не работать в более строгих песочницах.",
+        },
+      },
+    },
+    workspaceDirectory: {
+      title: "Директория workspace",
+      footer:
+        "Используется только когда место загрузки установлено на Директория workspace.",
+      uploadsDirectory: {
+        title: "Директория загрузок",
+        promptTitle: "Директория загрузок",
+        promptMessage:
+          "Введите директорию относительно workspace (без абсолютных путей, без ..).",
+        invalidDirectoryTitle: "Некорректная директория",
+        invalidDirectoryMessage:
+          "Используйте относительный путь, например `.happier/uploads`.",
+      },
+    },
+    sourceControlIgnore: {
+      title: "Исключения для контроля версий",
+      footer:
+        "Локальные исключения помогают избежать случайных коммитов. Если выбрать .gitignore, это может изменить отслеживаемый файл.",
+      options: {
+        gitInfoExclude: {
+          title: "Игнорировать локально (.git/info/exclude) (рекомендуется)",
+          subtitle:
+            "Предотвращает случайные коммиты без изменения файлов репозитория.",
+        },
+        gitignore: {
+          title: "Игнорировать через .gitignore",
+          subtitle:
+            "Добавляет запись в файл .gitignore в workspace (может быть закоммичено).",
+        },
+        none: {
+          title: "Не добавлять правила игнора",
+          subtitle:
+            "Загрузки могут попасть в контроль версий в зависимости от настроек репозитория.",
+        },
+      },
+      writeIgnoreRules: {
+        title: "Записывать правила игнора",
+      },
+    },
+    limits: {
+      title: "Лимиты",
+      footer:
+        "Эти лимиты применяются локальным обработчиком загрузок CLI (по возможности).",
+      invalidValueTitle: "Некорректное значение",
+      maxAttachmentSize: {
+        title: "Макс. размер вложения (байт)",
+        promptTitle: "Макс. размер вложения (байт)",
+        promptMessage: "Пример: 26214400 для 25MB.",
+        invalidValueMessage: "Введите число от 1024 до 1073741824.",
+      },
+      uploadTtl: {
+        title: "TTL загрузки (мс)",
+        promptTitle: "TTL загрузки (мс)",
+        promptMessage:
+          "Как долго загрузка может оставаться без активности до истечения срока.",
+        invalidValueMessage: "Введите число от 5000 до 3600000.",
+      },
+      chunkSize: {
+        title: "Предпочтительный размер чанка (байт)",
+        promptTitle: "Предпочтительный размер чанка (байт)",
+        promptMessage: "CLI может ограничить это безопасными пределами.",
+        invalidValueMessage: "Введите число от 4096 до 1048576.",
+      },
+    },
+  },
+
+  settingsSourceControl: {
+    commitStrategy: {
+      title: "Стратегия коммита",
+      footer:
+        "Атомарный коммит избегает взаимных помех в индексе при работе нескольких агентов. Staging в Git включает интерактивные сценарии include/exclude.",
+      options: {
+        atomic: {
+          title: "Атомарный коммит (рекомендуется)",
+          subtitle:
+            "Без live‑staging в индексе репозитория. Коммитит все ожидающие изменения одной RPC‑операцией.",
+        },
+        gitStaging: {
+          title: "Рабочий процесс staging в Git",
+          subtitle:
+            "Включает include/exclude и частичный staging по строкам для репозиториев Git.",
+        },
+      },
+    },
+    gitRoutingPreference: {
+      title: "Предпочтение маршрутизации для .git",
+      footer:
+        "Выберите, какой бэкенд предпочитать, когда режим репозитория — .git.",
+      options: {
+        git: {
+          title: "Репозитории .git используют Git",
+          subtitle: "По умолчанию и рекомендовано для совместимости.",
+        },
+        sapling: {
+          title: "Репозитории .git предпочитают Sapling",
+          subtitle:
+            "Использовать Sapling, когда доступны и Git, и Sapling.",
+        },
+      },
+    },
+    remoteConfirmation: {
+      title: "Подтверждение удалённых операций",
+      footer:
+        "Управляет тем, требуют ли операции pull/push подтверждения.",
+      options: {
+        always: {
+          title: "Всегда подтверждать pull/push",
+          subtitle: "Показывать диалоги подтверждения для pull и push.",
+        },
+        pushOnly: {
+          title: "Подтверждать только push",
+          subtitle: "Pull выполняется сразу; push требует подтверждения.",
+        },
+        never: {
+          title: "Никогда не подтверждать",
+          subtitle: "Выполнять pull и push сразу.",
+        },
+      },
+    },
+    pushRejectionRecovery: {
+      title: "Восстановление при отказе push",
+      footer:
+        "Поведение, когда push отклонён, потому что ветка отстаёт от upstream.",
+      options: {
+        promptFetch: {
+          title: "Спросить перед fetch",
+          subtitle:
+            "Спрашивать перед запуском fetch, когда push отклонён из‑за non‑fast‑forward.",
+        },
+        autoFetch: {
+          title: "Авто‑fetch",
+          subtitle:
+            "Автоматически запускать fetch после отклонения non‑fast‑forward push.",
+        },
+        manual: {
+          title: "Ручное восстановление",
+          subtitle:
+            "Не запускать fetch автоматически после отклонения push.",
+        },
+      },
+    },
+    commitMessageGenerator: {
+      title: "Генератор сообщения коммита",
+      footer:
+        "Необязательно: генерировать предложения для сообщения коммита с помощью одноразовой задачи LLM. Требуется поддержка execution runs на демоне.",
+      backendItemTitle: ({ backendId }: { backendId: string }) =>
+        `Бэкенд генератора: ${backendId}`,
+      backendItemSubtitle:
+        "ID бэкенда, используемый для одноразовой генерации сообщения коммита.",
+      backendPromptTitle: "Бэкенд для сообщения коммита",
+      backendPromptMessage: "Введите ID бэкенда",
+      instructionsPlaceholder: "Инструкции для сообщения коммита",
+    },
+    commitAttribution: {
+      title: "Авторство коммита",
+      footer:
+        "Если включено, сообщения коммитов, сгенерированные ИИ, будут содержать кредиты Co‑Authored‑By.",
+      includeCoAuthoredBy: {
+        title: "Добавлять Co‑Authored‑By",
+      },
+    },
+    filesDisplay: {
+      title: "Отображение файлов",
+      footer:
+        "Подсветка синтаксиса экспериментальная и может отключаться для очень больших diff.",
+      diffRenderer: {
+        options: {
+          pierre: {
+            title: "Рендерер diff: Pierre",
+            subtitle:
+              "Лучшее отображение diff на web/desktop. Использует worker‑pipeline и безопасно делает fallback при недоступности.",
+          },
+          happier: {
+            title: "Рендерер diff: Happier",
+            subtitle:
+              "Fallback‑рендерер для совместимости и диагностики.",
+          },
+        },
+      },
+      diffPresentation: {
+        options: {
+          unified: {
+            title: "Макет diff: Единый",
+            subtitle:
+              "Линейный вид (одна колонка). Лучше для узких экранов и быстрого просмотра.",
+          },
+          split: {
+            title: "Макет diff: Рядом",
+            subtitle:
+              "Разделённый вид (две колонки). Лучше для больших экранов и точных сравнений.",
+          },
+        },
+      },
+      syntaxHighlighting: {
+        options: {
+          off: {
+            title: "Подсветка синтаксиса: Выкл",
+            subtitle: "Показывать diff и файлы как обычный моноширинный текст.",
+          },
+          simple: {
+            title: "Подсветка синтаксиса: Простая",
+            subtitle:
+              "Быстрая подсветка по токенам для распространённых языков.",
+          },
+          advanced: {
+            title: "Подсветка синтаксиса: Расширенная",
+            subtitle:
+              "Более точная подсветка на web/desktop; fallback на простую в native.",
+          },
+        },
+      },
+      changedFilesDensity: {
+        options: {
+          comfortable: {
+            title: "Плотность изменённых файлов: Комфортная",
+            subtitle: "Более крупные строки с более читаемыми подписями и статусом.",
+          },
+          compact: {
+            title: "Плотность изменённых файлов: Компактная",
+            subtitle:
+              "Более компактные строки, чтобы легче просматривать при большом числе изменений.",
+          },
+        },
+      },
+    },
+    backends: {
+      backendGroupTitle: ({ backendTitle }: { backendTitle: string }) =>
+        `Бэкенд: ${backendTitle}`,
+      defaultDiffItemTitle: ({
+        backendTitle,
+        diffModeTitle,
+      }: {
+        backendTitle: string;
+        diffModeTitle: string;
+      }) => `Diff по умолчанию для ${backendTitle}: ${diffModeTitle}`,
+      defaultDiffItemSubtitle:
+        "Режим по умолчанию при просмотре файлов с включёнными и ожидающими дельтами.",
+    },
+    diffMode: {
+      pending: "Ожидающие",
+      combined: "Объединённый",
+      included: "Включённые",
+    },
+  },
+
+  settingsNotifications: {
+    push: {
+      title: "Push-уведомления",
+      footer:
+        "Эти уведомления отправляются вашим CLI через Expo, когда вашей сессии требуется внимание.",
+      enabledSubtitle: "Разрешить push-уведомления для этого аккаунта",
+    },
+    types: {
+      title: "Типы",
+      footer: "Отключите отдельные типы, если вам нужны не все уведомления.",
+      ready: {
+        title: "Готово",
+        subtitle:
+          "Уведомлять, когда ход завершён и агент ждёт вашей команды",
+      },
+      permissionRequests: {
+        title: "Запросы разрешений",
+        subtitle:
+          "Уведомлять, когда сессия заблокирована и ждёт одобрения",
+      },
+    },
   },
 
   settingsProviders: {
@@ -258,7 +1470,7 @@ export const ru: TranslationStructure = {
     sessionModeAcpAgentModes: "Режимы агентов ACP",
     runtimeSwitchNone: "Нет переключения в рантайме",
     runtimeSwitchMetadataGating: "Через метаданные",
-    runtimeSwitchAcpSetSessionMode: "ACP setSessionMode",
+    runtimeSwitchAcpSetSessionMode: "ACP: setSessionMode",
     runtimeSwitchProviderNative: "Нативный провайдер",
     modelsTitle: "Модели",
     modelSelectionTitle: "Выбор модели",
@@ -277,10 +1489,27 @@ export const ru: TranslationStructure = {
     acpApplyBehaviorRestartSession: "Перезапустить сессию",
     acpConfigOptionTitle: "ID опции конфигурации модели ACP",
     cliConnectionTitle: "CLI и подключение",
+    targetMachineTitle: "Целевая машина",
     detectedCliTitle: "Обнаруженный CLI",
     installSetupTitle: "Установка / настройка",
     installInfoSeeSetupGuide: "Смотрите руководство по настройке",
     installInfoUseProviderCliInstaller: "Используйте установщик CLI провайдера",
+    cliInstaller: {
+      installTitle: ({ provider }: { provider: string }) =>
+        `Установить ${provider} CLI`,
+      reinstallTitle: ({ provider }: { provider: string }) =>
+        `Переустановить ${provider} CLI`,
+      autoInstallUnavailable: "Авто-установка недоступна для этой машины.",
+      installSubtitle:
+        "Устанавливает CLI провайдера на выбранной машине (best-effort).",
+      reinstallSubtitle:
+        "Повторно запускает установщик провайдера, даже если CLI уже установлен.",
+      noMachineSelected: "Машина не выбрана.",
+      installNotSupported: "Установка не поддерживается на этой машине.",
+      installFailed: "Установка не удалась.",
+      installed: "Установлено.",
+      logPath: ({ logPath }: { logPath: string }) => `Лог: ${logPath}`,
+    },
     setupGuideUrlTitle: "URL руководства по настройке",
     connectedServiceTitle: "Подключённый сервис",
     notFoundTitle: "Провайдер не найден",
@@ -306,6 +1535,19 @@ export const ru: TranslationStructure = {
     },
     display: "Отображение",
     displayDescription: "Управление макетом и интервалами",
+    multiPanePanels: "Правые панели",
+    multiPanePanelsDescription:
+      "Показывать изменяемые по размеру правые панели для файлов и контроля версий (web/tablet)",
+    detailsPaneTabsBehavior: "Вкладки редактора",
+    detailsPaneTabsBehaviorDescription:
+      "Выберите поведение вкладок файлов в панели редактора",
+    detailsPaneTabsBehaviorOptions: {
+      preview: "Вкладка предпросмотра",
+      persistent: "Постоянные вкладки",
+    },
+    editorFocusMode: "Режим фокуса редактора",
+    editorFocusModeDescription:
+      "Скрывать чат и боковую панель при просмотре файлов (web/tablet)",
     inlineToolCalls: "Встроенные вызовы инструментов",
     inlineToolCallsDescription:
       "Отображать вызовы инструментов прямо в сообщениях чата",
@@ -383,6 +1625,25 @@ export const ru: TranslationStructure = {
     experimentalOptions: "Экспериментальные опции",
     experimentalOptionsDescription:
       "Выберите, какие экспериментальные функции включены.",
+    localTogglesTitle: "Функции",
+    localTogglesFooter:
+      "Локальные переключатели по функциям (независимо от поддержки сервера).",
+    featureDiagnostics: {
+      title: "Диагностика функций",
+      footer:
+        "Итоговые решения по функциям (политика сборки, локальная политика, проверки демона/сервера и область действия).",
+      decisionUnknown: "неизвестно",
+      decisionEnabled: "включено",
+      decisionBlocked: ({
+        state,
+        blockedBy,
+        code,
+      }: {
+        state: string;
+        blockedBy: string | null;
+        code: string;
+      }) => `${state} (blockedBy=${blockedBy ?? "null"}, code=${code})`,
+    },
     expAutomations: "Автоматизации",
     expAutomationsSubtitle: "Включить интерфейс автоматизаций и планирование",
     expExecutionRuns: "Запуски выполнений",
@@ -494,14 +1755,17 @@ export const ru: TranslationStructure = {
     connectionTimeout: "Время соединения истекло",
     authenticationFailed: "Ошибка авторизации",
     permissionDenied: "Доступ запрещен",
-    fileNotFound: "Файл не найден",
-    invalidFormat: "Неверный формат",
-    operationFailed: "Операция не выполнена",
-    tryAgain: "Пожалуйста, попробуйте снова",
-    contactSupport: "Если проблема сохранится, обратитесь в поддержку",
-    sessionNotFound: "Сессия не найдена",
-	    voiceSessionFailed: "Не удалось запустить голосовую сессию",
-	    voiceServiceUnavailable: "Голосовой сервис временно недоступен",
+	    fileNotFound: "Файл не найден",
+	    invalidFormat: "Неверный формат",
+	    operationFailed: "Операция не выполнена",
+	    daemonUnavailableTitle: "Демон недоступен",
+	    daemonUnavailableBody:
+	      "Happier не может подключиться к демону на этой машине. Он может быть офлайн, ещё запускаться или быть отключён от сервера.",
+	    tryAgain: "Пожалуйста, попробуйте снова",
+	    contactSupport: "Если проблема сохранится, обратитесь в поддержку",
+	    sessionNotFound: "Сессия не найдена",
+		    voiceSessionFailed: "Не удалось запустить голосовую сессию",
+		    voiceServiceUnavailable: "Голосовой сервис временно недоступен",
 	    voiceAlreadyStarting: "Голос уже запускается в другой сессии",
 	    oauthInitializationFailed: "Не удалось инициализировать процесс OAuth",
 	    tokenStorageFailed: "Не удалось сохранить токены аутентификации",
@@ -664,6 +1928,9 @@ export const ru: TranslationStructure = {
       "Время запуска сессии истекло. Машина может работать медленно или daemon не отвечает.",
     notConnectedToServer:
       "Нет подключения к серверу. Проверьте интернет-соединение.",
+    daemonRpcUnavailableTitle: "Демон недоступен",
+    daemonRpcUnavailableBody:
+      "Happier не может подключиться к демону на этой машине. Он может быть офлайн, ещё запускаться или быть отключён от сервера.",
     startingSession: "Запуск сессии...",
     startNewSessionInFolder: "Новая сессия здесь",
     noMachineSelected: "Пожалуйста, выберите машину для запуска сессии",
@@ -735,7 +2002,7 @@ export const ru: TranslationStructure = {
         "Этот ID возобновления сейчас нельзя применить. Happier вместо этого начнёт новую сессию.",
     },
     codexResumeBanner: {
-      title: "Codex resume",
+      title: "Возобновление Codex",
       updateAvailable: "Доступно обновление",
       systemCodexVersion: ({ version }: { version: string }) =>
         `Системный Codex: ${version}`,
@@ -833,6 +2100,11 @@ export const ru: TranslationStructure = {
     addAndUse: "Добавить и использовать",
     addTargetsTitle: "Добавить",
     addServerSubtitle: "Добавить новый сервер и переключиться на него",
+    serverCount: ({ count }: { count: number }) =>
+      `${count} ${plural({ count, one: "сервер", few: "сервера", many: "серверов" })}`,
+    signedOutSwitchConfirmTitle: "Вы не подключены",
+    signedOutSwitchConfirmBody:
+      "Переключиться на этот сервер и перейти на главный экран, чтобы вы могли войти или создать аккаунт?",
     addServerGroupTitle: "Добавить группу серверов",
     addServerGroupSubtitle: "Создать группу серверов для повторного использования",
     serverGroupNameLabel: "Имя группы",
@@ -840,6 +2112,17 @@ export const ru: TranslationStructure = {
     serverGroupServersLabel: "Серверы",
     saveServerGroup: "Сохранить группу",
     serverGroupMustHaveServer: "Группа серверов должна включать хотя бы один сервер.",
+    multiServerView: {
+      title: "Параллельный просмотр нескольких серверов",
+      footer: "Выберите, объединять ли несколько серверов в одном списке сессий.",
+      enableTitle: "Включить параллельный просмотр",
+      enableSubtitle: "Показывать вместе сессии выбранных серверов",
+      presentationTitle: "Режим отображения",
+      presentation: {
+        flatWithBadges: "Плоский список с бейджами серверов",
+        groupedByServer: "Сгруппировано по серверу",
+      },
+    },
   },
 
   sessionTags: {
@@ -850,6 +2133,10 @@ export const ru: TranslationStructure = {
     newTagTitle: "Новый тег",
     newTagMessage: "Введите название нового тега.",
     newTagConfirm: "Добавить",
+  },
+
+  sessionsList: {
+    serverHeader: ({ server }: { server: string }) => `Сервер: ${server}`,
   },
 
   sessionInfo: {
@@ -899,9 +2186,16 @@ export const ru: TranslationStructure = {
     lastUpdated: "Последнее обновление",
     sequence: "Последовательность",
     quickActions: "Быстрые действия",
+    executionRunsSubtitle: "Посмотреть запуски этой сессии",
+    automationsTitle: "Автоматизации",
+    automationsSubtitle: "Управляйте запланированными сообщениями для этой сессии",
+    viewSessionLogTitle: "Открыть лог сессии",
+    viewSessionLogSubtitle: "Открыть хвост лога в реальном времени для этой сессии",
     pinSession: "Закрепить сессию",
     unpinSession: "Открепить сессию",
     copyResumeCommand: "Скопировать команду возобновления",
+    resumeCommand: ({ sessionId }: { sessionId: string }) =>
+      `happier resume ${sessionId}`,
     viewMachine: "Посмотреть машину",
     viewMachineSubtitle: "Посмотреть детали машины и сессии",
     killSessionSubtitle: "Немедленно завершить сессию",
@@ -1025,6 +2319,18 @@ export const ru: TranslationStructure = {
     unknown: "неизвестно",
   },
 
+  connectionStatus: {
+    title: "Соединение",
+    labels: {
+      server: "Сервер",
+      socket: "Сокет",
+      authenticated: "Авторизовано",
+      lastSync: "Последняя синхронизация",
+      nextRetry: "Следующая попытка",
+      lastError: "Последняя ошибка",
+    },
+  },
+
   time: {
     justNow: "только что",
     minutesAgo: ({ count }: { count: number }) =>
@@ -1035,6 +2341,7 @@ export const ru: TranslationStructure = {
 
   session: {
     inputPlaceholder: "Введите сообщение...",
+    activity: "Активность",
     resuming: "Возобновление...",
     resumeFailed: "Не удалось возобновить сессию",
     resumeSupportNoteChecking:
@@ -1055,13 +2362,131 @@ export const ru: TranslationStructure = {
       `Эта сессия завершена и не может быть возобновлена, потому что ${provider} не поддерживает восстановление контекста здесь. Начните новую сессию, чтобы продолжить.`,
     machineOfflineNoticeTitle: "Машина не в сети",
     machineOfflineNoticeBody: ({ machine }: { machine: string }) =>
-      `"${machine}" не в сети, поэтому Happier пока не может возобновить эту сессию. Подключите машину, чтобы продолжить.`,
-    machineOfflineCannotResume:
-      "Машина не в сети. Подключите её, чтобы возобновить эту сессию.",
-    sharing: {
-      title: "Общий доступ",
-      directSharing: "Прямой доступ",
-      addShare: "Поделиться с другом",
+      `“${machine}” не в сети, поэтому Happier пока не может возобновить эту сессию. Подключите машину, чтобы продолжить.`,
+		    machineOfflineCannotResume:
+		      "Машина не в сети. Подключите её, чтобы возобновить эту сессию.",
+	    openRuns: "Открыть запуски сессии",
+	    openAutomations: "Открыть автоматизации сессии",
+      actionMenu: {
+        openA11y: "Открыть действия сессии",
+      },
+	    detailsPanel: {
+	      emptyHint: "Откройте файл или diff на правой панели.",
+	      unsupportedTab: "Эта вкладка деталей не поддерживается.",
+	      closeA11y: "Закрыть детали",
+          openTabA11y: ({ title }: { title: string }) => `Открыть вкладку ${title}`,
+          pinTabA11y: "Закрепить вкладку",
+          pinnedTabA11y: "Закрепленная вкладка",
+          closeTabA11y: "Закрыть вкладку",
+          enterFocusModeA11y: "Включить режим фокуса редактора",
+          exitFocusModeA11y: "Выключить режим фокуса редактора",
+	    },
+	
+	    actionsDraft: {
+	      noInputHints: "У этого действия нет подсказок ввода.",
+	    },
+
+    planOutput: {
+      title: "План",
+      recommendedBackend: "Рекомендуемый бэкенд",
+      risks: "Риски",
+      milestones: "Вехи",
+      adoptPlan: "Принять план",
+      sending: "Отправка…",
+      failedToAdopt: "Не удалось принять план",
+      a11y: {
+        adoptPlan: "Принять план",
+      },
+    },
+
+    reviewFindings: {
+      title: ({ count }: { count: number }) => `Замечания ревью (${count})`,
+      findingTitle: ({
+        status,
+        severity,
+        category,
+        title,
+      }: {
+        status: string;
+        severity: string;
+        category: string;
+        title: string;
+      }) => `[${status}] [${severity}/${category}] ${title}`,
+      status: {
+        untriaged: "Не классифицировано",
+        accept: "Принять",
+        reject: "Отклонить",
+        defer: "Отложить",
+        needsRefinement: "Требует уточнения",
+      },
+      refinementPlaceholder: "Необязательный комментарий для уточнения",
+      actions: {
+        applyTriage: "Применить классификацию",
+        applying: "Применение…",
+        applyAcceptedFindings: "Применить принятые замечания",
+        sending: "Отправка…",
+      },
+      errors: {
+        applyTriageFailed: "Не удалось применить классификацию.",
+        applyAcceptedFailed: "Не удалось применить принятые замечания.",
+      },
+    },
+
+		    pendingMessages: {
+		      title: "Отложенные сообщения",
+          indicator: ({ count }: { count: number }) => `Ожидает (${count})`,
+          badgeLabel: ({ count }: { count: number }) =>
+            count > 0 ? `Ожидает (+${count})` : "Ожидает",
+		      empty: "Нет отложенных сообщений.",
+		      actions: {
+	        up: "Вверх",
+	        down: "Вниз",
+	        edit: "Редактировать",
+	        steerNow: "Направить сейчас",
+	        sendNow: "Отправить сейчас",
+	        sendNowInterrupt: "Отправить сейчас (прервать)",
+	        requeue: "Вернуть в очередь",
+	      },
+	      editPrompt: {
+	        title: "Редактировать отложенное сообщение",
+	      },
+	      removeConfirm: {
+	        title: "Удалить отложенное сообщение?",
+	        body: "Это удалит отложенное сообщение.",
+	      },
+	      steerConfirm: {
+	        title: "Направить сейчас?",
+	        body: "Это добавит сообщение в текущий ход без его остановки.",
+	      },
+	      sendConfirm: {
+	        title: "Отправить сейчас?",
+	        interruptTitle: "Отправить сейчас (прервать)?",
+	        body: "Это остановит текущий ход и отправит сообщение немедленно.",
+	      },
+	      discarded: {
+	        title: "Отброшенные сообщения",
+	        subtitle:
+	          "Эти сообщения не были отправлены агенту (например, при переключении с удалённого на локальный режим).",
+	        label: "Отброшено",
+	        removeConfirm: {
+	          title: "Удалить отброшенное сообщение?",
+	          body: "Это удалит отброшенное сообщение.",
+	        },
+	      },
+	      errors: {
+	        updateFailed: "Не удалось обновить отложенное сообщение",
+	        deleteFailed: "Не удалось удалить отложенное сообщение",
+	        sendFailed: "Не удалось отправить отложенное сообщение",
+	        restoreFailed: "Не удалось восстановить отброшенное сообщение",
+	        deleteDiscardedFailed: "Не удалось удалить отброшенное сообщение",
+	        sendDiscardedFailed: "Не удалось отправить отброшенное сообщение",
+	        reorderFailed: "Не удалось изменить порядок отложенных сообщений",
+	      },
+	    },
+	    sharing: {
+	      title: "Общий доступ",
+	      directSharing: "Прямой доступ",
+	      addShare: "Поделиться с другом",
       accessLevel: "Уровень доступа",
       shareWith: "Поделиться с",
       sharedWith: "Доступ предоставлен",
@@ -1148,28 +2573,62 @@ export const ru: TranslationStructure = {
     completedWithNoOutput: "[Команда завершена без вывода]",
   },
 
-	  voiceAssistant: {
-	    connecting: "Подключение...",
-	    active: "Голосовой ассистент активен",
-	    connectionError: "Ошибка соединения",
-	    label: "Голосовой ассистент",
+  delegation: {
+    output: {
+      title: "Делегирование",
+      deliverablesTitle: "Результаты",
+    },
+  },
+
+  modelPickerOverlay: {
+    refreshModelsA11y: "Обновить модели",
+    loadingModelsA11y: "Загрузка моделей…",
+    refreshingModelsA11y: "Обновление моделей…",
+    searchPlaceholder: "Поиск моделей…",
+    customTitle: "Пользовательский…",
+    effectiveLabel: ({ label }: { label: string }) => `Фактически: ${label}`,
+  },
+
+		  voiceAssistant: {
+		    connecting: "Подключение...",
+		    active: "Голосовой ассистент активен",
+		    connectionError: "Ошибка соединения",
+		    label: "Голосовой ассистент",
 	    tapToEnd: "Нажмите, чтобы завершить",
 	  },
 
-		  voiceSurface: {
-		    start: "Старт",
-		    stop: "Стоп",
-		    selectSessionToStart: "Выберите сессию, чтобы запустить голос",
-		    targetSession: "Целевая сессия",
-		    noTarget: "Сессия не выбрана",
-		    clearTarget: "Очистить цель",
-		  },
+			  voiceSurface: {
+			    start: "Старт",
+			    stop: "Стоп",
+			    selectSessionToStart: "Выберите сессию, чтобы запустить голос",
+			    targetSession: "Целевая сессия",
+			    noTarget: "Сессия не выбрана",
+			    clearTarget: "Очистить цель",
+			    a11y: {
+			      teleport: "Телепортировать голосового агента",
+			      toggleActivity: "Переключить голосовую активность",
+			      clearActivity: "Очистить голосовую активность",
+			    },
+			  },
 
-	  voiceActivity: {
-	    title: "Голосовая активность",
-	    empty: "Пока нет голосовой активности.",
-	    clear: "Очистить",
-	  },
+		  voiceActivity: {
+		    title: "Голосовая активность",
+		    empty: "Пока нет голосовой активности.",
+		    clear: "Очистить",
+		    format: {
+		      voiceAgent: "Голосовой агент",
+		      you: "Вы",
+		      assistant: "Ассистент",
+		      assistantStreaming: "Ассистент…",
+		      action: "Действие",
+		      error: "Ошибка",
+		      status: "Статус",
+		      started: "Запущено",
+		      stopped: "Остановлено",
+		      errorFallback: "ошибка",
+		      eventFallback: "событие",
+		    },
+		  },
 
 	  agentInput: {
 	    dropToAttach: "Перетащите, чтобы прикрепить файлы",
@@ -1193,6 +2652,7 @@ export const ru: TranslationStructure = {
     },
     permissionMode: {
       title: "РЕЖИМ РАЗРЕШЕНИЙ",
+      effectiveLabel: ({ label }: { label: string }) => `Эффективно: ${label}`,
       default: "По умолчанию",
       readOnly: "Только чтение",
       acceptEdits: "Принимать правки",
@@ -1228,6 +2688,9 @@ export const ru: TranslationStructure = {
     model: {
       title: "МОДЕЛЬ",
       configureInCli: "Настройте модели в настройках CLI",
+      customDescription: "Использовать ID модели, которого нет в списке.",
+      customPromptBody: "Введите ID модели",
+      customPlaceholder: "например: claude-3.5-sonnet",
     },
     codexPermissionMode: {
       title: "РЕЖИМ РАЗРЕШЕНИЙ CODEX",
@@ -1283,6 +2746,26 @@ export const ru: TranslationStructure = {
       fileLabel: "ФАЙЛ",
       folderLabel: "ПАПКА",
     },
+    acp: {
+      modeSectionTitle: "Режим",
+      refreshModesA11y: "Обновить режимы",
+      pendingSwitching: ({ from, to }: { from: string; to: string }) =>
+        `Ожидает: переключение с ${from} на ${to}`,
+      currentMode: ({ name }: { name: string }) => `Текущий: ${name}`,
+      loadingModes: "Загрузка режимов…",
+      refreshingModes: "Обновление режимов…",
+      useDefaultModeHint: "Использовать режим по умолчанию для этого агента.",
+      startIn: ({ name }: { name: string }) => `Запуск в: ${name}`,
+      optionsSectionTitle: "Параметры",
+      currentValue: ({ value }: { value: string }) => `Текущий: ${value}`,
+      pendingValue: ({
+        current,
+        requested,
+      }: {
+        current: string;
+        requested: string;
+      }) => `Ожидает: ${current} → ${requested}`,
+    },
     actionMenu: {
       title: "ДЕЙСТВИЯ",
       files: "Файлы",
@@ -1311,6 +2794,13 @@ export const ru: TranslationStructure = {
   },
 
   tools: {
+    common: {
+      more: ({ count }: { count: number }) => `+${count} ещё`,
+      elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}с`,
+    },
+    webFetch: {
+      httpStatus: ({ status }: { status: number }) => `HTTP ${status}`,
+    },
     fullView: {
       description: "Описание",
       inputParams: "Входные параметры",
@@ -1329,10 +2819,59 @@ export const ru: TranslationStructure = {
       moreTools: ({ count }: { count: number }) =>
         `+${count} ещё ${plural({ count, one: "инструмент", few: "инструмента", many: "инструментов" })}`,
     },
+    subAgentRunView: {
+      planTitle: "План",
+      delegateTitle: "Делегирование",
+      reviewDigestTitle: "Сводка ревью",
+    },
+    changeTitleView: {
+      titleLabel: "Заголовок",
+    },
+    enterPlanMode: {
+      title: "Включен режим планирования",
+      body:
+        "Теперь агент сначала будет предлагать структурированный план перед тем, как выполнять действия. Когда будете готовы, вы можете выйти из режима планирования или запросить изменения.",
+    },
+    structuredResult: {
+      exit: "Код выхода",
+      stdout: "Стандартный вывод",
+      stderr: "Стандартная ошибка",
+      diff: "Различия",
+      result: "Результат",
+      items: "Элементы",
+      more: ({ count }: { count: number }) => `+${count} ещё`,
+    },
+    workspaceIndexingPermission: {
+      defaultTitle: "Индексация рабочего пространства",
+      description:
+        "Индексация помогает агенту быстрее искать по вашему коду и давать более точные ответы. Она может просканировать файлы в рабочем пространстве.",
+      optionFallback: "Вариант",
+      chooseOptionHint: "Выберите вариант ниже, чтобы продолжить.",
+    },
+    acpHistoryImport: {
+      title: "Импортировать историю сессии?",
+      defaultNote:
+        "Эта история сессии отличается от того, что уже есть в Happier. Импорт может создать дубликаты.",
+      counts: {
+        local: ({ count }: { count: number }) => `Локально: ${count}`,
+        remote: ({ count }: { count: number }) => `Удалённо: ${count}`,
+      },
+      preview: {
+        localTail: "Локально (хвост)",
+        remoteTail: "Удалённо (хвост)",
+        unknownRole: "неизвестно",
+      },
+      actions: {
+        import: "Импортировать",
+        skip: "Пропустить",
+      },
+    },
     multiEdit: {
       editNumber: ({ index, total }: { index: number; total: number }) =>
         `Правка ${index} из ${total}`,
       replaceAll: "Заменить все",
+      summaryEdits: ({ count }: { count: number }) =>
+        `${count} ${plural({ count, one: "правка", few: "правки", many: "правок" })}`,
     },
     names: {
       task: "Задача",
@@ -1420,9 +2959,65 @@ export const ru: TranslationStructure = {
 
   files: {
     searchPlaceholder: "Поиск файлов...",
+    clearSearchA11y: "Очистить поиск",
+    createFileA11y: "Создать файл",
+    createFolderA11y: "Создать папку",
+    createFilePromptTitle: "Создать файл",
+    createFilePromptBody: "Введите путь относительно корня проекта.",
+    createFileInvalidPath:
+      "Недопустимый путь файла. Используйте путь относительно workspace, например src/new-file.ts.",
+    createFileFailed: "Не удалось создать файл.",
+    createFolderPromptTitle: "Создать папку",
+    createFolderPromptBody: "Введите путь папки относительно корня проекта.",
+    createFolderInvalidPath:
+      "Недопустимый путь папки. Используйте путь относительно workspace, например src/new-folder.",
+    createFolderFailed: "Не удалось создать папку.",
+    changeRow: {
+      viewDiffA11y: ({ file }: { file: string }) => `Показать diff для ${file}`,
+      status: {
+        untracked: "Неотслеживаемый файл",
+        added: "Новый файл",
+        deleted: "Удалённый файл",
+        renamed: "Переименованный файл",
+        copied: "Скопированный файл",
+        conflicted: "Файл с конфликтом",
+        modified: "Изменённый файл",
+      },
+    },
+    projectLinkPicker: {
+      title: "Привязать файл проекта",
+      searchFailed: "Поиск не удался. Попробуйте ещё раз.",
+    },
     detachedHead: "отделённый HEAD",
     summary: ({ staged, unstaged }: { staged: number; unstaged: number }) =>
       `${staged} подготовлено • ${unstaged} не подготовлено`,
+    branchSummary: {
+      ahead: "Впереди",
+      behind: "Позади",
+      included: "Включено",
+      staged: "Подготовлено",
+      pending: "Ожидает",
+      unstaged: "Не подготовлено",
+      upstreamLabel: ({ upstream }: { upstream: string }) => `Upstream ${upstream}`,
+      noUpstream: "Нет upstream",
+    },
+    stageActions: {
+      selectPendingDiffMode:
+        "Выберите режим diff «Ожидает», чтобы выбрать строки для коммита.",
+      unableToBuildPatchFromSelection:
+        "Не удалось собрать патч из выбранных строк.",
+      diffChangedRefreshAndReselect:
+        "Diff изменился — обновите и выберите строки заново.",
+    },
+    discardChangesFor: ({ path }: { path: string }) => `Отменить изменения для ${path}`,
+    commitSelection: {
+      addToCommit: "Добавить в коммит",
+      removeFromCommit: "Убрать из коммита",
+    },
+    sourceControlStatus: {
+      changedFilesLabel: ({ count }: { count: number }) =>
+        `${count} ${plural({ count, one: "файл", few: "файла", many: "файлов" })}`,
+    },
     repositoryChangedFiles: ({ count }: { count: number }) =>
       `Изменённые файлы репозитория (${count})`,
     sessionAttributedChanges: ({ count }: { count: number }) =>
@@ -1447,9 +3042,20 @@ export const ru: TranslationStructure = {
 	    noFilesInProject: "Файлов в проекте нет",
 	    repositoryFolderLoadFailed: "Не удалось загрузить папку",
 	    repositoryCollapseAll: "Свернуть все",
+    sourceControlOperationsLog: {
+      title: "Недавние операции контроля версий",
+      allSessions: "Все сессии",
+      thisSession: "Эта сессия",
+      emptyThisSession: "Нет недавних операций для этой сессии.",
+    },
+    operationsHistory: {
+      recentCommits: "Недавние коммиты",
+      noCommitsAvailable: "Коммиты недоступны.",
+      loadMore: "Загрузить ещё коммиты",
+    },
 	    reviewFilterPlaceholder: "Фильтр файлов...",
 	    reviewNoMatches: "Нет совпадений",
-	    reviewLargeDiffOneAtATime: "Обнаружен большой diff; показываю по одному файлу.",
+	    reviewLargeDiffOneAtATime: "Обнаружен большой diff; изменения будут подгружаться при прокрутке.",
 	    reviewDiffRequestFailed: "Не удалось загрузить diff",
 	    reviewUnableToLoadDiff: "Не удалось загрузить diff",
 	    tryDifferentTerm: "Попробуйте другой поисковый запрос",
@@ -1458,17 +3064,174 @@ export const ru: TranslationStructure = {
     projectRoot: "Корень проекта",
     stagedChanges: ({ count }: { count: number }) =>
       `Подготовленные изменения (${count})`,
-    unstagedChanges: ({ count }: { count: number }) =>
-      `Неподготовленные изменения (${count})`,
-    // File viewer strings
-    loadingFile: ({ fileName }: { fileName: string }) =>
-      `Загрузка ${fileName}...`,
-    binaryFile: "Бинарный файл",
-    cannotDisplayBinary: "Невозможно отобразить содержимое бинарного файла",
-    diff: "Различия",
+	    unstagedChanges: ({ count }: { count: number }) =>
+	      `Неподготовленные изменения (${count})`,
+	    // File viewer strings
+	    fileReadFailed: "Не удалось прочитать файл",
+	    fileWriteFailed: "Не удалось записать файл",
+      fileEditor: {
+        experimentalHint:
+          "Редактирование экспериментально. Сохраните, чтобы записать изменения обратно в worktree сессии.",
+      },
+	    fileEditingUnsupported:
+	      "Редактирование файлов не поддерживается подключённым демоном. Обновите Happier на машине, чтобы включить операции записи.",
+	    selectionFailed: "Не удалось обновить выбор",
+	    openReviewCommentsFailed: "Не удалось открыть комментарии к ревью",
+        reviewComments: {
+          title: ({ count }: { count: number }) => `Комментарии ревью (${count})`,
+          placeholder: "Добавьте комментарий к ревью…",
+          jump: "Перейти",
+          addCommentA11y: "Добавить комментарий",
+          closeCommentA11y: "Закрыть комментарий",
+          draftsChipLabel: ({ count }: { count: number }) => `Ревью (${count})`,
+          errors: {
+            empty: "Комментарий не может быть пустым",
+            couldNotMapSelection: "Не удалось сопоставить выделение со строкой diff",
+          },
+        },
+        commitDetails: {
+          missingContext: "Не хватает контекста коммита",
+          failedToLoadDiff: "Не удалось загрузить diff коммита",
+          diffUnavailableTitle: "Diff коммита недоступен",
+          diffUnavailableHint:
+            "Попробуйте открыть коммит снова на экране «Файлы».",
+          commitLabel: "Коммит",
+          running: ({ operation }: { operation: string }) =>
+            `Выполняется: ${operation}`,
+          revert: {
+            title: "Откатить коммит",
+            button: "Откатить коммит",
+            confirm: "Откатить",
+            success: "Коммит успешно откатан",
+            failed: "Не удалось откатить коммит",
+          },
+        },
+        commitRevertUnavailable: "Откат недоступен для этого коммита.",
+        commitMessageEditor: {
+          placeholder: "Сообщение коммита",
+          generate: "Сгенерировать",
+          generating: "Генерация…",
+          applySuggestion: "Применить предложение",
+          commit: "Сделать коммит",
+          generateFailed: "Не удалось сгенерировать сообщение коммита",
+          generatorDisabled: "Генератор сообщений коммита отключён",
+        },
+	    loadingFile: ({ fileName }: { fileName: string }) =>
+	      `Загрузка ${fileName}...`,
+	    binaryFile: "Бинарный файл",
+	    cannotDisplayBinary: "Невозможно отобразить содержимое бинарного файла",
+	    diff: "Различия",
     file: "Файл",
+    diffModes: {
+      pending: "Ожидает",
+      included: "Включено",
+      combined: "Объединено",
+    },
+    fileActions: {
+      selectForCommit: "Выбрать для коммита",
+      stageFile: "Добавить в stage",
+      removeFromSelection: "Убрать из выбора",
+      unstageFile: "Убрать из stage",
+      selectionHint:
+        "Выберите «Включено» или «Ожидает», чтобы включить выбор строк.",
+      selectedLines: {
+        selectLinesForCommit: "Выбрать строки для коммита",
+        stageSelectedLines: "Добавить выбранные строки в stage",
+        unstageSelectedLines: "Убрать выбранные строки из stage",
+      },
+      clearSelection: "Очистить выбор",
+    },
+    toolbar: {
+      changedFiles: "Изменённые файлы",
+      allRepositoryFiles: "Все файлы репозитория",
+      repositoryView: "Вид репозитория",
+      sessionView: "Вид сессии",
+      review: "Ревью",
+      list: "Список",
+      scm: "Git",
+    },
     fileEmpty: "Файл пустой",
     noChanges: "Нет изменений для отображения",
+    sourceControlOperations: {
+      title: "Контроль версий",
+      actorThisSession: "эта сессия",
+      actorSession: ({ sessionIdPrefix }: { sessionIdPrefix: string }) =>
+        `сессия ${sessionIdPrefix}`,
+      running: ({ operation, actor }: { operation: string; actor: string }) =>
+        `Выполняется: ${operation} · ${actor}`,
+      lockedBy: ({ actor }: { actor: string }) =>
+        `Операции контроля версий заблокированы ${actor}.`,
+      globalLock:
+        "Операции временно заблокированы, потому что другая сессия выполняет команду контроля версий.",
+      selection: ({ count }: { count: number }) =>
+        count === 1
+          ? "Выбран 1 файл для следующего коммита."
+          : `Выбрано ${count} файлов для следующего коммита.`,
+      clear: "Очистить",
+      conflictsDetected:
+        "Обнаружены конфликты. Коммит, pull и push заблокированы до их устранения.",
+      actions: {
+        fetch: "Получить",
+        pull: "Скачать",
+        push: "Отправить",
+      },
+      blockedHints: {
+        lock: "Блокировка",
+        commitBlocked: "Коммит заблокирован",
+        pullBlocked: "Pull заблокирован",
+        pushBlocked: "Push заблокирован",
+      },
+    },
+  },
+
+  executionRuns: {
+    newRun: {
+      headerTitle: "Запустить выполнение",
+      sections: {
+        intent: "Назначение",
+        permissions: "Разрешения",
+        backends: "Бэкенды",
+        instructions: "Инструкции",
+      },
+      intents: {
+        review: "Ревью",
+        plan: "План",
+        delegate: "Делегировать",
+      },
+      permissionModes: {
+        readOnly: "Только чтение",
+        default: "По умолчанию",
+      },
+      instructionsPlaceholder: "Что должен сделать подагент?",
+      actions: {
+        start: "Запустить",
+      },
+      guidancePreview: "Предпросмотр подсказок",
+      a11y: {
+        startRun: "Запустить выполнение",
+        cancel: "Отмена",
+        selectIntent: ({ intent }: { intent: string }) =>
+          `Выбрать назначение ${intent}`,
+        selectPermissionMode: ({ mode }: { mode: string }) =>
+          `Выбрать разрешения ${mode}`,
+        toggleBackend: ({ backendId }: { backendId: string }) =>
+          `Переключить бэкенд ${backendId}`,
+      },
+    },
+    details: {
+      labels: {
+        intent: "Намерение",
+        backendId: "ID бэкенда",
+        permissionMode: "Режим разрешений",
+        retentionPolicy: "Политика хранения",
+        runClass: "Класс запуска",
+        ioMode: "Режим ввода/вывода",
+      },
+      timestamps: {
+        started: "Начато",
+        finished: "Завершено",
+      },
+    },
   },
 
   settingsSession: {
@@ -1476,116 +3239,286 @@ export const ru: TranslationStructure = {
       title: "Отправка сообщений",
       footer:
         "Определяет, что происходит при отправке сообщения, пока агент работает.",
-      queueInAgentTitle: "В очередь агента (текущий)",
-      queueInAgentSubtitle:
-        "Записать в стенограмму сразу; агент обработает, когда будет готов.",
-      interruptTitle: "Прервать и отправить",
-      interruptSubtitle: "Прервать текущий ход, затем отправить немедленно.",
-      pendingTitle: "Ожидание готовности",
-      pendingSubtitle:
-        "Сообщения ожидают в очереди; агент забирает, когда готов.",
-      busySteerPolicyTitle: "Когда агент занят (с поддержкой управления)",
-      busySteerPolicyFooter:
-        "Если агент поддерживает управление на лету, выберите, отправлять ли сообщения сразу или сначала в «Ожидание».",
-      busySteerPolicy: {
-        steerImmediatelyTitle: "Управлять сразу",
-        steerImmediatelySubtitle:
-          "Отправить сразу и направить текущий ход (без прерывания).",
-        queueForReviewTitle: "В очередь «Ожидание»",
-        queueForReviewSubtitle:
-          "Сначала поместить в «Ожидание»; отправить позже через «Направить сейчас».",
-      },
-    },
-    thinking: {
-      title: "Размышления",
-      footer:
-        "Определяет, как сообщения размышлений агента отображаются в стенограмме сессии.",
-      displayModeTitle: "Отображение размышлений",
-      displayMode: {
-        inlineTitle: "Встроенное (по умолчанию)",
-        inlineSubtitle: "Показывать размышления прямо в стенограмме.",
-        toolTitle: "Карточка инструмента",
-        toolSubtitle: "Показывать размышления как карточку инструмента «Рассуждение».",
-        hiddenTitle: "Скрытое",
-        hiddenSubtitle: "Скрывать размышления из стенограммы.",
-      },
-    },
-    toolRendering: {
-      title: "Отображение инструментов",
-      footer:
-        "Определяет, сколько деталей инструментов показывается на шкале времени сессии. Это настройка интерфейса, не влияет на поведение агента.",
-      defaultToolDetailLevelTitle: "Уровень детализации по умолчанию",
-      localControlDefaultTitle: "По умолчанию для локального управления",
-      showDebugByDefaultTitle: "Показывать отладку по умолчанию",
-      showDebugByDefaultSubtitle:
-        "Авторазворот исходных данных инструмента в полном просмотре.",
-    },
-    toolDetailOverrides: {
-      title: "Переопределения детализации инструментов",
-      footer:
-        "Переопределить уровень детализации для конкретных инструментов. Применяется к каноническому имени инструмента (V2) после нормализации.",
-    },
-    permissions: {
-      title: "Разрешения",
-      entrySubtitle: "Открыть настройки разрешений",
-      footer:
-        "Настройте разрешения по умолчанию и порядок применения изменений к запущенным сессиям.",
-      applyChangesFooter:
-        "Выберите, когда изменения разрешений вступают в силу для запущенных сессий.",
-      backendFooter:
-        "Задайте режим разрешений по умолчанию при запуске сессий с этим бэкендом.",
-      defaultPermissionModeTitle: "Режим разрешений по умолчанию",
-      applyTiming: {
-        immediateTitle: "Применить немедленно",
-        nextPromptTitle: "Применить при следующем сообщении",
-      },
-    },
-    defaultPermissions: {
-      title: "Разрешения по умолчанию",
-      footer:
-        "Применяются при запуске новой сессии. Профили могут переопределять.",
-      applyPermissionChangesTitle: "Применение изменений разрешений",
-      applyPermissionChangesImmediateSubtitle:
-        "Применить немедленно для запущенных сессий (обновление метаданных сессии).",
-      applyPermissionChangesNextPromptSubtitle: "Применить только при следующем сообщении.",
-    },
-    replayResume: {
-      title: "Воспроизведение для возобновления",
-      footer:
-        "Когда возобновление провайдера недоступно, можно воспроизвести недавние сообщения стенограммы в новой сессии как контекст.",
-      enabledTitle: "Включить воспроизведение для возобновления",
-      enabledSubtitleOn:
-        "Предлагать возобновление через воспроизведение, когда возобновление провайдера недоступно.",
-      enabledSubtitleOff: "Не предлагать возобновление через воспроизведение.",
-      strategyTitle: "Стратегия воспроизведения",
-      strategy: {
-        recentTitle: "Недавние сообщения",
-        recentSubtitle: "Использовать только последние сообщения стенограммы.",
-        summaryRecentTitle: "Сводка + недавние (экспериментально)",
-        summaryRecentSubtitle:
-          "Включить краткую сводку и недавние сообщения (по возможности).",
-      },
-      recentMessagesTitle: "Количество недавних сообщений",
-      recentMessagesPlaceholder: "16",
-    },
-    toolDetailLevel: {
-      titleOnlyTitle: "Только заголовок",
-      titleOnlySubtitle: "Показывать только название инструмента (без тела) на шкале времени.",
-      summaryTitle: "Сводка",
-      summarySubtitle: "Показывать компактную, безопасную сводку на шкале времени.",
-      fullTitle: "Полное",
-      fullSubtitle: "Показывать полные детали прямо на шкале времени.",
-      defaultTitle: "По умолчанию",
-      defaultSubtitle: "Использовать глобальную настройку по умолчанию.",
-    },
-    terminalConnect: {
-      title: "Подключение терминала",
-      legacySecretExportTitle: "Экспорт устаревшего секрета (совместимость)",
-      legacySecretExportEnabledSubtitle:
-        "Включено: экспортирует устаревший секрет аккаунта в терминал для подключения старых терминалов. Не рекомендуется.",
-      legacySecretExportDisabledSubtitle:
-        "Отключено (рекомендуется): использовать только ключ контента для терминалов (Terminal Connect V2).",
-    },
+	      queueInAgentTitle: "В очередь агента (текущий)",
+	      queueInAgentSubtitle:
+	        "Записать в стенограмму сразу; агент обработает, когда будет готов.",
+	      interruptTitle: "Прервать и отправить",
+	      interruptSubtitle: "Прервать текущий ход, затем отправить немедленно.",
+	      pendingTitle: "Ожидание готовности",
+	      pendingSubtitle:
+	        "Сообщения ожидают в очереди; агент забирает, когда готов.",
+	      busySteerPolicyTitle: "Когда агент занят (с поддержкой управления)",
+	      busySteerPolicyFooter:
+	        "Если агент поддерживает управление на лету, выберите, отправлять ли сообщения сразу или сначала в «Ожидание».",
+	      busySteerPolicy: {
+	        steerImmediatelyTitle: "Управлять сразу",
+	        steerImmediatelySubtitle:
+	          "Отправить сразу и направить текущий ход (без прерывания).",
+	        queueForReviewTitle: "В очередь «Ожидание»",
+	        queueForReviewSubtitle:
+	          "Сначала поместить в «Ожидание»; отправить позже через «Направить сейчас».",
+	      },
+	    },
+	    thinking: {
+	      title: "Размышления",
+	      footer:
+	        "Определяет, как сообщения размышлений агента отображаются в стенограмме сессии.",
+	      displayModeTitle: "Отображение размышлений",
+	      displayMode: {
+	        inlineTitle: "Встроенное (по умолчанию)",
+	        inlineSubtitle: "Показывать размышления прямо в стенограмме.",
+	        toolTitle: "Карточка инструмента",
+	        toolSubtitle: "Показывать размышления как карточку инструмента «Рассуждение».",
+	        hiddenTitle: "Скрытое",
+	        hiddenSubtitle: "Скрывать размышления из стенограммы.",
+	      },
+	    },
+	    toolRendering: {
+	      title: "Отображение инструментов",
+	      footer:
+	        "Определяет, сколько деталей инструментов показывается на шкале времени сессии. Это настройка интерфейса, не влияет на поведение агента.",
+	      defaultToolDetailLevelTitle: "Уровень детализации по умолчанию",
+	      expandedToolDetailLevelTitle: "Уровень деталей при раскрытии",
+	      timelineChrome: {
+	        title: "Стиль инструментов в таймлайне",
+	        cardsTitle: "Карточки",
+	        cardsSubtitle:
+	          "Карточки инструментов с содержимым внутри (в зависимости от уровня детализации).",
+	        activityFeedTitle: "Лента активности",
+	        activityFeedSubtitle:
+	          "Компактные строки, оптимизированные для высокой плотности инструментов.",
+	      },
+	      cardDensity: {
+	        title: "Плотность карточек",
+	        comfortableTitle: "Комфортно",
+	        comfortableSubtitle: "Больше отступов и более чёткое разделение.",
+	        compactTitle: "Компактно",
+	        compactSubtitle: "Более плотные заголовки и меньше отступов.",
+	      },
+	      activityFeed: {
+	        defaultDetailTitle: "Детали по умолчанию (лента активности)",
+	        expandedDetailTitle: "Детали при раскрытии (лента активности)",
+	        tapActionTitle: "Действие по нажатию (лента активности)",
+	        tapAction: {
+	          expandTitle: "Раскрыть",
+	          expandSubtitle: "Нажатие раскрывает или сворачивает детали внутри.",
+	          openTitle: "Открыть",
+	          openSubtitle: "Нажатие открывает экран полного просмотра инструмента.",
+	        },
+	        defaultExpandedTitle: "Раскрывать по умолчанию",
+	        defaultExpandedSubtitle:
+	          "Раскрывать строки инструментов по умолчанию в ленте активности.",
+	      },
+	      localControlDefaultTitle: "По умолчанию для локального управления",
+	      showDebugByDefaultTitle: "Показывать отладку по умолчанию",
+	      showDebugByDefaultSubtitle:
+	        "Авторазворот исходных данных инструмента в полном просмотре.",
+	    },
+	    transcript: {
+	      title: "Стенограмма",
+	      entrySubtitle: "Открыть настройки стенограммы",
+	      footer:
+	        "Настройте отображение чатов и поведение стенограммы.",
+	      layoutTitle: "Макет",
+	      layoutFooter:
+	        "Выберите между простой линейной стенограммой и группировкой по ходам.",
+	      layoutPickerTitle: "Макет стенограммы",
+	      layout: {
+	        linearTitle: "Линейный (текущий)",
+	        linearSubtitle: "Показывать сообщения как плоский список.",
+	        turnsTitle: "Ходы",
+	        turnsSubtitle: "Группировать сообщения в ходы пользователь/ассистент.",
+	      },
+	      activityGroupTitle: "Группировать инструменты в «Активность»",
+	      activityGroupSubtitle:
+	        "Компактно группировать вызовы инструментов в секцию «Активность» внутри каждого хода.",
+	      toolAppearanceTitle: "Вид инструментов",
+	      toolAppearanceSubtitle:
+	        "Настройте, как инструменты выглядят в стенограмме.",
+	      motionTitle: "Анимации",
+	      motionFooter: "Управляйте анимациями в стенограмме.",
+	      motionPickerTitle: "Анимации",
+	      motion: {
+	        offTitle: "Выключено",
+	        offSubtitle: "Отключить анимации стенограммы.",
+	        subtleTitle: "Ненавязчиво (по умолчанию)",
+	        subtleSubtitle: "Быстрая минимальная анимация для новой активности.",
+	        fullTitle: "Полно",
+	        fullSubtitle: "Более выразительные анимации и переходы.",
+	      },
+	      advancedMotionTitle: "Расширенные анимации…",
+	      advancedMotionSubtitle:
+	        "Настройте окно свежести и переключатели анимаций.",
+	      scrollTitle: "Прокрутка",
+	      scrollFooter:
+	        "Управляйте закреплением снизу и кнопкой перехода к низу.",
+	      scrollPinTitle: "Закрепить внизу",
+	      scrollPinSubtitle:
+	        "Следовать за новыми сообщениями, когда вы внизу.",
+	      jumpToBottomTitle: "Кнопка «вниз»",
+	      jumpToBottomSubtitle:
+	        "Показывать кнопку, когда вы прокрутили вверх и пришла новая активность.",
+	      advancedScrollTitle: "Расширенная прокрутка…",
+	      advancedScrollSubtitle: "Настройте пороги и счётчики.",
+	      advanced: {
+	        turnGroupingTitle: "Группировка ходов",
+	        turnGroupingFooter:
+	          "Определяет, как формируется «Активность» внутри ходов.",
+	        activityStrategyTitle: "Стратегия группировки активности",
+	        activityStrategy: {
+	          consecutiveTitle: "Последовательные инструменты (по умолчанию)",
+	          consecutiveSubtitle:
+	            "Группировать в «Активность» только последовательные вызовы инструментов.",
+	          allToolsTitle: "Все инструменты в ходе",
+	          allToolsSubtitle:
+	            "Группировать все вызовы инструментов в ходе в одну секцию «Активность».",
+	        },
+            activityCollapsedPreviewCountTitle: "Предпросмотр (свернуто)",
+            activityCollapsedPreviewCountSubtitle: ({ value }: { value: string }) => `Показывать последние ${value} инструмент(а/ов), когда «Активность» свернута.`,
+            activityCollapsedPreviewCount: {
+              offTitle: "Выключено",
+              offSubtitle: "Показывать только заголовок «Активность».",
+              oneTitle: "1 инструмент",
+              oneSubtitle: "Показывать самый последний инструмент в виде строки предпросмотра.",
+              twoTitle: "2 инструмента",
+              twoSubtitle: "Показывать 2 последних инструмента в виде строк предпросмотра.",
+              threeTitle: "3 инструмента",
+              threeSubtitle: "Показывать 3 последних инструмента в виде строк предпросмотра.",
+            },
+	        motionTitle: "Анимации (расшир.)",
+	        motionFooter:
+	          "Анимации ограничены окном свежести, чтобы история оставалась стабильной.",
+	        freshnessTitle: "Окно свежести",
+	        freshnessSubtitle: ({ value }: { value: string }) => `Текущее: ${value}ms`,
+	        freshnessPromptTitle: "Окно свежести (ms)",
+	        freshnessPromptBody:
+	          "Установите, как долго новые элементы считаются «свежими» для анимаций.",
+	        animateNewItemsTitle: "Анимировать новые элементы",
+	        animateNewItemsSubtitle:
+	          "Анимировать новые потоковые сообщения и инструменты.",
+	        animateToolExpandCollapseTitle:
+	          "Анимировать раскрытие/сворачивание инструмента",
+	        animateToolExpandCollapseSubtitle:
+	          "Анимировать переходы раскрытия/сворачивания внутри.",
+	        animateToolExpandCollapseFreshOnlyTitle:
+	          "Раскрытие/сворачивание только для свежих",
+	        animateToolExpandCollapseFreshOnlySubtitle:
+	          "Анимировать раскрытие/сворачивание только для свежих инструментов.",
+	        animateThinkingTitle: "Анимировать размышления",
+	        animateThinkingSubtitle:
+	          "Анимировать потоковые сообщения размышления, когда они видимы.",
+	        scrollTitle: "Прокрутка (расшир.)",
+	        scrollFooter:
+	          "Настройте пороги закрепления и поведение перехода вниз.",
+	        pinOffsetTitle: "Порог смещения закрепления",
+	        pinOffsetSubtitle: ({ value }: { value: string }) => `Текущее: ${value}px`,
+	        pinOffsetPromptTitle: "Порог смещения закрепления (px)",
+	        pinOffsetPromptBody:
+	          "Установите, насколько далеко от низа считается закреплённым.",
+	        autoFollowTitle: "Автоследование при закреплении",
+	        autoFollowSubtitle:
+	          "Когда закреплено, автоматически следовать за новой активностью.",
+	        jumpMinNewCountTitle: "Минимум новых для кнопки",
+	        jumpMinNewCountSubtitle: ({ value }: { value: string }) => `Текущее: ${value}`,
+	        jumpMinNewCountPromptTitle: "Минимум новых (кнопка)",
+	        jumpMinNewCountPromptBody:
+	          "Показывать кнопку только после этого количества новых элементов.",
+	        jumpAnimateScrollTitle: "Анимировать переход вниз",
+	        jumpAnimateScrollSubtitle:
+	          "Анимировать прокрутку при переходе вниз.",
+	      },
+	    },
+	    toolDetailOverrides: {
+	      title: "Переопределения детализации инструментов",
+	      footer:
+	        "Переопределить уровень детализации для конкретных инструментов. Применяется к каноническому имени инструмента (V2) после нормализации.",
+	    },
+	    permissions: {
+	      title: "Разрешения",
+	      entrySubtitle: "Открыть настройки разрешений",
+	      footer:
+	        "Настройте разрешения по умолчанию и порядок применения изменений к запущенным сессиям.",
+	      promptSurfaceTitle: "Запросы разрешений",
+	      promptSurfaceFooter:
+	        "Выберите, где во время сессии показывать запросы на подтверждение.",
+	      applyChangesFooter:
+	        "Выберите, когда изменения разрешений вступают в силу для запущенных сессий.",
+	      backendFooter:
+	        "Задайте режим разрешений по умолчанию при запуске сессий с этим бэкендом.",
+	      defaultPermissionModeTitle: "Режим разрешений по умолчанию",
+	      promptSurface: {
+	        composerTitle: "Рядом с вводом (рекомендуется)",
+	        composerSubtitle: "Показывать подробные карточки разрешений рядом с вводом.",
+	        transcriptTitle: "В стенограмме",
+	        transcriptSubtitle: "Показывать запросы разрешений внутри сообщений инструментов.",
+	        bothTitle: "Оба",
+	        bothSubtitle: "Показывать рядом с вводом и внутри стенограммы.",
+	      },
+	      applyTiming: {
+	        immediateTitle: "Применить немедленно",
+	        nextPromptTitle: "Применить при следующем сообщении",
+	      },
+	    },
+	    subAgentGuidanceEntry: {
+	      openSubtitle: "Открыть настройки суб-агента",
+	    },
+	    actionsEntry: {
+	      footer:
+	        "Включайте действия по поверхности и размещению (UI, голос, MCP) и контролируйте, где они появляются.",
+	      openSubtitle: "Открыть настройки действий",
+	    },
+	    defaultPermissions: {
+	      title: "Разрешения по умолчанию",
+	      footer:
+	        "Применяются при запуске новой сессии. Профили могут переопределять.",
+	      applyPermissionChangesTitle: "Применение изменений разрешений",
+	      applyPermissionChangesImmediateSubtitle:
+	        "Применить немедленно для запущенных сессий (обновление метаданных сессии).",
+	      applyPermissionChangesNextPromptSubtitle: "Применить только при следующем сообщении.",
+	    },
+	    replayResume: {
+	      title: "Воспроизведение для возобновления",
+	      footer:
+	        "Когда возобновление провайдера недоступно, можно воспроизвести недавние сообщения стенограммы в новой сессии как контекст.",
+	      enabledTitle: "Включить воспроизведение для возобновления",
+	      enabledSubtitleOn:
+	        "Предлагать возобновление через воспроизведение, когда возобновление провайдера недоступно.",
+	      enabledSubtitleOff: "Не предлагать возобновление через воспроизведение.",
+	      strategyTitle: "Стратегия воспроизведения",
+	      strategy: {
+	        recentTitle: "Недавние сообщения",
+	        recentSubtitle: "Использовать только последние сообщения стенограммы.",
+	        summaryRecentTitle: "Сводка + недавние (экспериментально)",
+	        summaryRecentSubtitle:
+	          "Включить краткую сводку и недавние сообщения (по возможности).",
+	      },
+	      recentMessagesTitle: "Количество недавних сообщений",
+	      recentMessagesPlaceholder: "16",
+	    },
+	    toolDetailLevel: {
+	      titleOnlyTitle: "Только заголовок",
+	      titleOnlySubtitle: "Показывать только название инструмента на шкале времени (без подзаголовка, без тела).",
+	      compactTitle: "Компактно",
+	      compactSubtitle: "Показывать название инструмента + короткий подзаголовок в одной строке (без тела).",
+	      summaryTitle: "Сводка",
+	      summarySubtitle: "Показывать компактную, безопасную сводку на шкале времени.",
+	      fullTitle: "Полное",
+	      fullSubtitle: "Показывать полные детали прямо на шкале времени.",
+	      defaultTitle: "По умолчанию",
+	      defaultSubtitle: "Использовать глобальную настройку по умолчанию.",
+          styleDefaultTitle: "По умолчанию (рекомендуется)",
+          styleDefaultSubtitle: "Карточки: Сводка. Лента активности: Компактно.",
+          expandedStyleDefaultTitle: "По умолчанию (рекомендуется)",
+          expandedStyleDefaultSubtitle: "Карточки: Полное. Лента активности: Сводка.",
+	    },
+	    terminalConnect: {
+	      title: "Подключение терминала",
+	      legacySecretExportTitle: "Экспорт устаревшего секрета (совместимость)",
+	      legacySecretExportEnabledSubtitle:
+	        "Включено: экспортирует устаревший секрет аккаунта в терминал для подключения старых терминалов. Не рекомендуется.",
+	      legacySecretExportDisabledSubtitle:
+	        "Отключено (рекомендуется): использовать только ключ контента для терминалов (Terminal Connect V2).",
+	    },
     sessionList: {
       title: "Список сессий",
       footer: "Настройте, что показывается в каждой строке сессии.",
@@ -1668,6 +3601,13 @@ export const ru: TranslationStructure = {
     },
     byo: {
       title: "Свой ElevenLabs",
+      agentReuseDialog: {
+        title: "Агент Happier уже существует",
+        messageWithId: ({ name, id }: { name: string; id: string }) =>
+          `Мы нашли существующего агента ElevenLabs («${name}», id: ${id}).\n\nХотите обновить его или создать нового?`,
+        messageNoId: ({ name }: { name: string }) =>
+          `Мы нашли существующего агента ElevenLabs («${name}»).\n\nХотите обновить его или создать нового?`,
+      },
       configured:
         "Настроено. Использование голоса будет списываться с вашего аккаунта ElevenLabs.",
       notConfigured:
@@ -1721,6 +3661,91 @@ export const ru: TranslationStructure = {
       provisioningGroupTitle: "Подготовка агента",
       provisioningGroupFooter:
         "Если вы меняете голос/настройки, нажмите «Обновить агента» для применения в ElevenLabs.",
+      realtime: {
+        call: {
+          title: "Звонок",
+          welcome: {
+            title: "Приветствие",
+            subtitle: "Необязательное приветствие в начале звонка.",
+            detail: {
+              off: "Выкл.",
+              immediate: "Сразу",
+              onFirstTurn: "На первом обращении",
+            },
+            options: {
+              offSubtitle: "Без приветствия.",
+              immediateSubtitle:
+                "Приветствовать сразу после подключения звонка.",
+              onFirstTurnSubtitle:
+                "Приветствовать в начале первого ответа.",
+            },
+          },
+        },
+        voicePicker: {
+          title: "Голос",
+          subtitle: "Выберите голос ElevenLabs для ответов.",
+          missingApiKeyTitle: "Добавьте API-ключ, чтобы загрузить голоса",
+          loadingTitle: "Загрузка голосов…",
+          errorTitle: "Не удалось загрузить голоса",
+          errorSubtitle: "Проверьте API-ключ и попробуйте снова.",
+        },
+        modelPicker: {
+          title: "Модель",
+          subtitle:
+            "Необязательно: переопределить id модели TTS ElevenLabs.",
+          detailAuto: "Авто",
+          options: {
+            autoTitle: "Авто",
+            autoSubtitle: "Использовать модель ElevenLabs по умолчанию.",
+            multilingualV2Subtitle: "Частый выбор по умолчанию (мультиязычная).",
+            turboV2Subtitle:
+              "Меньше задержка (если доступно в вашем тарифе).",
+            turboV25Subtitle: "Turbo 2.5 (если доступно).",
+            customTitle: "Своя…",
+            customSubtitle: "Введите id модели.",
+          },
+          prompt: {
+            title: "ID модели",
+            body: "Введите id модели ElevenLabs или оставьте пустым, чтобы использовать по умолчанию.",
+          },
+        },
+        voiceSettings: {
+          default: "По умолчанию",
+          stability: {
+            title: "Стабильность",
+            subtitle: "0–1. Пусто = по умолчанию.",
+            promptTitle: "Стабильность (0–1)",
+            promptBody:
+              "Введите число от 0 до 1. Оставьте пустым, чтобы использовать по умолчанию.",
+            invalid: "Введите число от 0 до 1.",
+          },
+          similarityBoost: {
+            title: "Усиление сходства",
+            subtitle: "0–1. Пусто = по умолчанию.",
+            promptTitle: "Усиление сходства (0–1)",
+            promptBody:
+              "Введите число от 0 до 1. Оставьте пустым, чтобы использовать по умолчанию.",
+            invalid: "Введите число от 0 до 1.",
+          },
+          style: {
+            title: "Стиль",
+            subtitle: "0–1. Пусто = по умолчанию.",
+            promptTitle: "Стиль (0–1)",
+            promptBody:
+              "Введите число от 0 до 1. Оставьте пустым, чтобы использовать по умолчанию.",
+            invalid: "Введите число от 0 до 1.",
+          },
+          speed: {
+            title: "Скорость",
+            subtitle: "0.5–2. Пусто = по умолчанию.",
+            promptTitle: "Скорость (0.5–2)",
+            promptBody:
+              "Введите число от 0.5 до 2. Оставьте пустым, чтобы использовать по умолчанию.",
+            invalid: "Введите число от 0.5 до 2.",
+          },
+        },
+        getStartedTitle: "Начать",
+      },
       apiKeySaveFailed:
         "Не удалось сохранить API-ключ. Пожалуйста, попробуйте ещё раз.",
       disconnect: "Отключить",
@@ -1744,9 +3769,410 @@ export const ru: TranslationStructure = {
       apiKeyPlaceholder: "Необязательно",
       apiKeySaveFailed:
         "Не удалось сохранить API-ключ. Пожалуйста, попробуйте ещё раз.",
+      googleCloudTts: {
+        provider: {
+          title: "Google Cloud: синтез речи",
+          subtitle:
+            "Используйте свой API‑ключ Google Cloud для синтеза аудио.",
+          detail: "Google Cloud (GCP)",
+        },
+        common: {
+          default: "По умолчанию",
+        },
+        apiKey: {
+          title: "API‑ключ Google Cloud",
+          promptTitle: "API‑ключ Google Cloud",
+          promptBody:
+            "Создайте API‑ключ с включенным Text-to-Speech API. Опционально: ограничьте ключ этим приложением (iOS bundle id / Android package+SHA1).",
+        },
+        androidCertSha1: {
+          title: "SHA‑1 сертификата Android (необязательно)",
+          subtitle:
+            "Нужно только если вы ограничили API‑ключ своим Android‑приложением.",
+          promptTitle: "SHA‑1 сертификата Android",
+          promptBody: "Пример: AA:BB:CC:... (из сертификата подписи).",
+        },
+        language: {
+          title: "Язык",
+          subtitle: "Необязательный фильтр списка голосов.",
+          searchPlaceholder: "Поиск языков",
+          allTitle: "Все",
+          allSubtitle: "Показывать голоса для всех языков.",
+        },
+        speakingRate: {
+          title: "Скорость речи",
+          subtitle: "0.25–4.0 (пусто = по умолчанию для голоса).",
+          promptTitle: "Скорость речи",
+          promptBody:
+            "Задайте скорость речи (0.25–4.0). Оставьте пустым для значения по умолчанию.",
+        },
+        pitch: {
+          title: "Высота",
+          subtitle: "-20–20 (пусто = по умолчанию для голоса).",
+          promptTitle: "Высота",
+          promptBody:
+            "Задайте высоту (-20–20). Оставьте пустым для значения по умолчанию.",
+        },
+        voice: {
+          title: "Голос",
+          subtitle: "Выберите голос Google Cloud.",
+          searchPlaceholder: "Поиск голосов",
+          selectPrompt: "Выбрать…",
+          setApiKeyPrompt: "Укажите API‑ключ",
+          loadingTitle: "Загрузка голосов…",
+        },
+        format: {
+          title: "Формат",
+          subtitle: "MP3 меньше; WAV без сжатия.",
+          mp3Subtitle: "Меньше размер, широкая совместимость.",
+          wavSubtitle: "Больше размер, без сжатия.",
+        },
+        alerts: {
+          missingApiKey: "Отсутствует API‑ключ Google Cloud.",
+          missingVoice: "Сначала выберите голос Google Cloud.",
+        },
+      },
+      googleGeminiStt: {
+        provider: {
+          title: "Google Gemini (аудио)",
+          subtitle: "Расшифровывайте аудио с помощью мультимодальных моделей Gemini.",
+          detail: "Gemini от Google",
+        },
+        apiKey: {
+          title: "API-ключ Gemini",
+          promptTitle: "API-ключ Gemini",
+          promptBody: "Создайте API-ключ в Google AI Studio (Gemini API).",
+        },
+        model: {
+          title: "Модель Gemini",
+          subtitle: "Выберите модель Gemini для транскрипции.",
+          searchPlaceholder: "Поиск моделей",
+          customTitle: "Пользовательский id модели…",
+          customSubtitle: "Введите имя модели вручную.",
+          loadingModelsTitle: "Загрузка моделей…",
+          promptTitle: "Модель Gemini",
+          promptBody: "Пример: gemini-2.5-flash",
+        },
+        language: {
+          title: "Язык",
+          subtitle: "Необязательная подсказка для повышения точности транскрипции.",
+          searchPlaceholder: "Поиск языков",
+          autoTitle: "Авто",
+          autoSubtitle: "Не передавать языковую подсказку.",
+        },
+      },
+      kokoro: {
+        common: {
+          default: "По умолчанию",
+          none: "Нет",
+        },
+        runtime: {
+          title: "Среда выполнения Kokoro",
+          unsupportedSubtitle: "Kokoro не поддерживается на этом устройстве/в этой среде.",
+          unavailableDetail: "Недоступно",
+        },
+        manifest: {
+          title: "Манифест пакета модели",
+          subtitle:
+            "По умолчанию используются пакеты моделей Happier (переопределяется через EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS).",
+          detailResolved: "Определён",
+          detailMissing: "Отсутствует",
+        },
+        assetPack: {
+          title: "Пакет модели Kokoro",
+          subtitleNative: "Выберите набор ресурсов Kokoro.",
+          subtitleWeb: "Выберите конфигурацию среды Kokoro.",
+        },
+        model: {
+          title: "Модель Kokoro",
+          subtitleNative: "Скачайте необходимые файлы для синтеза на устройстве.",
+          subtitleWeb: "Скачивается по запросу. Использует WebAssembly (бета).",
+        },
+        modelStatus: {
+          downloading: "Загрузка…",
+          downloadingPrefix: "Загрузка",
+          ready: "Готово",
+          error: "Ошибка",
+          notDownloaded: "Не скачано",
+        },
+        removeAssets: {
+          title: "Удалить файлы Kokoro",
+          subtitle: "Освободите место, удалив скачанные файлы Kokoro.",
+          detailRemove: "Удалить",
+          confirmTitle: "Удалить файлы Kokoro?",
+          confirmBody: "Это удалит скачанные файлы Kokoro с этого устройства.",
+          confirmButton: "Удалить",
+        },
+        updates: {
+          title: "Проверить обновления модели",
+          subtitle: "Вручную проверить, доступен ли более новый пакет модели.",
+          check: "Проверить",
+          upToDate: "Актуально",
+          updateAvailable: "Доступно обновление",
+        },
+        alerts: {
+          runtimeUnsupported: {
+            body: "Kokoro не поддерживается на этом устройстве/в этой среде.",
+          },
+          missingManifest: {
+            title: "Отсутствует URL манифеста",
+            body: "Не удалось определить URL манифеста пакета модели. Проверьте EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS (или устаревшие переменные окружения Kokoro).",
+          },
+          notInstalledTitle: "Не установлено",
+          notInstalledBody:
+            "Сначала скачайте пакет модели, чтобы включить проверку обновлений.",
+          upToDateTitle: "Актуально",
+          upToDateBody: "Для этого пакета модели нет доступных обновлений.",
+          updateAvailableTitle: "Доступно обновление",
+          updateAvailableBody: ({ remoteBuild }: { remoteBuild: string | null }) =>
+            `Скачать последнюю версию этого пакета модели сейчас?${remoteBuild ? `\n\nУдалённая сборка: ${remoteBuild}` : ""}`,
+          updatedTitle: "Обновлено",
+          updatedBody: "Пакет модели успешно обновлён.",
+          updateFailedTitle: "Ошибка обновления",
+          updateFailedBody: ({ message }: { message: string }) =>
+            `Не удалось обновить этот пакет модели.\n\n${message}`,
+        },
+        voice: {
+          title: "Голос",
+          subtitleNative: "Выберите голос Kokoro.",
+          searchPlaceholder: "Поиск голосов",
+          titleWeb: "Голос Kokoro",
+          subtitleWeb: "Выберите голос на устройстве для ответов.",
+          loadingVoicesTitle: "Загрузка голосов…",
+        },
+        speed: {
+          title: "Скорость",
+          subtitle: "Настройка скорости речи (0,5–2,0).",
+        },
+        web: {
+          warmingUp: "Подготовка…",
+          clearCache: {
+            confirmTitle: "Очистить кэш Kokoro?",
+            confirmBody:
+              "Это удалит скачанные файлы модели и голоса Kokoro с этого устройства.",
+            confirmButton: "Очистить",
+          },
+          cacheDetail: {
+            modelFiles: "Файлы модели",
+            voices: "Голоса",
+          },
+          cache: {
+            title: "Кэш Kokoro",
+            subtitle: "Управляйте скачанными файлами Kokoro на этом устройстве.",
+          },
+        },
+      },
+      localNeuralStt: {
+        modelPack: {
+          title: "Пакет модели",
+          subtitle: "Id пакета модели STT (streaming).",
+        },
+        modelFiles: {
+          title: "Файлы модели",
+          subtitle:
+            "Скачайте необходимые файлы, чтобы включить потоковый STT на устройстве.",
+        },
+        removeModelFiles: {
+          title: "Удалить файлы модели",
+          subtitle: "Освободите место, удалив скачанные файлы модели.",
+          confirmTitle: "Удалить файлы модели?",
+          confirmBody:
+            "Это удалит скачанный пакет модели STT с этого устройства.",
+        },
+        status: {
+          installed: "Установлено",
+          installedWithBuild: ({ build }: { build: string }) =>
+            `Установлено • ${build}`,
+          notInstalled: "Не установлено",
+        },
+        language: {
+          title: "Язык",
+          subtitle: "Необязательный языковой тег BCP-47.",
+          promptTitle: "Язык",
+          promptBody: "Введите языковой тег BCP-47 (например: en, en-US).",
+        },
+        alerts: {
+          downloadFailedTitle: "Ошибка загрузки",
+          downloadFailedBody: ({ message }: { message: string }) =>
+            `Не удалось скачать этот пакет модели.\n\n${message}`,
+          notInstalledTitle: "Не установлено",
+          notInstalledBody:
+            "Сначала скачайте пакет модели, чтобы включить проверку обновлений.",
+          upToDateBody:
+            "Для этого пакета модели нет доступных обновлений.",
+          updateAvailableBody: ({ remoteBuild }: { remoteBuild: string | null }) =>
+            `Скачать последнюю версию этого пакета модели сейчас?${remoteBuild ? `\n\nУдалённая сборка: ${remoteBuild}` : ""}`,
+          updatedTitle: "Обновлено",
+          updatedBody: "Пакет модели успешно обновлён.",
+          updateFailedTitle: "Ошибка обновления",
+          updateFailedBody: ({ message }: { message: string }) =>
+            `Не удалось обновить этот пакет модели.\n\n${message}`,
+        },
+      },
       conversationMode: "Режим разговора",
       conversationModeSubtitle:
         "Напрямую в сессию, или через медиатор с явным коммитом",
+      conversation: {
+        mode: {
+          voiceAgentSubtitle:
+            "Использовать голосового агента (явный коммит, контроль инструментов).",
+          directTitle: "Прямая сессия",
+          directSubtitle: "Говорите напрямую в активную сессию.",
+        },
+        handsFree: {
+          title: "Хэндс‑фри",
+          enableTitle: "Включить hands-free",
+          silenceTitle: "Таймаут тишины (мс)",
+          minSpeechTitle: "Минимальная речь (мс)",
+        },
+        customBackendIdSubtitle: "Введите пользовательский id бэкенда.",
+        searchBackendsPlaceholder: "Поиск бэкендов",
+        searchModelsPlaceholder: "Поиск моделей",
+        machineAutoSubtitle:
+          "Автовыбор машины на основе недавнего использования.",
+        rootSessionPolicy: {
+          title: "Политика корневой сессии",
+          fallbackSubtitle: "Выберите политику.",
+          singleTitle: "Одиночная",
+          singleSubtitle: "Каждый раз создавать новую корневую сессию.",
+          keepWarmTitle: "Держать тёплой",
+          keepWarmSubtitle:
+            "По возможности переиспользовать тёплую корневую сессию.",
+          maxWarmRootsTitle: "Макс. тёплых корней",
+          maxWarmRootsSubtitle:
+            "Ограничить число тёплых корневых сессий.",
+        },
+        persistence: {
+          title: "Сохранение транскрипта",
+          ephemeralTitle: "Временно",
+          ephemeralSubtitle:
+            "Не сохранять состояние голосового агента между сессиями.",
+          persistentTitle: "Постоянно",
+          persistentSubtitle:
+            "Сохранять состояние голосового агента между сессиями (с возобновлением).",
+        },
+        resetVoiceAgent: {
+          title: "Сбросить состояние голосового агента",
+          subtitle: "Очищает постоянное состояние голосового агента.",
+          confirmBody:
+            "Это очистит сохранённое состояние голосового агента. Отменить нельзя.",
+        },
+        agentSettings: {
+          title: "Голосовой агент",
+        },
+        backend: {
+          daemonSubtitle:
+            "Использует ваш бэкенд Happier и поддерживает возобновление провайдера.",
+          openAiSubtitle:
+            "Подключение к OpenAI-совместимым HTTP эндпоинтам.",
+        },
+        agentMachine: {
+          title: "Машина агента",
+          fallbackSubtitle: "Выберите, где запускать голосового агента.",
+          stayInVoiceHomeTitle: "Оставаться в voice home",
+          stayInVoiceHomeEnabledSubtitle:
+            "Держать агента на машине voice home.",
+          stayInVoiceHomeDisabledSubtitle:
+            "Разрешить агенту следовать за машиной сессии.",
+          allowTeleportTitle: "Разрешить телепорт",
+          teleportEnabledSubtitle:
+            "Разрешить перенос агента на другую машину при необходимости.",
+          teleportDisabledSubtitle: "Телепорт отключён.",
+        },
+        agentSource: {
+          followSessionTitle: "Следовать за сессией",
+          followSessionSubtitle: "Использовать бэкенд и конфигурацию сессии.",
+          fixedAgentTitle: "Фиксированный агент",
+          fixedAgentSubtitle:
+            "Всегда использовать конкретный агент-бэкенд.",
+        },
+        permissionPolicy: {
+          readOnlySubtitle: "Видит контекст, но не может запускать инструменты.",
+          noToolsSubtitle:
+            "Должен избегать запросов инструментов и никогда не запускать инструменты.",
+        },
+        chatModelSource: {
+          sessionSubtitle:
+            "Использовать конфигурацию модели сессии для чата агента.",
+          customSubtitle:
+            "Переопределить id модели чата голосового агента.",
+        },
+        chatModelId: {
+          title: "ID модели чата голосового агента",
+          subtitle:
+            "Используется, когда источник модели чата задан как пользовательская модель.",
+        },
+        commitModelSource: {
+          chatSubtitle: "Использовать модель чата агента для коммитов.",
+          sessionSubtitle:
+            "Использовать конфигурацию модели сессии для коммитов.",
+          customSubtitle:
+            "Переопределить id модели коммита голосового агента.",
+        },
+        commitModelId: {
+          title: "ID модели коммита голосового агента",
+          subtitle:
+            "Используется, когда источник модели коммита задан как пользовательская модель.",
+        },
+        commitIsolation: {
+          title: "Изоляция коммитов",
+          subtitle:
+            "Использовать отдельную vendor-сессию для генерации коммитов (для опытных).",
+        },
+        resumability: {
+          modeTitle: "Возобновление",
+          replayTitle: "Повтор",
+          replaySubtitle: "Возобновлять, проигрывая недавние сообщения.",
+          providerResumeTitle: "Возобновление провайдера",
+          providerResumeSubtitle:
+            "Возобновлять по состоянию сессии провайдера (если поддерживается).",
+          disabledVoiceAgent: "Требуется Happier Voice Agent.",
+          disabledDaemonBackend: "Требуется бэкенд Демон.",
+          disabledAgentNoProviderResume:
+            "Выбранный агент не поддерживает возобновление провайдера.",
+        },
+        providerResumeFallback: {
+          title: "Фолбэк на повтор",
+          subtitle:
+            "Если возобновление провайдера не удалось, перейти на повтор.",
+        },
+        replayRecentMessagesPromptBody:
+          "Сколько недавних сообщений включить (1–100).",
+        prewarm: {
+          title: "Прогрев при подключении",
+          subtitle: "Запускать голосового агента сразу при подключении.",
+        },
+        welcome: {
+          title: "Приветственное сообщение",
+          offTitle: "Выкл.",
+          offSubtitle: "Не отправлять приветственное сообщение.",
+          immediateTitle: "Сразу",
+          immediateSubtitle:
+            "Отправить приветствие сразу после запуска агента.",
+          onFirstTurnTitle: "На первом обращении",
+          onFirstTurnSubtitle:
+            "Отправить приветствие, когда вы заговорите впервые.",
+        },
+        verbosity: {
+          shortSubtitle: "Держать ответы агента краткими.",
+          balancedSubtitle:
+            "Разрешать чуть больше деталей при необходимости.",
+        },
+        streaming: {
+          title: "Стриминг",
+          enableTitle: "Включить стриминг",
+          enableTtsTitle: "Включить стриминг TTS",
+          ttsChunkCharsTitle: "Размер чанка TTS (символы)",
+          ttsChunkCharsPromptBody:
+            "Сколько символов буферизовать перед запросом следующего чанка TTS (32–2000).",
+        },
+        network: {
+          title: "Сеть",
+          timeoutTitle: "Таймаут сети (мс)",
+          timeoutPromptBody:
+            "Таймаут запросов к вашим эндпоинтам (1000–60000).",
+        },
+      },
       mediatorBackend: "Бэкенд медиатора",
       mediatorBackendSubtitle:
         "Демон (использует ваш бэкенд Happier) или OpenAI-совместимый HTTP",
@@ -1819,8 +4245,8 @@ export const ru: TranslationStructure = {
       chatMaxTokensPlaceholder: "Пусто = по умолчанию",
       chatMaxTokensUnlimited: "По умолчанию",
       chatMaxTokensInvalid: "Введите положительное число или оставьте пустым.",
-      sttBaseUrl: "STT Base URL",
-      sttBaseUrlTitle: "STT Base URL",
+      sttBaseUrl: "Базовый URL STT",
+      sttBaseUrlTitle: "Речь в текст",
       sttBaseUrlDescription:
         "Базовый URL для OpenAI-совместимого эндпоинта транскрибации (обычно заканчивается на /v1).",
       sttApiKey: "STT API-ключ",
@@ -1835,8 +4261,14 @@ export const ru: TranslationStructure = {
       deviceStt: "STT на устройстве (экспериментально)",
       deviceSttSubtitle:
         "Использовать распознавание речи на устройстве вместо OpenAI-совместимого эндпоинта",
-      ttsBaseUrl: "TTS Base URL",
-      ttsBaseUrlTitle: "TTS Base URL",
+      sttProvider: "Провайдер STT",
+      neuralStt: {
+        title: "STT на устройстве",
+        webNotAvailableSubtitle:
+          "Недоступно в вебе. Используйте STT устройства, OpenAI-совместимый или Gemini STT.",
+      },
+      ttsBaseUrl: "Базовый URL TTS",
+      ttsBaseUrlTitle: "Текст в речь",
       ttsBaseUrlDescription:
         "Базовый URL для OpenAI-совместимого эндпоинта озвучивания (обычно заканчивается на /v1).",
       ttsApiKey: "TTS API-ключ",
@@ -1855,6 +4287,10 @@ export const ru: TranslationStructure = {
         "Имя/ID голоса, отправляемое на TTS сервер (OpenAI-совместимое поле).",
       ttsFormat: "TTS формат",
       ttsFormatSubtitle: "Формат аудио, возвращаемый TTS",
+      ttsFormatOptions: {
+        mp3Subtitle: "Меньший размер, широкая совместимость.",
+        wavSubtitle: "Больший размер, без сжатия.",
+      },
       testTts: "Тест TTS",
       testTtsSubtitle:
         "Воспроизвести короткий пример с текущими настройками локального TTS (на устройстве или через эндпоинт)",
@@ -1872,6 +4308,8 @@ export const ru: TranslationStructure = {
       autoSpeak: "Авто-озвучивание ответов",
       autoSpeakSubtitle:
         "Озвучивать следующий ответ ассистента после отправки голосового сообщения",
+      bargeIn: "Перебивание",
+      speaking: "Говорит…",
     },
     privacy: {
       title: "Конфиденциальность",
@@ -1912,6 +4350,15 @@ export const ru: TranslationStructure = {
       footer: ({ count }: { count: number }) =>
         `Доступно ${count} ${plural({ count, one: "язык", few: "языка", many: "языков" })}`,
       autoDetect: "Автоопределение",
+      autoDetectSubtitle: "Пусть распознавание решит само (рекомендуется).",
+      customTitle: "Пользовательский…",
+      customSubtitle: "Введите языковой тег BCP-47.",
+      options: {
+        english: "Английский",
+        englishUs: "Английский (США)",
+        french: "Французский",
+        spanish: "Испанский",
+      },
     },
   },
 
@@ -1950,11 +4397,16 @@ export const ru: TranslationStructure = {
     analytics: "Аналитика",
     analyticsDisabled: "Данные не передаются",
     analyticsEnabled: "Анонимные данные об использовании передаются",
+    crashReports: "Отчёты о сбоях",
+    crashReportsDisabled: "Отчёты о сбоях не отправляются",
+    crashReportsEnabled: "Отчёты о сбоях отправляются",
     dangerZone: "Опасная зона",
     logout: "Выйти",
     logoutSubtitle: "Выйти из аккаунта и очистить локальные данные",
     logoutConfirm:
       "Вы уверены, что хотите выйти? Убедитесь, что вы сохранили резервную копию секретного ключа!",
+    encryptionUpdateFailed: "Не удалось обновить настройку шифрования",
+    secretKeyMissing: "Secret key unavailable. Please restore your account first.",
   },
 
   connectButton: {
@@ -2047,16 +4499,33 @@ export const ru: TranslationStructure = {
     failedToLinkDevice: "Не удалось связать устройство",
     cameraPermissionsRequiredToScanQr:
       "Для сканирования QR-кодов требуется доступ к камере",
+    qrScannerUnavailable:
+      "Не удалось открыть сканер QR. Попробуйте снова или введите URL вручную.",
   },
 
-  navigation: {
-    // Navigation titles and screen headers
-    connectTerminal: "Подключить терминал",
-    linkNewDevice: "Связать новое устройство",
-    restoreWithSecretKey: "Восстановить секретным ключом",
-    whatsNew: "Что нового",
-    friends: "Друзья",
-  },
+	  navigation: {
+	    // Navigation titles and screen headers
+	    connectTerminal: "Подключить терминал",
+	    linkNewDevice: "Связать новое устройство",
+	    restoreWithSecretKey: "Восстановить секретным ключом",
+	    whatsNew: "Что нового",
+	    friends: "Друзья",
+	    automations: "Автоматизации",
+	    automation: "Автоматизация",
+	    newAutomation: "Новая автоматизация",
+	    sourceControl: "Контроль версий",
+	    developerTools: "Инструменты разработчика",
+	    listComponentsDemo: "Демо компонентов списка",
+	    typography: "Типографика",
+	    colors: "Цвета",
+	    toolViewsDemo: "Демо представлений инструментов",
+	    maskedProgress: "Маскированный прогресс",
+	    shimmerViewDemo: "Демо эффекта Shimmer",
+	    multiTextInput: "Многострочный ввод текста",
+	    connectClaude: "Подключиться к Claude",
+	    zenNewTask: "Новая задача",
+	    zenTaskDetails: "Детали задачи",
+	  },
 
   welcome: {
     // Main welcome screen for unauthenticated users
@@ -2064,8 +4533,13 @@ export const ru: TranslationStructure = {
     subtitle:
       "Сквозное шифрование, аккаунт хранится только на вашем устройстве.",
     createAccount: "Создать аккаунт",
+    chooseEncryptionTitle: "Choose encryption",
+    chooseEncryptionBody: "This server supports both encrypted and non-encrypted accounts. Choose how you want to store your account data.",
+    chooseEncryptionEncrypted: "Continue with end-to-end encryption",
+    chooseEncryptionPlain: "Continue without encryption",
     signUpWithProvider: ({ provider }: { provider: string }) =>
       `Продолжить через ${provider}`,
+    signInWithCertificate: "Войти по сертификату",
     linkOrRestoreAccount: "Связать или восстановить аккаунт",
     loginWithMobileApp: "Войти через мобильное приложение",
     serverUnavailableTitle: "Не удаётся подключиться к серверу",
@@ -2095,8 +4569,40 @@ export const ru: TranslationStructure = {
     offlineHelp:
       "• Убедитесь, что компьютер онлайн\n• Выполните `happier daemon status` для диагностики\n• Используете последнюю версию CLI? Обновите командой `npm install -g @happier-dev/cli@latest`",
     launchNewSessionInDirectory: "Запустить новую сессию в папке",
+    customPathPlaceholder: "Введите свой путь",
+    tools: {
+      title: "Инструменты",
+      installablesTitle: "Устанавливаемые",
+      installablesSubtitle:
+        "Управляйте устанавливаемыми инструментами для этой машины.",
+    },
+    installables: {
+      screenTitle: "Устанавливаемые",
+      aboutGroupTitle: "О разделе",
+      aboutSubtitle:
+        "Управляйте инструментами, которые Happier может устанавливать и поддерживать в актуальном состоянии на этой машине.",
+      experimentalGroupTitle: ({ title }: { title: string }) =>
+        `${title} (экспериментально)`,
+      autoInstallTitle: "Автоустановка при необходимости",
+      autoInstallSubtitle:
+        "Устанавливает в фоне, когда это требуется для выбранного бэкенда (best‑effort).",
+      autoUpdateTitle: "Автообновление",
+      autoUpdatePromptTitle: "Автообновление",
+      autoUpdatePromptBody:
+        "Выберите, как Happier должен обрабатывать обновления для этого устанавливаемого элемента.",
+      autoUpdateModes: {
+        off: "Выключено",
+        notify: "Уведомлять",
+        auto: "Авто",
+      },
+    },
     daemon: "Демон",
     status: "Статус",
+    daemonStatus: {
+      unknown: "Неизвестно",
+      stopped: "Остановлен",
+      likelyAlive: "Вероятно, работает",
+    },
     stopDaemon: "Остановить daemon",
     stopDaemonConfirmTitle: "Остановить демон?",
     stopDaemonConfirmBody:
@@ -2144,6 +4650,7 @@ export const ru: TranslationStructure = {
     notFound: "Машина не найдена",
     unknownMachine: "неизвестная машина",
     unknownPath: "неизвестный путь",
+    previousSessionsTitle: "Предыдущие сессии (до 5 последних)",
     tmux: {
       overrideTitle: "Переопределить глобальные настройки tmux",
       overrideEnabledSubtitle:
@@ -2241,12 +4748,14 @@ export const ru: TranslationStructure = {
       "Не удалось открыть выбор текста. Пожалуйста, попробуйте снова.",
   },
 
-  markdown: {
-    // Markdown copy functionality
-    codeCopied: "Код скопирован",
-    copyFailed: "Ошибка копирования",
-    mermaidRenderFailed: "Не удалось отобразить диаграмму mermaid",
-  },
+	  markdown: {
+	    // Markdown copy functionality
+	    codeCopied: "Код скопирован",
+	    copyFailed: "Ошибка копирования",
+	    mermaidRenderFailed: "Не удалось отобразить диаграмму mermaid",
+	    diffLabel: "Дифф",
+	    codeLabel: "Код",
+	  },
 
   artifacts: {
     // Artifacts feature
@@ -2429,6 +4938,7 @@ export const ru: TranslationStructure = {
     },
     placeholders: {
       nameExample: "например, Work OpenAI",
+      valueExample: "sk-...",
     },
     validation: {
       nameRequired: "Имя обязательно.",
@@ -2627,6 +5137,15 @@ export const ru: TranslationStructure = {
         plan: "Планировать перед выполнением",
         bypassPermissions: "Пропускать все разрешения",
       },
+    },
+    defaultPermissions: {
+      title: "Разрешения по умолчанию",
+      footer:
+        "Переопределяет разрешения по умолчанию на уровне аккаунта для новых сессий, когда выбран этот профиль.",
+      accountDefaultSubtitle: ({ label }: { label: string }) =>
+        `По умолчанию для аккаунта: ${label}`,
+      useAccountDefault: "Использовать значение аккаунта",
+      currently: ({ label }: { label: string }) => `Сейчас: ${label}`,
     },
     aiBackend: {
       title: "Бекенд ИИ",

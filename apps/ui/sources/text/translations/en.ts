@@ -45,14 +45,195 @@ export const en = {
     runs: {
         title: 'Runs',
         empty: 'No runs yet.',
+        groupLabel: ({ groupId }: { groupId: string }) => `Group ${groupId}`,
+        showFinished: 'Show finished',
+        unknownMachine: 'Unknown machine',
+        failedToLoad: 'Failed to load runs',
+        noMachinesAvailable: 'No machines available.',
+        serverTitle: ({ serverId }: { serverId: string }) => `Server ${serverId}`,
+        machinesSubtitle: 'Machines',
+        openMachine: 'Open machine',
+        a11y: {
+            toggleFinished: 'Toggle finished runs',
+            refresh: 'Refresh runs',
+        },
+        openSession: 'Open session',
+        sessionTitle: ({ sessionId }: { sessionId: string }) => `Session ${sessionId}`,
+        runLabel: ({ runId }: { runId: string }) => `run ${runId}`,
+        detail: {
+            pid: ({ pid }: { pid: number }) => `pid ${pid}`,
+            cpu: ({ percent }: { percent: string }) => `${percent}% cpu`,
+            memory: ({ megabytes }: { megabytes: number }) => `${megabytes} MB`,
+        },
+        runDetails: {
+            failedToLoad: 'Failed to load run',
+            latestToolResultTitle: 'Latest tool result',
+            a11y: {
+                refreshRun: 'Refresh run',
+            },
+        },
+        stop: {
+            stopRunA11y: 'Stop run',
+            stopLabel: 'Stop run',
+            stoppingLabel: 'Stopping…',
+            stopRunFailedTitle: 'Stop run failed',
+            stopRunFailedBody:
+                'Stopping this run via session RPC failed. Do you want to stop the entire session process instead? This is destructive and will stop all runs in that session.',
+            stopSession: 'Stop session',
+            failedToStopRun: 'Failed to stop run',
+            failedToStopSession: 'Failed to stop session',
+        },
+        send: {
+            placeholder: 'Send to run…',
+            a11y: {
+                sendToRun: 'Send to run',
+            },
+            sendLabel: 'Send',
+            sendingLabel: 'Sending…',
+            failedToSend: 'Failed to send',
+        },
+    },
+
+    sessionLog: {
+        title: 'Session log',
+        devModeRequiredTitle: 'Developer mode is required',
+        devModeRequiredBody: 'Enable developer mode in settings to view session logs.',
+        logPathTitle: 'Log path',
+        unavailable: 'Unavailable',
+        logPathCopyLabel: 'Session log path',
+        refreshTailTitle: 'Refresh log tail',
+        refreshTailSubtitle: ({ maxBytes }: { maxBytes: string }) => `Read last ${maxBytes} bytes`,
+        copyVisibleTitle: 'Copy visible log',
+        copyVisibleSubtitleLoaded: 'Copy current tail to clipboard',
+        copyVisibleSubtitleEmpty: 'No log content loaded',
+        copyLogLabel: 'Session log',
+        statusTitle: 'Log status',
+        readErrorTitle: 'Read error',
+        tailTitle: 'Log tail',
+        tailTitleTruncated: 'Log tail (truncated)',
+        noOutputYet: '(No log output yet)',
+        readFailed: 'Failed to read session log',
+    },
+
+    automations: {
+        openA11y: 'Open automations',
+        gate: {
+            disabledTitle: 'Automations are disabled',
+            disabledBody: 'Enable them from Settings, then turn on Experiments and Automations.',
+        },
+        edit: {
+            title: 'Edit automation',
+            saveAutomationLabel: 'Save automation',
+            messageLabel: 'MESSAGE',
+            messagePlaceholder: 'Message to send',
+            messageHelpText: 'This message will be queued into the session as a pending user message.',
+            updateFailed: 'Failed to update automation.',
+            loadTemplateFailed: 'Failed to load automation template.',
+        },
+        form: {
+            groupAutomationTitle: 'Automation',
+            groupScheduleTitle: 'Schedule',
+            toggleEnableTitle: 'Enable automation',
+            toggleEnableSubtitle:
+                'Create this new session template as a scheduled automation instead of starting immediately.',
+            toggleEnabledTitle: 'Enabled',
+            toggleEnabledSubtitle: 'When disabled, no scheduled runs will be executed.',
+            labels: {
+                name: 'NAME',
+                descriptionOptional: 'DESCRIPTION (OPTIONAL)',
+                everyMinutes: 'EVERY (MINUTES)',
+                cronExpression: 'CRON EXPRESSION',
+                timezoneOptional: 'TIMEZONE (OPTIONAL)',
+            },
+            placeholders: {
+                name: 'Scheduled Session',
+                description: 'What should this automation do?',
+                everyMinutes: '60',
+                cronExpression: '*/5 * * * *',
+                timezone: 'UTC or America/New_York',
+            },
+            schedule: {
+                intervalTitle: 'Interval',
+                intervalSubtitle: 'Run every N minutes.',
+                cronTitle: 'Cron',
+                cronSubtitle: 'Advanced schedule expression.',
+                cronHelpText: 'Standard 5-field cron: minute hour day-of-month month day-of-week.',
+            },
+        },
+        session: {
+            emptyTitle: 'No automations',
+            emptyBody: 'Add an automation to queue scheduled messages into this session.',
+            addAutomation: 'Add automation',
+            failedToLoad: 'Failed to load automations.',
+        },
+        screen: {
+            emptyTitle: 'No automations yet',
+            emptyBody: 'Create one from the New Session flow to run scheduled sessions on your machines.',
+            createAutomationA11y: 'Create automation',
+        },
+        detail: {
+            invalidId: 'Invalid automation id.',
+            notFound: 'Automation not found.',
+            unknownDate: 'Unknown',
+            notScheduled: 'Not scheduled',
+            overviewGroupTitle: 'Overview',
+            overview: {
+                nameTitle: 'Name',
+                scheduleTitle: 'Schedule',
+                statusTitle: 'Status',
+                nextRunTitle: 'Next run',
+            },
+            status: {
+                active: 'Active',
+                paused: 'Paused',
+            },
+            actionsGroupTitle: 'Actions',
+            runNowTitle: 'Run now',
+            runNowQueuedBadge: 'Queued',
+            runNowQueuedLine: 'Queued.',
+            runNowQueuedSubtitle: 'Queued. The assigned daemon will pick it up when available.',
+            pauseAutomation: 'Pause automation',
+            resumeAutomation: 'Resume automation',
+            editAutomation: 'Edit automation',
+            deleteAutomation: 'Delete automation',
+            deleteConfirmTitle: 'Delete automation',
+            deleteConfirmMessage: 'This automation and its schedule will be removed.',
+            deleteConfirmButton: 'Delete',
+            machineAssignmentsTitle: 'Machine assignments',
+            machineAssignmentsFooter: 'Enable at least one machine for this automation to run.',
+            refreshFailed: 'Failed to refresh automation.',
+            runFailed: 'Failed to run automation.',
+            deleteFailed: 'Failed to delete automation.',
+            assignmentsUpdateFailed: 'Failed to update machine assignments.',
+            recentRunsTitle: 'Recent runs',
+            runMeta: {
+                scheduled: ({ time }: { time: string }) => `Scheduled: ${time}`,
+                updated: ({ time }: { time: string }) => `Updated: ${time}`,
+                error: ({ message }: { message: string }) => `Error: ${message}`,
+            },
+        },
+        create: {
+            defaultName: 'Scheduled message',
+            createFailed: 'Failed to create automation.',
+            unavailableGroupTitle: 'Unavailable',
+            cannotCreateForSession: 'Cannot create automation for this session',
+            sessionNotFound: 'Session not found.',
+            missingMachineId: 'This session is missing a machine id.',
+            missingResumeKey: 'This session does not have a resume encryption key loaded yet.',
+            createButtonTitle: 'Create automation',
+        },
     },
 
     common: {
         // Simple string constants
         add: 'Add',
+        edit: 'Edit',
         actions: 'Actions',
+        moreActions: 'More actions',
+        moreActionsHint: 'Opens a menu with more actions',
         cancel: 'Cancel',
         close: 'Close',
+        done: 'Done',
         authenticate: 'Authenticate',
         save: 'Save',
         saveAs: 'Save As',
@@ -61,15 +242,22 @@ export const en = {
         ok: 'OK',
         continue: 'Continue',
         back: 'Back',
+        start: 'Start',
         create: 'Create',
         rename: 'Rename',
         remove: 'Remove',
+        update: 'Update',
+        commit: 'Commit',
+        history: 'History',
+        applied: 'Applied',
         signOut: 'Sign out',
         keep: 'Keep',
         reset: 'Reset',
         logout: 'Logout',
         yes: 'Yes',
         no: 'No',
+        on: 'On',
+        off: 'Off',
         discard: 'Discard',
         discardChanges: 'Discard changes',
         unsavedChangesWarning: 'You have unsaved changes.',
@@ -77,24 +265,44 @@ export const en = {
         version: 'Version',
         details: 'Details',
         copy: 'Copy',
+        copyWithLabel: ({ label }: { label: string }) => `Copy ${label}`,
         copied: 'Copied',
+        command: 'Command',
         scanning: 'Scanning...',
         urlPlaceholder: 'https://example.com',
         home: 'Home',
         message: 'Message',
         send: 'Send',
+        attach: 'Attach',
+        linkFile: 'Link file',
         files: 'Files',
+        path: 'Path',
         fileViewer: 'File Viewer',
         loading: 'Loading...',
+        none: '—',
+        unavailable: 'Unavailable',
+        dialog: 'Dialog',
         retry: 'Retry',
         or: 'or',
         delete: 'Delete',
+        deleted: 'Deleted',
         optional: 'optional',
         noMatches: 'No matches',
         all: 'All',
         machine: 'machine',
         clearSearch: 'Clear search',
         refresh: 'Refresh',
+        default: 'Default',
+        enabled: 'Enabled',
+        disabled: 'Disabled',
+        requestFailed: 'Request failed.',
+    },
+
+    ui: {
+        resizableDockedPane: {
+            resizeA11y: 'Resize panel',
+            resizeHint: 'Use left and right arrow keys to resize',
+        },
     },
 
     dropdown: {
@@ -130,6 +338,18 @@ export const en = {
         unknown: 'unknown',
     },
 
+    connectionStatus: {
+        title: 'Connection',
+        labels: {
+            server: 'Server',
+            socket: 'Socket',
+            authenticated: 'Authenticated',
+            lastSync: 'Last sync',
+            nextRetry: 'Next retry',
+            lastError: 'Last error',
+        },
+    },
+
     time: {
         justNow: 'just now',
         minutesAgo: ({ count }: { count: number }) => `${count} minute${count !== 1 ? 's' : ''} ago`,
@@ -141,6 +361,17 @@ export const en = {
         enterSecretKey: 'Please enter a secret key',
         invalidSecretKey: 'Invalid secret key. Please check and try again.',
         enterUrlManually: 'Enter URL manually',
+        scanComputerQrInstructions: 'Scan the QR code shown in Happier on your computer (Settings → Add your phone).',
+        scanComputerQrButton: 'Scan QR to sign in',
+        waitingForApproval: 'Waiting for approval…',
+        showQrInstead: 'Show a QR code instead',
+        addPhoneQrInstructions: 'Scan this QR code with the Happier mobile app to sign in on your phone.',
+        pairingRequestTitle: 'Pairing request',
+        pairingRequestBody: 'Verify this code matches what you see on your phone, then approve.',
+        deviceLabel: 'Device',
+        confirmCodeLabel: 'Confirmation code',
+        approveButton: 'Approve',
+        generateNewQrCode: 'Generate new QR code',
         openMachine: 'Open machine',
         terminalUrlPlaceholder: 'happier://terminal?...',
         restoreQrInstructions: '1. Open Happier on your mobile device\n2. Go to Settings → Account\n3. Tap "Link New Device"\n4. Scan this QR code',
@@ -166,8 +397,349 @@ export const en = {
         unsupported: {
             connectTitle: ({ name }: { name: string }) => `Connect ${name}`,
             runCommandInTerminal: 'Run the following command in your terminal:',
+            command: ({ name }: { name: string }) => `happier connect ${name}`,
         },
     },
+
+    bugReports: {
+        composer: {
+            alerts: {
+                previewUnavailableTitle: 'Preview unavailable',
+                previewUnavailableBody: 'Could not build diagnostics preview.',
+                submittedTitle: 'Bug report submitted',
+                submittedExistingIssueBody: ({ issueNumber, reportId }: { issueNumber: number; reportId: string }) =>
+                    `A comment has been posted on issue #${issueNumber}.\n\nReport ID: ${reportId}`,
+                submittedNewIssueBody: ({ issueNumber, reportId }: { issueNumber: number; reportId: string }) =>
+                    `Issue #${issueNumber} has been created.\n\nReport ID: ${reportId}`,
+                submitFailedTitle: 'Submission failed',
+                submitFailedFallbackMessage: 'Could not submit this report.',
+                submitFailedBody: ({ message }: { message: string }) =>
+                    `${message}\n\nDo you want to open a prefilled GitHub issue instead?`,
+                openFallbackIssueButton: 'Open fallback issue',
+            },
+            diagnostics: {
+                title: 'Diagnostics',
+                subtitle: 'Choose what to include and preview before submitting.',
+                includeTitle: 'Include diagnostics',
+                includeSubtitle: 'Attach sanitized debugging artifacts for faster diagnosis.',
+                disabledByServerSuffix: ' (disabled by server)',
+                pasteDoctorJson: {
+                    title: 'CLI doctor JSON (optional)',
+                    subtitle: 'If your machine is unreachable from the UI, run `happier doctor --json` on your computer and paste it here.',
+                    placeholder: '{ "capturedAt": "...", ... }',
+                    invalid: ({ error }: { error: string }) => `Invalid doctor JSON: ${error}`,
+                    valid: 'Doctor JSON looks valid and will be attached to the report.',
+                },
+                previewButton: 'Preview diagnostics',
+                preview: {
+                    title: 'Diagnostics preview',
+                    helper: 'These artifacts will be uploaded with your report (sanitized and size-bounded). Tap an item to view its full contents.',
+                    empty: 'No diagnostics artifacts would be sent.',
+                    openArtifactA11y: ({ filename }: { filename: string }) => `Open ${filename}`,
+                },
+                kinds: {
+                    app: {
+                        title: 'App diagnostics',
+                        detail: 'App console logs, recent user actions, and session summary.',
+                    },
+                    daemon: {
+                        title: 'Daemon diagnostics',
+                        detail: 'Daemon summary and recent daemon logs from selected machines.',
+                    },
+                    stackService: {
+                        title: 'Stack service diagnostics',
+                        detail: 'Stack context and recent stack logs (if available).',
+                    },
+                    server: {
+                        title: 'Server diagnostics',
+                        detail: 'Server snapshot from the currently active server.',
+                    },
+                },
+            },
+            issueDetails: {
+                title: 'Describe the issue',
+                subtitle: 'Provide enough detail so we can reproduce and diagnose quickly.',
+                titleLabel: 'Title (required)',
+                titlePlaceholder: 'Short issue title',
+                githubUsernameLabel: 'GitHub username (optional)',
+                githubUsernamePlaceholder: 'Used as contact info in the issue body',
+                summaryLabel: 'Concise summary (required)',
+                summaryPlaceholder: 'One-paragraph summary',
+                currentBehaviorLabel: 'Current behavior (optional)',
+                currentBehaviorPlaceholder: 'What actually happens?',
+                expectedBehaviorLabel: 'Expected behavior (optional)',
+                expectedBehaviorPlaceholder: 'What should happen instead?',
+                reproductionStepsLabel: 'Reproduction steps (optional)',
+                reproductionStepsPlaceholder: '1. Open Happier\n2. Start a session\n3. ...',
+                whatChangedLabel: 'What changed recently (optional)',
+                whatChangedPlaceholder: 'Updates, config changes, new setup steps...',
+            },
+            similarIssues: {
+                title: 'Possible duplicates',
+                subtitle: 'If one of these matches, you can post your report as a comment instead of opening a new issue.',
+                searching: 'Searching issues…',
+                selectedTitle: ({ number }: { number: number }) => `Using issue #${number}`,
+                selectedSubtitle: 'Tap to switch back to creating a new issue.',
+                useIssueA11y: ({ number }: { number: number }) => `Use issue #${number}`,
+                issueState: {
+                    open: 'Open issue',
+                    closed: 'Closed issue',
+                },
+            },
+            frequencySeverity: {
+                title: 'Frequency and severity',
+                frequencyLabel: 'Frequency',
+                severityLabel: 'Severity',
+                frequency: {
+                    always: 'Always',
+                    often: 'Often',
+                    sometimes: 'Sometimes',
+                    once: 'Once',
+                },
+                severity: {
+                    blocker: 'Blocker',
+                    high: 'High',
+                    medium: 'Medium',
+                    low: 'Low',
+                },
+            },
+            environment: {
+                title: 'Environment (editable)',
+                appVersionLabel: 'App version',
+                platformLabel: 'Platform',
+                osVersionLabel: 'OS version',
+                deviceModelLabel: 'Device model',
+                serverUrlLabel: 'Server URL',
+                serverVersionLabel: 'Server version (optional)',
+                deploymentTypeLabel: 'Deployment type',
+                deploymentType: {
+                    cloud: 'Cloud',
+                    selfHosted: 'Self-hosted',
+                    enterprise: 'Enterprise',
+                },
+            },
+            consent: {
+                title: 'Consent',
+                understandTitle: 'I understand diagnostics may include technical metadata',
+                understandSubtitle: 'Do not include passwords, access tokens, or private keys.',
+            },
+            submit: {
+                requiredFieldsHint: 'Complete the required fields to enable submission.',
+                submitting: 'Submitting report…',
+                addToIssue: ({ number }: { number: number }) => `Add to issue #${number}`,
+                submitNew: 'Submit bug report',
+            },
+        },
+    },
+
+    memorySearchSettings: {
+        disabled: {
+            footer: 'Enable memory search in Features to configure local indexing.',
+            title: 'Memory search is disabled',
+            subtitle: 'Open Settings → Features to enable memory.search',
+            openFeatureSettings: 'Open feature settings',
+            alertTitle: 'Memory search disabled',
+            alertBody: 'Enable memory.search in Settings → Features.',
+        },
+        enabled: {
+            title: 'Enabled',
+            subtitle: 'Build and maintain a local index on this machine',
+            footer:
+                'When enabled, Happier builds a device-local index derived from decrypted transcripts to support fast recall and search.',
+        },
+        budgets: {
+            groupTitle: 'Disk budget',
+            groupFooter: 'Limits how much disk space the local memory index can use (best-effort eviction).',
+            mbLabel: ({ mb }: { mb: number }) => `${mb} MB`,
+            lightTitle: 'Light index budget',
+            lightPromptTitle: 'Light index budget',
+            lightPromptBody: 'Max MB for the light (summary shards) index on this machine.',
+            deepTitle: 'Deep index budget',
+            deepPromptTitle: 'Deep index budget',
+            deepPromptBody: 'Max MB for the deep (chunk) index on this machine.',
+        },
+        privacy: {
+            groupTitle: 'Privacy',
+            groupFooter: 'Delete local derived indexes and model caches when disabling memory search.',
+            deleteOnDisableTitle: 'Delete on disable',
+            deleteOnDisableSubtitle: 'Remove local indexes and caches when memory search is turned off',
+        },
+        screen: {
+            machineLabel: ({ machine }: { machine: string }) => `Machine: ${machine}`,
+            searchPlaceholder: 'Search memory',
+            enableLocalSearch: 'Enable Local Memory Search',
+        },
+        machine: {
+            title: 'Machine',
+            changeTitle: 'Change machine',
+            noMachine: 'No machine',
+        },
+        indexMode: {
+            title: 'Index mode',
+            footer: 'Light mode stores small summary shards. Deep mode can find more but uses more disk.',
+            triggerTitle: 'Mode',
+            options: {
+                lightTitle: 'Light (recommended)',
+                lightSubtitle: 'Summary shards only',
+                deepTitle: 'Deep',
+                deepSubtitle: 'Index message chunks locally',
+            },
+        },
+        backfill: {
+            title: 'Backfill',
+            footer: 'Controls how much history is indexed when enabling local memory.',
+            triggerTitle: 'Policy',
+            options: {
+                newOnlyTitle: 'New only (recommended)',
+                newOnlySubtitle: 'Index only content created after enabling',
+                last30DaysTitle: 'Last 30 days',
+                last30DaysSubtitle: 'Backfill recent sessions',
+                allHistoryTitle: 'All history',
+                allHistorySubtitle: 'Backfill everything (can take time)',
+            },
+        },
+        hints: {
+            title: 'Memory hint generation',
+            footer: 'Controls how summary shards are generated for light memory search.',
+            backend: {
+                title: 'Summarizer backend',
+                promptTitle: 'Summarizer backend',
+                promptBody: 'Enter an execution-run backend id (e.g. claude, codex).',
+            },
+            model: {
+                title: 'Summarizer model',
+                promptTitle: 'Summarizer model',
+                promptBody: 'Enter a model id to pass through to the backend.',
+            },
+            permissions: {
+                triggerTitle: 'Summarizer permissions',
+                options: {
+                    noToolsTitle: 'No tools (recommended)',
+                    noToolsSubtitle: 'Summarize text only',
+                    readOnlyTitle: 'Read-only',
+                    readOnlySubtitle: 'Allow non-mutating tools when supported',
+                },
+            },
+        },
+        embeddings: {
+            groupTitle: 'Embeddings',
+            groupFooter: 'Optional: download a local model to improve semantic matches when using Deep mode.',
+            enableTitle: 'Enable embeddings',
+            enableSubtitle: 'Improves ranking for deep search (downloads a model on first use)',
+            modelTitle: 'Embeddings model',
+            promptBody: 'Enter a local transformers model id.',
+            modelPlaceholder: 'Xenova/all-MiniLM-L6-v2',
+        },
+    },
+
+    subAgentGuidance: {
+	        ruleEditor: {
+            header: {
+                newRule: 'New rule',
+                editRule: 'Edit rule',
+            },
+            enabled: {
+                title: 'Enabled',
+            },
+            enabledState: {
+                enabled: 'Enabled',
+                disabled: 'Disabled',
+            },
+            common: {
+                noPreference: 'No preference',
+            },
+            titleField: {
+                label: 'Title (optional)',
+                placeholder: 'e.g. UI work',
+            },
+            descriptionField: {
+                label: 'When should the agent delegate?',
+                placeholder: 'Describe when/how to delegate…',
+            },
+            backendPicker: {
+                title: 'Target backend (optional)',
+                searchPlaceholder: 'Search backends',
+                noPreference: {
+                    subtitle: 'Let the agent choose a backend.',
+                },
+            },
+            modelPicker: {
+                title: 'Target model (optional)',
+                searchPlaceholder: 'Search models',
+                noPreference: {
+                    subtitle: 'Let the backend pick a default model.',
+                },
+            },
+            intent: {
+                title: 'Suggested intent (optional)',
+                noPreference: {
+                    subtitle: 'Let the agent decide intent.',
+                },
+                options: {
+                    review: {
+                        title: 'Review',
+                        subtitle: 'Code review / findings.',
+                    },
+                    plan: {
+                        title: 'Plan',
+                        subtitle: 'Planning / architecture.',
+                    },
+                    delegate: {
+                        title: 'Delegate',
+                        subtitle: 'Delegation / execution.',
+                    },
+                },
+            },
+	            exampleToolCalls: {
+	                label: 'Example tool calls (optional, one per line)',
+	                placeholder: 'execution.run.start …',
+	            },
+	        },
+	        settings: {
+	            groupTitle: 'Sub-agent',
+	            disabled: {
+	                footer:
+	                    'Execution runs are disabled. Enable Execution Runs in Settings → Features to use delegation guidance.',
+	                enableExecutionRuns: {
+	                    title: 'Enable Execution Runs',
+	                    subtitle: 'Open Features settings',
+	                },
+	            },
+	            footer:
+	                'Rules are appended to the system prompt so the main agent knows when and how you prefer it to launch sub-agent runs.',
+	            enableInjection: {
+	                title: 'Enable guidance injection',
+	            },
+	            characterBudget: {
+	                title: 'Character budget',
+	                subtitle: ({ value }: { value: string }) => `${value} chars`,
+	                promptTitle: 'Character budget',
+	                promptBody: 'Max characters to inject into the system prompt.',
+	            },
+	            rules: {
+	                groupTitle: 'Guidance rules',
+	                footerEnabled: 'Tap a rule to edit. The agent uses these as delegation hints.',
+	                footerDisabled: 'Enable injection to activate rules.',
+	                emptyTitle: 'No rules yet',
+	                emptySubtitle: 'Add a rule to guide delegation.',
+	                addRuleTitle: 'Add rule',
+	                addRuleSubtitle: 'Create a new guidance rule',
+	                untitled: 'Untitled rule',
+	                descriptionFallback: 'Describe when to delegate.',
+	                tapToEdit: 'Tap to edit',
+	                meta: {
+	                    target: ({ value }: { value: string }) => `Target: ${value}`,
+	                    model: ({ value }: { value: string }) => `Model: ${value}`,
+	                    intent: ({ value }: { value: string }) => `Intent: ${value}`,
+	                },
+	            },
+	            preview: {
+	                title: 'Preview',
+	                footer: 'This is the (truncated) text appended to the system prompt.',
+	                systemPromptLabel: 'System prompt (appended)',
+	            },
+	        },
+	    },
 
     settings: {
         title: 'Settings',
@@ -180,17 +752,31 @@ export const en = {
         social: 'Social',
         account: 'Account',
         accountSubtitle: 'Manage your account details',
+        addYourPhone: 'Add your phone',
+        addYourPhoneSubtitle: 'Show a QR code to sign in on your phone',
         appearance: 'Appearance',
         appearanceSubtitle: 'Customize how the app looks',
         voiceAssistant: 'Voice Assistant',
         voiceAssistantSubtitle: 'Configure voice interaction preferences',
         memorySearch: 'Local Memory Search',
         memorySearchSubtitle: 'Search across past conversations (device-local)',
+        notifications: 'Notifications',
+        notificationsSubtitle: 'Push notification preferences',
+        attachments: 'Attachments',
+        attachmentsSubtitle: 'File upload preferences',
+        sourceControl: 'Source control',
+        sourceControlSubtitle: 'Commit strategy and backend behavior',
+        automations: 'Automations',
+        automationsSubtitle: 'Manage scheduled sessions and recurring runs',
+        executionRunsSubtitle: 'Execution runs across machines',
+        connectedServices: 'Connected services',
+        connectedServicesSubtitle: 'Claude/Codex subscriptions and OAuth profiles',
         featuresTitle: 'Features',
         featuresSubtitle: 'Enable or disable app features',
         developer: 'Developer',
         developerTools: 'Developer Tools',
         about: 'About',
+        actionsSettingsAboutSubtitle: 'Enable or disable actions globally, per surface (UI/voice/MCP), and per placement (where they appear in the UI). Disabled actions are fail-closed at runtime.',
         aboutFooter: 'Happier is a Codex, Claude Code and OpenCode mobile client. It\'s fully end-to-end encrypted and your account is stored only on your device. Not affiliated with Anthropic.',
         whatsNew: 'What\'s New',
         whatsNewSubtitle: 'See the latest updates and improvements',
@@ -201,7 +787,7 @@ export const en = {
         supportUs: 'Support us',
         supportUsSubtitlePro: 'Thank you for your support!',
         supportUsSubtitle: 'Support project development',
-        scanQrCodeToAuthenticate: 'Scan QR code to authenticate',
+        scanQrCodeToAuthenticate: 'Scan QR to connect terminal',
         githubConnected: ({ login }: { login: string }) => `Connected as @${login}`,
         connectGithubAccount: 'Connect your GitHub account',
         claudeAuthSuccess: 'Successfully connected to Claude',
@@ -218,6 +804,8 @@ export const en = {
         sessionSubtitleMessageSendingAndTmux: 'Message sending and tmux',
         servers: 'Servers',
         serversSubtitle: 'Saved servers, groups, and defaults',
+        systemStatus: 'System Status',
+        systemStatusSubtitle: 'Servers, account, machines, daemon',
 
         // Dynamic settings messages
         accountConnected: ({ service }: { service: string }) => `${service} account connected`,
@@ -225,6 +813,535 @@ export const en = {
             `${name} is ${status}`,
         featureToggled: ({ feature, enabled }: { feature: string; enabled: boolean }) =>
             `${feature} ${enabled ? 'enabled' : 'disabled'}`,
+    },
+
+    systemStatus: {
+        sections: {
+            appHealth: 'App + sync health',
+            currentServer: 'Current server',
+            identity: 'Signed-in identity',
+            configuredServers: 'Configured servers',
+            machinesActiveServer: 'Machines (active server)',
+            machinesOtherServer: ({ server }: { server: string }) => `Machines (${server})`,
+            actions: 'Actions',
+        },
+        ui: {
+            dataReady: 'Data ready',
+            realtime: 'Realtime',
+            socket: 'Socket',
+            socketLastError: ({ error }: { error: string }) => `Last error: ${error}`,
+            lastSync: 'Last sync',
+        },
+        server: {
+            activeServer: 'Active server',
+        },
+        identity: {
+            accountId: 'Account id',
+            username: 'Username',
+        },
+        servers: {
+            noneConfigured: 'No servers configured',
+            active: 'Active',
+        },
+        machines: {
+            none: 'No machines',
+            status: ({ status }: { status: string }) => `Status: ${status}`,
+        },
+        machine: {
+            unknownHost: 'Unknown machine',
+            online: 'Online',
+            offline: 'Offline',
+            fetchDoctorSnapshot: {
+                loading: 'Fetching daemon server/account…',
+                invalid: 'Could not read doctor snapshot from machine',
+            },
+            daemonAttributionUnknown: 'Daemon server/account: unknown',
+            daemonAttribution: ({ serverUrl, accountId }: { serverUrl: string; accountId: string }) =>
+                `Daemon: ${serverUrl} • ${accountId}`,
+            daemonAttributionAge: ({ age }: { age: string }) => `Last checked: ${age}`,
+            cliVersionBullet: ({ version }: { version: string }) => ` • v${version}`,
+        },
+        mismatch: 'Mismatch',
+        time: {
+            secondsAgo: ({ count }: { count: number }) => `${count}s ago`,
+            minutesAgo: ({ count }: { count: number }) => `${count}m ago`,
+            hoursAgo: ({ count }: { count: number }) => `${count}h ago`,
+            daysAgo: ({ count }: { count: number }) => `${count}d ago`,
+        },
+        actions: {
+            runDiagnosis: 'Run diagnosis',
+            runDiagnosisSubtitle: 'Detect server/account/daemon mismatches',
+            refreshMachineAttribution: 'Refresh machine daemon attribution',
+            refreshMachineAttributionSubtitle: 'Fetch daemon server/account for a few online machines',
+            copyJson: 'Copy System Status JSON',
+            copyJsonSubtitle: 'Share a redacted snapshot for support',
+        },
+    },
+
+    diagnosis: {
+        title: 'Diagnosis',
+        sections: {
+            overview: 'Overview',
+            actions: 'Actions',
+            pasteDoctorJson: 'Paste CLI doctor JSON',
+            machineRuns: 'Machine runs',
+            serverProbe: 'Server probe',
+            findings: 'Findings',
+        },
+        overview: {
+            activeServer: 'Active server',
+            account: 'Account',
+            onlineMachines: 'Online machines (active server)',
+            cachedAttribution: ({ count }: { count: number }) => `${count} cached doctor snapshot(s) available`,
+        },
+        actions: {
+            run: 'Run diagnosis',
+            runSubtitle: 'Checks server, account, machines, and daemon targeting',
+            copyReport: 'Copy diagnosis report',
+            copyReportSubtitle: 'Copy a redacted JSON report for support',
+        },
+        pasteDoctorJson: {
+            footer: 'Tip: run `happier doctor --json` on your computer and paste it here.',
+            placeholder: '{ "capturedAt": "...", ... }',
+            parse: 'Validate pasted JSON',
+            ok: 'Pasted doctor JSON looks valid.',
+            helper: 'Optional: paste doctor JSON to diagnose account/server mismatches when your machine is unreachable.',
+            error: ({ error }: { error: string }) => `Invalid doctor JSON: ${error}`,
+        },
+        machine: {
+            invalidDoctorSnapshot: 'Machine returned an invalid doctor snapshot',
+        },
+        machineRuns: {
+            none: 'No online machines available',
+            idle: 'Idle',
+            loading: 'Running…',
+            ready: 'Ready',
+            error: 'Error',
+        },
+        serverProbe: {
+            title: 'Server diagnostics',
+            httpError: ({ status }: { status: string }) => `HTTP ${status}`,
+        },
+        findings: {
+            notRun: 'Run diagnosis to see results',
+            notRunSubtitle: 'This runs safe, redacted checks (no logs unless you include diagnostics in a bug report).',
+            none: 'No issues detected',
+            noneSubtitle: 'If the problem persists, submit a bug report with diagnostics.',
+            code: ({ code }: { code: string }) => `Code: ${code}`,
+            generic: {
+                subtitle: ({ code }: { code: string }) => `Details for ${code}`,
+                steps: {
+                    reportIssue: 'Submit a bug report and include this diagnosis report.',
+                },
+            },
+            serverMismatch: {
+                title: 'Server mismatch (UI vs daemon)',
+                subtitle: ({ ui, machine }: { ui: string; machine: string }) => `UI: ${ui} • Daemon: ${machine}`,
+                steps: {
+                    chooseAccount: 'Decide which server/account you want to use.',
+                    switchUiServer: 'Switch the UI to the same server as the daemon (or vice versa).',
+                    restartDaemon: 'Restart the daemon targeting the correct server, then retry.',
+                },
+            },
+            serverMismatchPasted: {
+                title: 'Server mismatch (UI vs pasted doctor)',
+                subtitle: ({ ui, pasted }: { ui: string; pasted: string }) => `UI: ${ui} • Pasted: ${pasted}`,
+            },
+            settingsMismatch: {
+                title: 'CLI settings vs resolved server mismatch',
+                subtitle: ({ settings, resolved }: { settings: string; resolved: string }) =>
+                    `settings.json: ${settings} • resolved: ${resolved}`,
+            },
+            accountMismatch: {
+                title: 'Account mismatch (UI vs daemon)',
+                subtitle: ({ ui, machine }: { ui: string; machine: string }) => `UI: ${ui} • Daemon: ${machine}`,
+                steps: {
+                    signInSameAccount: 'Make sure UI and CLI are signed in to the same account on the same server.',
+                    cliReauth: 'In CLI: log out, then run auth again for the correct server.',
+                },
+            },
+            machineMissingAccount: {
+                title: 'Machine is missing account information',
+            },
+            noOnlineMachines: {
+                title: 'No online machines',
+                steps: {
+                    startDaemon: 'Start the daemon (and ensure it stays running).',
+                    checkNetwork: 'Check network connectivity and try again.',
+                },
+            },
+            serverDiagnosticsDisabled: {
+                title: 'Server diagnostics disabled',
+                steps: {
+                    ok: 'This is normal if your server has diagnostics disabled.',
+                },
+            },
+            serverAuthError: {
+                title: 'Server auth error (401)',
+            },
+            serverUnreachable: {
+                title: 'Server unreachable',
+                steps: {
+                    checkServerUrl: 'Verify the server URL and your network connectivity.',
+                    tryAgain: 'Try again in a moment.',
+                },
+            },
+            serverHttpError: {
+                title: 'Server diagnostics HTTP error',
+                subtitle: ({ status }: { status: string }) => `Server responded with ${status}`,
+            },
+            activeServerNotInProfiles: {
+                title: 'Active server not found in saved server profiles',
+            },
+            multipleServers: {
+                title: 'Multiple servers detected across machines',
+            },
+        },
+    },
+
+    connectedServices: {
+        fallbackName: 'Connected service',
+        title: 'Connected services',
+        authChip: {
+            label: 'Auth',
+            labelWithCount: ({ count }: { count: number }) => `Auth: ${count}`,
+        },
+        list: {
+            empty: 'No connected services yet.',
+            connectedCount: ({ count }: { count: number }) => `${count} connected`,
+            needsReauth: 'needs re-auth',
+            notConnected: 'not connected',
+        },
+        quota: {
+            loading: 'Loading…',
+            error: ({ message }: { message: string }) => `Error: ${message}`,
+            lastUpdated: ({ time }: { time: string }) => `Last updated: ${time}`,
+            lastUpdatedStale: ({ time }: { time: string }) => `Last updated: ${time} • stale`,
+            noData: 'No quota data yet',
+            planLabel: ({ plan }: { plan: string }) => `Plan: ${plan}`,
+        },
+        oauthPaste: {
+            invalidConfig: 'Invalid connected service configuration.',
+            connectWebGroupTitle: 'Connect (web)',
+            connectWebDescription:
+                'This flow uses a copy/paste redirect step (like OpenClaw) and a Happier server proxy to exchange tokens safely.',
+            openAuthorizationUrl: 'Open authorization URL',
+            opensInNewTab: 'Opens in a new tab',
+            preparing: 'Preparing…',
+            pasteRedirectUrl: 'Paste redirect URL',
+            pasteRedirectUrlPromptBody:
+                'After completing OAuth, copy the final redirected URL from your browser address bar and paste it here.',
+            working: 'Working…',
+            alerts: {
+                connectedTitle: 'Connected',
+                connectedBody: ({ serviceId, profileId }: { serviceId: string; profileId: string }) =>
+                    `${serviceId} (${profileId}) is connected.`,
+                failedToConnect: 'Failed to connect',
+            },
+        },
+        detail: {
+            unknownService: 'Unknown connected service.',
+            actionsGroupTitle: 'Actions',
+            setDefaultProfileTitle: 'Set default profile',
+            setDefaultProfileSubtitleDefault: ({ profileId }: { profileId: string }) => `Default: ${profileId}`,
+            setDefaultProfileSubtitleChoose: 'Choose which profile is selected by default',
+            setProfileLabelTitle: 'Set profile label',
+            setProfileLabelSubtitle: 'Optional label shown in auth pickers',
+            addOauthProfileTitle: 'Add OAuth profile',
+            addOauthProfileSubtitle: 'Connect a new account profile',
+            connectSetupTokenTitle: 'Connect via setup-token',
+            connectSetupTokenSubtitle: 'Paste a Claude setup-token',
+            disconnectConfirmBody: ({ service, profileId }: { service: string; profileId: string }) =>
+                `Disconnect ${service} (${profileId})?`,
+            prompts: {
+                profileIdTitle: 'Profile id',
+                profileIdBody: 'Use a short label like work, personal, alt.',
+                setupTokenTitle: 'Setup token',
+                setupTokenBody: 'Paste your Claude setup-token.',
+                profileLabelTitle: 'Profile label',
+                profileLabelBody: 'Optional. Shown in auth pickers.',
+                profileLabelPlaceholder: 'Work account',
+            },
+            alerts: {
+                invalidProfileIdTitle: 'Invalid profile id',
+                invalidProfileIdBody: 'Use letters, numbers, hyphen, or underscore (max 64).',
+                unknownProfileTitle: 'Unknown profile',
+                unknownProfileBody: ({ profileId, service }: { profileId: string; service: string }) =>
+                    `No profile named "${profileId}" exists for ${service}.`,
+            },
+            profiles: {
+                empty: 'No profiles yet.',
+                connected: 'Connected',
+                defaultBadge: 'Default',
+                needsReauth: 'Needs re-auth',
+            },
+        },
+        authModal: {
+            nativeAuthTitle: 'Backend native auth',
+            nativeAuthSubtitle: 'Use your local CLI login / API keys',
+            connectedServicesTitle: 'Use connected services',
+            connectedServicesSubtitle: 'Fetch and materialize from Happier cloud',
+            notConnectedTitle: 'Not connected',
+            notConnectedSubtitle: 'Tap to open settings',
+            profileLabel: 'Profile',
+        },
+    },
+
+    attachments: {
+        alerts: {
+            fileTooLargeTitle: 'File too large',
+            fileTooLargeBody: ({ count }: { count: number }) =>
+                `Skipped ${count} ${plural({ count, singular: 'file', plural: 'files' })} that exceed the max attachment size.`,
+        },
+    },
+
+    settingsAttachments: {
+        disabled: {
+            title: 'Attachments',
+            footer: 'This feature is disabled by your server or build policy.',
+        },
+        fileUploads: {
+            title: 'File uploads',
+        },
+        uploadLocation: {
+            title: 'Upload location',
+            footer: 'Workspace uploads are the most compatible option. OS temp uploads can be useful to avoid repository artifacts, but may not be readable in stricter sandboxes.',
+            options: {
+                workspace: {
+                    title: 'Workspace directory (recommended)',
+                    subtitle: 'Uploads are written under a workspace-relative directory so the agent sandbox can read them reliably.',
+                },
+                osTemp: {
+                    title: 'OS temp directory',
+                    subtitle: 'Uploads are written to your OS temp directory. This can break in stricter sandboxes.',
+                },
+            },
+        },
+        workspaceDirectory: {
+            title: 'Workspace directory',
+            footer: 'Only used when upload location is set to Workspace directory.',
+            uploadsDirectory: {
+                title: 'Uploads directory',
+                promptTitle: 'Uploads directory',
+                promptMessage: 'Enter a workspace-relative directory (no absolute paths, no ..).',
+                invalidDirectoryTitle: 'Invalid directory',
+                invalidDirectoryMessage: 'Use a relative path like `.happier/uploads`.',
+            },
+        },
+        sourceControlIgnore: {
+            title: 'Source control ignore',
+            footer: 'Local-only ignores avoid accidental commits. If you choose .gitignore, this may modify a tracked file.',
+            options: {
+                gitInfoExclude: {
+                    title: 'Ignore locally (.git/info/exclude) (recommended)',
+                    subtitle: 'Avoids accidental commits without modifying repository files.',
+                },
+                gitignore: {
+                    title: 'Ignore via .gitignore',
+                    subtitle: 'Writes an entry to the workspace .gitignore file (may be committed).',
+                },
+                none: {
+                    title: 'Do not write ignore rules',
+                    subtitle: 'Uploads may be picked up by source control depending on your repo config.',
+                },
+            },
+            writeIgnoreRules: {
+                title: 'Write ignore rules',
+            },
+        },
+        limits: {
+            title: 'Limits',
+            footer: 'These limits are enforced by the local CLI upload handler (best-effort).',
+            invalidValueTitle: 'Invalid value',
+            maxAttachmentSize: {
+                title: 'Max attachment size (bytes)',
+                promptTitle: 'Max attachment size (bytes)',
+                promptMessage: 'Example: 26214400 for 25MB.',
+                invalidValueMessage: 'Enter a number between 1024 and 1073741824.',
+            },
+            uploadTtl: {
+                title: 'Upload TTL (ms)',
+                promptTitle: 'Upload TTL (ms)',
+                promptMessage: 'How long an upload can stay idle before it expires.',
+                invalidValueMessage: 'Enter a number between 5000 and 3600000.',
+            },
+            chunkSize: {
+                title: 'Preferred chunk size (bytes)',
+                promptTitle: 'Preferred chunk size (bytes)',
+                promptMessage: 'The CLI may clamp this to safe bounds.',
+                invalidValueMessage: 'Enter a number between 4096 and 1048576.',
+            },
+        },
+    },
+
+    settingsSourceControl: {
+        commitStrategy: {
+            title: 'Commit strategy',
+            footer: 'Atomic commit avoids cross-agent index interference. Git staging enables interactive include/exclude workflows.',
+            options: {
+                atomic: {
+                    title: 'Atomic commit (recommended)',
+                    subtitle: 'No live staging in the repository index. Commit all pending changes in one RPC operation.',
+                },
+                gitStaging: {
+                    title: 'Git staging workflow',
+                    subtitle: 'Enable include/exclude and partial line staging for Git repositories.',
+                },
+            },
+        },
+        gitRoutingPreference: {
+            title: '.git routing preference',
+            footer: 'Select which backend to prefer when the repository mode is .git.',
+            options: {
+                git: {
+                    title: '.git repositories use Git',
+                    subtitle: 'Default and recommended for compatibility.',
+                },
+                sapling: {
+                    title: '.git repositories prefer Sapling',
+                    subtitle: 'Use Sapling backend when both Git and Sapling are available.',
+                },
+            },
+        },
+        remoteConfirmation: {
+            title: 'Remote confirmation',
+            footer: 'Controls whether pull/push operations require confirmation.',
+            options: {
+                always: {
+                    title: 'Always confirm pull/push',
+                    subtitle: 'Show confirmation dialogs for pull and push operations.',
+                },
+                pushOnly: {
+                    title: 'Confirm push only',
+                    subtitle: 'Pull runs immediately; push requires confirmation.',
+                },
+                never: {
+                    title: 'Never confirm',
+                    subtitle: 'Run pull and push immediately.',
+                },
+            },
+        },
+        pushRejectionRecovery: {
+            title: 'Push rejection recovery',
+            footer: 'Behavior when push is rejected because the branch is behind upstream.',
+            options: {
+                promptFetch: {
+                    title: 'Prompt to fetch',
+                    subtitle: 'Ask before running fetch when push is non-fast-forward rejected.',
+                },
+                autoFetch: {
+                    title: 'Auto-fetch',
+                    subtitle: 'Automatically fetch after non-fast-forward push rejection.',
+                },
+                manual: {
+                    title: 'Manual recovery',
+                    subtitle: 'Do not fetch automatically after push rejection.',
+                },
+            },
+        },
+        commitMessageGenerator: {
+            title: 'Commit message generator',
+            footer: 'Optional: generate commit message suggestions using a one-shot LLM task. Requires execution runs support on the daemon.',
+            backendItemTitle: ({ backendId }: { backendId: string }) => `Generator backend: ${backendId}`,
+            backendItemSubtitle: 'Backend id used for one-shot commit message generation.',
+            backendPromptTitle: 'Commit message backend',
+            backendPromptMessage: 'Enter backend id',
+            instructionsPlaceholder: 'Commit message instructions',
+        },
+        commitAttribution: {
+            title: 'Commit attribution',
+            footer: 'When enabled, AI-generated commit messages will include Co-Authored-By credits.',
+            includeCoAuthoredBy: {
+                title: 'Include Co-Authored-By',
+            },
+        },
+        filesDisplay: {
+            title: 'Files display',
+            footer: 'Syntax highlighting is experimental and may be disabled for very large diffs.',
+            diffRenderer: {
+                options: {
+                    pierre: {
+                        title: 'Diff renderer: Pierre',
+                        subtitle: 'Best diff rendering on web/desktop. Uses a worker pipeline and falls back safely if unavailable.',
+                    },
+                    happier: {
+                        title: 'Diff renderer: Happier',
+                        subtitle: 'Fallback renderer for compatibility and troubleshooting.',
+                    },
+                },
+            },
+            diffPresentation: {
+                options: {
+                    unified: {
+                        title: 'Diff layout: Unified',
+                        subtitle: 'Inline diff view (single column). Best for narrow screens and quick scanning.',
+                    },
+                    split: {
+                        title: 'Diff layout: Side-by-side',
+                        subtitle: 'Split diff view (two columns). Best for large screens and precise comparisons.',
+                    },
+                },
+            },
+            syntaxHighlighting: {
+                options: {
+                    off: {
+                        title: 'Syntax highlighting: Off',
+                        subtitle: 'Render diffs and files as plain monospace text.',
+                    },
+                    simple: {
+                        title: 'Syntax highlighting: Simple',
+                        subtitle: 'Fast token-based highlighting for common languages.',
+                    },
+                    advanced: {
+                        title: 'Syntax highlighting: Advanced',
+                        subtitle: 'Higher fidelity highlighting on web/desktop; falls back to simple on native.',
+                    },
+                },
+            },
+            changedFilesDensity: {
+                options: {
+                    comfortable: {
+                        title: 'Changed files density: Comfortable',
+                        subtitle: 'Larger rows with clearer file subtitles and status.',
+                    },
+                    compact: {
+                        title: 'Changed files density: Compact',
+                        subtitle: 'Smaller rows for easier scanning when many files changed.',
+                    },
+                },
+            },
+        },
+        backends: {
+            backendGroupTitle: ({ backendTitle }: { backendTitle: string }) => `${backendTitle} backend`,
+            defaultDiffItemTitle: ({ backendTitle, diffModeTitle }: { backendTitle: string; diffModeTitle: string }) =>
+                `${backendTitle} default diff: ${diffModeTitle}`,
+            defaultDiffItemSubtitle: 'Default mode when viewing files with included and pending deltas.',
+        },
+        diffMode: {
+            pending: 'Pending',
+            combined: 'Combined',
+            included: 'Included',
+        },
+    },
+
+    settingsNotifications: {
+        push: {
+            title: 'Push notifications',
+            footer: 'These notifications are sent from your CLI via Expo when your session needs attention.',
+            enabledSubtitle: 'Allow push notifications on this account',
+        },
+        types: {
+            title: 'Types',
+            footer: 'Disable individual types if you only want certain alerts.',
+            ready: {
+                title: 'Ready',
+                subtitle: 'Notify when a turn finishes and the agent is waiting for your command',
+            },
+            permissionRequests: {
+                title: 'Permission requests',
+                subtitle: 'Notify when a session is blocked waiting for an approval',
+            },
+        },
     },
 
     settingsProviders: {
@@ -277,10 +1394,23 @@ export const en = {
         acpApplyBehaviorRestartSession: 'Restart session',
         acpConfigOptionTitle: 'ACP model config option id',
         cliConnectionTitle: 'CLI & Connection',
+        targetMachineTitle: 'Target machine',
         detectedCliTitle: 'Detected CLI',
         installSetupTitle: 'Install / setup',
         installInfoSeeSetupGuide: 'See setup guide',
         installInfoUseProviderCliInstaller: 'Use the provider CLI installer',
+        cliInstaller: {
+            installTitle: ({ provider }: { provider: string }) => `Install ${provider} CLI`,
+            reinstallTitle: ({ provider }: { provider: string }) => `Reinstall ${provider} CLI`,
+            autoInstallUnavailable: 'Auto-install is not available for this machine.',
+            installSubtitle: 'Installs the provider CLI on the selected machine (best-effort).',
+            reinstallSubtitle: 'Re-runs the provider installer even if the CLI is already present.',
+            noMachineSelected: 'No machine selected.',
+            installNotSupported: 'Install not supported on this machine.',
+            installFailed: 'Install failed.',
+            installed: 'Installed.',
+            logPath: ({ logPath }: { logPath: string }) => `Log: ${logPath}`,
+        },
         setupGuideUrlTitle: 'Setup guide URL',
         connectedServiceTitle: 'Connected service',
         notFoundTitle: 'Provider not found',
@@ -306,6 +1436,16 @@ export const en = {
         },
         display: 'Display',
         displayDescription: 'Control layout and spacing',
+        multiPanePanels: 'Right panels',
+        multiPanePanelsDescription: 'Show resizable right-side panels for files and source control (web/tablet)',
+        detailsPaneTabsBehavior: 'Editor tabs',
+        detailsPaneTabsBehaviorDescription: 'Choose how file tabs behave in the editor panel',
+        detailsPaneTabsBehaviorOptions: {
+            preview: 'Preview tab',
+            persistent: 'Persistent tabs',
+        },
+        editorFocusMode: 'Editor focus mode',
+        editorFocusModeDescription: 'Hide the session transcript and sidebar while you review files (web/tablet)',
         inlineToolCalls: 'Inline Tool Calls',
         inlineToolCallsDescription: 'Display tool calls directly in chat messages',
         expandTodoLists: 'Expand Todo Lists',
@@ -370,6 +1510,16 @@ export const en = {
         experimentalFeaturesDisabled: 'Using stable features only',
         experimentalOptions: 'Experimental options',
         experimentalOptionsDescription: 'Choose which experimental features are enabled.',
+        localTogglesTitle: 'Features',
+        localTogglesFooter: 'Per-feature local toggles (independent of server support).',
+        featureDiagnostics: {
+            title: 'Feature diagnostics',
+            footer: 'Resolved feature decisions (build policy, local policy, daemon/server probes, and scope).',
+            decisionUnknown: 'unknown',
+            decisionEnabled: 'enabled',
+            decisionBlocked: ({ state, blockedBy, code }: { state: string; blockedBy: string | null; code: string }) =>
+                `${state} (blockedBy=${blockedBy ?? 'null'}, code=${code})`,
+        },
         expAutomations: 'Automations',
         expAutomationsSubtitle: 'Enable automations UI surfaces and scheduling',
         expExecutionRuns: 'Execution runs',
@@ -465,6 +1615,9 @@ export const en = {
         fileNotFound: 'File not found',
         invalidFormat: 'Invalid format',
         operationFailed: 'Operation failed',
+        daemonUnavailableTitle: 'Daemon unavailable',
+        daemonUnavailableBody:
+            'Happier can’t reach the daemon on this machine. It may be offline, still starting, or disconnected from the server.',
         tryAgain: 'Please try again',
         contactSupport: 'Contact support if the problem persists',
         sessionNotFound: 'Session not found',
@@ -598,6 +1751,9 @@ export const en = {
         failedToStart: 'Failed to start session. Make sure the daemon is running on the target machine.',
         sessionTimeout: 'Session startup timed out. The machine may be slow or the daemon may not be responding.',
         notConnectedToServer: 'Not connected to server. Check your internet connection.',
+        daemonRpcUnavailableTitle: 'Daemon unavailable',
+        daemonRpcUnavailableBody:
+            'Happier can’t reach the daemon on this machine. It may be offline, still starting, or disconnected from the server.',
         noMachineSelected: 'Please select a machine to start the session',
         noPathSelected: 'Please select a directory to start the session in',
         machinePicker: {
@@ -703,6 +1859,7 @@ export const en = {
 
     session: {
         inputPlaceholder: 'What would you like to work on?',
+        activity: 'Activity',
         resuming: 'Resuming...',
         resumeFailed: 'Failed to resume session',
         resumeSupportNoteChecking: 'Note: Happier is still checking whether this machine can resume the provider session.',
@@ -723,6 +1880,123 @@ export const en = {
         machineOfflineNoticeBody: ({ machine }: { machine: string }) =>
             `“${machine}” is offline, so Happier can’t resume this session yet. Bring it online to continue.`,
         machineOfflineCannotResume: 'Machine is offline. Bring it online to resume this session.',
+        openRuns: 'Open session runs',
+        openAutomations: 'Open session automations',
+        actionMenu: {
+            openA11y: 'Open session actions',
+        },
+        detailsPanel: {
+            emptyHint: 'Open a file or diff from the right panel.',
+            unsupportedTab: 'Unsupported details tab.',
+            closeA11y: 'Close details',
+            openTabA11y: ({ title }: { title: string }) => `Open ${title}`,
+            pinTabA11y: 'Pin tab',
+            pinnedTabA11y: 'Pinned tab',
+            closeTabA11y: 'Close tab',
+            enterFocusModeA11y: 'Enter editor focus mode',
+            exitFocusModeA11y: 'Exit editor focus mode',
+        },
+
+        actionsDraft: {
+            noInputHints: 'This action has no input hints.',
+        },
+
+        planOutput: {
+            title: 'Plan',
+            recommendedBackend: 'Recommended backend',
+            risks: 'Risks',
+            milestones: 'Milestones',
+            adoptPlan: 'Adopt plan',
+            sending: 'Sending…',
+            failedToAdopt: 'Failed to adopt plan',
+            a11y: {
+                adoptPlan: 'Adopt plan',
+            },
+        },
+
+        reviewFindings: {
+            title: ({ count }: { count: number }) => `Review findings (${count})`,
+            findingTitle: ({
+                status,
+                severity,
+                category,
+                title,
+            }: {
+                status: string;
+                severity: string;
+                category: string;
+                title: string;
+            }) => `[${status}] [${severity}/${category}] ${title}`,
+            status: {
+                untriaged: 'Untriaged',
+                accept: 'Accept',
+                reject: 'Reject',
+                defer: 'Defer',
+                needsRefinement: 'Needs refinement',
+            },
+            refinementPlaceholder: 'Optional comment for refinement',
+            actions: {
+                applyTriage: 'Apply triage',
+                applying: 'Applying…',
+                applyAcceptedFindings: 'Apply accepted findings',
+                sending: 'Sending…',
+            },
+            errors: {
+                applyTriageFailed: 'Failed to apply triage.',
+                applyAcceptedFailed: 'Failed to apply accepted findings.',
+            },
+        },
+
+        pendingMessages: {
+            title: 'Pending messages',
+            indicator: ({ count }: { count: number }) => `Pending (${count})`,
+            badgeLabel: ({ count }: { count: number }) => (count > 0 ? `Pending (+${count})` : 'Pending'),
+            empty: 'No pending messages.',
+            actions: {
+                up: 'Up',
+                down: 'Down',
+                edit: 'Edit',
+                steerNow: 'Steer now',
+                sendNow: 'Send now',
+                sendNowInterrupt: 'Send now (interrupt)',
+                requeue: 'Re-queue',
+            },
+            editPrompt: {
+                title: 'Edit pending message',
+            },
+            removeConfirm: {
+                title: 'Remove pending message?',
+                body: 'This will delete the pending message.',
+            },
+            steerConfirm: {
+                title: 'Steer now?',
+                body: 'This will add this message to the current turn without stopping it.',
+            },
+            sendConfirm: {
+                title: 'Send now?',
+                interruptTitle: 'Send now (interrupt)?',
+                body: 'This will stop the current turn and send this message immediately.',
+            },
+            discarded: {
+                title: 'Discarded messages',
+                subtitle:
+                    'These messages were not sent to the agent (for example, when switching from remote to local).',
+                label: 'Discarded',
+                removeConfirm: {
+                    title: 'Remove discarded message?',
+                    body: 'This will delete the discarded message.',
+                },
+            },
+            errors: {
+                updateFailed: 'Failed to update pending message',
+                deleteFailed: 'Failed to delete pending message',
+                sendFailed: 'Failed to send pending message',
+                restoreFailed: 'Failed to restore discarded message',
+                deleteDiscardedFailed: 'Failed to delete discarded message',
+                sendDiscardedFailed: 'Failed to send discarded message',
+                reorderFailed: 'Failed to reorder pending messages',
+            },
+        },
 
         sharing: {
             title: 'Sharing',
@@ -800,6 +2074,22 @@ export const en = {
         completedWithNoOutput: '[Command completed with no output]',
     },
 
+    delegation: {
+        output: {
+            title: 'Delegation',
+            deliverablesTitle: 'Deliverables',
+        },
+    },
+
+    modelPickerOverlay: {
+        refreshModelsA11y: 'Refresh models',
+        loadingModelsA11y: 'Loading models…',
+        refreshingModelsA11y: 'Refreshing models…',
+        searchPlaceholder: 'Search models…',
+        customTitle: 'Custom…',
+        effectiveLabel: ({ label }: { label: string }) => `Effective: ${label}`,
+    },
+
     voiceAssistant: {
         connecting: 'Connecting...',
         active: 'Voice Assistant Active',
@@ -815,12 +2105,30 @@ export const en = {
         targetSession: 'Target session',
         noTarget: 'No session selected',
         clearTarget: 'Clear target',
+        a11y: {
+            teleport: 'Teleport voice agent',
+            toggleActivity: 'Toggle voice activity',
+            clearActivity: 'Clear voice activity',
+        },
     },
 
     voiceActivity: {
         title: 'Voice Activity',
         empty: 'No voice activity yet.',
         clear: 'Clear',
+        format: {
+            voiceAgent: 'Voice agent',
+            you: 'You',
+            assistant: 'Assistant',
+            assistantStreaming: 'Assistant…',
+            action: 'Action',
+            error: 'Error',
+            status: 'Status',
+            started: 'Started',
+            stopped: 'Stopped',
+            errorFallback: 'error',
+            eventFallback: 'event',
+        },
     },
 
     server: {
@@ -868,6 +2176,10 @@ export const en = {
         addAndUse: 'Add and use',
         addTargetsTitle: 'Add',
         addServerSubtitle: 'Add a new server and switch to it',
+        serverCount: ({ count }: { count: number }) => `${count} ${plural({ count, singular: 'server', plural: 'servers' })}`,
+        signedOutSwitchConfirmTitle: 'You are not connected',
+        signedOutSwitchConfirmBody:
+            'Switch to this server and continue to the home screen so you can sign in or create an account?',
         addServerGroupTitle: 'Add server group',
         addServerGroupSubtitle: 'Create a reusable group of servers',
         serverGroupNameLabel: 'Group name',
@@ -875,6 +2187,17 @@ export const en = {
         serverGroupServersLabel: 'Servers',
         saveServerGroup: 'Save group',
         serverGroupMustHaveServer: 'A server group must include at least one server.',
+        multiServerView: {
+            title: 'Concurrent multi-server view',
+            footer: 'Select whether to combine multiple servers in one session list.',
+            enableTitle: 'Enable concurrent view',
+            enableSubtitle: 'Show sessions from selected servers together',
+            presentationTitle: 'Presentation mode',
+            presentation: {
+                flatWithBadges: 'Flat list with server badges',
+                groupedByServer: 'Grouped by server',
+            },
+        },
     },
 
     sessionTags: {
@@ -885,6 +2208,10 @@ export const en = {
         newTagTitle: 'New tag',
         newTagMessage: 'Enter a name for the new tag.',
         newTagConfirm: 'Add',
+    },
+
+    sessionsList: {
+        serverHeader: ({ server }: { server: string }) => `Server: ${server}`,
     },
 
     sessionInfo: {
@@ -932,9 +2259,15 @@ export const en = {
         lastUpdated: 'Last Updated',
         sequence: 'Sequence',
         quickActions: 'Quick Actions',
+        executionRunsSubtitle: 'See execution runs for this session',
+        automationsTitle: 'Automations',
+        automationsSubtitle: 'Manage scheduled messages for this session',
+        viewSessionLogTitle: 'View session log',
+        viewSessionLogSubtitle: 'Open live log tail for this session',
         pinSession: 'Pin session',
         unpinSession: 'Unpin session',
         copyResumeCommand: 'Copy resume command',
+        resumeCommand: ({ sessionId }: { sessionId: string }) => `happier resume ${sessionId}`,
         viewMachine: 'View Machine',
         viewMachineSubtitle: 'View machine details and sessions',
         manageSharing: 'Manage sharing',
@@ -1039,6 +2372,7 @@ export const en = {
         },
         permissionMode: {
             title: 'PERMISSION MODE',
+            effectiveLabel: ({ label }: { label: string }) => `Effective: ${label}`,
             default: 'Default',
             readOnly: 'Read Only',
             acceptEdits: 'Accept Edits',
@@ -1074,6 +2408,9 @@ export const en = {
         model: {
             title: 'MODEL',
             configureInCli: 'Configure models in CLI settings',
+            customDescription: 'Use a model id that isn’t listed.',
+            customPromptBody: 'Enter a model id',
+            customPlaceholder: 'e.g. claude-3.5-sonnet',
         },
         codexPermissionMode: {
             title: 'CODEX PERMISSION MODE',
@@ -1129,6 +2466,19 @@ export const en = {
             fileLabel: 'FILE',
             folderLabel: 'FOLDER',
         },
+        acp: {
+            modeSectionTitle: 'Mode',
+            refreshModesA11y: 'Refresh modes',
+            pendingSwitching: ({ from, to }: { from: string; to: string }) => `Pending: switching from ${from} to ${to}`,
+            currentMode: ({ name }: { name: string }) => `Current: ${name}`,
+            loadingModes: 'Loading modes…',
+            refreshingModes: 'Refreshing modes…',
+            useDefaultModeHint: 'Use the default mode for this agent.',
+            startIn: ({ name }: { name: string }) => `Start in: ${name}`,
+            optionsSectionTitle: 'Options',
+            currentValue: ({ value }: { value: string }) => `Current: ${value}`,
+            pendingValue: ({ current, requested }: { current: string; requested: string }) => `Pending: ${current} → ${requested}`,
+        },
         actionMenu: {
             title: 'ACTIONS',
             files: 'Files',
@@ -1156,6 +2506,13 @@ export const en = {
     },
 
     tools: {
+        common: {
+            more: ({ count }: { count: number }) => `+${count} more`,
+            elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,
+        },
+        webFetch: {
+            httpStatus: ({ status }: { status: number }) => `HTTP ${status}`,
+        },
         fullView: {
             description: 'Description',
             inputParams: 'Input Parameters',
@@ -1173,9 +2530,54 @@ export const en = {
             initializing: 'Initializing agent...',
             moreTools: ({ count }: { count: number }) => `+${count} more ${plural({ count, singular: 'tool', plural: 'tools' })}`,
         },
+        subAgentRunView: {
+            planTitle: 'Plan',
+            delegateTitle: 'Delegate',
+            reviewDigestTitle: 'Review digest',
+        },
+        changeTitleView: {
+            titleLabel: 'Title',
+        },
+        enterPlanMode: {
+            title: 'Entered plan mode',
+            body: 'The agent will now provide a structured plan before taking action. You can exit plan mode or request changes when ready.',
+        },
+        structuredResult: {
+            exit: 'Exit code',
+            stdout: 'Stdout',
+            stderr: 'Stderr',
+            diff: 'Diff',
+            result: 'Result',
+            items: 'Items',
+            more: ({ count }: { count: number }) => `+${count} more`,
+        },
+        workspaceIndexingPermission: {
+            defaultTitle: 'Workspace indexing',
+            description: 'Indexing helps the agent search your codebase faster and provide more accurate answers. This may scan files in your workspace.',
+            optionFallback: 'Option',
+            chooseOptionHint: 'Choose an option below to continue.',
+        },
+        acpHistoryImport: {
+            title: 'Import session history?',
+            defaultNote: 'This session history differs from what is already in Happier. Importing may create duplicates.',
+            counts: {
+                local: ({ count }: { count: number }) => `Local: ${count}`,
+                remote: ({ count }: { count: number }) => `Remote: ${count}`,
+            },
+            preview: {
+                localTail: 'Local (tail)',
+                remoteTail: 'Remote (tail)',
+                unknownRole: 'unknown',
+            },
+            actions: {
+                import: 'Import',
+                skip: 'Skip',
+            },
+        },
         multiEdit: {
             editNumber: ({ index, total }: { index: number; total: number }) => `Edit ${index} of ${total}`,
             replaceAll: 'Replace All',
+            summaryEdits: ({ count }: { count: number }) => `${count} edit${count === 1 ? '' : 's'}`,
         },
         names: {
             task: 'Task',
@@ -1241,45 +2643,254 @@ export const en = {
         }
     },
 
-    files: {
-        searchPlaceholder: 'Search files...',
-        detachedHead: 'detached HEAD',
-        summary: ({ staged, unstaged }: { staged: number; unstaged: number }) => `${staged} staged • ${unstaged} unstaged`,
-        repositoryChangedFiles: ({ count }: { count: number }) => `Repository changed files (${count})`,
-        sessionAttributedChanges: ({ count }: { count: number }) => `Session-attributed changes (${count})`,
-        otherRepositoryChanges: ({ count }: { count: number }) => `Other repository changes (${count})`,
-        attributionReliabilityHigh: 'Best effort attribution. Repository view remains the source of truth.',
-        attributionReliabilityLimited: 'Reliability limited: multiple sessions are active for this repository. Showing direct attribution only.',
-        attributionLegendFull: 'direct = from this session operations, inferred = snapshot-based attribution',
-        attributionLegendDirectOnly: 'direct = from this session operations',
-        inferredSuppressed: ({ count }: { count: number }) =>
-            `${count} inferred file${count === 1 ? '' : 's'} kept in repository-only changes.`,
-        noSessionAttributedChanges: 'No session-attributed changes currently detected.',
-        notRepo: 'Not a source-control repository',
-        notUnderSourceControl: 'This directory is not under source control',
-        searching: 'Searching files...',
-        noFilesFound: 'No files found',
-        noFilesInProject: 'No files in project',
-        repositoryFolderLoadFailed: 'Unable to load folder',
-        repositoryCollapseAll: 'Collapse all',
-        reviewFilterPlaceholder: 'Filter files...',
-        reviewNoMatches: 'No matches',
-        reviewLargeDiffOneAtATime: 'Large diff detected, showing one file at a time.',
-        reviewDiffRequestFailed: 'Unable to load diff',
-        reviewUnableToLoadDiff: 'Unable to load diff',
-        tryDifferentTerm: 'Try a different search term',
-        searchResults: ({ count }: { count: number }) => `Search Results (${count})`,
-        projectRoot: 'Project root',
-        stagedChanges: ({ count }: { count: number }) => `Staged Changes (${count})`,
-        unstagedChanges: ({ count }: { count: number }) => `Unstaged Changes (${count})`,
-        // File viewer strings
-        loadingFile: ({ fileName }: { fileName: string }) => `Loading ${fileName}...`,
-        binaryFile: 'Binary File',
-        cannotDisplayBinary: 'Cannot display binary file content',
-        diff: 'Diff',
-        file: 'File',
+		    files: {
+		        searchPlaceholder: 'Search files...',
+                clearSearchA11y: 'Clear search',
+                createFileA11y: 'Create file',
+                createFolderA11y: 'Create folder',
+                createFilePromptTitle: 'Create file',
+                createFilePromptBody: 'Enter a path relative to the project root.',
+                createFileInvalidPath: 'Invalid file path. Use a workspace-relative path like src/new-file.ts.',
+                createFileFailed: 'Failed to create file.',
+                createFolderPromptTitle: 'Create folder',
+                createFolderPromptBody: 'Enter a folder path relative to the project root.',
+                createFolderInvalidPath: 'Invalid folder path. Use a workspace-relative path like src/new-folder.',
+                createFolderFailed: 'Failed to create folder.',
+                changeRow: {
+                    viewDiffA11y: ({ file }: { file: string }) => `View diff for ${file}`,
+                    status: {
+                        untracked: 'Untracked file',
+                        added: 'New file',
+                        deleted: 'Deleted file',
+                        renamed: 'Renamed file',
+                        copied: 'Copied file',
+                        conflicted: 'Conflicted file',
+                        modified: 'Modified file',
+                    },
+                },
+	            projectLinkPicker: {
+	                title: 'Link project file',
+	                searchFailed: 'Search failed. Try again.',
+	            },
+		        detachedHead: 'detached HEAD',
+		        summary: ({ staged, unstaged }: { staged: number; unstaged: number }) => `${staged} staged • ${unstaged} unstaged`,
+                branchSummary: {
+                    ahead: 'Ahead',
+                    behind: 'Behind',
+                    included: 'Included',
+                    staged: 'Staged',
+                    pending: 'Pending',
+                    unstaged: 'Unstaged',
+                    upstreamLabel: ({ upstream }: { upstream: string }) => `Upstream ${upstream}`,
+                    noUpstream: 'No upstream',
+                },
+                stageActions: {
+                    selectPendingDiffMode: 'Select Pending diff mode to pick lines for commit.',
+                    unableToBuildPatchFromSelection: 'Unable to build patch from selected lines.',
+                    diffChangedRefreshAndReselect: 'Diff changed, refresh and reselect lines.',
+                },
+                discardChangesFor: ({ path }: { path: string }) => `Discard changes for ${path}`,
+                commitSelection: {
+                    addToCommit: 'Add to commit',
+                    removeFromCommit: 'Remove from commit',
+                },
+                sourceControlStatus: {
+                    changedFilesLabel: ({ count }: { count: number }) => `${count} ${plural({ count, singular: 'file', plural: 'files' })}`,
+                },
+		        repositoryChangedFiles: ({ count }: { count: number }) => `Repository changed files (${count})`,
+		        sessionAttributedChanges: ({ count }: { count: number }) => `Session-attributed changes (${count})`,
+		        otherRepositoryChanges: ({ count }: { count: number }) => `Other repository changes (${count})`,
+	        attributionReliabilityHigh: 'Best effort attribution. Repository view remains the source of truth.',
+	        attributionReliabilityLimited: 'Reliability limited: multiple sessions are active for this repository. Showing direct attribution only.',
+	        attributionLegendFull: 'direct = from this session operations, inferred = snapshot-based attribution',
+	        attributionLegendDirectOnly: 'direct = from this session operations',
+	        inferredSuppressed: ({ count }: { count: number }) =>
+	            `${count} inferred file${count === 1 ? '' : 's'} kept in repository-only changes.`,
+	        noSessionAttributedChanges: 'No session-attributed changes currently detected.',
+	        notRepo: 'Not a source-control repository',
+	        notUnderSourceControl: 'This directory is not under source control',
+	        searching: 'Searching files...',
+	        noFilesFound: 'No files found',
+	        noFilesInProject: 'No files in project',
+	        repositoryFolderLoadFailed: 'Unable to load folder',
+	        repositoryCollapseAll: 'Collapse all',
+	            sourceControlOperationsLog: {
+	                title: 'Recent source-control operations',
+	                allSessions: 'All sessions',
+	                thisSession: 'This session',
+	                emptyThisSession: 'No recent operations for this session.',
+	            },
+                operationsHistory: {
+                    recentCommits: 'Recent commits',
+                    noCommitsAvailable: 'No commits available.',
+                    loadMore: 'Load more commits',
+                },
+		        reviewFilterPlaceholder: 'Filter files...',
+		        reviewNoMatches: 'No matches',
+		        reviewLargeDiffOneAtATime: 'Large diff detected; diffs will load as you scroll.',
+	        reviewDiffRequestFailed: 'Unable to load diff',
+	        reviewUnableToLoadDiff: 'Unable to load diff',
+	        tryDifferentTerm: 'Try a different search term',
+	        searchResults: ({ count }: { count: number }) => `Search Results (${count})`,
+	        projectRoot: 'Project root',
+	        stagedChanges: ({ count }: { count: number }) => `Staged Changes (${count})`,
+	        unstagedChanges: ({ count }: { count: number }) => `Unstaged Changes (${count})`,
+		        // File viewer strings
+		        fileReadFailed: 'Failed to read file',
+		        fileWriteFailed: 'Failed to write file',
+                fileEditor: {
+                    experimentalHint: 'Editing is experimental. Save to write changes back to the session worktree.',
+                },
+		        fileEditingUnsupported:
+		            'File editing isn’t supported by the connected daemon. Update Happier on the machine to enable write operations.',
+	        selectionFailed: 'Failed to update selection',
+	        openReviewCommentsFailed: 'Failed to open review comments',
+	            reviewComments: {
+                    title: ({ count }: { count: number }) => `Review comments (${count})`,
+	                placeholder: 'Add a review comment…',
+                    jump: 'Jump',
+                    addCommentA11y: 'Add comment',
+                    closeCommentA11y: 'Close comment',
+                    draftsChipLabel: ({ count }: { count: number }) => `Review (${count})`,
+	                errors: {
+	                    empty: 'Comment cannot be empty',
+	                    couldNotMapSelection: 'Could not map selection to a diff line',
+	                },
+	            },
+            commitDetails: {
+                missingContext: 'Missing commit context',
+                failedToLoadDiff: 'Failed to load commit diff',
+                diffUnavailableTitle: 'Commit diff unavailable',
+                diffUnavailableHint: 'Try opening the commit again from the Files screen.',
+                commitLabel: 'Commit',
+                running: ({ operation }: { operation: string }) => `Running: ${operation}`,
+                revert: {
+                    title: 'Revert commit',
+                    button: 'Revert commit',
+                    confirm: 'Revert',
+                    success: 'Commit reverted successfully',
+                    failed: 'Failed to revert commit',
+                },
+            },
+            commitRevertUnavailable: 'Revert is unavailable for this commit.',
+            commitMessageEditor: {
+                placeholder: 'Commit message',
+                generate: 'Generate',
+                generating: 'Generating…',
+                applySuggestion: 'Apply suggestion',
+                commit: 'Commit',
+                generateFailed: 'Failed to generate commit message',
+                generatorDisabled: 'Commit message generator is disabled',
+            },
+	        loadingFile: ({ fileName }: { fileName: string }) => `Loading ${fileName}...`,
+	        binaryFile: 'Binary File',
+	        cannotDisplayBinary: 'Cannot display binary file content',
+	        diff: 'Diff',
+	        file: 'File',
+            diffModes: {
+                pending: 'Pending',
+                included: 'Included',
+                combined: 'Combined',
+            },
+            fileActions: {
+                selectForCommit: 'Select for commit',
+                stageFile: 'Stage file',
+                removeFromSelection: 'Remove from selection',
+                unstageFile: 'Unstage file',
+                selectionHint: 'Select Included or Pending to enable line selection.',
+                selectedLines: {
+                    selectLinesForCommit: 'Select lines for commit',
+                    stageSelectedLines: 'Stage selected lines',
+                    unstageSelectedLines: 'Unstage selected lines',
+                },
+                clearSelection: 'Clear selection',
+            },
+            toolbar: {
+                changedFiles: 'Changed files',
+                allRepositoryFiles: 'All repository files',
+                repositoryView: 'Repository view',
+                sessionView: 'Session view',
+                review: 'Review',
+                list: 'List',
+                scm: 'SCM',
+            },
         fileEmpty: 'File is empty',
         noChanges: 'No changes to display',
+        sourceControlOperations: {
+            title: 'Source control',
+            actorThisSession: 'this session',
+            actorSession: ({ sessionIdPrefix }: { sessionIdPrefix: string }) =>
+                `session ${sessionIdPrefix}`,
+            running: ({ operation, actor }: { operation: string; actor: string }) =>
+                `Running: ${operation} · ${actor}`,
+            lockedBy: ({ actor }: { actor: string }) =>
+                `Source control operations are locked by ${actor}.`,
+            globalLock: 'Operations are temporarily locked because another session is running a source control command.',
+            selection: ({ count }: { count: number }) =>
+                count === 1
+                    ? '1 file selected for the next commit.'
+                    : `${count} files selected for the next commit.`,
+            clear: 'Clear',
+            conflictsDetected: 'Conflicts detected. Commit, pull, and push are blocked until conflicts are resolved.',
+            actions: {
+                fetch: 'Fetch',
+                pull: 'Pull',
+                push: 'Push',
+            },
+            blockedHints: {
+                lock: 'Lock',
+                commitBlocked: 'Commit blocked',
+                pullBlocked: 'Pull blocked',
+                pushBlocked: 'Push blocked',
+            },
+        },
+    },
+
+    executionRuns: {
+        newRun: {
+            headerTitle: 'Start run',
+            sections: {
+                intent: 'Intent',
+                permissions: 'Permissions',
+                backends: 'Backends',
+                instructions: 'Instructions',
+            },
+            intents: {
+                review: 'Review',
+                plan: 'Plan',
+                delegate: 'Delegate',
+            },
+            permissionModes: {
+                readOnly: 'Read-only',
+                default: 'Default',
+            },
+            instructionsPlaceholder: 'What should the sub-agent do?',
+            actions: {
+                start: 'Start',
+            },
+            guidancePreview: 'Guidance preview',
+            a11y: {
+                startRun: 'Start run',
+                cancel: 'Cancel',
+                selectIntent: ({ intent }: { intent: string }) => `Select intent ${intent}`,
+                selectPermissionMode: ({ mode }: { mode: string }) => `Select permissionMode ${mode}`,
+                toggleBackend: ({ backendId }: { backendId: string }) => `Toggle backend ${backendId}`,
+            },
+        },
+        details: {
+            labels: {
+                intent: 'Intent',
+                backendId: 'Backend ID',
+                permissionMode: 'Permission mode',
+                retentionPolicy: 'Retention policy',
+                runClass: 'Run class',
+                ioMode: 'I/O mode',
+            },
+            timestamps: {
+                started: 'Started',
+                finished: 'Finished',
+            },
+        },
     },
 
 	    settingsSession: {
@@ -1318,9 +2929,127 @@ export const en = {
             title: 'Tool rendering',
             footer: 'Controls how much tool detail is shown in the session timeline. This is a UI preference; it does not change agent behavior.',
             defaultToolDetailLevelTitle: 'Default tool detail level',
+            expandedToolDetailLevelTitle: 'Expanded tool detail level',
+            timelineChrome: {
+                title: 'Timeline tool style',
+                cardsTitle: 'Cards',
+                cardsSubtitle: 'Tool cards with inline content (based on detail level).',
+                activityFeedTitle: 'Activity feed',
+                activityFeedSubtitle: 'Compact rows optimized for high tool density.',
+            },
+	            cardDensity: {
+	                title: 'Tool density',
+	                comfortableTitle: 'Comfortable',
+	                comfortableSubtitle: 'More spacing and clearer separation (cards and activity feed).',
+	                compactTitle: 'Compact',
+	                compactSubtitle: 'Tighter rows and reduced padding (cards and activity feed).',
+	            },
+            activityFeed: {
+                defaultDetailTitle: 'Activity feed default detail',
+                expandedDetailTitle: 'Activity feed expanded detail',
+                tapActionTitle: 'Activity feed tap action',
+                tapAction: {
+                    expandTitle: 'Expand',
+                    expandSubtitle: 'Tap expands or collapses inline details.',
+                    openTitle: 'Open',
+                    openSubtitle: 'Tap opens the full tool view screen.',
+                },
+                defaultExpandedTitle: 'Default expanded',
+                defaultExpandedSubtitle: 'Expand tool rows by default in activity feed.',
+            },
             localControlDefaultTitle: 'Local-control default',
             showDebugByDefaultTitle: 'Show debug by default',
             showDebugByDefaultSubtitle: 'Auto-expand raw tool payloads in the full tool view.',
+        },
+        transcript: {
+            title: 'Transcript',
+            entrySubtitle: 'Open transcript settings',
+            footer: 'Customize how chats are displayed and how the transcript behaves.',
+            layoutTitle: 'Layout',
+            layoutFooter: 'Choose between a simple linear transcript and turn grouping.',
+            layoutPickerTitle: 'Transcript layout',
+            layout: {
+                linearTitle: 'Linear (current)',
+                linearSubtitle: 'Show messages as a flat list.',
+                turnsTitle: 'Turns',
+                turnsSubtitle: 'Group messages into user/assistant turns.',
+            },
+            activityGroupTitle: 'Group tools into Activity',
+            activityGroupSubtitle: 'Compact tool calls into an Activity section inside each turn.',
+            toolAppearanceTitle: 'Tool appearance',
+            toolAppearanceSubtitle: 'Customize how tools look in the transcript.',
+            motionTitle: 'Motion',
+            motionFooter: 'Control animations in the transcript.',
+            motionPickerTitle: 'Animations',
+            motion: {
+                offTitle: 'Off',
+                offSubtitle: 'Disable transcript animations.',
+                subtleTitle: 'Subtle (default)',
+                subtleSubtitle: 'Fast, minimal motion for new activity.',
+                fullTitle: 'Full',
+                fullSubtitle: 'More expressive motion and transitions.',
+            },
+            advancedMotionTitle: 'Advanced motion…',
+            advancedMotionSubtitle: 'Fine-tune freshness and animation toggles.',
+            scrollTitle: 'Scroll',
+            scrollFooter: 'Control pinned scrolling and jump-to-bottom behavior.',
+            scrollPinTitle: 'Pin to bottom',
+            scrollPinSubtitle: 'Follow new messages while you are at the bottom.',
+            jumpToBottomTitle: 'Jump to bottom button',
+            jumpToBottomSubtitle: 'Show a button when you scroll up and new activity arrives.',
+            advancedScrollTitle: 'Advanced scroll…',
+            advancedScrollSubtitle: 'Fine-tune pin thresholds and counters.',
+            advanced: {
+                turnGroupingTitle: 'Turn grouping',
+                turnGroupingFooter: 'Controls how Activity is formed inside turns.',
+                activityStrategyTitle: 'Activity grouping strategy',
+                activityStrategy: {
+                    consecutiveTitle: 'Consecutive tools (default)',
+                    consecutiveSubtitle: 'Group only consecutive tool calls into Activity.',
+                    allToolsTitle: 'All tools in turn',
+                    allToolsSubtitle: 'Group all tool calls in a turn into a single Activity section.',
+                },
+                activityCollapsedPreviewCountTitle: 'Collapsed preview',
+                activityCollapsedPreviewCountSubtitle: ({ value }: { value: string }) => `Show the last ${value} tool(s) when Activity is collapsed.`,
+                activityCollapsedPreviewCount: {
+                    offTitle: 'Off',
+                    offSubtitle: 'Show only the Activity header.',
+                    oneTitle: '1 tool',
+                    oneSubtitle: 'Show the most recent tool as a preview row.',
+                    twoTitle: '2 tools',
+                    twoSubtitle: 'Show the 2 most recent tools as preview rows.',
+                    threeTitle: '3 tools',
+                    threeSubtitle: 'Show the 3 most recent tools as preview rows.',
+                },
+                motionTitle: 'Motion (advanced)',
+                motionFooter: 'Animations are freshness-gated to keep history stable.',
+                freshnessTitle: 'Freshness window',
+                freshnessSubtitle: ({ value }: { value: string }) => `Current: ${value}ms`,
+                freshnessPromptTitle: 'Freshness window (ms)',
+                freshnessPromptBody: 'Set how long new items stay “fresh” for animations.',
+                animateNewItemsTitle: 'Animate new items',
+                animateNewItemsSubtitle: 'Animate new streamed-in messages and tools.',
+                animateToolExpandCollapseTitle: 'Animate tool expand/collapse',
+                animateToolExpandCollapseSubtitle: 'Animate inline tool expand/collapse transitions.',
+                animateToolExpandCollapseFreshOnlyTitle: 'Fresh-only expand/collapse',
+                animateToolExpandCollapseFreshOnlySubtitle: 'Only animate expand/collapse for fresh tools.',
+                animateThinkingTitle: 'Animate thinking',
+                animateThinkingSubtitle: 'Animate streamed thinking messages when visible.',
+                scrollTitle: 'Scroll (advanced)',
+                scrollFooter: 'Fine-tune pin thresholds and jump behavior.',
+                pinOffsetTitle: 'Pinned offset threshold',
+                pinOffsetSubtitle: ({ value }: { value: string }) => `Current: ${value}px`,
+                pinOffsetPromptTitle: 'Pinned offset threshold (px)',
+                pinOffsetPromptBody: 'Set how far from the bottom counts as pinned.',
+                autoFollowTitle: 'Auto-follow while pinned',
+                autoFollowSubtitle: 'When pinned, follow new activity automatically.',
+                jumpMinNewCountTitle: 'Jump button minimum count',
+                jumpMinNewCountSubtitle: ({ value }: { value: string }) => `Current: ${value}`,
+                jumpMinNewCountPromptTitle: 'Jump button minimum count',
+                jumpMinNewCountPromptBody: 'Show the jump button only after this many new items arrive.',
+                jumpAnimateScrollTitle: 'Animate jump to bottom',
+                jumpAnimateScrollSubtitle: 'Animate scrolling when jumping to bottom.',
+            },
         },
         toolDetailOverrides: {
             title: 'Tool detail overrides',
@@ -1330,13 +3059,30 @@ export const en = {
             title: 'Permissions',
             entrySubtitle: 'Open permissions settings',
             footer: 'Configure default permissions and how changes apply to running sessions.',
+            promptSurfaceTitle: 'Permission prompts',
+            promptSurfaceFooter: 'Choose where permission approval prompts appear during a session.',
             applyChangesFooter: 'Choose when permission changes take effect for running sessions.',
             backendFooter: 'Set the default permission mode used when starting sessions with this backend.',
             defaultPermissionModeTitle: 'Default permission mode',
+            promptSurface: {
+                composerTitle: 'Near composer (recommended)',
+                composerSubtitle: 'Show rich permission cards near the input.',
+                transcriptTitle: 'In transcript',
+                transcriptSubtitle: 'Show permission prompts inside tool messages.',
+                bothTitle: 'Both',
+                bothSubtitle: 'Show prompts near the composer and inside the transcript.',
+            },
             applyTiming: {
                 immediateTitle: 'Apply immediately',
                 nextPromptTitle: 'Apply on next message',
             },
+        },
+        subAgentGuidanceEntry: {
+            openSubtitle: 'Open Sub-agent settings',
+        },
+        actionsEntry: {
+            footer: 'Enable actions per surface and placement (UI, voice, MCP) and control where they appear.',
+            openSubtitle: 'Open actions settings',
         },
 	        defaultPermissions: {
 	            title: 'Default permissions',
@@ -1363,13 +3109,19 @@ export const en = {
 	        },
 	        toolDetailLevel: {
 	            titleOnlyTitle: 'Title only',
-	            titleOnlySubtitle: 'Show only the tool name (no body) in the timeline.',
+	            titleOnlySubtitle: 'Show only the tool name in the timeline (hides subtitle, status, and body).',
+                compactTitle: 'Compact',
+                compactSubtitle: 'Show tool name + inline subtitle + status on one line (hides body).',
 	            summaryTitle: 'Summary',
-            summarySubtitle: 'Show a compact, safe summary in the timeline.',
-            fullTitle: 'Full',
-            fullSubtitle: 'Show full details inline in the timeline.',
+	            summarySubtitle: 'Show a compact, safe summary in the timeline.',
+	            fullTitle: 'Full',
+	            fullSubtitle: 'Show full details inline in the timeline.',
             defaultTitle: 'Default',
             defaultSubtitle: 'Use the global default.',
+            styleDefaultTitle: 'Default (recommended)',
+            styleDefaultSubtitle: 'Cards: Summary. Activity feed: Compact.',
+            expandedStyleDefaultTitle: 'Default (recommended)',
+            expandedStyleDefaultSubtitle: 'Cards: Full. Activity feed: Summary.',
         },
         terminalConnect: {
             title: 'Terminal connect',
@@ -1460,6 +3212,13 @@ export const en = {
         },
         byo: {
             title: 'Use My ElevenLabs',
+            agentReuseDialog: {
+                title: 'Happier agent already exists',
+                messageWithId: ({ name, id }: { name: string; id: string }) =>
+                    `We found an existing ElevenLabs agent (“${name}”, id: ${id}).\n\nDo you want to update it, or create a new one?`,
+                messageNoId: ({ name }: { name: string }) =>
+                    `We found an existing ElevenLabs agent (“${name}”).\n\nDo you want to update it, or create a new one?`,
+            },
             configured: 'Configured. Voice usage will be billed to your ElevenLabs account.',
             notConfigured:
                 'Setup (2 minutes):\n' +
@@ -1522,6 +3281,83 @@ export const en = {
             voiceGroupFooter: 'Choose how your ElevenLabs agent speaks. Changes apply when you update the agent.',
             provisioningGroupTitle: 'Agent provisioning',
             provisioningGroupFooter: 'If you change voice/tuning, tap Update Agent to apply it in ElevenLabs.',
+            realtime: {
+                call: {
+                    title: 'Call',
+                    welcome: {
+                        title: 'Welcome message',
+                        subtitle: 'Optional greeting at the start of the call.',
+                        detail: {
+                            off: 'Off',
+                            immediate: 'Immediate',
+                            onFirstTurn: 'On first turn',
+                        },
+                        options: {
+                            offSubtitle: 'No greeting.',
+                            immediateSubtitle: 'Greet as soon as the call connects.',
+                            onFirstTurnSubtitle: 'Greet at the start of the first reply.',
+                        },
+                    },
+                },
+                voicePicker: {
+                    title: 'Voice',
+                    subtitle: 'Choose the ElevenLabs voice used for replies.',
+                    missingApiKeyTitle: 'Add API key to load voices',
+                    loadingTitle: 'Loading voices…',
+                    errorTitle: 'Failed to load voices',
+                    errorSubtitle: 'Check your API key and try again.',
+                },
+                modelPicker: {
+                    title: 'Model',
+                    subtitle: 'Optional: override the ElevenLabs TTS model id.',
+                    detailAuto: 'Auto',
+                    options: {
+                        autoTitle: 'Auto',
+                        autoSubtitle: 'Use the ElevenLabs default model.',
+                        multilingualV2Subtitle: 'Common default (multilingual).',
+                        turboV2Subtitle: 'Lower latency (if available on your plan).',
+                        turboV25Subtitle: 'Turbo 2.5 (if available).',
+                        customTitle: 'Custom…',
+                        customSubtitle: 'Enter a model id.',
+                    },
+                    prompt: {
+                        title: 'Model id',
+                        body: 'Enter an ElevenLabs model id, or leave blank to use the default.',
+                    },
+                },
+                voiceSettings: {
+                    default: 'Default',
+                    stability: {
+                        title: 'Stability',
+                        subtitle: '0–1. Leave blank for default.',
+                        promptTitle: 'Stability (0–1)',
+                        promptBody: 'Enter a number between 0 and 1. Leave blank to use the default.',
+                        invalid: 'Please enter a number between 0 and 1.',
+                    },
+                    similarityBoost: {
+                        title: 'Similarity boost',
+                        subtitle: '0–1. Leave blank for default.',
+                        promptTitle: 'Similarity boost (0–1)',
+                        promptBody: 'Enter a number between 0 and 1. Leave blank to use the default.',
+                        invalid: 'Please enter a number between 0 and 1.',
+                    },
+                    style: {
+                        title: 'Style',
+                        subtitle: '0–1. Leave blank for default.',
+                        promptTitle: 'Style (0–1)',
+                        promptBody: 'Enter a number between 0 and 1. Leave blank to use the default.',
+                        invalid: 'Please enter a number between 0 and 1.',
+                    },
+                    speed: {
+                        title: 'Speed',
+                        subtitle: '0.5–2. Leave blank for default.',
+                        promptTitle: 'Speed (0.5–2)',
+                        promptBody: 'Enter a number between 0.5 and 2. Leave blank to use the default.',
+                        invalid: 'Please enter a number between 0.5 and 2.',
+                    },
+                },
+                getStartedTitle: 'Get started',
+            },
             apiKeySaveFailed: 'Failed to save API key. Please try again.',
             disconnect: 'Disconnect',
             disconnectSubtitle: 'Remove stored ElevenLabs credentials from this device',
@@ -1539,8 +3375,367 @@ export const en = {
             baseUrlPlaceholder: 'http://192.168.1.10:8000/v1',
             apiKeyPlaceholder: 'Optional',
             apiKeySaveFailed: 'Failed to save API key. Please try again.',
+            googleCloudTts: {
+                provider: {
+                    title: 'Google Cloud Text-to-Speech',
+                    subtitle: 'Use your own Google Cloud API key to synthesize audio.',
+                    detail: 'Google Cloud',
+                },
+                common: {
+                    default: 'Default',
+                },
+                apiKey: {
+                    title: 'Google Cloud API key',
+                    promptTitle: 'Google Cloud API key',
+                    promptBody:
+                        'Create an API key with Text-to-Speech API enabled. Optional: restrict the key to this app (iOS bundle id / Android package+SHA1).',
+                },
+                androidCertSha1: {
+                    title: 'Android cert SHA-1 (optional)',
+                    subtitle: 'Only needed if you restrict the API key to your Android app.',
+                    promptTitle: 'Android cert SHA-1',
+                    promptBody: 'Example: AA:BB:CC:... (from your signing certificate).',
+                },
+                language: {
+                    title: 'Language',
+                    subtitle: 'Optional filter for the voice list.',
+                    searchPlaceholder: 'Search languages',
+                    allTitle: 'All',
+                    allSubtitle: 'Show voices for all languages.',
+                },
+                speakingRate: {
+                    title: 'Speaking rate',
+                    subtitle: '0.25–4.0 (default uses voice default).',
+                    promptTitle: 'Speaking rate',
+                    promptBody: 'Set the speaking rate (0.25–4.0). Leave empty to use default.',
+                },
+                pitch: {
+                    title: 'Pitch',
+                    subtitle: '-20–20 (default uses voice default).',
+                    promptTitle: 'Pitch',
+                    promptBody: 'Set the pitch (-20–20). Leave empty to use default.',
+                },
+                voice: {
+                    title: 'Voice',
+                    subtitle: 'Select a Google Cloud voice.',
+                    searchPlaceholder: 'Search voices',
+                    selectPrompt: 'Select…',
+                    setApiKeyPrompt: 'Set API key',
+                    loadingTitle: 'Loading voices…',
+                },
+                format: {
+                    title: 'Format',
+                    subtitle: 'MP3 is smaller; WAV is uncompressed.',
+                    mp3Subtitle: 'Smaller output, broadly compatible.',
+                    wavSubtitle: 'Larger output, uncompressed.',
+                },
+                alerts: {
+                    missingApiKey: 'Missing Google Cloud API key.',
+                    missingVoice: 'Select a Google Cloud voice first.',
+                },
+            },
+            googleGeminiStt: {
+                provider: {
+                    title: 'Google Gemini (audio)',
+                    subtitle: 'Transcribe audio using Gemini multimodal models.',
+                    detail: 'Google Gemini',
+                },
+                apiKey: {
+                    title: 'Gemini API key',
+                    promptTitle: 'Gemini API key',
+                    promptBody: 'Create an API key in Google AI Studio (Gemini API).',
+                },
+                model: {
+                    title: 'Gemini model',
+                    subtitle: 'Choose which Gemini model to use for transcription.',
+                    searchPlaceholder: 'Search models',
+                    customTitle: 'Custom model id…',
+                    customSubtitle: 'Enter a model name manually.',
+                    loadingModelsTitle: 'Loading models…',
+                    promptTitle: 'Gemini model',
+                    promptBody: 'Example: gemini-2.5-flash',
+                },
+                language: {
+                    title: 'Language',
+                    subtitle: 'Optional hint to improve transcription accuracy.',
+                    searchPlaceholder: 'Search languages',
+                    autoTitle: 'Auto',
+                    autoSubtitle: 'Do not provide a language hint.',
+                },
+            },
+            kokoro: {
+                common: {
+                    default: 'Default',
+                    none: '—',
+                },
+                runtime: {
+                    title: 'Kokoro runtime',
+                    unsupportedSubtitle: 'Kokoro is not supported on this device/runtime.',
+                    unavailableDetail: 'Unavailable',
+                },
+                manifest: {
+                    title: 'Model pack manifest',
+                    subtitle:
+                        'Defaults to Happier model packs (override via EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS).',
+                    detailResolved: 'Resolved',
+                    detailMissing: 'Missing',
+                },
+                assetPack: {
+                    title: 'Kokoro model pack',
+                    subtitleNative: 'Select which asset pack to use for Kokoro.',
+                    subtitleWeb: 'Select which runtime configuration to use for Kokoro.',
+                },
+                model: {
+                    title: 'Kokoro model',
+                    subtitleNative: 'Download required files to enable on-device synthesis.',
+                    subtitleWeb: 'Downloads on demand. Uses WebAssembly (beta).',
+                },
+                modelStatus: {
+                    downloading: 'Downloading…',
+                    downloadingPrefix: 'Downloading',
+                    ready: 'Ready',
+                    error: 'Error',
+                    notDownloaded: 'Not downloaded',
+                },
+                removeAssets: {
+                    title: 'Remove Kokoro assets',
+                    subtitle: 'Free storage by removing downloaded Kokoro files.',
+                    detailRemove: 'Remove',
+                    confirmTitle: 'Remove Kokoro assets?',
+                    confirmBody: 'This removes downloaded Kokoro files from this device.',
+                    confirmButton: 'Remove',
+                },
+                updates: {
+                    title: 'Check for model updates',
+                    subtitle: 'Manually check if a newer model pack is available.',
+                    check: 'Check',
+                    upToDate: 'Up to date',
+                    updateAvailable: 'Update available',
+                },
+                alerts: {
+                    runtimeUnsupported: {
+                        body: 'Kokoro is not supported on this device/runtime.',
+                    },
+                    missingManifest: {
+                        title: 'Manifest URL missing',
+                        body: 'Unable to resolve the model pack manifest URL. Check EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS (or legacy Kokoro env vars).',
+                    },
+                    notInstalledTitle: 'Not installed',
+                    notInstalledBody: 'Download the model pack first to enable update checks.',
+                    upToDateTitle: 'Up to date',
+                    upToDateBody: 'No updates are available for this model pack.',
+                    updateAvailableTitle: 'Update available',
+                    updateAvailableBody: ({ remoteBuild }: { remoteBuild: string | null }) =>
+                        `Download the latest version of this model pack now?${remoteBuild ? `\n\nRemote build: ${remoteBuild}` : ''}`,
+                    updatedTitle: 'Updated',
+                    updatedBody: 'Model pack updated successfully.',
+                    updateFailedTitle: 'Update failed',
+                    updateFailedBody: ({ message }: { message: string }) => `Unable to update this model pack.\n\n${message}`,
+                },
+                voice: {
+                    title: 'Voice',
+                    subtitleNative: 'Select the Kokoro voice.',
+                    searchPlaceholder: 'Search voices',
+                    titleWeb: 'Kokoro voice',
+                    subtitleWeb: 'Choose the on-device voice used for replies.',
+                    loadingVoicesTitle: 'Loading voices…',
+                },
+                speed: {
+                    title: 'Speed',
+                    subtitle: 'Adjust speaking speed (0.5–2.0).',
+                },
+                web: {
+                    warmingUp: 'Warming up…',
+                    clearCache: {
+                        confirmTitle: 'Clear Kokoro cache?',
+                        confirmBody: 'This removes downloaded Kokoro model and voice files from this device.',
+                        confirmButton: 'Clear',
+                    },
+                    cacheDetail: {
+                        modelFiles: 'Model files',
+                        voices: 'Voices',
+                    },
+                    cache: {
+                        title: 'Kokoro cache',
+                        subtitle: 'Manage downloaded Kokoro files on this device.',
+                    },
+                },
+            },
+            localNeuralStt: {
+                modelPack: {
+                    title: 'Model pack',
+                    subtitle: 'Streaming STT model pack id.',
+                },
+                modelFiles: {
+                    title: 'Model files',
+                    subtitle: 'Download required files to enable on-device streaming STT.',
+                },
+                removeModelFiles: {
+                    title: 'Remove model files',
+                    subtitle: 'Free storage by removing downloaded model files.',
+                    confirmTitle: 'Remove model files?',
+                    confirmBody: 'This will remove the downloaded STT model pack from this device.',
+                },
+                status: {
+                    installed: 'Installed',
+                    installedWithBuild: ({ build }: { build: string }) => `Installed • ${build}`,
+                    notInstalled: 'Not installed',
+                },
+                language: {
+                    title: 'Language',
+                    subtitle: 'Optional BCP-47 language tag.',
+                    promptTitle: 'Language',
+                    promptBody: 'Enter a BCP-47 language tag (e.g. en, en-US).',
+                },
+                alerts: {
+                    downloadFailedTitle: 'Download failed',
+                    downloadFailedBody: ({ message }: { message: string }) =>
+                        `Unable to download this model pack.\n\n${message}`,
+                    notInstalledTitle: 'Not installed',
+                    notInstalledBody: 'Download the model pack first to enable update checks.',
+                    upToDateBody: 'No updates are available for this model pack.',
+                    updateAvailableBody: ({ remoteBuild }: { remoteBuild: string | null }) =>
+                        `Download the latest version of this model pack now?${remoteBuild ? `\n\nRemote build: ${remoteBuild}` : ''}`,
+                    updatedTitle: 'Updated',
+                    updatedBody: 'Model pack updated successfully.',
+                    updateFailedTitle: 'Update failed',
+                    updateFailedBody: ({ message }: { message: string }) =>
+                        `Unable to update this model pack.\n\n${message}`,
+                },
+            },
             conversationMode: 'Conversation mode',
             conversationModeSubtitle: 'Direct-to-session, or voice agent with explicit commit',
+            conversation: {
+                mode: {
+                    voiceAgentSubtitle: 'Use the voice agent (explicit commit, tool controls).',
+                    directTitle: 'Direct session',
+                    directSubtitle: 'Speak directly into the active session.',
+                },
+                handsFree: {
+                    title: 'Hands-free',
+                    enableTitle: 'Enable hands-free',
+                    silenceTitle: 'Silence timeout (ms)',
+                    minSpeechTitle: 'Minimum speech (ms)',
+                },
+                customBackendIdSubtitle: 'Enter a custom backend id.',
+                searchBackendsPlaceholder: 'Search backends',
+                searchModelsPlaceholder: 'Search models',
+                machineAutoSubtitle: 'Auto-select a machine based on your recent usage.',
+                rootSessionPolicy: {
+                    title: 'Root session policy',
+                    fallbackSubtitle: 'Choose a policy.',
+                    singleTitle: 'Single',
+                    singleSubtitle: 'Create a new root session each time.',
+                    keepWarmTitle: 'Keep warm',
+                    keepWarmSubtitle: 'Reuse an existing warm root session when possible.',
+                    maxWarmRootsTitle: 'Max warm roots',
+                    maxWarmRootsSubtitle: 'Limit how many warm root sessions can be kept.',
+                },
+                persistence: {
+                    title: 'Transcript persistence',
+                    ephemeralTitle: 'Ephemeral',
+                    ephemeralSubtitle: 'Do not persist voice agent state between sessions.',
+                    persistentTitle: 'Persistent',
+                    persistentSubtitle: 'Persist voice agent state between sessions (resumable).',
+                },
+                resetVoiceAgent: {
+                    title: 'Reset voice agent state',
+                    subtitle: 'Clears persistent state for the voice agent.',
+                    confirmBody: 'This will clear the stored voice agent state. You can’t undo this.',
+                },
+                agentSettings: {
+                    title: 'Voice agent',
+                },
+                backend: {
+                    daemonSubtitle: 'Uses your Happier backend and supports provider resume.',
+                    openAiSubtitle: 'Connect to OpenAI-compatible HTTP endpoints.',
+                },
+                agentMachine: {
+                    title: 'Agent machine',
+                    fallbackSubtitle: 'Choose where to run the voice agent.',
+                    stayInVoiceHomeTitle: 'Stay in voice home',
+                    stayInVoiceHomeEnabledSubtitle: 'Keep the agent running on the voice home machine.',
+                    stayInVoiceHomeDisabledSubtitle: 'Allow the agent to follow the session machine.',
+                    allowTeleportTitle: 'Allow teleport',
+                    teleportEnabledSubtitle: 'Allow teleporting the agent to another machine when needed.',
+                    teleportDisabledSubtitle: 'Teleport disabled.',
+                },
+                agentSource: {
+                    followSessionTitle: 'Follow session',
+                    followSessionSubtitle: 'Use the session backend and configuration.',
+                    fixedAgentTitle: 'Fixed agent',
+                    fixedAgentSubtitle: 'Always use a specific agent backend.',
+                },
+                permissionPolicy: {
+                    readOnlySubtitle: 'Can see context, but cannot run tools.',
+                    noToolsSubtitle: 'Should avoid tool requests and never run tools.',
+                },
+                chatModelSource: {
+                    sessionSubtitle: 'Use the session model configuration for agent chat.',
+                    customSubtitle: 'Override the voice agent chat model id.',
+                },
+                chatModelId: {
+                    title: 'Voice agent chat model id',
+                    subtitle: 'Used when the voice agent chat model source is set to Custom model.',
+                },
+                commitModelSource: {
+                    chatSubtitle: 'Use the agent chat model for commits.',
+                    sessionSubtitle: 'Use the session model configuration for commits.',
+                    customSubtitle: 'Override the voice agent commit model id.',
+                },
+                commitModelId: {
+                    title: 'Voice agent commit model id',
+                    subtitle: 'Used when the voice agent commit model source is set to Custom model.',
+                },
+                commitIsolation: {
+                    title: 'Commit isolation',
+                    subtitle: 'Use a separate vendor session for commit generation (advanced).',
+                },
+                resumability: {
+                    modeTitle: 'Resumability',
+                    replayTitle: 'Replay',
+                    replaySubtitle: 'Resume by replaying recent messages.',
+                    providerResumeTitle: 'Provider resume',
+                    providerResumeSubtitle: 'Resume using provider session state (when supported).',
+                    disabledVoiceAgent: 'Requires Happier Voice Agent.',
+                    disabledDaemonBackend: 'Requires Daemon backend.',
+                    disabledAgentNoProviderResume: 'Selected agent does not support provider resume.',
+                },
+                providerResumeFallback: {
+                    title: 'Fallback to replay',
+                    subtitle: 'If provider resume fails, fall back to replay.',
+                },
+                replayRecentMessagesPromptBody: 'How many recent messages to include (1–100).',
+                prewarm: {
+                    title: 'Prewarm on connect',
+                    subtitle: 'Start the voice agent immediately when you connect.',
+                },
+                welcome: {
+                    title: 'Welcome message',
+                    offTitle: 'Off',
+                    offSubtitle: 'Do not send a welcome message.',
+                    immediateTitle: 'Immediate',
+                    immediateSubtitle: 'Send a welcome message as soon as the agent starts.',
+                    onFirstTurnTitle: 'On first turn',
+                    onFirstTurnSubtitle: 'Send a welcome message when you speak the first time.',
+                },
+                verbosity: {
+                    shortSubtitle: 'Keep agent responses brief.',
+                    balancedSubtitle: 'Allow slightly more detail when needed.',
+                },
+                streaming: {
+                    title: 'Streaming',
+                    enableTitle: 'Enable streaming',
+                    enableTtsTitle: 'Enable TTS streaming',
+                    ttsChunkCharsTitle: 'TTS chunk chars',
+                    ttsChunkCharsPromptBody: 'How many characters to buffer before requesting the next TTS chunk (32–2000).',
+                },
+                network: {
+                    title: 'Network',
+                    timeoutTitle: 'Network timeout (ms)',
+                    timeoutPromptBody: 'Timeout for requests to your endpoints (1000–60000).',
+                },
+            },
             mediatorBackend: 'Voice agent backend',
             mediatorBackendSubtitle: 'Daemon (uses your Happier backend) or OpenAI-compatible HTTP',
             mediatorBackendDaemon: 'Daemon',
@@ -1603,6 +3798,11 @@ export const en = {
             chatMaxTokensInvalid: 'Please enter a positive number, or leave blank.',
             deviceStt: 'Device STT (experimental)',
             deviceSttSubtitle: 'Use on-device speech recognition instead of an OpenAI-compatible endpoint',
+            sttProvider: 'STT Provider',
+            neuralStt: {
+                title: 'On-device STT',
+                webNotAvailableSubtitle: 'Not available on web. Use Device, OpenAI-compatible, or Gemini STT.',
+            },
             sttBaseUrl: 'STT Base URL',
             sttBaseUrlTitle: 'Speech to text',
             sttBaseUrlDescription: 'Base URL for OpenAI-compatible transcription endpoint (typically ends with /v1).',
@@ -1633,6 +3833,10 @@ export const en = {
             ttsVoiceDescription: 'Voice name/id to send to your TTS server (OpenAI-compatible field).',
             ttsFormat: 'TTS Format',
             ttsFormatSubtitle: 'Audio format returned by TTS',
+            ttsFormatOptions: {
+                mp3Subtitle: 'Smaller output, broadly compatible.',
+                wavSubtitle: 'Larger output, uncompressed.',
+            },
             testTts: 'Test TTS',
             testTtsSubtitle: 'Play a short sample using your configured local TTS (device TTS or endpoint)',
             testTtsSample: 'Hello from Happier. This is a test of your local TTS.',
@@ -1640,6 +3844,8 @@ export const en = {
             testTtsFailed: 'TTS test failed. Check your base URL, API key, model, voice, and TTS Format (some endpoints only support mp3 or wav).',
             autoSpeak: 'Auto-speak replies',
             autoSpeakSubtitle: 'Speak the next assistant reply after sending your voice message',
+            bargeIn: 'Barge-in',
+            speaking: 'Speaking…',
         },
         languageTitle: 'Language',
         languageDescription: 'Choose your preferred language for voice assistant interactions. This setting syncs across all your devices.',
@@ -1673,6 +3879,15 @@ export const en = {
             title: 'Languages',
             footer: ({ count }: { count: number }) => `${count} ${plural({ count, singular: 'language', plural: 'languages' })} available`,
             autoDetect: 'Auto-detect',
+            autoDetectSubtitle: 'Let the recognizer decide (recommended).',
+            customTitle: 'Custom…',
+            customSubtitle: 'Enter a BCP-47 language tag.',
+            options: {
+                english: 'English',
+                englishUs: 'English (US)',
+                french: 'French',
+                spanish: 'Spanish',
+            },
         }
     },
 
@@ -1707,10 +3922,15 @@ export const en = {
         analytics: 'Analytics',
         analyticsDisabled: 'No data is shared',
         analyticsEnabled: 'Anonymous usage data is shared',
+        crashReports: 'Crash reports',
+        crashReportsDisabled: 'No crash reports are shared',
+        crashReportsEnabled: 'Crash reports are shared',
         dangerZone: 'Danger Zone',
         logout: 'Logout',
         logoutSubtitle: 'Sign out and clear local data',
         logoutConfirm: 'Are you sure you want to logout? Make sure you have backed up your secret key!',
+        encryptionUpdateFailed: 'Failed to update encryption setting',
+        secretKeyMissing: 'Secret key unavailable. Please restore your account first.',
     },
 
     settingsLanguage: {
@@ -1803,7 +4023,8 @@ export const en = {
         failedToConnectTerminal: 'Failed to connect terminal',
         cameraPermissionsRequiredToConnectTerminal: 'Camera permissions are required to connect terminal',
         failedToLinkDevice: 'Failed to link device',
-        cameraPermissionsRequiredToScanQr: 'Camera permissions are required to scan QR codes'
+        cameraPermissionsRequiredToScanQr: 'Camera permissions are required to scan QR codes',
+        qrScannerUnavailable: 'Unable to open the QR scanner. Please try again or enter the URL manually.'
     },
 
     navigation: {
@@ -1813,6 +4034,21 @@ export const en = {
         restoreWithSecretKey: 'Restore with Secret Key',
         whatsNew: "What's New",
         friends: 'Friends',
+        automations: 'Automations',
+        automation: 'Automation',
+        newAutomation: 'New Automation',
+        sourceControl: 'Source control',
+        developerTools: 'Developer Tools',
+        listComponentsDemo: 'List Components Demo',
+        typography: 'Typography',
+        colors: 'Colors',
+        toolViewsDemo: 'Tool Views Demo',
+        maskedProgress: 'Masked Progress',
+        shimmerViewDemo: 'Shimmer View Demo',
+        multiTextInput: 'Multi Text Input',
+        connectClaude: 'Connect to Claude',
+        zenNewTask: 'New Task',
+        zenTaskDetails: 'Task Details',
     },
 
     welcome: {
@@ -1820,7 +4056,12 @@ export const en = {
         title: 'Codex, Claude Code and OpenCode mobile client',
         subtitle: 'End-to-end encrypted and your account is stored only on your device.',
         createAccount: 'Create account',
+        chooseEncryptionTitle: 'Choose encryption',
+        chooseEncryptionBody: 'This server supports both encrypted and non-encrypted accounts. Choose how you want to store your account data.',
+        chooseEncryptionEncrypted: 'Continue with end-to-end encryption',
+        chooseEncryptionPlain: 'Continue without encryption',
         signUpWithProvider: ({ provider }: { provider: string }) => `Continue with ${provider}`,
+        signInWithCertificate: 'Sign in with certificate',
         linkOrRestoreAccount: 'Link or restore account',
         loginWithMobileApp: 'Login with mobile app',
         serverUnavailableTitle: 'Can’t reach server',
@@ -1848,8 +4089,35 @@ export const en = {
         launchNewSessionInDirectory: 'Launch New Session in Directory',
         offlineUnableToSpawn: 'Launcher disabled while machine is offline',
         offlineHelp: '• Make sure your computer is online\n• Run `happier daemon status` to diagnose\n• Are you running the latest CLI version? Upgrade with `npm install -g @happier-dev/cli@latest`',
+        customPathPlaceholder: 'Enter custom path',
+        tools: {
+            title: 'Tools',
+            installablesTitle: 'Installables',
+            installablesSubtitle: 'Manage installable tools for this machine.',
+        },
+        installables: {
+            screenTitle: 'Installables',
+            aboutGroupTitle: 'About',
+            aboutSubtitle: 'Manage tools that Happier can install and keep up to date on this machine.',
+            experimentalGroupTitle: ({ title }: { title: string }) => `${title} (experimental)`,
+            autoInstallTitle: 'Auto-install when needed',
+            autoInstallSubtitle: 'Installs in the background when required for a selected backend (best-effort).',
+            autoUpdateTitle: 'Auto-update',
+            autoUpdatePromptTitle: 'Auto-update',
+            autoUpdatePromptBody: 'Choose how Happier should handle updates for this installable.',
+            autoUpdateModes: {
+                off: 'Off',
+                notify: 'Notify',
+                auto: 'Auto',
+            },
+        },
         daemon: 'Daemon',
         status: 'Status',
+        daemonStatus: {
+            unknown: 'Unknown',
+            stopped: 'Stopped',
+            likelyAlive: 'Likely alive',
+        },
         stopDaemon: 'Stop Daemon',
         stopDaemonConfirmTitle: 'Stop Daemon?',
         stopDaemonConfirmBody: 'You will not be able to spawn new sessions on this machine until you restart the daemon on your computer again. Your current sessions will stay alive.',
@@ -1891,6 +4159,7 @@ export const en = {
         notFound: 'Machine not found',
         unknownMachine: 'unknown machine',
         unknownPath: 'unknown path',
+        previousSessionsTitle: 'Previous Sessions (up to 5 most recent)',
         tmux: {
             overrideTitle: 'Override global tmux settings',
             overrideEnabledSubtitle: 'Custom tmux settings apply to new sessions on this machine.',
@@ -1964,6 +4233,8 @@ export const en = {
         codeCopied: 'Code copied',
         copyFailed: 'Failed to copy',
         mermaidRenderFailed: 'Failed to render mermaid diagram',
+        diffLabel: 'Diff',
+        codeLabel: 'Code',
     },
 
     artifacts: {
@@ -2118,6 +4389,7 @@ export const en = {
         },
         placeholders: {
             nameExample: 'e.g. Work OpenAI',
+            valueExample: 'sk-...',
         },
         validation: {
             nameRequired: 'Name is required.',
@@ -2294,6 +4566,13 @@ export const en = {
                 plan: 'Plan before executing',
                 bypassPermissions: 'Skip all permissions',
             },
+        },
+        defaultPermissions: {
+            title: 'Default permissions',
+            footer: 'Overrides the account-level default permissions for new sessions when this profile is selected.',
+            accountDefaultSubtitle: ({ label }: { label: string }) => `Account default: ${label}`,
+            useAccountDefault: 'Use account default',
+            currently: ({ label }: { label: string }) => `Currently: ${label}`,
         },
         aiBackend: {
             title: 'AI Backend',

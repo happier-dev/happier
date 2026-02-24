@@ -70,6 +70,14 @@ HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE=e2ee|plain
 Notes:
 - Switching account mode affects **new sessions** created after the change.
 - Existing sessions are **not** migrated (no retroactive decrypt/re-encrypt).
+- Switching account mode is an **atomic migration-backed transition** (clients call `POST /v1/account/encryption/migrate`).
+
+### Plaintext accounts and account-scoped data
+
+For plaintext accounts to work across devices (including keyless login), clients must not assume “device-key ciphertext” for account-scoped blobs.
+
+- Plaintext accounts use **settings v2** (`GET/POST /v2/account/settings`) and store settings as a plaintext envelope.
+- The legacy settings route (`/v1/account/settings`) is **rejected for plaintext accounts** with `400 { error: "plain_account_requires_settings_v2" }`.
 
 ## Per-session encryption mode
 
@@ -105,4 +113,3 @@ If you store plaintext session content on the server, treat it as sensitive appl
 - Encrypt disks and backups at rest.
 - Restrict database access and enable audit logging where possible.
 - Define retention and deletion policies appropriate for your org.
-

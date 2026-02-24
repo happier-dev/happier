@@ -14,7 +14,9 @@ import { applyAccountSettingsToProcessEnv } from '@/settings/applyAccountSetting
 import { applyProviderSpawnExtrasToProcessEnv } from '@/settings/providerSettings';
 
 import {
+  type AccountSettingsCache,
   type AccountSettingsCacheV1,
+  type AccountSettingsContentEnvelope,
   readAccountSettingsCache,
   resolveAccountSettingsCachePath,
   writeAccountSettingsCacheAtomic,
@@ -34,9 +36,12 @@ export type AccountSettingsContext = Readonly<{
 
 type BootstrapDeps = Readonly<{
   resolveCachePath: () => string;
-  readCache: (path: string) => Promise<AccountSettingsCacheV1 | null>;
-  writeCache: (path: string, cache: AccountSettingsCacheV1) => Promise<void>;
-  fetchFromServer: (args: { credentials: Credentials }) => Promise<{ settingsCiphertext: string | null; settingsVersion: number }>;
+  readCache: (path: string) => Promise<AccountSettingsCache | null>;
+  writeCache: (path: string, cache: AccountSettingsCache) => Promise<void>;
+  fetchFromServer: (args: { credentials: Credentials }) => Promise<
+    | { settingsCiphertext: string | null; settingsVersion: number }
+    | { settingsContent: AccountSettingsContentEnvelope | null; settingsVersion: number }
+  >;
   decryptCiphertext: (args: { credentials: Credentials; ciphertext: string }) => Promise<Record<string, unknown> | null>;
   applySideEffects: (args: { settings: AccountSettings; agentId?: AgentId; source: AccountSettingsContext['source']; settingsVersion: number; loadedAtMs: number }) => void;
 }>;
@@ -58,7 +63,7 @@ function readTtlMsFromEnvOrDefault(): number {
   return 5 * 60_000;
 }
 
-function shouldTreatCacheAsFresh(cache: AccountSettingsCacheV1, nowMs: number, ttlMs: number): boolean {
+function shouldTreatCacheAsFresh(cache: AccountSettingsCache, nowMs: number, ttlMs: number): boolean {
   if (ttlMs <= 0) return false;
   const age = nowMs - cache.cachedAt;
   return Number.isFinite(age) && age >= 0 && age < ttlMs;
@@ -94,19 +99,54 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     readCache: params.deps?.readCache ?? readAccountSettingsCache,
     writeCache: params.deps?.writeCache ?? writeAccountSettingsCacheAtomic,
     fetchFromServer: params.deps?.fetchFromServer ?? (async ({ credentials }) => {
-      const response = await axios.get(`${configuration.serverUrl}/v1/account/settings`, {
-        headers: {
-          Authorization: `Bearer ${credentials.token}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 15_000,
-      });
-      const body = response.data as { settings: string | null; settingsVersion: number };
-      const settingsVersion = typeof body?.settingsVersion === 'number' && Number.isFinite(body.settingsVersion)
-        ? body.settingsVersion
-        : 0;
-      const settingsCiphertext = typeof body?.settings === 'string' ? body.settings : null;
-      return { settingsCiphertext, settingsVersion };
+      try {
+        const response = await axios.get(`${configuration.serverUrl}/v2/account/settings`, {
+          headers: {
+            Authorization: `Bearer ${credentials.token}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 15_000,
+          validateStatus: () => true,
+        });
+
+        if (response.status === 404) {
+          throw Object.assign(new Error('settings_v2_not_supported'), { code: 'settings_v2_not_supported' });
+        }
+        if (response.status < 200 || response.status >= 300) {
+          throw new Error(`Failed to fetch /v2/account/settings (${response.status})`);
+        }
+
+        const body = response.data as any;
+        const settingsVersion = typeof body?.version === 'number' && Number.isFinite(body.version)
+          ? body.version
+          : 0;
+        const content = body?.content ?? null;
+        if (content === null) {
+          return { settingsContent: null, settingsVersion };
+        }
+        if (content?.t === 'plain') {
+          return { settingsContent: { t: 'plain', v: content.v }, settingsVersion };
+        }
+        if (content?.t === 'encrypted') {
+          return { settingsContent: { t: 'encrypted', c: String(content.c ?? '') }, settingsVersion };
+        }
+        return { settingsContent: null, settingsVersion };
+      } catch (err: any) {
+        if (err?.code !== 'settings_v2_not_supported') throw err;
+        const response = await axios.get(`${configuration.serverUrl}/v1/account/settings`, {
+          headers: {
+            Authorization: `Bearer ${credentials.token}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 15_000,
+        });
+        const body = response.data as { settings: string | null; settingsVersion: number };
+        const settingsVersion = typeof body?.settingsVersion === 'number' && Number.isFinite(body.settingsVersion)
+          ? body.settingsVersion
+          : 0;
+        const settingsCiphertext = typeof body?.settings === 'string' ? body.settings : null;
+        return { settingsCiphertext, settingsVersion };
+      }
     }),
     decryptCiphertext: params.deps?.decryptCiphertext ?? (async ({ credentials, ciphertext }) => {
       return decryptAccountSettingsCiphertext({ credentials, ciphertext });
@@ -134,20 +174,30 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   }
 
   const existing = inMemoryByScopeKey.get(scopeKey) ?? null;
-  if (refresh === 'auto' && existing && shouldTreatCacheAsFresh({ version: 1, cachedAt: existing.loadedAtMs, settingsCiphertext: null, settingsVersion: existing.settingsVersion }, nowMs, ttlMs)) {
+  if (refresh === 'auto' && existing && shouldTreatCacheAsFresh({ version: 2, cachedAt: existing.loadedAtMs, settingsContent: null, settingsVersion: existing.settingsVersion }, nowMs, ttlMs)) {
     return existing;
   }
 
   const cache = await deps.readCache(cachePath);
 
-  const parseFromCiphertext = async (ciphertext: string | null): Promise<AccountSettings> => {
+  const parseFromContent = async (content: AccountSettingsContentEnvelope | null): Promise<AccountSettings> => {
+    if (!content) return accountSettingsParse({});
+    if (content.t === 'plain') return accountSettingsParse(content.v);
+    const ciphertext = typeof content.c === 'string' ? content.c : '';
     if (!ciphertext) return accountSettingsParse({});
     const decrypted = await deps.decryptCiphertext({ credentials: params.credentials, ciphertext });
     return accountSettingsParse(decrypted ?? {});
   };
 
+  const cacheContent: AccountSettingsContentEnvelope | null =
+    cache && (cache as any).version === 2
+      ? ((cache as any).settingsContent ?? null)
+      : (cache && (cache as any).settingsCiphertext
+        ? { t: 'encrypted', c: (cache as any).settingsCiphertext as string }
+        : null);
+
   const useCache = async (): Promise<AccountSettingsContext> => {
-    const settings = await parseFromCiphertext(cache?.settingsCiphertext ?? null);
+    const settings = await parseFromContent(cacheContent);
     const settingsVersion = cache?.settingsVersion ?? 0;
     const ctx: AccountSettingsContext = { source: cache ? 'cache' : 'none', settings, settingsVersion, loadedAtMs: nowMs, whenRefreshed: null };
     deps.applySideEffects({ settings, agentId: params.agentId, source: ctx.source, settingsVersion, loadedAtMs: nowMs });
@@ -156,13 +206,18 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   };
 
   const fetchAndPersist = async (): Promise<AccountSettingsContext> => {
-    const { settingsCiphertext, settingsVersion } = await deps.fetchFromServer({ credentials: params.credentials });
-    const settings = await parseFromCiphertext(settingsCiphertext);
+    const fetched = await deps.fetchFromServer({ credentials: params.credentials }) as any;
+    const settingsVersion = typeof fetched.settingsVersion === 'number' ? fetched.settingsVersion : 0;
+    const settingsContent: AccountSettingsContentEnvelope | null =
+      'settingsContent' in fetched
+        ? (fetched.settingsContent ?? null)
+        : (fetched.settingsCiphertext ? { t: 'encrypted', c: fetched.settingsCiphertext } : null);
+    const settings = await parseFromContent(settingsContent);
     try {
       await deps.writeCache(cachePath, {
-        version: 1,
+        version: 2,
         cachedAt: nowMs,
-        settingsCiphertext,
+        settingsContent,
         settingsVersion,
       });
     } catch (err) {

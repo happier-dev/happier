@@ -4,8 +4,10 @@ import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 
 const ENCRYPTED_TEMPLATE_ENVELOPE_KIND = 'happier_automation_template_encrypted_v1';
+const PLAINTEXT_TEMPLATE_ENVELOPE_KIND = 'happier_automation_template_plain_v1';
 const MAX_TEMPLATE_CIPHERTEXT_CHARS = 220_000;
 const MAX_TEMPLATE_PAYLOAD_CIPHERTEXT_CHARS = 200_000;
+const MAX_TEMPLATE_PAYLOAD_PLAINTEXT_CHARS = 200_000;
 
 const TemplateSchema = z.object({
   directory: z.string().trim().min(1),
@@ -33,6 +35,17 @@ const TemplateEnvelopeSchema = z.object({
   payloadCiphertext: z.string().trim().min(1),
   existingSessionId: z.string().trim().min(1).optional(),
 }).strict();
+
+const PlainTemplateEnvelopeSchema = z.object({
+  kind: z.literal(PLAINTEXT_TEMPLATE_ENVELOPE_KIND),
+  payload: z.unknown(),
+  existingSessionId: z.string().trim().min(1).optional(),
+}).strict();
+
+const AnyTemplateEnvelopeSchema = z.discriminatedUnion('kind', [
+  TemplateEnvelopeSchema,
+  PlainTemplateEnvelopeSchema,
+]);
 
 export type AutomationTemplateEncryption =
   | Readonly<{ type: 'legacy'; secret: Uint8Array }>
@@ -90,41 +103,61 @@ export function parseAutomationTemplateExecution(
   }
 
   const envelope = TemplateEnvelopeSchema.safeParse(parsedEnvelope);
-  if (!envelope.success) {
+  const anyEnvelope = AnyTemplateEnvelopeSchema.safeParse(parsedEnvelope);
+  if (!anyEnvelope.success) {
     return { ok: false, error: 'Invalid automation template envelope' };
   }
-  if (envelope.data.payloadCiphertext.length > MAX_TEMPLATE_PAYLOAD_CIPHERTEXT_CHARS) {
-    return { ok: false, error: 'Invalid automation template: payloadCiphertext too large' };
+  if (anyEnvelope.data.kind === ENCRYPTED_TEMPLATE_ENVELOPE_KIND) {
+    if (anyEnvelope.data.payloadCiphertext.length > MAX_TEMPLATE_PAYLOAD_CIPHERTEXT_CHARS) {
+      return { ok: false, error: 'Invalid automation template: payloadCiphertext too large' };
+    }
+  } else {
+    const payloadJson = (() => {
+      try {
+        return JSON.stringify(anyEnvelope.data.payload);
+      } catch {
+        return null;
+      }
+    })();
+    if (!payloadJson) {
+      return { ok: false, error: 'Invalid automation template: payload must be JSON-serializable' };
+    }
+    if (payloadJson.length > MAX_TEMPLATE_PAYLOAD_PLAINTEXT_CHARS) {
+      return { ok: false, error: 'Invalid automation template: payload too large' };
+    }
   }
 
   if (payload.automation.targetType === 'existing_session') {
-    if (!envelope.data.existingSessionId) {
+    if (!anyEnvelope.data.existingSessionId) {
       return { ok: false, error: 'Invalid automation template: existingSessionId is required for existing_session target' };
     }
-  } else if (envelope.data.existingSessionId) {
+  } else if (anyEnvelope.data.existingSessionId) {
     return { ok: false, error: 'Invalid automation template: existingSessionId is not allowed for new_session target' };
   }
 
-  if (!encryption) {
-    return { ok: false, error: 'Encrypted automation template cannot be decrypted without machine encryption context' };
-  }
-
   let parsedPayload: unknown;
-  try {
-    const opened = openAccountScopedBlobCiphertext({
-      kind: 'automation_template_payload',
-      material: encryption.type === 'legacy'
-        ? { type: 'legacy', secret: encryption.secret }
-        : { type: 'dataKey', machineKey: encryption.machineKey },
-      ciphertext: envelope.data.payloadCiphertext,
-    });
-    const decrypted = opened?.value;
-    if (!decrypted || typeof decrypted !== 'object' || Array.isArray(decrypted)) {
+  if (anyEnvelope.data.kind === PLAINTEXT_TEMPLATE_ENVELOPE_KIND) {
+    parsedPayload = anyEnvelope.data.payload;
+  } else {
+    if (!encryption) {
+      return { ok: false, error: 'Encrypted automation template cannot be decrypted without machine encryption context' };
+    }
+    try {
+      const opened = openAccountScopedBlobCiphertext({
+        kind: 'automation_template_payload',
+        material: encryption.type === 'legacy'
+          ? { type: 'legacy', secret: encryption.secret }
+          : { type: 'dataKey', machineKey: encryption.machineKey },
+        ciphertext: anyEnvelope.data.payloadCiphertext,
+      });
+      const decrypted = opened?.value;
+      if (!decrypted || typeof decrypted !== 'object' || Array.isArray(decrypted)) {
+        return { ok: false, error: 'Invalid encrypted automation template payload' };
+      }
+      parsedPayload = decrypted;
+    } catch {
       return { ok: false, error: 'Invalid encrypted automation template payload' };
     }
-    parsedPayload = decrypted;
-  } catch {
-    return { ok: false, error: 'Invalid encrypted automation template payload' };
   }
 
   const parsed = TemplateSchema.safeParse(parsedPayload);
@@ -139,7 +172,7 @@ export function parseAutomationTemplateExecution(
   if (payload.automation.targetType === 'existing_session' && !template.existingSessionId) {
     return { ok: false, error: 'Invalid automation template: existingSessionId is required for existing_session target' };
   }
-  if (payload.automation.targetType === 'existing_session' && envelope.data.existingSessionId !== template.existingSessionId) {
+  if (payload.automation.targetType === 'existing_session' && anyEnvelope.data.existingSessionId !== template.existingSessionId) {
     return { ok: false, error: 'Invalid automation template: existingSessionId mismatch' };
   }
 

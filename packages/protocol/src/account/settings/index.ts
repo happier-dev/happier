@@ -10,3 +10,16 @@ export {
   type NotificationsSettingsV1,
 } from './accountSettings.js';
 
+export {
+  AccountSettingsStoredContentEnvelopeSchema,
+  type AccountSettingsStoredContentEnvelope,
+} from './accountSettingsStoredContentEnvelope.js';
+
+export {
+  AccountSettingsV2GetResponseSchema,
+  AccountSettingsV2UpdateRequestSchema,
+  AccountSettingsV2UpdateResponseSchema,
+  type AccountSettingsV2GetResponse,
+  type AccountSettingsV2UpdateRequest,
+  type AccountSettingsV2UpdateResponse,
+} from './accountSettingsApiV2.js';

@@ -259,4 +259,30 @@ describe('bootstrapAccountSettingsContext', () => {
     expect(fetchFromServer).toHaveBeenCalledTimes(1);
     await res.whenRefreshed;
   });
+
+  it('supports plaintext settings content envelopes (v2) without decrypting', async () => {
+    const nowMs = 1_000_000;
+    const res = await bootstrapAccountSettingsContext({
+      credentials: createCredentialsStub(),
+      mode: 'blocking',
+      refresh: 'force',
+      nowMs,
+      ttlMs: 60_000,
+      deps: {
+        resolveCachePath: () => '/tmp/server/account.settings.cache.json',
+        readCache: async () => null,
+        decryptCiphertext: async () => {
+          throw new Error('unexpected decryptCiphertext');
+        },
+        fetchFromServer: async () => ({
+          settingsContent: { t: 'plain', v: { notificationsSettingsV1: { v: 1, pushEnabled: false, ready: true, permissionRequest: true } } },
+          settingsVersion: 12,
+        } as any),
+        writeCache: async () => {},
+        applySideEffects: () => {},
+      },
+    });
+    expect(res.settingsVersion).toBe(12);
+    expect((res.settings as any).notificationsSettingsV1?.pushEnabled).toBe(false);
+  });
 });

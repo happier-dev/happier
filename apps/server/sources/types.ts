@@ -11,6 +11,10 @@ export type AccountProfile = {
         value: string | null;
         version: number;
     } | null;
+    settingsV2?: {
+        content: unknown | null;
+        version: number;
+    } | null;
     connectedServices: string[];
 }
 

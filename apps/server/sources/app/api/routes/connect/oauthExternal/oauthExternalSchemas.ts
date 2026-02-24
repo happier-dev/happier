@@ -15,12 +15,9 @@ export const connectPendingSchema = z.object({
     refreshTokenEnc: z.string().optional(),
 });
 
-export const authPendingSchema = z.object({
+const authPendingSharedSchema = z.object({
     flow: z.literal("auth"),
     provider: z.string(),
-    authMode: z.enum(["keyed", "keyless"]).optional().default("keyed"),
-    publicKeyHex: z.string().nullable().optional(),
-    proofHash: z.string().nullable().optional(),
     profileEnc: z.string(),
     accessTokenEnc: z.string(),
     refreshTokenEnc: z.string().optional(),
@@ -28,3 +25,23 @@ export const authPendingSchema = z.object({
     usernameRequired: z.boolean().optional(),
     usernameReason: z.string().nullable().optional(),
 });
+
+const authPendingLegacyKeylessSchema = authPendingSharedSchema.extend({
+    authMode: z.literal("keyless"),
+    proofHash: z.string(),
+}).strict();
+
+const authPendingLegacyKeyedSchema = authPendingSharedSchema.extend({
+    publicKeyHex: z.string(),
+}).strict();
+
+const authPendingV2Schema = authPendingSharedSchema.extend({
+    v: z.literal(2),
+    proofHash: z.string(),
+}).strict();
+
+export const authPendingSchema = z.union([
+    authPendingV2Schema,
+    authPendingLegacyKeylessSchema,
+    authPendingLegacyKeyedSchema,
+]);

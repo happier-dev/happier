@@ -33,11 +33,20 @@ vi.mock('expo-camera', () => ({
     },
 }));
 
+const useAuthMock = vi.hoisted(() => vi.fn());
 vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({
-        isAuthenticated: true,
-        credentials: { token: 't', secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
-        logout: vi.fn(),
+    useAuth: () => useAuthMock(),
+}));
+
+vi.mock('@/auth/oauth/contentKeyBinding', () => ({
+    buildContentKeyBinding: async () => null,
+}));
+
+vi.mock('@/auth/flows/challenge', () => ({
+    authChallenge: () => ({
+        challenge: new Uint8Array(32).fill(1),
+        signature: new Uint8Array(64).fill(2),
+        publicKey: new Uint8Array(32).fill(3),
     }),
 }));
 
@@ -49,6 +58,12 @@ describe('Settings → Account (encryption mode toggle)', () => {
 
     it('does not fetch account encryption mode when the feature gate is disabled', async () => {
         useFeatureEnabledMock.mockReturnValue(false);
+        useAuthMock.mockReturnValue({
+            isAuthenticated: true,
+            credentials: { token: 't', secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
+            logout: vi.fn(),
+            login: vi.fn(),
+        });
         storage.getState().applyProfile({ ...profileDefaults, linkedProviders: [], username: null });
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -88,7 +103,14 @@ describe('Settings → Account (encryption mode toggle)', () => {
 
     it('fetches + updates account encryption mode when enabled', async () => {
         useFeatureEnabledMock.mockReturnValue(true);
+        useAuthMock.mockReturnValue({
+            isAuthenticated: true,
+            credentials: { token: 't', secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
+            logout: vi.fn(),
+            login: vi.fn(),
+        });
         storage.getState().applyProfile({ ...profileDefaults, linkedProviders: [], username: null });
+        storage.getState().replaceSettings({ analyticsOptOut: false } as any, 7);
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = getRequestUrl(input);
@@ -105,12 +127,18 @@ describe('Settings → Account (encryption mode toggle)', () => {
                     json: async () => ({ mode: 'e2ee', updatedAt: 1 }),
                 };
             }
-            if (url.endsWith('/v1/account/encryption') && method === 'PATCH') {
+            if (url.endsWith('/v1/account/encryption/migrate') && method === 'POST') {
                 const body = init?.body ? JSON.parse(String(init.body)) : null;
-                expect(body).toEqual({ mode: 'plain' });
+                expect(body).toEqual(expect.objectContaining({
+                    toMode: 'plain',
+                    expectedSettingsVersion: 7,
+                    settingsContent: expect.objectContaining({ t: 'plain' }),
+                    connectedServices: { action: 'assert_empty' },
+                    automations: { action: 'assert_empty' },
+                }));
                 return {
                     ok: true,
-                    json: async () => ({ mode: 'plain', updatedAt: 2 }),
+                    json: async () => ({ success: true, mode: 'plain', settingsVersion: 8 }),
                 };
             }
             throw new Error(`Unexpected fetch: ${url} (${method})`);
@@ -142,7 +170,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
             expect(seen).toEqual(
                 expect.arrayContaining([
                     [expect.stringContaining('/v1/account/encryption'), 'GET'],
-                    [expect.stringContaining('/v1/account/encryption'), 'PATCH'],
+                    [expect.stringContaining('/v1/account/encryption/migrate'), 'POST'],
                 ]),
             );
         } finally {
@@ -154,7 +182,14 @@ describe('Settings → Account (encryption mode toggle)', () => {
 
     it('shows an error alert when updating account encryption mode fails', async () => {
         useFeatureEnabledMock.mockReturnValue(true);
+        useAuthMock.mockReturnValue({
+            isAuthenticated: true,
+            credentials: { token: 't', secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
+            logout: vi.fn(),
+            login: vi.fn(),
+        });
         storage.getState().applyProfile({ ...profileDefaults, linkedProviders: [], username: null });
+        storage.getState().replaceSettings({ analyticsOptOut: false } as any, 7);
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = getRequestUrl(input);
@@ -171,7 +206,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
                     json: async () => ({ mode: 'e2ee', updatedAt: 1 }),
                 };
             }
-            if (url.endsWith('/v1/account/encryption') && method === 'PATCH') {
+            if (url.endsWith('/v1/account/encryption/migrate') && method === 'POST') {
                 return {
                     ok: false,
                     status: 404,
@@ -210,6 +245,89 @@ describe('Settings → Account (encryption mode toggle)', () => {
                 expect.any(String),
                 expect.stringContaining('Encryption opt-out is not enabled on this server'),
             );
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+        }
+    });
+
+    it('enables e2ee on keyless credentials by generating a secret and migrating', async () => {
+        useFeatureEnabledMock.mockReturnValue(true);
+        const loginSpy = vi.fn(async () => {});
+        useAuthMock.mockReturnValue({
+            isAuthenticated: true,
+            credentials: { token: 't', encryption: { publicKey: 'pk', machineKey: Buffer.from(new Uint8Array(32).fill(4)).toString('base64') } },
+            logout: vi.fn(),
+            login: loginSpy,
+        });
+        storage.getState().applyProfile({ ...profileDefaults, linkedProviders: [], username: null });
+        storage.getState().replaceSettings({ analyticsOptOut: false } as any, 7);
+
+        const { Modal } = await import('@/modal');
+        const alertSpy = vi.spyOn(Modal, 'alert').mockResolvedValue();
+
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = getRequestUrl(input);
+            const method = (init?.method ?? 'GET').toUpperCase();
+            if (isFeaturesRequest(url)) {
+                return {
+                    ok: true,
+                    json: async () => createAccountFeaturesResponse({ encryptionAccountOptOutEnabled: true }),
+                };
+            }
+            if (url.endsWith('/v1/account/encryption') && method === 'GET') {
+                return {
+                    ok: true,
+                    json: async () => ({ mode: 'plain', updatedAt: 1 }),
+                };
+            }
+            if (url.endsWith('/v1/account/encryption/migrate') && method === 'POST') {
+                const body = init?.body ? JSON.parse(String(init.body)) : null;
+                expect(body).toEqual(expect.objectContaining({
+                    toMode: 'e2ee',
+                    expectedSettingsVersion: 7,
+                    settingsContent: expect.objectContaining({ t: 'encrypted' }),
+                    connectedServices: { action: 'assert_empty' },
+                    automations: { action: 'assert_empty' },
+                    keyProof: expect.objectContaining({
+                        publicKey: expect.any(String),
+                        challenge: expect.any(String),
+                        signature: expect.any(String),
+                    }),
+                }));
+                return {
+                    ok: true,
+                    json: async () => ({ success: true, mode: 'e2ee', settingsVersion: 8 }),
+                };
+            }
+            throw new Error(`Unexpected fetch: ${url} (${method})`);
+        });
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+        const { default: AccountScreen } = await import('./account');
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        try {
+            await act(async () => {
+                tree = renderer.create(<AccountScreen />);
+            });
+            await act(async () => {});
+
+            const encryptionItems =
+                tree?.root.findAll(
+                    (node) =>
+                        node?.props?.rightElement?.props?.testID === 'settings-account-encryption-mode-switch' &&
+                        typeof node?.props?.rightElement?.props?.onValueChange === 'function',
+                ) ?? [];
+            expect(encryptionItems).toHaveLength(1);
+
+            await act(async () => {
+                await encryptionItems[0]!.props.rightElement.props.onValueChange(true);
+            });
+
+            expect(loginSpy).toHaveBeenCalledWith('t', expect.any(String));
+            expect(alertSpy).toHaveBeenCalled();
         } finally {
             act(() => {
                 tree?.unmount();
