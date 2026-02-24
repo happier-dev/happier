@@ -28,6 +28,7 @@ export type OAuthFlowProvider = Readonly<{
         env: NodeJS.ProcessEnv;
         code: string;
         state?: string;
+        iss?: string;
         pkceCodeVerifier?: string;
         expectedNonce?: string;
     }) => Promise<OAuthTokenExchangeResult>;
