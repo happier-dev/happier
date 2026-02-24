@@ -71,9 +71,14 @@ vi.mock('@/sync/domains/state/storage', () => ({
     },
 }));
 
-vi.mock('@/sync/encryption/secretSettings', () => ({
-    sealSecretsDeep: (value: unknown) => value,
-}));
+vi.mock('@/sync/encryption/secretSettings', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/encryption/secretSettings')>();
+    return {
+        ...actual,
+        sealSecretsDeep: (value: unknown) => value,
+        unsealSecretsDeep: (value: unknown) => value,
+    };
+});
 
 vi.mock('@/sync/http/client', () => ({
     serverFetch: mocks.serverFetch,
@@ -121,13 +126,19 @@ describe('syncSettings account settings ciphertext', () => {
 
         mocks.serverFetch
             .mockResolvedValueOnce(
-                new Response(JSON.stringify({ success: true }), {
+                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
                 }),
             )
             .mockResolvedValueOnce(
-                new Response(JSON.stringify({ settings: null, settingsVersion: 10 }), {
+                new Response(JSON.stringify({ success: true, version: 10 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ content: null, version: 10 }), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
                 }),
@@ -142,17 +153,22 @@ describe('syncSettings account settings ciphertext', () => {
 
         expect(mocks.serverFetch).toHaveBeenCalled();
         const [url, init] = mocks.serverFetch.mock.calls[0];
-        expect(url).toBe('/v1/account/settings');
-        expect(init?.method).toBe('POST');
-        expect(typeof init?.body).toBe('string');
+        expect(url).toBe('/v1/account/encryption');
+        expect(init?.method).toBe('GET');
 
-        const body = JSON.parse(String(init?.body)) as { settings?: string };
-        expect(typeof body.settings).toBe('string');
+        const [url2, init2] = mocks.serverFetch.mock.calls[1];
+        expect(url2).toBe('/v2/account/settings');
+        expect(init2?.method).toBe('POST');
+        expect(typeof init2?.body).toBe('string');
+
+        const body = JSON.parse(String(init2?.body)) as { content?: { t?: unknown; c?: unknown } };
+        expect(body.content?.t).toBe('encrypted');
+        expect(typeof body.content?.c).toBe('string');
 
         const opened = openAccountScopedBlobCiphertext({
             kind: 'account_settings',
             material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
-            ciphertext: body.settings!,
+            ciphertext: body.content!.c as string,
         });
         expect(opened?.format).toBe('account_scoped_v1');
         expect(opened?.value).toEqual(
@@ -180,12 +196,19 @@ describe('syncSettings account settings ciphertext', () => {
             randomBytes: mocks.getRandomBytes,
         });
 
-        mocks.serverFetch.mockResolvedValueOnce(
-            new Response(JSON.stringify({ settings: ciphertext, settingsVersion: 12 }), {
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+            new Response(JSON.stringify({ content: { t: 'encrypted', c: ciphertext }, version: 12 }), {
                 status: 200,
                 headers: { 'Content-Type': 'application/json' },
             }),
-        );
+            );
 
         await syncSettings({
             credentials,

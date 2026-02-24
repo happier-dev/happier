@@ -101,9 +101,10 @@ test.describe('ui e2e: keyless OAuth auto-redirect (GitHub)', () => {
     if (!server) throw new Error('missing server');
     if (!oauthBaseUrl) throw new Error('missing oauth base url');
     if (!oauthCounts) throw new Error('missing oauth counts');
+    const serverBaseUrl = server.baseUrl;
 
     const finalized = page.waitForResponse(
-      (resp) => resp.url().startsWith(`${server.baseUrl}/v1/auth/external/github/finalize-keyless`) && resp.status() === 200,
+      (resp) => resp.url().startsWith(`${serverBaseUrl}/v1/auth/external/github/finalize-keyless`) && resp.status() === 200,
       { timeout: 120_000 },
     );
 

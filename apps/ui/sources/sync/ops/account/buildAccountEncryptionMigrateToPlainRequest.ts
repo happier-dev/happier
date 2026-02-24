@@ -99,6 +99,14 @@ export async function buildAccountEncryptionMigrateToPlainRequest(params: Readon
       const decoded = decodeAutomationTemplate(JSON.stringify(rawPayload));
       if (!decoded) throw new Error(`Invalid decrypted automation template payload (${automation.id})`);
 
+      const requiresSensitiveEncryption =
+        typeof (decoded as any).sessionEncryptionKeyBase64 === 'string' &&
+        String((decoded as any).sessionEncryptionKeyBase64).trim().length > 0;
+      if (requiresSensitiveEncryption) {
+        templates.push({ automationId: automation.id, templateCiphertext: automation.templateCiphertext });
+        continue;
+      }
+
       const plainTemplateCiphertext = await encodeAutomationTemplateForTransport({
         accountMode: 'plain',
         template: decoded,

@@ -8,6 +8,7 @@ const syncSpies = vi.hoisted(() => ({
     createAutomation: vi.fn(async (_input: any) => ({})),
     refreshAutomations: vi.fn(async () => {}),
     getSessionEncryptionKeyBase64ForResume: vi.fn((_sessionId: string) => 'dek-base64'),
+    getCredentials: vi.fn(() => ({ token: 't' })),
     encryption: {
         encryptAutomationTemplateRaw: vi.fn(async (_value: unknown) => 'ciphertext-base64'),
     },
@@ -76,6 +77,15 @@ vi.mock('@/sync/sync', () => ({
     sync: syncSpies,
 }));
 
+const serverFetchSpy = vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ mode: 'e2ee', updatedAt: 1 }),
+}));
+vi.mock('@/sync/http/client', () => ({
+    serverFetch: (...args: any[]) => serverFetchSpy(...args),
+}));
+
 async function flushRender(): Promise<void> {
     await act(async () => {
         await Promise.resolve();
@@ -106,14 +116,17 @@ describe('SessionAutomationCreateScreen', () => {
     beforeEach(() => {
         sessionState.session = {
             id: 's1',
+            encryptionMode: 'e2ee',
             metadata: { machineId: 'm1', path: '/tmp/project', homeDir: '/tmp' },
         };
         syncSpies.createAutomation.mockClear();
         syncSpies.refreshAutomations.mockClear();
         syncSpies.getSessionEncryptionKeyBase64ForResume.mockClear();
+        syncSpies.getCredentials.mockClear();
         syncSpies.encryption.encryptAutomationTemplateRaw.mockClear();
         routerBackSpy.mockReset();
         modalAlertSpy.mockReset();
+        serverFetchSpy.mockClear();
     });
 
     it('creates an existing-session automation with an envelope that includes existingSessionId', async () => {
@@ -148,5 +161,44 @@ describe('SessionAutomationCreateScreen', () => {
         const envelope = JSON.parse(String(input.templateCiphertext));
         expect(envelope.kind).toBe('happier_automation_template_encrypted_v1');
         expect(envelope.existingSessionId).toBe('s1');
+    });
+
+    it('creates a plaintext existing-session automation without requiring a resume key', async () => {
+        sessionState.session = {
+            id: 's_plain',
+            encryptionMode: 'plain',
+            metadata: { machineId: 'm1', path: '/tmp/project', homeDir: '/tmp' },
+        };
+        syncSpies.getSessionEncryptionKeyBase64ForResume.mockImplementationOnce(() => null as any);
+        serverFetchSpy.mockImplementationOnce(async () => ({
+            ok: true,
+            status: 200,
+            json: async () => ({ mode: 'plain', updatedAt: 1 }),
+        }));
+
+        const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<SessionAutomationCreateScreen sessionId="s_plain" />);
+        });
+        await flushRender();
+
+        const message = findTextInput(tree!, 'Message to send');
+        await act(async () => {
+            message.props.onChangeText('Hello');
+        });
+
+        const create = findPressableByText(tree!, 'Create automation');
+        await act(async () => {
+            create.props.onPress();
+        });
+
+        expect(syncSpies.createAutomation).toHaveBeenCalledTimes(1);
+        const input = syncSpies.createAutomation.mock.calls[0][0];
+        const envelope = JSON.parse(String(input.templateCiphertext));
+        expect(envelope.kind).toBe('happier_automation_template_plain_v1');
+        expect(envelope.existingSessionId).toBe('s_plain');
+        expect(syncSpies.encryption.encryptAutomationTemplateRaw).not.toHaveBeenCalled();
     });
 });

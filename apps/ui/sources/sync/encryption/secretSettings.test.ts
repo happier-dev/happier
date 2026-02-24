@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import sodium from '@/encryption/libsodium.lib';
-import { decryptSecretValue, sealSecretsDeep } from './secretSettings';
+import { decryptSecretValue, sealSecretsDeep, unsealSecretsDeep } from './secretSettings';
 
 describe('secretSettings', () => {
     beforeAll(async () => {
@@ -40,5 +40,16 @@ describe('secretSettings', () => {
         expect(input.value).toBe('sk-plain');
         expect(input.encryptedValue).toBeUndefined();
     });
-});
 
+    it('unsealSecretsDeep decrypts encryptedValue into value and drops encryptedValue', () => {
+        const key = new Uint8Array(32).fill(7);
+        const sealed = sealSecretsDeep({ secret: { _isSecretValue: true, value: 'sk-test' } }, key);
+        const container: any = (sealed as any).secret;
+        expect(container.encryptedValue?.t).toBe('enc-v1');
+
+        const unsealed = unsealSecretsDeep(sealed, key);
+        const out: any = (unsealed as any).secret;
+        expect(out.value).toBe('sk-test');
+        expect(out.encryptedValue).toBeUndefined();
+    });
+});

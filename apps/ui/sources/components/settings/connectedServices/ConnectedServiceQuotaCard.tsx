@@ -10,6 +10,7 @@ import { useAuth } from '@/auth/context/AuthContext';
 import { getConnectedServiceQuotaSnapshotSealed, requestConnectedServiceQuotaSnapshotRefresh } from '@/sync/api/account/apiConnectedServicesQuotasV2';
 import { openConnectedServiceQuotaSnapshot } from '@/sync/domains/connectedServices/openConnectedServiceQuotaSnapshot';
 import type { ConnectedServiceId, ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
+import { t } from '@/text';
 
 import { ConnectedServiceQuotaMeterRow } from './ConnectedServiceQuotaMeterRow';
 
@@ -119,8 +120,16 @@ export const ConnectedServiceQuotaCard = React.memo(function ConnectedServiceQuo
   return (
     <ItemGroup title={props.title}>
       <Item
-        title="Refresh"
-        subtitle={loading ? 'Loading…' : error ? `Error: ${error}` : snapshot ? `Last updated: ${formatTimestamp(snapshot.fetchedAt)}${isStale ? ' • stale' : ''}` : 'No quota data yet'}
+        title={t('common.refresh')}
+        subtitle={loading
+          ? t('connectedServices.quota.loading')
+          : error
+            ? t('connectedServices.quota.error', { message: error })
+            : snapshot
+              ? (isStale
+                ? t('connectedServices.quota.lastUpdatedStale', { time: formatTimestamp(snapshot.fetchedAt) })
+                : t('connectedServices.quota.lastUpdated', { time: formatTimestamp(snapshot.fetchedAt) }))
+              : t('connectedServices.quota.noData')}
         icon={<Ionicons name="refresh-outline" size={22} color={theme.colors.accent.blue} />}
         onPress={() => void requestRefreshAndReload()}
         showChevron={false}
@@ -128,7 +137,7 @@ export const ConnectedServiceQuotaCard = React.memo(function ConnectedServiceQuo
 
       {snapshot?.planLabel ? (
         <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 2 }}>
-          <Text style={{ opacity: 0.7 }}>{`Plan: ${snapshot.planLabel}`}</Text>
+          <Text style={{ opacity: 0.7 }}>{t('connectedServices.quota.planLabel', { plan: snapshot.planLabel })}</Text>
         </View>
       ) : null}
 

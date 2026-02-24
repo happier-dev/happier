@@ -86,17 +86,17 @@ export const ConnectedServicesAuthModal = React.memo(function ConnectedServicesA
         const mode = current.source === 'connected' ? 'connected' : 'native';
 
         return (
-          <ItemGroup key={serviceId} title={serviceId}>
-            <Item
-              title={'Backend native auth'}
-              subtitle={'Use your local CLI login / API keys'}
+            <ItemGroup key={serviceId} title={serviceId}>
+              <Item
+              title={t('connectedServices.authModal.nativeAuthTitle')}
+              subtitle={t('connectedServices.authModal.nativeAuthSubtitle')}
               icon={<Ionicons name={mode === 'native' ? 'checkmark-circle' : 'ellipse-outline'} size={22} color={theme.colors.accent.blue} />}
               onPress={() => handleSetBindingForService(serviceId, { source: 'native' })}
               showChevron={false}
             />
             <Item
-              title={'Use connected services'}
-              subtitle={'Fetch and materialize from Happier cloud'}
+              title={t('connectedServices.authModal.connectedServicesTitle')}
+              subtitle={t('connectedServices.authModal.connectedServicesSubtitle')}
               icon={<Ionicons name={mode === 'connected' ? 'checkmark-circle' : 'ellipse-outline'} size={22} color={theme.colors.accent.blue} />}
               onPress={() => {
                 if (connected.length === 0) {
@@ -111,14 +111,14 @@ export const ConnectedServicesAuthModal = React.memo(function ConnectedServicesA
             {mode === 'connected' ? (
               connected.length === 0 ? (
                 <Item
-                  title={'Not connected'}
-                  subtitle={'Tap to open settings'}
+                  title={t('connectedServices.authModal.notConnectedTitle')}
+                  subtitle={t('connectedServices.authModal.notConnectedSubtitle')}
                   icon={<Ionicons name="warning-outline" size={20} color={theme.colors.accent.orange} />}
                   onPress={props.onOpenSettings}
                 />
               ) : (
                 <View>
-                  <Text style={{ marginLeft: 16, marginBottom: 6, opacity: 0.7 }}>{'Profile'}</Text>
+                  <Text style={{ marginLeft: 16, marginBottom: 6, opacity: 0.7 }}>{t('connectedServices.authModal.profileLabel')}</Text>
                   {connected.map((opt) => {
                     const profileKey = connectedServiceProfileKey({ serviceId, profileId: opt.profileId });
                     const badges = quotaBadgesByKey[profileKey] ?? [];
@@ -154,7 +154,7 @@ export const ConnectedServicesAuthModal = React.memo(function ConnectedServicesA
 
       <ItemGroup>
         <Item
-          title={t('common.close') ?? 'Done'}
+          title={t('common.close')}
           icon={<Ionicons name="close-outline" size={22} color={theme.colors.accent.blue} />}
           onPress={props.onClose}
           showChevron={false}

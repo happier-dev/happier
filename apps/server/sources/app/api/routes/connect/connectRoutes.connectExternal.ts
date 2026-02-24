@@ -6,7 +6,7 @@ import { findOAuthProviderById } from "@/app/oauth/providers/registry";
 import { disconnectExternalIdentity } from "@/app/auth/providers/identity";
 import { deleteOAuthPendingBestEffort, loadValidOAuthPending } from "./connectRoutes.oauthPending";
 import { createExternalAuthorizeUrl } from "./oauthExternal/createExternalAuthorizeUrl";
-import { oauthExternalRateLimitPerUser } from "./oauthExternal/oauthExternalRateLimits";
+import { oauthExternalRateLimitConnectParamsPerUser } from "./oauthExternal/oauthExternalRateLimits";
 import { connectPendingSchema } from "./oauthExternal/oauthExternalSchemas";
 import { OAUTH_STATE_UNAVAILABLE_CODE } from "@/app/auth/oauthStateErrors";
 import { OAUTH_NOT_CONFIGURED_ERROR } from "./oauthExternal/oauthExternalErrors";
@@ -21,7 +21,7 @@ export function connectConnectExternalRoutes(app: Fastify) {
 
     app.get("/v1/connect/external/:provider/params", {
         preHandler: app.authenticate,
-        config: { rateLimit: oauthExternalRateLimitPerUser() },
+        config: { rateLimit: oauthExternalRateLimitConnectParamsPerUser() },
         schema: {
             params: z.object({ provider: z.string() }),
             response: {
@@ -104,4 +104,3 @@ export function connectConnectExternalRoutes(app: Fastify) {
         return reply.send({ success: true });
     });
 }
-

@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 import { type Fastify } from "../../types";
+import { db } from "@/storage/db";
+import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
 import {
     createAutomation,
     deleteAutomation,
@@ -30,7 +32,15 @@ export function registerAutomationCrudRoutes(app: Fastify): void {
         preHandler: app.authenticate,
     }, async (request, reply) => {
         try {
-            const input = parseAutomationUpsertInput(request.body);
+            const account = await db.account.findUnique({
+                where: { id: request.userId },
+                select: { publicKey: true, encryptionMode: true },
+            });
+            if (!account) {
+                return reply.code(500).send({ error: "automation_create_failed" });
+            }
+            const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(account);
+            const input = parseAutomationUpsertInput(request.body, { accountMode: mode });
             const created = await createAutomation({
                 accountId: request.userId,
                 input,
@@ -69,7 +79,15 @@ export function registerAutomationCrudRoutes(app: Fastify): void {
         },
     }, async (request, reply) => {
         try {
-            const input = parseAutomationPatchInput(request.body);
+            const account = await db.account.findUnique({
+                where: { id: request.userId },
+                select: { publicKey: true, encryptionMode: true },
+            });
+            if (!account) {
+                return reply.code(500).send({ error: "automation_update_failed" });
+            }
+            const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(account);
+            const input = parseAutomationPatchInput(request.body, { accountMode: mode });
             const updated = await updateAutomation({
                 accountId: request.userId,
                 automationId: request.params.id,

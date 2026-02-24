@@ -9,10 +9,11 @@ import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { useAuth } from '@/auth/context/AuthContext';
 import { sync } from '@/sync/sync';
-import { exchangeConnectedServiceOauthViaProxy, registerConnectedServiceCredentialSealed } from '@/sync/api/account/apiConnectedServicesV2';
-import { sealConnectedServiceCredential } from '@/sync/domains/connectedServices/sealConnectedServiceCredential';
+import { exchangeConnectedServiceOauthViaProxy } from '@/sync/api/account/apiConnectedServicesV2';
+import { storeConnectedServiceCredentialForAccount } from '@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount';
 import { generateOauthState, generatePkceCodes, parseOauthCallbackUrl } from '@/utils/auth/oauthCore';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { t } from '@/text';
 
 import {
   buildConnectedServiceCredentialRecord,
@@ -185,9 +186,9 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
     setBusy(true);
     try {
       const pasted = await Modal.prompt(
-        'Paste redirect URL',
-        'After completing OAuth, copy the final redirected URL from your browser address bar and paste it here.',
-        { placeholder: redirectUri, confirmText: 'Continue', cancelText: 'Cancel' },
+        t('connectedServices.oauthPaste.pasteRedirectUrl'),
+        t('connectedServices.oauthPaste.pasteRedirectUrlPromptBody'),
+        { placeholder: redirectUri, confirmText: t('common.continue'), cancelText: t('common.cancel') },
       );
       const pastedUrl = typeof pasted === 'string' ? pasted.trim() : '';
       if (!pastedUrl) return;
@@ -224,24 +225,19 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
         payload,
       });
 
-      const ciphertext = sealConnectedServiceCredential({ credentials, record });
-      await registerConnectedServiceCredentialSealed(credentials, {
-        serviceId,
-        profileId,
-        sealed: { format: 'account_scoped_v1', ciphertext },
-        metadata: {
-          kind: record.kind,
-          providerEmail: record.oauth.providerEmail,
-          providerAccountId: record.oauth.providerAccountId,
-          expiresAt: record.expiresAt,
-        },
-      });
+      await storeConnectedServiceCredentialForAccount(credentials, { serviceId, profileId, record });
 
       await sync.refreshProfile();
-      await Modal.alert('Connected', `${serviceId} (${profileId}) is connected.`);
+      await Modal.alert(
+        t('connectedServices.oauthPaste.alerts.connectedTitle'),
+        t('connectedServices.oauthPaste.alerts.connectedBody', { serviceId, profileId })
+      );
       props.onDone();
     } catch (e: unknown) {
-      await Modal.alert('Error', e instanceof Error ? e.message : 'Failed to connect');
+      await Modal.alert(
+        t('common.error'),
+        e instanceof Error ? e.message : t('connectedServices.oauthPaste.alerts.failedToConnect')
+      );
     } finally {
       setBusy(false);
     }
@@ -250,9 +246,9 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
   if (!serviceId || !profileId) {
     return (
       <ItemList>
-        <ItemGroup title="Connected Services">
+        <ItemGroup title={t('connectedServices.title')}>
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ opacity: 0.7 }}>Invalid connected service configuration.</Text>
+            <Text style={{ opacity: 0.7 }}>{t('connectedServices.oauthPaste.invalidConfig')}</Text>
           </View>
         </ItemGroup>
       </ItemList>
@@ -261,16 +257,16 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
 
   return (
     <ItemList>
-      <ItemGroup title="Connect (web)">
+      <ItemGroup title={t('connectedServices.oauthPaste.connectWebGroupTitle')}>
         <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
           <Text style={{ opacity: 0.7 }}>
-            This flow uses a copy/paste redirect step (like OpenClaw) and a Happier server proxy to exchange tokens safely.
+            {t('connectedServices.oauthPaste.connectWebDescription')}
           </Text>
         </View>
 
         <Item
-          title="Open authorization URL"
-          subtitle={authorizationUrl ? 'Opens in a new tab' : 'Preparing…'}
+          title={t('connectedServices.oauthPaste.openAuthorizationUrl')}
+          subtitle={authorizationUrl ? t('connectedServices.oauthPaste.opensInNewTab') : t('connectedServices.oauthPaste.preparing')}
           onPress={() => {
             if (!authorizationUrl) return;
             tryOpenInNewTab(authorizationUrl);
@@ -278,7 +274,7 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
         />
 
         <Item
-          title={busy ? 'Working…' : 'Paste redirect URL'}
+          title={busy ? t('connectedServices.oauthPaste.working') : t('connectedServices.oauthPaste.pasteRedirectUrl')}
           subtitle={redirectUri}
           onPress={busy ? undefined : handlePaste}
           showChevron={false}

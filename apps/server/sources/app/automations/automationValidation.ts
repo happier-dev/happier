@@ -18,6 +18,7 @@ export class AutomationValidationError extends Error {
 
 const MAX_TEMPLATE_CIPHERTEXT_CHARS = 220_000;
 const MAX_TEMPLATE_PAYLOAD_CIPHERTEXT_CHARS = 200_000;
+const MAX_TEMPLATE_PAYLOAD_PLAINTEXT_CHARS = 200_000;
 
 const AssignmentSchema = z.object({
     machineId: z.string().trim().min(1),
@@ -43,6 +44,17 @@ const TemplateEnvelopeSchema = z.object({
     payloadCiphertext: z.string().trim().min(1).max(MAX_TEMPLATE_PAYLOAD_CIPHERTEXT_CHARS),
     existingSessionId: z.string().trim().min(1).max(128).optional(),
 }).strict();
+
+const PlainTemplateEnvelopeSchema = z.object({
+    kind: z.literal("happier_automation_template_plain_v1"),
+    payload: z.unknown(),
+    existingSessionId: z.string().trim().min(1).max(128).optional(),
+}).strict();
+
+const AnyTemplateEnvelopeSchema = z.discriminatedUnion("kind", [
+    TemplateEnvelopeSchema,
+    PlainTemplateEnvelopeSchema,
+]);
 
 const UpsertSchema = z.object({
     name: z.string().trim().min(1).max(128),
@@ -81,7 +93,7 @@ function normalizeAssignments(assignments: ReadonlyArray<AutomationAssignmentInp
     return Array.from(deduped.values());
 }
 
-function assertEncryptedTemplateEnvelope(templateCiphertext: string): void {
+function assertTemplateEnvelopeForAccountMode(templateCiphertext: string, accountMode: "e2ee" | "plain"): void {
     let parsed: unknown;
     try {
         parsed = JSON.parse(templateCiphertext);
@@ -89,9 +101,37 @@ function assertEncryptedTemplateEnvelope(templateCiphertext: string): void {
         throw new AutomationValidationError("templateCiphertext must be valid JSON");
     }
 
-    const envelope = TemplateEnvelopeSchema.safeParse(parsed);
+    const envelope = AnyTemplateEnvelopeSchema.safeParse(parsed);
     if (!envelope.success) {
         throw new AutomationValidationError(`templateCiphertext: ${toMessage(envelope.error)}`);
+    }
+
+    if (accountMode === "e2ee") {
+        if (envelope.data.kind !== "happier_automation_template_encrypted_v1") {
+            throw new AutomationValidationError("templateCiphertext: expected encrypted template envelope");
+        }
+        return;
+    }
+
+    if (envelope.data.kind === "happier_automation_template_encrypted_v1") {
+        return;
+    }
+    if (envelope.data.kind !== "happier_automation_template_plain_v1") {
+        throw new AutomationValidationError("templateCiphertext: expected plaintext or encrypted template envelope");
+    }
+
+    const payloadJson = (() => {
+        try {
+            return JSON.stringify(envelope.data.payload);
+        } catch {
+            return null;
+        }
+    })();
+    if (!payloadJson) {
+        throw new AutomationValidationError("templateCiphertext: payload must be JSON-serializable");
+    }
+    if (payloadJson.length > MAX_TEMPLATE_PAYLOAD_PLAINTEXT_CHARS) {
+        throw new AutomationValidationError("templateCiphertext: payload is too large");
     }
 }
 
@@ -109,13 +149,17 @@ function assertScheduleIsComputable(schedule: { kind: "interval" | "cron"; every
     }
 }
 
-export function parseAutomationUpsertInput(raw: unknown): AutomationUpsertInput {
+export function parseAutomationUpsertInput(
+    raw: unknown,
+    opts?: Readonly<{ accountMode?: "e2ee" | "plain" }>,
+): AutomationUpsertInput {
     const parsed = UpsertSchema.safeParse(raw);
     if (!parsed.success) {
         throw new AutomationValidationError(toMessage(parsed.error));
     }
 
-    assertEncryptedTemplateEnvelope(parsed.data.templateCiphertext);
+    const accountMode = opts?.accountMode === "plain" ? "plain" : "e2ee";
+    assertTemplateEnvelopeForAccountMode(parsed.data.templateCiphertext, accountMode);
     assertScheduleIsComputable(parsed.data.schedule);
 
     return {
@@ -124,14 +168,18 @@ export function parseAutomationUpsertInput(raw: unknown): AutomationUpsertInput 
     };
 }
 
-export function parseAutomationPatchInput(raw: unknown): AutomationPatchInput {
+export function parseAutomationPatchInput(
+    raw: unknown,
+    opts?: Readonly<{ accountMode?: "e2ee" | "plain" }>,
+): AutomationPatchInput {
     const parsed = PatchSchema.safeParse(raw);
     if (!parsed.success) {
         throw new AutomationValidationError(toMessage(parsed.error));
     }
 
     if (typeof parsed.data.templateCiphertext === "string") {
-        assertEncryptedTemplateEnvelope(parsed.data.templateCiphertext);
+        const accountMode = opts?.accountMode === "plain" ? "plain" : "e2ee";
+        assertTemplateEnvelopeForAccountMode(parsed.data.templateCiphertext, accountMode);
     }
     if (parsed.data.schedule) {
         assertScheduleIsComputable(parsed.data.schedule);

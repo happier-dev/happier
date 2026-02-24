@@ -7,7 +7,7 @@ import { resolveAuthPolicyFromEnv } from "@/app/auth/authPolicy";
 import { OAUTH_STATE_UNAVAILABLE_CODE } from "@/app/auth/oauthStateErrors";
 import { findOAuthProviderById } from "@/app/oauth/providers/registry";
 import { createExternalAuthorizeUrl } from "./oauthExternal/createExternalAuthorizeUrl";
-import { oauthExternalRateLimitPerIp } from "./oauthExternal/oauthExternalRateLimits";
+import { oauthExternalRateLimitAuthParamsPerIp } from "./oauthExternal/oauthExternalRateLimits";
 import { OAUTH_NOT_CONFIGURED_ERROR } from "./oauthExternal/oauthExternalErrors";
 import { registerExternalAuthFinalizeRoute } from "./oauthExternal/registerExternalAuthFinalizeRoute";
 import { registerExternalAuthFinalizeKeylessRoute } from "./oauthExternal/registerExternalAuthFinalizeKeylessRoute";
@@ -23,7 +23,7 @@ export function connectAuthExternalRoutes(app: Fastify) {
     //
 
     app.get("/v1/auth/external/:provider/params", {
-        config: { rateLimit: oauthExternalRateLimitPerIp() },
+        config: { rateLimit: oauthExternalRateLimitAuthParamsPerIp() },
         schema: {
             params: z.object({ provider: z.string() }),
             querystring: z
@@ -32,8 +32,12 @@ export function connectAuthExternalRoutes(app: Fastify) {
                     mode: z.enum(["keyed", "keyless"]).optional(),
                     proofHash: z.string().optional(),
                 })
-                .refine((q) => (q.mode === "keyless" ? Boolean(q.proofHash) : Boolean(q.publicKey)), {
-                    message: "Expected publicKey (keyed) or proofHash (keyless)",
+                .refine((q) => {
+                    if (q.mode === "keyless") return Boolean(q.proofHash);
+                    if (typeof q.proofHash === "string" && q.proofHash.trim()) return true;
+                    return Boolean(q.publicKey);
+                }, {
+                    message: "Expected publicKey (legacy keyed) or proofHash (keyed or keyless)",
                 }),
             response: {
                 200: ExternalOAuthParamsResponseSchema,
@@ -49,32 +53,53 @@ export function connectAuthExternalRoutes(app: Fastify) {
 
         const mode = (request.query as any)?.mode === "keyless" ? "keyless" : "keyed";
         const policy = resolveAuthPolicyFromEnv(process.env);
-        if (mode === "keyed") {
-            if (!policy.signupProviders.includes(providerId)) {
-                return reply.code(403).send({ error: "signup-provider-disabled" });
-            }
-        } else {
+        const keyedAllowed = policy.signupProviders.includes(providerId);
+        let keylessAllowed = false;
+        if (mode === "keyless") {
             const keyless = readAuthOauthKeylessFeatureEnv(process.env);
-            if (!(keyless.enabled && keyless.providers.includes(providerId))) {
-                return reply.code(403).send({ error: "keyless-disabled" });
-            }
+            keylessAllowed = keyless.enabled && keyless.providers.includes(providerId);
+            if (!keylessAllowed) return reply.code(403).send({ error: "keyless-disabled" });
             const availability = resolveKeylessAccountsAvailability(process.env);
             if (!availability.ok) {
                 return reply.code(403).send({ error: availability.reason === "e2ee-required" ? "e2ee-required" : "keyless-disabled" });
+            }
+        } else {
+            // Universal proofHash auth-start: allow if either keyed signup or keyless is allowed.
+            const proofHashCandidate = String((request.query as any)?.proofHash ?? "").trim();
+            if (proofHashCandidate) {
+                const keyless = readAuthOauthKeylessFeatureEnv(process.env);
+                keylessAllowed = keyless.enabled && keyless.providers.includes(providerId);
+                if (!keyedAllowed && !keylessAllowed) {
+                    return reply.code(403).send({ error: "signup-provider-disabled" });
+                }
+                if (keylessAllowed) {
+                    const availability = resolveKeylessAccountsAvailability(process.env);
+                    if (!availability.ok && !keyedAllowed) {
+                        return reply.code(403).send({ error: availability.reason === "e2ee-required" ? "e2ee-required" : "keyless-disabled" });
+                    }
+                }
+            } else if (!keyedAllowed) {
+                return reply.code(403).send({ error: "signup-provider-disabled" });
             }
         }
 
         let publicKeyHex: string | null = null;
         let proofHash: string | null = null;
         if (mode === "keyed") {
-            try {
-                const publicKeyBytes = privacyKit.decodeBase64((request.query as any).publicKey);
-                if (publicKeyBytes.length !== tweetnacl.sign.publicKeyLength) {
+            const proofHashRaw = String((request.query as any)?.proofHash ?? "").trim().toLowerCase();
+            if (proofHashRaw) {
+                if (!/^[0-9a-f]{64}$/.test(proofHashRaw)) return reply.code(400).send({ error: "Invalid proof" });
+                proofHash = proofHashRaw;
+            } else {
+                try {
+                    const publicKeyBytes = privacyKit.decodeBase64((request.query as any).publicKey);
+                    if (publicKeyBytes.length !== tweetnacl.sign.publicKeyLength) {
+                        return reply.code(400).send({ error: "Invalid public key" });
+                    }
+                    publicKeyHex = privacyKit.encodeHex(publicKeyBytes);
+                } catch {
                     return reply.code(400).send({ error: "Invalid public key" });
                 }
-                publicKeyHex = privacyKit.encodeHex(publicKeyBytes);
-            } catch {
-                return reply.code(400).send({ error: "Invalid public key" });
             }
         } else {
             proofHash = String((request.query as any)?.proofHash ?? "").trim().toLowerCase();

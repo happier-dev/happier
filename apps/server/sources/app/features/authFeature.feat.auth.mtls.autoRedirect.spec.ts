@@ -11,6 +11,8 @@ describe("resolveAuthFeature (mTLS auto-redirect)", () => {
             HAPPIER_FEATURE_AUTH_MTLS__ENABLED: "1",
             HAPPIER_FEATURE_AUTH_MTLS__MODE: "forwarded",
             HAPPIER_FEATURE_AUTH_MTLS__TRUST_FORWARDED_HEADERS: "1",
+            // mTLS login is a keyless method and is unavailable when the server storage policy requires E2EE.
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
         } as NodeJS.ProcessEnv);
 
         expect(feature.capabilities?.auth?.ui?.autoRedirect?.enabled).toBe(true);
@@ -25,10 +27,10 @@ describe("resolveAuthFeature (mTLS auto-redirect)", () => {
             HAPPIER_FEATURE_AUTH_MTLS__ENABLED: "1",
             HAPPIER_FEATURE_AUTH_MTLS__MODE: "forwarded",
             HAPPIER_FEATURE_AUTH_MTLS__TRUST_FORWARDED_HEADERS: "0",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
         } as NodeJS.ProcessEnv);
 
         expect(feature.capabilities?.auth?.ui?.autoRedirect?.enabled).toBe(true);
         expect(feature.capabilities?.auth?.ui?.autoRedirect?.providerId).toBe(null);
     });
 });
-

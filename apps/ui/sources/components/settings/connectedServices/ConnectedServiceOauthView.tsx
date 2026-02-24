@@ -5,9 +5,9 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { OAuthView, OAuthViewUnsupported, type OAuthViewConfig } from '@/components/ui/navigation/OAuthView';
 import { Modal } from '@/modal';
 import { useAuth } from '@/auth/context/AuthContext';
+import { t } from '@/text';
 import { sync } from '@/sync/sync';
-import { registerConnectedServiceCredentialSealed } from '@/sync/api/account/apiConnectedServicesV2';
-import { sealConnectedServiceCredential } from '@/sync/domains/connectedServices/sealConnectedServiceCredential';
+import { storeConnectedServiceCredentialForAccount } from '@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount';
 import { getConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { buildConnectedServiceCredentialRecord, ConnectedServiceCredentialRecordV1Schema, ConnectedServiceIdSchema, type ConnectedServiceCredentialRecordV1, type ConnectedServiceId } from '@happier-dev/protocol';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -39,7 +39,7 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
   if (!serviceId || !entry || !profileId) {
     return (
       <View style={{ flex: 1 }}>
-        <OAuthViewUnsupported name={rawServiceId || 'Connected service'} command={entry?.connectCommand} />
+        <OAuthViewUnsupported name={rawServiceId || t('connectedServices.fallbackName')} command={entry?.connectCommand} />
       </View>
     );
   }
@@ -69,18 +69,7 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
 
   const registerRecord = async (record: ConnectedServiceCredentialRecordV1) => {
     const credentials = ensureCredentials();
-    const ciphertext = sealConnectedServiceCredential({ credentials, record });
-    await registerConnectedServiceCredentialSealed(credentials, {
-      serviceId,
-      profileId,
-      sealed: { format: 'account_scoped_v1', ciphertext },
-      metadata: {
-        kind: record.kind,
-        providerEmail: record.kind === 'oauth' ? record.oauth.providerEmail : record.token.providerEmail,
-        providerAccountId: record.kind === 'oauth' ? record.oauth.providerAccountId : record.token.providerAccountId,
-        expiresAt: record.expiresAt,
-      },
-    });
+    await storeConnectedServiceCredentialForAccount(credentials, { serviceId, profileId, record });
     await sync.refreshProfile();
   };
 
@@ -121,10 +110,16 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
           fireAndForget((async () => {
             try {
               await registerMaybeRecord(record);
-              await Modal.alert('Connected', `${entry.displayName} (${profileId}) is connected.`);
+              await Modal.alert(
+                t('connectedServices.oauthPaste.alerts.connectedTitle'),
+                t('connectedServices.oauthPaste.alerts.connectedBody', { serviceId: entry.displayName, profileId }),
+              );
               router.back();
             } catch (e: unknown) {
-              await Modal.alert('Error', e instanceof Error ? e.message : 'Failed to connect');
+              await Modal.alert(
+                t('common.error'),
+                e instanceof Error ? e.message : t('connectedServices.oauthPaste.alerts.failedToConnect'),
+              );
             }
           })(), { tag: 'ConnectedServiceOauthView.onSuccess.openai' });
         },
@@ -169,10 +164,16 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
           fireAndForget((async () => {
             try {
               await registerMaybeRecord(record);
-              await Modal.alert('Connected', `${entry.displayName} (${profileId}) is connected.`);
+              await Modal.alert(
+                t('connectedServices.oauthPaste.alerts.connectedTitle'),
+                t('connectedServices.oauthPaste.alerts.connectedBody', { serviceId: entry.displayName, profileId }),
+              );
               router.back();
             } catch (e: unknown) {
-              await Modal.alert('Error', e instanceof Error ? e.message : 'Failed to connect');
+              await Modal.alert(
+                t('common.error'),
+                e instanceof Error ? e.message : t('connectedServices.oauthPaste.alerts.failedToConnect'),
+              );
             }
           })(), { tag: 'ConnectedServiceOauthView.onSuccess.anthropic' });
         },
@@ -217,10 +218,16 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
           fireAndForget((async () => {
             try {
               await registerMaybeRecord(record);
-              await Modal.alert('Connected', `${entry.displayName} (${profileId}) is connected.`);
+              await Modal.alert(
+                t('connectedServices.oauthPaste.alerts.connectedTitle'),
+                t('connectedServices.oauthPaste.alerts.connectedBody', { serviceId: entry.displayName, profileId }),
+              );
               router.back();
             } catch (e: unknown) {
-              await Modal.alert('Error', e instanceof Error ? e.message : 'Failed to connect');
+              await Modal.alert(
+                t('common.error'),
+                e instanceof Error ? e.message : t('connectedServices.oauthPaste.alerts.failedToConnect'),
+              );
             }
           })(), { tag: 'ConnectedServiceOauthView.onSuccess.gemini' });
         },

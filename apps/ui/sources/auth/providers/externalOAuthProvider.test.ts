@@ -49,7 +49,7 @@ afterEach(() => {
 });
 
 describe('createExternalOAuthProvider', () => {
-    it('returns the external signup URL when params endpoint is successful', async () => {
+    it('returns the external auth URL when params endpoint is successful', async () => {
         stubFetch(async () => ({
             ok: true,
             status: 200,
@@ -57,12 +57,12 @@ describe('createExternalOAuthProvider', () => {
         }));
 
         const provider = createProvider();
-        await expect(provider.getExternalSignupUrl({ publicKey: 'pk' })).resolves.toBe(
+        await expect(provider.getExternalAuthUrl({ proofHash: 'abc123' })).resolves.toBe(
             'https://oauth.example.test/signup',
         );
     });
 
-    it('returns the external keyless login URL when params endpoint is successful', async () => {
+    it('includes the proofHash query param when building the params request', async () => {
         let capturedUrl: string | null = null;
         stubFetch(async (url) => {
             capturedUrl = url;
@@ -74,12 +74,10 @@ describe('createExternalOAuthProvider', () => {
         });
 
         const provider = createProvider();
-        expect(provider.getExternalLoginUrl).toBeDefined();
-        await expect(provider.getExternalLoginUrl!({ proofHash: 'abc123' })).resolves.toBe(
+        await expect(provider.getExternalAuthUrl({ proofHash: 'abc123' })).resolves.toBe(
             'https://oauth.example.test/login',
         );
         expect(capturedUrl).toContain('/v1/auth/external/github/params');
-        expect(capturedUrl).toContain('mode=keyless');
         expect(capturedUrl).toContain('proofHash=abc123');
     });
 
@@ -91,7 +89,7 @@ describe('createExternalOAuthProvider', () => {
         }));
 
         const provider = createProvider();
-        await expect(provider.getExternalSignupUrl({ publicKey: 'pk' })).rejects.toEqual(
+        await expect(provider.getExternalAuthUrl({ proofHash: 'abc123' })).rejects.toEqual(
             expect.objectContaining({
                 name: 'HappyError',
                 kind: 'config',
@@ -101,11 +99,11 @@ describe('createExternalOAuthProvider', () => {
         );
     });
 
-    it('throws for successful signup response payloads missing a URL', async () => {
+    it('throws for successful auth response payloads missing a URL', async () => {
         stubFetch(async () => ({ ok: true, status: 200, body: { url: '' } }));
 
         const provider = createProvider();
-        await expect(provider.getExternalSignupUrl({ publicKey: 'pk' })).rejects.toThrow('external-signup-unavailable');
+        await expect(provider.getExternalAuthUrl({ proofHash: 'abc123' })).rejects.toThrow('external-auth-unavailable');
     });
 
     it('maps connect params 400 failures into config HappyError payloads', async () => {

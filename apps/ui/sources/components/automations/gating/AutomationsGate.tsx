@@ -7,6 +7,7 @@ import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Text } from '@/components/ui/text/Text';
 import { layout } from '@/components/ui/layout/layout';
+import { t } from '@/text';
 
 const stylesheet = StyleSheet.create((theme) => ({
     loadingContainer: {
@@ -56,13 +57,13 @@ export function AutomationsGate(props: { children: React.ReactNode }) {
             <View style={styles.container}>
                 <ItemList style={{ paddingTop: 0 }}>
                     <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
-                        <View style={styles.disabledContainer}>
-                            <Ionicons name="timer-outline" size={56} color={theme.colors.textSecondary} />
-                            <Text style={styles.disabledTitle}>Automations are disabled</Text>
-                            <Text style={styles.disabledBody}>
-                                Enable them from Settings, then turn on Experiments and Automations.
-                            </Text>
-                        </View>
+	                        <View style={styles.disabledContainer}>
+	                            <Ionicons name="timer-outline" size={56} color={theme.colors.textSecondary} />
+	                            <Text style={styles.disabledTitle}>{t('automations.gate.disabledTitle')}</Text>
+	                            <Text style={styles.disabledBody}>
+	                                {t('automations.gate.disabledBody')}
+	                            </Text>
+	                        </View>
                     </View>
                 </ItemList>
             </View>
@@ -71,4 +72,3 @@ export function AutomationsGate(props: { children: React.ReactNode }) {
 
     return <>{props.children}</>;
 }
-

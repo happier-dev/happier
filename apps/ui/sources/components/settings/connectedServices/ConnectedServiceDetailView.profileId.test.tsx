@@ -55,9 +55,9 @@ vi.mock('@/sync/sync', () => ({
   sync: { refreshProfile: vi.fn(async () => {}), applySettings: vi.fn(async () => {}) },
 }));
 
-vi.mock('@/sync/api/account/apiConnectedServicesV2', () => ({
-  deleteConnectedServiceCredential: vi.fn(async () => {}),
-  registerConnectedServiceCredentialSealed: vi.fn(async () => {}),
+vi.mock('@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount', () => ({
+  storeConnectedServiceCredentialForAccount: vi.fn(async () => {}),
+  deleteConnectedServiceCredentialForAccount: vi.fn(async () => {}),
 }));
 
 describe('ConnectedServiceDetailView profile id validation', () => {

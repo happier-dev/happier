@@ -177,6 +177,8 @@ describe("authRoutes (auth policy) (integration)", () => {
         process.env.AUTH_ANONYMOUS_SIGNUP_ENABLED = "0";
         process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED = "1";
         process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS = "github";
+        // Keyless OAuth login is available only when the server storage policy is not E2EE-required.
+        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
         process.env.GITHUB_CLIENT_ID = "id";
         process.env.GITHUB_CLIENT_SECRET = "secret";
         process.env.GITHUB_REDIRECT_URL = "https://example.com/oauth/github/callback";

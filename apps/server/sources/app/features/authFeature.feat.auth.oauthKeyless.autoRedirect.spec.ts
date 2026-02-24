@@ -11,6 +11,8 @@ describe("resolveAuthFeature (OAuth keyless auto-redirect)", () => {
             HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "0",
             HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED: "1",
             HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS: "github",
+            // Keyless auth methods are available only when the server storage policy is not E2EE-required.
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
             GITHUB_CLIENT_ID: "id",
             GITHUB_CLIENT_SECRET: "secret",
             GITHUB_REDIRECT_URL: "https://example.test/v1/oauth/github/callback",

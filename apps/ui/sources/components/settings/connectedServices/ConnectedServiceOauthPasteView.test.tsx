@@ -9,7 +9,7 @@ import { decodeBase64, encodeBase64, sealBoxBundle } from '@happier-dev/protocol
 const promptSpy = vi.fn(async () => 'http://localhost:1455/auth/callback?code=code-1&state=state-1');
 const alertSpy = vi.fn(async () => {});
 const refreshProfileSpy = vi.fn(async () => {});
-const registerSpy = vi.fn(async () => {});
+const storeCredentialSpy = vi.fn(async () => {});
 
 const exchangeSpy = vi.fn(async (_credentials: any, params: any) => {
   const recipientPublicKey = decodeBase64(params.publicKey, 'base64url');
@@ -53,7 +53,11 @@ vi.mock('@/sync/sync', () => ({
 
 vi.mock('@/sync/api/account/apiConnectedServicesV2', () => ({
   exchangeConnectedServiceOauthViaProxy: exchangeSpy,
-  registerConnectedServiceCredentialSealed: registerSpy,
+}));
+
+vi.mock('@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount', () => ({
+  storeConnectedServiceCredentialForAccount: storeCredentialSpy,
+  deleteConnectedServiceCredentialForAccount: vi.fn(async () => {}),
 }));
 
 vi.mock('@/utils/auth/oauthCore', async (importOriginal) => {
@@ -90,12 +94,15 @@ describe('ConnectedServiceOauthPasteView', () => {
         redirectUri: 'http://localhost:1455/auth/callback',
       }),
     );
-    expect(registerSpy).toHaveBeenCalledWith(
+    expect(storeCredentialSpy).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         serviceId: 'openai-codex',
         profileId: 'work',
-        sealed: expect.objectContaining({ format: 'account_scoped_v1', ciphertext: expect.any(String) }),
+        record: expect.objectContaining({
+          kind: 'oauth',
+          oauth: expect.objectContaining({ accessToken: 'access-1', refreshToken: 'refresh-1' }),
+        }),
       }),
     );
     expect(refreshProfileSpy).toHaveBeenCalled();

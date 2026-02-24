@@ -8,6 +8,7 @@ import { Text } from '@/components/ui/text/Text';
 import { resolveConnectedServiceProfileLabel, connectedServiceProfileKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import { computeConnectedServiceQuotaSummaryBadges } from '@/sync/domains/connectedServices/connectedServiceQuotaBadges';
 import type { ConnectedServiceId, ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
+import { t } from '@/text';
 
 import { ConnectedServiceQuotaBadgesView } from '../ConnectedServiceQuotaBadgesView';
 
@@ -32,13 +33,13 @@ export const ConnectedServiceDetailProfilesGroup = React.memo(function Connected
   onDisconnect: (profileId: string) => void;
   onConnectOauth: (profileId: string) => void;
 }>) {
-  return (
-    <ItemGroup title={props.title}>
-      {props.profiles.length === 0 ? (
-        <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-          <Text style={{ opacity: 0.7 }}>No profiles yet.</Text>
-        </View>
-      ) : null}
+	  return (
+	    <ItemGroup title={props.title}>
+	      {props.profiles.length === 0 ? (
+	        <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+	          <Text style={{ opacity: 0.7 }}>{t('connectedServices.detail.profiles.empty')}</Text>
+	        </View>
+	      ) : null}
 
       {props.profiles.map((p) => {
         const profileId = typeof p?.profileId === 'string' ? p.profileId : '';
@@ -63,14 +64,14 @@ export const ConnectedServiceDetailProfilesGroup = React.memo(function Connected
           })
           : [];
 
-        const providerEmail = typeof p?.providerEmail === 'string' ? p.providerEmail : null;
-        const connectedSubtitle = providerEmail ?? 'Connected';
-        const subtitleParts = [
-          profileId === props.defaultProfileId ? 'Default' : null,
-          label ? profileId : null,
-          label ? connectedSubtitle : connectedSubtitle,
-        ].filter(Boolean) as string[];
-        const subtitle = status === 'connected' ? subtitleParts.join(' • ') : 'Needs re-auth';
+	        const providerEmail = typeof p?.providerEmail === 'string' ? p.providerEmail : null;
+	        const connectedSubtitle = providerEmail ?? t('connectedServices.detail.profiles.connected');
+	        const subtitleParts = [
+	          profileId === props.defaultProfileId ? t('connectedServices.detail.profiles.defaultBadge') : null,
+	          label ? profileId : null,
+	          label ? connectedSubtitle : connectedSubtitle,
+	        ].filter(Boolean) as string[];
+	        const subtitle = status === 'connected' ? subtitleParts.join(' • ') : t('connectedServices.detail.profiles.needsReauth');
 
         const iconName = status === 'connected' ? 'checkmark-circle-outline' : 'warning-outline';
         const iconColor = status === 'connected' ? '#34C759' : '#FF9500';

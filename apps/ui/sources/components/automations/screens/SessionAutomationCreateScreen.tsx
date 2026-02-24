@@ -13,8 +13,9 @@ import { AutomationSettingsForm, type AutomationSettingsValue } from '@/componen
 import { Modal } from '@/modal';
 import { useSession } from '@/sync/domains/state/storage';
 import { normalizeAutomationDescription, normalizeAutomationName, type AutomationScheduleInput, validateAutomationTemplateTarget } from '@/sync/domains/automations/automationValidation';
-import { sealAutomationTemplateForTransport } from '@/sync/domains/automations/automationTemplateTransport';
+import { encodeAutomationTemplateCiphertextForAccount } from '@/sync/domains/automations/encodeAutomationTemplateCiphertextForAccount';
 import { sync } from '@/sync/sync';
+import { t } from '@/text';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -76,7 +77,7 @@ export function SessionAutomationCreateScreen(props: { sessionId: string }) {
     const [message, setMessage] = React.useState('');
     const [form, setForm] = React.useState<AutomationSettingsValue>(() => ({
         enabled: true,
-        name: 'Scheduled message',
+        name: t('automations.create.defaultName'),
         description: '',
         scheduleKind: 'interval',
         everyMinutes: 60,
@@ -86,6 +87,7 @@ export function SessionAutomationCreateScreen(props: { sessionId: string }) {
 
     const machineId = typeof session?.metadata?.machineId === 'string' ? session.metadata.machineId : null;
     const sessionDekBase64 = sync.getSessionEncryptionKeyBase64ForResume(props.sessionId);
+    const requiresDek = session?.encryptionMode !== 'plain';
 
     const isValid = React.useMemo(() => {
         const nameOk = form.name.trim().length > 0;
@@ -93,27 +95,29 @@ export function SessionAutomationCreateScreen(props: { sessionId: string }) {
             ? Number.isFinite(form.everyMinutes) && form.everyMinutes >= 1
             : form.cronExpr.trim().length > 0;
         const messageOk = message.trim().length > 0;
-        const sessionOk = Boolean(session) && Boolean(machineId) && Boolean(sessionDekBase64);
+        const sessionOk = Boolean(session) && Boolean(machineId) && (!requiresDek || Boolean(sessionDekBase64));
         return nameOk && scheduleOk && messageOk && sessionOk;
-    }, [form, machineId, message, session, sessionDekBase64]);
+    }, [form, machineId, message, requiresDek, session, sessionDekBase64]);
 
     const handleCreate = React.useCallback(async () => {
         if (!isValid) return;
-        if (!session || !machineId || !sessionDekBase64) return;
+        if (!session || !machineId) return;
+        if (requiresDek && !sessionDekBase64) return;
         try {
+            const credentials = sync.getCredentials();
             const template = {
                 directory: normalizeDirectory(session.metadata?.path ?? session.metadata?.homeDir),
                 prompt: message.trim(),
                 displayText: message.trim(),
                 existingSessionId: props.sessionId,
-                sessionEncryptionKeyBase64: sessionDekBase64,
-                sessionEncryptionVariant: 'dataKey' as const,
+                ...(sessionDekBase64 ? { sessionEncryptionKeyBase64: sessionDekBase64, sessionEncryptionVariant: 'dataKey' as const } : {}),
             };
             validateAutomationTemplateTarget({
                 targetType: 'existing_session',
                 template,
             });
-            const templateCiphertext = await sealAutomationTemplateForTransport({
+            const templateCiphertext = await encodeAutomationTemplateCiphertextForAccount({
+                credentials,
                 template,
                 encryptRaw: (value) => sync.encryption.encryptAutomationTemplateRaw(value),
             });
@@ -130,25 +134,28 @@ export function SessionAutomationCreateScreen(props: { sessionId: string }) {
             await sync.refreshAutomations();
             router.back();
         } catch (error) {
-            await Modal.alert('Error', error instanceof Error ? error.message : 'Failed to create automation.');
+            await Modal.alert(
+                t('common.error'),
+                error instanceof Error ? error.message : t('automations.create.createFailed')
+            );
         }
-    }, [form, isValid, machineId, message, props.sessionId, router, session, sessionDekBase64]);
+    }, [form, isValid, machineId, message, props.sessionId, requiresDek, router, session, sessionDekBase64]);
 
     const missingReason = React.useMemo(() => {
-        if (!session) return 'Session not found.';
-        if (!machineId) return 'This session is missing a machine id.';
-        if (!sessionDekBase64) return 'This session does not have a resume encryption key loaded yet.';
+        if (!session) return t('automations.create.sessionNotFound');
+        if (!machineId) return t('automations.create.missingMachineId');
+        if (requiresDek && !sessionDekBase64) return t('automations.create.missingResumeKey');
         return null;
-    }, [machineId, session, sessionDekBase64]);
+    }, [machineId, requiresDek, session, sessionDekBase64]);
 
     return (
         <View style={styles.container}>
             <ItemList style={{ paddingTop: 0 }}>
                 <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
                     {missingReason ? (
-                        <ItemGroup title="Unavailable">
+                        <ItemGroup title={t('automations.create.unavailableGroupTitle')}>
                             <Item
-                                title="Cannot create automation for this session"
+                                title={t('automations.create.cannotCreateForSession')}
                                 subtitle={missingReason}
                                 subtitleLines={0}
                                 icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.warningCritical} />}
@@ -157,21 +164,21 @@ export function SessionAutomationCreateScreen(props: { sessionId: string }) {
                         </ItemGroup>
                     ) : null}
 
-                    <ItemGroup title="Message">
+                    <ItemGroup title={t('common.message')}>
                         <View style={styles.contentContainer}>
-                            <Text style={styles.label}>MESSAGE</Text>
+                            <Text style={styles.label}>{t('automations.edit.messageLabel')}</Text>
                             <TextInput
                                 style={styles.textInput}
                                 value={message}
                                 onChangeText={setMessage}
-                                placeholder="Message to send"
+                                placeholder={t('automations.edit.messagePlaceholder')}
                                 placeholderTextColor={theme.colors.input.placeholder}
                                 autoCapitalize="sentences"
                                 autoCorrect={true}
                                 multiline={true}
                             />
                             <Text style={styles.helpText}>
-                                This message will be queued into the session as a pending user message.
+                                {t('automations.edit.messageHelpText')}
                             </Text>
                         </View>
                     </ItemGroup>
@@ -182,9 +189,9 @@ export function SessionAutomationCreateScreen(props: { sessionId: string }) {
                         onChange={setForm}
                     />
 
-                    <ItemGroup title="Actions">
+                    <ItemGroup title={t('common.actions')}>
                         <Item
-                            title="Create automation"
+                            title={t('automations.create.createButtonTitle')}
                             icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.success} />}
                             onPress={() => void handleCreate()}
                             disabled={!isValid}

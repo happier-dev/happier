@@ -5,6 +5,7 @@ import { db } from "@/storage/db";
 import { ConnectedServiceIdSchema, type ConnectedServiceId } from "@happier-dev/protocol";
 
 import { isConnectedServiceCredentialMetadataV2 } from "./credentialMetadataV2";
+import { isConnectedServiceCredentialMetadataV3 } from "../connectedServicesV3/credentialMetadataV3";
 
 export function registerConnectedServiceProfilesRoutesV2(app: Fastify): void {
   app.get("/v2/connect/:serviceId/profiles", {
@@ -38,12 +39,13 @@ export function registerConnectedServiceProfilesRoutesV2(app: Fastify): void {
 
     const profiles = rows.map((row) => {
       const meta = isConnectedServiceCredentialMetadataV2(row.metadata) ? row.metadata : null;
+      const metaV3 = !meta && isConnectedServiceCredentialMetadataV3(row.metadata) ? row.metadata : null;
       return {
         profileId: row.profileId,
-        status: meta ? "connected" as const : "needs_reauth" as const,
-        kind: meta?.kind ?? null,
-        providerEmail: meta?.providerEmail ?? null,
-        providerAccountId: meta?.providerAccountId ?? null,
+        status: meta || metaV3 ? "connected" as const : "needs_reauth" as const,
+        kind: meta?.kind ?? metaV3?.kind ?? null,
+        providerEmail: meta?.providerEmail ?? metaV3?.providerEmail ?? null,
+        providerAccountId: meta?.providerAccountId ?? metaV3?.providerAccountId ?? null,
         expiresAt: row.expiresAt ? row.expiresAt.getTime() : null,
         lastUsedAt: row.lastUsedAt ? row.lastUsedAt.getTime() : null,
       };
@@ -52,4 +54,3 @@ export function registerConnectedServiceProfilesRoutesV2(app: Fastify): void {
     return reply.send({ serviceId, profiles });
   });
 }
-

@@ -15,6 +15,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Text } from '@/components/ui/text/Text';
 import { layout } from '@/components/ui/layout/layout';
+import { t } from '@/text';
 
 const stylesheet = StyleSheet.create((theme) => ({
     loading: {
@@ -34,11 +35,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-function formatDate(ms: number): string {
+function formatDate(ms: number, unknownLabel: string): string {
     try {
         return new Date(ms).toLocaleString();
     } catch {
-        return 'Unknown';
+        return unknownLabel;
     }
 }
 
@@ -63,7 +64,10 @@ export function AutomationDetailScreen() {
                 sync.fetchAutomationRuns(automationId),
             ]);
         } catch (error) {
-            await Modal.alert('Error', error instanceof Error ? error.message : 'Failed to refresh automation.');
+            await Modal.alert(
+                t('common.error'),
+                error instanceof Error ? error.message : t('automations.detail.refreshFailed')
+            );
         } finally {
             setLoading(false);
         }
@@ -84,7 +88,10 @@ export function AutomationDetailScreen() {
                 setRunNowState((prev) => (prev === 'queued' ? 'idle' : prev));
             }, 2500);
         } catch (error) {
-            await Modal.alert('Error', error instanceof Error ? error.message : 'Failed to run automation.');
+            await Modal.alert(
+                t('common.error'),
+                error instanceof Error ? error.message : t('automations.detail.runFailed')
+            );
             setRunNowState('idle');
         }
     }, [automationId]);
@@ -98,23 +105,29 @@ export function AutomationDetailScreen() {
                 await sync.resumeAutomation(automationId);
             }
         } catch (error) {
-            await Modal.alert('Error', error instanceof Error ? error.message : 'Failed to update automation.');
+            await Modal.alert(
+                t('common.error'),
+                error instanceof Error ? error.message : t('automations.edit.updateFailed')
+            );
         }
     }, [automation, automationId]);
 
     const handleDelete = React.useCallback(async () => {
         if (!automationId) return;
         const confirmed = await Modal.confirm(
-            'Delete automation',
-            'This automation and its schedule will be removed.',
-            { destructive: true, confirmText: 'Delete' },
+            t('automations.detail.deleteConfirmTitle'),
+            t('automations.detail.deleteConfirmMessage'),
+            { destructive: true, confirmText: t('automations.detail.deleteConfirmButton') },
         );
         if (!confirmed) return;
         try {
             await sync.deleteAutomation(automationId);
             router.back();
         } catch (error) {
-            await Modal.alert('Error', error instanceof Error ? error.message : 'Failed to delete automation.');
+            await Modal.alert(
+                t('common.error'),
+                error instanceof Error ? error.message : t('automations.detail.deleteFailed')
+            );
         }
     }, [automationId, router]);
 
@@ -137,7 +150,10 @@ export function AutomationDetailScreen() {
             await sync.replaceAutomationAssignments(automationId, nextAssignments);
             await sync.refreshAutomations();
         } catch (error) {
-            await Modal.alert('Error', error instanceof Error ? error.message : 'Failed to update machine assignments.');
+            await Modal.alert(
+                t('common.error'),
+                error instanceof Error ? error.message : t('automations.detail.assignmentsUpdateFailed')
+            );
         }
     }, [automation, automationId]);
 
@@ -146,7 +162,7 @@ export function AutomationDetailScreen() {
             <ItemList>
                 <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
                     <View style={styles.emptyRuns}>
-                        <Text style={styles.emptyRunsText}>Invalid automation id.</Text>
+                        <Text style={styles.emptyRunsText}>{t('automations.detail.invalidId')}</Text>
                     </View>
                 </View>
             </ItemList>
@@ -169,59 +185,66 @@ export function AutomationDetailScreen() {
                 <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
                     <View style={styles.emptyRuns}>
                         <Ionicons name="alert-circle-outline" size={32} color={theme.colors.textSecondary} />
-                        <Text style={styles.emptyRunsText}>Automation not found.</Text>
+                        <Text style={styles.emptyRunsText}>{t('automations.detail.notFound')}</Text>
                     </View>
                 </View>
             </ItemList>
         );
     }
 
-    const nextRunLabel = automation.nextRunAt ? formatDate(automation.nextRunAt) : 'Not scheduled';
+    const unknownDate = t('automations.detail.unknownDate');
+    const nextRunLabel = automation.nextRunAt
+        ? formatDate(automation.nextRunAt, unknownDate)
+        : t('automations.detail.notScheduled');
 
     return (
         <ItemList style={{ paddingTop: 0 }}>
             <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
-                <ItemGroup title="Overview">
-                    <Item title="Name" detail={automation.name} showChevron={false} />
-                    <Item title="Schedule" subtitle={formatAutomationScheduleLabel(automation)} subtitleLines={0} showChevron={false} />
-                    <Item title="Status" detail={automation.enabled ? 'Active' : 'Paused'} showChevron={false} />
-                    <Item title="Next run" subtitle={nextRunLabel} subtitleLines={0} showChevron={false} />
+                <ItemGroup title={t('automations.detail.overviewGroupTitle')}>
+                    <Item title={t('automations.detail.overview.nameTitle')} detail={automation.name} showChevron={false} />
+                    <Item title={t('automations.detail.overview.scheduleTitle')} subtitle={formatAutomationScheduleLabel(automation)} subtitleLines={0} showChevron={false} />
+                    <Item
+                        title={t('automations.detail.overview.statusTitle')}
+                        detail={automation.enabled ? t('automations.detail.status.active') : t('automations.detail.status.paused')}
+                        showChevron={false}
+                    />
+                    <Item title={t('automations.detail.overview.nextRunTitle')} subtitle={nextRunLabel} subtitleLines={0} showChevron={false} />
                 </ItemGroup>
 
-                <ItemGroup title="Actions">
+                <ItemGroup title={t('automations.detail.actionsGroupTitle')}>
                     <Item
-                        title="Run now"
-                        subtitle={runNowState === 'queued' ? 'Queued. The assigned daemon will pick it up when available.' : undefined}
+                        title={t('automations.detail.runNowTitle')}
+                        subtitle={runNowState === 'queued' ? t('automations.detail.runNowQueuedSubtitle') : undefined}
                         subtitleLines={0}
                         onPress={() => void handleRunNow()}
                         rightElement={runNowState === 'running'
                             ? <ActivityIndicator size="small" color={theme.colors.textSecondary} />
                             : runNowState === 'queued'
-                                ? <Text style={{ color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600' }}>Queued</Text>
+                                ? <Text style={{ color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600' }}>{t('automations.detail.runNowQueuedBadge')}</Text>
                                 : undefined}
                         showChevron={false}
                     />
                     <Item
-                        title={automation.enabled ? 'Pause automation' : 'Resume automation'}
+                        title={automation.enabled ? t('automations.detail.pauseAutomation') : t('automations.detail.resumeAutomation')}
                         onPress={() => void handleToggleEnabled()}
                         showChevron={false}
                     />
                     <Item
-                        title="Edit automation"
+                        title={t('automations.detail.editAutomation')}
                         onPress={handleEditAutomation}
                         showChevron={false}
                     />
                     <Item
-                        title="Delete automation"
+                        title={t('automations.detail.deleteAutomation')}
                         destructive
                         onPress={() => void handleDelete()}
                         showChevron={false}
                     />
                 </ItemGroup>
 
-                <ItemGroup title="Machine assignments" footer="Enable at least one machine for this automation to run.">
+                <ItemGroup title={t('automations.detail.machineAssignmentsTitle')} footer={t('automations.detail.machineAssignmentsFooter')}>
                     {machines.length === 0 ? (
-                        <Item title="No machines available" showChevron={false} />
+                        <Item title={t('newSession.machinePicker.emptyMessage')} showChevron={false} />
                     ) : machines.map((machine) => {
                         const assignment = automation.assignments.find((item) => item.machineId === machine.id);
                         const isEnabled = assignment?.enabled === true;
@@ -249,17 +272,17 @@ export function AutomationDetailScreen() {
                     })}
                 </ItemGroup>
 
-                <ItemGroup title="Recent runs">
+                <ItemGroup title={t('automations.detail.recentRunsTitle')}>
                     {runs.length === 0 ? (
-                        <Item title="No runs yet" showChevron={false} />
+                        <Item title={t('runs.empty')} showChevron={false} />
                     ) : runs.slice(0, 20).map((run) => (
                         <Item
                             key={run.id}
                             title={run.state.toUpperCase()}
                             subtitle={[
-                                `Scheduled: ${formatDate(run.scheduledAt)}`,
-                                `Updated: ${formatDate(run.updatedAt)}`,
-                                ...(run.errorMessage ? [`Error: ${run.errorMessage}`] : []),
+                                t('automations.detail.runMeta.scheduled', { time: formatDate(run.scheduledAt, unknownDate) }),
+                                t('automations.detail.runMeta.updated', { time: formatDate(run.updatedAt, unknownDate) }),
+                                ...(run.errorMessage ? [t('automations.detail.runMeta.error', { message: run.errorMessage })] : []),
                             ].join('\n')}
                             subtitleLines={0}
                             showChevron={false}

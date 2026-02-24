@@ -44,7 +44,7 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
     expect(request.automations).toEqual({ action: 'assert_empty' });
   });
 
-  it('migrates connected service credentials and automation templates to plain envelopes', async () => {
+  it('migrates connected service credentials and plaintext-safe automation templates to plain envelopes', async () => {
     const credentials = createLegacyCredentials();
     const material = resolveAccountScopedCryptoMaterialFromCredentials(credentials);
 
@@ -75,7 +75,7 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
     const opened = openConnectedServiceCredentialCiphertext({ material, ciphertext: sealedCiphertext });
     expect(opened.value).toEqual(expect.objectContaining({ kind: 'oauth' }));
 
-    const encryptedTemplateCiphertext = await encodeAutomationTemplateForTransport({
+    const sensitiveTemplateCiphertext = await encodeAutomationTemplateForTransport({
       accountMode: 'e2ee',
       template: {
         directory: '/tmp/project',
@@ -87,12 +87,25 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
       encryptRaw: async (value) => `cipher:${Buffer.from(JSON.stringify(value)).toString('base64')}`,
     });
 
+    const safeTemplateCiphertext = await encodeAutomationTemplateForTransport({
+      accountMode: 'e2ee',
+      template: {
+        directory: '/tmp/project',
+        prompt: 'Hello',
+        existingSessionId: 's2',
+      },
+      encryptRaw: async (value) => `cipher:${Buffer.from(JSON.stringify(value)).toString('base64')}`,
+    });
+
     const request = await buildAccountEncryptionMigrateToPlainRequest({
       credentials,
       expectedSettingsVersion: 7,
       settings: { schemaVersion: 2, backendEnabledById: {} } as any,
       connectedServiceProfiles: [{ serviceId: 'openai-codex', profileId: 'work' }],
-      automations: [{ id: 'auto_1', templateCiphertext: encryptedTemplateCiphertext }],
+      automations: [
+        { id: 'auto_sensitive', templateCiphertext: sensitiveTemplateCiphertext },
+        { id: 'auto_safe', templateCiphertext: safeTemplateCiphertext },
+      ],
       fetchConnectedServiceCredentialSealed: async () => ({
         sealed: { format: 'account_scoped_v1', ciphertext: sealedCiphertext },
         metadata: { kind: 'oauth', providerEmail: null, providerAccountId: 'acct-1', expiresAt: 123 },
@@ -118,8 +131,13 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
 
     expect(request.automations.action).toBe('migrate');
     if (request.automations.action !== 'migrate') throw new Error('expected migrate');
-    expect(request.automations.templates).toHaveLength(1);
-    const plainEnvelope = JSON.parse(String(request.automations.templates[0]!.templateCiphertext));
+    expect(request.automations.templates).toHaveLength(2);
+
+    expect(request.automations.templates[0]!.automationId).toBe('auto_sensitive');
+    expect(request.automations.templates[0]!.templateCiphertext).toBe(sensitiveTemplateCiphertext);
+
+    expect(request.automations.templates[1]!.automationId).toBe('auto_safe');
+    const plainEnvelope = JSON.parse(String(request.automations.templates[1]!.templateCiphertext));
     expect(plainEnvelope.kind).toBe('happier_automation_template_plain_v1');
   });
 });

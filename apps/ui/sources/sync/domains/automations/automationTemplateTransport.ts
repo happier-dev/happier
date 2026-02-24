@@ -90,7 +90,11 @@ export async function encodeAutomationTemplateForTransport(params: {
         throw new Error('Failed to normalize automation template before transport encoding');
     }
 
-    if (params.accountMode === 'plain') {
+    const requiresSensitiveEncryption =
+        typeof (parsed as any).sessionEncryptionKeyBase64 === 'string' &&
+        String((parsed as any).sessionEncryptionKeyBase64).trim().length > 0;
+
+    if (params.accountMode === 'plain' && !requiresSensitiveEncryption) {
         const envelope: PlainAutomationTemplateEnvelope = {
             kind: AUTOMATION_TEMPLATE_PLAINTEXT_ENVELOPE_KIND,
             payload: parsed,
