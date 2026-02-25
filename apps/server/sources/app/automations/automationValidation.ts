@@ -93,6 +93,10 @@ function normalizeAssignments(assignments: ReadonlyArray<AutomationAssignmentInp
     return Array.from(deduped.values());
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function assertTemplateEnvelopeForAccountMode(templateCiphertext: string, accountMode: "e2ee" | "plain"): void {
     let parsed: unknown;
     try {
@@ -118,6 +122,13 @@ function assertTemplateEnvelopeForAccountMode(templateCiphertext: string, accoun
     }
     if (envelope.data.kind !== "happier_automation_template_plain_v1") {
         throw new AutomationValidationError("templateCiphertext: expected plaintext or encrypted template envelope");
+    }
+
+    const sessionDekCandidate = isPlainRecord(envelope.data.payload)
+        ? envelope.data.payload["sessionEncryptionKeyBase64"]
+        : null;
+    if (typeof sessionDekCandidate === "string" && sessionDekCandidate.trim().length > 0) {
+        throw new AutomationValidationError("templateCiphertext: plaintext templates must not include sessionEncryptionKeyBase64");
     }
 
     const payloadJson = (() => {

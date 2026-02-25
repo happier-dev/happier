@@ -74,12 +74,12 @@ vi.mock('@/encryption/libsodium.lib', () => ({
     },
 }));
 
-const getExternalSignupUrl = vi.fn(async (_params: unknown) => 'https://example.test/oauth');
+const getExternalAuthUrl = vi.fn(async (_params: unknown) => 'https://example.test/oauth');
 vi.mock('@/auth/providers/registry', () => ({
     getAuthProvider: () => ({
         id: 'github',
         displayName: 'GitHub',
-        getExternalSignupUrl,
+        getExternalAuthUrl,
     }),
 }));
 
@@ -136,8 +136,8 @@ describe('/restore/lost-access', () => {
             });
 
             expect(setPendingExternalAuth).toHaveBeenCalledWith(expect.objectContaining({ provider: 'github', intent: 'reset' }));
-            expect(getExternalSignupUrl).toHaveBeenCalledWith(
-                expect.objectContaining({ publicKey: 'base64-value+slash/plus+' }),
+            expect(getExternalAuthUrl).toHaveBeenCalledWith(
+                expect.objectContaining({ mode: 'keyed', publicKey: 'base64-value+slash/plus+' }),
             );
             expect(canOpenURL).toHaveBeenCalledWith('https://example.test/oauth');
             expect(openURL).toHaveBeenCalledWith('https://example.test/oauth');
@@ -159,7 +159,7 @@ describe('/restore/lost-access', () => {
             getAuthProvider: () => ({
                 id: 'github',
                 displayName: 'GitHub',
-                getExternalSignupUrl: vi.fn(async () => 'javascript:alert(1)'),
+                getExternalAuthUrl: vi.fn(async () => 'javascript:alert(1)'),
             }),
         }));
 

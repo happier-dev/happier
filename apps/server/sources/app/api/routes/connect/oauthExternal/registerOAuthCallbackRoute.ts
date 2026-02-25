@@ -235,10 +235,32 @@ export function registerOAuthCallbackRoute(app: Fastify) {
                     });
 
                     const encryptionEnv = readEncryptionFeatureEnv(process.env);
+                    const policy = resolveAuthPolicyFromEnv(process.env);
+                    const keyedAllowed = policy.signupProviders.includes(providerId);
+
+                    const keylessEnv = readAuthOauthKeylessFeatureEnv(process.env);
+                    const keylessAllowed = keylessEnv.enabled && keylessEnv.providers.includes(providerId);
+                    const availability = resolveKeylessAccountsAvailability(process.env);
+
+                    const provisioningModes = (() => {
+                        const modes: string[] = [];
+                        const canProvisionPlain =
+                            keylessAllowed &&
+                            keylessEnv.autoProvision &&
+                            availability.ok &&
+                            encryptionEnv.storagePolicy !== "required_e2ee";
+                        if (canProvisionPlain) modes.push("plain");
+                        const canProvisionE2ee =
+                            keyedAllowed &&
+                            encryptionEnv.storagePolicy !== "plaintext_only";
+                        if (canProvisionE2ee) modes.push("e2ee");
+                        return modes.join(",");
+                    })();
+
                     const redirectParams: Record<string, string> = {
                         ...redirectBaseParams,
                         storagePolicy: encryptionEnv.storagePolicy,
-                        ...(isAlreadyLinked ? {} : { provisioning: "required" }),
+                        ...(isAlreadyLinked ? {} : { provisioning: "required", provisioningModes }),
                     };
                     if (isAlreadyLinked && alreadyLinked?.accountId) {
                         const account = await db.account.findUnique({

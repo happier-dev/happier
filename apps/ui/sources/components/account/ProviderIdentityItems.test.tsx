@@ -65,7 +65,7 @@ vi.mock('@/auth/providers/registry', () => ({
         displayName: 'GitHub',
         badgeIconName: 'logo-github',
         supportsProfileBadge: true,
-        getExternalSignupUrl: async () => '',
+        getExternalAuthUrl: async () => '',
         getConnectUrl: async () => 'javascript:alert(1)',
         finalizeConnect: async () => {},
         cancelConnectPending: async () => {},

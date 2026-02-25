@@ -35,14 +35,34 @@ export function createExternalOAuthProvider(params: {
                     body: t('connect.externalAuthVerifiedBody', { provider: providerName }),
                 };
             },
-        getExternalAuthUrl: async ({ proofHash }) => {
-            const normalizedProofHash = String(proofHash ?? '').trim();
-            if (!normalizedProofHash) {
-                throw new Error('external-auth-unavailable');
-            }
+        getExternalAuthUrl: async (input) => {
+            const query =
+                input.mode === 'keyless'
+                    ? (() => {
+                          const normalizedProofHash = String(input.proofHash ?? '').trim();
+                          if (!normalizedProofHash) throw new Error('external-auth-unavailable');
+                          return `mode=keyless&proofHash=${encodeURIComponent(normalizedProofHash)}`;
+                      })()
+                    : (() => {
+                          if ('proofHash' in input) {
+                              const normalizedProofHash = String(input.proofHash ?? '').trim();
+                              if (!normalizedProofHash) throw new Error('external-auth-unavailable');
+                              // Universal proofHash auth-start: allow keyed flows to bind the pending record even
+                              // when provisioning will ultimately require a key.
+                              const normalizedPublicKey =
+                                  typeof input.publicKey === 'string' ? String(input.publicKey).trim() : '';
+                              const publicKeyPart = normalizedPublicKey ? `&publicKey=${encodeURIComponent(normalizedPublicKey)}` : '';
+                              return `proofHash=${encodeURIComponent(normalizedProofHash)}${publicKeyPart}`;
+                          }
+
+                          const normalizedPublicKey = String(input.publicKey ?? '').trim();
+                          if (!normalizedPublicKey) throw new Error('external-auth-unavailable');
+                          // Backward compatibility: omit mode=keyed for older servers.
+                          return `publicKey=${encodeURIComponent(normalizedPublicKey)}`;
+                      })();
 
             const response = await serverFetch(
-                `/v1/auth/external/${encodeURIComponent(providerId)}/params?proofHash=${encodeURIComponent(normalizedProofHash)}`,
+                `/v1/auth/external/${encodeURIComponent(providerId)}/params?${query}`,
                 undefined,
                 { includeAuth: false },
             );

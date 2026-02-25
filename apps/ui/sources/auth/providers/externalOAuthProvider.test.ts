@@ -57,7 +57,7 @@ describe('createExternalOAuthProvider', () => {
         }));
 
         const provider = createProvider();
-        await expect(provider.getExternalAuthUrl({ proofHash: 'abc123' })).resolves.toBe(
+        await expect(provider.getExternalAuthUrl({ mode: 'keyless', proofHash: 'abc123' })).resolves.toBe(
             'https://oauth.example.test/signup',
         );
     });
@@ -74,11 +74,54 @@ describe('createExternalOAuthProvider', () => {
         });
 
         const provider = createProvider();
-        await expect(provider.getExternalAuthUrl({ proofHash: 'abc123' })).resolves.toBe(
+        await expect(provider.getExternalAuthUrl({ mode: 'keyless', proofHash: 'abc123' })).resolves.toBe(
+            'https://oauth.example.test/login',
+        );
+        expect(capturedUrl).toContain('/v1/auth/external/github/params');
+        expect(capturedUrl).toContain('mode=keyless');
+        expect(capturedUrl).toContain('proofHash=abc123');
+    });
+
+    it('includes the publicKey query param when building keyed params requests', async () => {
+        let capturedUrl: string | null = null;
+        stubFetch(async (url) => {
+            capturedUrl = url;
+            return {
+                ok: true,
+                status: 200,
+                body: { url: 'https://oauth.example.test/login' },
+            };
+        });
+
+        const provider = createProvider();
+        await expect(provider.getExternalAuthUrl({ mode: 'keyed', publicKey: 'pk1' })).resolves.toBe(
+            'https://oauth.example.test/login',
+        );
+        expect(capturedUrl).toContain('/v1/auth/external/github/params');
+        expect(capturedUrl).toContain('publicKey=pk1');
+        expect(capturedUrl).not.toContain('mode=keyed');
+    });
+
+    it('includes the proofHash query param when building keyed params requests with proofHash', async () => {
+        let capturedUrl: string | null = null;
+        stubFetch(async (url) => {
+            capturedUrl = url;
+            return {
+                ok: true,
+                status: 200,
+                body: { url: 'https://oauth.example.test/login' },
+            };
+        });
+
+        const provider = createProvider();
+        await expect(provider.getExternalAuthUrl({ mode: 'keyed', proofHash: 'abc123', publicKey: 'pk1' })).resolves.toBe(
             'https://oauth.example.test/login',
         );
         expect(capturedUrl).toContain('/v1/auth/external/github/params');
         expect(capturedUrl).toContain('proofHash=abc123');
+        expect(capturedUrl).toContain('publicKey=pk1');
+        expect(capturedUrl).not.toContain('mode=keyed');
+        expect(capturedUrl).not.toContain('mode=keyless');
     });
 
     it('throws config HappyError when external OAuth is not configured', async () => {
@@ -89,7 +132,7 @@ describe('createExternalOAuthProvider', () => {
         }));
 
         const provider = createProvider();
-        await expect(provider.getExternalAuthUrl({ proofHash: 'abc123' })).rejects.toEqual(
+        await expect(provider.getExternalAuthUrl({ mode: 'keyless', proofHash: 'abc123' })).rejects.toEqual(
             expect.objectContaining({
                 name: 'HappyError',
                 kind: 'config',
@@ -103,7 +146,9 @@ describe('createExternalOAuthProvider', () => {
         stubFetch(async () => ({ ok: true, status: 200, body: { url: '' } }));
 
         const provider = createProvider();
-        await expect(provider.getExternalAuthUrl({ proofHash: 'abc123' })).rejects.toThrow('external-auth-unavailable');
+        await expect(provider.getExternalAuthUrl({ mode: 'keyless', proofHash: 'abc123' })).rejects.toThrow(
+            'external-auth-unavailable',
+        );
     });
 
     it('maps connect params 400 failures into config HappyError payloads', async () => {

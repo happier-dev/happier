@@ -163,8 +163,8 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                 }
 
                 let publicKeyHexUpdate: string | null = null;
-                let contentPublicKeyUpdate: Uint8Array | null = null;
-                let contentPublicKeySigUpdate: Uint8Array | null = null;
+                let contentPublicKeyUpdate: Uint8Array<ArrayBuffer> | null = null;
+                let contentPublicKeySigUpdate: Uint8Array<ArrayBuffer> | null = null;
                 if (toMode === "e2ee") {
                     let publicKeyBytes: Uint8Array;
                     let challengeBytes: Uint8Array;
@@ -215,8 +215,16 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                         if (!contentSigOk) {
                             return { type: "invalid-params" as const };
                         }
-                        contentPublicKeyUpdate = new Uint8Array(contentPublicKey);
-                        contentPublicKeySigUpdate = new Uint8Array(contentPublicKeySig);
+                        // Prisma's bytes fields are typed as Uint8Array<ArrayBuffer>, but some decoders return
+                        // Uint8Array<ArrayBufferLike> (which includes SharedArrayBuffer). Copy into a fresh
+                        // ArrayBuffer-backed view for Prisma compatibility.
+                        const contentPublicKeyCopy = new Uint8Array(contentPublicKey.byteLength);
+                        contentPublicKeyCopy.set(contentPublicKey);
+                        contentPublicKeyUpdate = contentPublicKeyCopy;
+
+                        const contentPublicKeySigCopy = new Uint8Array(contentPublicKeySig.byteLength);
+                        contentPublicKeySigCopy.set(contentPublicKeySig);
+                        contentPublicKeySigUpdate = contentPublicKeySigCopy;
                     }
                 }
 

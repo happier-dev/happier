@@ -39,6 +39,7 @@ export function createAccountFeaturesResponse(
         capabilities: {
             ...base.capabilities,
             encryption: {
+                ...base.capabilities.encryption,
                 storagePolicy: (overrides.encryptionPlaintextStorageEnabled ?? (overrides.encryptionAccountOptOutEnabled ?? false))
                     ? 'optional'
                     : 'required_e2ee',

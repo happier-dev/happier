@@ -224,14 +224,25 @@ function NotAuthenticated() {
 
     const createAccountViaProvider = async (providerId: string) => {
         try {
+            const proofBytes = await getRandomBytesAsync(32);
+            const proof = encodeBase64(proofBytes, 'base64url');
+            const proofHashBytes = await digest('SHA-256', new TextEncoder().encode(proof));
+            const proofHash = encodeHex(proofHashBytes).toLowerCase();
+
             const secretBytes = await getRandomBytesAsync(32);
-            const secret = encodeBase64(secretBytes, "base64url");
+            const secret = encodeBase64(secretBytes, 'base64url');
+            const signingKeyPair = sodium.crypto_sign_seed_keypair(secretBytes);
+            const publicKey = encodeBase64(signingKeyPair.publicKey);
+
             const snapshot = getActiveServerSnapshot();
             const serverUrl = snapshot.serverUrl ? String(snapshot.serverUrl).trim() : '';
-            await TokenStorage.setPendingExternalAuth({ provider: providerId, secret, returnTo: '/', ...(serverUrl ? { serverUrl } : {}) });
-
-            const kp = sodium.crypto_sign_seed_keypair(secretBytes);
-            const publicKey = encodeBase64(kp.publicKey);
+            await TokenStorage.setPendingExternalAuth({
+                provider: providerId,
+                proof,
+                secret,
+                returnTo: '/',
+                ...(serverUrl ? { serverUrl } : {}),
+            });
 
             const provider = getAuthProvider(providerId);
             if (!provider) {
@@ -240,7 +251,7 @@ function NotAuthenticated() {
                 return;
             }
 
-            const url = await provider.getExternalSignupUrl({ publicKey });
+            const url = await provider.getExternalAuthUrl({ mode: 'keyed', proofHash, publicKey });
             if (!isSafeExternalAuthUrl(url)) {
                 await TokenStorage.clearPendingExternalAuth();
                 await Modal.alert(t('common.error'), t('errors.operationFailed'));
@@ -276,19 +287,18 @@ function NotAuthenticated() {
             await TokenStorage.setPendingExternalAuth({
                 provider: providerId,
                 proof,
-                mode: 'keyless',
                 returnTo: '/',
                 ...(serverUrl ? { serverUrl } : {}),
             });
 
             const provider = getAuthProvider(providerId);
-            if (!provider || !provider.getExternalLoginUrl) {
+            if (!provider) {
                 await TokenStorage.clearPendingExternalAuth();
                 await Modal.alert(t('common.error'), t('errors.operationFailed'));
                 return;
             }
 
-            const url = await provider.getExternalLoginUrl({ proofHash });
+            const url = await provider.getExternalAuthUrl({ mode: 'keyless', proofHash });
             if (!isSafeExternalAuthUrl(url)) {
                 await TokenStorage.clearPendingExternalAuth();
                 await Modal.alert(t('common.error'), t('errors.operationFailed'));

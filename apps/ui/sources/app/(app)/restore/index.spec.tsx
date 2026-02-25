@@ -9,6 +9,16 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 
 vi.mock('react-native-reanimated', () => ({}));
 
+vi.mock('expo-camera', () => ({
+    useCameraPermissions: () => [{ granted: true }, vi.fn(async () => ({ granted: true }))],
+    CameraView: {
+        isModernBarcodeScannerAvailable: false,
+        launchScanner: vi.fn(),
+        dismissScanner: vi.fn(async () => {}),
+        onModernBarcodeScanned: vi.fn(() => ({ remove: () => {} })),
+    },
+}));
+
 const pushSpy = vi.fn();
 vi.mock('expo-router', () => ({
     useRouter: () => ({ back: vi.fn(), push: pushSpy, replace: vi.fn() }),
@@ -18,11 +28,19 @@ vi.mock('expo-router', () => ({
     }),
 }));
 
+vi.mock('@/hooks/server/useFeatureDecision', () => ({
+    useFeatureDecision: () => ({ state: 'enabled' }),
+}));
+
 vi.mock('react-native', () => ({
     View: 'View',
     Text: 'Text',
     ScrollView: 'ScrollView',
     ActivityIndicator: 'ActivityIndicator',
+    Dimensions: {
+        get: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
+    },
+    useWindowDimensions: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
     Platform: { OS: 'web', select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android },
     AppState: { addEventListener: () => ({ remove: () => {} }) },
 }));

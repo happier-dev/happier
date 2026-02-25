@@ -186,5 +186,63 @@ describe("connectRoutes (connected services v3) plaintext credential endpoints (
         expect(res.statusCode).toBe(400);
         expect(res.json()).toEqual({ error: "invalid-params" });
     });
-});
 
+    it("does not return v3 plaintext credentials for e2ee accounts (defense-in-depth)", async () => {
+        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "required_e2ee";
+
+        const user = await db.account.create({
+            data: { publicKey: "pk-v3-e2ee", encryptionMode: "e2ee" },
+            select: { id: true },
+        });
+
+        const now = Date.now();
+        const record = {
+            v: 1,
+            serviceId: "openai-codex",
+            profileId: "work",
+            kind: "oauth",
+            createdAt: now,
+            updatedAt: now,
+            expiresAt: null,
+            oauth: {
+                accessToken: "tok_access",
+                refreshToken: "tok_refresh",
+                idToken: null,
+                scope: null,
+                tokenType: null,
+                providerAccountId: null,
+                providerEmail: "user@example.com",
+                raw: null,
+            },
+            token: null,
+        };
+
+        await db.serviceAccountToken.create({
+            data: {
+                accountId: user.id,
+                vendor: "openai-codex",
+                profileId: "work",
+                token: Buffer.from(JSON.stringify(record), "utf8"),
+                metadata: {
+                    v: 3,
+                    storage: "plain_json_v1",
+                    kind: "oauth",
+                    providerEmail: "user@example.com",
+                    providerAccountId: null,
+                },
+            },
+        });
+
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const getOne = await app.inject({
+            method: "GET",
+            url: "/v3/connect/openai-codex/profiles/work/credential",
+            headers: { "x-test-user-id": user.id },
+        });
+        expect(getOne.statusCode).toBe(404);
+        expect(getOne.json()).toEqual({ error: "connect_credential_not_found" });
+    });
+});

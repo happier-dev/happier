@@ -129,6 +129,17 @@ export function registerConnectedServiceCredentialRoutesV3(app: Fastify): void {
         const serviceId = request.params.serviceId satisfies ConnectedServiceId;
         const profileId = request.params.profileId;
 
+        const account = await db.account.findUnique({
+            where: { id: userId },
+            select: { publicKey: true, encryptionMode: true },
+        });
+        if (!account) return reply.code(404).send({ error: "connect_credential_not_found" });
+
+        const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(account);
+        if (mode !== "plain") {
+            return reply.code(404).send({ error: "connect_credential_not_found" });
+        }
+
         const row = await db.serviceAccountToken.findUnique({
             where: { accountId_vendor_profileId: { accountId: userId, vendor: serviceId, profileId } },
             select: { token: true, metadata: true },
@@ -176,6 +187,17 @@ export function registerConnectedServiceCredentialRoutesV3(app: Fastify): void {
         const serviceId = request.params.serviceId satisfies ConnectedServiceId;
         const profileId = request.params.profileId;
 
+        const account = await db.account.findUnique({
+            where: { id: userId },
+            select: { publicKey: true, encryptionMode: true },
+        });
+        if (!account) return reply.code(404).send({ error: "connect_credential_not_found" });
+
+        const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(account);
+        if (mode !== "plain") {
+            return reply.code(404).send({ error: "connect_credential_not_found" });
+        }
+
         const existing = await db.serviceAccountToken.findUnique({
             where: { accountId_vendor_profileId: { accountId: userId, vendor: serviceId, profileId } },
             select: { id: true },
@@ -186,4 +208,3 @@ export function registerConnectedServiceCredentialRoutesV3(app: Fastify): void {
         return reply.send({ success: true });
     });
 }
-

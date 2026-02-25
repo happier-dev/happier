@@ -119,6 +119,27 @@ describe("parseAutomationUpsertInput", () => {
         ).not.toThrow();
     });
 
+    it("rejects plaintext automation templates that include sessionEncryptionKeyBase64 when accountMode=plain", () => {
+        const plain = JSON.stringify({
+            kind: "happier_automation_template_plain_v1",
+            payload: {
+                directory: "/tmp/project",
+                prompt: "hi",
+                sessionEncryptionKeyBase64: "dek",
+            },
+        });
+
+        expect(() =>
+            parseAutomationUpsertInput({
+                name: "Plain template",
+                enabled: true,
+                schedule: { kind: "interval", everyMs: 60_000 },
+                targetType: "new_session",
+                templateCiphertext: plain,
+            }, { accountMode: "plain" }),
+        ).toThrow(/sessionEncryptionKeyBase64/i);
+    });
+
     it("accepts encrypted automation templates when accountMode=plain", () => {
         const encrypted = JSON.stringify({
             kind: "happier_automation_template_encrypted_v1",

@@ -53,7 +53,7 @@ test.describe('ui e2e: OAuth provisioning choice (optional → plain) (GitHub)',
       extraEnv: {
         HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '0',
         AUTH_ANONYMOUS_SIGNUP_ENABLED: '0',
-        AUTH_SIGNUP_PROVIDERS: '',
+        AUTH_SIGNUP_PROVIDERS: 'github',
 
         HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: '1',
         HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
@@ -112,7 +112,7 @@ test.describe('ui e2e: OAuth provisioning choice (optional → plain) (GitHub)',
     );
 
     await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
-    await page.getByTestId('welcome-create-account').click();
+    await page.getByTestId('welcome-signup-provider').click();
 
     await expect(page.getByTestId('oauth-provisioning-choice-plain')).toHaveCount(1, { timeout: 120_000 });
     await expect(page.getByTestId('oauth-provisioning-choice-e2ee')).toHaveCount(1, { timeout: 120_000 });
@@ -138,4 +138,3 @@ test.describe('ui e2e: OAuth provisioning choice (optional → plain) (GitHub)',
     expect(keylessRows?.[0]?.n === 1 || keylessRows?.[0]?.n === '1').toBe(true);
   });
 });
-

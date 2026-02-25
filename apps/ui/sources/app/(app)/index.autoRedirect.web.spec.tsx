@@ -85,7 +85,7 @@ vi.mock('@/auth/providers/registry', () => ({
     getAuthProvider: () => ({
         id: 'github',
         displayName: 'GitHub',
-        getExternalSignupUrl: async () => externalSignupUrl,
+        getExternalAuthUrl: async () => externalSignupUrl,
     }),
 }));
 

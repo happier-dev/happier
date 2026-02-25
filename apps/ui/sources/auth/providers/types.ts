@@ -15,8 +15,12 @@ export type AuthProvider = Readonly<{
     supportsProfileBadge?: boolean;
     connectButtonColor?: string;
     getRestoreRedirectNotice?: (params: { reason: RestoreRedirectReason }) => RestoreRedirectNotice | null;
-    getExternalSignupUrl: (params: { publicKey: string }) => Promise<string>;
-    getExternalLoginUrl?: (params: { proofHash: string }) => Promise<string>;
+    getExternalAuthUrl: (
+        params:
+            | { mode: 'keyed'; publicKey: string }
+            | { mode: 'keyed'; proofHash: string; publicKey?: string }
+            | { mode: 'keyless'; proofHash: string },
+    ) => Promise<string>;
     getConnectUrl: (credentials: AuthCredentials) => Promise<string>;
     finalizeConnect: (credentials: AuthCredentials, params: { pending: string; username: string }) => Promise<void>;
     cancelConnectPending: (credentials: AuthCredentials, pending: string) => Promise<void>;

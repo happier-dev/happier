@@ -97,6 +97,21 @@ function normalizeInternalReturnTo(value: unknown): string | null {
     return trimmed;
 }
 
+function resolveProvisioningModes(raw: string | null): Readonly<{ allowPlain: boolean; allowE2ee: boolean }> {
+    if (raw == null) {
+        // Back-compat: older servers don't include provisioningModes, so assume both options.
+        return { allowPlain: true, allowE2ee: true };
+    }
+
+    const modes = raw
+        .split(',')
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean);
+    const set = new Set(modes);
+
+    return { allowPlain: set.has('plain'), allowE2ee: set.has('e2ee') };
+}
+
 function maybeActivateServerUrl(rawServerUrl: unknown): void {
     const serverUrl = typeof rawServerUrl === 'string' ? rawServerUrl.trim() : '';
     if (!serverUrl) return;
@@ -129,6 +144,7 @@ export default function OAuthProviderReturn() {
         serverUrl?: string;
         storagePolicy: string | null;
         provisioning: string | null;
+        provisioningModes: string | null;
         accountMode: string | null;
         username: string | null;
         chosenMode: 'plain' | 'e2ee' | null;
@@ -147,6 +163,7 @@ export default function OAuthProviderReturn() {
     const resolvedMode = paramString(params, 'mode');
     const resolvedStoragePolicy = paramString(params, 'storagePolicy');
     const resolvedProvisioning = paramString(params, 'provisioning');
+    const resolvedProvisioningModes = paramString(params, 'provisioningModes');
     const resolvedAccountMode = paramString(params, 'accountMode');
 
     const finalizeAuth = React.useCallback((params: { mode: 'plain' | 'e2ee' }) => {
@@ -307,8 +324,27 @@ export default function OAuthProviderReturn() {
             return;
         }
         if (nextCtx.provisioning === 'required') {
+            const modes = resolveProvisioningModes(nextCtx.provisioningModes);
             if (nextCtx.storagePolicy === 'optional') {
-                setProvisioningChoiceOpen(true);
+                if (modes.allowPlain && modes.allowE2ee) {
+                    setProvisioningChoiceOpen(true);
+                    return;
+                }
+                if (modes.allowPlain) {
+                    finalizeAuth({ mode: 'plain' });
+                    return;
+                }
+                if (modes.allowE2ee) {
+                    finalizeAuth({ mode: 'e2ee' });
+                    return;
+                }
+
+                fireAndForget((async () => {
+                    await Modal.alert(t('common.error'), t('errors.oauthInitializationFailed'));
+                    await TokenStorage.clearPendingExternalAuth();
+                })(), { tag: 'OAuthProviderReturn.provisioningModesUnavailable' });
+                pendingAuthContextRef.current = null;
+                router.replace('/');
                 return;
             }
             if (nextCtx.storagePolicy === 'plaintext_only') {
@@ -427,6 +463,7 @@ export default function OAuthProviderReturn() {
                         serverUrl: state.serverUrl,
                         storagePolicy: resolvedStoragePolicy,
                         provisioning: resolvedProvisioning,
+                        provisioningModes: resolvedProvisioningModes,
                         accountMode: resolvedAccountMode,
                         username: null,
                         chosenMode: null,
@@ -451,8 +488,25 @@ export default function OAuthProviderReturn() {
                     }
 
                     if (resolvedProvisioning === 'required') {
+                        const modes = resolveProvisioningModes(resolvedProvisioningModes);
                         if (resolvedStoragePolicy === 'optional') {
-                            setProvisioningChoiceOpen(true);
+                            if (modes.allowPlain && modes.allowE2ee) {
+                                setProvisioningChoiceOpen(true);
+                                return;
+                            }
+                            if (modes.allowPlain) {
+                                finalizeAuth({ mode: 'plain' });
+                                return;
+                            }
+                            if (modes.allowE2ee) {
+                                finalizeAuth({ mode: 'e2ee' });
+                                return;
+                            }
+
+                            await Modal.alert(t('common.error'), t('errors.oauthInitializationFailed'));
+                            await TokenStorage.clearPendingExternalAuth();
+                            pendingAuthContextRef.current = null;
+                            safeReplace('/');
                             return;
                         }
                         if (resolvedStoragePolicy === 'plaintext_only') {

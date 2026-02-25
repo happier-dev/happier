@@ -170,6 +170,7 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
 
         process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED = "1";
         process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS = "github";
+        process.env.HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_AUTO_PROVISION = "1";
         process.env.HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED = "1";
         process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
 
@@ -217,6 +218,7 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
         expect(redirect.searchParams.get("pending")).toBeTruthy();
         expect(redirect.searchParams.get("provisioning")).toBe("required");
         expect(redirect.searchParams.get("storagePolicy")).toBe("optional");
+        expect(redirect.searchParams.get("provisioningModes")).toBe("plain,e2ee");
 
         const pending = redirect.searchParams.get("pending") as string;
         const pendingRow = await db.repeatKey.findUnique({ where: { key: pending } });

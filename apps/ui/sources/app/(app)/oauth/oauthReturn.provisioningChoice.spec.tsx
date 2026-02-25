@@ -74,4 +74,49 @@ describe('oauth/[provider] return (provisioning choice)', () => {
 
     vi.stubGlobal('fetch', originalFetch);
   });
+
+  it('auto-finalizes plaintext (keyless) when provisioningModes only allows plain', async () => {
+    replaceSpy.mockReset();
+    loginWithCredentialsSpy.mockReset();
+    clearPendingExternalAuthMock.mockReset();
+
+    localSearchParamsMock.mockReturnValue({
+      provider: 'github',
+      flow: 'auth',
+      pending: 'p4',
+      storagePolicy: 'optional',
+      provisioning: 'required',
+      provisioningModes: 'plain',
+    });
+    setPendingExternalAuthState({ provider: 'github', proof: 'proof_4' });
+
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn(async (url: any, init?: any) => {
+      if (typeof url === 'string' && url.includes('/v1/auth/external/github/finalize-keyless')) {
+        const body = JSON.parse(String(init?.body ?? '{}'));
+        if (body?.pending !== 'p4' || body?.proof !== 'proof_4') {
+          return new Response(JSON.stringify({ error: 'invalid' }), { status: 400 });
+        }
+        return new Response(JSON.stringify({ success: true, token: 'tok_4' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 });
+    });
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    await runWithOAuthScreen(async (tree) => {
+      await flushOAuthEffects(8);
+
+      expect(fetchMock).toHaveBeenCalled();
+      expect(clearPendingExternalAuthMock).toHaveBeenCalled();
+      expect(loginWithCredentialsSpy).toHaveBeenCalled();
+      expect(replaceSpy).toHaveBeenCalledWith('/');
+
+      expect(tree.root.findAllByProps({ testID: 'oauth-provisioning-choice-plain' })).toHaveLength(0);
+    });
+
+    vi.stubGlobal('fetch', originalFetch);
+  });
 });

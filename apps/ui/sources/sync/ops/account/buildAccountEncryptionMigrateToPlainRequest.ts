@@ -19,7 +19,10 @@ import {
   tryDecodeAutomationTemplateEnvelope,
 } from '@/sync/domains/automations/automationTemplateTransport';
 
-import { AccountEncryptionMigrateRequestSchema } from '@/sync/api/account/apiAccountEncryptionMigrate';
+import {
+  AccountEncryptionMigrateRequestSchema,
+  type AccountEncryptionMigrateRequest,
+} from '@/sync/api/account/apiAccountEncryptionMigrate';
 
 type ConnectedServiceCredentialMetadataInput = Readonly<{
   kind: 'oauth' | 'token';
