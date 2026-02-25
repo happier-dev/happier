@@ -35,7 +35,12 @@ class EventRouter {
         return this.userConnections.get(userId);
     }
 
-    hasUserScopedConnections(userId: string): boolean {
+    async hasUserScopedConnections(userId: string): Promise<boolean> {
+        if (this.io) {
+            const sockets = await this.io.in(`user-scoped:${userId}`).fetchSockets();
+            return sockets.length > 0;
+        }
+        // Fallback: in-memory routing (single-process only)
         const connections = this.userConnections.get(userId);
         if (!connections) return false;
         for (const conn of connections) {

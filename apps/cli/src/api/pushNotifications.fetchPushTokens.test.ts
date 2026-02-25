@@ -4,6 +4,10 @@ import axios from 'axios';
 
 import { PushNotificationClient } from './pushNotifications';
 
+vi.mock('@/settings/notifications/notificationsPolicy', () => ({
+  shouldSuppressWhenUIActiveForActiveAccount: () => true,
+}));
+
 vi.mock('axios', () => {
   return {
     __esModule: true,

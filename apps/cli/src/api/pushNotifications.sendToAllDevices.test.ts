@@ -8,6 +8,10 @@ const sendPushNotificationsAsyncSpy = vi.fn(async (_chunk: any[]) =>
   _chunk.map(() => ({ status: 'ok' })),
 );
 
+vi.mock('@/settings/notifications/notificationsPolicy', () => ({
+  shouldSuppressWhenUIActiveForActiveAccount: () => true,
+}));
+
 vi.mock('axios', () => {
   return {
     __esModule: true,

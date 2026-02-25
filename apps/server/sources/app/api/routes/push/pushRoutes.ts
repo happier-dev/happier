@@ -111,7 +111,7 @@ export function pushRoutes(app: Fastify) {
         schema: {
             querystring: z.object({
                 suppressIfUIActive: z.enum(['0', '1']).optional(),
-            }).optional(),
+            }),
         },
         preHandler: app.authenticate
     }, async (request, reply) => {
@@ -119,7 +119,7 @@ export function pushRoutes(app: Fastify) {
         const query = (request.query ?? {}) as { suppressIfUIActive?: string };
 
         // When requested, suppress push tokens if the user has an active UI connection (browser/app).
-        if (query.suppressIfUIActive === '1' && eventRouter.hasUserScopedConnections(userId)) {
+        if (query.suppressIfUIActive === '1' && await eventRouter.hasUserScopedConnections(userId)) {
             return reply.send({ tokens: [], suppressedByActiveUI: true });
         }
 
