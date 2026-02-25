@@ -79,6 +79,22 @@ For plaintext accounts to work across devices (including keyless login), clients
 - Plaintext accounts use **settings v2** (`GET/POST /v2/account/settings`) and store settings as a plaintext envelope.
 - The legacy settings route (`/v1/account/settings`) is **rejected for plaintext accounts** with `400 { error: "plain_account_requires_settings_v2" }`.
 
+#### Plaintext at-rest sealing (recommended)
+
+Plaintext accounts are server-readable by definition, but you can still reduce disk/backups exposure by sealing sensitive account-scoped blobs at rest using the server master secret.
+
+Env vars:
+
+```bash
+# Defaults are server_sealed
+HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_SETTINGS_AT_REST=none|server_sealed
+HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST=none|server_sealed
+```
+
+Notes:
+- These affect **DB storage only**. Wire payloads remain plaintext envelopes for plaintext accounts.
+- For connected services, the v3 plaintext credential endpoints store credentials as plaintext envelopes and seal them at rest when configured.
+
 ## Per-session encryption mode
 
 Each session has a stable `encryptionMode` (`e2ee` or `plain`) chosen at creation time.

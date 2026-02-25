@@ -92,6 +92,35 @@ AUTH_REQUIRED_LOGIN_PROVIDERS=okta
 AUTH_PROVIDERS_CONFIG_PATH=/etc/happier/auth-providers.json
 ```
 
+## Keyless OIDC login (optional, enterprise)
+
+Happier can also use an OIDC provider as a **keyless login method** (no device keys), when enabled by feature env vars.
+
+This is intended for enterprise deployments and is usually paired with plaintext storage mode. See:
+- [Server Auth](/docs/server/auth)
+- [Encryption & plaintext storage](/docs/server/encryption)
+
+Minimum prerequisites (example for provider id `okta`):
+
+```bash
+HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=optional|plaintext_only
+HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED=1
+
+HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED=1
+HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS=okta
+```
+
+To allow OIDC sign-in to **create** a new keyless/plain account on first login:
+
+```bash
+HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_AUTO_PROVISION=1
+```
+
+Notes:
+- Keyless OIDC login is **separate** from keyed OIDC signup. You can enable either or both.
+- `HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE` controls only the default for **keyed** accounts under `optional`; it does not gate keyless provisioning.
+- On `HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=optional`, the client may offer a **choice** on first login (E2EE vs plaintext) when the provider is enabled for both keyed provisioning and keyless auto-provisioning.
+
 ## Step-by-step: add a new OIDC provider
 
 1. Pick a provider id (lowercase), e.g. `okta` / `auth0` / `entra`.

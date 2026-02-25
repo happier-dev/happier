@@ -66,6 +66,18 @@ Happier uses a **device-key** account model (each account is tied to a device se
 - You can optionally require external providers (GitHub and/or OIDC) for signup and/or ongoing access.
 - External providers are **not** “password login”: if a user is trying to access an *existing* Happier account from a new device/browser, they still need to **restore** the account (for example “Login with mobile app”), then connect providers from settings.
 
+### Keyed vs keyless (how providers show up in the UI)
+
+The same OAuth provider (for example GitHub or an OIDC provider) can appear in the UI in two different roles:
+
+- **Keyed provisioning** (“Continue with GitHub”): creates a **device-key** account.
+  - Users must back up a secret key and **restore** on new devices/browsers.
+  - This is the standard Happier model and works on E2EE-only servers.
+- **Keyless login** (“Sign in with GitHub”): signs in to a **keyless/plain** account (no device keys).
+  - Sign-in can be **seamless across devices**, but it is intended for enterprise deployments and usually paired with plaintext storage.
+
+Server operators control which role(s) are enabled via `/v1/features` (policy + feature env vars). Clients should not guess.
+
 ## Auth methods (discovery)
 
 Clients should treat `GET /v1/features` as the source of truth for “what auth flows are available”.
@@ -98,17 +110,85 @@ Happier currently supports keyless login via:
 Keyless account auto-provisioning is intentionally guarded:
 
 - enable keyless accounts: `HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED=1`
-- ensure new accounts default to plaintext: `HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=optional|plaintext_only` and `HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE=plain`
-- for OAuth keyless login: `HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED=1` + allowlist providers via `HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS`
+- allow plaintext storage (required for keyless accounts): `HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=optional|plaintext_only`
+- for OAuth keyless login:
+  - enable: `HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED=1`
+  - allowlist providers: `HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS=github,okta,...`
+  - allow first-login account creation: `HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_AUTO_PROVISION=1`
+- for mTLS keyless login: see [mTLS auth](./auth-mtls)
+
+Recommended hardening for plaintext/keyless deployments:
+
+- seal plaintext account settings at rest: `HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_SETTINGS_AT_REST=server_sealed` (default)
+- seal plaintext account connected-service credentials at rest: `HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST=server_sealed` (default)
+
+Note: `HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE` controls only the default mode for **keyed** accounts and new sessions when the storage policy is `optional`. It does not gate keyless auto-provisioning.
 
 ### OAuth keyless provisioning choice (optional encryption servers)
 
-When the server storage policy is `optional` and keyless OAuth login is enabled, new users coming back from OAuth (GitHub/OIDC) may be prompted to choose:
+When the server storage policy is `optional`, new users coming back from OAuth (GitHub/OIDC) may be prompted to choose:
 
 - **End-to-end encrypted (E2EE)**: creates a device-key account; users must back up a secret key to restore on new devices.
 - **Not encrypted (plaintext)**: creates a keyless/plain account; sign-in is seamless across devices, but the server can read stored content.
 
-On `plaintext_only` servers, clients should automatically choose plaintext. On `required_e2ee` servers, clients should automatically choose E2EE.
+When the provider is enabled for **both** modes (keyed provisioning + keyless auto-provisioning), the client should show the choice.
+When only one mode is available, the client should auto-select it (no extra screen).
+
+On `plaintext_only` servers, clients should automatically choose plaintext. On `required_e2ee` servers, clients should not offer plaintext/keyless choices.
+
+### Operator recipes (recommended)
+
+**E2EE-only (public server) + GitHub required**
+
+```bash
+HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=required_e2ee
+
+AUTH_ANONYMOUS_SIGNUP_ENABLED=false
+AUTH_SIGNUP_PROVIDERS=github
+AUTH_REQUIRED_LOGIN_PROVIDERS=github
+```
+
+**Keyless-only (enterprise) + plaintext-only + GitHub required**
+
+```bash
+HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=plaintext_only
+HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED=1
+
+AUTH_ANONYMOUS_SIGNUP_ENABLED=false
+AUTH_SIGNUP_PROVIDERS=
+AUTH_REQUIRED_LOGIN_PROVIDERS=github
+
+HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED=1
+HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS=github
+HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_AUTO_PROVISION=1
+```
+
+**Optional encryption (enterprise) + OAuth provisioning choice (GitHub)**
+
+```bash
+HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=optional
+HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED=1
+
+AUTH_ANONYMOUS_SIGNUP_ENABLED=false
+AUTH_SIGNUP_PROVIDERS=github
+AUTH_REQUIRED_LOGIN_PROVIDERS=github
+
+HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED=1
+HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS=github
+HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_AUTO_PROVISION=1
+```
+
+Optional: allow users to switch existing accounts (`e2ee ↔ plain`) when storage policy is `optional`:
+
+```bash
+HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT=1
+```
+
+## Upgrade notes (operator guidance)
+
+- **Clients first is usually safe** for keyed accounts (device-key model), because older servers still accept the core `/v1/auth` login flow.
+- **Do not enable `plaintext_only`** until you have clients that support plaintext storage (older clients will fail because encrypted writes are rejected).
+- If you enable **keyless OAuth auto-provisioning**, ensure your clients are new enough to understand the keyless flows advertised by `/v1/features` (otherwise users may see missing buttons or failed sign-in attempts).
 
 ## OAuth return URL (required for GitHub/OIDC self-hosting)
 
