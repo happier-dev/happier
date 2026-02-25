@@ -121,6 +121,16 @@ Notes:
 - `HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE` controls only the default for **keyed** accounts under `optional`; it does not gate keyless provisioning.
 - On `HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=optional`, the client may offer a **choice** on first login (E2EE vs plaintext) when the provider is enabled for both keyed provisioning and keyless auto-provisioning.
 
+### Auto-redirect (OIDC-only deployments)
+
+If an OIDC provider is your only supported login/signup flow, you can enable auto-redirect so users don’t have to tap the button:
+
+```bash
+HAPPIER_FEATURE_AUTH_UI__AUTO_REDIRECT_ENABLED=1
+HAPPIER_FEATURE_AUTH_UI__AUTO_REDIRECT_PROVIDER_ID=<providerId>
+AUTH_ANONYMOUS_SIGNUP_ENABLED=0
+```
+
 ## Step-by-step: add a new OIDC provider
 
 1. Pick a provider id (lowercase), e.g. `okta` / `auth0` / `entra`.
