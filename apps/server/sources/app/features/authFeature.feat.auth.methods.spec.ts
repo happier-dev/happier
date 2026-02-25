@@ -87,7 +87,7 @@ describe("resolveAuthFeature (auth.methods)", () => {
         expect(misconfig).toEqual(expect.arrayContaining([expect.objectContaining({ code: "auth_mtls_keyless_unavailable" })]));
     });
 
-    it("disables keyless OAuth provisioning when keyless auto-provision eligibility is not satisfied", () => {
+    it("enables keyless OAuth provisioning on optional servers regardless of DEFAULT_ACCOUNT_MODE", () => {
         const feature = resolveAuthFeature({
             AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
             AUTH_SIGNUP_PROVIDERS: "",
@@ -106,7 +106,7 @@ describe("resolveAuthFeature (auth.methods)", () => {
         const github = getMethod(feature, "github");
         expect(github).toMatchObject({ id: "github" });
         expect(github.actions).toEqual(
-            expect.arrayContaining([{ id: "provision", enabled: false, mode: "keyless" }]),
+            expect.arrayContaining([{ id: "provision", enabled: true, mode: "keyless" }]),
         );
         expect(github.actions).toEqual(
             expect.arrayContaining([{ id: "login", enabled: true, mode: "keyless" }]),
