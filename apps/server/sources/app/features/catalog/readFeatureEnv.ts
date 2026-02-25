@@ -223,13 +223,31 @@ export function readSocialFriendsFeatureEnv(env: NodeJS.ProcessEnv): SocialFrien
 }
 
 export function readAuthFeatureEnv(env: NodeJS.ProcessEnv): AuthFeatureEnv {
+  const legacyRecoveryProviderResetEnabled = env.AUTH_RECOVERY_PROVIDER_RESET_ENABLED;
+  const legacyUiAutoRedirectEnabled = env.AUTH_UI_AUTO_REDIRECT;
+  const legacyUiAutoRedirectProviderId = env.AUTH_UI_AUTO_REDIRECT_PROVIDER_ID;
+  const legacyUiRecoveryKeyReminderEnabled = env.AUTH_UI_RECOVERY_KEY_REMINDER_ENABLED;
+
   return {
-    recoveryProviderResetEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.authRecoveryProviderResetEnabled], true),
+    recoveryProviderResetEnabled: parseBooleanEnv(
+      env[FEATURE_ENV_KEYS.authRecoveryProviderResetEnabled] ?? legacyRecoveryProviderResetEnabled,
+      true,
+    ),
     loginKeyChallengeEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.authLoginKeyChallengeEnabled], true),
     pairingDesktopQrMobileScanEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.authPairingDesktopQrMobileScanEnabled], true),
-    uiAutoRedirectEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.authUiAutoRedirectEnabled], false),
-    uiAutoRedirectProviderId: (env[FEATURE_ENV_KEYS.authUiAutoRedirectProviderId] ?? '').trim().toLowerCase(),
-    uiRecoveryKeyReminderEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.authUiRecoveryKeyReminderEnabled], true),
+    uiAutoRedirectEnabled: parseBooleanEnv(
+      env[FEATURE_ENV_KEYS.authUiAutoRedirectEnabled] ?? legacyUiAutoRedirectEnabled,
+      false,
+    ),
+    uiAutoRedirectProviderId: (
+      env[FEATURE_ENV_KEYS.authUiAutoRedirectProviderId] ?? legacyUiAutoRedirectProviderId ?? ''
+    )
+      .trim()
+      .toLowerCase(),
+    uiRecoveryKeyReminderEnabled: parseBooleanEnv(
+      env[FEATURE_ENV_KEYS.authUiRecoveryKeyReminderEnabled] ?? legacyUiRecoveryKeyReminderEnabled,
+      true,
+    ),
   };
 }
 
@@ -341,6 +359,6 @@ export function readEncryptionFeatureEnv(env: NodeJS.ProcessEnv): EncryptionFeat
 
 export function readE2eeFeatureEnv(env: NodeJS.ProcessEnv): E2eeFeatureEnv {
   return {
-    keylessAccountsEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.e2eeKeylessAccountsEnabled], true),
+    keylessAccountsEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.e2eeKeylessAccountsEnabled], false),
   };
 }
