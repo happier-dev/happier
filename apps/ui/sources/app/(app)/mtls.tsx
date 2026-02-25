@@ -17,6 +17,12 @@ export default function MtlsCallbackScreen() {
         let mounted = true;
         (async () => {
             try {
+                const error = typeof (params as any)?.error === 'string' ? String((params as any).error).trim().toLowerCase() : '';
+                if (error === 'restore_required') {
+                    router.replace('/restore');
+                    return;
+                }
+
                 const code = typeof params.code === 'string' ? params.code : '';
                 if (!code.trim()) {
                     await Modal.alert(t('common.error'), t('errors.operationFailed'));
@@ -77,4 +83,3 @@ export default function MtlsCallbackScreen() {
         </View>
     );
 }
-
