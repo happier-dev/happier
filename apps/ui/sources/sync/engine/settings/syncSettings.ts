@@ -12,9 +12,9 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { sealSecretsDeep, unsealSecretsDeep } from '@/sync/encryption/secretSettings';
 import { serverFetch } from '@/sync/http/client';
+import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import {
-    AccountEncryptionModeResponseSchema,
     AccountSettingsV2GetResponseSchema,
     AccountSettingsV2UpdateResponseSchema,
     openAccountScopedBlobCiphertext,
@@ -38,27 +38,8 @@ export async function syncSettings(params: {
     let lastVersionMismatch: { expectedVersion: number; currentVersion: number; pendingKeys: string[] } | null = null;
     const pendingServerSettings = stripLocalOnlyAccountSettings(pendingSettings);
 
-    const encryptionModeResponse = await serverFetch('/v1/account/encryption', {
-        method: 'GET',
-        headers: {
-            'Authorization': `Bearer ${credentials.token}`,
-            'Content-Type': 'application/json',
-        },
-    }, { includeAuth: false });
-
-    if (!encryptionModeResponse.ok) {
-        if (encryptionModeResponse.status >= 400 && encryptionModeResponse.status < 500 && encryptionModeResponse.status !== 408 && encryptionModeResponse.status !== 429) {
-            throw new HappyError(`Failed to fetch encryption setting (${encryptionModeResponse.status})`, false);
-        }
-        throw new Error(`Failed to fetch encryption setting: ${encryptionModeResponse.status}`);
-    }
-
-    const encryptionModeJson: unknown = await encryptionModeResponse.json();
-    const encryptionModeParsed = AccountEncryptionModeResponseSchema.safeParse(encryptionModeJson);
-    if (!encryptionModeParsed.success) {
-        throw new Error('Failed to parse encryption setting response');
-    }
-    const accountMode = encryptionModeParsed.data.mode === 'plain' ? 'plain' : 'e2ee';
+    const encryptionMode = await fetchAccountEncryptionMode(credentials);
+    const accountMode = encryptionMode.mode === 'plain' ? 'plain' : 'e2ee';
 
     async function fetchSettingsV2(): Promise<{ content: unknown; version: number }> {
         const response = await serverFetch('/v2/account/settings', {
@@ -110,6 +91,33 @@ export async function syncSettings(params: {
         throw new Error(`Failed to update settings (v2): ${response.status}`);
     }
 
+    async function updateSettingsV1(params: { settings: string | null; expectedVersion: number }): Promise<any> {
+        const response = await serverFetch('/v1/account/settings', {
+            method: 'POST',
+            body: JSON.stringify({
+                settings: params.settings,
+                expectedVersion: params.expectedVersion,
+            }),
+            headers: {
+                'Authorization': `Bearer ${credentials.token}`,
+                'Content-Type': 'application/json',
+            },
+        }, { includeAuth: false });
+
+        const data: any = await response.json().catch(() => null);
+        if (!data || typeof data !== 'object') {
+            throw new Error(`Failed to update settings (v1): ${response.status}`);
+        }
+
+        if (response.ok && data.success === true && typeof data.version === 'number') {
+            return data;
+        }
+        if (response.ok && data.success === false && data.error === 'version-mismatch' && typeof data.currentVersion === 'number') {
+            return data;
+        }
+        throw new Error(`Failed to update settings (v1): ${response.status}`);
+    }
+
     async function decryptSettingsCiphertext(ciphertext: string): Promise<Record<string, unknown> | null> {
         const machineKey = encryption.getContentPrivateKey();
         const opened = openAccountScopedBlobCiphertext({
@@ -154,15 +162,19 @@ export async function syncSettings(params: {
             const mergedSettings = applySettings(storage.getState().settings, pendingServerSettings);
             const settingsForServer = normalizeSettingsForServerStorage({ raw: mergedSettings, mode: accountMode });
 
+            let e2eeCiphertext: string | null = null;
             const content =
                 accountMode === 'plain'
                     ? ({ t: 'plain', v: settingsForServer } as const)
-                    : ({ t: 'encrypted', c: sealAccountScopedBlobCiphertext({
-                        kind: 'account_settings',
-                        material: { type: 'dataKey', machineKey: encryption.getContentPrivateKey() },
-                        payload: settingsForServer,
-                        randomBytes: getRandomBytes,
-                    }) } as const);
+                    : (() => {
+                        e2eeCiphertext = sealAccountScopedBlobCiphertext({
+                            kind: 'account_settings',
+                            material: { type: 'dataKey', machineKey: encryption.getContentPrivateKey() },
+                            payload: settingsForServer,
+                            randomBytes: getRandomBytes,
+                        });
+                        return ({ t: 'encrypted', c: e2eeCiphertext } as const);
+                    })();
             dbgSettings('syncSettings: POST attempt', {
                 endpoint: activeServerUrl,
                 attempt: retryCount + 1,
@@ -175,9 +187,13 @@ export async function syncSettings(params: {
                 data = await updateSettingsV2({ content, expectedVersion: version ?? 0 });
             } catch (e: any) {
                 if (e?.code === 'settings_v2_not_supported') {
-                    throw new Error('Settings v2 is required but not supported by this server');
+                    if (accountMode === 'plain') {
+                        throw new Error('Settings v2 is required but not supported by this server');
+                    }
+                    data = await updateSettingsV1({ settings: e2eeCiphertext, expectedVersion: version ?? 0 });
+                } else {
+                    throw e;
                 }
-                throw e;
             }
 
             if (data.success) {
@@ -196,7 +212,10 @@ export async function syncSettings(params: {
                     pendingKeys: Object.keys(pendingServerSettings).sort(),
                 };
 
-                const currentContent = data.currentContent as any;
+                const currentContent = (data.currentContent ??
+                    (typeof data.currentSettings === 'string' || data.currentSettings === null
+                        ? (data.currentSettings ? { t: 'encrypted', c: data.currentSettings } : null)
+                        : null)) as any;
                 const serverRaw = await (async () => {
                     if (!currentContent) return null;
                     if (currentContent.t === 'plain') return currentContent.v as Record<string, unknown>;
