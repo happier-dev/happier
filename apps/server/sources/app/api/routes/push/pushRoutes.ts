@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { type Fastify } from "../../types";
 import { db } from "@/storage/db";
+import { eventRouter } from "@/app/events/eventRouter";
 
 function normalizeClientServerUrl(raw: unknown): string | null {
     const value = typeof raw === "string" ? raw.trim() : "";
@@ -107,9 +108,20 @@ export function pushRoutes(app: Fastify) {
 
     // Get Push Tokens API
     app.get('/v1/push-tokens', {
+        schema: {
+            querystring: z.object({
+                suppressIfUIActive: z.enum(['0', '1']).optional(),
+            }).optional(),
+        },
         preHandler: app.authenticate
     }, async (request, reply) => {
         const userId = request.userId;
+        const query = (request.query ?? {}) as { suppressIfUIActive?: string };
+
+        // When requested, suppress push tokens if the user has an active UI connection (browser/app).
+        if (query.suppressIfUIActive === '1' && eventRouter.hasUserScopedConnections(userId)) {
+            return reply.send({ tokens: [], suppressedByActiveUI: true });
+        }
 
         try {
             const tokens = await db.accountPushToken.findMany({

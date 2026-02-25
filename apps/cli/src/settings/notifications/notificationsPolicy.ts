@@ -23,3 +23,12 @@ export function shouldSendReadyPushNotificationForActiveAccount(): boolean {
 export function shouldSendPermissionRequestPushNotificationForActiveAccount(): boolean {
   return shouldSendPermissionRequestPushNotification(getActiveAccountSettingsSnapshot()?.settings ?? null);
 }
+
+export function shouldSuppressWhenUIActive(settings?: AccountSettings | null): boolean {
+  const notifications = resolveNotifications(settings);
+  return notifications.suppressWhenUIActive !== false;
+}
+
+export function shouldSuppressWhenUIActiveForActiveAccount(): boolean {
+  return shouldSuppressWhenUIActive(getActiveAccountSettingsSnapshot()?.settings ?? null);
+}

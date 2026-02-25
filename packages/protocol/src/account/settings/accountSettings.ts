@@ -10,12 +10,14 @@ export const NotificationsSettingsV1Schema = z
     pushEnabled: z.boolean().default(true),
     ready: z.boolean().default(true),
     permissionRequest: z.boolean().default(true),
+    suppressWhenUIActive: z.boolean().default(true),
   })
   .catch({
     v: 1,
     pushEnabled: true,
     ready: true,
     permissionRequest: true,
+    suppressWhenUIActive: true,
   });
 
 export type NotificationsSettingsV1 = z.infer<typeof NotificationsSettingsV1Schema>;

@@ -59,6 +59,25 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
             </ItemGroup>
 
             <ItemGroup
+                title="Behavior"
+                footer="When enabled, push notifications are suppressed while you have the app or browser open."
+            >
+                <Item
+                    title="Suppress when active"
+                    subtitle="Skip push notifications when a browser or app session is connected"
+                    icon={<Ionicons name="eye-outline" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={(
+                        <Switch
+                            value={notifications.suppressWhenUIActive !== false}
+                            disabled={!pushEnabled}
+                            onValueChange={(value) => setNotifications({ suppressWhenUIActive: Boolean(value) })}
+                        />
+                    )}
+                    showChevron={false}
+                />
+            </ItemGroup>
+
+            <ItemGroup
                 title="Types"
                 footer="Disable individual types if you only want certain alerts."
             >

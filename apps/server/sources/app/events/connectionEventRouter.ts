@@ -35,6 +35,15 @@ class EventRouter {
         return this.userConnections.get(userId);
     }
 
+    hasUserScopedConnections(userId: string): boolean {
+        const connections = this.userConnections.get(userId);
+        if (!connections) return false;
+        for (const conn of connections) {
+            if (conn.connectionType === 'user-scoped') return true;
+        }
+        return false;
+    }
+
     // === SOCKET.IO ADAPTER (ROOM-BASED FANOUT) ===
 
     setIo(io: Server): void {

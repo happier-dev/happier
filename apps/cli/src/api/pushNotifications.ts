@@ -5,6 +5,7 @@ import { withServerUrlInPushData } from './pushNotificationData'
 import { serializeAxiosErrorForLog } from './client/serializeAxiosErrorForLog'
 import { summarizeExpoPushTicketErrorsForLog } from './pushTicketLogSummary'
 import { isPushDebugEnabled, readPushFetchTokensTimeoutMs } from './pushNotificationsConfig'
+import { shouldSuppressWhenUIActiveForActiveAccount } from '@/settings/notifications/notificationsPolicy'
 
 export interface PushToken {
     id: string
@@ -43,11 +44,18 @@ export class PushNotificationClient {
     /**
      * Fetch all push tokens for the authenticated user
      */
-    async fetchPushTokens(): Promise<PushToken[]> {
+    async fetchPushTokens(options?: { suppressIfUIActive?: boolean }): Promise<PushToken[]> {
         const debugPush = isPushDebugEnabled()
         try {
-            const response = await axios.get<{ tokens: PushToken[] }>(
-                `${this.baseUrl}/v1/push-tokens`,
+            const params = new URLSearchParams()
+            if (options?.suppressIfUIActive) {
+                params.set('suppressIfUIActive', '1')
+            }
+            const qs = params.toString()
+            const url = `${this.baseUrl}/v1/push-tokens${qs ? `?${qs}` : ''}`
+
+            const response = await axios.get<{ tokens: PushToken[]; suppressedByActiveUI?: boolean }>(
+                url,
                 {
                     headers: {
                         'Authorization': `Bearer ${this.token}`,
@@ -57,15 +65,20 @@ export class PushNotificationClient {
                 }
             )
 
-            if (debugPush) logger.debug(`Fetched ${response.data.tokens.length} push tokens`)
-            
+            if (debugPush) {
+                if (response.data.suppressedByActiveUI) {
+                    logger.debug('[PUSH] Push suppressed: active UI session detected')
+                }
+                logger.debug(`Fetched ${response.data.tokens.length} push tokens`)
+            }
+
             // Log token information
             if (debugPush) {
                 response.data.tokens.forEach((token, index) => {
                     logger.debug(`[PUSH] Token ${index + 1}: id=${token.id}, created=${new Date(token.createdAt).toISOString()}, updated=${new Date(token.updatedAt).toISOString()}`)
                 })
             }
-            
+
             return response.data.tokens
         } catch (error) {
             logger.debug('[PUSH] [ERROR] Failed to fetch push tokens:', serializeAxiosErrorForLog(error))
@@ -155,9 +168,10 @@ export class PushNotificationClient {
         if (debugPush) logger.debug(`[PUSH] sendToAllDevicesAsync called with title: "${title}", body: "${body}"`);
 
         try {
-            // Fetch all push tokens
-            if (debugPush) logger.debug('[PUSH] Fetching push tokens...')
-            const tokens = await this.fetchPushTokens()
+            // Fetch all push tokens (suppress if user has an active UI session and setting is enabled)
+            const suppressIfUIActive = shouldSuppressWhenUIActiveForActiveAccount()
+            if (debugPush) logger.debug(`[PUSH] Fetching push tokens... (suppressIfUIActive=${suppressIfUIActive})`)
+            const tokens = await this.fetchPushTokens({ suppressIfUIActive })
             if (debugPush) logger.debug(`[PUSH] Fetched ${tokens.length} push tokens`)
 
             // Log token details for debugging
