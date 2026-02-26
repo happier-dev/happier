@@ -2937,6 +2937,7 @@ export const ja: TranslationStructure = {
     },
     model: {
       title: "モデル",
+      useCliSettings: "CLI設定を使用",
       configureInCli: "CLIの設定でモデルを構成",
       customDescription: "一覧にないモデルIDを使用します。",
       customPromptBody: "モデルIDを入力してください",
@@ -4950,6 +4951,7 @@ export const ja: TranslationStructure = {
     permissions: {
       yesAlwaysAllowCommand: "はい、グローバルに常に許可",
       yesForSession: "はい、このセッションでは確認しない",
+      stop: "停止",
       stopAndExplain: "停止して、何をすべきか説明",
     },
   },
@@ -4963,6 +4965,7 @@ export const ja: TranslationStructure = {
         "はい、このコマンドプレフィックスについては確認しない",
       yesForSubcommand: "はい、このサブコマンドについては確認しない",
       yesForCommandName: "はい、このコマンドについては確認しない",
+      stop: "停止",
       noTellClaude: "いいえ、フィードバックを提供",
     },
   },

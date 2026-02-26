@@ -14,6 +14,7 @@
  */
 
 import { redactBugReportSensitiveText } from '@happier-dev/protocol';
+import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
 import type {
   TransportHandler,
   ToolPattern,
@@ -46,14 +47,7 @@ export const OPENCODE_TIMEOUTS = {
 const OPENCODE_TOOL_PATTERNS: readonly ToolPatternWithInputFields[] = [
   {
     name: 'change_title',
-    patterns: [
-      'change_title',
-      'change-title',
-      'happy__change_title',
-      'mcp__happy__change_title',
-      'happier__change_title',
-      'mcp__happier__change_title',
-    ],
+    patterns: ['change-title', ...CHANGE_TITLE_TOOL_NAME_ALIASES],
     inputFields: ['title'],
   },
   {
@@ -120,11 +114,12 @@ export class OpenCodeTransport implements TransportHandler {
   handleStderr(text: string, context: StderrContext): StderrResult {
     const trimmed = text.trim();
     if (!trimmed) return { message: null, suppress: true };
+    const lower = trimmed.toLowerCase();
 
     // Rate limit errors - OpenCode (or its providers) may retry; keep logs for debugging.
     if (
       trimmed.includes('429') ||
-      trimmed.toLowerCase().includes('rate limit') ||
+      lower.includes('rate limit') ||
       trimmed.includes('RATE_LIMIT')
     ) {
       return { message: null, suppress: false };
@@ -132,9 +127,9 @@ export class OpenCodeTransport implements TransportHandler {
 
     // Authentication error - show actionable message.
     if (
-      trimmed.toLowerCase().includes('authentication') ||
-      trimmed.toLowerCase().includes('unauthorized') ||
-      trimmed.toLowerCase().includes('api key')
+      lower.includes('authentication') ||
+      lower.includes('unauthorized') ||
+      lower.includes('api key')
     ) {
       const errorMessage: AgentMessage = {
         type: 'status',
@@ -145,7 +140,7 @@ export class OpenCodeTransport implements TransportHandler {
     }
 
     // Model not found - show actionable message.
-    if (trimmed.toLowerCase().includes('model not found')) {
+    if (lower.includes('model not found') || lower.includes('providermodelnotfounderror')) {
       const errorMessage: AgentMessage = {
         type: 'status',
         status: 'error',
@@ -159,7 +154,6 @@ export class OpenCodeTransport implements TransportHandler {
 
     // CLI invocation/config errors (flags/args/etc) should be surfaced directly so misconfiguration
     // doesn't appear as a "silent" failure.
-    const lower = trimmed.toLowerCase();
     const looksLikeCliInvocationError =
       lower.startsWith('error:') ||
       lower.includes('unknown flag') ||
@@ -250,6 +244,17 @@ export class OpenCodeTransport implements TransportHandler {
           ? String((acp as any).title).trim().toLowerCase()
           : '';
       if (acpTitle === 'task') return 'Task';
+
+      const title = typeof input.title === 'string' ? input.title.trim() : '';
+      const memory = typeof input.memory === 'string' ? input.memory.trim() : '';
+      const prompt = typeof input.prompt === 'string' ? input.prompt.trim() : '';
+      const subagentType = typeof input.subagent_type === 'string' ? input.subagent_type.trim() : '';
+
+      const looksLikeTaskTool = Boolean(prompt) && Boolean(subagentType);
+      const looksLikeChangeTitle = Boolean(title);
+      const looksLikeSaveMemory = Boolean(memory);
+
+      if (looksLikeTaskTool && !looksLikeChangeTitle && !looksLikeSaveMemory) return 'Task';
     }
 
     const directToolName = findToolNameFromId(toolName, OPENCODE_TOOL_PATTERNS, { preferLongestMatch: true });

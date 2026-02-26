@@ -1,4 +1,5 @@
 import { asRecord, firstNonEmptyString, hasNonEmptyRecord } from './_shared';
+import { isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
 
 function canonicalizeToolNameNonV2(toolName: string, input: unknown): string {
     // NOTE: This path covers:
@@ -12,7 +13,7 @@ function canonicalizeToolNameNonV2(toolName: string, input: unknown): string {
     if (toolName === 'CodexReasoning' || toolName === 'GeminiReasoning' || toolName === 'think') return 'Reasoning';
     if (toolName === 'exit_plan_mode') return 'ExitPlanMode';
 
-    if (toolName === 'mcp__happier__change_title' || toolName === 'mcp__happy__change_title') return 'change_title';
+    if (isChangeTitleToolNameAlias(toolName)) return 'change_title';
 
     const lower = toolName.toLowerCase();
     if (lower === 'patch') return 'Patch';

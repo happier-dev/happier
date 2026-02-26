@@ -86,4 +86,17 @@ describe('GeminiPermissionHandler', () => {
       expect.objectContaining({ tool: 'mcp__happier__change_title', status: 'approved', decision: 'approved' }),
     );
   });
+
+  it('auto-approves canonical change_title even when toolCallId is generic', async () => {
+    const session = new FakePermissionSession();
+    const handler = new GeminiPermissionHandler(session.asApiSessionClient());
+    handler.setPermissionMode('read-only');
+
+    const result = await handler.handleToolCall('tool-1', 'change_title', { title: 'new title' });
+    expect(result.decision).toBe('approved');
+    expect(session.snapshot().requests?.['tool-1']).toBeUndefined();
+    expect(session.snapshot().completedRequests?.['tool-1']).toEqual(
+      expect.objectContaining({ tool: 'change_title', status: 'approved', decision: 'approved' }),
+    );
+  });
 });

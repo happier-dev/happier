@@ -2407,6 +2407,7 @@ export const en = {
         },
         model: {
             title: 'MODEL',
+            useCliSettings: 'Use CLI settings',
             configureInCli: 'Configure models in CLI settings',
             customDescription: 'Use a model id that isn’t listed.',
             customPromptBody: 'Enter a model id',
@@ -4200,6 +4201,7 @@ export const en = {
         permissions: {
             yesAlwaysAllowCommand: 'Yes, always allow globally',
             yesForSession: "Yes, and don't ask for a session",
+            stop: 'Stop',
             stopAndExplain: 'Stop, and explain what to do',
         }
     },
@@ -4212,6 +4214,7 @@ export const en = {
             yesForCommandPrefix: "Yes, don't ask again for this command prefix",
             yesForSubcommand: "Yes, don't ask again for this subcommand",
             yesForCommandName: "Yes, don't ask again for this command",
+            stop: 'Stop',
             noTellClaude: 'No, and provide feedback',
         }
     },

@@ -2396,6 +2396,7 @@ deps: {
         },
         model: {
             title: 'MODEL',
+            useCliSettings: 'Fes servir la configuració del CLI',
             configureInCli: 'Configura els models a la configuració del CLI',
             customDescription: 'Fes servir un ID de model que no apareix a la llista.',
             customPromptBody: 'Introdueix un ID de model',
@@ -4172,6 +4173,7 @@ deps: {
         permissions: {
             yesAlwaysAllowCommand: 'Sí, permet globalment',
             yesForSession: 'Sí, i no preguntar per aquesta sessió',
+            stop: 'Atura',
             stopAndExplain: 'Atura, i explica què fer',
         }
     },
@@ -4184,6 +4186,7 @@ deps: {
             yesForCommandPrefix: "Sí, no tornis a preguntar per aquest prefix d'ordre",
             yesForSubcommand: "Sí, no tornis a preguntar per aquesta subordre",
             yesForCommandName: "Sí, no tornis a preguntar per aquesta ordre",
+            stop: 'Atura',
             noTellClaude: 'No, proporciona comentaris',
         }
     },

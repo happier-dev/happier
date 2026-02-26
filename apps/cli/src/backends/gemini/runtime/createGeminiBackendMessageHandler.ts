@@ -7,6 +7,7 @@ import {
   handleAcpStatusRunning,
 } from '@/agent/acp/bridge/acpCommonHandlers';
 import { createAcpAgentMessageForwarder } from '@/agent/acp/bridge/createAcpAgentMessageForwarder';
+import { isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
 import { logger } from '@/ui/logger';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 
@@ -128,11 +129,11 @@ export function createGeminiBackendMessageHandler(params: {
       }
 
       case 'tool-result': {
+        const isChangeTitleToolResult =
+          (typeof msg.toolName === 'string' && isChangeTitleToolNameAlias(msg.toolName.toLowerCase())) ||
+          (typeof msg.callId === 'string' && msg.callId.toLowerCase().includes('change_title'));
         if (
-          msg.toolName === 'change_title' ||
-          msg.toolName === 'happy__change_title' ||
-          msg.callId?.includes('change_title') ||
-          msg.toolName === 'happier__change_title'
+          isChangeTitleToolResult
         ) {
           params.state.changeTitleCompleted = true;
           logger.debug('[gemini] change_title completed');

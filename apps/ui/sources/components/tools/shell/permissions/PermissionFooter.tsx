@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { View, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { sessionAbort, sessionAllow, sessionDeny } from '@/sync/ops';
-import { sync } from '@/sync/sync';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { storage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
@@ -65,21 +64,6 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         return [];
     })();
     const canApproveExecPolicy = isCodexDecision && isNativeCodexAgent && execPolicyCommand.length > 0;
-
-    const sendStopAndExplainMessage = async () => {
-        // UX: the stop/abort action promises an explanation. Ensure we ask the agent explicitly,
-        // otherwise aborting the run can leave the user with no response.
-        try {
-            const summary = formatPermissionRequestSummary({ toolName, toolInput });
-            await sync.sendMessage(
-                sessionId,
-                `I denied the permission request (${summary}). ` +
-                    `Please explain what I should do manually to achieve the same result, without running any tools.`,
-            );
-        } catch (error) {
-            console.error('Failed to request explanation after abort:', error);
-        }
-    };
 
     if (!canApprovePermissions && permission.status === 'pending') {
         const summary = formatPermissionRequestSummary({ toolName, toolInput });
@@ -226,11 +210,6 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             // Only legacy/non-Codex decision flows should force read-only mode on stop.
             if (shouldForceReadOnlyAfterStop) {
                 storage.getState().updateSessionPermissionMode(sessionId, 'read-only');
-            }
-            // Codex can deadlock the turn when we auto-send a synthetic follow-up immediately
-            // after an abort decision. Leave Codex ready for the next user-authored message.
-            if (!isNativeCodexAgent) {
-                await sendStopAndExplainMessage();
             }
         } catch (error) {
             console.error('Failed to deny permission:', error);
@@ -636,8 +615,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                         )}
                     </TouchableOpacity>
 
-                    {/* Codex-style decision UI: only native Codex uses the abort workaround.
-                        Other codex-decision agents keep the generic stop+explain behavior. */}
+                    {/* Codex-style decision UI: only native Codex uses the abort workaround. */}
                     <TouchableOpacity
                         style={[
                             styles.button,
@@ -660,7 +638,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                                     isPending && styles.buttonTextDeny,
                                     isCodexAborted && styles.buttonTextSelected
                                 ]} numberOfLines={1} ellipsizeMode="tail">
-                                    {t(copy.stopAndExplainKey)}
+                                    {t(copy.stopKey)}
                                 </Text>
                             </View>
                         )}
@@ -865,7 +843,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                                 isPending && styles.buttonTextDeny,
                                 isDenied && styles.buttonTextSelected
                             ]} numberOfLines={1} ellipsizeMode="tail">
-                                {t(copy.noTellAgentKey)}
+                                {t(copy.stopKey)}
                             </Text>
                         </View>
                     )}

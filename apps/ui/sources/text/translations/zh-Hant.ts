@@ -1428,6 +1428,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
         model: {
             title: '模型',
+            useCliSettings: '使用 CLI 設定',
             configureInCli: '在 CLI 設定中配置模型',
         },
         codexPermissionMode: {
@@ -2579,6 +2580,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         // Codex permission dialog buttons
         permissions: {
             yesForSession: '是，並且本次工作階段不再詢問',
+            stop: '停止',
             stopAndExplain: '停止，並說明該做什麼',
         }
     },
@@ -2588,6 +2590,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         permissions: {
             yesAllowAllEdits: '是，允許本次工作階段的所有編輯',
             yesForTool: '是，不再詢問此工具',
+            stop: '停止',
             noTellClaude: '否，並告訴 Claude 該如何不同地操作',
         }
     },

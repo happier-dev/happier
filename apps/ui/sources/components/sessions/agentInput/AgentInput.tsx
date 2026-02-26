@@ -842,7 +842,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const effectiveModelLabel = React.useMemo(() => {
         const found = modelOptions.find((o) => o.value === effectiveModelPolicy.effectiveModelId);
         if (found) return found.label;
-        return effectiveModelPolicy.effectiveModelId === 'default' ? 'Default' : effectiveModelPolicy.effectiveModelId;
+        return effectiveModelPolicy.effectiveModelId === 'default' ? t('agentInput.model.useCliSettings') : effectiveModelPolicy.effectiveModelId;
     }, [effectiveModelPolicy.effectiveModelId, modelOptions]);
 
     const canEnterCustomModel = React.useMemo(() => {
@@ -879,7 +879,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             : '';
         const effectiveId = selected || 'default';
         const opt = preflightAcpSessionModeOptions?.find((o) => o.id === effectiveId) ?? null;
-        return { id: effectiveId, name: opt?.name ?? (effectiveId === 'default' ? 'Default' : effectiveId) };
+        return { id: effectiveId, name: opt?.name ?? (effectiveId === 'default' ? t('common.default') : effectiveId) };
     }, [preflightAcpSessionModeOptions, props.acpSessionModeSelectedIdOverride]);
 
     const acpConfigOptionControls = React.useMemo(() => {

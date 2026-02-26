@@ -1,5 +1,6 @@
 import { truncateDeep } from '../redaction/redact';
 import type { ToolHappierMetaV2, ToolNormalizationProtocol } from '@happier-dev/protocol';
+import { isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
 import { normalizeBashInput, normalizeBashResult } from './families/execute';
 import { normalizeReadInput, normalizeReadResult } from './families/read';
 import { normalizeEditInput, normalizeEditResult } from './families/edit';
@@ -276,7 +277,7 @@ export function canonicalizeToolNameV2(opts: {
     if (name === 'GeminiReasoning' || name === 'CodexReasoning' || lower === 'think') return 'Reasoning';
     if (lower === 'exit_plan_mode') return 'ExitPlanMode';
     if (lower === 'askuserquestion' || lower === 'ask_user_question') return 'AskUserQuestion';
-    if (lower === 'mcp__happier__change_title' || lower === 'mcp__happy__change_title') return 'change_title';
+    if (isChangeTitleToolNameAlias(lower)) return 'change_title';
     return name;
 }
 

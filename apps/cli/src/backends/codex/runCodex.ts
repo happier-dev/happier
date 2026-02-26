@@ -123,6 +123,12 @@ export async function runCodex(opts: {
 
     const explicitPermissionMode = opts.permissionMode;
     const hasResumeArg = typeof opts.resume === 'string' && opts.resume.trim().length > 0;
+
+    // Codex ACP session resume intentionally skips a separate capabilities probe.
+    // The probe requires spawning an ACP agent and waiting for initialize, which can be slower than
+    // resuming the prior session directly.
+    // We still fail closed: if a resume id is provided and Codex ACP cannot load it, the subsequent
+    // startup/initialize will error and the run will abort.
     const accountSettings = hasResumeArg ? null : (getActiveAccountSettingsSnapshot()?.settings ?? null);
     const permissionModeSeed = resolvePermissionModeSeedForAgentStart({
         agentId: 'codex',

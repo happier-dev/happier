@@ -2687,6 +2687,7 @@ export const ru: TranslationStructure = {
     },
     model: {
       title: "МОДЕЛЬ",
+      useCliSettings: "Использовать настройки CLI",
       configureInCli: "Настройте модели в настройках CLI",
       customDescription: "Использовать ID модели, которого нет в списке.",
       customPromptBody: "Введите ID модели",
@@ -4704,6 +4705,7 @@ export const ru: TranslationStructure = {
     permissions: {
       yesAlwaysAllowCommand: "Да, разрешить глобально",
       yesForSession: "Да, и не спрашивать для этой сессии",
+      stop: "Остановить",
       stopAndExplain: "Остановить и объяснить, что делать",
     },
   },
@@ -4717,6 +4719,7 @@ export const ru: TranslationStructure = {
         "Да, больше не спрашивать для этого префикса команды",
       yesForSubcommand: "Да, больше не спрашивать для этой подкоманды",
       yesForCommandName: "Да, больше не спрашивать для этой команды",
+      stop: "Остановить",
       noTellClaude: "Нет, дать обратную связь",
     },
   },

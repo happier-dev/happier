@@ -2994,6 +2994,7 @@ export const it: TranslationStructure = {
     },
     model: {
       title: "MODELLO",
+      useCliSettings: "Usa le impostazioni CLI",
       configureInCli: "Configura i modelli nelle impostazioni CLI",
       customDescription: "Usa un id modello che non è in elenco.",
       customPromptBody: "Inserisci un id modello",
@@ -5033,6 +5034,7 @@ export const it: TranslationStructure = {
     permissions: {
       yesAlwaysAllowCommand: "Sì, consenti sempre globalmente",
       yesForSession: "Sì, e non chiedere per una sessione",
+      stop: "Ferma",
       stopAndExplain: "Fermati e spiega cosa devo fare",
     },
   },
@@ -5047,6 +5049,7 @@ export const it: TranslationStructure = {
         "Sì, non chiedere più per questo prefisso di comando",
       yesForSubcommand: "Sì, non chiedere più per questo sottocomando",
       yesForCommandName: "Sì, non chiedere più per questo comando",
+      stop: "Ferma",
       noTellClaude: "No, fornisci feedback",
     },
   },

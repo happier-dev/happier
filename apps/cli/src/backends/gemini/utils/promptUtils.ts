@@ -4,6 +4,8 @@
  * Utilities for working with prompts, including change_title instruction detection.
  */
 
+import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
+
 /**
  * Check if a prompt contains change_title instruction
  * 
@@ -12,9 +14,5 @@
  */
 export function hasChangeTitleInstruction(prompt: string): boolean {
   const lower = prompt.toLowerCase();
-  return lower.includes('change_title') ||
-         lower.includes('happy__change_title') ||
-         lower.includes('mcp__happy__change_title') ||
-         lower.includes('happier__change_title') ||
-         lower.includes('mcp__happier__change_title');
+  return CHANGE_TITLE_TOOL_NAME_ALIASES.some((alias) => lower.includes(alias));
 }

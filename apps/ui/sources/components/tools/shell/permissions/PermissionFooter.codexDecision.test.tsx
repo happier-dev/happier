@@ -64,7 +64,7 @@ vi.mock('@/agents/catalog/permissionUiCopy', () => ({
         protocol: 'codexDecision',
         yesAlwaysAllowCommandKey: 'codex.permissions.yesAlwaysAllowCommand',
         yesForSessionKey: 'codex.permissions.yesForSession',
-        stopAndExplainKey: 'codex.permissions.stopAndExplain',
+        stopKey: 'codex.permissions.stop',
     }),
 }));
 

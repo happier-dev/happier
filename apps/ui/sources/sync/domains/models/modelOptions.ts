@@ -59,7 +59,7 @@ export function supportsFreeformModelSelectionForSession(agentType: AgentType, m
 function getModelLabel(mode: ModelMode): string {
     switch (mode) {
         case 'default':
-            return t('agentInput.permissionMode.default');
+            return t('agentInput.model.useCliSettings');
         case 'gemini-2.5-pro':
             return t('agentInput.geminiModel.gemini25Pro.label');
         case 'gemini-2.5-flash':

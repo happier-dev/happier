@@ -2525,6 +2525,7 @@ export const zhHans: TranslationStructure = {
     },
     model: {
       title: "模型",
+      useCliSettings: "使用 CLI 设置",
       configureInCli: "在 CLI 设置中配置模型",
       customDescription: "使用列表中未显示的模型 id。",
       customPromptBody: "输入模型 id",
@@ -4409,6 +4410,7 @@ export const zhHans: TranslationStructure = {
     permissions: {
       yesAlwaysAllowCommand: "是，全局永久允许",
       yesForSession: "是，并且本次会话不再询问",
+      stop: "停止",
       stopAndExplain: "停止，并说明该做什么",
     },
   },
@@ -4421,6 +4423,7 @@ export const zhHans: TranslationStructure = {
       yesForCommandPrefix: "是，不再询问此命令前缀",
       yesForSubcommand: "是，不再询问此子命令",
       yesForCommandName: "是，不再询问此命令",
+      stop: "停止",
       noTellClaude: "否，提供反馈",
     },
   },

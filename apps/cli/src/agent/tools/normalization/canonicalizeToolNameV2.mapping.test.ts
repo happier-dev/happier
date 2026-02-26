@@ -58,6 +58,16 @@ describe('canonicalizeToolNameV2 mappings', () => {
     expect(canonicalize(toolName)).toBe('Task');
   });
 
+  it.each([
+    'change_title',
+    'mcp__happier__change_title',
+    'mcp__happy__change_title',
+    'happier__change_title',
+    'happy__change_title',
+  ])('normalizes `%s` to change_title', (toolName) => {
+    expect(canonicalize(toolName)).toBe('change_title');
+  });
+
   it('infers Patch for delete-like inputs that include changes', () => {
     expect(canonicalize('delete', { changes: { 'foo.txt': { before: 'a', after: 'b' } } })).toBe('Patch');
   });
