@@ -37,13 +37,29 @@ function makeWindowsCmdExecutable(params: { dir: string; name: string; content: 
   return filePath;
 }
 
+function expectDefaultAcpArgs(args: string[]): void {
+  expect(args[0]).toBe('acp');
+  expect(args).toContain('--print-logs');
+  const logLevelIdx = args.indexOf('--log-level');
+  expect(logLevelIdx).toBeGreaterThanOrEqual(0);
+  expect(args[logLevelIdx + 1]).toBe('ERROR');
+}
+
 describe('createOpenCodeBackend command resolution', () => {
   const originalOpenCodePath = process.env.HAPPIER_OPENCODE_PATH;
+  const originalPrintLogs = process.env.HAPPIER_OPENCODE_ACP_PRINT_LOGS;
+  const originalLogLevel = process.env.HAPPIER_OPENCODE_ACP_LOG_LEVEL;
   const tempDirs: string[] = [];
 
   afterEach(() => {
     if (originalOpenCodePath === undefined) delete process.env.HAPPIER_OPENCODE_PATH;
     else process.env.HAPPIER_OPENCODE_PATH = originalOpenCodePath;
+
+    if (originalPrintLogs === undefined) delete process.env.HAPPIER_OPENCODE_ACP_PRINT_LOGS;
+    else process.env.HAPPIER_OPENCODE_ACP_PRINT_LOGS = originalPrintLogs;
+
+    if (originalLogLevel === undefined) delete process.env.HAPPIER_OPENCODE_ACP_LOG_LEVEL;
+    else process.env.HAPPIER_OPENCODE_ACP_LOG_LEVEL = originalLogLevel;
 
     while (tempDirs.length > 0) {
       const dir = tempDirs.pop();
@@ -61,6 +77,7 @@ describe('createOpenCodeBackend command resolution', () => {
 
     const backend = createOpenCodeBackend({ cwd: tmpdir(), env: {} }) as unknown as AcpBackendLike;
     expect(backend.options.command).toBe(expected);
+    expectDefaultAcpArgs(backend.options.args);
   });
 
   it('handles non-executable override paths with explicit platform semantics', () => {
@@ -76,9 +93,11 @@ describe('createOpenCodeBackend command resolution', () => {
     const backend = createOpenCodeBackend({ cwd: workDir, env: {} }) as unknown as AcpBackendLike;
     if (process.platform === 'win32') {
       expect(backend.options.command).toBe(nonExecutablePath);
+      expectDefaultAcpArgs(backend.options.args);
       return;
     }
     expect(backend.options.command).toBe('opencode');
+    expectDefaultAcpArgs(backend.options.args);
   });
 
   it('uses HAPPIER_OPENCODE_PATH when it points to an existing executable', () => {
@@ -103,7 +122,7 @@ describe('createOpenCodeBackend command resolution', () => {
 
     const backend = createOpenCodeBackend({ cwd: workDir, env: {} }) as unknown as AcpBackendLike;
     expect(backend.options.command).toBe(opencodePath);
-    expect(backend.options.args).toEqual(['acp']);
+    expectDefaultAcpArgs(backend.options.args);
     expect(backend.options.env.NODE_ENV).toBe('production');
     expect(backend.options.env.DEBUG).toBe('');
   });
@@ -132,6 +151,7 @@ describe('createOpenCodeBackend OPENCODE_CONFIG_CONTENT handling', () => {
 
     const backend = createOpenCodeBackend({ cwd: workDir, env: {} }) as unknown as AcpBackendLike;
     expect(backend.options.env.OPENCODE_CONFIG_CONTENT).toBe('{"model":"from-process-env"}');
+    expectDefaultAcpArgs(backend.options.args);
   });
 
   it('prefers options.env.OPENCODE_CONFIG_CONTENT over process.env when both are set', () => {
@@ -144,6 +164,7 @@ describe('createOpenCodeBackend OPENCODE_CONFIG_CONTENT handling', () => {
       env: { OPENCODE_CONFIG_CONTENT: '{"model":"from-options-env"}' },
     }) as unknown as AcpBackendLike;
     expect(backend.options.env.OPENCODE_CONFIG_CONTENT).toBe('{"model":"from-options-env"}');
+    expectDefaultAcpArgs(backend.options.args);
   });
 
   it('does not read ~/.config/opencode/opencode.json and does not set OPENCODE_CONFIG_CONTENT when env is unset', () => {
@@ -160,6 +181,15 @@ describe('createOpenCodeBackend OPENCODE_CONFIG_CONTENT handling', () => {
 
     const backend = createOpenCodeBackend({ cwd: homeDir, env: {} }) as unknown as AcpBackendLike;
     expect(backend.options.env.OPENCODE_CONFIG_CONTENT).toBeUndefined();
+    expectDefaultAcpArgs(backend.options.args);
+  });
+
+  it('can disable stderr log printing via env', () => {
+    const backend = createOpenCodeBackend({
+      cwd: '/tmp',
+      env: { HAPPIER_OPENCODE_ACP_PRINT_LOGS: '0' },
+    }) as unknown as AcpBackendLike;
+    expect(backend.options.args[0]).toBe('acp');
+    expect(backend.options.args).not.toContain('--print-logs');
   });
 });
-

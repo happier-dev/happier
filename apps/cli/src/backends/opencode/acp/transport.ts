@@ -13,6 +13,7 @@
  * Agent-specific stderr parsing can be added later if needed.
  */
 
+import { redactBugReportSensitiveText } from '@happier-dev/protocol';
 import type {
   TransportHandler,
   ToolPattern,
@@ -151,6 +152,55 @@ export class OpenCodeTransport implements TransportHandler {
         detail: 'Model not found. Check available models in your CLI (for example: `opencode models`).',
       };
       return { message: errorMessage };
+    }
+
+    const redacted = redactBugReportSensitiveText(trimmed);
+    const detail = redacted.length > 500 ? `${redacted.slice(0, 500)}…` : redacted;
+
+    // CLI invocation/config errors (flags/args/etc) should be surfaced directly so misconfiguration
+    // doesn't appear as a "silent" failure.
+    const lower = trimmed.toLowerCase();
+    const looksLikeCliInvocationError =
+      lower.startsWith('error:') ||
+      lower.includes('unknown flag') ||
+      lower.includes('unknown option') ||
+      lower.includes('unrecognized option') ||
+      lower.includes('unknown argument') ||
+      lower.includes('flag provided but not defined') ||
+      lower.includes('invalid value') ||
+      lower.includes('invalid argument') ||
+      lower.includes('unknown command');
+
+    if (looksLikeCliInvocationError) {
+      const errorMessage: AgentMessage = {
+        type: 'status',
+        status: 'error',
+        detail,
+      };
+      return { message: errorMessage, suppress: false };
+    }
+
+    // Provider request failures (e.g. Anthropic/OpenAI invalid_request_error) often only show up as
+    // OpenCode logs when `opencode acp --print-logs` is enabled. Surface these as user-visible errors
+    // so the UI doesn't appear stuck with no response.
+    const looksLikeProviderRequestError =
+      lower.includes('invalid_request_error') ||
+      lower.includes('apierror') ||
+      lower.includes('statuscode') ||
+      lower.includes('image exceeds') ||
+      (lower.includes('exceeds') && lower.includes('maximum')) ||
+      lower.includes('request failed') ||
+      lower.includes('bad request') ||
+      (lower.includes('http') && (lower.includes(' 4') || lower.includes(' 5'))) ||
+      (/\b(4\d\d|5\d\d)\b/.test(lower) && lower.includes('error'));
+
+    if (looksLikeProviderRequestError) {
+      const errorMessage: AgentMessage = {
+        type: 'status',
+        status: 'error',
+        detail,
+      };
+      return { message: errorMessage, suppress: false };
     }
 
     // During long-running tools, keep stderr available for debugging but avoid noisy UI messages.

@@ -133,6 +133,35 @@ describe('OpenCodeTransport handleStderr', () => {
     expect(transport.handleStderr('non-actionable warning', { activeToolCalls: new Set(), hasActiveInvestigation: false }))
       .toEqual({ message: null });
   });
+
+  it('emits request errors surfaced by provider logs (e.g. invalid_request_error)', () => {
+    const transport = new OpenCodeTransport();
+    const result = transport.handleStderr(
+      'invalid_request_error: image exceeds 5 MB maximum: 6348660 bytes > 5242880 bytes',
+      { activeToolCalls: new Set(), hasActiveInvestigation: false },
+    );
+    expect(asStatusErrorMessage(result.message).detail).toContain('image exceeds 5 MB maximum');
+  });
+
+  it('emits CLI invocation errors (e.g. unknown flag)', () => {
+    const transport = new OpenCodeTransport();
+    const result = transport.handleStderr('unknown flag: --print-logs', {
+      activeToolCalls: new Set(),
+      hasActiveInvestigation: false,
+    });
+    expect(asStatusErrorMessage(result.message).detail).toContain('unknown flag');
+  });
+
+  it('redacts sensitive values in emitted stderr errors', () => {
+    const transport = new OpenCodeTransport();
+    const result = transport.handleStderr('bad request: x-api-key: super-secret-value', {
+      activeToolCalls: new Set(),
+      hasActiveInvestigation: false,
+    });
+    const detail = asStatusErrorMessage(result.message).detail;
+    expect(detail).toContain('x-api-key: [REDACTED]');
+    expect(detail).not.toContain('super-secret-value');
+  });
 });
 
 describe('OpenCodeTransport timeouts', () => {

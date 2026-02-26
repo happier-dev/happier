@@ -24,6 +24,7 @@ import {
   type SetSessionModeRequest,
   type ContentBlock,
 } from '@agentclientprotocol/sdk';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol';
 import { randomUUID } from 'node:crypto';
 import { createWriteStream, promises as fs } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -744,6 +745,60 @@ export class AcpBackend implements AgentBackend {
       onDroppedLine: (entry) => {
         filteredCount++;
         droppedStdoutCapture?.write(entry);
+
+        // Some ACP agents incorrectly emit error output to stdout (instead of stderr), which gets
+        // filtered out as non-JSON and can otherwise leave the UI "stuck" with no visible failure.
+        // Best-effort: classify error-like dropped stdout lines during an in-flight prompt turn and
+        // surface them as status:error + a rejected waitForResponseComplete().
+        if (this.waitingForResponse && !this.responseCompletionError && entry.reason === 'transport_filter_null') {
+          const raw = entry.line;
+          const trimmed = raw.trim();
+          if (trimmed) {
+            const context: StderrContext = {
+              activeToolCalls: this.activeToolCalls,
+              hasActiveInvestigation: this.transport.isInvestigationTool
+                ? Array.from(this.activeToolCalls).some((id) => this.transport.isInvestigationTool!(id))
+                : false,
+            };
+
+            const transportResult = this.transport.handleStderr?.(raw, context);
+            const transportMessage = transportResult?.message ?? null;
+            if (transportMessage) {
+              this.emit(transportMessage);
+              if (transportMessage.type === 'status' && transportMessage.status === 'error') {
+                const detailRaw =
+                  typeof transportMessage.detail === 'string' && transportMessage.detail.trim()
+                    ? transportMessage.detail
+                    : trimmed;
+                const detail = redactBugReportSensitiveText(detailRaw);
+                this.failPendingResponseWait(new Error(detail));
+              }
+              return;
+            }
+
+            const analysisText = trimmed.length > 5000 ? trimmed.slice(0, 5000) : trimmed;
+            const lower = analysisText.toLowerCase();
+            const looksLikeError =
+              lower.startsWith('error') ||
+              lower.includes('error:') ||
+              lower.includes('exception') ||
+              lower.includes('traceback') ||
+              lower.includes('invalid_request') ||
+              lower.includes('invalid request') ||
+              lower.includes('unauthorized') ||
+              lower.includes('forbidden') ||
+              lower.includes('permission denied') ||
+              (/\b(4\d\d|5\d\d)\b/.test(lower) &&
+                (lower.includes('http') || lower.includes('status') || lower.includes('error') || lower.includes('request'))) ||
+              (lower.includes('exceeds') && lower.includes('bytes') && trimmed.includes('>'));
+            if (!looksLikeError) return;
+
+            const redacted = redactBugReportSensitiveText(trimmed);
+            const detail = redacted.length > 500 ? `${redacted.slice(0, 500)}…` : redacted;
+            this.emit({ type: 'status', status: 'error', detail });
+            this.failPendingResponseWait(new Error(detail));
+          }
+        }
       },
       onDone: () => {
         if (filteredCount > 0) {
@@ -1879,7 +1934,7 @@ export class AcpBackend implements AgentBackend {
         // NOTE: When an ACP agent crashes/exits shortly after responding to session/prompt, the
         // subprocess exit can race with our "no updates" idle fallback. Use a small minimum grace
         // to reduce flakes and avoid incorrectly treating a failed turn as complete.
-        const graceMs = Math.max(35, transportIdleTimeoutMs);
+        const graceMs = Math.max(100, transportIdleTimeoutMs);
         if (this.postPromptCompletionIdleTimeout) {
           clearTimeout(this.postPromptCompletionIdleTimeout);
         }

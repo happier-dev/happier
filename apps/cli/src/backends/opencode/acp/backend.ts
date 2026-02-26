@@ -15,6 +15,7 @@ import { openCodeTransport } from '@/backends/opencode/acp/transport';
 import { logger } from '@/ui/logger';
 import type { PermissionMode } from '@/api/types';
 import { buildOpenCodeFamilyPermissionEnv } from '@/backends/opencode/utils/opencodeFamilyPermissionEnv';
+import { parseBooleanEnv } from '@happier-dev/protocol';
 
 export interface OpenCodeBackendOptions extends AgentFactoryOptions {
   /** MCP servers to make available to the agent */
@@ -26,22 +27,37 @@ export interface OpenCodeBackendOptions extends AgentFactoryOptions {
 }
 
 export function createOpenCodeBackend(options: OpenCodeBackendOptions): AgentBackend {
+  const mergedEnv: Record<string, string> = {
+    // Pass through the parent process environment by default so users can configure
+    // OpenCode using standard env vars (including OPENCODE_CONFIG_CONTENT).
+    ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string')),
+    // Isolation/runner env should override the parent environment.
+    ...options.env,
+    ...buildOpenCodeFamilyPermissionEnv(options.permissionMode),
+    // Keep output clean; ACP must own stdout.
+    NODE_ENV: 'production',
+    DEBUG: '',
+  };
+
+  const shouldPrintLogs = parseBooleanEnv(mergedEnv['HAPPIER_OPENCODE_ACP_PRINT_LOGS'], true);
+
+  const resolvedLogLevel = (() => {
+    const raw = (mergedEnv['HAPPIER_OPENCODE_ACP_LOG_LEVEL'] ?? '').toString().trim().toUpperCase();
+    if (raw === 'DEBUG' || raw === 'INFO' || raw === 'WARN' || raw === 'ERROR') return raw;
+    return 'ERROR';
+  })();
+
   const backendOptions: AcpBackendOptions = {
     agentName: 'opencode',
     cwd: options.cwd,
     command: resolveCliPathOverride({ agentId: 'opencode' }) ?? 'opencode',
-    args: ['acp'],
-    env: {
-      // Pass through the parent process environment by default so users can configure
-      // OpenCode using standard env vars (including OPENCODE_CONFIG_CONTENT).
-      ...process.env,
-      // Isolation/runner env should override the parent environment.
-      ...options.env,
-      ...buildOpenCodeFamilyPermissionEnv(options.permissionMode),
-      // Keep output clean; ACP must own stdout.
-      NODE_ENV: 'production',
-      DEBUG: '',
-    },
+    args: [
+      'acp',
+      ...(shouldPrintLogs ? (['--print-logs'] as const) : []),
+      '--log-level',
+      resolvedLogLevel,
+    ],
+    env: mergedEnv,
     mcpServers: options.mcpServers,
     permissionHandler: options.permissionHandler,
     transportHandler: openCodeTransport,

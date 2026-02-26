@@ -11,6 +11,7 @@ function writeFakeAcpAgentScript(params: {
   dir: string;
   exitCodeAfterPrompt?: number;
   stderrAfterPromptText?: string;
+  stdoutAfterPromptText?: string;
   emitMessageChunkAfterPrompt?: boolean;
   selfTerminateSignalAfterPrompt?: NodeJS.Signals;
 }): string {
@@ -18,6 +19,7 @@ function writeFakeAcpAgentScript(params: {
   const shouldExitAfterPrompt = typeof params.exitCodeAfterPrompt === 'number';
   const exitCode = params.exitCodeAfterPrompt ?? 0;
   const stderrAfterPromptText = params.stderrAfterPromptText ? JSON.stringify(params.stderrAfterPromptText) : 'null';
+  const stdoutAfterPromptText = params.stdoutAfterPromptText ? JSON.stringify(params.stdoutAfterPromptText) : 'null';
   const emitMessageChunkAfterPrompt = params.emitMessageChunkAfterPrompt ?? true;
   const selfTerminateSignalAfterPrompt =
     typeof params.selfTerminateSignalAfterPrompt === 'string' ? params.selfTerminateSignalAfterPrompt : null;
@@ -63,6 +65,13 @@ function writeFakeAcpAgentScript(params: {
           const stderrText = ${stderrAfterPromptText};
           if (stderrText) {
             process.stderr.write(String(stderrText) + '\\n');
+          }
+          const stdoutText = ${stdoutAfterPromptText};
+          if (stdoutText) {
+            // Some ACP agents (incorrectly) write error output to stdout instead of stderr.
+            // Our transport filters non-JSON stdout lines, so the backend must still surface
+            // these to avoid a "silent" failure in the UI.
+            process.stdout.write(String(stdoutText) + '\\n');
           }
           const selfSignal = ${selfTerminateSignalAfterPrompt ? JSON.stringify(selfTerminateSignalAfterPrompt) : 'null'};
           if (selfSignal) {
@@ -229,7 +238,7 @@ describe('AcpBackend.waitForResponseComplete', () => {
       const started = await backend.startSession();
       await backend.sendPrompt(started.sessionId, 'hi');
 
-      await expect(backend.waitForResponseComplete(50)).resolves.toBeUndefined();
+      await expect(backend.waitForResponseComplete(250)).resolves.toBeUndefined();
     } finally {
       await backendForCleanup?.dispose().catch(() => {});
       rmSync(dir, { recursive: true, force: true });
@@ -379,6 +388,109 @@ describe('AcpBackend.waitForResponseComplete', () => {
 
       await errorStatusEmitted;
       await expect(backend.waitForResponseComplete(250)).rejects.toThrow(/auth invalid/);
+    } finally {
+      await backendForCleanup?.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it('rejects waitForResponseComplete when agent writes an error-like non-JSON stdout line during a prompt', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-error-chunk-'));
+    const scriptPath = writeFakeAcpAgentScript({
+      dir,
+      emitMessageChunkAfterPrompt: false,
+      stdoutAfterPromptText: 'Error: image exceeds 5 MB maximum',
+    });
+    let backendForCleanup: AcpBackend | undefined;
+
+    try {
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: {
+          agentName: 'test',
+          getInitTimeout: () => 5_000,
+          getToolPatterns: () => [] as ToolPattern[],
+          getIdleTimeout: () => 1,
+          // Match real ACP transports: non-JSON stdout must be filtered out so the ACP stream parser
+          // doesn't crash. The backend should still surface error-like dropped lines to callers.
+          filterStdoutLine: (line: string) => {
+            const trimmed = line.trim();
+            if (!trimmed) return null;
+            if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null;
+            try {
+              const parsed = JSON.parse(trimmed);
+              if (typeof parsed !== 'object' || parsed === null) return null;
+              return line;
+            } catch {
+              return null;
+            }
+          },
+        } satisfies TransportHandler,
+      });
+      backendForCleanup = backend;
+
+      const started = await backend.startSession();
+      await backend.sendPrompt(started.sessionId, 'hi');
+
+      await expect(backend.waitForResponseComplete(250)).rejects.toThrow(/image exceeds 5 MB maximum/);
+    } finally {
+      await backendForCleanup?.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it('redacts sensitive tokens in surfaced dropped-stdout errors', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-error-redaction-'));
+    const scriptPath = writeFakeAcpAgentScript({
+      dir,
+      emitMessageChunkAfterPrompt: false,
+      stdoutAfterPromptText: 'Error: Authorization: Bearer abc/def+ghi==',
+    });
+    let backendForCleanup: AcpBackend | undefined;
+
+    try {
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: {
+          agentName: 'test',
+          getInitTimeout: () => 5_000,
+          getToolPatterns: () => [] as ToolPattern[],
+          getIdleTimeout: () => 1,
+          filterStdoutLine: (line: string) => {
+            const trimmed = line.trim();
+            if (!trimmed) return null;
+            if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null;
+            try {
+              const parsed = JSON.parse(trimmed);
+              if (typeof parsed !== 'object' || parsed === null) return null;
+              return line;
+            } catch {
+              return null;
+            }
+          },
+        } satisfies TransportHandler,
+      });
+      backendForCleanup = backend;
+
+      const started = await backend.startSession();
+      await backend.sendPrompt(started.sessionId, 'hi');
+
+      let caught: unknown;
+      try {
+        await backend.waitForResponseComplete(250);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      const message = (caught as Error).message;
+      expect(message).toContain('[REDACTED]');
+      expect(message).not.toContain('abc/def+ghi==');
     } finally {
       await backendForCleanup?.dispose().catch(() => {});
       rmSync(dir, { recursive: true, force: true });
