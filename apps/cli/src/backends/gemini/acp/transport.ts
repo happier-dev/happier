@@ -20,6 +20,7 @@ import type {
   ToolNameContext,
 } from '@/agent/transport/TransportHandler';
 import type { AgentMessage } from '@/agent/core';
+import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
 import { logger } from '@/ui/logger';
 import { filterJsonObjectOrArrayLine } from '@/agent/transport/utils/jsonStdoutFilter';
 import { getSuggestedGeminiModelsForUi } from '@/backends/gemini/models/suggestedGeminiModelsForUi';
@@ -62,14 +63,7 @@ export const GEMINI_TIMEOUTS = {
 const GEMINI_TOOL_PATTERNS: ToolPatternWithInputFields[] = [
   {
     name: 'change_title',
-    patterns: [
-      'change_title',
-      'change-title',
-      'happy__change_title',
-      'mcp__happy__change_title',
-      'happier__change_title',
-      'mcp__happier__change_title',
-    ],
+    patterns: CHANGE_TITLE_TOOL_NAME_ALIASES,
     inputFields: ['title'],
     emptyInputDefault: true, // change_title often has empty input (title extracted from context)
   },

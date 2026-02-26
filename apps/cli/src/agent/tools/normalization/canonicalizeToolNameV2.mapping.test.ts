@@ -60,6 +60,7 @@ describe('canonicalizeToolNameV2 mappings', () => {
 
   it.each([
     'change_title',
+    'change-title',
     'mcp__happier__change_title',
     'mcp__happy__change_title',
     'happier__change_title',

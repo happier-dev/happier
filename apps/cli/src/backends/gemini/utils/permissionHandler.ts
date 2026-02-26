@@ -10,6 +10,7 @@ import {
   type PendingRequest,
   type PermissionResult,
 } from '@/agent/permissions/CodexLikePermissionHandler';
+import { isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
 
 export type { PermissionResult, PendingRequest };
 
@@ -21,8 +22,6 @@ export class GeminiPermissionHandler extends CodexLikePermissionHandler {
     super({ session, logPrefix: '[Gemini]', onAbortRequested: opts?.onAbortRequested ?? null });
     // Always-auto-approve safe internal tools that don't perform external side effects.
     this.alwaysAutoApproveToolNameIncludes = [
-      'happy__change_title',
-      'happier__change_title',
       'geminireasoning',
       'codexreasoning',
     ];
@@ -36,6 +35,7 @@ export class GeminiPermissionHandler extends CodexLikePermissionHandler {
     const lowerName = toolName.toLowerCase();
     const lowerId = toolCallId.toLowerCase();
     const isAlwaysAutoApprove =
+      isChangeTitleToolNameAlias(toolName) ||
       this.alwaysAutoApproveToolNameIncludes.some((t) => lowerName.includes(t)) ||
       this.alwaysAutoApproveToolCallIdIncludes.some((t) => lowerId.includes(t));
     if (isAlwaysAutoApprove) {

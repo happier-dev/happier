@@ -25,6 +25,7 @@ import {
   determineGeminiModel,
   getGeminiModelSource
 } from '@/backends/gemini/utils/config';
+import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
 
 function isTruthyEnv(value: string | undefined): boolean {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -180,16 +181,16 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
     permissionHandler: options.permissionHandler,
     transportHandler: geminiTransport,
     authMethodId,
-    // Check if prompt instructs the agent to change title (for auto-approval of change_title tool)
-    hasChangeTitleInstruction: (prompt: string) => {
-      const lower = prompt.toLowerCase();
-      return lower.includes('change_title') ||
-             lower.includes('change title') ||
-             lower.includes('set title') ||
-             lower.includes('mcp__happy__change_title') ||
-             lower.includes('mcp__happier__change_title');
-    },
-  };
+	    // Check if prompt instructs the agent to change title (for auto-approval of change_title tool)
+	    hasChangeTitleInstruction: (prompt: string) => {
+	      const lower = prompt.toLowerCase();
+	      return (
+	        CHANGE_TITLE_TOOL_NAME_ALIASES.some((alias) => lower.includes(alias)) ||
+	        lower.includes('change title') ||
+	        lower.includes('set title')
+	      );
+	    },
+	  };
 
   // Determine model source for logging
   const modelSource = getGeminiModelSource(options.model, localConfig);

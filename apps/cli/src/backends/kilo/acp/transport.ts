@@ -19,6 +19,7 @@ import type {
   ToolNameContext,
 } from '@/agent/transport/TransportHandler';
 import type { AgentMessage } from '@/agent/core';
+import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
 import { logger } from '@/ui/logger';
 import { filterJsonObjectOrArrayLine } from '@/agent/transport/utils/jsonStdoutFilter';
 import {
@@ -39,14 +40,7 @@ export const KILO_TIMEOUTS = {
 const KILO_TOOL_PATTERNS: readonly ToolPatternWithInputFields[] = [
   {
     name: 'change_title',
-    patterns: [
-      'change_title',
-      'change-title',
-      'happy__change_title',
-      'mcp__happy__change_title',
-      'happier__change_title',
-      'mcp__happier__change_title',
-    ],
+    patterns: CHANGE_TITLE_TOOL_NAME_ALIASES,
     inputFields: ['title'],
   },
   {

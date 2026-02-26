@@ -5,6 +5,7 @@ import { canonicalizeToolNameForRendering } from './nameInference';
 describe('canonicalizeToolNameForRendering (change_title aliases)', () => {
     it.each([
         'change_title',
+        'change-title',
         'mcp__happier__change_title',
         'mcp__happy__change_title',
         'happier__change_title',
@@ -13,4 +14,3 @@ describe('canonicalizeToolNameForRendering (change_title aliases)', () => {
         expect(canonicalizeToolNameForRendering(toolName, {})).toBe('change_title');
     });
 });
-

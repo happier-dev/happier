@@ -25,6 +25,7 @@ describe('parseMessageAsEvent', () => {
             parseMessageAsEvent(makeToolCallMessage('happy__change_title')),
             parseMessageAsEvent(makeToolCallMessage('happier__change_title')),
             parseMessageAsEvent(makeToolCallMessage('change_title')),
+            parseMessageAsEvent(makeToolCallMessage('change-title')),
         ];
 
         for (const event of events) {

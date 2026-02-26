@@ -14,7 +14,7 @@
  */
 
 import { redactBugReportSensitiveText } from '@happier-dev/protocol';
-import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
+import { CHANGE_TITLE_TOOL_NAME_ALIASES, isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
 import type {
   TransportHandler,
   ToolPattern,
@@ -47,7 +47,7 @@ export const OPENCODE_TIMEOUTS = {
 const OPENCODE_TOOL_PATTERNS: readonly ToolPatternWithInputFields[] = [
   {
     name: 'change_title',
-    patterns: ['change-title', ...CHANGE_TITLE_TOOL_NAME_ALIASES],
+    patterns: CHANGE_TITLE_TOOL_NAME_ALIASES,
     inputFields: ['title'],
   },
   {
@@ -237,7 +237,7 @@ export class OpenCodeTransport implements TransportHandler {
     // OpenCode uses `change_title` as the task/subagent tool in some ACP implementations.
     // Map it to `Task` when ACP metadata indicates this is the task tool so that downstream
     // features (like sidechain replay import) can key off a stable name.
-    if (toolName === 'change_title') {
+    if (isChangeTitleToolNameAlias(toolName)) {
       const acp = input?._acp;
       const acpTitle =
         acp && typeof acp === 'object' && !Array.isArray(acp) && typeof (acp as any).title === 'string'

@@ -13,6 +13,8 @@ import { z } from 'zod';
 export const CHANGE_TITLE_TOOL_NAME_ALIASES = [
   // Canonical
   'change_title',
+  // Alternate delimiter seen in some transports
+  'change-title',
   // Preferred MCP naming
   'mcp__happier__change_title',
   // Legacy MCP naming during migration
