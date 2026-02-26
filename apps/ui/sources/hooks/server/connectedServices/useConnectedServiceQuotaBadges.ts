@@ -2,7 +2,9 @@ import * as React from 'react';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { getConnectedServiceQuotaSnapshotSealed } from '@/sync/api/account/apiConnectedServicesQuotasV2';
+import { getConnectedServiceQuotaSnapshotPlain } from '@/sync/api/account/apiConnectedServicesQuotasV3';
 import { computeConnectedServiceQuotaSummaryBadges } from '@/sync/domains/connectedServices/connectedServiceQuotaBadges';
 import { openConnectedServiceQuotaSnapshot } from '@/sync/domains/connectedServices/openConnectedServiceQuotaSnapshot';
 import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
@@ -50,8 +52,31 @@ export function useConnectedServiceQuotaBadges(
     cacheByKeyRef.current = cacheByKey;
   }, [cacheByKey]);
 
+  const accountModeRef = React.useRef<'plain' | 'e2ee' | null>(null);
+  const accountModePromiseRef = React.useRef<Promise<'plain' | 'e2ee'> | null>(null);
+  React.useEffect(() => {
+    accountModeRef.current = null;
+    accountModePromiseRef.current = null;
+  }, [credentials?.token]);
+
   const pinnedByKey = settings.connectedServicesQuotaPinnedMeterIdsByKey;
   const strategyByKey = settings.connectedServicesQuotaSummaryStrategyByKey;
+
+  const resolveAccountMode = React.useCallback(async (): Promise<'plain' | 'e2ee'> => {
+    if (accountModeRef.current) return accountModeRef.current;
+    if (!credentials) return 'e2ee';
+
+    if (!accountModePromiseRef.current) {
+      accountModePromiseRef.current = fetchAccountEncryptionMode(credentials)
+        .then((res) => (res.mode === 'plain' ? 'plain' : 'e2ee'))
+        .catch(() => 'e2ee')
+        .then((mode) => {
+          accountModeRef.current = mode;
+          return mode;
+        });
+    }
+    return await accountModePromiseRef.current;
+  }, [credentials]);
 
   React.useEffect(() => {
     if (!quotasEnabled) return;
@@ -113,13 +138,23 @@ export function useConnectedServiceQuotaBadges(
 
     const controller = new AbortController();
     fireAndForget((async () => {
+      const mode = await resolveAccountMode();
       await Promise.all(toFetch.map(async (entry) => {
         try {
-          const sealed = await getConnectedServiceQuotaSnapshotSealed(credentials, {
-            serviceId: entry.serviceId,
-            profileId: entry.profileId,
-          });
-          const opened = sealed ? openConnectedServiceQuotaSnapshot(credentials, sealed.sealed) : null;
+          let opened: ConnectedServiceQuotaSnapshotV1 | null = null;
+          if (mode === 'plain') {
+            opened = await getConnectedServiceQuotaSnapshotPlain(credentials, {
+              serviceId: entry.serviceId,
+              profileId: entry.profileId,
+            });
+          }
+          if (!opened) {
+            const sealed = await getConnectedServiceQuotaSnapshotSealed(credentials, {
+              serviceId: entry.serviceId,
+              profileId: entry.profileId,
+            });
+            opened = sealed ? openConnectedServiceQuotaSnapshot(credentials, sealed.sealed) : null;
+          }
           if (controller.signal.aborted) return;
           setCacheByKey((prev) => {
             const existing = prev[entry.key];
@@ -154,7 +189,7 @@ export function useConnectedServiceQuotaBadges(
     })(), { tag: 'useConnectedServiceQuotaBadges.refresh' });
 
     return () => controller.abort();
-  }, [quotasEnabled, credentials, profiles, pinnedByKey, wakeSeq]);
+  }, [quotasEnabled, credentials, profiles, pinnedByKey, wakeSeq, resolveAccountMode]);
 
   const badgesByKey: Record<string, Array<{ meterId: string; text: string }>> = {};
   if (!quotasEnabled) return badgesByKey;

@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ConnectedServiceQuotaSnapshotV1Schema, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 import type { getConnectedServiceQuotaSnapshotSealed } from '@/sync/api/account/apiConnectedServicesQuotasV2';
+import type { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
+import type { getConnectedServiceQuotaSnapshotPlain } from '@/sync/api/account/apiConnectedServicesQuotasV3';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -23,6 +25,25 @@ vi.mock('@/auth/context/AuthContext', () => ({
 const useFeatureEnabledSpy = vi.fn((_featureId: string) => true);
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: (featureId: string) => useFeatureEnabledSpy(featureId),
+}));
+
+const { fetchAccountEncryptionModeSpy } = vi.hoisted(() => ({
+  fetchAccountEncryptionModeSpy: vi.fn<
+    (...args: Parameters<typeof fetchAccountEncryptionMode>) => ReturnType<typeof fetchAccountEncryptionMode>
+  >(async () => ({ mode: 'e2ee', updatedAt: 0 })),
+}));
+vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
+  fetchAccountEncryptionMode: fetchAccountEncryptionModeSpy,
+}));
+
+const { getConnectedServiceQuotaSnapshotPlainSpy } = vi.hoisted(() => ({
+  getConnectedServiceQuotaSnapshotPlainSpy: vi.fn<
+    (...args: Parameters<typeof getConnectedServiceQuotaSnapshotPlain>) => ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>
+  >(async () => null),
+}));
+vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
+  getConnectedServiceQuotaSnapshotPlain: getConnectedServiceQuotaSnapshotPlainSpy,
+  requestConnectedServiceQuotaSnapshotRefreshV3: vi.fn(async () => true),
 }));
 
 vi.mock('@/sync/store/hooks', async () => {
@@ -75,6 +96,7 @@ describe('ConnectedServiceDetailView quotas', () => {
 
   it('shows quota card when feature is enabled', async () => {
     setFeatureFlags({ connectedServices: true, 'connectedServices.quotas': true });
+    fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'e2ee', updatedAt: 0 });
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
 
     let tree!: renderer.ReactTestRenderer;
@@ -87,6 +109,7 @@ describe('ConnectedServiceDetailView quotas', () => {
 
   it('hides quota card when feature is disabled', async () => {
     setFeatureFlags({ connectedServices: true, 'connectedServices.quotas': false });
+    fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'e2ee', updatedAt: 0 });
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
 
     let tree!: renderer.ReactTestRenderer;
@@ -99,6 +122,7 @@ describe('ConnectedServiceDetailView quotas', () => {
 
   it('does not expose connected services detail when the feature is disabled', async () => {
     setFeatureFlags({ connectedServices: false, 'connectedServices.quotas': true });
+    fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'e2ee', updatedAt: 0 });
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
 
     let tree!: renderer.ReactTestRenderer;
@@ -112,6 +136,7 @@ describe('ConnectedServiceDetailView quotas', () => {
 
   it('persists pinned meter ids via settings when toggled', async () => {
     setFeatureFlags({ connectedServices: true, 'connectedServices.quotas': true });
+    fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'e2ee', updatedAt: 0 });
 
     const secretBytes = new Uint8Array(32).fill(3);
     const snapshot = ConnectedServiceQuotaSnapshotV1Schema.parse({
@@ -166,5 +191,49 @@ describe('ConnectedServiceDetailView quotas', () => {
     expect(applySettingsSpy).toHaveBeenCalledWith({
       connectedServicesQuotaPinnedMeterIdsByKey: { 'openai-codex/work': ['weekly'] },
     });
+  });
+
+  it('loads plaintext quota snapshots for plaintext accounts', async () => {
+    setFeatureFlags({ connectedServices: true, 'connectedServices.quotas': true });
+    fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'plain', updatedAt: 0 });
+
+    const snapshot = ConnectedServiceQuotaSnapshotV1Schema.parse({
+      v: 1,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      fetchedAt: 1,
+      staleAfterMs: 60_000,
+      planLabel: 'Pro',
+      accountLabel: null,
+      meters: [
+        {
+          meterId: 'weekly',
+          label: 'Weekly',
+          used: 82,
+          limit: 100,
+          unit: 'count',
+          utilizationPct: null,
+          resetsAt: null,
+          status: 'ok',
+          details: {},
+        },
+      ],
+    });
+
+    getConnectedServiceQuotaSnapshotPlainSpy.mockResolvedValue(snapshot);
+
+    const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
+
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(<ConnectedServiceDetailView />);
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const row = tree.root.find((n) => n.props?.meter?.meterId === 'weekly');
+    expect(row).toBeTruthy();
   });
 });

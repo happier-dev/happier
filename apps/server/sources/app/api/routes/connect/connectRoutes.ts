@@ -5,6 +5,7 @@ import { connectConnectExternalRoutes } from "./connectRoutes.connectExternal";
 import { connectVendorTokenRoutes } from "./connectRoutes.vendorTokens";
 import { connectConnectedServicesV2Routes } from "./connectRoutes.connectedServicesV2";
 import { connectConnectedServicesQuotasV2Routes } from "./connectRoutes.connectedServicesQuotasV2";
+import { connectConnectedServicesQuotasV3Routes } from "./connectRoutes.connectedServicesQuotasV3";
 import { connectConnectedServicesV3Routes } from "./connectRoutes.connectedServicesV3";
 import { createServerFeatureGatedRouteApp } from "@/app/features/catalog/serverFeatureGate";
 import { registerOAuthCallbackRoute } from "./oauthExternal/registerOAuthCallbackRoute";
@@ -19,6 +20,7 @@ export function connectRoutes(app: Fastify) {
     connectConnectedServicesV2Routes(createServerFeatureGatedRouteApp(app, "connectedServices", process.env));
     connectConnectedServicesV3Routes(createServerFeatureGatedRouteApp(app, "connectedServices", process.env));
     connectConnectedServicesQuotasV2Routes(createServerFeatureGatedRouteApp(app, "connectedServices.quotas", process.env));
+    connectConnectedServicesQuotasV3Routes(createServerFeatureGatedRouteApp(app, "connectedServices.quotas", process.env));
 
     // OAuth callback must stay mounted for auth flows; connect flows are rejected inside the handler when disabled.
     registerOAuthCallbackRoute(app);

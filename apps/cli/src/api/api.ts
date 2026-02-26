@@ -18,12 +18,18 @@ import {
   shouldReturnNullForGetOrCreateSessionError,
 } from './client/offlineErrors';
 import {
+  AccountEncryptionModeResponseSchema,
+  ConnectedServiceCredentialRecordV1Schema,
   ConnectedServiceIdSchema,
+  ConnectedServiceQuotaSnapshotV1Schema,
   SealedConnectedServiceCredentialV1Schema,
   SealedConnectedServiceQuotaSnapshotV1Schema,
+  StoredJsonContentEnvelopeSchema,
 } from '@happier-dev/protocol';
 import type {
+  ConnectedServiceCredentialRecordV1,
   ConnectedServiceId,
+  ConnectedServiceQuotaSnapshotV1,
   SealedConnectedServiceCredentialV1,
   SealedConnectedServiceQuotaSnapshotV1,
 } from '@happier-dev/protocol';
@@ -531,6 +537,91 @@ export class ApiClient {
     return { serviceId: serviceIdParsed.data, profiles: profilesParsed.data };
   }
 
+  async getAccountEncryptionMode(): Promise<'e2ee' | 'plain'> {
+    const serverUrl = resolveServerHttpBaseUrl();
+    try {
+      const response = await axios.get(
+        `${serverUrl}/v1/account/encryption`,
+        {
+          headers: {
+            'Authorization': `Bearer ${this.credential.token}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 5000,
+        },
+      );
+      if (response.status !== 200) return 'e2ee';
+      const parsed = AccountEncryptionModeResponseSchema.safeParse(response.data);
+      if (!parsed.success) return 'e2ee';
+      return parsed.data.mode === 'plain' ? 'plain' : 'e2ee';
+    } catch (error: unknown) {
+      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+      if (status === 404) return 'e2ee';
+      logger.debug(`[API] [ERROR] Failed to get account encryption mode:`, serializeAxiosErrorForLog(error));
+      return 'e2ee';
+    }
+  }
+
+  async getConnectedServiceCredentialPlain(params: {
+    serviceId: ConnectedServiceId;
+    profileId: string;
+  }): Promise<{
+    content: { t: 'plain'; v: ConnectedServiceCredentialRecordV1 };
+  } | null> {
+    const serverUrl = resolveServerHttpBaseUrl();
+    const serviceId = encodeURIComponent(params.serviceId);
+    const profileId = encodeURIComponent(params.profileId);
+
+    try {
+      const response = await axios.get(
+        `${serverUrl}/v3/connect/${serviceId}/profiles/${profileId}/credential`,
+        {
+          headers: {
+            'Authorization': `Bearer ${this.credential.token}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 5000,
+        },
+      );
+      if (response.status !== 200) {
+        throw new Error(`Server returned status ${response.status}`);
+      }
+      const raw = response.data;
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        throw new Error('Invalid connected service credential response');
+      }
+
+      const contentParsed = StoredJsonContentEnvelopeSchema.safeParse((raw as any).content);
+      if (!contentParsed.success || contentParsed.data.t !== 'plain') {
+        throw new Error('Invalid connected service credential response');
+      }
+
+      const recordParsed = ConnectedServiceCredentialRecordV1Schema.safeParse(contentParsed.data.v);
+      if (!recordParsed.success) {
+        throw new Error('Invalid connected service credential response');
+      }
+
+      return { content: { t: 'plain', v: recordParsed.data } };
+    } catch (error: unknown) {
+      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+      const code = (() => {
+        if (!axios.isAxiosError(error)) return undefined;
+        const data = error.response?.data;
+        if (!data || typeof data !== 'object' || Array.isArray(data)) return undefined;
+        const rec = data as Record<string, unknown>;
+        return typeof rec.error === 'string' ? rec.error : undefined;
+      })();
+      if (status === 404) {
+        return null;
+      }
+      if (status === 409 && code === 'connect_credential_unsupported_format') {
+        return null;
+      }
+      logger.debug(`[API] [ERROR] Failed to get connected service credential (v3):`, serializeAxiosErrorForLog(error));
+      throw new Error(`Failed to get connected service credential: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
   /**
    * Register a sealed connected service quota snapshot (v2).
    *
@@ -638,6 +729,120 @@ export class ApiClient {
       if (status === 404) return null;
 
       logger.debug(`[API] [ERROR] Failed to get connected service quota snapshot:`, serializeAxiosErrorForLog(error));
+      throw new Error(
+        `Failed to get connected service quota snapshot: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
+  }
+
+  async registerConnectedServiceQuotaSnapshotPlain(params: {
+    serviceId: ConnectedServiceId;
+    profileId: string;
+    content: { t: 'plain'; v: ConnectedServiceQuotaSnapshotV1 };
+    metadata: {
+      fetchedAt: number;
+      staleAfterMs: number;
+      status: 'ok' | 'unavailable' | 'estimated' | 'error';
+    };
+  }): Promise<void> {
+    const serverUrl = resolveServerHttpBaseUrl();
+    const serviceId = encodeURIComponent(params.serviceId);
+    const profileId = encodeURIComponent(params.profileId);
+
+    try {
+      const response = await axios.post(
+        `${serverUrl}/v3/connect/${serviceId}/profiles/${profileId}/quotas`,
+        {
+          content: params.content,
+          metadata: params.metadata,
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${this.credential.token}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 5000,
+        },
+      );
+
+      if (response.status !== 200 && response.status !== 201) {
+        throw new Error(`Server returned status ${response.status}`);
+      }
+
+      logger.debug(`[API] Connected service quota snapshot registered (v3)`, {
+        serviceId: params.serviceId,
+        profileId: params.profileId,
+      });
+    } catch (error) {
+      logger.debug(`[API] [ERROR] Failed to register connected service quota snapshot (v3):`, serializeAxiosErrorForLog(error));
+      throw new Error(
+        `Failed to register connected service quota snapshot: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
+  }
+
+  async getConnectedServiceQuotaSnapshotPlain(params: {
+    serviceId: ConnectedServiceId;
+    profileId: string;
+  }): Promise<{
+    content: { t: 'plain'; v: ConnectedServiceQuotaSnapshotV1 };
+    metadata: {
+      fetchedAt: number;
+      staleAfterMs: number;
+      status: 'ok' | 'unavailable' | 'estimated' | 'error';
+      refreshRequestedAt?: number;
+    };
+  } | null> {
+    const serverUrl = resolveServerHttpBaseUrl();
+    const serviceId = encodeURIComponent(params.serviceId);
+    const profileId = encodeURIComponent(params.profileId);
+
+    try {
+      const response = await axios.get(
+        `${serverUrl}/v3/connect/${serviceId}/profiles/${profileId}/quotas`,
+        {
+          headers: {
+            'Authorization': `Bearer ${this.credential.token}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 5000,
+        },
+      );
+      if (response.status !== 200) {
+        throw new Error(`Server returned status ${response.status}`);
+      }
+      const raw = response.data;
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        throw new Error('Invalid connected service quota snapshot response');
+      }
+
+      const contentParsed = StoredJsonContentEnvelopeSchema.safeParse((raw as any).content);
+      if (!contentParsed.success || contentParsed.data.t !== 'plain') {
+        throw new Error('Invalid connected service quota snapshot response');
+      }
+
+      const snapshotParsed = ConnectedServiceQuotaSnapshotV1Schema.safeParse(contentParsed.data.v);
+      if (!snapshotParsed.success) {
+        throw new Error('Invalid connected service quota snapshot response');
+      }
+
+      const metadataParsed = z.object({
+        fetchedAt: z.number(),
+        staleAfterMs: z.number(),
+        status: z.enum(['ok', 'unavailable', 'estimated', 'error']),
+        refreshRequestedAt: z.number().optional(),
+      }).safeParse((raw as any).metadata);
+
+      if (!metadataParsed.success) {
+        throw new Error('Invalid connected service quota snapshot response');
+      }
+
+      return { content: { t: 'plain', v: snapshotParsed.data }, metadata: metadataParsed.data };
+    } catch (error: unknown) {
+      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+      if (status === 404) return null;
+
+      logger.debug(`[API] [ERROR] Failed to get connected service quota snapshot (v3):`, serializeAxiosErrorForLog(error));
       throw new Error(
         `Failed to get connected service quota snapshot: ${error instanceof Error ? error.message : 'Unknown error'}`,
       );

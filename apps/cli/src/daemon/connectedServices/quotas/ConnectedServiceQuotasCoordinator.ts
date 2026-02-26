@@ -17,10 +17,23 @@ type ConnectedServicesBindingsV1Like = Readonly<{
 }>;
 
 type QuotaApi = Readonly<{
+  getAccountEncryptionMode?: () => Promise<'e2ee' | 'plain'>;
   getConnectedServiceQuotaSnapshotSealed: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>) => Promise<
     | null
     | Readonly<{
         sealed: Readonly<{ format: 'account_scoped_v1'; ciphertext: string }>;
+        metadata: Readonly<{
+          fetchedAt: number;
+          staleAfterMs: number;
+          status: 'ok' | 'unavailable' | 'estimated' | 'error';
+          refreshRequestedAt?: number;
+        }>;
+      }>
+  >;
+  getConnectedServiceQuotaSnapshotPlain?: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>) => Promise<
+    | null
+    | Readonly<{
+        content: Readonly<{ t: 'plain'; v: ConnectedServiceQuotaSnapshotV1 }>;
         metadata: Readonly<{
           fetchedAt: number;
           staleAfterMs: number;
@@ -34,6 +47,12 @@ type QuotaApi = Readonly<{
     | Readonly<{
         sealed: Readonly<{ format: 'account_scoped_v1'; ciphertext: string }>;
         metadata: Readonly<{ kind: string }>;
+      }>
+  >;
+  getConnectedServiceCredentialPlain?: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>) => Promise<
+    | null
+    | Readonly<{
+        content: Readonly<{ t: 'plain'; v: ConnectedServiceCredentialRecordV1 }>;
       }>
   >;
   listConnectedServiceProfiles?: (args: Readonly<{ serviceId: ConnectedServiceId }>) => Promise<
@@ -51,6 +70,12 @@ type QuotaApi = Readonly<{
     serviceId: ConnectedServiceId;
     profileId: string;
     sealed: Readonly<{ format: 'account_scoped_v1'; ciphertext: string }>;
+    metadata: Readonly<{ fetchedAt: number; staleAfterMs: number; status: 'ok' | 'unavailable' | 'estimated' | 'error' }>;
+  }>) => Promise<void>;
+  registerConnectedServiceQuotaSnapshotPlain?: (args: Readonly<{
+    serviceId: ConnectedServiceId;
+    profileId: string;
+    content: Readonly<{ t: 'plain'; v: ConnectedServiceQuotaSnapshotV1 }>;
     metadata: Readonly<{ fetchedAt: number; staleAfterMs: number; status: 'ok' | 'unavailable' | 'estimated' | 'error' }>;
   }>) => Promise<void>;
 }>;
@@ -194,6 +219,9 @@ export class ConnectedServiceQuotasCoordinator {
 
   public async tickOnce(): Promise<void> {
     const now = Math.max(0, Math.trunc(this.now()));
+    const accountMode = await (typeof this.api.getAccountEncryptionMode === 'function'
+      ? this.api.getAccountEncryptionMode()
+      : Promise.resolve('e2ee' as const)).catch(() => 'e2ee' as const);
     const encryption = this.credentials.encryption;
     const material =
       encryption.type === 'legacy'
@@ -249,7 +277,9 @@ export class ConnectedServiceQuotasCoordinator {
       for (const profileId of profileIds) {
         try {
           const bindingKey = this.makeBindingKey({ serviceId, profileId });
-          const existing = await this.api.getConnectedServiceQuotaSnapshotSealed({ serviceId, profileId });
+          const existing = accountMode === 'plain' && typeof this.api.getConnectedServiceQuotaSnapshotPlain === 'function'
+            ? await this.api.getConnectedServiceQuotaSnapshotPlain({ serviceId, profileId })
+            : await this.api.getConnectedServiceQuotaSnapshotSealed({ serviceId, profileId });
           const forcedRefresh = (() => {
             const fetchedAt = Number(existing?.metadata?.fetchedAt ?? 0);
             const refreshRequestedAt = Number(existing?.metadata?.refreshRequestedAt ?? 0);
@@ -273,11 +303,22 @@ export class ConnectedServiceQuotasCoordinator {
             }
           }
 
-          const sealedCred = await this.api.getConnectedServiceCredentialSealed({ serviceId, profileId });
-          if (!sealedCred?.sealed?.ciphertext) continue;
+          let record: ConnectedServiceCredentialRecordV1 | null = null;
 
-          const opened = openConnectedServiceCredentialCiphertext({ material, ciphertext: sealedCred.sealed.ciphertext });
-          const record = opened?.value as ConnectedServiceCredentialRecordV1 | null | undefined;
+          if (accountMode === 'plain') {
+            if (typeof this.api.getConnectedServiceCredentialPlain === 'function') {
+              const plainCred = await this.api.getConnectedServiceCredentialPlain({ serviceId, profileId }).catch(() => null);
+              record = plainCred?.content?.t === 'plain' ? plainCred.content.v : null;
+            }
+          }
+
+          if (!record) {
+            const sealedCred = await this.api.getConnectedServiceCredentialSealed({ serviceId, profileId });
+            if (!sealedCred?.sealed?.ciphertext) continue;
+
+            const opened = openConnectedServiceCredentialCiphertext({ material, ciphertext: sealedCred.sealed.ciphertext });
+            record = (opened?.value as ConnectedServiceCredentialRecordV1 | null | undefined) ?? null;
+          }
           if (!record) continue;
 
           const controller = new AbortController();
@@ -320,19 +361,27 @@ export class ConnectedServiceQuotasCoordinator {
           const snapshot = raced.snapshot;
           if (!snapshot) continue;
 
-          const sealed = sealConnectedServiceQuotaSnapshotCiphertext({
-            material,
-            payload: snapshot,
-            randomBytes: this.randomBytes,
-          });
-
           const status = deriveQuotaSnapshotStatus(snapshot);
-          await this.api.registerConnectedServiceQuotaSnapshotSealed({
-            serviceId,
-            profileId,
-            sealed: { format: 'account_scoped_v1', ciphertext: sealed },
-            metadata: { fetchedAt: snapshot.fetchedAt, staleAfterMs: snapshot.staleAfterMs, status },
-          });
+          if (accountMode === 'plain' && typeof this.api.registerConnectedServiceQuotaSnapshotPlain === 'function') {
+            await this.api.registerConnectedServiceQuotaSnapshotPlain({
+              serviceId,
+              profileId,
+              content: { t: 'plain', v: snapshot },
+              metadata: { fetchedAt: snapshot.fetchedAt, staleAfterMs: snapshot.staleAfterMs, status },
+            });
+          } else {
+            const sealed = sealConnectedServiceQuotaSnapshotCiphertext({
+              material,
+              payload: snapshot,
+              randomBytes: this.randomBytes,
+            });
+            await this.api.registerConnectedServiceQuotaSnapshotSealed({
+              serviceId,
+              profileId,
+              sealed: { format: 'account_scoped_v1', ciphertext: sealed },
+              metadata: { fetchedAt: snapshot.fetchedAt, staleAfterMs: snapshot.staleAfterMs, status },
+            });
+          }
           this.failureStateByBindingKey.delete(bindingKey);
         } catch {
           const bindingKey = this.makeBindingKey({ serviceId, profileId });

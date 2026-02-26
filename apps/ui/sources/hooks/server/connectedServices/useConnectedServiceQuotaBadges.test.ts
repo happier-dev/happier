@@ -4,6 +4,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { ConnectedServiceQuotaSnapshotV1Schema, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 import type { getConnectedServiceQuotaSnapshotSealed } from '@/sync/api/account/apiConnectedServicesQuotasV2';
+import type { getConnectedServiceQuotaSnapshotPlain } from '@/sync/api/account/apiConnectedServicesQuotasV3';
 
 import { renderHookAndCollectValues } from '../serverFeatureHookHarness.testHelpers';
 
@@ -20,7 +21,11 @@ const useSettingsSpy = vi.fn(() => ({
 
 const useFeatureEnabledSpy = vi.fn((_featureId: string) => true);
 
-const { getConnectedServiceQuotaSnapshotSealedSpy } = vi.hoisted(() => ({
+const { fetchAccountEncryptionModeSpy, getConnectedServiceQuotaSnapshotPlainSpy, getConnectedServiceQuotaSnapshotSealedSpy } = vi.hoisted(() => ({
+  fetchAccountEncryptionModeSpy: vi.fn(async () => ({ mode: 'e2ee' as const, updatedAt: 0 })),
+  getConnectedServiceQuotaSnapshotPlainSpy: vi.fn<
+    (...args: Parameters<typeof getConnectedServiceQuotaSnapshotPlain>) => ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>
+  >(async () => null),
   getConnectedServiceQuotaSnapshotSealedSpy: vi.fn<
     (...args: Parameters<typeof getConnectedServiceQuotaSnapshotSealed>) => ReturnType<typeof getConnectedServiceQuotaSnapshotSealed>
   >(async () => null),
@@ -39,8 +44,16 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: (featureId: string) => useFeatureEnabledSpy(featureId),
 }));
 
+vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
+  fetchAccountEncryptionMode: fetchAccountEncryptionModeSpy,
+}));
+
 vi.mock('@/sync/api/account/apiConnectedServicesQuotasV2', () => ({
   getConnectedServiceQuotaSnapshotSealed: getConnectedServiceQuotaSnapshotSealedSpy,
+}));
+
+vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
+  getConnectedServiceQuotaSnapshotPlain: getConnectedServiceQuotaSnapshotPlainSpy,
 }));
 
 async function flushHookEffects(turns = 3) {
@@ -79,6 +92,7 @@ describe('useConnectedServiceQuotaBadges', () => {
 
   it('returns badges for pinned meters after snapshot fetch', async () => {
     useFeatureEnabledSpy.mockReturnValue(true);
+    fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'e2ee', updatedAt: 0 });
 
     const secretBytes = new Uint8Array(32).fill(3);
     const snapshot = ConnectedServiceQuotaSnapshotV1Schema.parse({
@@ -132,12 +146,58 @@ describe('useConnectedServiceQuotaBadges', () => {
     expect(last['anthropic/work']?.map((b) => b.text)).toContain('Weekly 18%');
   });
 
+  it('supports plaintext quotas in plaintext accounts', async () => {
+    useFeatureEnabledSpy.mockReturnValue(true);
+    fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'plain', updatedAt: 0 });
+
+    const snapshot = ConnectedServiceQuotaSnapshotV1Schema.parse({
+      v: 1,
+      serviceId: 'anthropic',
+      profileId: 'work',
+      fetchedAt: 1,
+      staleAfterMs: 60_000,
+      planLabel: 'Pro',
+      accountLabel: null,
+      meters: [
+        {
+          meterId: 'weekly',
+          label: 'Weekly',
+          used: 82,
+          limit: 100,
+          unit: 'count',
+          utilizationPct: null,
+          resetsAt: null,
+          status: 'ok',
+          details: {},
+        },
+      ],
+    });
+
+    useSettingsSpy.mockReturnValue({
+      connectedServicesQuotaPinnedMeterIdsByKey: { 'anthropic/work': ['weekly'] },
+      connectedServicesQuotaSummaryStrategyByKey: {},
+      connectedServicesProfileLabelByKey: {},
+      connectedServicesDefaultProfileByServiceId: {},
+    });
+
+    getConnectedServiceQuotaSnapshotPlainSpy.mockResolvedValue(snapshot);
+
+    const { useConnectedServiceQuotaBadges } = await import('./useConnectedServiceQuotaBadges');
+    const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaBadges([
+      { serviceId: 'anthropic', profileId: 'work' },
+    ]));
+
+    const last = seen.at(-1) ?? {};
+    expect(last['anthropic/work']?.map((b) => b.text)).toContain('Weekly 18%');
+  });
+
   it('retries a pinned key after an initial miss', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000_000);
     const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
     try {
       useFeatureEnabledSpy.mockReturnValue(true);
+      fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'e2ee', updatedAt: 0 });
 
       const secretBytes = new Uint8Array(32).fill(3);
       const snapshot = ConnectedServiceQuotaSnapshotV1Schema.parse({
