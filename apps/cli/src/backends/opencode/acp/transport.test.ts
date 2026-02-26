@@ -27,6 +27,13 @@ describe('OpenCodeTransport determineToolName', () => {
       expected: 'Task',
     },
     {
+      label: 'maps change_title task alias to Task when input is task-shaped without ACP metadata',
+      toolName: 'change_title',
+      toolCallId: 'tool-3',
+      input: { prompt: 'Respond with EXACTLY: SUBTASK_OK', subagent_type: 'assistant' },
+      expected: 'Task',
+    },
+    {
       label: 'uses toolCallId pattern mapping (case-insensitive)',
       toolName: 'other',
       toolCallId: 'BASH-123',
@@ -111,6 +118,22 @@ describe('OpenCodeTransport handleStderr', () => {
       activeToolCalls: new Set(),
       hasActiveInvestigation: false,
     });
+    expect(asStatusErrorMessage(result.message).detail).toContain('Model not found');
+  });
+
+  it('emits actionable model-not-found errors for OpenCode ProviderModelNotFoundError stack traces', () => {
+    const transport = new OpenCodeTransport();
+    const result = transport.handleStderr(
+      `
+ProviderModelNotFoundError: ProviderModelNotFoundError
+ data: {
+  providerID: "openai",
+  modelID: "does_not_exist",
+  suggestions: [],
+}
+`,
+      { activeToolCalls: new Set(), hasActiveInvestigation: false },
+    );
     expect(asStatusErrorMessage(result.message).detail).toContain('Model not found');
   });
 

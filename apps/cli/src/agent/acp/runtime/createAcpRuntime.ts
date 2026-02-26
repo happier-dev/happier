@@ -464,6 +464,11 @@ export function createAcpRuntime(params: {
     b.onMessage((msg: AgentMessage) => {
       if (loadingSession) {
         if (msg.type === 'status' && msg.status === 'error') {
+          const detail = typeof msg.detail === 'string' ? msg.detail.trim() : '';
+          if (detail) {
+            const message = /^error[:\\s]/i.test(detail) ? detail : `Error: ${detail}`;
+            params.session.sendAgentMessage(params.provider, { type: 'message', message });
+          }
           turnAborted = true;
           params.session.sendAgentMessage(params.provider, { type: 'turn_aborted', id: randomUUID() });
         }
@@ -536,6 +541,13 @@ export function createAcpRuntime(params: {
           }
 
           if (msg.status === 'error') {
+            if (!turnAborted) {
+              const detail = typeof msg.detail === 'string' ? msg.detail.trim() : '';
+              if (detail) {
+                const message = /^error[:\\s]/i.test(detail) ? detail : `Error: ${detail}`;
+                params.session.sendAgentMessage(params.provider, { type: 'message', message });
+              }
+            }
             turnAborted = true;
             clearToolCallCache();
             params.onThinkingChange(false);
