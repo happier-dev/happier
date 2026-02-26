@@ -46,21 +46,27 @@ const fontFaceObserverWebShim = path.resolve(__dirname, "sources/platform/shims/
 
 const defaultResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  // Fix event-target-shim/index import - exports define "." not "./index"
+  let resolvedModuleName = moduleName;
+  if (moduleName === "event-target-shim/index") {
+    resolvedModuleName = "event-target-shim";
+  }
+
   if (
     platform === "web" &&
-    (moduleName === "@huggingface/transformers" ||
-      moduleName.startsWith("@huggingface/transformers/"))
+    (resolvedModuleName === "@huggingface/transformers" ||
+      resolvedModuleName.startsWith("@huggingface/transformers/"))
   ) {
     return { type: "sourceFile", filePath: transformersStub };
   }
 
   // expo-font uses fontfaceobserver on web with a hard-coded timeout; in practice this can
   // surface as unhandled errors. Use a web-safe shim that avoids throwing on timeouts.
-  if (platform === "web" && moduleName === "fontfaceobserver") {
+  if (platform === "web" && resolvedModuleName === "fontfaceobserver") {
     return { type: "sourceFile", filePath: fontFaceObserverWebShim };
   }
 
-  if (moduleName === "kokoro-js" || moduleName.startsWith("kokoro-js/")) {
+  if (resolvedModuleName === "kokoro-js" || resolvedModuleName.startsWith("kokoro-js/")) {
     if (platform === "web") {
       return { type: "sourceFile", filePath: kokoroJsStub };
     }

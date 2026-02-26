@@ -223,7 +223,15 @@ vi.mock('@/components/ui/lists/ActionListSection', () => ({
 }));
 
 vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
-    useScrollEdgeFades: () => ({ scrollEdgeFadesProps: {}, onScroll: () => {}, onLayout: () => {} }),
+    useScrollEdgeFades: () => ({
+        canScrollX: false,
+        canScrollY: false,
+        visibility: { top: false, bottom: false, left: false, right: false },
+        onViewportLayout: () => {},
+        onContentSizeChange: () => {},
+        onScroll: () => {},
+        onMomentumScrollEnd: () => {},
+    }),
 }));
 
 vi.mock('@/sync/domains/settings/settings', () => ({

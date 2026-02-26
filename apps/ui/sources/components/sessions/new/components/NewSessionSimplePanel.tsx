@@ -176,6 +176,7 @@ export function NewSessionSimplePanel(props: Readonly<{
                                 width: '100%',
                                 alignSelf: 'center',
                                 paddingTop: props.safeAreaTop + props.newSessionTopPadding,
+                                ...(Platform.OS !== 'web' ? { marginTop: 'auto' } : {}),
                             }}
                         >
                             {/* Session type selector only if enabled via experiments */}

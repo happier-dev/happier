@@ -70,6 +70,12 @@ import { attachActionBarMouseDragScroll } from './attachActionBarMouseDragScroll
 
 const ACTION_BAR_SCROLL_END_GUTTER_WIDTH = 24;
 
+// Settings menu height constraints
+// - Max height when no keyboard is visible or plenty of space
+// - Min height ensures at least a few options are visible on cramped screens
+const SETTINGS_MENU_MAX_HEIGHT = 300;
+const SETTINGS_MENU_MIN_HEIGHT = 120;
+
 
 export type AgentInputExtraActionChipRenderContext = Readonly<{
     chipStyle: (pressed: boolean) => any;
@@ -208,7 +214,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         alignItems: 'center',
         width: '100%',
         paddingBottom: 8,
-        paddingTop: 8,
+        zIndex: 10,
     },
     innerContainer: {
         width: '100%',
@@ -625,6 +631,14 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         });
     }, [keyboardHeight, screenHeight]);
 
+    const settingsMenuMaxHeight = React.useMemo(() => {
+        if (keyboardHeight <= 0) {
+            return SETTINGS_MENU_MAX_HEIGHT;
+        }
+        const availableHeight = screenHeight - keyboardHeight;
+        return Math.max(Math.min(Math.round(availableHeight * 0.5), SETTINGS_MENU_MAX_HEIGHT), SETTINGS_MENU_MIN_HEIGHT);
+    }, [screenHeight, keyboardHeight]);
+
     const hasText = props.value.trim().length > 0;
     const hasSendableContent = hasText || props.hasSendableAttachments === true;
     const micPressHandler = voiceEnabled ? props.onMicPress : undefined;
@@ -804,6 +818,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const [showSettings, setShowSettings] = React.useState(false);
     const overlayAnchorRef = React.useRef<View>(null);
     const settingsAnchorRef = React.useRef<View>(null);
+
+    // On web, anchor settings popover to the settings button for better UX
+    const settingsPopoverAnchorRef = Platform.OS === 'web' ? settingsAnchorRef : overlayAnchorRef;
 
     const actionBarFades = useScrollEdgeFades({
         enabledEdges: { left: true, right: true },
@@ -1276,17 +1293,17 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 	                {showSettings && (
 	                    <Popover
 	                        open={showSettings}
-	                        anchorRef={settingsAnchorRef}
+	                        anchorRef={settingsPopoverAnchorRef}
 	                        boundaryRef={null}
 	                        placement="top"
 	                        gap={8}
-	                        maxHeightCap={400}
-	                        portal={{
-	                            web: true,
-	                            native: true,
-	                            matchAnchorWidth: false,
-	                            anchorAlign: 'start',
-	                        }}
+                        maxHeightCap={settingsMenuMaxHeight}
+                        portal={{
+                            web: { target: 'body' },
+                            native: true,
+                            matchAnchorWidth: Platform.OS !== 'web',
+                            anchorAlign: 'start',
+                        }}
                         edgePadding={{
                             horizontal: Platform.OS === 'web' ? (screenWidth > 700 ? 12 : 16) : 0,
                             vertical: 12,
@@ -1300,6 +1317,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                 keyboardShouldPersistTaps="always"
                                 edgeFades={{ top: true, bottom: true, size: 28 }}
                                 edgeIndicators={true}
+                                initialVisibility={{ bottom: true }}
                             >
                                 {/* Action shortcuts (collapsed layout) */}
                                 {actionMenuActions.length > 0 ? (
