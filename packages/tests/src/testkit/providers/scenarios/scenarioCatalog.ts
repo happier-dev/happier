@@ -458,6 +458,25 @@ function acpResumeMetadataKey(providerId: ProviderUnderTest['id']): string {
   return 'opencodeSessionId';
 }
 
+function claudeAgentTeamsCreateAndSpawnPrompt(teamId: string): string {
+  return [
+    'This is an automated E2E test for Claude Code Agent Teams.',
+    'You MUST execute the following tool calls, in order:',
+    '',
+    `1) AgentTeamCreate: create a team with team_name="${teamId}".`,
+    '2) Task: spawn teammate Alpha (run_in_background=true).',
+    '3) Task: spawn teammate Beta (run_in_background=true).',
+    '',
+    'Rules:',
+    '- Do not use Bash.',
+    '- Do not read or write files.',
+    '- Do not answer until steps 1–3 are complete.',
+    '- Then reply DONE.',
+    '',
+    'If you do not see the AgentTeamCreate tool available, reply ONLY: NO_AGENT_TEAMS.',
+  ].join('\n');
+}
+
 export function abortContinuationFollowupSubstrings(
   providerId: ProviderUnderTest['id'],
   followupSentinel: string,
@@ -835,6 +854,197 @@ await server.connect(new StdioServerTransport());
       if (!hasEcho) throw new Error('Bash tool-call did not include expected command substring');
     },
   }),
+
+  agent_teams_participant_routing_broadcast: (provider) => {
+    assertProviderId(provider, 'claude');
+    const teamId = 'probe';
+    const broadcastSentinel = 'HAPPIER_E2E_AGENT_TEAMS_BROADCAST_SENTINEL_123';
+    return {
+      id: 'agent_teams_participant_routing_broadcast',
+      title: 'agent teams: participant routing (broadcast) triggers SendMessage tool call',
+      tier: 'extended',
+      yolo: false,
+      waitMs: 240_000,
+      messageMeta: {
+        claudeCodeExperimentalAgentTeamsEnabled: true,
+      },
+      steps: [
+        {
+          id: 'create_team_and_spawn',
+          prompt: () => claudeAgentTeamsCreateAndSpawnPrompt(teamId),
+          satisfaction: {
+            requiredFixtureKeys: [
+              'claude/claude/tool-call/AgentTeamCreate',
+              'claude/claude/tool-call/Task',
+            ],
+            requiredTraceSubstrings: ['Alpha', 'Beta'],
+          },
+        },
+        {
+          id: 'broadcast_via_participant_meta',
+          prompt: () =>
+            [
+              broadcastSentinel,
+              'Reply with EXACT text: OK',
+            ].join('\n'),
+          messageMeta: {
+            happier: {
+              kind: 'participant_message.v1',
+              payload: {
+                recipient: {
+                  kind: 'agent_team_broadcast',
+                  teamId,
+                },
+              },
+            },
+          },
+          satisfaction: {
+            requiredFixtureKeys: ['claude/claude/tool-call/AgentTeamSendMessage'],
+          },
+        },
+        {
+          id: 'delete_team',
+          prompt: () =>
+            [
+              `Delete the Agent Team named "${teamId}" using the TeamDelete tool.`,
+              'Then reply DONE.',
+            ].join('\n'),
+        },
+      ],
+      requiredFixtureKeys: ['claude/claude/tool-call/AgentTeamCreate', 'claude/claude/tool-call/AgentTeamSendMessage', 'claude/claude/tool-call/AgentTeamDelete'],
+      verify: async ({ fixtures }) => {
+        const examples = fixtures?.examples;
+        if (!examples || typeof examples !== 'object') throw new Error('Invalid fixtures: missing examples');
+
+        const teamCreates = (examples['claude/claude/tool-call/AgentTeamCreate'] ?? []) as any[];
+        if (!Array.isArray(teamCreates) || teamCreates.length === 0) throw new Error('Missing TeamCreate tool-call fixtures');
+        const hasProbeTeamCreate = teamCreates.some((e) => hasStringSubstring(stableStringifyShape(e?.payload?.input), teamId));
+        if (!hasProbeTeamCreate) throw new Error(`TeamCreate did not include expected team id/name: ${teamId}`);
+
+        const taskCalls = (examples['claude/claude/tool-call/Task'] ?? []) as any[];
+        if (!Array.isArray(taskCalls) || taskCalls.length === 0) throw new Error('Missing Task tool-call fixtures (expected teammate spawns)');
+        const hasAlpha = taskCalls.some((e) => hasStringSubstring(stableStringifyShape(e?.payload?.input), '"name":"Alpha"'));
+        const hasBeta = taskCalls.some((e) => hasStringSubstring(stableStringifyShape(e?.payload?.input), '"name":"Beta"'));
+        if (!hasAlpha || !hasBeta) throw new Error('Expected Task tool-call inputs to include both Alpha and Beta teammate spawns');
+
+        const sendMessages = (examples['claude/claude/tool-call/AgentTeamSendMessage'] ?? []) as any[];
+        if (!Array.isArray(sendMessages) || sendMessages.length === 0) throw new Error('Missing SendMessage tool-call fixtures');
+        const hasBroadcast = sendMessages.some((e) => {
+          const input = e?.payload?.input;
+          if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+          return (input as any).type === 'broadcast';
+        });
+        if (!hasBroadcast) {
+          throw new Error('SendMessage tool-call did not include a broadcast payload');
+        }
+
+        const deletes = (examples['claude/claude/tool-call/AgentTeamDelete'] ?? []) as any[];
+        if (!Array.isArray(deletes) || deletes.length === 0) throw new Error('Missing TeamDelete tool-call fixtures');
+        const hasProbeDelete = deletes.some((e) => hasStringSubstring(stableStringifyShape(e?.payload?.input), teamId));
+        if (!hasProbeDelete) throw new Error(`TeamDelete did not include expected team id/name: ${teamId}`);
+      },
+    } satisfies ProviderScenario;
+  },
+
+  agent_sdk_agent_teams_participant_routing_broadcast: (provider) => {
+    const base = scenarioCatalog.agent_teams_participant_routing_broadcast(provider);
+    return withAgentSdkRemoteMeta(base, {
+      id: 'agent_sdk_agent_teams_participant_routing_broadcast',
+      title: 'agent sdk: agent teams: participant routing (broadcast) triggers SendMessage tool call',
+    });
+  },
+
+  agent_teams_participant_routing_member: (provider) => {
+    assertProviderId(provider, 'claude');
+    const teamId = 'probe';
+    const memberLabel = 'Alpha';
+    const memberId = '@Alpha';
+    const directSentinel = 'HAPPIER_E2E_AGENT_TEAMS_DIRECT_SENTINEL_123';
+    return {
+      id: 'agent_teams_participant_routing_member',
+      title: 'agent teams: participant routing (member) triggers SendMessage tool call',
+      tier: 'extended',
+      yolo: false,
+      waitMs: 240_000,
+      messageMeta: {
+        claudeCodeExperimentalAgentTeamsEnabled: true,
+      },
+      steps: [
+        {
+          id: 'create_team_and_spawn',
+          prompt: () => claudeAgentTeamsCreateAndSpawnPrompt(teamId),
+          satisfaction: {
+            requiredFixtureKeys: [
+              'claude/claude/tool-call/AgentTeamCreate',
+              'claude/claude/tool-call/Task',
+            ],
+            requiredTraceSubstrings: ['Alpha', 'Beta'],
+          },
+        },
+        {
+          id: 'direct_message_via_participant_meta',
+          prompt: () =>
+            [
+              directSentinel,
+              'Reply with EXACT text: OK',
+            ].join('\n'),
+          messageMeta: {
+            happier: {
+              kind: 'participant_message.v1',
+              payload: {
+                recipient: {
+                  kind: 'agent_team_member',
+                  teamId,
+                  memberId,
+                  memberLabel,
+                },
+              },
+            },
+          },
+          satisfaction: {
+            requiredFixtureKeys: ['claude/claude/tool-call/AgentTeamSendMessage'],
+          },
+        },
+        {
+          id: 'delete_team',
+          prompt: () =>
+            [
+              `Delete the Agent Team named "${teamId}" using the TeamDelete tool.`,
+              'Then reply DONE.',
+            ].join('\n'),
+        },
+      ],
+      requiredFixtureKeys: ['claude/claude/tool-call/AgentTeamCreate', 'claude/claude/tool-call/AgentTeamSendMessage', 'claude/claude/tool-call/AgentTeamDelete'],
+      verify: async ({ fixtures }) => {
+        const examples = fixtures?.examples;
+        if (!examples || typeof examples !== 'object') throw new Error('Invalid fixtures: missing examples');
+
+        const sendMessages = (examples['claude/claude/tool-call/AgentTeamSendMessage'] ?? []) as any[];
+        if (!Array.isArray(sendMessages) || sendMessages.length === 0) throw new Error('Missing SendMessage tool-call fixtures');
+        const hasDirect = sendMessages.some((e) => {
+          const input = e?.payload?.input;
+          if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+          const type = typeof (input as any).type === 'string' ? String((input as any).type) : '';
+          const recipient = typeof (input as any).recipient === 'string' ? String((input as any).recipient) : '';
+          const hasTarget = recipient.includes(memberLabel) || recipient.includes(memberId);
+          // Avoid matching shutdown requests that may happen during cleanup.
+          const isRoutedMessage = type.length > 0 && type !== 'broadcast' && type !== 'shutdown_request';
+          return hasTarget && isRoutedMessage;
+        });
+        if (!hasDirect) {
+          throw new Error('SendMessage tool-call did not include a direct/member payload containing the expected target');
+        }
+      },
+    } satisfies ProviderScenario;
+  },
+
+  agent_sdk_agent_teams_participant_routing_member: (provider) => {
+    const base = scenarioCatalog.agent_teams_participant_routing_member(provider);
+    return withAgentSdkRemoteMeta(base, {
+      id: 'agent_sdk_agent_teams_participant_routing_member',
+      title: 'agent sdk: agent teams: participant routing (member) triggers SendMessage tool call',
+    });
+  },
 
   read_known_file: (provider) => {
     if (provider.id === 'claude') {
@@ -1344,6 +1554,28 @@ await server.connect(new StdioServerTransport());
           throw new Error('acp_set_model_dynamic: applied model does not match selected model');
         }
       },
+    } satisfies ProviderScenario;
+  },
+
+  opencode_surface_status_error: (provider) => {
+    if (provider.protocol !== 'acp') {
+      throw new Error(`opencode_surface_status_error only supports ACP providers (got ${provider.protocol})`);
+    }
+    if (provider.id !== 'opencode') {
+      throw new Error(`opencode_surface_status_error only supports opencode provider (got ${provider.id})`);
+    }
+
+    return {
+      id: 'opencode_surface_status_error',
+      title: 'opencode: surfaces model failures as status:error (not silent)',
+      tier: 'extended',
+      // Force a deterministic provider failure without hitting network: OpenCode rejects unknown
+      // model ids locally, and Happier must surface the failure in the session UI.
+      cliArgs: () => ['--model', 'openai/does_not_exist', '--model-updated-at', String(Date.now())],
+      prompt: () => 'hi',
+      requiredMessageSubstrings: ['Model not found'],
+      // Keep wait budget tight; this should fail fast if errors are not surfaced.
+      waitMs: 60_000,
     } satisfies ProviderScenario;
   },
 

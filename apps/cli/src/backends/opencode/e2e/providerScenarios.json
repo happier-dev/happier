@@ -8,6 +8,7 @@
       "task_subagent_reply",
       "acp_probe_models",
       "acp_set_model_dynamic",
+      "opencode_surface_status_error",
       "read_known_file",
       "search_known_token",
       "glob_list_files",
