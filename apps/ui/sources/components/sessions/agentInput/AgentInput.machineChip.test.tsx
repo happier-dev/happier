@@ -159,6 +159,7 @@ vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
         onViewportLayout: () => {},
         onContentSizeChange: () => {},
         onScroll: () => {},
+        onMomentumScrollEnd: () => {},
     }),
 }));
 

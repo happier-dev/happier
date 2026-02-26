@@ -78,10 +78,13 @@ vi.mock('@/components/ui/scroll/ScrollEdgeIndicators', () => ({
 
 vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
     useScrollEdgeFades: () => ({
+        canScrollX: false,
+        canScrollY: false,
         visibility: { top: false, bottom: false, left: false, right: false },
         onViewportLayout: () => {},
         onContentSizeChange: () => {},
         onScroll: () => {},
+        onMomentumScrollEnd: () => {},
     }),
 }));
 
