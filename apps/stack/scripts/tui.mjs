@@ -4,6 +4,7 @@ import { mkdir } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 
 import { printResult } from './utils/cli/cli.mjs';
+import { resolveCommandInvocation } from './utils/process/resolveCommandInvocation.mjs';
 import { readEnvObjectFromFile } from './utils/env/read.mjs';
 import { getComponentDir, getRepoDir, getRootDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { getStackRuntimeStatePath, readStackRuntimeStateFile } from './utils/stack/runtime_state.mjs';
@@ -202,12 +203,16 @@ async function preflightCorepackYarnForStack({ envPath }) {
   await mkdir(env.COREPACK_HOME, { recursive: true }).catch(() => {});
 
   await new Promise((resolvePromise) => {
-    const proc = spawn('yarn', ['--version'], {
+    const invocation = resolveCommandInvocation({ command: 'yarn', args: ['--version'], env });
+    const proc = spawn(invocation.command, invocation.args, {
       env,
       cwd: baseDir,
       // Non-tty stdio: Corepack typically won't prompt; if it does, we still provide "y\n".
       stdio: ['pipe', 'ignore', 'ignore'],
       shell: false,
+      ...(process.platform === 'win32'
+        ? { windowsHide: true, windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+        : null),
     });
     try {
       proc.stdin?.write('y\n');

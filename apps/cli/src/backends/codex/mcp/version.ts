@@ -1,6 +1,8 @@
 import { execFileSync } from 'child_process';
+import type { ExecFileSyncOptionsWithStringEncoding } from 'node:child_process';
 
 import { logger } from '@/ui/logger';
+import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
 export interface CodexVersionInfo {
     raw: string | null;
@@ -40,7 +42,17 @@ export function getCodexVersionInfo(codexCommand: string): CodexVersionInfo {
     if (cached) return cached;
 
     try {
-        const raw = execFileSync(codexCommand, ['--version'], { encoding: 'utf8', windowsHide: true }).trim();
+        const invocation = resolveWindowsCommandInvocation({
+            command: codexCommand,
+            args: ['--version'],
+            resolveCommandOnPath: true,
+        });
+        const execOptions: ExecFileSyncOptionsWithStringEncoding & Readonly<{ windowsVerbatimArguments?: boolean }> = {
+            encoding: 'utf8',
+            windowsHide: true,
+            windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+        };
+        const raw = execFileSync(invocation.command, invocation.args, execOptions).trim();
         const match = raw.match(/(?:codex(?:-cli)?)\s+v?(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)\.(\d+))?/i)
             ?? raw.match(/\b(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)\.(\d+))?\b/);
         if (!match) {
@@ -123,4 +135,3 @@ export function getCodexMcpCommand(codexCommand: string): string {
     if (!info.parsed) return 'mcp-server';
     return isVersionAtLeast(info, MCP_SERVER_MIN_VERSION) ? 'mcp-server' : 'mcp';
 }
-

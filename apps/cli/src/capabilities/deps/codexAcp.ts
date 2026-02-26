@@ -5,6 +5,7 @@ import { dirname, join } from 'path';
 import { promisify } from 'util';
 import { configuration } from '@/configuration';
 import { CODEX_ACP_DIST_TAG } from '@happier-dev/protocol/installables';
+import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
 const execFileAsync = promisify(execFile);
 
@@ -50,9 +51,16 @@ async function readInstalledNpmPackageVersion(opts: { installDir: string; packag
 
 async function readNpmDistTagVersion(opts: { packageName: string; distTag: string }): Promise<string | null> {
     try {
-        const { stdout } = await execFileAsync('npm', ['view', `${opts.packageName}@${opts.distTag}`, 'version'], {
+        const invocation = resolveWindowsCommandInvocation({
+            command: 'npm',
+            args: ['view', `${opts.packageName}@${opts.distTag}`, 'version'],
+            env: process.env,
+            resolveCommandOnPath: true,
+        });
+        const { stdout } = await execFileAsync(invocation.command, invocation.args, {
             timeout: 10_000,
             windowsHide: true,
+            windowsVerbatimArguments: invocation.windowsVerbatimArguments,
         });
         const text = typeof stdout === 'string' ? stdout.trim() : '';
         return text || null;
@@ -69,11 +77,18 @@ async function installNpmDepToPrefix(opts: {
     try {
         await mkdir(opts.installDir, { recursive: true });
         await mkdir(dirname(opts.logPath), { recursive: true });
-        const { stdout, stderr } = await execFileAsync(
-            'npm',
-            ['install', '--no-audit', '--no-fund', '--prefix', opts.installDir, opts.installSpec],
-            { timeout: 15 * 60_000, windowsHide: true, maxBuffer: 50 * 1024 * 1024 },
-        );
+        const invocation = resolveWindowsCommandInvocation({
+            command: 'npm',
+            args: ['install', '--no-audit', '--no-fund', '--prefix', opts.installDir, opts.installSpec],
+            env: process.env,
+            resolveCommandOnPath: true,
+        });
+        const { stdout, stderr } = await execFileAsync(invocation.command, invocation.args, {
+            timeout: 15 * 60_000,
+            windowsHide: true,
+            maxBuffer: 50 * 1024 * 1024,
+            windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+        });
 
         await writeFile(
             opts.logPath,

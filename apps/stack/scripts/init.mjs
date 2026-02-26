@@ -11,6 +11,7 @@ import { readJsonIfExists } from './utils/fs/json.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from './utils/env/sandbox.mjs';
 import { banner, bullets, cmd, kv, sectionTitle } from './utils/ui/layout.mjs';
 import { cyan, dim, green, yellow } from './utils/ui/ansi.mjs';
+import { resolveCommandInvocation } from './utils/process/resolveCommandInvocation.mjs';
 
 function getCliRootDir() {
   return dirname(dirname(fileURLToPath(import.meta.url)));
@@ -292,12 +293,32 @@ async function main() {
       console.log(`${green('✓')} runtime already installed ${dim('(')}${cyan(runtimeDir)}${dim(')')} ${dim('@happier-dev/stack@')}${cyan(runtimeVersion)}`);
     } else {
       console.log(`${yellow('!')} installing runtime into ${cyan(runtimeDir)} ${dim('(')}${cyan(spec)}${dim(')')}...`);
-      let res = spawnSync('npm', ['install', '--no-audit', '--no-fund', '--silent', '--prefix', runtimeDir, spec], { stdio: 'inherit' });
+      const installInvocation = resolveCommandInvocation({
+        command: 'npm',
+        args: ['install', '--no-audit', '--no-fund', '--silent', '--prefix', runtimeDir, spec],
+        env: process.env,
+      });
+      let res = spawnSync(installInvocation.command, installInvocation.args, {
+        stdio: 'inherit',
+        ...(process.platform === 'win32'
+          ? { windowsHide: true, windowsVerbatimArguments: installInvocation.windowsVerbatimArguments }
+          : null),
+      });
       if (res.status !== 0) {
         // Pre-publish developer experience: if the package isn't on npm yet (E404),
         // fall back to installing the local checkout into the runtime prefix.
         console.log(`${yellow('!')} runtime install failed; attempting local install from ${cyan(cliRootDir)}...`);
-        res = spawnSync('npm', ['install', '--no-audit', '--no-fund', '--silent', '--prefix', runtimeDir, cliRootDir], { stdio: 'inherit' });
+        const localInstallInvocation = resolveCommandInvocation({
+          command: 'npm',
+          args: ['install', '--no-audit', '--no-fund', '--silent', '--prefix', runtimeDir, cliRootDir],
+          env: process.env,
+        });
+        res = spawnSync(localInstallInvocation.command, localInstallInvocation.args, {
+          stdio: 'inherit',
+          ...(process.platform === 'win32'
+            ? { windowsHide: true, windowsVerbatimArguments: localInstallInvocation.windowsVerbatimArguments }
+            : null),
+        });
         if (res.status !== 0) {
           process.exit(res.status ?? 1);
         }

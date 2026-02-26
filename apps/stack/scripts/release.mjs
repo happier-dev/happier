@@ -1,7 +1,14 @@
 import { spawnSync } from "node:child_process";
+import { resolveCommandInvocation } from "./utils/process/resolveCommandInvocation.mjs";
 
 function run(cmd, args) {
-  const result = spawnSync(cmd, args, { stdio: "inherit" });
+  const invocation = resolveCommandInvocation({ command: cmd, args, env: process.env });
+  const result = spawnSync(invocation.command, invocation.args, {
+    stdio: "inherit",
+    ...(process.platform === "win32"
+      ? { windowsHide: true, windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+      : null),
+  });
   if (result.error) throw result.error;
   if (typeof result.status === "number" && result.status !== 0) process.exit(result.status);
 }
@@ -26,7 +33,13 @@ const bump = args.find((a) => ["patch", "minor", "major"].includes(a));
 if (!bump) usageAndExit();
 
 // Ensure we're authenticated before doing anything that creates a version commit/tag.
-const whoami = spawnSync("npm", ["whoami"], { stdio: "ignore" });
+const whoamiInvocation = resolveCommandInvocation({ command: "npm", args: ["whoami"], env: process.env });
+const whoami = spawnSync(whoamiInvocation.command, whoamiInvocation.args, {
+  stdio: "ignore",
+  ...(process.platform === "win32"
+    ? { windowsHide: true, windowsVerbatimArguments: whoamiInvocation.windowsVerbatimArguments }
+    : null),
+});
 if (typeof whoami.status === "number" && whoami.status !== 0) {
   run("npm", ["login"]);
 }

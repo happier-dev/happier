@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { mkdir } from 'node:fs/promises';
-import { delimiter, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 
 import { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import type { AgentBackend } from '@/agent/core';
@@ -11,6 +11,18 @@ import {
   writeExecutableScript,
   writeFakeAcpAgentScript,
 } from './agentModelsProbe.testkit';
+
+async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T> | T): Promise<T> {
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  if (!descriptor) return await run();
+
+  Object.defineProperty(process, 'platform', { ...descriptor, value: platform });
+  try {
+    return await run();
+  } finally {
+    Object.defineProperty(process, 'platform', descriptor);
+  }
+}
 
 function createApprovedPermissionHandler(): AcpPermissionHandler {
   return {
@@ -233,6 +245,123 @@ process.exit(1);
       expect(res.availableModels.some((m) => m.id === 'openai/gpt-4.1-mini')).toBe(true);
     } finally {
       process.env.PATH = prevPath;
+      if (typeof prevOverride === 'string') {
+        process.env.HAPPIER_OPENCODE_PATH = prevOverride;
+      } else {
+        delete process.env.HAPPIER_OPENCODE_PATH;
+      }
+      await fixture.cleanup();
+    }
+  }, 20_000);
+
+  it('runs `opencode models` via opencode.CMD on PATH on Windows when only the .CMD shim exists', async () => {
+    const fixture = await createProbeTempDir('happier-cli-model-probe-win32');
+    const binDir = resolve(join(fixture.dir, 'bin'));
+    await mkdir(binDir, { recursive: true });
+
+    const opencodePath = resolve(join(binDir, 'opencode.CMD'));
+    await writeExecutableScript(
+      opencodePath,
+      `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "models") {
+  process.stdout.write("openai/gpt-4.1\\nopenai/gpt-4.1-mini\\n");
+  process.exit(0);
+}
+process.exit(1);
+`,
+    );
+
+    const cmdExePath = resolve(join(binDir, 'cmd.exe'));
+    await writeExecutableScript(
+      cmdExePath,
+      `#!/usr/bin/env node
+const cp = require('node:child_process');
+
+function splitCommandLine(raw) {
+  const tokens = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < raw.length; i += 1) {
+    let ch = raw[i];
+    if (ch === '^' && i + 1 < raw.length) {
+      const next = raw[i + 1];
+      i += 1;
+      if (next === ' ' || next === '\\t') {
+        current += next;
+        continue;
+      }
+      ch = next;
+    }
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (!inQuotes && (ch === ' ' || ch === '\\t')) {
+      if (current) tokens.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  if (current) tokens.push(current);
+  return tokens;
+}
+
+const args = process.argv.slice(2);
+const cIndex = args.findIndex((a) => String(a).toLowerCase() === '/c');
+const rest = cIndex === -1 ? [] : args.slice(cIndex + 1);
+if (rest.length === 0) process.exit(1);
+
+let commandLine = rest.join(' ');
+if (rest.length === 1) commandLine = rest[0];
+if (commandLine.startsWith('"') && commandLine.endsWith('"')) commandLine = commandLine.slice(1, -1);
+
+const tokens = splitCommandLine(commandLine);
+if (tokens.length === 0) process.exit(1);
+
+const command = tokens[0];
+const commandArgs = tokens.slice(1);
+const child = cp.spawn(command, commandArgs, { stdio: 'inherit', env: process.env });
+
+const forward = (signal) => {
+  try { child.kill(signal); } catch {}
+};
+process.on('SIGTERM', () => forward('SIGTERM'));
+process.on('SIGINT', () => forward('SIGINT'));
+
+child.on('exit', (code, signal) => {
+  if (signal) {
+    try { process.kill(process.pid, signal); } catch {}
+  }
+  process.exit(code ?? 1);
+});
+child.on('error', (error) => {
+  const msg = error && error.message ? error.message : String(error);
+  console.error(msg);
+  process.exit(127);
+});
+`,
+    );
+
+    const prevPath = process.env.PATH;
+    const prevPathext = process.env.PATHEXT;
+    const prevOverride = process.env.HAPPIER_OPENCODE_PATH;
+    process.env.PATH = `${binDir}${delimiter}${dirname(process.execPath)}`;
+    process.env.PATHEXT = '.CMD';
+    delete process.env.HAPPIER_OPENCODE_PATH;
+    try {
+      await withPlatform('win32', async () => {
+        const res = await probeAgentModelsBestEffort({ agentId: 'opencode', cwd: fixture.dir, timeoutMs: 2_000 });
+        expect(res.source).toBe('dynamic');
+        expect(res.availableModels[0]).toEqual({ id: 'default', name: 'Default' });
+        expect(res.availableModels.some((m) => m.id === 'openai/gpt-4.1')).toBe(true);
+        expect(res.availableModels.some((m) => m.id === 'openai/gpt-4.1-mini')).toBe(true);
+      });
+    } finally {
+      process.env.PATH = prevPath;
+      if (typeof prevPathext === 'string') process.env.PATHEXT = prevPathext;
+      else delete process.env.PATHEXT;
       if (typeof prevOverride === 'string') {
         process.env.HAPPIER_OPENCODE_PATH = prevOverride;
       } else {

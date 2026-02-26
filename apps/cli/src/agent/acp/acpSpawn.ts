@@ -1,5 +1,7 @@
 import type { SpawnOptions } from 'node:child_process';
 
+import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
+
 export type AcpSpawnSpec = {
   command: string;
   args: string[];
@@ -12,14 +14,24 @@ export function buildAcpSpawnSpec(params: {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
 }): AcpSpawnSpec {
-  return {
+  const args = (params.args ?? []).map((a) => String(a));
+  const invocation = resolveWindowsCommandInvocation({
     command: params.command,
-    args: (params.args ?? []).map((a) => String(a)),
+    args,
+    env: params.env,
+    resolveCommandOnPath: true,
+  });
+
+  return {
+    command: invocation.command,
+    args: invocation.args,
     options: {
       cwd: params.cwd,
       env: params.env,
       stdio: ['pipe', 'pipe', 'pipe'],
-      ...(process.platform === 'win32' ? { windowsHide: true } : null),
+      ...(process.platform === 'win32'
+        ? { windowsHide: true, windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+        : null),
     },
   };
 }

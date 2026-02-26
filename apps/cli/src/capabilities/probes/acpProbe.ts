@@ -15,7 +15,9 @@ import {
 import { logger } from '@/ui/logger';
 import type { TransportHandler } from '@/agent/transport';
 import { nodeToWebStreams } from '@/agent/acp/nodeToWebStreams';
+import { killProcessTree } from '@/agent/acp/killProcessTree';
 import { AsyncTtlCache } from '@happier-dev/protocol';
+import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
 export type AcpProbeResult =
     | { ok: true; checkedAt: number; agentCapabilities: InitializeResponse['agentCapabilities'] }
@@ -46,6 +48,11 @@ function buildAcpProbeCacheKey(params: {
 
 async function terminateProcess(child: ChildProcess): Promise<void> {
     if (child.killed) return;
+
+    if (process.platform === 'win32') {
+        await killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
+        return;
+    }
 
     const waitForExit = new Promise<void>((resolve) => {
         child.once('exit', () => resolve());
@@ -99,24 +106,22 @@ export async function probeAcpAgentCapabilities(params: {
     let child: ChildProcess | null = null;
     let spawnErrorPromise: Promise<never> | null = null;
     try {
-        const isWindows = process.platform === 'win32';
         const env = { ...process.env, ...params.env };
+        const invocation = resolveWindowsCommandInvocation({
+            command: params.command,
+            args: params.args,
+            env,
+            resolveCommandOnPath: true,
+        });
 
-        if (isWindows) {
-            child = spawn(params.command, params.args, {
-                cwd: params.cwd,
-                env,
-                stdio: ['pipe', 'pipe', 'pipe'],
-                shell: true,
-                windowsHide: true,
-            });
-        } else {
-            child = spawn(params.command, params.args, {
-                cwd: params.cwd,
-                env,
-                stdio: ['pipe', 'pipe', 'pipe'],
-            });
-        }
+        child = spawn(invocation.command, invocation.args, {
+            cwd: params.cwd,
+            env,
+            stdio: ['pipe', 'pipe', 'pipe'],
+            ...(process.platform === 'win32'
+                ? { windowsHide: true, windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+                : null),
+        });
 
         // Missing ACP binaries surface as async spawn errors; if not consumed they bubble up
         // as uncaught exceptions and can crash the daemon process.

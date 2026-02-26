@@ -1,8 +1,6 @@
-import { existsSync } from 'node:fs';
-import { join, delimiter as pathDelimiter } from 'node:path';
-
 import { shouldUseCodexMcpResumeServer } from '../localControl/localControlSupport';
 import { resolveCodexMcpResumeServerCommand } from './resolveMcpResumeServer';
+import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 
 export type CodexMcpServerSpawn = Readonly<{ mode: 'codex-cli' | 'mcp-server'; command: string }>;
 
@@ -23,24 +21,7 @@ function resolveCodexOnPath(): string {
 
   const isWindows = process.platform === 'win32';
   if (!isWindows) return 'codex';
-
-  const pathEnv = typeof process.env.PATH === 'string' ? process.env.PATH : '';
-  const extensions: string[] = isWindows
-    ? (process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM')
-        .split(';')
-        .map((e: string) => e.trim())
-        .filter(Boolean)
-    : [''];
-
-  for (const dir of pathEnv.split(pathDelimiter)) {
-    const trimmed = dir.trim();
-    if (!trimmed) continue;
-    for (const ext of extensions) {
-      const candidate = join(trimmed, isWindows ? `codex${ext}` : 'codex');
-      if (existsSync(candidate)) return candidate;
-    }
-  }
-  return 'codex';
+  return resolveWindowsCommandOnPath('codex') ?? 'codex';
 }
 
 export async function resolveCodexMcpServerSpawn(opts: Readonly<{
