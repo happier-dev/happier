@@ -183,6 +183,15 @@ export class OpenCodeTransport implements TransportHandler {
     // Provider request failures (e.g. Anthropic/OpenAI invalid_request_error) often only show up as
     // OpenCode logs when `opencode acp --print-logs` is enabled. Surface these as user-visible errors
     // so the UI doesn't appear stuck with no response.
+    const looksLikeNetworkError =
+      lower.includes('unable to connect') ||
+      lower.includes('connectionrefused') ||
+      lower.includes('connection refused') ||
+      lower.includes('econnrefused') ||
+      lower.includes('fetch failed') ||
+      lower.includes('network error') ||
+      lower.includes('socket hang up');
+
     const looksLikeProviderRequestError =
       lower.includes('invalid_request_error') ||
       lower.includes('apierror') ||
@@ -194,7 +203,7 @@ export class OpenCodeTransport implements TransportHandler {
       (lower.includes('http') && (lower.includes(' 4') || lower.includes(' 5'))) ||
       (/\b(4\d\d|5\d\d)\b/.test(lower) && lower.includes('error'));
 
-    if (looksLikeProviderRequestError) {
+    if (looksLikeNetworkError || looksLikeProviderRequestError) {
       const errorMessage: AgentMessage = {
         type: 'status',
         status: 'error',

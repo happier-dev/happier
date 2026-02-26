@@ -162,6 +162,15 @@ describe('OpenCodeTransport handleStderr', () => {
     expect(detail).toContain('x-api-key: [REDACTED]');
     expect(detail).not.toContain('super-secret-value');
   });
+
+  it('emits network/connection failures surfaced by provider logs', () => {
+    const transport = new OpenCodeTransport();
+    const result = transport.handleStderr(
+      'ERROR 2026-02-26T14:50:56 service=session.processor error=Unable to connect. Is the computer able to access the url? process',
+      { activeToolCalls: new Set(), hasActiveInvestigation: false },
+    );
+    expect(asStatusErrorMessage(result.message).detail).toContain('Unable to connect');
+  });
 });
 
 describe('OpenCodeTransport timeouts', () => {
