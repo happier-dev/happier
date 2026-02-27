@@ -40,6 +40,13 @@ describe('Action Spec Registry', () => {
     expect(spec.surfaces.voice_tool).toBe(true);
   });
 
+  it('exposes session fork action spec', () => {
+    const spec = getActionSpec('session.fork');
+    expect(spec.id).toBe('session.fork');
+    expect(spec.surfaces.ui_button).toBe(true);
+    expect(spec.placements).toContain('session_action_menu');
+  });
+
   it('provides input hints for every ActionSpec (single source of truth for elicitation)', () => {
     for (const spec of listActionSpecs()) {
       expect((spec as any).inputHints).toBeTruthy();

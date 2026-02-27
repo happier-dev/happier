@@ -44,6 +44,7 @@ export type ActionExecutorDeps = Readonly<{
 
   // Session navigation/spawn (client-side)
   sessionOpen: (args: Readonly<{ sessionId: string }>) => Promise<unknown>;
+  sessionFork: (args: Readonly<{ sessionId: string; serverId?: string | null }>) => Promise<unknown>;
   sessionSpawnNew: (args: Readonly<{
     tag?: string;
     workspaceId?: string;
@@ -297,6 +298,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const sessionId = normalizeId((parsed.data as any).sessionId);
           if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const res = await deps.sessionOpen({ sessionId });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.fork') {
+          const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionFork({ sessionId, ...(serverId ? { serverId } : {}) });
           return { ok: true, result: res };
         }
 
