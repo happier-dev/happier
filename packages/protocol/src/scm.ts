@@ -68,6 +68,7 @@ export const ScmCapabilitiesSchema = z.object({
   readLog: z.boolean(),
   writeInclude: z.boolean(),
   writeExclude: z.boolean(),
+  writeDiscard: z.boolean().optional(),
   writeCommit: z.boolean(),
   writeCommitPathSelection: z.boolean(),
   writeCommitLineSelection: z.boolean(),
@@ -228,6 +229,26 @@ export const ScmChangeApplyResponseSchema = z.object({
   errorCode: ScmOperationErrorCodeSchema.optional(),
 });
 export type ScmChangeApplyResponse = z.infer<typeof ScmChangeApplyResponseSchema>;
+
+export const ScmChangeDiscardEntrySchema = z.object({
+  path: z.string(),
+  kind: ScmEntryKindSchema,
+});
+export type ScmChangeDiscardEntry = z.infer<typeof ScmChangeDiscardEntrySchema>;
+
+export const ScmChangeDiscardRequestSchema = ScmRequestBaseSchema.extend({
+  entries: z.array(ScmChangeDiscardEntrySchema).min(1),
+});
+export type ScmChangeDiscardRequest = z.infer<typeof ScmChangeDiscardRequestSchema>;
+
+export const ScmChangeDiscardResponseSchema = z.object({
+  success: z.boolean(),
+  stdout: z.string().optional(),
+  stderr: z.string().optional(),
+  error: z.string().optional(),
+  errorCode: ScmOperationErrorCodeSchema.optional(),
+});
+export type ScmChangeDiscardResponse = z.infer<typeof ScmChangeDiscardResponseSchema>;
 
 export const ScmCommitPatchSchema = z.object({
   path: z.string(),

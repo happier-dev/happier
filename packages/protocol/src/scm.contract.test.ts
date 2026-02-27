@@ -5,6 +5,8 @@ import {
     SCM_COMMIT_PATCH_MAX_LENGTH,
     SCM_OPERATION_ERROR_CODES,
     ScmBackendDescribeResponseSchema,
+    ScmChangeDiscardRequestSchema,
+    ScmChangeDiscardResponseSchema,
     ScmCommitCreateRequestSchema,
     isScmPatchBoundToPath,
     parseScmPatchPaths,
@@ -157,6 +159,26 @@ describe('scm protocol contracts', () => {
         expect(allPending.scope?.kind).toBe('all-pending');
         expect(pathScoped.scope?.kind).toBe('paths');
         expect(patchScoped.patches?.[0]?.path).toBe('src/a.ts');
+    });
+
+    it('supports discarding a set of pending changes', () => {
+        const parsedRequest = ScmChangeDiscardRequestSchema.parse({
+            cwd: '.',
+            entries: [
+                { path: 'src/a.ts', kind: 'modified' },
+                { path: 'src/new.ts', kind: 'untracked' },
+            ],
+        });
+        expect(parsedRequest.entries).toHaveLength(2);
+        expect(parsedRequest.entries[0]?.path).toBe('src/a.ts');
+        expect(parsedRequest.entries[0]?.kind).toBe('modified');
+
+        const parsedResponse = ScmChangeDiscardResponseSchema.parse({
+            success: true,
+            stdout: '',
+            stderr: '',
+        });
+        expect(parsedResponse.success).toBe(true);
     });
 
     it('enforces commit patch count and size limits', () => {
