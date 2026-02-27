@@ -19,6 +19,13 @@ export {
   resolveCodexSpawnExtrasFromSettings,
 } from './definitions/codex.js';
 
+export type { OpenCodeBackendMode } from './definitions/opencode.js';
+export {
+  OPENCODE_PROVIDER_SETTINGS_DEFINITION,
+  OPENCODE_PROVIDER_SETTINGS_DEFAULTS,
+  buildOpenCodeProviderSettingsShape,
+} from './definitions/opencode.js';
+
 export {
   CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFINITION,
   CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS,
@@ -28,4 +35,3 @@ export {
   isValidClaudeRemoteAdvancedOptionsJson,
   normalizeClaudeRemoteAdvancedOptionsJson,
 } from './definitions/claudeRemote.js';
-

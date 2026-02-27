@@ -4,10 +4,12 @@ import type { AgentId } from '../types.js';
 
 import { CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFINITION } from './definitions/claudeRemote.js';
 import { CODEX_PROVIDER_SETTINGS_DEFINITION } from './definitions/codex.js';
+import { OPENCODE_PROVIDER_SETTINGS_DEFINITION } from './definitions/opencode.js';
 import type { ProviderSettingsDefinition } from './types.js';
 
 const ALL_DEFINITIONS: readonly ProviderSettingsDefinition[] = Object.freeze([
   CODEX_PROVIDER_SETTINGS_DEFINITION,
+  OPENCODE_PROVIDER_SETTINGS_DEFINITION,
   CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFINITION,
 ]);
 
