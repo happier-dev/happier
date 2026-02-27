@@ -109,6 +109,16 @@ export {
   type SessionContinueWithReplayRpcResult,
 } from './sessionContinueWithReplay.js';
 export {
+  SessionForkPointSchema,
+  SessionForkRpcParamsSchema,
+  SessionForkRpcResultSchema,
+  SessionForkStrategySchema,
+  type SessionForkPoint,
+  type SessionForkRpcParams,
+  type SessionForkRpcResult,
+  type SessionForkStrategy,
+} from './sessionFork.js';
+export {
   RPC_ERROR_CODES,
   RPC_ERROR_MESSAGES,
   RPC_METHODS,
@@ -621,6 +631,14 @@ export {
 } from './structuredMessages/sessionSummaryShardV1.js';
 
 export {
+  ParticipantRecipientV1Schema,
+  ParticipantMessageV1Schema,
+  parseParticipantMessageV1,
+  type ParticipantRecipientV1,
+  type ParticipantMessageV1,
+} from './structuredMessages/participantMessageV1.js';
+
+export {
   MemoryCitationV1Schema,
   MemorySearchErrorCodeSchema,
   MemorySearchHitV1Schema,
@@ -778,6 +796,35 @@ export {
   type AccountEncryptionModeResponse,
   type AccountEncryptionModeUpdateRequest,
 } from './account/encryptionMode.js';
+
+export {
+  AccountEncryptionMigrateToModeSchema,
+  AccountEncryptionMigrateKeyProofSchema,
+  AccountEncryptionMigrateConnectedServicesDirectiveSchema,
+  AccountEncryptionMigrateAutomationsDirectiveSchema,
+  AccountEncryptionMigrateRequestSchema,
+  AccountEncryptionMigrateSuccessResponseSchema,
+  AccountEncryptionMigrateInvalidParamsReasonSchema,
+  AccountEncryptionMigrateBadRequestResponseSchema,
+  AccountEncryptionMigrateForbiddenResponseSchema,
+  AccountEncryptionMigrateNotFoundResponseSchema,
+  AccountEncryptionMigrateConflictResponseSchema,
+  AccountEncryptionMigrateInternalResponseSchema,
+  AccountEncryptionMigrateAnyErrorResponseSchema,
+  type AccountEncryptionMigrateToMode,
+  type AccountEncryptionMigrateKeyProof,
+  type AccountEncryptionMigrateConnectedServicesDirective,
+  type AccountEncryptionMigrateAutomationsDirective,
+  type AccountEncryptionMigrateRequest,
+  type AccountEncryptionMigrateSuccessResponse,
+  type AccountEncryptionMigrateInvalidParamsReason,
+  type AccountEncryptionMigrateBadRequestResponse,
+  type AccountEncryptionMigrateForbiddenResponse,
+  type AccountEncryptionMigrateNotFoundResponse,
+  type AccountEncryptionMigrateConflictResponse,
+  type AccountEncryptionMigrateInternalResponse,
+  type AccountEncryptionMigrateAnyErrorResponse,
+} from './account/encryptionMigrate.js';
 
 export {
   ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
