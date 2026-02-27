@@ -33,6 +33,10 @@
     "./tailscale": {
       "types": "./dist/tailscale/index.d.ts",
       "default": "./dist/tailscale/index.js"
+    },
+    "./process": {
+      "types": "./dist/process/index.d.ts",
+      "default": "./dist/process/index.js"
     }
   },
   "files": [

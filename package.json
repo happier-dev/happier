@@ -110,7 +110,7 @@
     "release:build:binaries:server": "node scripts/pipeline/release/build-server-binaries.mjs",
     "release:verify:artifacts": "node scripts/pipeline/release/verify-artifacts.mjs",
     "release:publish:manifests": "node scripts/pipeline/release/publish-manifests.mjs",
-    "test:release:contracts": "HAPPIER_FEATURE_POLICY_ENV= node --test scripts/release/*.test.mjs",
+    "test:release:contracts": "HAPPIER_FEATURE_POLICY_ENV= node --test scripts/release/*.test.mjs scripts/release/*/*.test.mjs scripts/pipeline/**/*.test.mjs",
     "release:sync:installers": "node scripts/pipeline/release/sync-installers.mjs",
     "release:check:installers": "node scripts/pipeline/release/sync-installers.mjs --check"
   },
@@ -143,6 +143,9 @@
   },
   "resolutions": {
     "@tauri-apps/api": "2.8.0"
+  },
+  "devDependencies": {
+    "@sentry/cli": "^3.2.2"
   },
   "packageManager": "yarn@1.22.22"
 }
