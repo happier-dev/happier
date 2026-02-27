@@ -29,8 +29,9 @@ import { useServerSettingsServerProfileActions } from '@/components/settings/ser
 import { useServerSettingsGroupActions } from '@/components/settings/server/hooks/useServerSettingsGroupActions';
 import { useServerSettingsConcurrentActions } from '@/components/settings/server/hooks/useServerSettingsConcurrentActions';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { clearPendingNotificationNav, getPendingNotificationNav } from '@/sync/domains/pending/pendingNotificationNav';
 
-type SearchParams = Readonly<{ url?: string | string[]; auto?: string | string[] }>;
+type SearchParams = Readonly<{ url?: string | string[]; auto?: string | string[]; source?: string | string[] }>;
 
 function normalizeUrl(raw: string): string {
     return canonicalizeServerUrl(raw);
@@ -63,6 +64,8 @@ export type ServerSettingsController = Readonly<{
     inputName: string;
     error: string | null;
     isValidating: boolean;
+    addServerPrefillHint: string | null;
+    addServerDefaultExpanded: 'server' | 'group' | null;
     onChangeUrl: (value: string) => void;
     onChangeName: (value: string) => void;
     onResetServer: () => Promise<void>;
@@ -101,9 +104,11 @@ export function useServerSettingsScreenController(): ServerSettingsController {
     const [serverSelectionActiveTargetId, setServerSelectionActiveTargetId] = useSettingMutable('serverSelectionActiveTargetId');
 
     const route = React.useMemo(() => {
-        return parseServerSettingsRouteParams({ url: searchParams.url, auto: searchParams.auto });
-    }, [searchParams.auto, searchParams.url]);
+        return parseServerSettingsRouteParams({ url: searchParams.url, auto: searchParams.auto, source: searchParams.source });
+    }, [searchParams.auto, searchParams.source, searchParams.url]);
     const autoMode = route.auto;
+    const addServerPrefillHint = route.source === 'notification' && route.url ? t('server.notificationAddServerHint') : null;
+    const addServerDefaultExpanded = route.source === 'notification' && route.url ? ('server' as const) : null;
 
     const switchServerById = React.useCallback(async (serverId: string, opts?: { normalizeRoute?: boolean }) => {
         setActiveServerId(serverId, { scope: 'device' });
@@ -300,9 +305,18 @@ export function useServerSettingsScreenController(): ServerSettingsController {
             source: 'manual',
         });
 
-        await switchServerById(profile.id);
+        await switchServerById(profile.id, { normalizeRoute: route.source !== 'notification' });
         setRevision((r) => r + 1);
-    }, [inputName, inputUrl, switchServerById, validateServerReachable]);
+
+        if (route.source === 'notification' && route.url) {
+            const pending = getPendingNotificationNav();
+            const intended = normalizeUrl(route.url);
+            if (pending && intended && normalizeUrl(pending.serverUrl) === intended && pending.route) {
+                clearPendingNotificationNav();
+                router.replace(pending.route);
+            }
+        }
+    }, [inputName, inputUrl, route.source, route.url, router, switchServerById, validateServerReachable]);
 
     const onResetServer = React.useCallback(async () => {
         const confirmed = await Modal.confirm(
@@ -340,6 +354,8 @@ export function useServerSettingsScreenController(): ServerSettingsController {
         inputName,
         error,
         isValidating,
+        addServerPrefillHint,
+        addServerDefaultExpanded,
         onChangeUrl: (value) => {
             setInputUrl(value);
             setError(null);

@@ -900,6 +900,23 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 title: '權限請求',
                 subtitle: '當工作階段因等待批准而被阻塞時通知',
             },
+            userActions: {
+                title: '操作請求',
+                subtitle: '當工作階段需要你的回答或確認時通知',
+            },
+        },
+    },
+
+    notifications: {
+        actions: {
+            allow: '允許',
+            deny: '拒絕',
+            answer: '回答',
+        },
+        channels: {
+            default: '預設',
+            permissionRequests: '權限請求',
+            userActionRequests: '操作請求',
         },
     },
 
@@ -1295,6 +1312,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         addAndUse: '新增並使用',
         addTargetsTitle: '新增',
         addServerSubtitle: '新增伺服器並切換',
+        notificationAddServerHint: '此伺服器尚未在此裝置上儲存。請在下方新增以繼續。',
         addServerGroupTitle: '新增伺服器群組',
         addServerGroupSubtitle: '建立可重複使用的伺服器群組',
         serverGroupNameLabel: '群組名稱',

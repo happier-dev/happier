@@ -58,6 +58,8 @@ const refreshFromActiveServerSpy = vi.fn(async () => {});
 let capturedRowActions: Record<string, any[]> = {};
 let capturedRoundButtons: Array<{ title: string; onPress?: () => void; action?: () => void }> = [];
 let capturedItemPressesByTitle: Record<string, Array<() => void>> = {};
+let pendingNotificationNavValue: { serverUrl: string; route: string } | null = null;
+const clearPendingNotificationNavSpy = vi.fn();
 
 vi.mock('expo-router', () => ({
     Stack: Object.assign(
@@ -88,6 +90,17 @@ vi.mock('@/modal', () => ({
         confirm: vi.fn(async () => true),
         prompt: vi.fn(async () => null),
         alert: vi.fn(),
+    },
+}));
+
+vi.mock('@/sync/domains/pending/pendingNotificationNav', () => ({
+    getPendingNotificationNav: () => pendingNotificationNavValue,
+    setPendingNotificationNav: (next: { serverUrl: string; route: string }) => {
+        pendingNotificationNavValue = next;
+    },
+    clearPendingNotificationNav: () => {
+        clearPendingNotificationNavSpy();
+        pendingNotificationNavValue = null;
     },
 }));
 
@@ -147,6 +160,8 @@ describe('ServerConfigScreen', () => {
         capturedRowActions = {};
         capturedRoundButtons = [];
         capturedItemPressesByTitle = {};
+        pendingNotificationNavValue = null;
+        clearPendingNotificationNavSpy.mockReset();
     });
 
     afterEach(() => {
@@ -225,6 +240,31 @@ describe('ServerConfigScreen', () => {
         expect(switchConnectionToActiveServerSpy).not.toHaveBeenCalled();
         expect(refreshFromActiveServerSpy).not.toHaveBeenCalled();
         expect(routerReplaceMock).not.toHaveBeenCalledWith('/');
+    });
+
+    it('navigates to pending notification session after adding a server from a notification deep link', async () => {
+        localSearchParamsMock = { url: 'https://company.example.test', source: 'notification' };
+        pendingNotificationNavValue = { serverUrl: 'https://company.example.test', route: '/session/s_123' };
+
+        const fetchSpy = vi.fn(async () => ({ ok: true, json: async () => ({}) }));
+        (globalThis as any).fetch = fetchSpy;
+
+        const Screen = (await import('./server')).default;
+        await act(async () => {
+            renderer.create(React.createElement(Screen));
+            await new Promise((r) => setTimeout(r, 0));
+        });
+
+        const addButton = capturedRoundButtons.filter((b) => b.title === 'server.addAndUse').at(-1);
+        expect(addButton).toBeTruthy();
+
+        await act(async () => {
+            await addButton!.action?.();
+            await new Promise((r) => setTimeout(r, 0));
+        });
+
+        expect(clearPendingNotificationNavSpy).toHaveBeenCalledTimes(1);
+        expect(routerReplaceMock).toHaveBeenCalledWith('/session/s_123');
     });
 
     it('renders a preconfigured server as a normal saved server entry', async () => {

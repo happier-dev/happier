@@ -676,6 +676,13 @@ export {
 // Diff helpers
 export { splitUnifiedDiffByFile } from './diff/splitUnifiedDiffByFile.js';
 
+// Push notifications (mobile)
+export {
+  PUSH_NOTIFICATION_ACTION_IDS,
+  PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
+  PUSH_NOTIFICATION_CATEGORY_IDS,
+} from './push/pushNotificationActions.js';
+
 // Happier server feature discovery + social contracts
 export {
   BUG_REPORT_DEFAULT_ACCEPTED_ARTIFACT_KINDS,

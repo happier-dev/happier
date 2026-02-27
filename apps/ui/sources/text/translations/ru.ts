@@ -1434,8 +1434,26 @@ export const ru: TranslationStructure = {
         subtitle:
           "Уведомлять, когда сессия заблокирована и ждёт одобрения",
       },
+      userActions: {
+        title: "Запросы действий",
+        subtitle:
+          "Уведомлять, когда сессии нужен ответ или подтверждение",
+      },
     },
   },
+
+	  notifications: {
+	    actions: {
+	      allow: 'Разрешить',
+	      deny: 'Отклонить',
+	      answer: 'Ответить',
+	    },
+	    channels: {
+	      default: 'По умолчанию',
+	      permissionRequests: 'Запросы разрешений',
+	      userActionRequests: 'Запросы действий',
+	    },
+	  },
 
   settingsProviders: {
     title: "Настройки провайдера ИИ",
@@ -2100,6 +2118,7 @@ export const ru: TranslationStructure = {
     addAndUse: "Добавить и использовать",
     addTargetsTitle: "Добавить",
     addServerSubtitle: "Добавить новый сервер и переключиться на него",
+    notificationAddServerHint: "Этот сервер ещё не сохранён на этом устройстве. Добавьте его ниже, чтобы продолжить.",
     serverCount: ({ count }: { count: number }) =>
       `${count} ${plural({ count, one: "сервер", few: "сервера", many: "серверов" })}`,
     signedOutSwitchConfirmTitle: "Вы не подключены",

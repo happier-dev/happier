@@ -1733,10 +1733,28 @@ export const ja: TranslationStructure = {
         subtitle:
           "セッションが承認待ちでブロックされているときに通知します",
       },
+      userActions: {
+        title: "操作リクエスト",
+        subtitle:
+          "セッションが回答や確認を必要とするときに通知します",
+      },
     },
   },
 
-		  settingsProviders: {
+	  notifications: {
+	    actions: {
+	      allow: '許可',
+	      deny: '拒否',
+	      answer: '回答',
+	    },
+	    channels: {
+	      default: 'デフォルト',
+	      permissionRequests: '権限リクエスト',
+	      userActionRequests: 'アクションリクエスト',
+	    },
+	  },
+
+  settingsProviders: {
 	    title: "AIプロバイダー設定",
 	    entrySubtitle: "プロバイダー固有のオプションを設定します",
 	    footer:
@@ -2679,6 +2697,7 @@ export const ja: TranslationStructure = {
     addAndUse: "追加して使用",
     addTargetsTitle: "追加",
     addServerSubtitle: "新しいサーバーを追加して切り替え",
+    notificationAddServerHint: "このサーバーはまだこの端末に保存されていません。続行するには下で追加してください。",
     serverCount: ({ count }: { count: number }) => `${count} サーバー`,
     signedOutSwitchConfirmTitle: "接続されていません",
     signedOutSwitchConfirmBody:

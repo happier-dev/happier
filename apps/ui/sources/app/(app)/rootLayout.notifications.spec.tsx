@@ -3,6 +3,7 @@ import renderer, { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/rootLayoutTestkit';
+import { PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -21,12 +22,16 @@ const pushSpy = vi.fn();
 const upsertActivateAndSwitchServerSpy = vi.fn(async (_params: { serverUrl: string; source: string; scope: string; refreshAuth: unknown }) => true);
 const setActiveServerAndSwitchSpy = vi.fn(async (_params: { serverId: string; scope: string; refreshAuth: unknown }) => true);
 const applySettingsSpy = vi.fn();
+const sessionAllowSpy = vi.fn((..._args: unknown[]) => Promise.resolve());
+const sessionDenySpy = vi.fn((..._args: unknown[]) => Promise.resolve());
 const clearPendingTerminalConnectSpy = vi.fn();
 const clearPendingNotificationNavSpy = vi.fn();
+const clearPendingNotificationActionSpy = vi.fn();
 let activeServerUrl = 'https://api.happier.dev';
 let serverProfilesValue: { id: string; serverUrl: string }[] = [];
 let pendingTerminalConnectValue: { publicKeyB64Url: string; serverUrl: string } | null = null;
 let pendingNotificationNavValue: { serverUrl: string; route: string } | null = null;
+let pendingNotificationActionValue: { serverUrl: string; sessionId: string; requestId: string; action: 'allow' | 'deny' } | null = null;
 let lastRenderer: renderer.ReactTestRenderer | null = null;
 
 vi.mock('expo-router', () => ({
@@ -137,6 +142,22 @@ vi.mock('@/sync/domains/pending/pendingNotificationNav', () => ({
     },
 }));
 
+vi.mock('@/sync/domains/pending/pendingNotificationAction', () => ({
+    getPendingNotificationAction: () => pendingNotificationActionValue,
+    setPendingNotificationAction: (next: { serverUrl: string; sessionId: string; requestId: string; action: 'allow' | 'deny' }) => {
+        pendingNotificationActionValue = next;
+    },
+    clearPendingNotificationAction: () => {
+        clearPendingNotificationActionSpy();
+        pendingNotificationActionValue = null;
+    },
+}));
+
+vi.mock('@/sync/ops', () => ({
+    sessionAllow: (...args: unknown[]) => sessionAllowSpy(...args),
+    sessionDeny: (...args: unknown[]) => sessionDenySpy(...args),
+}));
+
 vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
     getReadyServerFeatures: async () =>
         createRootLayoutFeaturesResponse({
@@ -150,6 +171,7 @@ afterEach(() => {
     serverProfilesValue = [];
     pendingTerminalConnectValue = null;
     pendingNotificationNavValue = null;
+    pendingNotificationActionValue = null;
     try {
         act(() => {
             lastRenderer?.unmount();
@@ -163,6 +185,9 @@ afterEach(() => {
     setActiveServerAndSwitchSpy.mockReset();
     clearPendingTerminalConnectSpy.mockClear();
     clearPendingNotificationNavSpy.mockClear();
+    clearPendingNotificationActionSpy.mockClear();
+    sessionAllowSpy.mockClear();
+    sessionDenySpy.mockClear();
     vi.restoreAllMocks();
     vi.resetModules();
 });
@@ -317,5 +342,266 @@ describe('App RootLayout notifications', () => {
         expect(setActiveServerAndSwitchSpy).not.toHaveBeenCalled();
         expect(upsertActivateAndSwitchServerSpy).not.toHaveBeenCalled();
         expect(pushSpy).toHaveBeenCalledWith('/session/s_789');
+    });
+
+    it('sends a permission allow response and navigates when notification action is pressed', async () => {
+        const Notifications = await import('expo-notifications');
+        vi.spyOn(Notifications, 'getLastNotificationResponseAsync').mockResolvedValue({
+            actionIdentifier: PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1,
+            notification: {
+                date: Date.parse('2026-02-09T00:00:00.000Z'),
+                request: {
+                    identifier: 'n4',
+                    trigger: null,
+                    content: {
+                        title: null,
+                        subtitle: null,
+                        body: null,
+                        categoryIdentifier: null,
+                        sound: null,
+                        data: { sessionId: 's_allow', requestId: 'p_allow', serverUrl: 'https://api.happier.dev' },
+                    },
+                },
+            },
+        });
+        vi.spyOn(Notifications, 'addNotificationResponseReceivedListener').mockImplementation(() => ({ remove: () => {} }));
+
+        await renderRootLayout();
+
+        expect(sessionAllowSpy).toHaveBeenCalledWith('s_allow', 'p_allow', undefined, undefined, 'approved');
+        expect(pushSpy).toHaveBeenCalledWith('/session/s_allow');
+    });
+
+    it('switches to a saved inactive server and performs permission allow when notification action is pressed', async () => {
+        serverProfilesValue = [
+            { id: 'server-1', serverUrl: 'https://api.happier.dev' },
+            { id: 'server-2', serverUrl: 'https://company.example.test' },
+        ];
+        activeServerUrl = 'https://api.happier.dev';
+        const Notifications = await import('expo-notifications');
+        vi.spyOn(Notifications, 'getLastNotificationResponseAsync').mockResolvedValue({
+            actionIdentifier: PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1,
+            notification: {
+                date: Date.parse('2026-02-09T00:00:00.000Z'),
+                request: {
+                    identifier: 'n4b',
+                    trigger: null,
+                    content: {
+                        title: null,
+                        subtitle: null,
+                        body: null,
+                        categoryIdentifier: null,
+                        sound: null,
+                        data: { sessionId: 's_allow_2', requestId: 'p_allow_2', serverUrl: 'https://company.example.test' },
+                    },
+                },
+            },
+        });
+        vi.spyOn(Notifications, 'addNotificationResponseReceivedListener').mockImplementation(() => ({ remove: () => {} }));
+
+        await renderRootLayout();
+
+        expect(setActiveServerAndSwitchSpy).toHaveBeenCalledWith({
+            serverId: 'server-2',
+            scope: 'device',
+            refreshAuth: expect.any(Function),
+        });
+        expect(sessionAllowSpy).toHaveBeenCalledWith('s_allow_2', 'p_allow_2', undefined, undefined, 'approved');
+        expect(pushSpy).toHaveBeenCalledWith('/session/s_allow_2');
+    });
+
+    it('does not perform permission allow when notification action is pressed without serverUrl', async () => {
+        const Notifications = await import('expo-notifications');
+        vi.spyOn(Notifications, 'getLastNotificationResponseAsync').mockResolvedValue({
+            actionIdentifier: PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1,
+            notification: {
+                date: Date.parse('2026-02-09T00:00:00.000Z'),
+                request: {
+                    identifier: 'n4c',
+                    trigger: null,
+                    content: {
+                        title: null,
+                        subtitle: null,
+                        body: null,
+                        categoryIdentifier: null,
+                        sound: null,
+                        data: { sessionId: 's_allow_3', requestId: 'p_allow_3' },
+                    },
+                },
+            },
+        });
+        vi.spyOn(Notifications, 'addNotificationResponseReceivedListener').mockImplementation(() => ({ remove: () => {} }));
+
+        await renderRootLayout();
+
+        expect(sessionAllowSpy).not.toHaveBeenCalled();
+        expect(pushSpy).toHaveBeenCalledWith('/session/s_allow_3');
+    });
+
+    it('does not perform permission allow when notification action targets an unsaved server', async () => {
+        serverProfilesValue = [
+            { id: 'server-1', serverUrl: 'https://api.happier.dev' },
+        ];
+        activeServerUrl = 'https://api.happier.dev';
+        const Notifications = await import('expo-notifications');
+        vi.spyOn(Notifications, 'getLastNotificationResponseAsync').mockResolvedValue({
+            actionIdentifier: PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1,
+            notification: {
+                date: Date.parse('2026-02-09T00:00:00.000Z'),
+                request: {
+                    identifier: 'n4d',
+                    trigger: null,
+                    content: {
+                        title: null,
+                        subtitle: null,
+                        body: null,
+                        categoryIdentifier: null,
+                        sound: null,
+                        data: { sessionId: 's_allow_4', requestId: 'p_allow_4', serverUrl: 'https://unknown.example.test' },
+                    },
+                },
+            },
+        });
+        vi.spyOn(Notifications, 'addNotificationResponseReceivedListener').mockImplementation(() => ({ remove: () => {} }));
+
+        await renderRootLayout();
+
+        expect(sessionAllowSpy).not.toHaveBeenCalled();
+        expect(setActiveServerAndSwitchSpy).not.toHaveBeenCalled();
+        expect(upsertActivateAndSwitchServerSpy).not.toHaveBeenCalled();
+        expect(pendingNotificationNavValue).toEqual({ serverUrl: 'https://unknown.example.test', route: '/session/s_allow_4' });
+        expect(pushSpy).toHaveBeenCalledWith('/server?url=https%3A%2F%2Funknown.example.test&source=notification');
+    });
+
+    it('ignores unknown notification action identifiers (does not auto-add or navigate)', async () => {
+        serverProfilesValue = [
+            { id: 'server-1', serverUrl: 'https://api.happier.dev' },
+        ];
+        activeServerUrl = 'https://api.happier.dev';
+        const Notifications = await import('expo-notifications');
+        vi.spyOn(Notifications, 'getLastNotificationResponseAsync').mockResolvedValue({
+            actionIdentifier: 'UNKNOWN_ACTION',
+            notification: {
+                date: Date.parse('2026-02-09T00:00:00.000Z'),
+                request: {
+                    identifier: 'n_unknown',
+                    trigger: null,
+                    content: {
+                        title: null,
+                        subtitle: null,
+                        body: null,
+                        categoryIdentifier: null,
+                        sound: null,
+                        data: { sessionId: 's_unknown', serverUrl: 'https://unknown.example.test' },
+                    },
+                },
+            },
+        });
+        vi.spyOn(Notifications, 'addNotificationResponseReceivedListener').mockImplementation(() => ({ remove: () => {} }));
+
+        await renderRootLayout();
+
+        expect(setActiveServerAndSwitchSpy).not.toHaveBeenCalled();
+        expect(upsertActivateAndSwitchServerSpy).not.toHaveBeenCalled();
+        expect(pendingNotificationNavValue).toBe(null);
+        expect(pushSpy).not.toHaveBeenCalled();
+    });
+
+    it('auto-adds and switches server when zero servers exist and a permission action targets an unsaved server (but does not perform the action)', async () => {
+        serverProfilesValue = [];
+        activeServerUrl = 'https://api.happier.dev';
+        const Notifications = await import('expo-notifications');
+        vi.spyOn(Notifications, 'getLastNotificationResponseAsync').mockResolvedValue({
+            actionIdentifier: PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1,
+            notification: {
+                date: Date.parse('2026-02-09T00:00:00.000Z'),
+                request: {
+                    identifier: 'n4e',
+                    trigger: null,
+                    content: {
+                        title: null,
+                        subtitle: null,
+                        body: null,
+                        categoryIdentifier: null,
+                        sound: null,
+                        data: { sessionId: 's_allow_5', requestId: 'p_allow_5', serverUrl: 'https://new.example.test' },
+                    },
+                },
+            },
+        });
+        vi.spyOn(Notifications, 'addNotificationResponseReceivedListener').mockImplementation(() => ({ remove: () => {} }));
+
+        await renderRootLayout();
+
+        expect(sessionAllowSpy).not.toHaveBeenCalled();
+        expect(upsertActivateAndSwitchServerSpy).toHaveBeenCalledWith({
+            serverUrl: 'https://new.example.test',
+            source: 'notification',
+            scope: 'device',
+            refreshAuth: expect.any(Function),
+        });
+        expect(pushSpy).toHaveBeenCalledWith('/session/s_allow_5');
+    });
+
+    it('routes to server settings with a prefilled url when a notification targets an unsaved server and servers already exist', async () => {
+        serverProfilesValue = [
+            { id: 'server-1', serverUrl: 'https://api.happier.dev' },
+        ];
+        activeServerUrl = 'https://api.happier.dev';
+        const Notifications = await import('expo-notifications');
+        vi.spyOn(Notifications, 'getLastNotificationResponseAsync').mockResolvedValue({
+            actionIdentifier: Notifications.DEFAULT_ACTION_IDENTIFIER,
+            notification: {
+                date: Date.parse('2026-02-09T00:00:00.000Z'),
+                request: {
+                    identifier: 'n6',
+                    trigger: null,
+                    content: {
+                        title: null,
+                        subtitle: null,
+                        body: null,
+                        categoryIdentifier: null,
+                        sound: null,
+                        data: { sessionId: 's_999', serverUrl: 'https://unknown2.example.test' },
+                    },
+                },
+            },
+        });
+        vi.spyOn(Notifications, 'addNotificationResponseReceivedListener').mockImplementation(() => ({ remove: () => {} }));
+
+        await renderRootLayout();
+
+        expect(pendingNotificationNavValue).toEqual({ serverUrl: 'https://unknown2.example.test', route: '/session/s_999' });
+        expect(pushSpy).toHaveBeenCalledWith('/server?url=https%3A%2F%2Funknown2.example.test&source=notification');
+        expect(setActiveServerAndSwitchSpy).not.toHaveBeenCalled();
+        expect(upsertActivateAndSwitchServerSpy).not.toHaveBeenCalled();
+    });
+
+    it('sends a permission deny response and navigates when notification action is pressed', async () => {
+        const Notifications = await import('expo-notifications');
+        vi.spyOn(Notifications, 'getLastNotificationResponseAsync').mockResolvedValue({
+            actionIdentifier: PUSH_NOTIFICATION_ACTION_IDS.permissionDenyV1,
+            notification: {
+                date: Date.parse('2026-02-09T00:00:00.000Z'),
+                request: {
+                    identifier: 'n5',
+                    trigger: null,
+                    content: {
+                        title: null,
+                        subtitle: null,
+                        body: null,
+                        categoryIdentifier: null,
+                        sound: null,
+                        data: { sessionId: 's_deny', requestId: 'p_deny', serverUrl: 'https://api.happier.dev' },
+                    },
+                },
+            },
+        });
+        vi.spyOn(Notifications, 'addNotificationResponseReceivedListener').mockImplementation(() => ({ remove: () => {} }));
+
+        await renderRootLayout();
+
+        expect(sessionDenySpy).toHaveBeenCalledWith('s_deny', 'p_deny', undefined, undefined, 'denied', 'Denied from notification');
+        expect(pushSpy).toHaveBeenCalledWith('/session/s_deny');
     });
 });

@@ -1465,10 +1465,28 @@ export const pt: TranslationStructure = {
         subtitle:
           "Notificar quando uma sessão está bloqueada aguardando uma aprovação",
       },
+      userActions: {
+        title: "Solicitações de ação",
+        subtitle:
+          "Notificar quando uma sessão precisa de uma resposta ou confirmação",
+      },
     },
   },
 
-		  settingsProviders: {
+	  notifications: {
+	    actions: {
+	      allow: 'Permitir',
+	      deny: 'Negar',
+	      answer: 'Responder',
+	    },
+	    channels: {
+	      default: 'Padrão',
+	      permissionRequests: 'Solicitações de permissão',
+	      userActionRequests: 'Solicitações de ação',
+	    },
+	  },
+
+  settingsProviders: {
 		    title: "Configurações do provedor de IA",
 		    entrySubtitle: "Configure opções específicas do provedor",
 		    footer:
@@ -2432,6 +2450,7 @@ export const pt: TranslationStructure = {
     addAndUse: "Adicionar e usar",
     addTargetsTitle: "Adicionar",
     addServerSubtitle: "Adicionar um novo servidor e trocar para ele",
+    notificationAddServerHint: "Este servidor ainda não está salvo neste dispositivo. Adicione-o abaixo para continuar.",
     serverCount: ({ count }: { count: number }) =>
       `${count} ${plural({ count, singular: "servidor", plural: "servidores" })}`,
     signedOutSwitchConfirmTitle: "Você não está conectado",

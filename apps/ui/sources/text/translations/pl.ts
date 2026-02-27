@@ -1477,10 +1477,28 @@ export const pl: TranslationStructure = {
         subtitle:
           "Powiadamiaj, gdy sesja jest zablokowana i czeka na zatwierdzenie",
       },
+      userActions: {
+        title: "Prośby o akcję",
+        subtitle:
+          "Powiadamiaj, gdy sesja wymaga odpowiedzi lub potwierdzenia",
+      },
     },
   },
 
-		  settingsProviders: {
+	  notifications: {
+	    actions: {
+	      allow: 'Zezwól',
+	      deny: 'Odmów',
+	      answer: 'Odpowiedz',
+	    },
+	    channels: {
+	      default: 'Domyślne',
+	      permissionRequests: 'Prośby o uprawnienia',
+	      userActionRequests: 'Prośby o działanie',
+	    },
+	  },
+
+  settingsProviders: {
 		    title: "Ustawienia dostawcy AI",
 		    entrySubtitle: "Skonfiguruj opcje specyficzne dla dostawcy",
 		    footer:
@@ -2442,6 +2460,7 @@ export const pl: TranslationStructure = {
     addAndUse: "Dodaj i użyj",
     addTargetsTitle: "Dodaj",
     addServerSubtitle: "Dodaj nowy serwer i przełącz na niego",
+    notificationAddServerHint: "Ten serwer nie jest jeszcze zapisany na tym urządzeniu. Dodaj go poniżej, aby kontynuować.",
     serverCount: ({ count }: { count: number }) =>
       `${count} ${plural({ count, one: "serwer", few: "serwery", many: "serwerów" })}`,
     signedOutSwitchConfirmTitle: "Nie jesteś połączony",

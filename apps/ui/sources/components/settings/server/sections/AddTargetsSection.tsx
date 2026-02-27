@@ -23,6 +23,8 @@ type AddTargetsSectionProps = Readonly<{
     onChangeName: (value: string) => void;
     onResetServer: () => Promise<void> | void;
     onAddServer: () => Promise<void> | void;
+    prefillHint?: string | null;
+    defaultExpanded?: 'server' | 'group' | null;
 
     // Add server group form
     servers: ReadonlyArray<ServerProfile>;
@@ -92,7 +94,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 export function AddTargetsSection(props: AddTargetsSectionProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const [expanded, setExpanded] = React.useState<ExpandedKind>(null);
+    const [expanded, setExpanded] = React.useState<ExpandedKind>(props.defaultExpanded ?? null);
 
     const [groupName, setGroupName] = React.useState('');
     const [groupServerIds, setGroupServerIds] = React.useState<string[]>([]);
@@ -104,6 +106,11 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
             return next;
         });
     }, []);
+
+    React.useEffect(() => {
+        if (!props.defaultExpanded) return;
+        setExpanded((prev) => prev ?? props.defaultExpanded ?? null);
+    }, [props.defaultExpanded]);
 
     React.useEffect(() => {
         if (expanded !== 'group') return;
@@ -180,6 +187,11 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
             />
             {expanded === 'server' ? (
                 <View style={styles.contentContainer}>
+                    {props.prefillHint ? (
+                        <Text style={[styles.statusText, { marginBottom: 12 }]}>
+                            {props.prefillHint}
+                        </Text>
+                    ) : null}
                     {props.autoMode ? (
                         <Text style={[styles.statusText, { marginBottom: 12 }]}>
                             {t('server.autoConfigHint')}

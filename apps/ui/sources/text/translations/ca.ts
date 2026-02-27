@@ -1332,10 +1332,27 @@ export const ca: TranslationStructure = {
                 title: 'Sol·licituds de permís',
                 subtitle: 'Notifica quan una sessió està bloquejada esperant una aprovació',
             },
+            userActions: {
+                title: 'Sol·licituds d’acció',
+                subtitle: 'Notifica quan una sessió necessita una resposta o confirmació',
+            },
         },
     },
 
-	    settingsProviders: {
+    notifications: {
+        actions: {
+            allow: 'Permetre',
+            deny: 'Denegar',
+            answer: 'Respondre',
+        },
+        channels: {
+            default: 'Per defecte',
+            permissionRequests: 'Sol·licituds de permís',
+            userActionRequests: 'Sol·licituds d’acció',
+        },
+    },
+
+    settingsProviders: {
         title: 'Configuració del proveïdor d’IA',
         entrySubtitle: 'Configura opcions específiques del proveïdor',
         footer: 'Configura opcions específiques del proveïdor. Aquests ajustos poden afectar el comportament de la sessió.',
@@ -2165,6 +2182,7 @@ deps: {
         addAndUse: 'Afegeix i usa',
         addTargetsTitle: 'Afegeix',
         addServerSubtitle: 'Afegeix un nou servidor i canvia-hi',
+        notificationAddServerHint: 'Aquest servidor encara no està desat en aquest dispositiu. Afegeix-lo a continuació per continuar.',
         serverCount: ({ count }: { count: number }) => `${count} ${plural({ count, singular: 'servidor', plural: 'servidors' })}`,
         signedOutSwitchConfirmTitle: 'No estàs connectat',
         signedOutSwitchConfirmBody:

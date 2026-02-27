@@ -6,6 +6,12 @@ import * as Fonts from 'expo-font';
 import { Asset } from 'expo-asset';
 import * as Notifications from 'expo-notifications';
 import { FontAwesome } from '@expo/vector-icons';
+import {
+    PUSH_NOTIFICATION_ACTION_IDS,
+    PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
+    PUSH_NOTIFICATION_CATEGORY_IDS,
+} from '@happier-dev/protocol';
+import { t } from '@/text';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { AuthProvider } from '@/auth/context/AuthContext';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
@@ -276,12 +282,53 @@ Notifications.setNotificationHandler({
 
 // Setup Android notification channel (required for Android 8.0+)
 if (Platform.OS === 'android') {
-    Notifications.setNotificationChannelAsync('default', {
-        name: 'Default',
+    void Notifications.setNotificationChannelAsync(PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.defaultV1, {
+        name: t('notifications.channels.default'),
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 250, 250, 250],
         lightColor: '#FF231F7C',
-    });
+    }).catch(() => {});
+
+    void Notifications.setNotificationChannelAsync(PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.permissionRequestsV1, {
+        name: t('notifications.channels.permissionRequests'),
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#FF231F7C',
+    }).catch(() => {});
+
+    void Notifications.setNotificationChannelAsync(PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.userActionRequestsV1, {
+        name: t('notifications.channels.userActionRequests'),
+        importance: Notifications.AndroidImportance.HIGH,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#FF231F7C',
+    }).catch(() => {});
+}
+
+// Register interactive notification actions.
+//
+// Note: Expo docs recommend avoiding ':' and '-' in category identifiers.
+// Our category ids live in `@happier-dev/protocol` so the CLI push payload and app registration stay in sync.
+if (Platform.OS !== 'web') {
+    void Notifications.setNotificationCategoryAsync(PUSH_NOTIFICATION_CATEGORY_IDS.permissionRequestV1, [
+        {
+            identifier: PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1,
+            buttonTitle: t('notifications.actions.allow'),
+            options: { opensAppToForeground: true },
+        },
+        {
+            identifier: PUSH_NOTIFICATION_ACTION_IDS.permissionDenyV1,
+            buttonTitle: t('notifications.actions.deny'),
+            options: { opensAppToForeground: true, isDestructive: true },
+        },
+    ]).catch(() => {});
+
+    void Notifications.setNotificationCategoryAsync(PUSH_NOTIFICATION_CATEGORY_IDS.userActionRequestV1, [
+        {
+            identifier: PUSH_NOTIFICATION_ACTION_IDS.userActionOpenV1,
+            buttonTitle: t('notifications.actions.answer'),
+            options: { opensAppToForeground: true },
+        },
+    ]).catch(() => {});
 }
 
 export {

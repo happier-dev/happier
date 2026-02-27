@@ -1341,6 +1341,23 @@ export const en = {
                 title: 'Permission requests',
                 subtitle: 'Notify when a session is blocked waiting for an approval',
             },
+            userActions: {
+                title: 'Action requests',
+                subtitle: 'Notify when a session needs an answer or confirmation',
+            },
+        },
+    },
+
+    notifications: {
+        actions: {
+            allow: 'Allow',
+            deny: 'Deny',
+            answer: 'Answer',
+        },
+        channels: {
+            default: 'Default',
+            permissionRequests: 'Permission requests',
+            userActionRequests: 'Action requests',
         },
     },
 
@@ -2176,6 +2193,7 @@ export const en = {
         addAndUse: 'Add and use',
         addTargetsTitle: 'Add',
         addServerSubtitle: 'Add a new server and switch to it',
+        notificationAddServerHint: 'This server isn’t saved on this device yet. Add it below to continue.',
         serverCount: ({ count }: { count: number }) => `${count} ${plural({ count, singular: 'server', plural: 'servers' })}`,
         signedOutSwitchConfirmTitle: 'You are not connected',
         signedOutSwitchConfirmBody:

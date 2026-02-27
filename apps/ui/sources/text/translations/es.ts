@@ -1455,8 +1455,25 @@ export const es: TranslationStructure = {
         subtitle:
           "Notificar cuando una sesión está bloqueada esperando una aprobación",
       },
+      userActions: {
+        title: "Solicitudes de acción",
+        subtitle: "Notificar cuando una sesión necesita una respuesta o confirmación",
+      },
     },
   },
+
+	  notifications: {
+	    actions: {
+	      allow: 'Permitir',
+	      deny: 'Denegar',
+	      answer: 'Responder',
+	    },
+	    channels: {
+	      default: 'Predeterminado',
+	      permissionRequests: 'Solicitudes de permisos',
+	      userActionRequests: 'Solicitudes de acción',
+	    },
+	  },
 
   settingsProviders: {
     title: "Configuración del proveedor de IA",
@@ -2420,6 +2437,7 @@ export const es: TranslationStructure = {
     addAndUse: "Añadir y usar",
     addTargetsTitle: "Añadir",
     addServerSubtitle: "Añade un servidor nuevo y cámbiate a él",
+    notificationAddServerHint: "Este servidor aún no está guardado en este dispositivo. Añádelo abajo para continuar.",
     serverCount: ({ count }: { count: number }) =>
       `${count} ${plural({ count, singular: "servidor", plural: "servidores" })}`,
     signedOutSwitchConfirmTitle: "No estás conectado",

@@ -1382,6 +1382,23 @@ export const zhHans: TranslationStructure = {
         title: "权限请求",
         subtitle: "当会话因等待批准而被阻塞时通知",
       },
+      userActions: {
+        title: "操作请求",
+        subtitle: "当会话需要你的回答或确认时通知",
+      },
+    },
+  },
+
+  notifications: {
+    actions: {
+      allow: '允许',
+      deny: '拒绝',
+      answer: '回答',
+    },
+    channels: {
+      default: '默认',
+      permissionRequests: '权限请求',
+      userActionRequests: '操作请求',
     },
   },
 
@@ -2280,6 +2297,7 @@ export const zhHans: TranslationStructure = {
     addAndUse: "添加并使用",
     addTargetsTitle: "添加",
     addServerSubtitle: "添加新服务器并切换到它",
+    notificationAddServerHint: "此服务器尚未在此设备上保存。请在下方添加以继续。",
     serverCount: ({ count }: { count: number }) => `${count} 个服务器`,
     signedOutSwitchConfirmTitle: "未连接",
     signedOutSwitchConfirmBody:

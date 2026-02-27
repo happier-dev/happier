@@ -5,6 +5,7 @@ import { withServerUrlInPushData } from './pushNotificationData'
 import { serializeAxiosErrorForLog } from './client/serializeAxiosErrorForLog'
 import { summarizeExpoPushTicketErrorsForLog } from './pushTicketLogSummary'
 import { isPushDebugEnabled, readPushFetchTokensTimeoutMs } from './pushNotificationsConfig'
+import { PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS, PUSH_NOTIFICATION_CATEGORY_IDS } from '@happier-dev/protocol'
 
 export interface PushToken {
     id: string
@@ -26,6 +27,51 @@ function normalizeClientServerUrl(raw: unknown): string | null {
     } catch {
         return null
     }
+}
+
+type PushRequestKind = 'permission' | 'user_action'
+
+function resolvePushRequestKindFromPushData(data: Record<string, unknown> | undefined): PushRequestKind | null {
+    const kind = typeof data?.kind === 'string' ? data.kind.trim() : ''
+    if (kind === 'permission' || kind === 'user_action') return kind
+
+    const type = typeof data?.type === 'string' ? data.type.trim() : ''
+    if (type === 'permission_request') return 'permission'
+    if (type === 'user_action_request') return 'user_action'
+    return null
+}
+
+function resolveCategoryIdFromPushData(data: Record<string, unknown> | undefined): string | undefined {
+    const kind = resolvePushRequestKindFromPushData(data)
+    if (kind === 'permission') return PUSH_NOTIFICATION_CATEGORY_IDS.permissionRequestV1
+    if (kind === 'user_action') return PUSH_NOTIFICATION_CATEGORY_IDS.userActionRequestV1
+    return undefined
+}
+
+function resolveAndroidChannelIdFromPushData(data: Record<string, unknown> | undefined): string | undefined {
+    const kind = resolvePushRequestKindFromPushData(data)
+    if (kind === 'permission') return PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.permissionRequestsV1
+    if (kind === 'user_action') return PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.userActionRequestsV1
+    return undefined
+}
+
+function sanitizeNotificationSubtitle(raw: string): string {
+    const value = String(raw ?? '').trim()
+    if (!value) return ''
+    // Avoid newlines/control chars in lock screen notifications; also cap length for safety.
+    const collapsed = value
+        .replace(/[\u0000-\u001F\u007F]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+    if (!collapsed) return ''
+    return collapsed.length > 80 ? collapsed.slice(0, 80) : collapsed
+}
+
+function resolveIosSubtitleFromPushData(data: Record<string, unknown> | undefined): string | undefined {
+    const categoryId = resolveCategoryIdFromPushData(data)
+    if (!categoryId) return undefined
+    const tool = typeof data?.tool === 'string' ? sanitizeNotificationSubtitle(data.tool) : ''
+    return tool ? tool : undefined
 }
 
 
@@ -176,13 +222,19 @@ export class PushNotificationClient {
             const messages: ExpoPushMessage[] = tokens.map((token, index) => {
                 if (debugPush) logger.debug(`[PUSH] Creating message ${index + 1} for token`)
                 const baseUrl = normalizeClientServerUrl(token.clientServerUrl) ?? this.baseUrl
+                const categoryId = resolveCategoryIdFromPushData(data);
+                const channelId = resolveAndroidChannelIdFromPushData(data);
+                const subtitle = resolveIosSubtitleFromPushData(data);
                 return {
                     to: token.token,
                     title,
                     body,
                     data: withServerUrlInPushData({ baseUrl, data }),
                     sound: 'default',
-                    priority: 'high'
+                    priority: 'high',
+                    categoryId,
+                    channelId,
+                    subtitle,
                 }
             })
 
