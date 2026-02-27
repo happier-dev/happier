@@ -15,7 +15,8 @@ export function createModelOverrideV1Schema(zod: typeof z) {
     .object({
       v: zod.literal(1),
       updatedAt: zod.number().finite(),
-      modelId: zod.string(),
+      // Cleared overrides are represented as `null` (see computeNextMetadataStringOverrideV1).
+      modelId: zod.string().nullable(),
     })
     .passthrough();
 }
@@ -36,7 +37,8 @@ export function createAcpSessionModeOverrideV1Schema(zod: typeof z) {
     .object({
       v: zod.literal(1),
       updatedAt: zod.number().finite(),
-      modeId: zod.string(),
+      // Cleared overrides are represented as `null` (see computeNextMetadataStringOverrideV1).
+      modeId: zod.string().nullable(),
     })
     .passthrough();
 }
@@ -84,4 +86,3 @@ export function buildAcpConfigOptionOverridesV1(params: Readonly<{
     overrides: params.overrides,
   };
 }
-

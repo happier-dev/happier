@@ -40,7 +40,7 @@ export const SessionContinueWithReplayRpcParamsSchema = z
 export type SessionContinueWithReplayRpcParams = z.infer<typeof SessionContinueWithReplayRpcParamsSchema>;
 
 export const SessionContinueWithReplayRpcResultSchema = z.union([
-  z.object({ type: z.literal('success'), sessionId: z.string().min(1), seedDraft: z.string().min(1) }).passthrough(),
+  z.object({ type: z.literal('success'), sessionId: z.string().min(1) }).passthrough(),
   z.object({ type: z.literal('requestToApproveDirectoryCreation'), directory: z.string().min(1) }).passthrough(),
   z.object({ type: z.literal('error'), errorCode: z.string().min(1), errorMessage: z.string().min(1) }).passthrough(),
 ]);
