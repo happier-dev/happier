@@ -161,6 +161,7 @@ export const ExecutionRunSendRequestSchema = z.object({
   runId: z.string().min(1),
   message: z.string().min(1),
   resume: z.boolean().optional(),
+  delivery: z.enum(['prompt', 'steer_if_supported', 'interrupt']).optional(),
 }).passthrough();
 export type ExecutionRunSendRequest = z.infer<typeof ExecutionRunSendRequestSchema>;
 
