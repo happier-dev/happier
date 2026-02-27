@@ -32,6 +32,9 @@ export const CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS = Object.freeze({
   // behavior users see when launching Claude Code directly (including user-global MCP servers).
   claudeRemoteSettingSources: 'user_project' as 'project' | 'user_project' | 'none',
   claudeRemoteIncludePartialMessages: false,
+  // Force-enable Claude Code experimental Agent Teams (aka "agent swarm") across local + remote starts.
+  // When false, Happier does not override Claude's default behavior.
+  claudeCodeExperimentalAgentTeamsEnabled: false,
   claudeLocalPermissionBridgeEnabled: true,
   claudeLocalPermissionBridgeWaitIndefinitely: false,
   claudeLocalPermissionBridgeTimeoutSeconds: 600,
@@ -47,6 +50,7 @@ export function buildClaudeRemoteProviderSettingsShape(zod: typeof z): ProviderS
     claudeRemoteAgentSdkEnabled: zod.boolean(),
     claudeRemoteSettingSources: zod.enum(['project', 'user_project', 'none']),
     claudeRemoteIncludePartialMessages: zod.boolean(),
+    claudeCodeExperimentalAgentTeamsEnabled: zod.boolean(),
     claudeLocalPermissionBridgeEnabled: zod.boolean(),
     claudeLocalPermissionBridgeWaitIndefinitely: zod.boolean(),
     claudeLocalPermissionBridgeTimeoutSeconds: zod.number().int().positive(),
@@ -65,6 +69,7 @@ export function buildClaudeRemoteOutgoingMessageMetaExtras(settings: Readonly<Re
     claudeRemoteAgentSdkEnabled: Boolean(settings.claudeRemoteAgentSdkEnabled),
     claudeRemoteSettingSources: typeof settings.claudeRemoteSettingSources === 'string' ? settings.claudeRemoteSettingSources : 'user_project',
     claudeRemoteIncludePartialMessages: Boolean(settings.claudeRemoteIncludePartialMessages),
+    claudeCodeExperimentalAgentTeamsEnabled: Boolean(settings.claudeCodeExperimentalAgentTeamsEnabled),
     claudeLocalPermissionBridgeEnabled: Boolean(settings.claudeLocalPermissionBridgeEnabled),
     claudeLocalPermissionBridgeWaitIndefinitely: Boolean(settings.claudeLocalPermissionBridgeWaitIndefinitely),
     claudeLocalPermissionBridgeTimeoutSeconds: typeof settings.claudeLocalPermissionBridgeTimeoutSeconds === 'number'
