@@ -117,6 +117,12 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: [],
     representation: 'server',
   },
+  'auth.pairing.desktopQrMobileScan': {
+    description: 'Pairing session support for desktop/web QR → logged-out mobile scan sign-in.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'server',
+  },
   'encryption.plaintextStorage': {
     description: 'Plaintext session storage support (no E2EE at rest).',
     defaultFailMode: 'fail_closed',
@@ -137,6 +143,12 @@ const FEATURE_CATALOG_DEFINITION = {
   },
   'app.analytics': {
     description: 'Anonymous analytics and instrumentation (PostHog).',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'client',
+  },
+  'app.crashReports': {
+    description: 'Crash reports and error telemetry (Sentry).',
     defaultFailMode: 'fail_closed',
     dependencies: [],
     representation: 'client',
@@ -215,12 +227,6 @@ const FEATURE_CATALOG_DEFINITION = {
   },
   'usage.reporting': {
     description: 'Usage reporting surfaces and telemetry views.',
-    defaultFailMode: 'fail_closed',
-    dependencies: [],
-    representation: 'client',
-  },
-  'messages.thinkingVisibility': {
-    description: 'Thinking/status message visibility.',
     defaultFailMode: 'fail_closed',
     dependencies: [],
     representation: 'client',

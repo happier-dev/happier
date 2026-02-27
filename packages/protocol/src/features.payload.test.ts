@@ -31,6 +31,7 @@ describe('FeaturesResponseSchema', () => {
     // Backward compatibility: older servers predate this gate but still support `POST /v1/auth`.
     // Default to enabled unless a server explicitly disables it.
     expect(parsed.features.auth.login.keyChallenge.enabled).toBe(true);
+    expect((parsed as any).features.auth.pairing.desktopQrMobileScan.enabled).toBe(false);
     expect(parsed.features.auth.ui.recoveryKeyReminder.enabled).toBe(false);
     expect((parsed as any).features.e2ee.keylessAccounts.enabled).toBe(false);
 
@@ -46,6 +47,8 @@ describe('FeaturesResponseSchema', () => {
       storagePolicy: 'required_e2ee',
       allowAccountOptOut: false,
       defaultAccountMode: 'e2ee',
+      plainAccountSettingsAtRest: 'server_sealed',
+      plainAccountCredentialsAtRest: 'server_sealed',
     });
     expect((parsed as any).capabilities.auth.methods).toEqual([]);
     expect(parsed.capabilities.auth.login.methods).toEqual([]);
