@@ -19,6 +19,18 @@ export function isTmuxWindowIndexConflict(stderr: string | undefined): boolean {
   return /index\s+\d+\s+in\s+use/i.test(stderr ?? '');
 }
 
+/**
+ * Extract the conflicting window index from tmux error message.
+ * Returns null if no index can be parsed.
+ */
+export function extractTmuxWindowIndexConflict(stderr: string | undefined): number | null {
+  if (!stderr) return null;
+  const match = /index\s+(\d+)\s+in\s+use/i.exec(stderr);
+  if (!match || !match[1]) return null;
+  const parsed = Number.parseInt(match[1], 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export function normalizeExitCode(code: number | null): number {
   // Node passes `code === null` when the process was terminated by a signal.
   // Preserve failure semantics rather than treating it as success.

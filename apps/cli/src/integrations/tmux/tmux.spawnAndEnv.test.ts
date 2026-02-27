@@ -226,6 +226,53 @@ describe('TmuxUtilities.spawnInTmux', () => {
         expect(newWindowCalls.length).toBeGreaterThanOrEqual(2);
     });
 
+    it('uses explicit window index on retry after conflict', async () => {
+        // This test verifies that on retry, we query for available indices
+        // and use an explicit target like "session:index"
+        class ConflictThenExplicitIndexTmuxUtilities extends FakeTmuxUtilities {
+            private newWindowAttempts = 0;
+            public readonly targetArguments: string[] = [];
+
+            override async executeTmuxCommand(cmd: string[], session?: string): Promise<TmuxCommandResult | null> {
+                // Track list-windows calls for window indices
+                if (cmd[0] === 'list-windows' && cmd.includes('#{window_index}')) {
+                    // Return indices 0, 1, 2 (so next available is 3)
+                    return { returncode: 0, stdout: '0\n1\n2\n', stderr: '', command: cmd };
+                }
+
+                if (cmd[0] !== 'new-window') {
+                    return super.executeTmuxCommand(cmd, session);
+                }
+
+                this.newWindowAttempts += 1;
+                this.calls.push({ cmd, session });
+
+                // Track the -t argument
+                const tIndex = cmd.indexOf('-t');
+                if (tIndex >= 0 && tIndex + 1 < cmd.length) {
+                    this.targetArguments.push(cmd[tIndex + 1]!);
+                }
+
+                if (this.newWindowAttempts === 1) {
+                    // First attempt fails with index 0 in use
+                    return { returncode: 1, stdout: '', stderr: 'create window failed: index 0 in use.', command: cmd };
+                }
+                // Second attempt succeeds
+                return { returncode: 0, stdout: '4242\n', stderr: '', command: cmd };
+            }
+        }
+
+        const tmux = new ConflictThenExplicitIndexTmuxUtilities();
+        const result = await tmux.spawnInTmux(['echo', 'hello'], { sessionName: 'my-session', windowName: 'my-window' }, {});
+
+        expect(result.success).toBe(true);
+        expect(tmux.targetArguments.length).toBe(2);
+        // First attempt: just session name (let tmux auto-assign)
+        expect(tmux.targetArguments[0]).toBe('my-session');
+        // Second attempt: explicit session:index
+        expect(tmux.targetArguments[1]).toBe('my-session:3');
+    });
+
     it('returns an error when tmux new-window output is not a numeric pane PID', async () => {
         class InvalidPidTmuxUtilities extends FakeTmuxUtilities {
             override async executeTmuxCommand(cmd: string[], session?: string): Promise<TmuxCommandResult | null> {
@@ -242,5 +289,74 @@ describe('TmuxUtilities.spawnInTmux', () => {
 
         expect(result.success).toBe(false);
         expect(result.error).toMatch(/PID/i);
+    });
+});
+
+describe('TmuxUtilities.getWindowIndices', () => {
+    class FakeTmuxWithWindowIndices extends TmuxUtilities {
+        public override async executeTmuxCommand(cmd: string[]): Promise<TmuxCommandResult | null> {
+            if (cmd[0] === 'list-windows') {
+                return { returncode: 0, stdout: '0\n2\n5\n', stderr: '', command: cmd };
+            }
+            return { returncode: 0, stdout: '', stderr: '', command: cmd };
+        }
+    }
+
+    it('returns a set of window indices', async () => {
+        const tmux = new FakeTmuxWithWindowIndices();
+        const indices = await tmux.getWindowIndices('my-session');
+        expect(indices).toEqual(new Set([0, 2, 5]));
+    });
+});
+
+describe('TmuxUtilities.findAvailableWindowIndex', () => {
+    class FakeTmuxWithNoWindows extends TmuxUtilities {
+        public override async executeTmuxCommand(cmd: string[]): Promise<TmuxCommandResult | null> {
+            if (cmd[0] === 'list-windows') {
+                return { returncode: 0, stdout: '', stderr: '', command: cmd };
+            }
+            return { returncode: 0, stdout: '', stderr: '', command: cmd };
+        }
+    }
+
+    class FakeTmuxWithWindows extends TmuxUtilities {
+        private windowIndices: number[];
+
+        constructor(indices: number[]) {
+            super('test');
+            this.windowIndices = indices;
+        }
+
+        public override async executeTmuxCommand(cmd: string[]): Promise<TmuxCommandResult | null> {
+            if (cmd[0] === 'list-windows') {
+                const stdout = this.windowIndices.join('\n');
+                return { returncode: 0, stdout, stderr: '', command: cmd };
+            }
+            return { returncode: 0, stdout: '', stderr: '', command: cmd };
+        }
+    }
+
+    it('returns 0 when session has no windows', async () => {
+        const tmux = new FakeTmuxWithNoWindows();
+        const index = await tmux.findAvailableWindowIndex('my-session');
+        expect(index).toBe(0);
+    });
+
+    it('finds first gap in window indices', async () => {
+        const tmux = new FakeTmuxWithWindows([0, 1, 3]); // gap at 2
+        const index = await tmux.findAvailableWindowIndex('my-session');
+        expect(index).toBe(2);
+    });
+
+    it('returns next index when no gaps', async () => {
+        const tmux = new FakeTmuxWithWindows([0, 1, 2]);
+        const index = await tmux.findAvailableWindowIndex('my-session');
+        expect(index).toBe(3);
+    });
+
+    it('finds gap at start when index 0 is missing', async () => {
+        const tmux = new FakeTmuxWithWindows([1, 2, 3]);
+        const index = await tmux.findAvailableWindowIndex('my-session');
+        expect(index).toBe(0);
     });
 });

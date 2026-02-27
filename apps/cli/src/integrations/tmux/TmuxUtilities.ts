@@ -4,6 +4,7 @@ import { logger } from '@/ui/logger';
 
 import {
   buildPosixShellCommand,
+  extractTmuxWindowIndexConflict,
   isTmuxWindowIndexConflict,
   normalizeExitCode,
   readNonNegativeIntegerEnv,
@@ -517,21 +518,33 @@ export class TmuxUtilities {
       //
       // Note: tmux can fail with `create window failed: index N in use` when multiple
       // clients concurrently create windows in the same session (tmux does not always
-      // auto-retry the window index allocation). Retry a few times to make concurrent
-      // session starts robust.
+      // auto-retry the window index allocation). Retry a few times with explicit index
+      // selection to make concurrent session starts robust.
       const maxAttempts = readPositiveIntegerEnv('HAPPIER_CLI_TMUX_CREATE_WINDOW_MAX_ATTEMPTS', 3);
       const retryDelayMs = readNonNegativeIntegerEnv('HAPPIER_CLI_TMUX_CREATE_WINDOW_RETRY_DELAY_MS', 25);
 
       let createResult: TmuxCommandResult | null = null;
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-        createResult = await this.executeTmuxCommand(createWindowArgs);
+        // On first attempt, use default args (let tmux auto-assign index).
+        // On retry, query for an available index and explicitly target it.
+        let currentArgs = createWindowArgs;
+        if (attempt > 1) {
+          const availableIndex = await this.findAvailableWindowIndex(sessionName);
+          logger.debug(`[TMUX] Retrying with explicit window index ${availableIndex}`);
+          // Rebuild args with explicit target: session:index
+          const explicitTarget = `${sessionName}:${availableIndex}`;
+          currentArgs = this.buildArgsWithExplicitTarget(createWindowArgs, explicitTarget);
+        }
+
+        createResult = await this.executeTmuxCommand(currentArgs);
         if (createResult && createResult.returncode === 0) break;
 
         const stderr = createResult?.stderr;
         const shouldRetry = attempt < maxAttempts && isTmuxWindowIndexConflict(stderr);
         if (!shouldRetry) break;
 
-        logger.debug(`[TMUX] new-window failed with window index conflict; retrying (attempt ${attempt}/${maxAttempts})`);
+        const conflictIndex = extractTmuxWindowIndexConflict(stderr);
+        logger.debug(`[TMUX] new-window failed with window index conflict (index ${conflictIndex ?? 'unknown'}); retrying (attempt ${attempt}/${maxAttempts})`);
         if (retryDelayMs > 0) {
           await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
         }
@@ -575,6 +588,32 @@ export class TmuxUtilities {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  /**
+   * Build new-window args with an explicit target (session:index).
+   * Replaces the existing -t argument with the explicit target.
+   */
+  private buildArgsWithExplicitTarget(originalArgs: string[], explicitTarget: string): string[] {
+    const newArgs: string[] = [];
+    let skipNext = false;
+
+    for (let i = 0; i < originalArgs.length; i += 1) {
+      if (skipNext) {
+        skipNext = false;
+        continue;
+      }
+      const arg = originalArgs[i];
+      if (arg === '-t') {
+        // Skip -t and its value, add our explicit target instead
+        skipNext = true;
+        newArgs.push('-t', explicitTarget);
+      } else {
+        newArgs.push(arg);
+      }
+    }
+
+    return newArgs;
   }
 
   /**
@@ -632,5 +671,48 @@ export class TmuxUtilities {
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean);
+  }
+
+  /**
+   * Get the set of window indices currently in use for a session.
+   * Returns an empty set if the session cannot be queried.
+   */
+  async getWindowIndices(sessionName?: string): Promise<Set<number>> {
+    const targetSession = sessionName || this.sessionName;
+    const result = await this.executeTmuxCommand(['list-windows', '-t', targetSession, '-F', '#{window_index}']);
+
+    if (!result || result.returncode !== 0) {
+      return new Set();
+    }
+
+    const indices = new Set<number>();
+    for (const line of result.stdout.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const parsed = Number.parseInt(trimmed, 10);
+      if (Number.isFinite(parsed)) {
+        indices.add(parsed);
+      }
+    }
+    return indices;
+  }
+
+  /**
+   * Find an available window index for the session.
+   * Starts from base-index (default 0) and finds the first gap or next available.
+   */
+  async findAvailableWindowIndex(sessionName?: string): Promise<number> {
+    const usedIndices = await this.getWindowIndices(sessionName);
+
+    if (usedIndices.size === 0) {
+      return 0;
+    }
+
+    // Find the first gap, or use max + 1
+    let candidate = 0;
+    while (usedIndices.has(candidate)) {
+      candidate += 1;
+    }
+    return candidate;
   }
 }
