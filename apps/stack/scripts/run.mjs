@@ -28,6 +28,7 @@ import { daemonStartGate, formatDaemonAuthRequiredError } from './utils/auth/dae
 import { resolveServerUiEnv } from './utils/server/ui_env.mjs';
 import { applyBindModeToEnv, resolveBindModeFromArgs } from './utils/net/bind_mode.mjs';
 import { cmd, sectionTitle } from './utils/ui/layout.mjs';
+import { renderTerminalUsageInstructions } from './utils/stack/terminal_usage_instructions.mjs';
 import { cyan, dim, green, yellow } from './utils/ui/ansi.mjs';
 import { isSandboxed } from './utils/env/sandbox.mjs';
 import { installExitCleanup } from './utils/proc/exit_cleanup.mjs';
@@ -432,11 +433,11 @@ async function main() {
     }
 
     console.log('');
-    console.log(sectionTitle('Terminal usage'));
-    console.log(dim(`To run ${cyan('happier')} against this stack (and have sessions appear in the UI), export:`));
-    console.log(cmd(`export HAPPIER_SERVER_URL="${effectiveInternalServerUrl}"`));
-    console.log(cmd(`export HAPPIER_HOME_DIR="${cliHomeDir}"`));
-    console.log(cmd(`export HAPPIER_WEBAPP_URL="${publicServerUrl}"`));
+    console.log(renderTerminalUsageInstructions({
+      internalServerUrl: effectiveInternalServerUrl,
+      cliHomeDir,
+      publicServerUrl,
+    }).join('\n'));
 
     // Auto-open UI (interactive only) using the stack-scoped hostname when applicable.
     const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
