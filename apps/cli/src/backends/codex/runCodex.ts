@@ -30,7 +30,7 @@ import { configuration } from '@/configuration';
 import { isExperimentalCodexAcpEnabled, isExperimentalCodexVendorResumeEnabled } from '@/backends/codex/experiments';
 import { maybeUpdatePermissionModeMetadata } from '@/agent/runtime/permission/permissionModeMetadata';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
-import { pushTextToMessageQueueWithSpecialCommands } from '@/agent/runtime/queueSpecialCommands';
+import { pushMessageToQueueWithSpecialCommands } from '@/agent/runtime/queueSpecialCommands';
 import { normalizePermissionModeToIntent, resolvePermissionModeUpdatedAtFromMessage } from '@/agent/runtime/permission/permissionModeCanonical';
 import { publishCodexSessionIdMetadata } from './utils/codexSessionIdMetadata';
 import { createCodexAcpRuntime } from './acp/runtime';
@@ -77,8 +77,8 @@ import {
     readStartupOverridesCacheForBackend,
     writeStartupOverridesCacheForBackend,
 } from '@/agent/runtime/startup/startupOverridesCache';
-import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
+import { shouldSendReadyPushNotification } from '@/settings/notifications/notificationsPolicy';
 import { runStartupCoordinator } from '@/agent/runtime/startup/startupCoordinator';
 import type { BackendStartupSpec, StartupContext } from '@/agent/runtime/startup/startupSpec';
 
@@ -124,13 +124,7 @@ export async function runCodex(opts: {
 
     const explicitPermissionMode = opts.permissionMode;
     const hasResumeArg = typeof opts.resume === 'string' && opts.resume.trim().length > 0;
-
-    // Codex ACP session resume intentionally skips a separate capabilities probe.
-    // The probe requires spawning an ACP agent and waiting for initialize, which can be slower than
-    // resuming the prior session directly.
-    // We still fail closed: if a resume id is provided and Codex ACP cannot load it, the subsequent
-    // startup/initialize will error and the run will abort.
-    const accountSettings = hasResumeArg ? null : (getActiveAccountSettingsSnapshot()?.settings ?? null);
+    const accountSettings = hasResumeArg ? null : (opts.accountSettingsContext?.settings ?? null);
     const permissionModeSeed = resolvePermissionModeSeedForAgentStart({
         agentId: 'codex',
         explicitPermissionMode: opts.permissionMode,
@@ -499,8 +493,9 @@ export async function runCodex(opts: {
             // This message will not go through the main prompt loop queue; display it immediately.
             messageBuffer.addMessage(text, 'user');
             void runtime.steerPrompt(text).catch(() => {
-                pushTextToMessageQueueWithSpecialCommands({
+                pushMessageToQueueWithSpecialCommands({
                     queue: messageQueue,
+                    message: text,
                     text,
                     mode: enhancedMode,
                 });
@@ -508,8 +503,9 @@ export async function runCodex(opts: {
             return;
         }
 
-        pushTextToMessageQueueWithSpecialCommands({
+        pushMessageToQueueWithSpecialCommands({
             queue: messageQueue,
+            message: text,
             text,
             mode: enhancedMode,
         });
@@ -554,6 +550,7 @@ export async function runCodex(opts: {
             pushSender: api.push(),
             waitingForCommandLabel: 'Codex',
             logPrefix: '[Codex]',
+            shouldSendPush: () => shouldSendReadyPushNotification(opts.accountSettingsContext?.settings ?? null),
         });
     };
 
@@ -764,6 +761,13 @@ export async function runCodex(opts: {
     //
     // Start Context 
     //
+
+    // Codex ACP session resume intentionally skips a separate capabilities probe.
+    // The probe requires spawning an ACP agent and waiting for initialize, which can be slower than
+    // just attempting `loadSession` directly (and it duplicates work the runtime must do anyway).
+    //
+    // We still fail closed: if a resume id is provided and Codex ACP cannot load it, the subsequent
+    // session load attempt will throw and we will not silently start a new session.
 
     // Start Happier MCP server (HTTP) and prepare STDIO bridge config for Codex
     const happierBridge = await createHappierMcpBridge(session, { commandMode: 'current-process' });
