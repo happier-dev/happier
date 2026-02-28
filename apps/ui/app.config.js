@@ -237,6 +237,14 @@ const baseExpoConfig = {
         plugins: [
             require("./plugins/withEinkCompatibility.js"),
             [
+                "@sentry/react-native/expo",
+                {
+                    url: "https://sentry.io/",
+                    project: "happier-ui",
+                    organization: "happier-devs"
+                }
+            ],
+            [
                 "expo-router",
                 {
                     root: "./sources/app"
