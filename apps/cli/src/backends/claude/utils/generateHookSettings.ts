@@ -1,6 +1,6 @@
 /**
  * Generate temporary settings file with Claude hooks for session tracking
- * 
+ *
  * Creates a settings.json file that configures Claude's SessionStart hook
  * to notify our HTTP server when sessions change (new session, resume, compact, etc.)
  */
@@ -10,7 +10,7 @@ import { writeFileSync, mkdirSync, unlinkSync, existsSync } from 'node:fs';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { projectPath } from '@/projectPath';
-import { readClaudeSettings, type ClaudeSettings } from './claudeSettings';
+import { readClaudeSettingsAsync, type ClaudeSettings } from './claudeSettings';
 import { isBun } from '@/utils/runtime';
 
 export interface GenerateHookSettingsOptions {
@@ -25,11 +25,14 @@ export interface GenerateHookSettingsOptions {
 
 /**
  * Generate a temporary settings file with SessionStart hook configuration
- * 
+ *
+ * Uses async file I/O with timeout to read base settings, preventing
+ * indefinite hangs on slow or inaccessible filesystems.
+ *
  * @param port - The port where Happy server is listening
  * @returns Path to the generated settings file
  */
-export function generateHookSettingsFile(port: number, options: GenerateHookSettingsOptions = {}): string {
+export async function generateHookSettingsFile(port: number, options: GenerateHookSettingsOptions = {}): Promise<string> {
     const hooksDir = join(configuration.happyHomeDir, 'tmp', 'hooks');
     mkdirSync(hooksDir, { recursive: true });
 
@@ -78,7 +81,7 @@ export function generateHookSettingsFile(port: number, options: GenerateHookSett
         ];
     }
 
-    const baseSettings: ClaudeSettings = readClaudeSettings(options.claudeConfigDir) ?? {};
+    const baseSettings: ClaudeSettings = await readClaudeSettingsAsync(options.claudeConfigDir) ?? {};
     const baseHooks =
         baseSettings && typeof baseSettings === 'object' && baseSettings.hooks && typeof baseSettings.hooks === 'object'
             ? (baseSettings.hooks as Record<string, unknown>)
@@ -124,7 +127,7 @@ export function generateHookSettingsFile(port: number, options: GenerateHookSett
 
 /**
  * Clean up the temporary hook settings file
- * 
+ *
  * @param filepath - Path to the settings file to remove
  */
 export function cleanupHookSettingsFile(filepath: string): void {
