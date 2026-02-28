@@ -329,9 +329,11 @@ export type Metadata = {
   claudeSessionId?: string, // Claude Code session ID
   claudeTranscriptPath?: string | null, // Claude Code transcript path (hooks)
   claudeLastCheckpointId?: string | null, // Claude SDK file checkpoint UUID (remote)
+  claudeLastAssistantUuid?: string | null, // Claude SDK assistant message UUID (resume anchoring)
   codexSessionId?: string, // Codex session/conversation ID (uuid)
   geminiSessionId?: string, // Gemini ACP session ID (opaque)
   opencodeSessionId?: string, // OpenCode ACP session ID (opaque)
+  opencodeBackendMode?: 'server' | 'acp',
   auggieSessionId?: string, // Auggie ACP session ID (opaque)
   qwenSessionId?: string, // Qwen Code ACP session ID (opaque)
   kimiSessionId?: string, // Kimi ACP session ID (opaque)
