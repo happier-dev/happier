@@ -7,6 +7,35 @@ import {
   getToolCallNameKey,
 } from './toolCallInputHints';
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function ensureOpaqueAcpToolCallInputEnvelope(input: unknown): unknown {
+  const record = asRecord(input);
+  if (!record) return input;
+
+  const hasAcp = Object.prototype.hasOwnProperty.call(record, '_acp');
+  const hasLocations = Object.prototype.hasOwnProperty.call(record, 'locations');
+  if (hasAcp && hasLocations) return input;
+
+  const next: Record<string, unknown> = { ...record };
+  if (!hasAcp) next._acp = {};
+  if (!hasLocations) next.locations = [];
+  return next;
+}
+
+function ensureOpaqueAcpToolResultOutputEnvelope(output: unknown): unknown {
+  const record = asRecord(output);
+  if (record) {
+    if (Object.prototype.hasOwnProperty.call(record, '_acp')) return output;
+    return { ...record, _acp: {} };
+  }
+
+  return { output, _acp: {} };
+}
+
 export function normalizeCodexSessionMessageBody(params: {
   body: any;
   toolCallCanonicalNameByProviderAndId: Map<string, { rawToolName: string; canonicalToolName: string }>;
@@ -88,13 +117,14 @@ export function normalizeAcpSessionMessageBody(params: {
       rawInput: hintedRawInput,
       callId,
     });
+    const inputWithOpaque = ensureOpaqueAcpToolCallInputEnvelope(input);
     params.toolCallCanonicalNameByProviderAndId.set(getToolCallNameKey(provider, callId), {
       rawToolName,
       canonicalToolName,
     });
-    params.toolCallInputByProviderAndId.set(getToolCallNameKey(provider, callId), input);
+    params.toolCallInputByProviderAndId.set(getToolCallNameKey(provider, callId), inputWithOpaque);
     params.permissionToolCallRawInputByProviderAndId.delete(getToolCallNameKey(provider, callId));
-    return { ...body, name: canonicalToolName, input };
+    return { ...body, name: canonicalToolName, input: inputWithOpaque };
   }
 
   if (body.type === 'permission-request') {
@@ -139,18 +169,19 @@ export function normalizeAcpSessionMessageBody(params: {
       canonicalToolName,
       rawOutput: (body as any).output,
     });
+    const outputWithOpaque = ensureOpaqueAcpToolResultOutputEnvelope(output);
 
     const maybePatchedOutput = (() => {
-      if (canonicalToolName !== 'TodoWrite' && canonicalToolName !== 'TodoRead') return output;
+      if (canonicalToolName !== 'TodoWrite' && canonicalToolName !== 'TodoRead') return outputWithOpaque;
       const outputRecord =
-        output && typeof output === 'object' && !Array.isArray(output)
-          ? (output as Record<string, unknown>)
+        outputWithOpaque && typeof outputWithOpaque === 'object' && !Array.isArray(outputWithOpaque)
+          ? (outputWithOpaque as Record<string, unknown>)
           : null;
-      if (!outputRecord) return output;
+      if (!outputRecord) return outputWithOpaque;
       const existingTodos = Array.isArray((outputRecord as any).todos)
         ? ((outputRecord as any).todos as unknown[])
         : null;
-      if (existingTodos && existingTodos.length > 0) return output;
+      if (existingTodos && existingTodos.length > 0) return outputWithOpaque;
 
       const input = params.toolCallInputByProviderAndId.get(key);
       const inputRecord =
@@ -161,7 +192,7 @@ export function normalizeAcpSessionMessageBody(params: {
         inputRecord && Array.isArray((inputRecord as any).todos)
           ? ((inputRecord as any).todos as unknown[])
           : null;
-      if (!todos || todos.length === 0) return output;
+      if (!todos || todos.length === 0) return outputWithOpaque;
       return { ...outputRecord, todos };
     })();
 
