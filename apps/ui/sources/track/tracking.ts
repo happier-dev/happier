@@ -6,6 +6,6 @@ import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBu
 const ANALYTICS_FEATURE_ID = 'app.analytics' as const satisfies FeatureId;
 
 export const tracking = (config.postHogKey && getFeatureBuildPolicyDecision(ANALYTICS_FEATURE_ID) !== 'deny') ? new PostHog(config.postHogKey, {
-    host: 'https://us.i.posthog.com',
+    host: (config.postHogHost ?? 'https://us.i.posthog.com').trim() || 'https://us.i.posthog.com',
     captureAppLifecycleEvents: true,
 }) : null;

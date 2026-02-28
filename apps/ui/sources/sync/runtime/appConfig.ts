@@ -6,6 +6,7 @@ import { parseOptionalBooleanEnv } from '@happier-dev/protocol';
 export interface AppConfig {
     variant?: string;
     postHogKey?: string;
+    postHogHost?: string;
     revenueCatAppleKey?: string;
     revenueCatGoogleKey?: string;
     revenueCatStripeKey?: string;
@@ -86,9 +87,14 @@ export function loadAppConfig(): AppConfig {
         if (__DEV__) console.log('[loadAppConfig] Override revenueCatStripeKey from EXPO_PUBLIC_REVENUE_CAT_STRIPE');
         config.revenueCatStripeKey = process.env.EXPO_PUBLIC_REVENUE_CAT_STRIPE;
     }
-    if (process.env.EXPO_PUBLIC_POSTHOG_KEY && config.postHogKey !== process.env.EXPO_PUBLIC_POSTHOG_KEY) {
-        if (__DEV__) console.log('[loadAppConfig] Override postHogKey from EXPO_PUBLIC_POSTHOG_KEY');
-        config.postHogKey = process.env.EXPO_PUBLIC_POSTHOG_KEY;
+    const posthogKeyFromEnv = process.env.EXPO_PUBLIC_POSTHOG_KEY || process.env.EXPO_PUBLIC_POSTHOG_API_KEY;
+    if (posthogKeyFromEnv && config.postHogKey !== posthogKeyFromEnv) {
+        if (__DEV__) console.log('[loadAppConfig] Override postHogKey from EXPO_PUBLIC_POSTHOG_KEY/EXPO_PUBLIC_POSTHOG_API_KEY');
+        config.postHogKey = posthogKeyFromEnv;
+    }
+    if (process.env.EXPO_PUBLIC_POSTHOG_HOST && config.postHogHost !== process.env.EXPO_PUBLIC_POSTHOG_HOST) {
+        if (__DEV__) console.log('[loadAppConfig] Override postHogHost from EXPO_PUBLIC_POSTHOG_HOST');
+        config.postHogHost = process.env.EXPO_PUBLIC_POSTHOG_HOST;
     }
     if (process.env.EXPO_PUBLIC_SERVER_URL && config.serverUrl !== process.env.EXPO_PUBLIC_SERVER_URL) {
         if (__DEV__) console.log('[loadAppConfig] Override serverUrl from EXPO_PUBLIC_SERVER_URL');
