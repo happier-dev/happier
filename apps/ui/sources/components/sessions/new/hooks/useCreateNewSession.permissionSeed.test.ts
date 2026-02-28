@@ -61,6 +61,7 @@ async function setupUseCreateNewSessionHarness() {
                 automationCaptured.value = input;
                 return { id: 'auto_1', ...input };
             }),
+            getCredentials: vi.fn(() => ({ token: 't' })),
             encryption: {
                 encryptRaw: encryptRawSpy,
                 encryptAutomationTemplateRaw: encryptRawSpy,
@@ -71,6 +72,13 @@ async function setupUseCreateNewSessionHarness() {
             refreshMachines: refreshMachinesSpy,
             sendMessage: syncSendMessageSpy,
         },
+    }));
+    vi.doMock('@/sync/http/client', () => ({
+        serverFetch: vi.fn(async () => ({
+            ok: true,
+            status: 200,
+            json: async () => ({ mode: 'e2ee', updatedAt: 1 }),
+        })),
     }));
     vi.doMock('@/sync/domains/state/storage', () => ({
         storage: {

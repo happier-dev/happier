@@ -28,7 +28,7 @@ import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { nowServerMs } from '@/sync/runtime/time';
 import { buildAutomationTemplate } from '@/components/sessions/new/modules/buildAutomationTemplate';
-import { sealAutomationTemplateForTransport } from '@/sync/domains/automations/automationTemplateTransport';
+import { encodeAutomationTemplateCiphertextForAccount } from '@/sync/domains/automations/encodeAutomationTemplateCiphertextForAccount';
 import {
     buildAutomationScheduleFromDraft,
     normalizeAutomationDescription,
@@ -294,7 +294,8 @@ export function useCreateNewSession(params: Readonly<{
                         targetType: 'new_session',
                         template,
                     });
-                    const templateCiphertext = await sealAutomationTemplateForTransport({
+                    const templateCiphertext = await encodeAutomationTemplateCiphertextForAccount({
+                        credentials: sync.getCredentials(),
                         template,
                         encryptRaw: (value) => sync.encryption.encryptAutomationTemplateRaw(value),
                     });
