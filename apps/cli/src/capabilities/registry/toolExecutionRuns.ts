@@ -4,6 +4,7 @@ import { access } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { join, delimiter as PATH_DELIMITER } from 'node:path';
 import { getVendorResumeSupport } from '@/backends/catalog';
+import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 
 function isCliAvailable(context: any, agentId: string): boolean {
   const entry = context?.cliSnapshot?.clis?.[agentId];
@@ -14,28 +15,22 @@ async function resolveCommandOnPath(command: string, pathEnv: string | null | un
   const pathRaw = typeof pathEnv === 'string' ? pathEnv.trim() : '';
   if (!pathRaw) return null;
 
+  if (process.platform === 'win32') {
+    return resolveWindowsCommandOnPath(command, { ...process.env, PATH: pathRaw });
+  }
+
   const segments = pathRaw
     .split(PATH_DELIMITER)
     .map((p) => p.trim())
     .filter(Boolean);
 
-  const isWindows = process.platform === 'win32';
-  const extensions = isWindows
-    ? (process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM')
-        .split(';')
-        .map((e) => e.trim())
-        .filter(Boolean)
-    : [''];
-
   for (const dir of segments) {
-    for (const ext of extensions) {
-      const candidate = join(dir, isWindows ? `${command}${ext}` : command);
-      try {
-        await access(candidate, isWindows ? fsConstants.F_OK : fsConstants.X_OK);
-        return candidate;
-      } catch {
-        // continue
-      }
+    const candidate = join(dir, command);
+    try {
+      await access(candidate, fsConstants.X_OK);
+      return candidate;
+    } catch {
+      // continue
     }
   }
 
