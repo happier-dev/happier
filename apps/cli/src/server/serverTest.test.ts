@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import http from 'node:http';
+import net from 'node:net';
 
 describe('probeServerVersion', () => {
   let server: http.Server;
@@ -49,6 +50,25 @@ describe('probeServerVersion', () => {
     expect(out.version).toBe('test');
   });
 
+  it('bypasses patched http.request when probing loopback endpoints', async () => {
+    responseMode = 'ok';
+
+    const previousRequest = http.request;
+    (http as any).request = () => {
+      throw new Error('http_request_used');
+    };
+
+    try {
+      const { probeServerVersion } = await import('./serverTest');
+      const out = await probeServerVersion(baseUrl);
+      expect(out.ok).toBe(true);
+      if (!out.ok) throw new Error(`expected ok result, got: ${out.error}`);
+      expect(out.version).toBe('test');
+    } finally {
+      (http as any).request = previousRequest;
+    }
+  });
+
   it('bypasses a custom global agent when probing loopback endpoints', async () => {
     responseMode = 'ok';
 
@@ -96,16 +116,18 @@ describe('probeServerVersion', () => {
     // default timeout is also 5s, which can race with Vitest when a connect attempt hangs.
     const prevTimeout = process.env.HAPPIER_SERVER_TEST_TIMEOUT_MS;
     process.env.HAPPIER_SERVER_TEST_TIMEOUT_MS = '250';
+    const blackholeServer = net.createServer((socket) => {
+      socket.destroy();
+    });
     try {
       const unreachablePort = await new Promise<number>((resolve, reject) => {
-        const ephemeralServer = http.createServer();
-        ephemeralServer.listen(0, () => {
-          const address = ephemeralServer.address();
+        blackholeServer.listen(0, () => {
+          const address = blackholeServer.address();
           if (!address || typeof address === 'string') {
             reject(new Error('expected TCP address'));
             return;
           }
-          ephemeralServer.close((error) => (error ? reject(error) : resolve(address.port)));
+          resolve(address.port);
         });
       });
 
@@ -118,6 +140,9 @@ describe('probeServerVersion', () => {
       expect(out.error.length).toBeGreaterThan(0);
       expect(out.error.startsWith('http_')).toBe(false);
     } finally {
+      await new Promise<void>((resolve, reject) => {
+        blackholeServer.close((error) => (error ? reject(error) : resolve()));
+      });
       process.env.HAPPIER_SERVER_TEST_TIMEOUT_MS = prevTimeout;
     }
   });
