@@ -12,41 +12,67 @@ export function createStopSession(params: Readonly<{
   return async (sessionId: string): Promise<boolean> => {
     logger.debug(`[DAEMON RUN] Attempting to stop session ${sessionId}`);
 
-    // Try to find by sessionId first
+    const normalizedSessionId = String(sessionId ?? '').trim();
+    const isPidFallback = normalizedSessionId.startsWith('PID-');
+    const fallbackPid = isPidFallback ? Number.parseInt(normalizedSessionId.replace('PID-', ''), 10) : NaN;
+
+    const pidsToStop: number[] = [];
     for (const [pid, session] of pidToTrackedSession.entries()) {
-      if (session.happySessionId === sessionId ||
-        (sessionId.startsWith('PID-') && pid === parseInt(sessionId.replace('PID-', '')))) {
-
-        if (session.startedBy === 'daemon' && session.childProcess) {
-          try {
-            session.childProcess.kill('SIGTERM');
-            logger.debug(`[DAEMON RUN] Sent SIGTERM to daemon-spawned session ${sessionId}`);
-          } catch (error) {
-            logger.debug(`[DAEMON RUN] Failed to kill session ${sessionId}:`, error);
-          }
-        } else {
-          // PID reuse safety: verify the PID still looks like a Happy session process (and matches hash if known).
-          const safe = await isPidSafeHappySessionProcess({ pid, expectedProcessCommandHash: session.processCommandHash });
-          if (!safe) {
-            logger.warn(`[DAEMON RUN] Refusing to SIGTERM PID ${pid} for session ${sessionId} (PID reuse safety)`);
-            return false;
-          }
-          // For externally started sessions, try to kill by PID
-          try {
-            process.kill(pid, 'SIGTERM');
-            logger.debug(`[DAEMON RUN] Sent SIGTERM to external session PID ${pid}`);
-          } catch (error) {
-            logger.debug(`[DAEMON RUN] Failed to kill external session PID ${pid}:`, error);
-          }
-        }
-
-        pidToTrackedSession.delete(pid);
-        logger.debug(`[DAEMON RUN] Removed session ${sessionId} from tracking`);
-        return true;
-      }
+      const happySessionId = typeof session.happySessionId === 'string' ? session.happySessionId : '';
+      const existingSessionId =
+        session.spawnOptions && typeof (session.spawnOptions as any).existingSessionId === 'string'
+          ? String((session.spawnOptions as any).existingSessionId).trim()
+          : '';
+      const matches =
+        happySessionId === normalizedSessionId ||
+        existingSessionId === normalizedSessionId ||
+        (isPidFallback && Number.isFinite(fallbackPid) && pid === fallbackPid);
+      if (matches) pidsToStop.push(pid);
     }
 
-    logger.debug(`[DAEMON RUN] Session ${sessionId} not found`);
-    return false;
+    if (pidsToStop.length === 0) {
+      logger.debug(`[DAEMON RUN] Session ${normalizedSessionId} not found`);
+      return false;
+    }
+
+    let stoppedAny = false;
+    for (const pid of pidsToStop) {
+      const session = pidToTrackedSession.get(pid);
+      if (!session) continue;
+
+      if (session.startedBy === 'daemon' && session.childProcess) {
+        try {
+          session.childProcess.kill('SIGTERM');
+          logger.debug(`[DAEMON RUN] Sent SIGTERM to daemon-spawned session ${normalizedSessionId} (pid=${pid})`);
+          stoppedAny = true;
+        } catch (error) {
+          logger.debug(`[DAEMON RUN] Failed to kill session ${normalizedSessionId} (pid=${pid}):`, error);
+        }
+        pidToTrackedSession.delete(pid);
+        continue;
+      }
+
+      // PID reuse safety: verify the PID still looks like a Happy session process (and matches hash if known).
+      const safe = await isPidSafeHappySessionProcess({ pid, expectedProcessCommandHash: session.processCommandHash });
+      if (!safe) {
+        logger.warn(`[DAEMON RUN] Refusing to SIGTERM PID ${pid} for session ${normalizedSessionId} (PID reuse safety)`);
+        continue;
+      }
+
+      try {
+        process.kill(pid, 'SIGTERM');
+        logger.debug(`[DAEMON RUN] Sent SIGTERM to external session PID ${pid} (${normalizedSessionId})`);
+        stoppedAny = true;
+      } catch (error) {
+        logger.debug(`[DAEMON RUN] Failed to kill external session PID ${pid}:`, error);
+      }
+
+      pidToTrackedSession.delete(pid);
+    }
+
+    if (stoppedAny) {
+      logger.debug(`[DAEMON RUN] Removed session ${normalizedSessionId} from tracking`);
+    }
+    return stoppedAny;
   };
 }
