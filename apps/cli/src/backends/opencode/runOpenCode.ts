@@ -9,6 +9,7 @@ import { logger } from '@/ui/logger';
 import type { Credentials } from '@/persistence';
 import { initialMachineMetadata } from '@/daemon/startDaemon';
 import { runStandardAcpProvider, type StandardAcpProviderRunOptions } from '@/agent/runtime/runStandardAcpProvider';
+import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
 
 import { OpenCodeTerminalDisplay } from '@/backends/opencode/ui/OpenCodeTerminalDisplay';
 
@@ -76,6 +77,21 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
 
       // Do not block first prompt on metadata readiness; publish in the background.
       void (async () => {
+        if (backendMode === 'server') {
+          updateAgentStateBestEffort(
+            session,
+            (currentState) => ({
+              ...currentState,
+              capabilities: {
+                ...(currentState.capabilities && typeof currentState.capabilities === 'object' ? currentState.capabilities : {}),
+                askUserQuestionAnswersInPermission: true,
+              },
+            }),
+            '[opencode]',
+            'initial_agent_state',
+          );
+        }
+
         // OpenCode resume depends on writing `opencodeSessionId` into Happy session metadata.
         // Ensure we have a decrypted metadata snapshot so the update doesn't silently no-op.
         const snapshot = await session.ensureMetadataSnapshot({ timeoutMs: 60_000 });

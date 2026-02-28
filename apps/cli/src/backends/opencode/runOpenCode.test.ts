@@ -6,8 +6,16 @@ const { runStandardAcpProviderMock } = vi.hoisted(() => ({
   runStandardAcpProviderMock: vi.fn(),
 }));
 
+const { updateAgentStateBestEffortMock } = vi.hoisted(() => ({
+  updateAgentStateBestEffortMock: vi.fn(),
+}));
+
 vi.mock('@/agent/runtime/runStandardAcpProvider', () => ({
   runStandardAcpProvider: runStandardAcpProviderMock,
+}));
+
+vi.mock('@/api/session/sessionWritesBestEffort', () => ({
+  updateAgentStateBestEffort: updateAgentStateBestEffortMock,
 }));
 
 const { createOpenCodeAcpRuntimeMock, createOpenCodeServerRuntimeMock } = vi.hoisted(() => ({
@@ -37,6 +45,7 @@ describe('runOpenCode', () => {
 
   beforeEach(() => {
     runStandardAcpProviderMock.mockReset();
+    updateAgentStateBestEffortMock.mockReset();
     createOpenCodeAcpRuntimeMock.mockReset();
     createOpenCodeServerRuntimeMock.mockReset();
     delete process.env.HAPPIER_OPENCODE_BACKEND_MODE;
@@ -75,9 +84,54 @@ describe('runOpenCode', () => {
     await runOpenCode({ credentials });
 
     expect(onAfterStartOutcome).toBe('completed');
+    expect(updateAgentStateBestEffortMock).toHaveBeenCalledTimes(1);
     expect(ensureMetadataSnapshot).toHaveBeenCalledTimes(1);
     expect(updateMetadata).not.toHaveBeenCalled();
   }, 15_000);
+
+  it('publishes askUserQuestionAnswersInPermission capability seed in server mode', async () => {
+    runStandardAcpProviderMock.mockImplementationOnce(async (_opts: unknown, config: unknown) => {
+      if (!config || typeof config !== 'object') {
+        throw new Error('Expected runStandardAcpProvider config to be an object');
+      }
+      const maybeOnAfterStart = (config as { onAfterStart?: unknown }).onAfterStart;
+      if (typeof maybeOnAfterStart !== 'function') {
+        throw new Error('Expected runStandardAcpProvider config to provide onAfterStart');
+      }
+
+      maybeOnAfterStart({
+        session: { ensureMetadataSnapshot: vi.fn(() => new Promise<null>(() => {})), updateMetadata: vi.fn(async () => {}) },
+        runtime: { getSessionId: () => 'opencode-session-1' },
+      });
+    });
+
+    await runOpenCode({ credentials });
+
+    expect(updateAgentStateBestEffortMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not publish askUserQuestionAnswersInPermission capability seed in acp mode', async () => {
+    process.env.HAPPIER_OPENCODE_BACKEND_MODE = 'acp';
+
+    runStandardAcpProviderMock.mockImplementationOnce(async (_opts: unknown, config: unknown) => {
+      if (!config || typeof config !== 'object') {
+        throw new Error('Expected runStandardAcpProvider config to be an object');
+      }
+      const maybeOnAfterStart = (config as { onAfterStart?: unknown }).onAfterStart;
+      if (typeof maybeOnAfterStart !== 'function') {
+        throw new Error('Expected runStandardAcpProvider config to provide onAfterStart');
+      }
+
+      maybeOnAfterStart({
+        session: { ensureMetadataSnapshot: vi.fn(() => new Promise<null>(() => {})), updateMetadata: vi.fn(async () => {}) },
+        runtime: { getSessionId: () => 'opencode-session-1' },
+      });
+    });
+
+    await runOpenCode({ credentials });
+
+    expect(updateAgentStateBestEffortMock).toHaveBeenCalledTimes(0);
+  });
 
   it('defaults to server runtime when backend mode is not specified', async () => {
     runStandardAcpProviderMock.mockImplementationOnce(async (_opts: unknown, config: unknown) => {
