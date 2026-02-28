@@ -220,6 +220,7 @@ export function useCreateNewSession(params: Readonly<{
 
             environmentVariables = buildSpawnEnvironmentVariablesFromUiState({
                 agentId: params.agentType,
+                settings: params.settings,
                 environmentVariables,
                 newSessionOptions: params.agentNewSessionOptions,
             });

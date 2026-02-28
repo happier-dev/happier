@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
     buildResumeSessionExtrasFromUiState,
+    buildSpawnEnvironmentVariablesFromUiState,
     buildSpawnSessionExtrasFromUiState,
     buildWakeResumeExtras,
 } from './registryUiBehavior';
@@ -108,5 +109,37 @@ describe('buildWakeResumeExtras', () => {
             agentId: 'codex',
             resumeCapabilityOptions: {},
         })).toEqual({});
+    });
+});
+
+describe('buildSpawnEnvironmentVariablesFromUiState', () => {
+    it('injects OpenCode backend mode env var while preserving existing env', () => {
+        expect(buildSpawnEnvironmentVariablesFromUiState({
+            agentId: 'opencode',
+            settings: makeSettings({ opencodeBackendMode: 'acp' as any }),
+            environmentVariables: { FOO: '1' },
+            newSessionOptions: null,
+        })).toEqual({
+            FOO: '1',
+            HAPPIER_OPENCODE_BACKEND_MODE: 'acp',
+        });
+
+        expect(buildSpawnEnvironmentVariablesFromUiState({
+            agentId: 'opencode',
+            settings: makeSettings({ opencodeBackendMode: 'server' as any }),
+            environmentVariables: undefined,
+            newSessionOptions: null,
+        })).toEqual({
+            HAPPIER_OPENCODE_BACKEND_MODE: 'server',
+        });
+    });
+
+    it('returns the input env for non-OpenCode agents', () => {
+        expect(buildSpawnEnvironmentVariablesFromUiState({
+            agentId: 'claude',
+            settings: makeSettings({ opencodeBackendMode: 'acp' as any }),
+            environmentVariables: { FOO: '1' },
+            newSessionOptions: null,
+        })).toEqual({ FOO: '1' });
     });
 });

@@ -7,8 +7,10 @@ import type { Settings } from '@/sync/domains/settings/settings';
 import { buildAcpLoadSessionPrefetchRequest, readAcpLoadSessionSupport, shouldPrefetchAcpCapabilities } from '@/agents/runtime/acpRuntimeResume';
 import { CODEX_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/codex/uiBehavior';
 import { AUGGIE_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/auggie/uiBehavior';
+import { OPENCODE_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/opencode/uiBehavior';
 import { PI_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/pi/uiBehavior';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput';
+import type { Session } from '@/sync/domains/state/storageTypes';
 
 type CapabilityResults = Partial<Record<CapabilityId, CapabilityDetectResult>>;
 
@@ -62,6 +64,7 @@ export type AgentUiBehavior = Readonly<{
     payload?: Readonly<{
         buildSpawnEnvironmentVariables?: (opts: {
             agentId: AgentId;
+            settings: Settings;
             environmentVariables: Record<string, string> | undefined;
             newSessionOptions?: Record<string, unknown> | null;
         }) => Record<string, string> | undefined;
@@ -75,6 +78,10 @@ export type AgentUiBehavior = Readonly<{
             experiments: AgentResumeExperiments;
         }) => Record<string, unknown>;
         buildWakeResumeExtras?: (opts: { agentId: AgentId; resumeCapabilityOptions: ResumeCapabilityOptions }) => Record<string, unknown>;
+    }>;
+    forking?: Readonly<{
+        supportsForkConversation?: (ctx: { session: Session }) => boolean;
+        supportsForkFromMessage?: (ctx: { session: Session }) => boolean;
     }>;
 }>;
 
@@ -110,6 +117,7 @@ function mergeAgentUiBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBe
         ...(a.resume || b.resume ? { resume: { ...(a.resume ?? {}), ...(b.resume ?? {}) } } : {}),
         ...(a.newSession || b.newSession ? { newSession: { ...(a.newSession ?? {}), ...(b.newSession ?? {}) } } : {}),
         ...(a.payload || b.payload ? { payload: { ...(a.payload ?? {}), ...(b.payload ?? {}) } } : {}),
+        ...(a.forking || b.forking ? { forking: { ...(a.forking ?? {}), ...(b.forking ?? {}) } } : {}),
     };
 }
 
@@ -132,6 +140,7 @@ function buildDefaultAgentUiBehavior(agentId: AgentId): AgentUiBehavior {
 
 const AGENTS_UI_BEHAVIOR_OVERRIDES: Readonly<Partial<Record<AgentId, AgentUiBehavior>>> = Object.freeze({
     codex: CODEX_UI_BEHAVIOR_OVERRIDE,
+    opencode: OPENCODE_UI_BEHAVIOR_OVERRIDE,
     auggie: AUGGIE_UI_BEHAVIOR_OVERRIDE,
     pi: PI_UI_BEHAVIOR_OVERRIDE,
 });
@@ -145,6 +154,13 @@ export const AGENTS_UI_BEHAVIOR: Readonly<Record<AgentId, AgentUiBehavior>> = Ob
         }),
     ) as Record<AgentId, AgentUiBehavior>,
 );
+
+export function resolveAgentUiBehaviorFromFlavor(flavor: unknown): AgentUiBehavior | null {
+    const id = typeof flavor === 'string' ? flavor.trim() : '';
+    if (!id) return null;
+    if (!(AGENT_IDS as readonly string[]).includes(id)) return null;
+    return AGENTS_UI_BEHAVIOR[id as AgentId] ?? null;
+}
 
 export function getAgentResumeExperimentsFromSettings(agentId: AgentId, settings: Settings): AgentResumeExperiments {
     const enabled = true;
@@ -297,6 +313,7 @@ export function buildSpawnSessionExtrasFromUiState(opts: {
 
 export function buildSpawnEnvironmentVariablesFromUiState(opts: {
     agentId: AgentId;
+    settings: Settings;
     environmentVariables: Record<string, string> | undefined;
     newSessionOptions?: Record<string, unknown> | null;
 }): Record<string, string> | undefined {
