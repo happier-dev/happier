@@ -119,6 +119,18 @@ type ShellAllowPattern =
   | { kind: 'exact'; value: string }
   | { kind: 'prefix'; value: string };
 
+function isSimpleUnsetOnlySegment(segment: string): boolean {
+  const raw = segment.trim();
+  if (!raw.startsWith('unset ')) return false;
+  const parts = raw.split(/\s+/).filter(Boolean);
+  if (parts[0] !== 'unset') return false;
+  if (parts.length < 2) return false;
+  for (const name of parts.slice(1)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return false;
+  }
+  return true;
+}
+
 function isSegmentAllowed(segment: string, patterns: ShellAllowPattern[]): boolean {
   const raw = segment.trim();
   if (!raw) return false;
@@ -167,10 +179,17 @@ export function isShellCommandAllowed(command: string, patterns: ShellAllowPatte
   const split = splitShellCommandTopLevel(raw);
   if (!split.ok) return false;
 
+  // Some provider runtimes prepend a simple `unset VAR VAR2; ...` prelude to scrub secrets.
+  // Treat those leading segments as an ignorable prelude so command-name allow rules work.
+  const segments = [...split.segments];
+  while (segments.length > 0 && isSimpleUnsetOnlySegment(segments[0])) {
+    segments.shift();
+  }
+
   // If there are no operators, split.segments will be [raw] and this behaves like a normal match.
-  for (const segment of split.segments) {
+  for (const segment of segments) {
     if (!isSegmentAllowed(segment, patterns)) return false;
   }
 
-  return split.segments.length > 0;
+  return segments.length > 0;
 }

@@ -47,6 +47,16 @@ describe('permissionToolIdentifier', () => {
     expect(isToolAllowedForSession(allowed, 'bash', { command: 'FOO=bar git status --porcelain' })).toBe(true);
   });
 
+  it('accepts prefix matches with a leading unset prelude segment', () => {
+    const allowed = new Set(['execute(pwd:*)']);
+    expect(
+      isToolAllowedForSession(allowed, 'bash', {
+        command:
+          'unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_OAUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CODE_SETUP_TOKEN; pwd',
+      }),
+    ).toBe(true);
+  });
+
   it('does not treat chained commands as allowed unless each segment is allowed', () => {
     const allowed = new Set(['execute(git:*)']);
     expect(isToolAllowedForSession(allowed, 'bash', { command: 'git status && rm -rf /tmp/x' })).toBe(false);

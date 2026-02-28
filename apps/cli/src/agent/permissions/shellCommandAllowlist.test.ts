@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { splitShellCommandTopLevel } from './shellCommandAllowlist';
+import { isShellCommandAllowed, splitShellCommandTopLevel } from './shellCommandAllowlist';
 
 describe('shellCommandAllowlist', () => {
   it('fails closed on process substitution', () => {
@@ -14,5 +14,24 @@ describe('shellCommandAllowlist', () => {
     if (!res.ok) return;
     expect(res.segments).toEqual(['echo ${HOME}', 'echo ok']);
   });
-});
 
+  it('treats simple leading unset segments as an ignorable prelude for command-name allow rules', () => {
+    const patterns = [{ kind: 'prefix' as const, value: 'pwd' }];
+    expect(
+      isShellCommandAllowed(
+        'unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_OAUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CODE_SETUP_TOKEN; pwd',
+        patterns,
+      ),
+    ).toBe(true);
+  });
+
+  it('does not allow extra segments when only the main command is allowed', () => {
+    const patterns = [{ kind: 'prefix' as const, value: 'pwd' }];
+    expect(
+      isShellCommandAllowed(
+        'unset ANTHROPIC_API_KEY; pwd && rm -rf /',
+        patterns,
+      ),
+    ).toBe(false);
+  });
+});
