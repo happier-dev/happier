@@ -256,8 +256,8 @@ export function useCreateNewSession(params: Readonly<{
             // The UI must not hard-block on pre-spawn capability probes (self-hosted transports can make probes flaky).
             const resumeId = params.resumeSessionId.trim().length > 0 ? params.resumeSessionId.trim() : undefined;
 
-	            const spawnPermissionMode = parsePermissionIntentAlias(params.permissionMode) ?? 'default';
-	            const spawnPermissionModeUpdatedAt = nowServerMs();
+              const spawnPermissionMode = parsePermissionIntentAlias(params.permissionMode) ?? 'default';
+              const spawnPermissionModeUpdatedAt = nowServerMs();
                 const spawnModelId =
                     getAgentCore(params.agentType).model.supportsSelection === true &&
                     typeof params.modelMode === 'string' &&
@@ -315,29 +315,29 @@ export function useCreateNewSession(params: Readonly<{
                     return;
                 }
 
-	            const result = await machineSpawnNewSession({
-	                machineId: params.selectedMachineId,
-                    serverId: resolvedTargetServerId,
-	                directory: actualPath,
-	                approvedNewDirectoryCreation: true,
-	                agent: params.agentType,
-	                profileId: profilesActive ? (params.selectedProfileId ?? '') : undefined,
-	                environmentVariables,
-	                resume: resumeId,
-	                permissionMode: spawnPermissionMode,
-	                permissionModeUpdatedAt: spawnPermissionModeUpdatedAt,
-                    ...(spawnModelId ? { modelId: spawnModelId, modelUpdatedAt: spawnModelUpdatedAt } : {}),
-                    ...(connectedServices ? { connectedServices } : {}),
-	                ...buildSpawnSessionExtrasFromUiState({
-	                    agentId: params.agentType,
-	                    settings: params.settings,
-	                    resumeSessionId: params.resumeSessionId,
-	                }),
-	                terminal,
-	                windowsRemoteSessionConsole,
-	            });
+                  const result = await machineSpawnNewSession({
+                          machineId: params.selectedMachineId,
+                          serverId: resolvedTargetServerId,
+                          directory: actualPath,
+                          approvedNewDirectoryCreation: true,
+                          agent: params.agentType,
+                          profileId: profilesActive ? (params.selectedProfileId ?? '') : undefined,
+                          environmentVariables,
+                          resume: resumeId,
+                          permissionMode: spawnPermissionMode,
+                          permissionModeUpdatedAt: spawnPermissionModeUpdatedAt,
+                          ...(spawnModelId ? { modelId: spawnModelId, modelUpdatedAt: spawnModelUpdatedAt } : {}),
+                          ...(connectedServices ? { connectedServices } : {}),
+                          ...buildSpawnSessionExtrasFromUiState({
+                          agentId: params.agentType,
+                          settings: params.settings,
+                          resumeSessionId: params.resumeSessionId,
+                      }),
+                      terminal,
+                      windowsRemoteSessionConsole,
+                  });
 
-            if (result.type === 'success' && result.sessionId) {
+                if (result.type === 'success' && result.sessionId) {
                 // Clear draft state on successful session creation
                 clearNewSessionDraft();
 
@@ -384,10 +384,10 @@ export function useCreateNewSession(params: Readonly<{
                         return 'session'
                     },
                 });
-	            } else if (result.type === 'requestToApproveDirectoryCreation') {
-	                Modal.alert(t('common.error'), t('newSession.failedToStart'));
-	                params.setIsCreating(false);
-	            } else if (result.type === 'error') {
+              } else if (result.type === 'requestToApproveDirectoryCreation') {
+                  Modal.alert(t('common.error'), t('newSession.failedToStart'));
+                  params.setIsCreating(false);
+              } else if (result.type === 'error') {
                     if (result.errorCode === SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE) {
                         params.setIsCreating(false);
                         showDaemonUnavailableAlert({
@@ -401,10 +401,10 @@ export function useCreateNewSession(params: Readonly<{
                         });
                         return;
                     }
-	                const extraDetail = (() => {
-	                    switch (result.errorCode) {
-	                        case SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED:
-	                            return 'Resume is not supported for this agent on this machine.';
+                  const extraDetail = (() => {
+                      switch (result.errorCode) {
+                          case SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED:
+                              return 'Resume is not supported for this agent on this machine.';
                         case SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK:
                             return 'The agent process exited before it could connect. Check that the agent CLI is installed and available to the daemon (PATH).';
                         case SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT:
@@ -432,12 +432,12 @@ export function useCreateNewSession(params: Readonly<{
             Modal.alert(t('common.error'), errorMessage);
             params.setIsCreating(false);
         }
-		    }, [
+        }, [
             mountedRef,
-		        params.agentType,
-		        params.machineEnvPresence.meta,
-		        params.modelMode,
-		        params.permissionMode,
+            params.agentType,
+            params.machineEnvPresence.meta,
+            params.modelMode,
+            params.permissionMode,
         params.profileMap,
         params.recentMachinePaths,
         params.resumeSessionId,
@@ -449,14 +449,14 @@ export function useCreateNewSession(params: Readonly<{
         params.selectedMachineCapabilities,
         params.allowedTargetServerIds,
         params.targetServerId,
-	        params.selectedSecretIdByProfileIdByEnvVarName,
-	        params.selectedMachine?.metadata?.platform,
-	        params.selectedMachine?.metadata?.windowsRemoteSessionConsole,
-	        params.selectedMachineId,
-	        params.selectedPath,
-	        params.selectedProfileId,
-	        params.sessionOnlySecretValueByProfileIdByEnvVarName,
-	        params.sessionPrompt,
+          params.selectedSecretIdByProfileIdByEnvVarName,
+          params.selectedMachine?.metadata?.platform,
+          params.selectedMachine?.metadata?.windowsRemoteSessionConsole,
+          params.selectedMachineId,
+          params.selectedPath,
+          params.selectedProfileId,
+          params.sessionOnlySecretValueByProfileIdByEnvVarName,
+          params.sessionPrompt,
         params.sessionType,
         params.setIsCreating,
         params.setIsResumeSupportChecking,
