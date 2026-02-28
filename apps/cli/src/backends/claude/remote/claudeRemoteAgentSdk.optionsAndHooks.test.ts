@@ -1082,5 +1082,72 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             }),
         );
     });
+    it('registers PreToolUse hook that scrubs sensitive env vars for Bash commands', async () => {
+        let capturedHooks: any = null;
+
+        const createQuery = vi.fn((_params: any) => {
+            capturedHooks = _params.options?.hooks;
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode() };
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeEnvVars: {},
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            createQuery,
+        } as any);
+
+        expect(capturedHooks?.PreToolUse?.[0]?.hooks?.length).toBe(1);
+
+        const output = await capturedHooks.PreToolUse[0].hooks[0]({
+            hook_event_name: 'PreToolUse',
+            tool_name: 'Bash',
+            tool_input: { command: 'echo hi' },
+        });
+
+        expect(output).toEqual(
+            expect.objectContaining({
+                continue: true,
+                suppressOutput: true,
+                hookSpecificOutput: {
+                    hookEventName: 'PreToolUse',
+                    updatedInput: expect.anything(),
+                },
+            }),
+        );
+
+        const updatedCommand = output.hookSpecificOutput.updatedInput.command;
+        expect(updatedCommand).toContain('unset ');
+        expect(updatedCommand).toContain('CLAUDE_CODE_OAUTH_TOKEN');
+        expect(updatedCommand).toContain('ANTHROPIC_AUTH_TOKEN');
+        expect(updatedCommand).toContain('echo hi');
+    });
+
 
 });

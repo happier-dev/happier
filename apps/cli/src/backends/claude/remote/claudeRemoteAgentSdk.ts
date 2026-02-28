@@ -222,6 +222,14 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
         )
         : undefined;
 
+    const BASH_SECRET_SCRUB_ENV_KEYS = [
+        'ANTHROPIC_API_KEY',
+        'ANTHROPIC_AUTH_TOKEN',
+        'ANTHROPIC_OAUTH_TOKEN',
+        'CLAUDE_CODE_OAUTH_TOKEN',
+        'CLAUDE_CODE_SETUP_TOKEN',
+    ] as const;
+
     const hooks = {
         SessionStart: [
             {
@@ -252,6 +260,47 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
                             );
                         }
                         return { continue: true };
+                    },
+                ],
+            },
+        ],
+        PreToolUse: [
+            {
+                hooks: [
+                    async (input: any) => {
+                        if (!input || typeof input !== 'object') {
+                            return { continue: true, suppressOutput: true };
+                        }
+
+                        const toolName = typeof input.tool_name === 'string' ? input.tool_name : '';
+                        if (toolName !== 'Bash') {
+                            return { continue: true, suppressOutput: true };
+                        }
+
+                        const toolInput = (input as any).tool_input;
+                        if (!toolInput || typeof toolInput !== 'object' || Array.isArray(toolInput)) {
+                            return { continue: true, suppressOutput: true };
+                        }
+
+                        const command = typeof (toolInput as any).command === 'string' ? (toolInput as any).command : '';
+                        if (!command.trim()) {
+                            return { continue: true, suppressOutput: true };
+                        }
+
+                        const prefix = `unset ${BASH_SECRET_SCRUB_ENV_KEYS.join(' ')}; `;
+                        const nextCommand = command.startsWith(prefix) ? command : prefix + command;
+
+                        return {
+                            continue: true,
+                            suppressOutput: true,
+                            hookSpecificOutput: {
+                                hookEventName: 'PreToolUse',
+                                updatedInput: {
+                                    ...(toolInput as Record<string, unknown>),
+                                    command: nextCommand,
+                                },
+                            },
+                        };
                     },
                 ],
             },
