@@ -19,6 +19,18 @@ function createLegacyCredentials(): AuthCredentials {
   } as any;
 }
 
+function assertObject(value: unknown, name: string): asserts value is Record<string, unknown> {
+  if (!value || typeof value !== 'object') {
+    throw new Error(`Expected ${name} to be an object`);
+  }
+}
+
+function assertString(value: unknown, name: string): asserts value is string {
+  if (typeof value !== 'string') {
+    throw new Error(`Expected ${name} to be a string`);
+  }
+}
+
 describe('buildAccountEncryptionMigrateToPlainRequest', () => {
   it('builds assert_empty directives when no connected services or automations exist', async () => {
     const credentials = createLegacyCredentials();
@@ -73,6 +85,8 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
 
     // Sanity: opening yields the record.
     const opened = openConnectedServiceCredentialCiphertext({ material, ciphertext: sealedCiphertext });
+    expect(opened).not.toBeNull();
+    if (!opened) throw new Error('Expected opened credential');
     expect(opened.value).toEqual(expect.objectContaining({ kind: 'oauth' }));
 
     const sensitiveTemplateCiphertext = await encodeAutomationTemplateForTransport({
@@ -133,11 +147,16 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
     if (request.automations.action !== 'migrate') throw new Error('expected migrate');
     expect(request.automations.templates).toHaveLength(2);
 
-    expect(request.automations.templates[0]!.automationId).toBe('auto_sensitive');
-    expect(request.automations.templates[0]!.templateCiphertext).toBe(sensitiveTemplateCiphertext);
+    const sensitive = request.automations.templates[0];
+    assertObject(sensitive, 'sensitive automation template');
+    expect(sensitive.automationId).toBe('auto_sensitive');
+    expect(sensitive.templateCiphertext).toBe(sensitiveTemplateCiphertext);
 
-    expect(request.automations.templates[1]!.automationId).toBe('auto_safe');
-    const plainEnvelope = JSON.parse(String(request.automations.templates[1]!.templateCiphertext));
+    const safe = request.automations.templates[1];
+    assertObject(safe, 'safe automation template');
+    expect(safe.automationId).toBe('auto_safe');
+    assertString(safe.templateCiphertext, 'safe automation templateCiphertext');
+    const plainEnvelope = JSON.parse(safe.templateCiphertext);
     expect(plainEnvelope.kind).toBe('happier_automation_template_plain_v1');
   });
 });

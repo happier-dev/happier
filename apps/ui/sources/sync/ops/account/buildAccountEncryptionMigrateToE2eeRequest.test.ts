@@ -19,6 +19,18 @@ function createLegacyCredentials(): AuthCredentials {
   } as any;
 }
 
+function assertObject(value: unknown, name: string): asserts value is Record<string, unknown> {
+  if (!value || typeof value !== 'object') {
+    throw new Error(`Expected ${name} to be an object`);
+  }
+}
+
+function assertString(value: unknown, name: string): asserts value is string {
+  if (typeof value !== 'string') {
+    throw new Error(`Expected ${name} to be a string`);
+  }
+}
+
 describe('buildAccountEncryptionMigrateToE2eeRequest', () => {
   it('builds assert_empty directives when no connected services or automations exist', async () => {
     const credentials = createLegacyCredentials();
@@ -50,7 +62,6 @@ describe('buildAccountEncryptionMigrateToE2eeRequest', () => {
       serviceId: 'openai-codex',
       profileId: 'work',
       kind: 'token',
-      expiresAt: null,
       token: {
         token: 'tok-1',
         providerAccountId: 'acct-1',
@@ -64,8 +75,6 @@ describe('buildAccountEncryptionMigrateToE2eeRequest', () => {
         directory: '/tmp/project',
         prompt: 'Hi',
         existingSessionId: 's1',
-        sessionEncryptionKeyBase64: 'dek',
-        sessionEncryptionVariant: 'dataKey',
       },
     });
 
@@ -81,14 +90,19 @@ describe('buildAccountEncryptionMigrateToE2eeRequest', () => {
     expect(request.connectedServices.action).toBe('migrate');
     if (request.connectedServices.action !== 'migrate') throw new Error('expected migrate');
     expect(request.connectedServices.credentials).toHaveLength(1);
-    const cred = request.connectedServices.credentials[0]!;
+    const cred = request.connectedServices.credentials[0];
+    assertObject(cred, 'connected service credential');
     expect(cred.kind).toBe('sealed');
-    expect(cred.sealed?.format).toBe('account_scoped_v1');
+    assertObject(cred.sealed, 'sealed connected service credential');
+    expect(cred.sealed.format).toBe('account_scoped_v1');
+    assertString(cred.sealed.ciphertext, 'sealed ciphertext');
 
     const openedCred = openConnectedServiceCredentialCiphertext({
       material,
-      ciphertext: cred.sealed!.ciphertext,
+      ciphertext: cred.sealed.ciphertext,
     });
+    expect(openedCred).not.toBeNull();
+    if (!openedCred) throw new Error('Expected opened credential');
     expect(openedCred.value).toEqual(expect.objectContaining({ kind: 'token' }));
 
     expect(request.settingsContent?.t).toBe('encrypted');
@@ -101,7 +115,10 @@ describe('buildAccountEncryptionMigrateToE2eeRequest', () => {
 
     expect(request.automations.action).toBe('migrate');
     if (request.automations.action !== 'migrate') throw new Error('expected migrate');
-    const envelope = JSON.parse(String(request.automations.templates[0]!.templateCiphertext));
+    const template = request.automations.templates[0];
+    assertObject(template, 'automation template');
+    assertString(template.templateCiphertext, 'automation templateCiphertext');
+    const envelope = JSON.parse(template.templateCiphertext);
     expect(envelope.kind).toBe('happier_automation_template_encrypted_v1');
   });
 });

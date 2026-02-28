@@ -69,6 +69,9 @@ export async function buildAccountEncryptionMigrateToPlainRequest(params: Readon
     for (const profile of params.connectedServiceProfiles) {
       const fetched = await params.fetchConnectedServiceCredentialSealed({ serviceId: profile.serviceId, profileId: profile.profileId });
       const opened = openConnectedServiceCredentialCiphertext({ material, ciphertext: fetched.sealed.ciphertext });
+      if (!opened) {
+        throw new Error(`Failed to open connected service credential (${profile.serviceId}/${profile.profileId})`);
+      }
       const recordParsed = ConnectedServiceCredentialRecordV1Schema.safeParse(opened.value);
       if (!recordParsed.success) {
         throw new Error(`Failed to open connected service credential (${profile.serviceId}/${profile.profileId})`);
