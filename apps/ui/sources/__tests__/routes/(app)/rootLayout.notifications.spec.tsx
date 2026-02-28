@@ -193,7 +193,7 @@ afterEach(() => {
 });
 
 async function renderRootLayout() {
-    const RootLayout = (await import('./_layout')).default;
+    const RootLayout = (await import('@/app/(app)/_layout')).default;
     await act(async () => {
         try {
             lastRenderer?.unmount();
@@ -223,7 +223,7 @@ describe('App RootLayout notifications', () => {
 
         await renderRootLayout();
 
-        expect(pushSpy).toHaveBeenCalledWith('/terminal?key=abc123&server=https%3A%2F%2Fapi.happier.dev');
+        expect(pushSpy).toHaveBeenCalledWith('/terminal/connect#key=abc123&server=https%3A%2F%2Fapi.happier.dev');
         expect(upsertActivateAndSwitchServerSpy).not.toHaveBeenCalled();
     });
 
@@ -245,7 +245,7 @@ describe('App RootLayout notifications', () => {
             scope: 'device',
             refreshAuth: expect.any(Function),
         });
-        expect(pushSpy).toHaveBeenCalledWith('/terminal?key=abc123&server=https%3A%2F%2Fcompany.example.test');
+        expect(pushSpy).toHaveBeenCalledWith('/terminal/connect#key=abc123&server=https%3A%2F%2Fcompany.example.test');
     });
 
     it('navigates to the session when a notification contains sessionId', async () => {

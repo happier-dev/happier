@@ -1,9 +1,10 @@
+import { resolveAppUrlScheme } from '@/utils/url/appScheme';
+
 export type ParsedTerminalConnectUrl = Readonly<{
     publicKeyB64Url: string;
     serverUrl: string | null;
 }>;
 
-const TERMINAL_PREFIX = 'happier://terminal?';
 const SAFE_SERVER_PROTOCOLS = new Set(['http:', 'https:']);
 const TERMINAL_CONNECT_WEB_PATH = '/terminal/connect';
 
@@ -48,21 +49,37 @@ export function buildTerminalConnectDeepLink(params: Readonly<{
     publicKeyB64Url: string;
     serverUrl: string | null | undefined;
 }>): string {
+    const terminalPrefix = `${resolveAppUrlScheme()}://terminal?`;
     const publicKeyB64Url = String(params.publicKeyB64Url ?? '').trim();
     const safeServerUrl = normalizeServerUrl(params.serverUrl ?? '');
     if (!safeServerUrl) {
-        return `${TERMINAL_PREFIX}${publicKeyB64Url}`;
+        return `${terminalPrefix}${publicKeyB64Url}`;
     }
-    return `${TERMINAL_PREFIX}key=${encodeURIComponent(publicKeyB64Url)}&server=${encodeURIComponent(safeServerUrl)}`;
+    return `${terminalPrefix}key=${encodeURIComponent(publicKeyB64Url)}&server=${encodeURIComponent(safeServerUrl)}`;
+}
+
+export function buildTerminalConnectWebHref(params: Readonly<{
+    publicKeyB64Url: string;
+    serverUrl: string | null | undefined;
+}>): string {
+    const publicKeyB64Url = String(params.publicKeyB64Url ?? '').trim();
+    const safeServerUrl = normalizeServerUrl(params.serverUrl ?? '');
+
+    const hash = safeServerUrl
+        ? `#key=${encodeURIComponent(publicKeyB64Url)}&server=${encodeURIComponent(safeServerUrl)}`
+        : `#key=${encodeURIComponent(publicKeyB64Url)}`;
+
+    return `${TERMINAL_CONNECT_WEB_PATH}${hash}`;
 }
 
 export function parseTerminalConnectUrl(url: string): ParsedTerminalConnectUrl | null {
+    const terminalPrefix = `${resolveAppUrlScheme()}://terminal?`;
     const raw = String(url ?? '');
-    if (!raw.startsWith(TERMINAL_PREFIX)) {
+    if (!raw.startsWith(terminalPrefix)) {
         return parseTerminalConnectWebUrl(raw);
     }
 
-    const tail = raw.slice(TERMINAL_PREFIX.length);
+    const tail = raw.slice(terminalPrefix.length);
     if (!tail) return null;
 
     // Legacy format: happier://terminal?<publicKeyB64Url>

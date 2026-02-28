@@ -27,6 +27,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text } from '@/components/ui/text/Text';
 import { bootstrapActiveServerFromWebLocation, readWebServerUrlOverrideFromLocation } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
 import { PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol';
+import { buildTerminalConnectWebHref } from '@/utils/path/terminalConnectUrl';
 
 const bootstrappedWebServerOverride = bootstrapActiveServerFromWebLocation({ scope: 'device' });
 
@@ -171,7 +172,16 @@ export default function RootLayout() {
         const pendingTerminalConnect = getPendingTerminalConnect();
         if (pendingTerminalConnect) {
             if (pendingTerminalHandledRef.current) return;
-            const route = `/terminal?key=${encodeURIComponent(pendingTerminalConnect.publicKeyB64Url)}&server=${encodeURIComponent(pendingTerminalConnect.serverUrl)}`;
+            // Avoid leaking the terminal connect key via query params; use hash params on the dedicated
+            // `/terminal/connect` route instead.
+            const route = buildTerminalConnectWebHref({
+                publicKeyB64Url: pendingTerminalConnect.publicKeyB64Url,
+                serverUrl: pendingTerminalConnect.serverUrl,
+            });
+
+            // If we are already on the terminal-connect page (which persists a pending connect while
+            // clearing the URL hash for safety), do not navigate away.
+            if (segments.includes('terminal') && segments.includes('connect')) return;
 
             const active = normalizeServerUrl(getActiveServerUrl());
             const target = normalizeServerUrl(pendingTerminalConnect.serverUrl);
