@@ -1079,6 +1079,12 @@ export const en = {
                 failedToConnect: 'Failed to connect',
             },
         },
+        oauthEmbedded: {
+            title: 'Connect (in-app browser)',
+            description:
+                'Start sign-in in an embedded browser. If it fails, use the redirect paste method.',
+            startButton: 'Start sign-in',
+        },
         deviceAuth: {
             invalidConfig: 'Invalid connected service configuration.',
             title: 'Connect (device)',

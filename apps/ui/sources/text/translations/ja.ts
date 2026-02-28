@@ -1416,7 +1416,7 @@ export const ja: TranslationStructure = {
       invalidConfig: "接続済みサービスの設定が無効です。",
       connectWebGroupTitle: "接続（Web）",
       connectWebDescription:
-        "このフローは、コピー/貼り付けのリダイレクト手順（OpenClaw のようなもの）と Happier サーバーのプロキシを使って、トークンを安全に交換します。",
+        "認可URLを開き、ブラウザでOAuthを完了したら、最終的にリダイレクトされたURLをコピーしてHappierに貼り付けてください。",
       openAuthorizationUrl: "認可 URL を開く",
       opensInNewTab: "新しいタブで開きます",
       preparing: "準備中…",
@@ -1433,6 +1433,12 @@ export const ja: TranslationStructure = {
         failedToOpenUrl: "URL を開けませんでした",
         failedToConnect: "接続に失敗しました",
       },
+    },
+    oauthEmbedded: {
+      title: "接続（アプリ内ブラウザ）",
+      description:
+        "埋め込みブラウザでサインインを開始します。うまくいかない場合は、リダイレクトURL貼り付け方式を使ってください。",
+      startButton: "サインインを開始",
     },
     deviceAuth: {
       invalidConfig: "接続済みサービスの設定が無効です。",

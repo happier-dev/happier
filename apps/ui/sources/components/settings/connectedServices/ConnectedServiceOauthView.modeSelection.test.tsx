@@ -33,6 +33,20 @@ vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', () => ({
     displayName: String(serviceId),
     connectCommand: `happier connect ${serviceId}`,
     supportsOauth: serviceId !== 'anthropic',
+    oauthAddActionModes: serviceId === 'openai-codex'
+      ? ['device', 'paste']
+      : serviceId === 'claude-subscription'
+        ? ['paste']
+        : ['paste'],
+  }),
+}));
+
+vi.mock('@/sync/domains/connectedServices/oauth/connectedServiceOauthAdapters', () => ({
+  getConnectedServiceOauthAdapter: (serviceId: string) => ({
+    serviceId,
+    defaultRedirectUri: 'http://localhost/cb',
+    buildAuthorizationUrl: () => 'https://example.com/oauth',
+    exchangeAuthorizationCodeForRecord: async () => ({}),
   }),
 }));
 
@@ -41,12 +55,17 @@ vi.mock('@/components/ui/navigation/OAuthView', () => ({
   OAuthViewUnsupported: () => React.createElement('OAuthViewUnsupported'),
 }));
 
+vi.mock('./oauth/ConnectedServiceOauthEmbeddedView', () => ({
+  ConnectedServiceOauthEmbeddedView: (props: unknown) =>
+    React.createElement('ConnectedServiceOauthEmbeddedView', props as Record<string, unknown>),
+}));
+
 vi.mock('./ConnectedServiceOauthPasteView', () => ({
   ConnectedServiceOauthPasteView: (props: unknown) => React.createElement('ConnectedServiceOauthPasteView', props as Record<string, unknown>),
 }));
 
-vi.mock('./ConnectedServiceOauthDeviceView', () => ({
-  ConnectedServiceOauthDeviceView: (props: unknown) => React.createElement('ConnectedServiceOauthDeviceView', props as Record<string, unknown>),
+vi.mock('./oauth/openai/OpenAiCodexDeviceAuthView', () => ({
+  OpenAiCodexDeviceAuthView: (props: unknown) => React.createElement('OpenAiCodexDeviceAuthView', props as Record<string, unknown>),
 }));
 
 describe('ConnectedServiceOauthView mode selection', () => {
@@ -77,7 +96,7 @@ describe('ConnectedServiceOauthView mode selection', () => {
       tree = renderer.create(<ConnectedServiceOauthView />);
     });
 
-    const deviceViews = tree.root.findAllByType('ConnectedServiceOauthDeviceView' as any);
+    const deviceViews = tree.root.findAllByType('OpenAiCodexDeviceAuthView' as any);
     expect(deviceViews).toHaveLength(1);
     expect(deviceViews[0]?.props?.fallbackAction?.onPress).toBeTypeOf('function');
 
@@ -103,7 +122,7 @@ describe('ConnectedServiceOauthView mode selection', () => {
       tree = renderer.create(<ConnectedServiceOauthView />);
     });
 
-    expect(tree.root.findAllByType('OAuthView' as any)).toHaveLength(1);
+    expect(tree.root.findAllByType('ConnectedServiceOauthEmbeddedView' as any)).toHaveLength(1);
     expect(tree.root.findAllByType('ConnectedServiceOauthPasteView' as any)).toHaveLength(0);
   });
 });

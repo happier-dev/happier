@@ -1151,7 +1151,7 @@ export const pl: TranslationStructure = {
       invalidConfig: "Nieprawidłowa konfiguracja połączonej usługi.",
       connectWebGroupTitle: "Połącz (web)",
       connectWebDescription:
-        "Ten przepływ używa kroku przekierowania kopiuj/wklej (jak OpenClaw) oraz serwerowego proxy Happier do bezpiecznej wymiany tokenów.",
+        "Otwórz URL autoryzacji, dokończ OAuth w przeglądarce, a następnie skopiuj i wklej końcowy przekierowany URL z powrotem do Happier.",
       openAuthorizationUrl: "Otwórz URL autoryzacji",
       opensInNewTab: "Otwiera się w nowej karcie",
       preparing: "Przygotowywanie…",
@@ -1168,6 +1168,12 @@ export const pl: TranslationStructure = {
         failedToOpenUrl: "Nie udało się otworzyć URL",
         failedToConnect: "Nie udało się połączyć",
       },
+    },
+    oauthEmbedded: {
+      title: "Połącz (przeglądarka w aplikacji)",
+      description:
+        "Rozpocznij logowanie w osadzonej przeglądarce. Jeśli to nie zadziała, użyj metody wklejania przekierowania.",
+      startButton: "Rozpocznij logowanie",
     },
     deviceAuth: {
       invalidConfig: "Nieprawidłowa konfiguracja połączonej usługi.",

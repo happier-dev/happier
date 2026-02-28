@@ -11,7 +11,7 @@ const alertSpy = vi.fn(async () => {});
 const refreshProfileSpy = vi.fn(async () => {});
 const storeCredentialSpy = vi.fn(async () => {});
 
-const exchangeSpy = vi.fn(async (_credentials: any, params: any) => {
+const defaultExchangeImpl = async (_credentials: any, params: any) => {
   const recipientPublicKey = decodeBase64(params.publicKey, 'base64url');
   const plaintextJson = JSON.stringify({
     serviceId: params.serviceId,
@@ -32,7 +32,9 @@ const exchangeSpy = vi.fn(async (_credentials: any, params: any) => {
     randomBytes: (n) => new Uint8Array(n).fill(7),
   });
   return { bundle: encodeBase64(bundle, 'base64url') };
-});
+};
+
+const exchangeSpy = vi.fn(defaultExchangeImpl);
 
 const legacySecretB64Url = Buffer.from(new Uint8Array(32).fill(3)).toString('base64url');
 
@@ -70,7 +72,28 @@ vi.mock('@/utils/auth/oauthCore', async (importOriginal) => {
 });
 
 describe('ConnectedServiceOauthPasteView', () => {
+  async function flushAsyncEffects(): Promise<void> {
+    // `ConnectedServiceOauthPasteView` initializes PKCE/state in a fire-and-forget effect.
+    // Flush a couple microtasks so the `handlePaste` handler is armed with pkce/state.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+
+  function resetMocks(): void {
+    promptSpy.mockClear();
+    alertSpy.mockClear();
+    refreshProfileSpy.mockClear();
+    storeCredentialSpy.mockClear();
+    exchangeSpy.mockClear();
+    exchangeSpy.mockImplementation(defaultExchangeImpl);
+  }
+
   it('uses the proxy exchange endpoint and registers a sealed credential', async () => {
+    resetMocks();
     const { ConnectedServiceOauthPasteView } = await import('./ConnectedServiceOauthPasteView');
 
     const onDone = vi.fn();
@@ -79,8 +102,9 @@ describe('ConnectedServiceOauthPasteView', () => {
     await act(async () => {
       tree = renderer.create(<ConnectedServiceOauthPasteView serviceId="openai-codex" profileId="work" onDone={onDone} />);
     });
+    await flushAsyncEffects();
 
-    const pasteItem = tree.root.find((n) => n.props?.title === 'Paste redirect URL');
+    const pasteItem = tree.root.find((n) => n.props?.testID === 'connectedServices.oauthPaste.pasteRedirectButton');
     await act(async () => {
       await pasteItem.props.onPress?.();
     });
@@ -92,6 +116,7 @@ describe('ConnectedServiceOauthPasteView', () => {
         code: 'code-1',
         verifier: 'verifier-1',
         redirectUri: 'http://localhost:1455/auth/callback',
+        state: 'state-1',
       }),
     );
     expect(storeCredentialSpy).toHaveBeenCalledWith(
@@ -107,5 +132,59 @@ describe('ConnectedServiceOauthPasteView', () => {
     );
     expect(refreshProfileSpy).toHaveBeenCalled();
     expect(onDone).toHaveBeenCalled();
+
+    await act(async () => {
+      tree.unmount();
+    });
+  });
+
+  it('rejects proxy bundles that claim a different serviceId', async () => {
+    resetMocks();
+    const { ConnectedServiceOauthPasteView } = await import('./ConnectedServiceOauthPasteView');
+
+    exchangeSpy.mockImplementationOnce(async (_credentials: any, params: any) => {
+      const recipientPublicKey = decodeBase64(params.publicKey, 'base64url');
+      const plaintextJson = JSON.stringify({
+        serviceId: 'gemini',
+        accessToken: 'access-1',
+        refreshToken: 'refresh-1',
+        idToken: 'id-1',
+        scope: null,
+        tokenType: null,
+        providerEmail: null,
+        providerAccountId: 'acct-1',
+        expiresAt: 123,
+        raw: { ok: true },
+      });
+      const plaintext = new TextEncoder().encode(plaintextJson);
+      const bundle = sealBoxBundle({
+        plaintext,
+        recipientPublicKey,
+        randomBytes: (n) => new Uint8Array(n).fill(7),
+      });
+      return { bundle: encodeBase64(bundle, 'base64url') };
+    });
+
+    const onDone = vi.fn();
+
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(<ConnectedServiceOauthPasteView serviceId="openai-codex" profileId="work" onDone={onDone} />);
+    });
+    await flushAsyncEffects();
+
+    const pasteItem = tree.root.find((n) => n.props?.testID === 'connectedServices.oauthPaste.pasteRedirectButton');
+    await act(async () => {
+      await pasteItem.props.onPress?.();
+    });
+
+    expect(storeCredentialSpy).not.toHaveBeenCalled();
+    expect(refreshProfileSpy).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+    expect(alertSpy).toHaveBeenCalled();
+
+    await act(async () => {
+      tree.unmount();
+    });
   });
 });

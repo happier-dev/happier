@@ -1055,7 +1055,7 @@ export const ca: TranslationStructure = {
             invalidConfig: 'Configuració del servei connectat no vàlida.',
             connectWebGroupTitle: 'Connecta (web)',
             connectWebDescription:
-                'Aquest flux utilitza un pas de redirecció de copiar/enganxar (com OpenClaw) i un servidor proxy de Happier per intercanviar els tokens de manera segura.',
+                'Obre l\'URL d\'autorització, completa OAuth al navegador i després copia/enganxa l\'URL final redirigida de tornada a Happier.',
             openAuthorizationUrl: 'Obre l\'URL d\'autorització',
             opensInNewTab: 'S\'obre en una pestanya nova',
             preparing: 'Preparant…',
@@ -1072,6 +1072,12 @@ export const ca: TranslationStructure = {
                 failedToOpenUrl: 'No s\'ha pogut obrir l\'URL',
                 failedToConnect: 'No s\'ha pogut connectar',
             },
+        },
+        oauthEmbedded: {
+            title: 'Connecta (navegador dins l\'app)',
+            description:
+                'Inicia la sessió en un navegador integrat. Si falla, fes servir el mètode d\'enganxar la redirecció.',
+            startButton: 'Inicia la sessió',
         },
         deviceAuth: {
             invalidConfig: 'Configuració del servei connectat no vàlida.',

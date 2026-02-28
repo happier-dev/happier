@@ -248,7 +248,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             invalidConfig: '已連線服務設定無效。',
             connectWebGroupTitle: '連線（網頁）',
             connectWebDescription:
-                '此流程使用複製/貼上的重新導向步驟（如 OpenClaw），並透過 Happier 伺服器代理安全交換權杖。',
+                '開啟授權 URL，在瀏覽器中完成 OAuth，然後將最終重新導向的 URL 複製並貼回 Happier。',
             openAuthorizationUrl: '開啟授權 URL',
             opensInNewTab: '將在新分頁中開啟',
             preparing: '準備中…',
@@ -265,6 +265,12 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 failedToOpenUrl: '無法開啟連結',
                 failedToConnect: '連線失敗',
             },
+        },
+        oauthEmbedded: {
+            title: '連線（應用程式內瀏覽器）',
+            description:
+                '在內嵌瀏覽器中開始登入。如果失敗，請使用貼上重新導向 URL 的方式。',
+            startButton: '開始登入',
         },
         deviceAuth: {
             invalidConfig: '已連結服務設定無效。',

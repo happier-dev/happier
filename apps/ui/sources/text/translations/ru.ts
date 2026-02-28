@@ -1109,7 +1109,7 @@ export const ru: TranslationStructure = {
       invalidConfig: "Неверная конфигурация подключённого сервиса.",
       connectWebGroupTitle: "Подключить (web)",
       connectWebDescription:
-        "Этот поток использует шаг редиректа через копирование/вставку (как в OpenClaw) и прокси сервера Happier для безопасного обмена токенами.",
+        "Откройте URL авторизации, завершите OAuth в браузере, затем скопируйте и вставьте итоговый URL редиректа обратно в Happier.",
       openAuthorizationUrl: "Открыть URL авторизации",
       opensInNewTab: "Откроется в новой вкладке",
       preparing: "Подготовка…",
@@ -1126,6 +1126,12 @@ export const ru: TranslationStructure = {
         failedToOpenUrl: "Не удалось открыть URL",
         failedToConnect: "Не удалось подключиться",
       },
+    },
+    oauthEmbedded: {
+      title: "Подключить (встроенный браузер)",
+      description:
+        "Запустите вход во встроенном браузере. Если не получится, используйте метод вставки URL редиректа.",
+      startButton: "Начать вход",
     },
     deviceAuth: {
       invalidConfig: "Неверная конфигурация подключённого сервиса.",

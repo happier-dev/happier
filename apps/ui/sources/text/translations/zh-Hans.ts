@@ -1080,7 +1080,7 @@ export const zhHans: TranslationStructure = {
       invalidConfig: "已连接服务配置无效。",
       connectWebGroupTitle: "连接（网页）",
       connectWebDescription:
-        "此流程使用复制/粘贴的重定向步骤（类似 OpenClaw），并通过 Happier 服务器代理安全交换令牌。",
+        "打开授权 URL，在浏览器中完成 OAuth，然后将最终重定向的 URL 复制并粘贴回 Happier。",
       openAuthorizationUrl: "打开授权 URL",
       opensInNewTab: "将在新标签页中打开",
       preparing: "准备中…",
@@ -1097,6 +1097,12 @@ export const zhHans: TranslationStructure = {
         failedToOpenUrl: "无法打开链接",
         failedToConnect: "连接失败",
       },
+    },
+    oauthEmbedded: {
+      title: "连接（应用内浏览器）",
+      description:
+        "在内嵌浏览器中开始登录。如果失败，请使用粘贴重定向 URL 的方式。",
+      startButton: "开始登录",
     },
     deviceAuth: {
       invalidConfig: "已连接服务配置无效。",

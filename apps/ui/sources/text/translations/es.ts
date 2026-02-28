@@ -1131,7 +1131,7 @@ export const es: TranslationStructure = {
       invalidConfig: "Configuración de servicio conectado no válida.",
       connectWebGroupTitle: "Conectar (web)",
       connectWebDescription:
-        "Este flujo usa un paso de redirección de copiar/pegar (como OpenClaw) y un proxy del servidor de Happier para intercambiar tokens de forma segura.",
+        "Abre la URL de autorización, completa OAuth en tu navegador y luego copia/pega la URL final redirigida de vuelta en Happier.",
       openAuthorizationUrl: "Abrir URL de autorización",
       opensInNewTab: "Se abre en una nueva pestaña",
       preparing: "Preparando…",
@@ -1148,6 +1148,12 @@ export const es: TranslationStructure = {
         failedToOpenUrl: "No se pudo abrir la URL",
         failedToConnect: "No se pudo conectar",
       },
+    },
+    oauthEmbedded: {
+      title: "Conectar (navegador en la app)",
+      description:
+        "Inicia sesión en un navegador integrado. Si falla, usa el método de pegar la redirección.",
+      startButton: "Iniciar sesión",
     },
     deviceAuth: {
       invalidConfig: "Configuración del servicio conectado no válida.",
