@@ -20,7 +20,7 @@ export function resolveMobileExpoConfig({ env = process.env } = {}) {
     (env.HAPPIER_STACK_MOBILE_SCHEME ??
       env.HAPPIER_STACK_DEV_CLIENT_SCHEME ??
       env.EXPO_APP_SCHEME ??
-      'hstack-dev')
+      'happier-dev')
       .toString()
   );
   const host = (env.HAPPIER_STACK_MOBILE_HOST ?? 'lan').toString();
