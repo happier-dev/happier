@@ -254,6 +254,64 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(capturedOptions.mcpServers.happier).toEqual(happierMcpServers.happier);
     });
 
+    it('forwards explicit spawn env keys into the Claude subprocess env', async () => {
+        const originalToken = process.env.GITHUB_TOKEN;
+        const originalMarker = process.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON;
+        process.env.GITHUB_TOKEN = 'ghp_test';
+        process.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON = JSON.stringify(['GITHUB_TOKEN']);
+
+        try {
+            let capturedOptions: any = null;
+
+            const createQuery = vi.fn((_params: any) => {
+                capturedOptions = _params.options;
+                return {
+                    async *[Symbol.asyncIterator]() {
+                        yield { type: 'result' } as any;
+                    },
+                    close: vi.fn(),
+                    setPermissionMode: vi.fn(),
+                    setModel: vi.fn(),
+                    setMaxThinkingTokens: vi.fn(),
+                    supportedCommands: vi.fn(async () => []),
+                    supportedModels: vi.fn(async () => []),
+                } as any;
+            });
+
+            let didSendFirst = false;
+            const nextMessage = vi.fn(async () => {
+                if (didSendFirst) return null;
+                didSendFirst = true;
+                return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
+            });
+
+            await claudeRemoteAgentSdk({
+                sessionId: null,
+                transcriptPath: null,
+                path: '/tmp',
+                claudeEnvVars: {},
+                claudeArgs: [],
+                claudeExecutablePath: '/tmp/claude',
+                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+                isAborted: () => false,
+                nextMessage,
+                onReady: () => {},
+                onSessionFound: () => {},
+                onMessage: () => {},
+                createQuery,
+            } as any);
+
+            expect(capturedOptions).toBeTruthy();
+            expect(capturedOptions.env?.GITHUB_TOKEN).toBe('ghp_test');
+            expect(capturedOptions.env?.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON).toBeUndefined();
+        } finally {
+            if (originalToken === undefined) delete process.env.GITHUB_TOKEN;
+            else process.env.GITHUB_TOKEN = originalToken;
+            if (originalMarker === undefined) delete process.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON;
+            else process.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON = originalMarker;
+        }
+    });
+
     it('sets allowDangerouslySkipPermissions only when permissionMode is bypassPermissions', async () => {
         let capturedOptions: any = null;
 

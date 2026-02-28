@@ -16,6 +16,7 @@ import { parseClaudeSdkFlagOverridesFromArgs } from '@/backends/claude/remote/sd
 import { resolveClaudeRemoteSessionStartPlan } from '@/backends/claude/remote/sessionStartPlan';
 import { tryMergeUserMcpConfigArgsIntoHappierMcp } from '@/backends/claude/utils/mcpConfigMerge';
 import { parseCheckpointsCommand, parseRewindCommand } from './agentSdk/claudeAgentSdkSlashCommands';
+import { parseExplicitSpawnEnvKeysFromProcessEnv } from './agentSdk/explicitSpawnEnvKeysMarker';
 import {
     extractTextDeltaFromStreamEvent,
     extractToolResultStartFromStreamEvent,
@@ -377,13 +378,17 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
             'HAPPY_E2E_',
         ];
 
+        const explicitSpawnEnvKeys = new Set(parseExplicitSpawnEnvKeysFromProcessEnv(process.env));
+
         const out: Record<string, string> = {};
         for (const [key, value] of Object.entries(process.env)) {
             if (typeof value !== 'string') continue;
-            if (allowExact.has(key) || allowPrefixes.some((p) => key.startsWith(p))) {
+            if (explicitSpawnEnvKeys.has(key) || allowExact.has(key) || allowPrefixes.some((p) => key.startsWith(p))) {
                 out[key] = value;
             }
         }
+
+        delete out.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON;
 
         return { ...out, ...(opts.claudeEnvVars ?? {}) };
     };
