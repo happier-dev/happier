@@ -31,8 +31,8 @@ At the end, the installer prints:
 
 - Your container IP and local HTTP URL
 - If applicable, your public HTTPS URL
-- “Configure server” links (web + mobile deep link) so your app/web UI points to the right server
-- Next steps to connect a terminal/daemon
+- A “Connect terminal” link/QR (mobile deep link + web URL) that includes `server=...` so the app/web UI can switch servers automatically
+- Next steps to connect a terminal/daemon (and start/restart services if you installed Dev box)
 
 Local access:
 
@@ -46,10 +46,10 @@ If you select **Tailscale** during install, the stack typically binds to `loopba
 2. Choose a remote access option:
    - **Tailscale** (recommended) if you want an HTTPS URL without opening ports.
    - **Reverse proxy** if you already have Caddy/Nginx/Traefik.
-3. Open the installer’s **Configure server** link on your phone (or `https://app.happier.dev`) and **sign in / create an account**.
-4. On the computer where you want to run the daemon/terminal, run:
+3. On the computer where you want to run the daemon/terminal:
    - `happier server add --server-url https://<your-server-url> --use`
-   - `happier auth login`
+   - `happier auth login --method=mobile`
+4. On your phone, scan the QR code (or open the deep link). The app will prompt to switch servers (if needed), then you can sign in/create an account and approve the terminal connection.
 5. If you installed **Dev box**, follow the printed “connect daemon” step and restart the stack/service.
 
 ## After install: recommended onboarding flow
@@ -72,7 +72,9 @@ For remote access (phone / outside your LAN), the web UI requires **HTTPS** (sec
 
 If you use a reverse proxy, the Proxmox installer will ask you for your public HTTPS URL and persist it in:
 
-- `/home/happier/.happier/stacks/main/env` as `HAPPIER_STACK_SERVER_URL=https://<your-domain>`
+- `/home/happier/.happier/stacks/main/env` as `HAPPIER_PUBLIC_SERVER_URL=https://<your-domain>` (canonical/share URL used in QR/deep links)
+  - If you serve the web UI from the same origin, it may also set `HAPPIER_WEBAPP_URL=https://<your-domain>`
+  - (Legacy) some stacks may still use `HAPPIER_STACK_SERVER_URL` for compatibility
 
 If you need to change it later, edit the same file and restart the stack/service.
 
@@ -91,7 +93,7 @@ Make sure your proxy supports **WebSockets** and forwards the usual “real URL�
 
 Also make sure the stack knows its public URL (for correct deep links/QR codes):
 
-- `HAPPIER_STACK_SERVER_URL=https://<your-domain>` in `/home/happier/.happier/stacks/main/env`
+- `HAPPIER_PUBLIC_SERVER_URL=https://<your-domain>` in `/home/happier/.happier/stacks/main/env`
 
 Then restart:
 
@@ -141,21 +143,11 @@ If you use a UI-driven reverse proxy (e.g. Nginx Proxy Manager / Traefik), make 
 
 ### 2) Configure your app/web UI to use your server
 
-Use the installer’s printed “Configure server” links first. They:
+In most cases you don’t need a separate “configure server” step anymore: terminal connect links include `server=...`, so the app/web UI can safely prompt you to switch servers before you approve the connection.
 
-- pre-fill your server URL
-- help avoid “wrong server” confusion when you later connect a terminal/daemon
+If you want to add/switch servers manually in the app:
 
-If you missed the output, re-print the links from inside the container:
-
-- `/home/happier/.happier-stack/bin/hstack auth login --print --method=mobile --no-open`
-
-This will print:
-
-- A **Configure server** link (web + mobile deep link)
-- A **Connect terminal** link (web + mobile deep link) that includes `server=...`
-
-Open the configure link first, confirm, then sign in/create your account.
+- Open **Settings → Servers** and add your server URL.
 
 If you chose **not** to serve the web UI from your Proxmox container, use:
 
@@ -193,8 +185,11 @@ On your laptop/desktop:
 
 This persists the server URL locally, then prints:
 
-- “Configure server” links (so you can point the app/web UI at your server)
-- “Connect terminal” links (so you can approve the machine connection)
+- “Connect terminal” links (mobile QR/deep link + web URL) so you can approve the machine connection
+
+If you need to explicitly configure/switch servers in the app/web UI (rarely needed), run:
+
+- `happier auth login --print-configure-links`
 
 For ongoing profile switching and multi-server usage, see [Features → Multi-server](/docs/features/multi-server).
 
