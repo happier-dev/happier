@@ -82,7 +82,6 @@ export async function claudeRemote(opts: {
         claudeArgs: opts.claudeArgs,
     });
 
-
     // Get initial message
     const initial = await opts.nextMessage();
     if (!initial) { // No initial message - exit
