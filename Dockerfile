@@ -267,6 +267,11 @@ FROM server AS relay-server
 # Embed the web UI bundle so self-hosted deployments can serve UI from the server.
 # Disable at runtime by clearing HAPPIER_SERVER_UI_DIR (e.g. `-e HAPPIER_SERVER_UI_DIR=`).
 COPY --from=webapp-builder --chown=node:node /repo/apps/ui/dist /repo/apps/ui/dist
+ARG SENTRY_RELEASE=""
+ENV SENTRY_RELEASE=$SENTRY_RELEASE
+ARG SENTRY_SERVER_CENTRAL_DSN=""
+ENV HAPPIER_SENTRY_CENTRAL_DSN=$SENTRY_SERVER_CENTRAL_DSN
+ENV HAPPIER_SENTRY_USE_CENTRAL_DSN=1
 ENV HAPPIER_SERVER_FLAVOR=light
 ENV HAPPY_SERVER_FLAVOR=light
 ENV HAPPIER_DB_PROVIDER=sqlite
