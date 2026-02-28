@@ -16,6 +16,7 @@ import {
   readOptionalFlagValue,
   type ParsedSessionStartArgs,
 } from '@/cli/sessionStartArgs';
+import { acquireSessionRunnerLock } from '@/daemon/sessionRunnerLock';
 
 type CommonBackendRunOptions = ParsedSessionStartArgs & {
   credentials: Credentials;
@@ -31,6 +32,8 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
   agentIdForAccountSettings?: AgentId;
   resolveExtraOptions?: (args: string[]) => Extra;
 }): Promise<void> {
+  let releaseSessionRunnerLock: (() => Promise<void>) | null = null;
+
   try {
     const refreshSettings = params.context.args.includes('--refresh-settings');
 
@@ -46,6 +49,20 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
     const existingSessionId = readOptionalFlagValue(params.context.args, '--existing-session');
     const resume = readOptionalFlagValue(params.context.args, '--resume');
     const extraOptions = params.resolveExtraOptions ? params.resolveExtraOptions(params.context.args) : ({} as Extra);
+
+    const normalizedExistingSessionId = typeof existingSessionId === 'string' ? existingSessionId.trim() : '';
+    if (normalizedExistingSessionId) {
+      const lock = await acquireSessionRunnerLock({ sessionId: normalizedExistingSessionId });
+      if (!lock.ok) {
+        if (lock.reason === 'already_running') {
+          throw new Error(
+            `Session ${normalizedExistingSessionId} is already running on this machine (pid=${lock.heldByPid}).`,
+          );
+        }
+        throw new Error(`Failed to acquire session runner lock for ${normalizedExistingSessionId} (${lock.reason}).`);
+      }
+      releaseSessionRunnerLock = lock.release;
+    }
 
     const runPromise = params.loadRun();
 
@@ -90,7 +107,7 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
       agentModeUpdatedAt: resolved.agentModeUpdatedAt,
       modelId: resolved.modelId,
       modelUpdatedAt: resolved.modelUpdatedAt,
-      existingSessionId,
+      existingSessionId: normalizedExistingSessionId || undefined,
       resume,
       ...extraOptions,
     });
@@ -99,6 +116,10 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
     if (process.env.DEBUG) {
       console.error(error);
     }
+    await releaseSessionRunnerLock?.().catch(() => {});
+    releaseSessionRunnerLock = null;
     process.exit(1);
+  } finally {
+    await releaseSessionRunnerLock?.().catch(() => {});
   }
 }
