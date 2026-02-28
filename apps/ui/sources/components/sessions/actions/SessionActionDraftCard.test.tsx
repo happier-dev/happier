@@ -37,6 +37,11 @@ vi.mock('react-native-unistyles', () => ({
   }),
 }));
 
+vi.mock('@/components/ui/text/Text', () => ({
+  Text: 'Text',
+  TextInput: 'TextInput',
+}));
+
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
@@ -112,7 +117,7 @@ describe('SessionActionDraftCard', () => {
       tree = renderer.create(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
     });
 
-    const start = findPressableByText(tree!, 'Start');
+    const start = findPressableByText(tree!, 'common.start');
     expect(start).toBeTruthy();
 
     await act(async () => {
@@ -151,7 +156,7 @@ describe('SessionActionDraftCard', () => {
       tree = renderer.create(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
     });
 
-    const start = findPressableByText(tree!, 'Start');
+    const start = findPressableByText(tree!, 'common.start');
     expect(start).toBeTruthy();
 
     await act(async () => {

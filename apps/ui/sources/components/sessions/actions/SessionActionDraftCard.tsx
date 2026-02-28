@@ -294,7 +294,7 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
                     <Text style={{ color: theme.colors.textSecondary, marginBottom: 6 }}>{label}</Text>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
                       <Chip
-                        label="On"
+                        label={t('common.on')}
                         selected={selected}
                         disabled={!editable || disabled}
                         onPress={() => {
@@ -303,7 +303,7 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
                         }}
                       />
                       <Chip
-                        label="Off"
+                        label={t('common.off')}
                         selected={!selected}
                         disabled={!editable || disabled}
                         onPress={() => {
@@ -376,7 +376,7 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
               return null;
             })
           ) : (
-            <Text style={{ color: theme.colors.textSecondary }}>This action has no input hints.</Text>
+            <Text style={{ color: theme.colors.textSecondary }}>{t('session.actionsDraft.noInputHints')}</Text>
           )}
 
           {error ? (
@@ -395,7 +395,7 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
                 opacity: props.draft.status === 'running' ? 0.4 : pressed ? 0.7 : 1,
               })}
             >
-              <Text style={{ color: theme.colors.textSecondary }}>Cancel</Text>
+              <Text style={{ color: theme.colors.textSecondary }}>{t('common.cancel')}</Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
@@ -409,7 +409,7 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
                 opacity: props.draft.status !== 'editing' ? 0.5 : pressed ? 0.8 : 1,
               })}
             >
-              <Text style={{ color: theme.colors.button.primary.tint, fontWeight: '600' }}>Start</Text>
+              <Text style={{ color: theme.colors.button.primary.tint, fontWeight: '600' }}>{t('common.start')}</Text>
             </Pressable>
           </View>
           </View>
