@@ -18,11 +18,13 @@ describe('ApiSessionClient connection handling', () => {
     let mockUserSocket: any;
     let consoleSpy: any;
     let mockSession: any;
+    let originalArgv: string[];
     const flushQueuedCommits = async (client: ApiSessionClient): Promise<void> => {
         await (client as any).messageCommitQueueTail;
     };
 
     beforeEach(() => {
+        originalArgv = [...process.argv];
         consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
         // Mock socket.io client
@@ -74,6 +76,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     afterEach(() => {
+        process.argv = originalArgv;
         delete process.env.HAPPIER_STACK_TOOL_TRACE;
         delete process.env.HAPPIER_STACK_TOOL_TRACE_FILE;
         delete process.env.HAPPIER_DAEMON_INITIAL_PROMPT;
@@ -103,6 +106,105 @@ describe('ApiSessionClient connection handling', () => {
     it('exposes last observed transcript seq for fork/resume heuristics', () => {
         const client = new ApiSessionClient('token', mockSession);
         expect(client.getLastObservedMessageSeq()).toBe(0);
+    });
+
+    it('filters historical catch-up user messages from delivery for terminal-started sessions', async () => {
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+        const { configuration } = await import('@/configuration');
+
+        const plaintext = {
+            role: 'user',
+            content: { type: 'text', text: 'historical prompt' },
+            meta: { source: 'ui', sentFrom: 'web' },
+        };
+        const ciphertext = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
+
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue({
+            status: 200,
+            data: {
+                messages: [
+                    {
+                        id: 'm-old-1',
+                        seq: 1,
+                        content: { t: 'encrypted', c: ciphertext },
+                        createdAt: Date.now() - configuration.startupTranscriptCatchUpLookbackMs - 1_000,
+                    },
+                ],
+                nextAfterSeq: null,
+            },
+        });
+
+        process.argv = process.argv.filter((arg) => arg !== '--started-by');
+        mockSession.metadata.startedBy = undefined;
+        mockSession.metadata.startedFromDaemon = undefined;
+
+        const client = new ApiSessionClient('token', mockSession);
+        const onUserMessage = vi.fn();
+        client.onUserMessage(onUserMessage);
+
+        await new Promise((r) => setTimeout(r, 0));
+        expect(getSpy).toHaveBeenCalledTimes(1);
+        expect(onUserMessage).not.toHaveBeenCalled();
+    });
+
+    it('delivers recent catch-up user messages for terminal-started sessions', async () => {
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+
+        const plaintext = {
+            role: 'user',
+            content: { type: 'text', text: 'recent prompt' },
+            meta: { source: 'ui', sentFrom: 'web' },
+        };
+        const ciphertext = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
+
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue({
+            status: 200,
+            data: {
+                messages: [
+                    {
+                        id: 'm-new-1',
+                        seq: 1,
+                        content: { t: 'encrypted', c: ciphertext },
+                        createdAt: Date.now(),
+                    },
+                ],
+                nextAfterSeq: null,
+            },
+        });
+
+        process.argv = process.argv.filter((arg) => arg !== '--started-by');
+        mockSession.metadata.startedBy = undefined;
+        mockSession.metadata.startedFromDaemon = undefined;
+
+        const client = new ApiSessionClient('token', mockSession);
+        const onUserMessage = vi.fn();
+        client.onUserMessage(onUserMessage);
+
+        await new Promise((r) => setTimeout(r, 0));
+        expect(getSpy).toHaveBeenCalledTimes(1);
+        expect(onUserMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                role: 'user',
+                content: { type: 'text', text: 'recent prompt' },
+            }),
+        );
+    });
+
+    it('runs startup transcript catch-up for daemon-started sessions', async () => {
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { messages: [], nextAfterSeq: null } });
+
+        mockSession.metadata.startedBy = 'daemon';
+
+        const client = new ApiSessionClient('token', mockSession);
+        client.onUserMessage(() => {});
+
+        await new Promise((r) => setTimeout(r, 0));
+        expect(getSpy).toHaveBeenCalledTimes(1);
     });
 
     it('sends plaintext session messages when session.encryptionMode is plain', async () => {
@@ -409,6 +511,10 @@ describe('ApiSessionClient connection handling', () => {
             },
         });
 
+        mockSession.metadata = {
+            ...mockSession.metadata,
+            startedBy: 'daemon',
+        };
         const client = new ApiSessionClient('fake-token', mockSession);
         const onUserMessage = vi.fn();
 

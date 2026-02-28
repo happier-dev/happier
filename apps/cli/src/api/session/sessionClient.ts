@@ -59,6 +59,7 @@ export class ApiSessionClient extends EventEmitter {
     private userSocket: Socket<ServerToClientEvents, ClientToServerEvents>;
     private pendingMessages: UserMessage[] = [];
     private pendingMessageCallback: ((message: UserMessage) => void) | null = null;
+    private userMessageCallbackAttachedAtMs: number | null = null;
     readonly rpcHandlerManager: RpcHandlerManager;
     private agentStateLock = new AsyncLock();
     private metadataLock = new AsyncLock();
@@ -89,6 +90,7 @@ export class ApiSessionClient extends EventEmitter {
     private readonly startedByDaemonProcess: boolean;
     private readonly materializationRecoveryScheduler: KeyedSingleFlightScheduler;
     private readonly transcriptRecoveryErrorStateByLocalId = new Map<string, { lastLoggedAt: number; suppressed: number }>();
+    private messageCommitQueueTail: Promise<unknown> = Promise.resolve();
 
     /**
      * Returns the latest known agentState (may be stale if socket is disconnected).
@@ -397,6 +399,19 @@ export class ApiSessionClient extends EventEmitter {
                 deleteMaterializedLocalId: (localId) => this.deleteMaterializedLocalId(localId),
                 pendingMessageCallback: this.pendingMessageCallback,
                 pendingMessages: this.pendingMessages,
+                shouldDeliverUserMessageToAgentQueue: (message, update) => {
+                    if (!update?.id?.startsWith('catchup-')) return true;
+                    if (this.lastObservedMessageSeq > 0) return true;
+                    if (this.shouldRunStartupTranscriptCatchUp()) return true;
+
+                    const attachedAtMs = this.userMessageCallbackAttachedAtMs;
+                    if (typeof attachedAtMs !== 'number' || !Number.isFinite(attachedAtMs)) return true;
+                    const lookbackMs = configuration.startupTranscriptCatchUpLookbackMs;
+                    if (typeof lookbackMs !== 'number' || !Number.isFinite(lookbackMs) || lookbackMs < 0) return true;
+                    const createdAtMs = typeof (message as any).createdAt === 'number' ? (message as any).createdAt : null;
+                    if (typeof createdAtMs !== 'number' || !Number.isFinite(createdAtMs)) return true;
+                    return createdAtMs >= attachedAtMs - lookbackMs;
+                },
                 emit: (event, payload) => this.emit(event, payload),
                 debug: (message, payload) => logger.debug(message, payload),
                 debugLargeJson: (message, payload) => logger.debugLargeJson(message, payload),
@@ -447,7 +462,7 @@ export class ApiSessionClient extends EventEmitter {
         }
 
         const p = (async () => {
-            const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+            const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
             const response = await axios.get(`${serverUrl}/v1/account/profile`, {
                 headers: {
                     Authorization: `Bearer ${this.token}`,
@@ -480,15 +495,19 @@ export class ApiSessionClient extends EventEmitter {
         });
     }
 
+    private shouldRunStartupTranscriptCatchUp(): boolean {
+        return (
+            this.startedByDaemonProcess ||
+            this.metadata?.startedBy === 'daemon' ||
+            this.metadata?.startedFromDaemon === true
+        );
+    }
+
     private scheduleNextStartupMessageCatchUpRetry(): void {
         if (this.closed) return;
         if (this.lastObservedMessageSeq > 0) return;
         if (this.startupMessageCatchUpRetryTimer) return;
-        const shouldRetryForDaemonStart =
-            this.startedByDaemonProcess ||
-            this.metadata?.startedBy === 'daemon' ||
-            this.metadata?.startedFromDaemon === true;
-        if (!shouldRetryForDaemonStart) return;
+        if (!this.shouldRunStartupTranscriptCatchUp()) return;
 
         const delayMs = ApiSessionClient.STARTUP_MESSAGE_CATCH_UP_RETRY_DELAYS_MS[this.startupMessageCatchUpRetryIndex];
         if (typeof delayMs !== 'number') return;
@@ -602,6 +621,9 @@ export class ApiSessionClient extends EventEmitter {
             metadataStartedFromDaemon: this.metadata?.startedFromDaemon ?? null,
         });
         this.pendingMessageCallback = callback;
+        if (this.userMessageCallbackAttachedAtMs === null) {
+            this.userMessageCallbackAttachedAtMs = Date.now();
+        }
         while (this.pendingMessages.length > 0) {
             callback(this.pendingMessages.shift()!);
         }
@@ -779,6 +801,17 @@ export class ApiSessionClient extends EventEmitter {
         });
     }
 
+    /**
+     * Force a session snapshot sync from the server.
+     *
+     * This is useful when metadata/agentState may have been updated by another client (e.g. daemon RPC)
+     * and this runner needs the latest snapshot before making turn decisions (e.g. replaySeedV1).
+     */
+    async refreshSessionSnapshotFromServerBestEffort(opts?: { reason?: 'connect' | 'waitForMetadataUpdate' }): Promise<void> {
+        const reason = opts?.reason ?? 'waitForMetadataUpdate';
+        await this.syncSessionSnapshotFromServer({ reason });
+    }
+
     private async commitSessionMessage(
         params: { message: string | { t: 'plain'; v: unknown }; localId: string; requireCommit: boolean },
     ): Promise<void> {
@@ -854,6 +887,15 @@ export class ApiSessionClient extends EventEmitter {
         this.scheduleCommitRetry({ message: params.message, localId });
     }
 
+    private enqueueMessageCommit<T>(fn: () => Promise<T>): Promise<T> {
+        const queued = this.messageCommitQueueTail.then(fn, fn);
+        this.messageCommitQueueTail = queued.then(
+            () => undefined,
+            () => undefined,
+        );
+        return queued;
+    }
+
     private scheduleCommitRetry(params: { message: string | { t: 'plain'; v: unknown }; localId: string }): void {
         const localId = params.localId;
         if (!localId) return;
@@ -872,11 +914,13 @@ export class ApiSessionClient extends EventEmitter {
                 this.pendingCommitRetryAttemptsByLocalId.delete(localId);
                 return;
             }
-            void this.commitSessionMessage({
-                message: params.message,
-                localId,
-                requireCommit: false,
-            }).catch(() => {
+            void this.enqueueMessageCommit(() =>
+                this.commitSessionMessage({
+                    message: params.message,
+                    localId,
+                    requireCommit: false,
+                }),
+            ).catch(() => {
                 // Best-effort retry only.
             });
         }, delayMs);
@@ -899,11 +943,13 @@ export class ApiSessionClient extends EventEmitter {
         localId: string;
         logErrorMessage: string;
     }): void {
-        void this.commitSessionMessage({
-            message: params.message,
-            localId: params.localId,
-            requireCommit: false,
-        }).catch((error) => {
+        void this.enqueueMessageCommit(() =>
+            this.commitSessionMessage({
+                message: params.message,
+                localId: params.localId,
+                requireCommit: false,
+            }),
+        ).catch((error) => {
             logger.debug(params.logErrorMessage, { error });
         });
     }
@@ -1135,7 +1181,9 @@ export class ApiSessionClient extends EventEmitter {
     ): Promise<void> {
         const content = this.buildUserTextMessageContent(text, opts.meta);
         const payload = this.buildOutboundSessionMessagePayload(content);
-        await this.commitSessionMessage({ message: payload, localId: opts.localId, requireCommit: true });
+        await this.enqueueMessageCommit(() =>
+            this.commitSessionMessage({ message: payload, localId: opts.localId, requireCommit: true }),
+        );
     }
 
     async sendAgentMessageCommitted(
@@ -1155,7 +1203,9 @@ export class ApiSessionClient extends EventEmitter {
         }
 
         const payload = this.buildOutboundSessionMessagePayload(content);
-        await this.commitSessionMessage({ message: payload, localId, requireCommit: true });
+        await this.enqueueMessageCommit(() =>
+            this.commitSessionMessage({ message: payload, localId, requireCommit: true }),
+        );
     }
 
     async fetchRecentTranscriptTextItemsForAcpImport(opts?: { take?: number }): Promise<Array<{ role: 'user' | 'agent'; text: string }>> {
@@ -1346,6 +1396,16 @@ export class ApiSessionClient extends EventEmitter {
      */
     getMetadataSnapshot(): Metadata | null {
         return this.metadata;
+    }
+
+    /**
+     * Read-only snapshot of the last transcript message seq observed by this client.
+     *
+     * Used for provider integrations that need to distinguish "fresh" sessions from sessions that
+     * already contain imported history or prior user prompts (e.g. resume history import).
+     */
+    getLastObservedMessageSeq(): number {
+        return this.lastObservedMessageSeq;
     }
 
     async close() {

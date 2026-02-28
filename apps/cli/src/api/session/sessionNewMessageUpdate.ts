@@ -16,6 +16,7 @@ export function handleSessionNewMessageUpdate(params: {
     deleteMaterializedLocalId: (localId: string) => void;
     pendingMessageCallback: ((message: UserMessage) => void) | null;
     pendingMessages: UserMessage[];
+    shouldDeliverUserMessageToAgentQueue?: (message: UserMessage, update: Update) => boolean;
     emit: (event: 'user-message' | 'message', payload: unknown) => void;
     debug: (message: string, data?: unknown) => void;
     debugLargeJson: (message: string, data: unknown) => void;
@@ -93,7 +94,9 @@ export function handleSessionNewMessageUpdate(params: {
         const sentFrom = userResult.data.meta?.sentFrom;
         const source = userResult.data.meta?.source;
         const shouldDeliverToAgent = source !== 'cli' && sentFrom !== 'cli';
-        if (shouldDeliverToAgent) {
+        const shouldDeliverToAgentQueue =
+            shouldDeliverToAgent && (params.shouldDeliverUserMessageToAgentQueue?.(userResult.data, params.update) ?? true);
+        if (shouldDeliverToAgentQueue) {
             if (params.pendingMessageCallback) {
                 params.pendingMessageCallback(userResult.data);
             } else {
