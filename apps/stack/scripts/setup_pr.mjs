@@ -29,26 +29,28 @@ import { inferPrStackBaseName } from './utils/stack/pr_stack_name.mjs';
 import { bold, cyan, dim, green } from './utils/ui/ansi.mjs';
 
 function pickReviewerMobileSchemeEnv(env) {
-  // For review-pr flows, reviewers typically have the standard Happier dev build on their phone,
-  // so default to the canonical `happier://` scheme unless the user explicitly configured one.
+  // For review-pr flows, the mobile "dev-client" deep link must target a dev-client app install,
+  // not the production Happier app. Default to the dev-client scheme (see docs/mobile-ios.md).
   // If the user explicitly set a review-specific override, honor it.
   const reviewOverride = (env.HAPPIER_STACK_REVIEW_MOBILE_SCHEME ?? '').toString().trim();
   if (reviewOverride) {
     return { ...env, HAPPIER_STACK_MOBILE_SCHEME: reviewOverride };
   }
 
-  // In sandbox review flows, keep things predictable and avoid relying on any global per-machine overrides.
-  if (isSandboxed()) {
-    return { ...env, HAPPIER_STACK_MOBILE_SCHEME: 'happier' };
+  // If the user already configured a scheme, keep it.
+  const explicitMobile = (env.HAPPIER_STACK_MOBILE_SCHEME ?? '').toString().trim();
+  if (explicitMobile) return env;
+
+  const devClientScheme = (env.HAPPIER_STACK_DEV_CLIENT_SCHEME ?? '').toString().trim();
+  if (devClientScheme && !isSandboxed()) {
+    return { ...env, HAPPIER_STACK_MOBILE_SCHEME: devClientScheme };
   }
 
-  // Non-sandbox: keep existing behavior unless nothing is configured at all.
-  const explicit =
-    (env.HAPPIER_STACK_MOBILE_SCHEME ?? env.HAPPIER_STACK_DEV_CLIENT_SCHEME ?? '')
-      .toString()
-      .trim();
-  if (explicit) return env;
-  return { ...env, HAPPIER_STACK_MOBILE_SCHEME: 'happier' };
+  // Default to the dev-client scheme.
+  // Note: in sandbox mode, prefer a deterministic default and avoid reading host-machine config by default.
+  // If the user wants a specific scheme in sandbox mode, set HAPPIER_STACK_DEV_CLIENT_SCHEME or HAPPIER_STACK_REVIEW_MOBILE_SCHEME.
+  const fallback = isSandboxed() ? 'hstack-dev' : devClientScheme || 'hstack-dev';
+  return { ...env, HAPPIER_STACK_MOBILE_SCHEME: fallback };
 }
 
 async function printReviewerStackSummary({ rootDir, stackName, env, wantsMobile }) {
@@ -276,13 +278,22 @@ async function main() {
   // Determine server flavor for bootstrap and stack creation.
   const serverFlavorFromArg = (kv.get('--server-flavor') ?? '').trim().toLowerCase();
   const serverFromArg = (kv.get('--server') ?? '').trim();
+  const normalizedServerFromArg =
+    serverFromArg === 'happy-server'
+      ? 'happier-server'
+      : serverFromArg === 'happy-server-light'
+        ? 'happier-server-light'
+        : serverFromArg;
   const serverComponent =
     serverFlavorFromArg === 'full'
-      ? 'happy-server'
+      ? 'happier-server'
       : serverFlavorFromArg === 'light'
-        ? 'happy-server-light'
-        : serverFromArg || 'happy-server-light';
-  const bootstrapServer = serverComponent === 'happy-server' ? 'both' : 'happy-server-light';
+        ? 'happier-server-light'
+        : normalizedServerFromArg || 'happier-server-light';
+  if (serverComponent !== 'happier-server' && serverComponent !== 'happier-server-light') {
+    throw new Error(`[setup-pr] invalid --server: ${serverFromArg || serverComponent}`);
+  }
+  const bootstrapServer = serverComponent === 'happier-server' ? 'both' : 'happier-server-light';
 
   // Auth defaults (avoid prompts; setup-pr should be low-friction).
   // Note: these may be updated below (sandbox prompt), so keep them mutable.
