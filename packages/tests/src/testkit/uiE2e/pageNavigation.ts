@@ -3,7 +3,13 @@ import type { Page } from '@playwright/test';
 export function normalizeLoopbackBaseUrl(input: string): string {
   try {
     const parsed = new URL(input);
-    if (parsed.hostname === 'localhost') parsed.hostname = '127.0.0.1';
+    // Expo web dev server is started with `--host localhost`, and recent Webpack/Metro stacks can
+    // reject loopback IP Host headers (127.0.0.1/::1) depending on allowedHosts configuration.
+    // Normalise to `localhost` so deep links (e.g. /terminal/connect#key=...) work reliably in
+    // Playwright E2E across environments.
+    if (parsed.hostname === '127.0.0.1' || parsed.hostname === '0.0.0.0' || parsed.hostname === '::1') {
+      parsed.hostname = 'localhost';
+    }
     return parsed.toString().replace(/\/+$/, '');
   } catch {
     return input.replace(/\/+$/, '');
@@ -36,4 +42,3 @@ export async function gotoDomContentLoadedWithRetries(page: Page, url: string, t
     }
   }
 }
-
