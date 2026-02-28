@@ -33,5 +33,6 @@ describe('happier (default claude) help output', () => {
     expect(stdout).toContain('--webapp-url');
     expect(stdout).toContain('--public-server-url');
     expect(stdout).toContain('--server ');
+    expect(stdout).not.toContain('--claude-env');
   });
 });

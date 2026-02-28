@@ -136,19 +136,6 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
     } else if (arg === '--existing-session') {
       // Used by daemon to reconnect to an existing session (for inactive session resume)
       options.existingSessionId = strippedArgs[++i];
-    } else if (arg === '--claude-env') {
-      // Parse KEY=VALUE environment variable to pass to Claude
-      const envArg = strippedArgs[++i];
-      if (envArg && envArg.includes('=')) {
-        const eqIndex = envArg.indexOf('=');
-        const key = envArg.substring(0, eqIndex);
-        const value = envArg.substring(eqIndex + 1);
-        options.claudeEnvVars = options.claudeEnvVars || {};
-        options.claudeEnvVars[key] = value;
-      } else {
-        console.error(chalk.red(`Invalid --claude-env format: ${envArg}. Expected KEY=VALUE`));
-        process.exit(1);
-      }
     } else if (arg === '--chrome') {
       chromeOverride = true;
     } else if (arg === '--no-chrome') {
@@ -201,8 +188,6 @@ ${chalk.bold('Examples:')}
   happier --chrome           Enable Chrome browser access for this session
   happier --no-chrome        Disable Chrome even if default is on
   happier --js-runtime bun   Use bun instead of node to spawn Claude Code
-  happier --claude-env ANTHROPIC_BASE_URL=http://127.0.0.1:3456
-                             Use a custom API endpoint (e.g., claude-code-router)
   happier auth login --force Authenticate
   happier doctor             Run diagnostics
 
