@@ -63,7 +63,7 @@ export function isMachineIdConflictError(error: unknown): error is MachineIdConf
 }
 
 function resolveServerHttpBaseUrl(): string {
-  return resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+  return resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
 }
 
 export class ApiClient {
