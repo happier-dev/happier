@@ -11,6 +11,7 @@ import { getDefaultClaudeCodePathForAgentSdk } from '@/backends/claude/sdk/utils
 import type { SessionHookData } from '@/backends/claude/utils/startHookServer';
 import { getProjectPath } from '@/backends/claude/utils/path';
 import { getClaudeRemoteSystemPrompt } from '@/backends/claude/utils/remoteSystemPrompt';
+import { normalizeClaudeToolUseNamesInSdkMessage } from '@/backends/claude/utils/normalizeClaudeToolUseNames';
 import { parseClaudeSdkFlagOverridesFromArgs } from '@/backends/claude/remote/sdkFlagOverrides';
 import { resolveClaudeRemoteSessionStartPlan } from '@/backends/claude/remote/sessionStartPlan';
 
@@ -284,6 +285,10 @@ export async function claudeRemoteAgentSdk(opts: {
     // Test seam
     createQuery?: AgentSdkQueryFactory;
 }) {
+    const emitMessage = (message: SDKMessage) => {
+        opts.onMessage(normalizeClaudeToolUseNamesInSdkMessage(message));
+    };
+
     const recordTraceMarker = (params: { kind: string; payload: Record<string, unknown> }) => {
         recordToolTraceEvent({
             direction: 'outbound',
@@ -763,7 +768,7 @@ export async function claudeRemoteAgentSdk(opts: {
                                 continue;
                             }
 
-                            opts.onMessage({
+                            emitMessage({
                                 type: 'system',
                                 subtype: 'happier',
                                 happierTraceMarker: 'checkpoint-rewind',
@@ -902,7 +907,7 @@ export async function claudeRemoteAgentSdk(opts: {
                         continue;
                     }
                     if (mode.claudeRemoteIncludePartialMessages === true) {
-                        opts.onMessage({
+                        emitMessage({
                             type: 'assistant',
                             happierPartial: true,
                             session_id: (message as any).session_id,
@@ -1003,7 +1008,7 @@ export async function claudeRemoteAgentSdk(opts: {
                 } else {
                     const deduped = stripSeenToolBlocksFromMessage(pendingToolUseMessage.message, seen);
                     if (deduped) {
-                        opts.onMessage(deduped);
+                        emitMessage(deduped);
                         recordSeenToolBlocks(deduped, seen);
                     }
                     pendingToolUseMessage = null;
@@ -1016,7 +1021,7 @@ export async function claudeRemoteAgentSdk(opts: {
                 } else {
                     const deduped = stripSeenToolBlocksFromMessage(pendingToolResultMessage.message, seen);
                     if (deduped) {
-                        opts.onMessage(deduped);
+                        emitMessage(deduped);
                         recordSeenToolBlocks(deduped, seen);
                     }
                     pendingToolResultMessage = null;
@@ -1026,7 +1031,7 @@ export async function claudeRemoteAgentSdk(opts: {
             const sdkMessage = message as SDKMessage;
             const deduped = stripSeenToolBlocksFromMessage(sdkMessage, seen);
             if (!deduped) continue;
-            opts.onMessage(deduped);
+            emitMessage(deduped);
             recordSeenToolBlocks(deduped, seen);
 
             if (message && message.type === 'system' && message.subtype === 'init') {

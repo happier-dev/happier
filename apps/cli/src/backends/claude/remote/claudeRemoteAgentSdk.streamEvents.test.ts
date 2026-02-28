@@ -153,6 +153,66 @@ describe('claudeRemoteAgentSdk stream events', () => {
         }));
     });
 
+    it('normalizes Claude Agent Teams tool_use names while reconstructing tool_use blocks from stream_event', async () => {
+        const onMessage = vi.fn();
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_start',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_start',
+                            content_block: { type: 'tool_use', id: 'toolu_1', name: 'TeamCreate', input: {} },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_stop',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: { type: 'content_block_stop' },
+                    } as any;
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage: async () => ({
+                message: 'hello',
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true }),
+            }),
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage,
+            createQuery,
+        } as any);
+
+        expect(onMessage.mock.calls.some(([msg]) => msg?.type === 'stream_event')).toBe(false);
+        expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'assistant',
+            message: expect.objectContaining({
+                content: [expect.objectContaining({ type: 'tool_use', id: 'toolu_1', name: 'AgentTeamCreate' })],
+            }),
+        }));
+    });
+
     it('does not emit duplicate tool_use when the assembled SDK assistant message also includes the same tool_use block', async () => {
         const onMessage = vi.fn();
 
