@@ -17,12 +17,12 @@ import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/con
 import { Typography } from '@/constants/Typography';
 import { listServerSelectionTargets } from '@/sync/domains/server/selection/serverSelectionResolver';
 import { resolveActiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
+import { normalizeStoredServerSelectionGroups } from '@/sync/domains/server/selection/serverSelectionMutations';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import { useConnectionTargetActions } from '@/components/navigation/connection/useConnectionTargetActions';
 import { ConnectionTargetList } from '@/components/navigation/connection/ConnectionTargetList';
 import { promptSignedOutServerSwitchConfirmation } from '@/components/settings/server/modals/ServerSwitchAuthPrompt';
 import { Text } from '@/components/ui/text/Text';
-
 
 type Variant = 'sidebar' | 'header';
 
@@ -109,7 +109,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     const [serverSelectionActiveTargetId, setServerSelectionActiveTargetId] = useSettingMutable('serverSelectionActiveTargetId');
 
     const [open, setOpen] = React.useState(false);
-    const anchorRef = React.useRef<any>(null);
+    const anchorRef = React.useRef<React.ElementRef<typeof View> | null>(null);
     const [authStatusByServerId, setAuthStatusByServerId] = React.useState<Record<string, 'signedIn' | 'signedOut' | 'unknown'>>({});
 
     const connectionStatus = React.useMemo((): { color: string; isPulsing: boolean } => {
@@ -186,7 +186,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     const serverTargets = React.useMemo(() => {
         return listServerSelectionTargets({
             serverProfiles: servers,
-            groupProfiles: serverSelectionGroups as any,
+            groupProfiles: normalizeStoredServerSelectionGroups(serverSelectionGroups),
         });
     }, [serverSelectionGroups, servers]);
 
