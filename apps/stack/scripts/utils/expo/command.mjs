@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { ensureDepsInstalled, ensureWorkspacePackagesBuiltForComponent } from '../proc/pm.mjs';
 import { run } from '../proc/proc.mjs';
 import { spawnProc } from '../proc/proc.mjs';
-import { ensureExpoIsolationEnv, getExpoStatePaths, wantsExpoClearCache } from './expo.mjs';
+import { ensureExpoIsolationEnv, getExpoStatePaths, resolveExpoTmpDir, wantsExpoClearCache } from './expo.mjs';
 
 export async function prepareExpoCommandEnv({
   baseDir,
@@ -14,7 +14,8 @@ export async function prepareExpoCommandEnv({
 }) {
   const env = { ...(baseEnv ?? process.env) };
   const paths = getExpoStatePaths({ baseDir, kind, projectDir, stateFileName });
-  await ensureExpoIsolationEnv({ env, stateDir: paths.stateDir, expoHomeDir: paths.expoHomeDir, tmpDir: paths.tmpDir });
+  const tmpDir = resolveExpoTmpDir({ env, defaultTmpDir: paths.tmpDir, kind, projectDir });
+  await ensureExpoIsolationEnv({ env, stateDir: paths.stateDir, expoHomeDir: paths.expoHomeDir, tmpDir });
   return { env, paths };
 }
 
