@@ -84,3 +84,5 @@ notes/
 /.tmp
 /packages/tests/playwright-report/
 /packages/tests/test-results/
+_.env.pipeline.local
+_.env.pipeline.production.local
