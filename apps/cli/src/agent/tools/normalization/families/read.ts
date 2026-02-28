@@ -6,21 +6,27 @@ function asRecord(value: unknown): UnknownRecord | null {
 }
 
 function parseOpencodeFileWrapper(text: string): { content: string; startLine?: number; numLines?: number; totalLines?: number } | null {
-    if (!text.includes('<file>')) return null;
-    const lines = text.replace(/\r\n/g, '\n').split('\n');
-    const startIndex = lines.findIndex((l) => l.trim() === '<file>');
-    if (startIndex < 0) return null;
-    const endIndex = lines.findIndex((l, idx) => idx > startIndex && l.trim() === '</file>');
-    if (endIndex < 0) return null;
+    const fileMatch = text.match(/<file>([\s\S]*?)<\/file>/i);
+    const contentMatch = fileMatch ? null : text.match(/<content>([\s\S]*?)<\/content>/i);
+    const body = fileMatch?.[1] ?? contentMatch?.[1] ?? null;
+    if (!body) return null;
+
+    const format: 'file' | 'content' = fileMatch ? 'file' : 'content';
+    const lines = body.replace(/\r\n/g, '\n').split('\n');
+    // Wrappers typically render a newline immediately after the opening tag; treat that as formatting, not file content.
+    while (lines.length > 0 && lines[0] !== undefined && lines[0].trim().length === 0) {
+        lines.shift();
+    }
 
     const contentLines: string[] = [];
     let startLine: number | undefined;
     let totalLines: number | undefined;
 
-    for (let i = startIndex + 1; i < endIndex; i++) {
-        const line = lines[i];
-        if (line.startsWith('(End of file')) {
-            const match = line.match(/total\s+(\d+)\s+lines/i);
+    for (const line of lines) {
+        const trimmed = line.trim();
+
+        if (trimmed.startsWith('(End of file')) {
+            const match = trimmed.match(/total\s+(\d+)\s+lines/i);
             if (match) {
                 const n = Number(match[1]);
                 if (Number.isFinite(n) && n > 0) totalLines = n;
@@ -28,15 +34,23 @@ function parseOpencodeFileWrapper(text: string): { content: string; startLine?: 
             continue;
         }
 
-        const match = line.match(/^(\d+)\|\s?(.*)$/);
-        if (match) {
-            const n = Number(match[1]);
+        const fileLineMatch = trimmed.match(/^0*(\d+)\|\s?(.*)$/);
+        if (fileLineMatch) {
+            const n = Number(fileLineMatch[1]);
             if (Number.isFinite(n) && startLine == null) startLine = n;
-            contentLines.push(match[2]);
+            contentLines.push(fileLineMatch[2]);
             continue;
         }
 
-        if (line.trim().length === 0) {
+        const contentLineMatch = trimmed.match(/^0*(\d+):\s?(.*)$/);
+        if (contentLineMatch) {
+            const n = Number(contentLineMatch[1]);
+            if (Number.isFinite(n) && startLine == null) startLine = n;
+            contentLines.push(contentLineMatch[2]);
+            continue;
+        }
+
+        if (format === 'file' && trimmed.length === 0) {
             contentLines.push('');
         }
     }
@@ -160,6 +174,11 @@ export function normalizeReadResult(rawOutput: unknown): UnknownRecord {
                 ...(typeof parsed?.numLines === 'number' ? { numLines: parsed.numLines } : null),
                 ...(typeof parsed?.totalLines === 'number' ? { totalLines: parsed.totalLines } : null),
             };
+            const metadata = asRecord(out.metadata);
+            if (metadata && Object.prototype.hasOwnProperty.call(metadata, 'loaded')) {
+                const { loaded: _loaded, ...rest } = metadata;
+                out.metadata = rest;
+            }
             return out;
         }
     }
