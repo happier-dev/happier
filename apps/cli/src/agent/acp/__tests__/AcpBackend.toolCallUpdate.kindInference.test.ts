@@ -139,7 +139,7 @@ describe('AcpBackend tool_call_update kind inference', () => {
 
       // Without output extraction fallback this would be ''.
       expect(last.result).not.toBe('');
-      expect(Array.isArray(last.result)).toBe(true);
+      expect(Array.isArray((last.result as any)?.output)).toBe(true);
     } finally {
       await backendForCleanup?.dispose().catch(() => {});
       rmSync(dir, { recursive: true, force: true });

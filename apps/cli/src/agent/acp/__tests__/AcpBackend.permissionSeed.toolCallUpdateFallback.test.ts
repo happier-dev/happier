@@ -171,7 +171,7 @@ describe('AcpBackend permission seed + tool_call_update fallback', () => {
 	      const last = toolResults[toolResults.length - 1]!;
 	      expect(last.toolName).toBe('execute');
 	      expect(last.result).not.toBe('');
-	      expect(Array.isArray(last.result)).toBe(true);
+	      expect(Array.isArray((last.result as any)?.output)).toBe(true);
 	    } finally {
       await backendForCleanup?.dispose().catch(() => {});
       rmSync(dir, { recursive: true, force: true });
