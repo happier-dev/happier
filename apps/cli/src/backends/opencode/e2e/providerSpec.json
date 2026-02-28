@@ -57,6 +57,7 @@
     "extraArgs": ["--started-by", "terminal"],
     "env": {
       "HEADLESS": "1",
+      "HAPPIER_OPENCODE_BACKEND_MODE": "acp",
       "HAPPIER_VARIANT": "dev"
     }
   }
