@@ -17,6 +17,7 @@ import { logger } from './logger';
 import { ensureDaemonRunningForSessionCommand, shouldAutoStartDaemonAfterAuth } from '@/daemon/ensureDaemon';
 import { buildConfigureServerLinks, buildTerminalConnectLinks } from '@happier-dev/cli-common/links';
 import { tailscaleServeHttpsUrlForInternalServerUrl } from '@/integrations/tailscale/tailscaleServe';
+import { isInsecureRemoteHttpServerUrl, isLocalishServerUrl } from '@/server/serverUrlClassification';
 
 export type PostTerminalAuthRequestCompatibleResponse =
     | { state: 'requested' }
@@ -55,6 +56,29 @@ function shouldAutoInferPublicServerUrl(): boolean {
 function resolveTailscaleServeStatusTimeoutMs(): number {
     const raw = Number.parseInt(String(process.env.HAPPIER_TAILSCALE_SERVE_STATUS_TIMEOUT_MS ?? ''), 10);
     return Number.isFinite(raw) && raw > 0 ? raw : 750;
+}
+
+function printServerUrlReachabilityHint(serverUrl: string): void {
+    let url: URL | null = null;
+    try {
+        url = new URL(serverUrl);
+    } catch {
+        url = null;
+    }
+
+    if (isInsecureRemoteHttpServerUrl(serverUrl)) {
+        console.log('Warning: your server URL uses HTTP on a non-local host.');
+        console.log('This is insecure, and many web flows require HTTPS. Prefer an https:// URL (Tailscale Serve or a reverse proxy).');
+        console.log('');
+        return;
+    }
+
+    if (isLocalishServerUrl(serverUrl) && url?.protocol !== 'https:') {
+        console.log('Note: your server URL looks like a LAN-only URL.');
+        console.log('This will work only when your phone/laptop are on the same LAN/VPN.');
+        console.log('For remote/phone access, use an HTTPS URL (Tailscale Serve or a reverse proxy) as your server URL.');
+        console.log('');
+    }
 }
 
 async function applyAutoPublicServerUrlFromTailscaleServeBestEffort(): Promise<void> {
@@ -143,7 +167,7 @@ export async function doAuth(): Promise<Credentials | null> {
     try {
         const publicKey = encodeBase64(keypair.publicKey);
         if (debugEnabled) {
-            console.log(`[AUTH DEBUG] Sending auth request to: ${configuration.serverUrl}/v1/auth/request`);
+            console.log(`[AUTH DEBUG] Sending auth request to: ${configuration.apiServerUrl}/v1/auth/request`);
             console.log(`[AUTH DEBUG] Public key: ${publicKey.substring(0, 20)}...`);
         }
         await postTerminalAuthRequestCompatible({
@@ -178,51 +202,65 @@ async function doBothAuth(params: Readonly<{ keypair: tweetnacl.BoxKeyPair; clai
     }
 
     const publicKeyB64Url = encodeBase64Url(params.keypair.publicKey);
-    const configureLinks = buildConfigureServerLinks({
-        webappUrl: configuration.webappUrl,
-        serverUrl: configuration.publicServerUrl,
-    });
     const terminalLinks = buildTerminalConnectLinks({
         webappUrl: configuration.webappUrl,
-        serverUrl: configuration.publicServerUrl,
+        serverUrl: configuration.serverUrl,
         publicKeyB64Url,
     });
 
     console.log('\nAuthenticate this machine\n');
     console.log(`This terminal is connected to: ${configuration.serverUrl}`);
+    if (configuration.apiServerUrl !== configuration.serverUrl) {
+        console.log(`API URL: ${configuration.apiServerUrl}`);
+    }
     console.log(`Web app URL: ${configuration.webappUrl}`);
     console.log('');
+    printServerUrlReachabilityHint(configuration.serverUrl);
     console.log('Recommended: use the mobile app first. It makes linking additional devices easier.');
     console.log('');
     console.log('Before you continue:');
-    console.log('- Make sure your phone/browser can reach your server over HTTPS');
-    console.log('- In the Happier mobile app, set the Server URL to the same public URL you use to reach the web UI (often the Web app URL above)');
+    console.log('- Make sure your phone/browser can reach the server URL embedded in the QR/deep link');
+    console.log('- The app/web UI may prompt you to switch servers automatically (because the link includes server=...)');
     console.log('- Sign in (or create an account)');
     console.log('- If you already have a Happier account on another device, sign in with that same account');
     console.log('');
 
-    console.log('Step 0 — Configure your app/web (self-host only)');
-    console.log('If you are using Happier Cloud, you can skip this.');
-    console.log('');
-    console.log('Web (prefill + confirm):');
-    console.log(configureLinks.webUrl);
-    console.log('');
-    console.log('Mobile deep link (scan QR or open manually):\n');
-    displayQRCode(configureLinks.mobileUrl);
-    console.log('\n' + configureLinks.mobileUrl);
-    console.log('');
+    const printConfigureLinksRaw = String(process.env.HAPPIER_AUTH_PRINT_CONFIGURE_LINKS ?? '').trim().toLowerCase();
+    const printConfigureLinks = ['1', 'true', 'yes', 'on'].includes(printConfigureLinksRaw);
+    if (printConfigureLinks) {
+        const configureLinks = buildConfigureServerLinks({
+            webappUrl: configuration.webappUrl,
+            serverUrl: configuration.serverUrl,
+        });
+        console.log('Optional — Configure server in app/web (advanced)');
+        console.log('Web (prefill + confirm):');
+        console.log(configureLinks.webUrl);
+        console.log('Mobile deep link:');
+        console.log(configureLinks.mobileUrl);
+        console.log('');
+    }
 
-    console.log('Option A — Web');
-    console.log('Open this URL in a browser where you are signed in to Happier:');
-    console.log(terminalLinks.webUrl);
-    console.log('');
-
-    console.log('Option B — Mobile');
+    console.log('Mobile (recommended)');
     console.log('Scan this QR code with your Happier mobile app:\n');
     displayQRCode(terminalLinks.mobileUrl);
     console.log('\nOr manually open this URL:');
     console.log(terminalLinks.mobileUrl);
     console.log('');
+
+    console.log('Web (fallback)');
+    console.log('Open this URL in a browser where you are signed in to Happier:');
+    console.log(terminalLinks.webUrl);
+    console.log('');
+
+    const noOpenRaw = (process.env.HAPPIER_NO_BROWSER_OPEN ?? '').toString().trim();
+    const noOpen = Boolean(noOpenRaw) && noOpenRaw !== '0' && noOpenRaw.toLowerCase() !== 'false';
+    if (!noOpen && process.stdout.isTTY) {
+        try {
+            await openBrowser(terminalLinks.webUrl);
+        } catch {
+            // best-effort
+        }
+    }
 
     return await waitForAuthentication({ keypair: params.keypair, claimSecret: params.claimSecret });
 }
@@ -233,7 +271,7 @@ async function postTerminalAuthRequestCompatible(params: Readonly<{
     claimSecretHash?: string;
 }>): Promise<PostTerminalAuthRequestCompatibleResponse> {
     try {
-        const res = await axios.post<PostTerminalAuthRequestCompatibleResponse>(`${configuration.serverUrl}/v1/auth/request`, {
+        const res = await axios.post<PostTerminalAuthRequestCompatibleResponse>(`${configuration.apiServerUrl}/v1/auth/request`, {
             publicKey: params.publicKey,
             ...(typeof params.supportsV2 === 'boolean' ? { supportsV2: params.supportsV2 } : {}),
             ...(typeof params.claimSecretHash === 'string' ? { claimSecretHash: params.claimSecretHash } : {}),
@@ -244,7 +282,7 @@ async function postTerminalAuthRequestCompatible(params: Readonly<{
         if (code === 400 || code === 422) {
             // Some legacy servers validate request bodies strictly and reject unknown keys.
             // Retry with the minimal legacy payload.
-            const res = await axios.post<PostTerminalAuthRequestCompatibleResponse>(`${configuration.serverUrl}/v1/auth/request`, {
+            const res = await axios.post<PostTerminalAuthRequestCompatibleResponse>(`${configuration.apiServerUrl}/v1/auth/request`, {
                 publicKey: params.publicKey,
             });
             return res.data;
@@ -292,35 +330,45 @@ async function doMobileAuth(params: Readonly<{ keypair: tweetnacl.BoxKeyPair; cl
     }
     console.log('\nMobile Authentication\n');
     console.log(`This terminal is connected to: ${configuration.serverUrl}`);
+    if (configuration.apiServerUrl !== configuration.serverUrl) {
+        console.log(`API URL: ${configuration.apiServerUrl}`);
+    }
     console.log(`Web app URL: ${configuration.webappUrl}\n`);
+    printServerUrlReachabilityHint(configuration.serverUrl);
     console.log('Recommended: use the mobile app first. It makes linking additional devices easier.');
     console.log('If you already have a Happier account on another device, sign in with that same account.\n');
 
-    const configureLinks = buildConfigureServerLinks({
+    const publicKeyB64Url = encodeBase64Url(params.keypair.publicKey);
+    const terminalLinks = buildTerminalConnectLinks({
         webappUrl: configuration.webappUrl,
-        serverUrl: configuration.publicServerUrl,
+        serverUrl: configuration.serverUrl,
+        publicKeyB64Url,
     });
-    console.log('Step 0 — Configure your app/web (self-host only)');
-    console.log('Web (prefill + confirm):');
-    console.log(configureLinks.webUrl);
-    console.log('');
-    console.log('Mobile deep link (scan QR or open manually):\n');
-    displayQRCode(configureLinks.mobileUrl);
-    console.log('\n' + configureLinks.mobileUrl);
-    console.log('');
+
+    const printConfigureLinksRaw = String(process.env.HAPPIER_AUTH_PRINT_CONFIGURE_LINKS ?? '').trim().toLowerCase();
+    const printConfigureLinks = ['1', 'true', 'yes', 'on'].includes(printConfigureLinksRaw);
+    if (printConfigureLinks) {
+        const configureLinks = buildConfigureServerLinks({
+            webappUrl: configuration.webappUrl,
+            serverUrl: configuration.serverUrl,
+        });
+        console.log('Optional — Configure server in app/web (advanced)');
+        console.log('Web (prefill + confirm):');
+        console.log(configureLinks.webUrl);
+        console.log('Mobile deep link:');
+        console.log(configureLinks.mobileUrl);
+        console.log('');
+    }
 
     console.log('Scan this QR code with your Happier mobile app:\n');
-
-    const publicKeyB64Url = encodeBase64Url(params.keypair.publicKey);
-    const authUrl = buildTerminalConnectLinks({
-        webappUrl: configuration.webappUrl,
-        serverUrl: configuration.publicServerUrl,
-        publicKeyB64Url,
-    }).mobileUrl;
-    displayQRCode(authUrl);
+    displayQRCode(terminalLinks.mobileUrl);
 
     console.log('\nOr manually enter this URL:');
-    console.log(authUrl);
+    console.log(terminalLinks.mobileUrl);
+    console.log('');
+
+    console.log('Web (fallback):');
+    console.log(terminalLinks.webUrl);
     console.log('');
 
     return await waitForAuthentication({ keypair: params.keypair, claimSecret: params.claimSecret });
@@ -335,23 +383,20 @@ async function doWebAuth(params: Readonly<{ keypair: tweetnacl.BoxKeyPair; claim
     }
     console.log('\nWeb Authentication\n');
     console.log(`This terminal is connected to: ${configuration.serverUrl}`);
+    if (configuration.apiServerUrl !== configuration.serverUrl) {
+        console.log(`API URL: ${configuration.apiServerUrl}`);
+    }
     console.log(`Web app URL: ${configuration.webappUrl}\n`);
+    printServerUrlReachabilityHint(configuration.serverUrl);
     console.log('If you already have a Happier account on another device, sign in with that same account.\n');
 
-    const configureLinks = buildConfigureServerLinks({
+    const publicKeyB64Url = encodeBase64Url(params.keypair.publicKey);
+    const terminalLinks = buildTerminalConnectLinks({
         webappUrl: configuration.webappUrl,
-        serverUrl: configuration.publicServerUrl,
+        serverUrl: configuration.serverUrl,
+        publicKeyB64Url,
     });
-    console.log('Step 0 — Configure your app/web (self-host only)');
-    console.log('Web (prefill + confirm):');
-    console.log(configureLinks.webUrl);
-    console.log('');
-    console.log('Mobile deep link (scan QR or open manually):\n');
-    displayQRCode(configureLinks.mobileUrl);
-    console.log('\n' + configureLinks.mobileUrl);
-    console.log('');
-
-    const webUrl = generateWebAuthUrl(params.keypair.publicKey);
+    const webUrl = terminalLinks.webUrl;
     const noOpenRaw = (process.env.HAPPIER_NO_BROWSER_OPEN ?? '').toString().trim();
     const noOpen = Boolean(noOpenRaw) && noOpenRaw !== '0' && noOpenRaw.toLowerCase() !== 'false';
     if (!noOpen) {
@@ -376,6 +421,9 @@ async function doWebAuth(params: Readonly<{ keypair: tweetnacl.BoxKeyPair; claim
     // https://github.com/slopus/happy/issues/19
     console.log('\nIf the browser did not open, please copy and paste this URL:');
     console.log(webUrl);
+    console.log('');
+    console.log('If you want to use the mobile app instead, manually open this deep link:');
+    console.log(terminalLinks.mobileUrl);
     console.log('');
 
     return await waitForAuthentication({ keypair: params.keypair, claimSecret: params.claimSecret });
@@ -450,7 +498,7 @@ async function waitForAuthentication(params: Readonly<{ keypair: tweetnacl.BoxKe
                 } else {
                     let statusRes: any;
                     try {
-                        statusRes = await axios.get(`${configuration.serverUrl}/v1/auth/request/status`, {
+                        statusRes = await axios.get(`${configuration.apiServerUrl}/v1/auth/request/status`, {
                             params: { publicKey },
                         });
                     } catch (e: any) {
@@ -477,7 +525,7 @@ async function waitForAuthentication(params: Readonly<{ keypair: tweetnacl.BoxKe
 
                     if (status === 'authorized') {
                         try {
-                            const claimRes = await axios.post(`${configuration.serverUrl}/v1/auth/request/claim`, {
+                            const claimRes = await axios.post(`${configuration.apiServerUrl}/v1/auth/request/claim`, {
                                 publicKey,
                                 claimSecret: params.claimSecret,
                             });
