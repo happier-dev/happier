@@ -19,6 +19,19 @@ export const CLAUDE_PROVIDER_SETTINGS_PLUGIN = {
     settingsDefaults: defaults,
     uiSections: [
         {
+            id: 'claudeCodeExperiments',
+            title: 'Claude Code experiments',
+            footer: 'These settings apply to both local Claude (terminal) and remote Claude (Agent SDK) sessions started by Happier.',
+            fields: [
+                {
+                    key: 'claudeCodeExperimentalAgentTeamsEnabled',
+                    kind: 'boolean',
+                    title: 'Force-enable Agent Teams',
+                    subtitle: 'Enable Claude Code experimental Agent Teams (agent swarm) in all Claude sessions started by Happier.',
+                },
+            ],
+        },
+        {
             id: 'claudeRemoteSdk',
             title: 'Claude Agent SDK (remote mode)',
             footer:

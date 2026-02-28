@@ -17,6 +17,7 @@ describe('settingsParse provider plugin defaults', () => {
         expect((settings as any).claudeRemoteDisableTodos).toBe(false);
         expect((settings as any).claudeRemoteStrictMcpServerConfig).toBe(false);
         expect((settings as any).claudeRemoteAdvancedOptionsJson).toBe('');
+        expect((settings as any).claudeCodeExperimentalAgentTeamsEnabled).toBe(false);
         expect((settings as any).codexBackendMode).toBe('mcp');
         expect((settings as any).codexMcpResumeInstallSpec).toBe('');
         expect((settings as any).codexAcpInstallSpec).toBe('');
