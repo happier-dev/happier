@@ -20,6 +20,7 @@ import { getSocketIoProxyOptions } from '@/utils/proxy/socketIoProxy';
 
 import type { DaemonToServerEvents, ServerToDaemonEvents } from './machine/socketTypes';
 import { registerMachineRpcHandlers, type MachineRpcHandlers } from './machine/rpcHandlers';
+import { resolveMachineRpcWorkingDirectory } from './machine/resolveMachineRpcWorkingDirectory';
 
 export class ApiMachineClient {
     private socket!: Socket<ServerToDaemonEvents, DaemonToServerEvents>;
@@ -41,7 +42,7 @@ export class ApiMachineClient {
             logger: (msg, data) => logger.debug(msg, data)
         });
 
-        registerSessionHandlers(this.rpcHandlerManager, process.cwd());
+        registerSessionHandlers(this.rpcHandlerManager, resolveMachineRpcWorkingDirectory());
     }
 
     setRPCHandlers({
