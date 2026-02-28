@@ -519,8 +519,6 @@ export function createAcpRuntime(params: {
             handleAcpStatusRunning({
               session: params.session,
               agent: params.provider,
-              messageBuffer: params.messageBuffer,
-              onThinkingChange: params.onThinkingChange,
               getTaskStartedSent: () => taskStartedSent,
               setTaskStartedSent: (value) => { taskStartedSent = value; },
               makeId: () => randomUUID(),
@@ -977,6 +975,8 @@ export function createAcpRuntime(params: {
       turnAborted = false;
       resetTurnState();
       startPendingPumpIfNeeded();
+      params.onThinkingChange(true);
+      params.session.keepAlive(true, 'remote');
       try {
         params.hooks?.onBeginTurn?.();
       } catch (e) {

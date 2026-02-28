@@ -7,7 +7,6 @@ type AgentPayload = Parameters<AcpRuntimeSessionClient['sendAgentMessage']>[1];
 type SessionWithKeepAlive = Pick<AcpRuntimeSessionClient, 'keepAlive' | 'sendAgentMessage'>;
 type SessionWithSendOnly = Pick<AcpRuntimeSessionClient, 'sendAgentMessage'>;
 type MessageBufferForModelOutput = Pick<MessageBuffer, 'removeLastMessage' | 'addMessage' | 'updateLastMessage'>;
-type MessageBufferForStatus = Pick<MessageBuffer, 'addMessage'>;
 
 export function handleAcpModelOutputDelta(params: {
   delta: string;
@@ -33,22 +32,15 @@ export function handleAcpModelOutputDelta(params: {
 export function handleAcpStatusRunning(params: {
   session: SessionWithKeepAlive;
   agent: AgentKey;
-  messageBuffer: MessageBufferForStatus;
-  onThinkingChange: (thinking: boolean) => void;
   getTaskStartedSent: () => boolean;
   setTaskStartedSent: (value: boolean) => void;
   makeId: () => string;
 }): void {
-  params.onThinkingChange(true);
-  params.session.keepAlive(true, 'remote');
-
   if (!params.getTaskStartedSent()) {
     const payload: AgentPayload = { type: 'task_started', id: params.makeId() };
     params.session.sendAgentMessage(params.agent, payload);
     params.setTaskStartedSent(true);
   }
-
-  params.messageBuffer.addMessage('Thinking...', 'system');
 }
 
 export function forwardAcpPermissionRequest(params: {

@@ -63,13 +63,13 @@ export function createGeminiBackendMessageHandler(params: {
         }
 
         if (msg.status === 'running') {
+          params.state.thinking = true;
+          params.session.keepAlive(params.state.thinking, 'remote');
           handleAcpStatusRunning({
             session: params.session,
             agent: 'gemini',
-            messageBuffer: params.messageBuffer,
-            onThinkingChange: (value) => { params.state.thinking = value; },
             getTaskStartedSent: () => params.state.taskStartedSent,
-            setTaskStartedSent: (value) => { params.state.taskStartedSent = value; },
+            setTaskStartedSent: (value: boolean) => { params.state.taskStartedSent = value; },
             makeId: () => randomUUID(),
           });
         } else if (msg.status === 'error') {
