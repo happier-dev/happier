@@ -10,6 +10,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 
 import { sync } from '@/sync/sync';
 import { useSettings } from '@/sync/domains/state/storage';
+import { t } from '@/text';
 
 import { DEFAULT_NOTIFICATIONS_SETTINGS_V1, NotificationsSettingsV1Schema } from '@happier-dev/protocol';
 
@@ -41,12 +42,12 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
     return (
         <ItemList style={{ paddingTop: 0 }}>
             <ItemGroup
-                title="Push notifications"
-                footer="These notifications are sent from your CLI via Expo when your session needs attention."
+                title={t('settingsNotifications.push.title')}
+                footer={t('settingsNotifications.push.footer')}
             >
                 <Item
-                    title="Enabled"
-                    subtitle="Allow push notifications on this account"
+                    title={t('common.enabled')}
+                    subtitle={t('settingsNotifications.push.enabledSubtitle')}
                     icon={<Ionicons name="notifications-outline" size={29} color={theme.colors.accent.blue} />}
                     rightElement={(
                         <Switch
@@ -59,12 +60,12 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
             </ItemGroup>
 
             <ItemGroup
-                title="Types"
-                footer="Disable individual types if you only want certain alerts."
+                title={t('settingsNotifications.types.title')}
+                footer={t('settingsNotifications.types.footer')}
             >
                 <Item
-                    title="Ready"
-                    subtitle="Notify when a turn finishes and the agent is waiting for your command"
+                    title={t('settingsNotifications.types.ready.title')}
+                    subtitle={t('settingsNotifications.types.ready.subtitle')}
                     icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.success} />}
                     rightElement={(
                         <Switch
@@ -76,14 +77,27 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
                     showChevron={false}
                 />
                 <Item
-                    title="Permission requests"
-                    subtitle="Notify when a session is blocked waiting for an approval"
+                    title={t('settingsNotifications.types.permissionRequests.title')}
+                    subtitle={t('settingsNotifications.types.permissionRequests.subtitle')}
                     icon={<Ionicons name="hand-left-outline" size={29} color={theme.colors.textSecondary} />}
                     rightElement={(
                         <Switch
                             value={notifications.permissionRequest !== false}
                             disabled={!pushEnabled}
                             onValueChange={(value) => setNotifications({ permissionRequest: Boolean(value) })}
+                        />
+                    )}
+                    showChevron={false}
+                />
+                <Item
+                    title={t('settingsNotifications.types.userActions.title')}
+                    subtitle={t('settingsNotifications.types.userActions.subtitle')}
+                    icon={<Ionicons name="chatbox-ellipses-outline" size={29} color={theme.colors.textSecondary} />}
+                    rightElement={(
+                        <Switch
+                            value={notifications.userActionRequest !== false}
+                            disabled={!pushEnabled}
+                            onValueChange={(value) => setNotifications({ userActionRequest: Boolean(value) })}
                         />
                     )}
                     showChevron={false}
