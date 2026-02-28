@@ -31,7 +31,7 @@ function main() {
   });
 
   const profile = String(values.profile ?? '').trim();
-  if (!profile) fail('--profile is required (full|fast|none|custom)');
+  if (!profile) fail('--profile is required (full|fast|none|custom|release-assets)');
 
   const customChecks = String(values['custom-checks'] ?? '').trim();
 
@@ -51,6 +51,7 @@ function main() {
     run_build_website: plan.runBuildWebsite ? 'true' : 'false',
     run_build_docs: plan.runBuildDocs ? 'true' : 'false',
     run_cli_smoke_linux: plan.runCliSmokeLinux ? 'true' : 'false',
+    run_release_assets_e2e: plan.runReleaseAssetsE2e ? 'true' : 'false',
   });
 
   process.stdout.write(`${JSON.stringify({ profile, custom_checks: customChecks, ...plan })}\n`);

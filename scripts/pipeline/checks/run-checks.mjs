@@ -43,6 +43,17 @@ function parseBoolString(value, name) {
 /**
  * @param {unknown} value
  * @param {string} name
+ * @param {boolean} defaultValue
+ */
+function resolveBoolEnv(value, name, defaultValue) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return defaultValue;
+  return parseBoolString(raw, name);
+}
+
+/**
+ * @param {unknown} value
+ * @param {string} name
  * @param {boolean} autoValue
  */
 function resolveAutoBool(value, name, autoValue) {
@@ -82,7 +93,7 @@ function main() {
   });
 
   const profile = String(values.profile ?? '').trim();
-  if (!profile) fail('--profile is required (full|fast|none|custom)');
+  if (!profile) fail('--profile is required (full|fast|none|custom|release-assets)');
   const customChecks = String(values['custom-checks'] ?? '').trim();
 
   const plan = resolveChecksProfilePlan({
@@ -137,6 +148,46 @@ function main() {
   if (plan.runBuildWebsite) run({ dryRun }, 'yarn', ['website:build']);
   if (plan.runBuildDocs) run({ dryRun }, 'yarn', ['docs:build']);
   if (plan.runCliSmokeLinux) run({ dryRun }, process.execPath, ['scripts/pipeline/run.mjs', 'smoke-cli']);
+
+  if (plan.runReleaseAssetsE2e) {
+    const modeRaw = String(process.env.HAPPIER_RELEASE_ASSETS_E2E_MODE ?? '').trim().toLowerCase();
+    const mode = modeRaw === 'npm' || modeRaw === 'local' ? modeRaw : modeRaw ? null : 'local';
+    if (!mode) {
+      fail(`HAPPIER_RELEASE_ASSETS_E2E_MODE must be 'npm' or 'local' (got: ${modeRaw || '<empty>'})`);
+    }
+
+    const monorepoRaw = String(process.env.HAPPIER_RELEASE_ASSETS_E2E_MONOREPO ?? '').trim().toLowerCase();
+    const monorepoDefault = mode === 'local' ? 'local' : 'github';
+    const monorepo =
+      monorepoRaw === 'github' || monorepoRaw === 'local' ? monorepoRaw : monorepoRaw ? null : monorepoDefault;
+    if (!monorepo) {
+      fail(`HAPPIER_RELEASE_ASSETS_E2E_MONOREPO must be 'github' or 'local' (got: ${monorepoRaw || '<empty>'})`);
+    }
+
+    const withRelayUpgrade = resolveBoolEnv(
+      process.env.HAPPIER_RELEASE_ASSETS_E2E_WITH_RELAY_UPGRADE,
+      'HAPPIER_RELEASE_ASSETS_E2E_WITH_RELAY_UPGRADE',
+      true,
+    );
+
+    if (!dryRun) {
+      if (!commandExists('docker')) {
+        fail("release-assets-e2e requires Docker. Fix: start Docker Desktop (macOS) or install docker engine.");
+      }
+      try {
+        execFileSync('docker', ['info'], { encoding: 'utf8', stdio: ['ignore', 'ignore', 'ignore'], timeout: 10_000 });
+      } catch {
+        fail('release-assets-e2e requires Docker to be running. Fix: start Docker Desktop and retry.');
+      }
+    }
+
+    run({ dryRun }, 'bash', [
+      'scripts/release/release-assets-e2e/run.sh',
+      `--mode=${mode}`,
+      `--monorepo=${monorepo}`,
+      withRelayUpgrade ? '--with-relay-upgrade' : '--no-relay-upgrade',
+    ]);
+  }
 }
 
 main();
