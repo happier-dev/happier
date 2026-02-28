@@ -181,12 +181,15 @@ export function applyDeprecatedSessionStartAliasesForAgent(params: {
   const modelUpdatedAt = params.modelUpdatedAt;
 
   // Back-compat: historically "plan" was treated as a permission mode in some CLIs.
-  // For ACP agents where "plan" is an agent/session mode (OpenCode plan/build), map it to --agent-mode.
-  if (getAgentSessionModesKind(params.agentId) === 'acpAgentModes' && !agentModeId && permissionMode === 'plan') {
+  // For agents where "plan" is an agent/session mode (e.g. OpenCode plan/build, Claude plan/build), map it to --agent-mode.
+  const sessionModesKind = getAgentSessionModesKind(params.agentId);
+  const supportsAgentModeAlias = sessionModesKind === 'acpAgentModes' || sessionModesKind === 'staticAgentModes';
+  if (supportsAgentModeAlias && !agentModeId && permissionMode === 'plan') {
     warnings.push(`Deprecated: use --agent-mode plan instead of --permission-mode plan for ${params.agentId}.`);
     agentModeId = 'plan';
     agentModeUpdatedAt = agentModeUpdatedAt ?? permissionModeUpdatedAt;
-    permissionMode = 'default';
+    // "plan" is no longer a permission intent. Treat it as read-only for safety.
+    permissionMode = 'read-only';
     // permissionModeUpdatedAt is preserved: it still serves as a monotonic seed for arbitration.
   }
 

@@ -98,7 +98,7 @@ describe('parseSessionStartArgs', () => {
     });
 
     expect(resolved.agentModeId).toBe('plan');
-    expect(resolved.permissionMode).toBe('default');
+    expect(resolved.permissionMode).toBe('read-only');
     expect(resolved.warnings.join(' ')).toMatch(/deprecated/i);
   });
 
@@ -110,7 +110,19 @@ describe('parseSessionStartArgs', () => {
     });
 
     expect(resolved.agentModeId).toBe('plan');
-    expect(resolved.permissionMode).toBe('default');
+    expect(resolved.permissionMode).toBe('read-only');
+    expect(resolved.warnings.join(' ')).toMatch(/deprecated/i);
+  });
+
+  it('treats --permission-mode plan as a deprecated alias for --agent-mode plan on Claude', () => {
+    const parsed = parseSessionStartArgs(['happier', '--permission-mode', 'plan']);
+    const resolved = applyDeprecatedSessionStartAliasesForAgent({
+      agentId: 'claude',
+      ...parsed,
+    });
+
+    expect(resolved.agentModeId).toBe('plan');
+    expect(resolved.permissionMode).toBe('read-only');
     expect(resolved.warnings.join(' ')).toMatch(/deprecated/i);
   });
 });
