@@ -1,8 +1,18 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { claudeRemoteAgentSdk } from './claudeRemoteAgentSdk';
 import { makeMode } from './claudeRemoteAgentSdk.testkit';
 
+
+const ORIGINAL_CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR;
+
+afterEach(() => {
+    if (typeof ORIGINAL_CLAUDE_CONFIG_DIR === 'string') {
+        process.env.CLAUDE_CONFIG_DIR = ORIGINAL_CLAUDE_CONFIG_DIR;
+    } else {
+        delete process.env.CLAUDE_CONFIG_DIR;
+    }
+});
 describe('claudeRemoteAgentSdk options and hooks', () => {
     it('does not set allowedTools when the mode does not provide an allowlist override', async () => {
         let capturedOptions: any = null;
@@ -644,11 +654,13 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             return { message: 'hello', mode: makeMode() };
         });
 
+        process.env.CLAUDE_CONFIG_DIR = '/tmp/claude_cfg';
+
         await claudeRemoteAgentSdk({
             sessionId: null,
             transcriptPath: null,
             path: '/tmp',
-            claudeEnvVars: { CLAUDE_CONFIG_DIR: '/tmp/claude_cfg' },
+            claudeEnvVars: {},
             claudeArgs: [],
             claudeExecutablePath: '/tmp/claude',
             canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
@@ -707,11 +719,13 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             return { message: 'hello', mode: makeMode() };
         });
 
+        process.env.CLAUDE_CONFIG_DIR = '/tmp/claude_cfg';
+
         await claudeRemoteAgentSdk({
             sessionId: null,
             transcriptPath: null,
             path: '/tmp',
-            claudeEnvVars: { CLAUDE_CONFIG_DIR: '/tmp/claude_cfg' },
+            claudeEnvVars: {},
             claudeArgs: [],
             claudeExecutablePath: '/tmp/claude',
             canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
@@ -769,6 +783,8 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             didSendFirst = true;
             return { message: 'hello', mode: makeMode() };
         });
+
+        process.env.CLAUDE_CONFIG_DIR = '/tmp/claude_cfg';
 
         await claudeRemoteAgentSdk({
             sessionId: null,
@@ -831,7 +847,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             sessionId: null,
             transcriptPath: null,
             path: '/tmp',
-            claudeEnvVars: { CLAUDE_CONFIG_DIR: '/tmp/claude_cfg' },
+            claudeEnvVars: {},
             claudeArgs: [],
             claudeExecutablePath: '/tmp/claude',
             canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
@@ -868,6 +884,8 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
                 supportedModels: vi.fn(async () => []),
             } as any;
         });
+
+        process.env.CLAUDE_CONFIG_DIR = '/tmp/claude_cfg';
 
         await claudeRemoteAgentSdk({
             sessionId: null,

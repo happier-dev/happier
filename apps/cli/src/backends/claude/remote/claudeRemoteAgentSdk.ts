@@ -131,7 +131,7 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
         sessionId: opts.sessionId,
         transcriptPath: opts.transcriptPath,
         path: opts.path,
-        claudeConfigDir: opts.claudeEnvVars?.CLAUDE_CONFIG_DIR ?? null,
+        claudeConfigDir: resolveClaudeConfigDirOverride(process.env),
         claudeArgs: effectiveClaudeArgs,
     }, {
         logPrefix: 'claudeRemoteAgentSdk',
@@ -214,7 +214,7 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
 
     const built = buildClaudeAgentSdkHooks({
         cwd: opts.path,
-        claudeConfigDir: opts.claudeEnvVars?.CLAUDE_CONFIG_DIR ?? null,
+        claudeConfigDir: resolveClaudeConfigDirOverride(process.env),
         getMode: () => mode,
         onSessionFound: opts.onSessionFound,
         canCallTool: opts.canCallTool,
@@ -782,7 +782,7 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
                 const init = message as SDKSystemMessage;
                 if (init.session_id) {
                     const transcriptPath = join(
-                        getProjectPath(opts.path, opts.claudeEnvVars?.CLAUDE_CONFIG_DIR ?? null),
+                        getProjectPath(opts.path, resolveClaudeConfigDirOverride(process.env)),
                         `${init.session_id}.jsonl`,
                     );
                     opts.onSessionFound(init.session_id, { transcript_path: transcriptPath, transcriptPath });
