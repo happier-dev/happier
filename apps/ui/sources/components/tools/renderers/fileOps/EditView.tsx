@@ -7,14 +7,20 @@ import { useSetting } from '@/sync/domains/state/storage';
 
 import { Text } from '@/components/ui/text/Text';
 
+const TEXT_ARROW = '→';
 
-function extractEditStrings(input: any): { old: string; next: string } {
+function extractEditStrings(input: any): { old: string; next: string; filePath: string | null } {
     // 1) ACP nested format: tool.input.toolCall.content[0]
     if (input?.toolCall?.content?.[0]) {
         const content = input.toolCall.content[0];
         return {
             old: content.oldText || content.old_string || '',
             next: content.newText || content.new_string || '',
+            filePath: typeof content.file_path === 'string'
+                ? content.file_path
+                : typeof content.filePath === 'string'
+                    ? content.filePath
+                    : null,
         };
     }
 
@@ -24,6 +30,11 @@ function extractEditStrings(input: any): { old: string; next: string } {
         return {
             old: content.oldText || content.old_string || '',
             next: content.newText || content.new_string || '',
+            filePath: typeof content.file_path === 'string'
+                ? content.file_path
+                : typeof content.filePath === 'string'
+                    ? content.filePath
+                    : null,
         };
     }
 
@@ -31,6 +42,11 @@ function extractEditStrings(input: any): { old: string; next: string } {
     return {
         old: input?.oldText || input?.old_string || '',
         next: input?.newText || input?.new_string || '',
+        filePath: typeof input?.file_path === 'string'
+            ? input.file_path
+            : typeof input?.filePath === 'string'
+                ? input.filePath
+                : null,
     };
 }
 
@@ -52,6 +68,7 @@ export const EditView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
     const extracted = extractEditStrings(tool.input);
     const oldString = trimIdent(extracted.old || '');
     const newString = trimIdent(extracted.next || '');
+    const filePath = extracted.filePath;
 
     if (detailLevel === 'title') {
         const from = truncateOneLine(oldString, 48);
@@ -59,7 +76,7 @@ export const EditView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
         return (
             <ToolSectionView>
                 <Text numberOfLines={1}>
-                    {from} → {to}
+                    {`${from} ${TEXT_ARROW} ${to}`}
                 </Text>
             </ToolSectionView>
         );
@@ -75,6 +92,7 @@ export const EditView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
         <>
             <ToolSectionView fullWidth>
                 <ToolDiffView 
+                    filePath={filePath}
                     oldText={truncatedOld} 
                     newText={truncatedNew} 
                     showLineNumbers={showLineNumbers}

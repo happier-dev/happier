@@ -24,9 +24,11 @@ export const WriteView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
     const showLineNumbersInToolViews = useSetting('showLineNumbersInToolViews');
 
     let contents: string = '<no contents>';
+    let filePath: string | null = null;
     const parsed = knownTools.Write.input.safeParse(tool.input);
     if (parsed.success && typeof parsed.data.content === 'string') {
         contents = parsed.data.content;
+        filePath = typeof parsed.data.file_path === 'string' ? parsed.data.file_path : null;
     }
 
     if (detailLevel === 'title') {
@@ -46,6 +48,7 @@ export const WriteView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
         <>
             <ToolSectionView fullWidth>
                 <ToolDiffView 
+                    filePath={filePath}
                     oldText={''} 
                     newText={truncated} 
                     showLineNumbers={showLineNumbers}
