@@ -13,6 +13,7 @@ type SpawnPayloadCapture = {
     permissionMode?: string;
     permissionModeUpdatedAt?: number;
     connectedServices?: unknown;
+    resume?: string;
 } | null;
 
 type AutomationCreateCapture = {
@@ -221,6 +222,65 @@ describe('useCreateNewSession permission seeding', () => {
         expect(typeof captured.value?.permissionModeUpdatedAt).toBe('number');
         expect(Number.isFinite(captured.value?.permissionModeUpdatedAt)).toBe(true);
         expect((captured.value?.permissionModeUpdatedAt ?? 0)).toBeGreaterThan(0);
+    });
+
+    it('passes resumeSessionId through without pre-spawn capability probing', async () => {
+        const { useCreateNewSession, captured, prefetchMachineCapabilitiesSpy } = await setupUseCreateNewSessionHarness();
+
+        let handleCreateSession: null | (() => Promise<void>) = null;
+        const settings = { experiments: false } as unknown as Settings;
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                router: { push: vi.fn(), replace: vi.fn() },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                sessionType: 'simple',
+                settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'opencode' as any,
+                permissionMode: 'default' as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                sessionPrompt: '',
+                resumeSessionId: 'sess_old',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: null,
+                allowedTargetServerIds: ['server-a'],
+            });
+
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        act(() => {
+            renderer.create(React.createElement(Test));
+        });
+
+        await act(async () => {
+            await handleCreateSession?.();
+        });
+
+        expect(captured.value?.resume).toBe('sess_old');
+        expect(prefetchMachineCapabilitiesSpy).toHaveBeenCalledTimes(0);
     });
 
     it('passes connectedServices bindings into machineSpawnNewSession when provided', async () => {
