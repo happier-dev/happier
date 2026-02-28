@@ -29,6 +29,7 @@ export class ApiMachineClient {
     private hasConnectedOnce = false;
     private accountIdPromise: Promise<string> | null = null;
     private changesSyncInFlight: Promise<void> | null = null;
+    private updateListeners = new Set<(update: Update) => boolean | void>();
 
     constructor(
         private token: string,
@@ -55,6 +56,29 @@ export class ApiMachineClient {
             rpcHandlerManager: this.rpcHandlerManager,
             handlers: { spawnSession, stopSession, requestShutdown, ...(memory ? { memory } : {}) }
         });
+    }
+
+    onUpdate(listener: (update: Update) => boolean | void): () => void {
+        this.updateListeners.add(listener);
+        return () => {
+            this.updateListeners.delete(listener);
+        };
+    }
+
+    private dispatchUpdate(update: Update): boolean {
+        let handled = false;
+        for (const listener of this.updateListeners) {
+            try {
+                if (listener(update) === true) {
+                    handled = true;
+                }
+            } catch (error) {
+                logger.warn('[API MACHINE] Update listener threw (ignored)', {
+                    message: error instanceof Error ? error.message : String(error),
+                });
+            }
+        }
+        return handled;
     }
 
     /**
@@ -219,8 +243,12 @@ export class ApiMachineClient {
                     this.machine.daemonState = decrypt(this.machine.encryptionKey, this.machine.encryptionVariant, decodeBase64(update.daemonState.value));
                     this.machine.daemonStateVersion = update.daemonState.version;
                 }
-            } else {
-                logger.debug(`[API MACHINE] Received unknown update type: ${(data.body as any).t}`);
+                return;
+            }
+
+            const handled = this.dispatchUpdate(data);
+            if (!handled && process.env.DEBUG) { // too verbose for production
+                logger.debug(`[API MACHINE] Ignored update type: ${(data.body as any).t}`);
             }
         });
 
