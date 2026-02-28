@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { claudeRemoteAgentSdk } from './claudeRemoteAgentSdk';
 import { makeMode } from './claudeRemoteAgentSdk.testkit';
-
 
 const ORIGINAL_CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR;
 
@@ -13,6 +15,7 @@ afterEach(() => {
         delete process.env.CLAUDE_CONFIG_DIR;
     }
 });
+
 describe('claudeRemoteAgentSdk options and hooks', () => {
     it('does not set allowedTools when the mode does not provide an allowlist override', async () => {
         let capturedOptions: any = null;
@@ -39,15 +42,14 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
         });
 
-        await claudeRemoteAgentSdk({
-            sessionId: null,
-            transcriptPath: null,
-            path: '/tmp',
-            claudeEnvVars: {},
-            claudeArgs: [],
-            claudeExecutablePath: '/tmp/claude',
-            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
-            isAborted: () => false,
+            await claudeRemoteAgentSdk({
+                sessionId: null,
+                transcriptPath: null,
+                path: '/tmp',
+                claudeArgs: [],
+                claudeExecutablePath: '/tmp/claude',
+                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+                isAborted: () => false,
             nextMessage,
             onReady: () => {},
             onSessionFound: () => {},
@@ -84,15 +86,14 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
         });
 
-        await claudeRemoteAgentSdk({
-            sessionId: null,
-            transcriptPath: null,
-            path: '/tmp',
-            claudeEnvVars: {},
-            claudeArgs: [],
-            claudeExecutablePath: '/tmp/claude',
-            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
-            isAborted: () => false,
+            await claudeRemoteAgentSdk({
+                sessionId: null,
+                transcriptPath: null,
+                path: '/tmp',
+                claudeArgs: [],
+                claudeExecutablePath: '/tmp/claude',
+                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+                isAborted: () => false,
             nextMessage,
             onReady: () => {},
             onSessionFound: () => {},
@@ -132,15 +133,14 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             };
         });
 
-        await claudeRemoteAgentSdk({
-            sessionId: null,
-            transcriptPath: null,
-            path: '/tmp',
-            claudeEnvVars: {},
-            claudeArgs: [],
-            claudeExecutablePath: '/tmp/claude',
-            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
-            isAborted: () => false,
+            await claudeRemoteAgentSdk({
+                sessionId: null,
+                transcriptPath: null,
+                path: '/tmp',
+                claudeArgs: [],
+                claudeExecutablePath: '/tmp/claude',
+                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+                isAborted: () => false,
             nextMessage,
             onReady: () => {},
             onSessionFound: () => {},
@@ -151,7 +151,6 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(capturedOptions).toBeTruthy();
         expect(capturedOptions.settingSources).toEqual(['project']);
     });
-
 
     it('sets resumeSessionAt when resuming and caller provides an anchor uuid', async () => {
         let capturedOptions: any = null;
@@ -186,7 +185,6 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             sessionId: 'sess_1',
             transcriptPath,
             path: '/tmp',
-            claudeEnvVars: {},
             claudeArgs: [],
             claudeExecutablePath: '/tmp/claude',
             resumeSessionAt: 'asst_uuid_99',
@@ -232,15 +230,14 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             happier: { command: 'node', args: ['happier-mcp.mjs', '--url', 'http://127.0.0.1:1234'] },
         };
 
-        await claudeRemoteAgentSdk({
-            sessionId: null,
-            transcriptPath: null,
-            path: '/tmp',
-            claudeEnvVars: {},
-            claudeArgs: [],
-            claudeExecutablePath: '/tmp/claude',
-            happierMcpServers,
-            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            await claudeRemoteAgentSdk({
+                sessionId: null,
+                transcriptPath: null,
+                path: '/tmp',
+                claudeArgs: [],
+                claudeExecutablePath: '/tmp/claude',
+                happierMcpServers,
+                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
             isAborted: () => false,
             nextMessage,
             onReady: () => {},
@@ -291,7 +288,6 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             sessionId: null,
             transcriptPath: null,
             path: '/tmp',
-            claudeEnvVars: {},
             claudeArgs: ['--mcp-config', userMcpConfig],
             claudeExecutablePath: '/tmp/claude',
             happierMcpServers,
@@ -305,17 +301,15 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         } as any);
 
         expect(capturedOptions).toBeTruthy();
-        expect(capturedOptions.mcpServers).toEqual(
-            expect.objectContaining({
-                custom: { type: 'http', url: 'http://127.0.0.1:9999' },
-                happier: expect.anything(),
-            }),
-        );
+        expect(capturedOptions.mcpServers).toEqual(expect.objectContaining({
+            custom: { type: 'http', url: 'http://127.0.0.1:9999' },
+            happier: expect.anything(),
+        }));
         // Happier MCP always wins on name collisions.
         expect(capturedOptions.mcpServers.happier).toEqual(happierMcpServers.happier);
     });
 
-    it('forwards explicit spawn env keys into the Claude subprocess env', async () => {
+    it('forwards explicit GUI/profile env keys into the Claude subprocess env even when not allowlisted', async () => {
         const originalToken = process.env.GITHUB_TOKEN;
         const originalMarker = process.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON;
         process.env.GITHUB_TOKEN = 'ghp_test';
@@ -350,7 +344,6 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
                 sessionId: null,
                 transcriptPath: null,
                 path: '/tmp',
-                claudeEnvVars: {},
                 claudeArgs: [],
                 claudeExecutablePath: '/tmp/claude',
                 canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
@@ -363,8 +356,9 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             } as any);
 
             expect(capturedOptions).toBeTruthy();
-            expect(capturedOptions.env?.GITHUB_TOKEN).toBe('ghp_test');
-            expect(capturedOptions.env?.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON).toBeUndefined();
+            expect(capturedOptions.env).toBeTruthy();
+            expect(capturedOptions.env.GITHUB_TOKEN).toBe('ghp_test');
+            expect(capturedOptions.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON).toBeUndefined();
         } finally {
             if (originalToken === undefined) delete process.env.GITHUB_TOKEN;
             else process.env.GITHUB_TOKEN = originalToken;
@@ -373,48 +367,60 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         }
     });
 
-    it('forces permissionMode=plan when agentModeId=plan even if permissionMode is non-plan', async () => {
-        let capturedOptions: any = null;
+    it('injects Claude Code experimental Agent Teams env var when enabled on the mode', async () => {
+        const original = process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS;
+        delete process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS;
 
-        const createQuery = vi.fn((_params: any) => {
-            capturedOptions = _params.options;
-            return {
-                async *[Symbol.asyncIterator]() {
-                    yield { type: 'result' } as any;
-                },
-                close: vi.fn(),
-                setPermissionMode: vi.fn(),
-                setModel: vi.fn(),
-                setMaxThinkingTokens: vi.fn(),
-                supportedCommands: vi.fn(async () => []),
-                supportedModels: vi.fn(async () => []),
-            } as any;
-        });
+        try {
+            let capturedOptions: any = null;
 
-        let didSendFirst = false;
-        const nextMessage = vi.fn(async () => {
-            if (didSendFirst) return null;
-            didSendFirst = true;
-            return { message: 'hello', mode: makeMode({ permissionMode: 'read-only', agentModeId: 'plan' } as any) };
-        });
+            const createQuery = vi.fn((_params: any) => {
+                capturedOptions = _params.options;
+                return {
+                    async *[Symbol.asyncIterator]() {
+                        yield { type: 'result' } as any;
+                    },
+                    close: vi.fn(),
+                    setPermissionMode: vi.fn(),
+                    setModel: vi.fn(),
+                    setMaxThinkingTokens: vi.fn(),
+                    supportedCommands: vi.fn(async () => []),
+                    supportedModels: vi.fn(async () => []),
+                } as any;
+            });
 
-        await claudeRemoteAgentSdk({
-            sessionId: null,
-            transcriptPath: null,
-            path: '/tmp',
-            claudeEnvVars: {},
-            claudeArgs: [],
-            claudeExecutablePath: '/tmp/claude',
-            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
-            isAborted: () => false,
-            nextMessage,
-            onReady: () => {},
-            onSessionFound: () => {},
-            onMessage: () => {},
-            createQuery,
-        } as any);
+            let didSendFirst = false;
+            const nextMessage = vi.fn(async () => {
+                if (didSendFirst) return null;
+                didSendFirst = true;
+                return {
+                    message: 'hello',
+                    mode: makeMode({ permissionMode: 'default', claudeCodeExperimentalAgentTeamsEnabled: true } as any),
+                };
+            });
 
-        expect(capturedOptions?.permissionMode).toBe('plan');
+            await claudeRemoteAgentSdk({
+                sessionId: null,
+                transcriptPath: null,
+                path: '/tmp',
+                claudeArgs: [],
+                claudeExecutablePath: '/tmp/claude',
+                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+                isAborted: () => false,
+                nextMessage,
+                onReady: () => {},
+                onSessionFound: () => {},
+                onMessage: () => {},
+                createQuery,
+            } as any);
+
+            expect(capturedOptions).toBeTruthy();
+            expect(capturedOptions.env).toBeTruthy();
+            expect(capturedOptions.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe('1');
+        } finally {
+            if (typeof original === 'string') process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = original;
+            else delete process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS;
+        }
     });
 
     it('sets allowDangerouslySkipPermissions only when permissionMode is bypassPermissions', async () => {
@@ -444,15 +450,14 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
                 return { message: 'hello', mode: makeMode({ permissionMode }) };
             });
 
-            await claudeRemoteAgentSdk({
-                sessionId: null,
-                transcriptPath: null,
-                path: '/tmp',
-                claudeEnvVars: {},
-                claudeArgs: [],
-                claudeExecutablePath: '/tmp/claude',
-                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
-                isAborted: () => false,
+                await claudeRemoteAgentSdk({
+                    sessionId: null,
+                    transcriptPath: null,
+                    path: '/tmp',
+                    claudeArgs: [],
+                    claudeExecutablePath: '/tmp/claude',
+                    canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+                    isAborted: () => false,
                 nextMessage,
                 onReady: () => {},
                 onSessionFound: () => {},
@@ -495,15 +500,14 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             };
         });
 
-        await claudeRemoteAgentSdk({
-            sessionId: null,
-            transcriptPath: null,
-            path: '/tmp',
-            claudeEnvVars: {},
-            claudeArgs: ['--model', 'cli-model', '--fallback-model', 'cli-fallback'],
-            claudeExecutablePath: '/tmp/claude',
-            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
-            isAborted: () => false,
+            await claudeRemoteAgentSdk({
+                sessionId: null,
+                transcriptPath: null,
+                path: '/tmp',
+                claudeArgs: ['--model', 'cli-model', '--fallback-model', 'cli-fallback'],
+                claudeExecutablePath: '/tmp/claude',
+                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+                isAborted: () => false,
             nextMessage,
             onReady: () => {},
             onSessionFound: () => {},
@@ -543,15 +547,14 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         });
 
         await expect(
-            claudeRemoteAgentSdk({
-                sessionId: null,
-                transcriptPath: null,
-                path: '/tmp',
-                claudeEnvVars: {},
-                claudeArgs: [],
-                claudeExecutablePath: '/tmp/claude',
-                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
-                isAborted: () => false,
+                claudeRemoteAgentSdk({
+                    sessionId: null,
+                    transcriptPath: null,
+                    path: '/tmp',
+                    claudeArgs: [],
+                    claudeExecutablePath: '/tmp/claude',
+                    canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+                    isAborted: () => false,
                 nextMessage,
                 onReady: () => {},
                 onSessionFound: () => {},
@@ -595,7 +598,6 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             sessionId: null,
             transcriptPath: null,
             path: '/tmp',
-            claudeEnvVars: {},
             claudeArgs: [],
             claudeExecutablePath: '/tmp/claude',
             canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
@@ -648,24 +650,23 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         });
 
         let didSendFirst = false;
-        const nextMessage = vi.fn(async () => {
-            if (didSendFirst) return null;
-            didSendFirst = true;
-            return { message: 'hello', mode: makeMode() };
-        });
+            const nextMessage = vi.fn(async () => {
+                if (didSendFirst) return null;
+                didSendFirst = true;
+                return { message: 'hello', mode: makeMode() };
+            });
 
-        process.env.CLAUDE_CONFIG_DIR = '/tmp/claude_cfg';
+            process.env.CLAUDE_CONFIG_DIR = '/tmp/claude_cfg';
 
-        await claudeRemoteAgentSdk({
-            sessionId: null,
-            transcriptPath: null,
-            path: '/tmp',
-            claudeEnvVars: {},
-            claudeArgs: [],
-            claudeExecutablePath: '/tmp/claude',
-            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
-            isAborted: () => false,
-            nextMessage,
+            await claudeRemoteAgentSdk({
+                sessionId: null,
+                transcriptPath: null,
+                path: '/tmp',
+                claudeArgs: [],
+                claudeExecutablePath: '/tmp/claude',
+                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+                isAborted: () => false,
+                nextMessage,
             onReady: () => {},
             onSessionFound,
             onMessage: () => {},
@@ -713,24 +714,23 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         });
 
         let didSendFirst = false;
-        const nextMessage = vi.fn(async () => {
-            if (didSendFirst) return null;
-            didSendFirst = true;
-            return { message: 'hello', mode: makeMode() };
-        });
+            const nextMessage = vi.fn(async () => {
+                if (didSendFirst) return null;
+                didSendFirst = true;
+                return { message: 'hello', mode: makeMode() };
+            });
 
-        process.env.CLAUDE_CONFIG_DIR = '/tmp/claude_cfg';
+            process.env.CLAUDE_CONFIG_DIR = '/tmp/claude_cfg';
 
-        await claudeRemoteAgentSdk({
-            sessionId: null,
-            transcriptPath: null,
-            path: '/tmp',
-            claudeEnvVars: {},
-            claudeArgs: [],
-            claudeExecutablePath: '/tmp/claude',
-            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
-            isAborted: () => false,
-            nextMessage,
+            await claudeRemoteAgentSdk({
+                sessionId: null,
+                transcriptPath: null,
+                path: '/tmp',
+                claudeArgs: [],
+                claudeExecutablePath: '/tmp/claude',
+                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+                isAborted: () => false,
+                nextMessage,
             onReady: () => {},
             onSessionFound,
             onMessage: () => {},
@@ -784,18 +784,15 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             return { message: 'hello', mode: makeMode() };
         });
 
-        process.env.CLAUDE_CONFIG_DIR = '/tmp/claude_cfg';
-
-        await claudeRemoteAgentSdk({
-            sessionId: null,
-            transcriptPath: null,
-            path: '/tmp',
-            claudeEnvVars: {},
-            claudeArgs: [],
-            claudeExecutablePath: '/tmp/claude',
-            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
-            isAborted: () => false,
-            nextMessage,
+            await claudeRemoteAgentSdk({
+                sessionId: null,
+                transcriptPath: null,
+                path: '/tmp',
+                claudeArgs: [],
+                claudeExecutablePath: '/tmp/claude',
+                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+                isAborted: () => false,
+                nextMessage,
             onReady: () => {},
             onSessionFound,
             onMessage: () => {},
@@ -837,22 +834,23 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         });
 
         let didSendFirst = false;
-        const nextMessage = vi.fn(async () => {
-            if (didSendFirst) return null;
-            didSendFirst = true;
-            return { message: 'hello', mode: makeMode() };
-        });
+            const nextMessage = vi.fn(async () => {
+                if (didSendFirst) return null;
+                didSendFirst = true;
+                return { message: 'hello', mode: makeMode() };
+            });
 
-        await claudeRemoteAgentSdk({
-            sessionId: null,
-            transcriptPath: null,
-            path: '/tmp',
-            claudeEnvVars: {},
-            claudeArgs: [],
-            claudeExecutablePath: '/tmp/claude',
-            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
-            isAborted: () => false,
-            nextMessage,
+            process.env.CLAUDE_CONFIG_DIR = '/tmp/claude_cfg';
+
+            await claudeRemoteAgentSdk({
+                sessionId: null,
+                transcriptPath: null,
+                path: '/tmp',
+                claudeArgs: [],
+                claudeExecutablePath: '/tmp/claude',
+                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+                isAborted: () => false,
+                nextMessage,
             onReady: () => {},
             onSessionFound,
             onMessage: () => {},
@@ -884,8 +882,6 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
                 supportedModels: vi.fn(async () => []),
             } as any;
         });
-
-        process.env.CLAUDE_CONFIG_DIR = '/tmp/claude_cfg';
 
         await claudeRemoteAgentSdk({
             sessionId: null,
@@ -1034,16 +1030,15 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
                 return { message: 'hello', mode: makeMode() };
             });
 
-            await claudeRemoteAgentSdk({
-                sessionId: null,
-                transcriptPath: null,
-                path: '/tmp',
-                claudeEnvVars: {},
-                claudeArgs: [],
-                claudeExecutablePath: '/tmp/claude',
-                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
-                isAborted: () => false,
-                nextMessage,
+                await claudeRemoteAgentSdk({
+                    sessionId: null,
+                    transcriptPath: null,
+                    path: '/tmp',
+                    claudeArgs: [],
+                    claudeExecutablePath: '/tmp/claude',
+                    canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+                    isAborted: () => false,
+                    nextMessage,
                 onReady: () => {},
                 onSessionFound: () => {},
                 onMessage: () => {},
@@ -1088,7 +1083,6 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             sessionId: null,
             transcriptPath: null,
             path: '/tmp',
-            claudeEnvVars: {},
             claudeArgs: [],
             claudeExecutablePath: '/tmp/claude',
             canCallTool,
@@ -1146,16 +1140,15 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             return { message: 'hello', mode: makeMode() };
         });
 
-        await claudeRemoteAgentSdk({
-            sessionId: null,
-            transcriptPath: null,
-            path: '/tmp',
-            claudeEnvVars: {},
-            claudeArgs: [],
-            claudeExecutablePath: '/tmp/claude',
-            canCallTool,
-            isAborted: () => false,
-            nextMessage,
+            await claudeRemoteAgentSdk({
+                sessionId: null,
+                transcriptPath: null,
+                path: '/tmp',
+                claudeArgs: [],
+                claudeExecutablePath: '/tmp/claude',
+                canCallTool,
+                isAborted: () => false,
+                nextMessage,
             onReady: () => {},
             onSessionFound: () => {},
             onMessage: () => {},
@@ -1195,6 +1188,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             }),
         );
     });
+
     it('includes updatedPermissions when canCallTool returns permission updates', async () => {
         const canCallTool = vi.fn(async () => ({
             behavior: 'allow',
@@ -1229,7 +1223,6 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             sessionId: null,
             transcriptPath: null,
             path: '/tmp',
-            claudeEnvVars: {},
             claudeArgs: [],
             claudeExecutablePath: '/tmp/claude',
             canCallTool,
@@ -1275,7 +1268,6 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
 
     it('registers PreToolUse hook that scrubs sensitive env vars for Bash commands', async () => {
         let capturedHooks: any = null;
-
         const createQuery = vi.fn((_params: any) => {
             capturedHooks = _params.options?.hooks;
             return {
@@ -1302,7 +1294,6 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             sessionId: null,
             transcriptPath: null,
             path: '/tmp',
-            claudeEnvVars: {},
             claudeArgs: [],
             claudeExecutablePath: '/tmp/claude',
             canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
@@ -1318,27 +1309,29 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
 
         const output = await capturedHooks.PreToolUse[0].hooks[0]({
             hook_event_name: 'PreToolUse',
+            session_id: 'sess_1',
+            transcript_path: '/tmp/sess_1.jsonl',
+            cwd: '/tmp',
             tool_name: 'Bash',
             tool_input: { command: 'echo hi' },
+            tool_use_id: 'toolu_123',
         });
 
         expect(output).toEqual(
             expect.objectContaining({
                 continue: true,
                 suppressOutput: true,
-                hookSpecificOutput: {
+                hookSpecificOutput: expect.objectContaining({
                     hookEventName: 'PreToolUse',
-                    updatedInput: expect.anything(),
-                },
+                    updatedInput: expect.objectContaining({
+                        command: expect.stringContaining('unset '),
+                    }),
+                }),
             }),
         );
-
-        const updatedCommand = output.hookSpecificOutput.updatedInput.command;
-        expect(updatedCommand).toContain('unset ');
-        expect(updatedCommand).toContain('CLAUDE_CODE_OAUTH_TOKEN');
-        expect(updatedCommand).toContain('ANTHROPIC_AUTH_TOKEN');
-        expect(updatedCommand).toContain('echo hi');
+        expect(output.hookSpecificOutput.updatedInput.command).toContain('CLAUDE_CODE_OAUTH_TOKEN');
+        expect(output.hookSpecificOutput.updatedInput.command).toContain('ANTHROPIC_AUTH_TOKEN');
+        expect(output.hookSpecificOutput.updatedInput.command).toContain('echo hi');
     });
-
 
 });

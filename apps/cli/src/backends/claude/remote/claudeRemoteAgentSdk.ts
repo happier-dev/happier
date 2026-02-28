@@ -11,13 +11,22 @@ import { getDefaultClaudeCodePathForAgentSdk } from '@/backends/claude/sdk/utils
 import type { SessionHookData } from '@/backends/claude/utils/startHookServer';
 import { getProjectPath } from '@/backends/claude/utils/path';
 import { getClaudeRemoteSystemPrompt } from '@/backends/claude/utils/remoteSystemPrompt';
-import { normalizeClaudeToolUseNamesInSdkMessage } from '@/backends/claude/utils/normalizeClaudeToolUseNames';
 import { parseClaudeSdkFlagOverridesFromArgs } from '@/backends/claude/remote/sdkFlagOverrides';
 import { resolveClaudeRemoteSessionStartPlan } from '@/backends/claude/remote/sessionStartPlan';
+import { resolveClaudeConfigDirOverride } from '@/backends/claude/utils/resolveClaudeConfigDirOverride';
+import { resolveClaudeCodeExperimentalEnvOverlay } from '@/backends/claude/spawn/resolveClaudeCodeExperimentalEnvOverlay';
+import { normalizeClaudeToolUseNamesInSdkMessage } from '@/backends/claude/utils/normalizeClaudeToolUseNames';
 import { tryMergeUserMcpConfigArgsIntoHappierMcp } from '@/backends/claude/utils/mcpConfigMerge';
+import { isValidEnvVarKey } from '@/terminal/runtime/envVarSanitization';
+
+import type { SDKMessage, SDKSystemMessage, SDKUserMessage } from '@/backends/claude/sdk';
+import type { PermissionResult } from '@/backends/claude/sdk/types';
+import type { JsRuntime } from '@/backends/claude/runClaude';
+import { createSubprocessStderrAppender, resolveSubprocessArtifactsDir } from '@/agent/runtime/subprocessArtifacts';
+import { join } from 'node:path';
+import { buildClaudeAgentSdkHooks } from './agentSdk/buildClaudeAgentSdkHooks';
 import { parseCheckpointsCommand, parseRewindCommand } from './agentSdk/claudeAgentSdkSlashCommands';
 import { parseExplicitSpawnEnvKeysFromProcessEnv } from './agentSdk/explicitSpawnEnvKeysMarker';
-import { buildClaudeAgentSdkHooks } from './agentSdk/buildClaudeAgentSdkHooks';
 import {
     extractTextDeltaFromStreamEvent,
     extractToolResultStartFromStreamEvent,
@@ -30,45 +39,37 @@ import {
     stripSeenToolBlocksFromMessage,
 } from './agentSdk/streamEventToolBlocks';
 
-import type { SDKMessage, SDKSystemMessage, SDKUserMessage } from '@/backends/claude/sdk';
-import type { PermissionResult } from '@/backends/claude/sdk/types';
-import type { JsRuntime } from '@/backends/claude/runClaude';
-import { createSubprocessStderrAppender, resolveSubprocessArtifactsDir } from '@/agent/runtime/subprocessArtifacts';
-import { join } from 'node:path';
-import type { McpServerConfig } from '@/agent';
-
 type AgentSdkQueryFactory = (params: {
     prompt: string | AsyncIterable<any>;
     options?: Record<string, unknown>;
 }) => AgentSdkQueryType;
 
-function argsContainMcpConfigFlag(args?: readonly string[] | null): boolean {
-    if (!args || args.length === 0) return false;
-    for (const arg of args) {
+function argsContainMcpConfigFlag(args?: string[] | null): boolean {
+    const input = args ?? [];
+    for (const arg of input) {
         if (arg === '--mcp-config') return true;
         if (typeof arg === 'string' && arg.startsWith('--mcp-config=')) return true;
     }
     return false;
 }
 
-
-
-
 export async function claudeRemoteAgentSdk(opts: {
-	    // Fixed parameters
-	    sessionId: string | null;
-	    transcriptPath: string | null;
-	    path: string;
-	    claudeEnvVars?: Record<string, string>;
-	    claudeArgs?: string[];
-    claudeExecutablePath?: string;
-    /** Optional anchor UUID for resuming at a specific assistant message. */
-    resumeSessionAt?: string | null;
+            // Fixed parameters
+            sessionId: string | null;
+            transcriptPath: string | null;
+            path: string;
+            claudeArgs?: string[];
+        claudeExecutablePath?: string;
+        /**
+         * Optional anchor UUID for resuming a session at a specific assistant message.
+         * Only applied when `resume` is set (i.e. we are resuming a prior session).
+         */
+        resumeSessionAt?: string | null;
     /**
      * Optional MCP servers to inject into the Claude Agent SDK invocation (e.g. Happier MCP).
      * This should be additive with the user's config (no strict MCP unless explicitly requested).
      */
-    happierMcpServers?: Record<string, McpServerConfig>;
+    happierMcpServers?: Record<string, unknown>;
     signal?: AbortSignal;
     canCallTool: (
         toolName: string,
@@ -104,10 +105,6 @@ export async function claudeRemoteAgentSdk(opts: {
     // Test seam
     createQuery?: AgentSdkQueryFactory;
 }) {
-    const emitMessage = (message: SDKMessage) => {
-        opts.onMessage(normalizeClaudeToolUseNamesInSdkMessage(message));
-    };
-
     const recordTraceMarker = (params: { kind: string; payload: Record<string, unknown> }) => {
         recordToolTraceEvent({
             direction: 'outbound',
@@ -119,25 +116,15 @@ export async function claudeRemoteAgentSdk(opts: {
         });
     };
 
-        const mergedMcp = tryMergeUserMcpConfigArgsIntoHappierMcp({
-        baseMcpServers: opts.happierMcpServers ?? {},
-        claudeArgs: effectiveClaudeArgs,
-    });
-    if (argsContainMcpConfigFlag(opts.claudeArgs) && !mergedMcp) {
-        throw new Error('Invalid --mcp-config: expected JSON object with a { "mcpServers": { ... } } field.');
-    }
-    const effectiveClaudeArgs = mergedMcp ? mergedMcp.filteredClaudeArgs : opts.claudeArgs;
-    const effectiveMcpServers = mergedMcp ? mergedMcp.mergedMcpServers : opts.happierMcpServers;
-
-const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
-        sessionId: opts.sessionId,
-        transcriptPath: opts.transcriptPath,
-        path: opts.path,
-        claudeConfigDir: resolveClaudeConfigDirOverride(process.env),
-        claudeArgs: effectiveClaudeArgs,
-    }, {
-        logPrefix: 'claudeRemoteAgentSdk',
-    });
+        const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
+            sessionId: opts.sessionId,
+            transcriptPath: opts.transcriptPath,
+            path: opts.path,
+            claudeConfigDir: resolveClaudeConfigDirOverride(process.env),
+            claudeArgs: opts.claudeArgs,
+        }, {
+            logPrefix: 'claudeRemoteAgentSdk',
+        });
 
     const initial = await opts.nextMessage();
     if (!initial) return;
@@ -158,7 +145,24 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
 
     let mode = initial.mode;
 
-    const argOverrides = parseClaudeSdkFlagOverridesFromArgs(effectiveClaudeArgs);
+    const mergedMcp = tryMergeUserMcpConfigArgsIntoHappierMcp({
+        baseMcpServers: (opts.happierMcpServers ?? Object.create(null)) as Record<string, unknown>,
+        claudeArgs: opts.claudeArgs,
+    });
+    if (!mergedMcp && argsContainMcpConfigFlag(opts.claudeArgs)) {
+        throw new Error('Invalid --mcp-config: expected JSON object with a { "mcpServers": { ... } } field.');
+    }
+    const effectiveMcpServers = mergedMcp ? mergedMcp.mergedMcpServers : opts.happierMcpServers;
+    const effectiveClaudeArgs = mergedMcp ? mergedMcp.filteredClaudeArgs : opts.claudeArgs;
+
+    // Use args with any --mcp-config stripped for override parsing and start-plan resolution.
+    opts = {
+        ...opts,
+        claudeArgs: effectiveClaudeArgs,
+        ...(effectiveMcpServers ? { happierMcpServers: effectiveMcpServers } : {}),
+    };
+
+    const argOverrides = parseClaudeSdkFlagOverridesFromArgs(opts.claudeArgs);
     const customSystemPrompt = argOverrides.customSystemPrompt ?? mode.customSystemPrompt;
     const appendSystemPrompt = argOverrides.appendSystemPrompt ?? mode.appendSystemPrompt;
     const remoteSystemPrompt = getClaudeRemoteSystemPrompt({ disableTodos: mode.claudeRemoteDisableTodos === true });
@@ -213,14 +217,27 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
         )
         : undefined;
 
-
-    const built = buildClaudeAgentSdkHooks({
+    const builtHooks = buildClaudeAgentSdkHooks({
         cwd: opts.path,
         claudeConfigDir: resolveClaudeConfigDirOverride(process.env),
         getMode: () => mode,
-        onSessionFound: opts.onSessionFound,
-        canCallTool: opts.canCallTool,
+        onSessionFound: (sessionId, data) => opts.onSessionFound(sessionId, data as any),
+        canCallTool: (toolName, input, resolvedMode, options) =>
+            opts.canCallTool(toolName, input, resolvedMode, {
+                signal: options.signal,
+                toolUseId: options.toolUseId ?? null,
+                agentId: options.agentId ?? null,
+                suggestions: options.suggestions,
+                blockedPath: options.blockedPath ?? null,
+                decisionReason: options.decisionReason ?? null,
+            }),
     });
+    const hooks = builtHooks.hooks as any;
+    const canUseTool = builtHooks.canUseTool as any;
+
+    const emitMessage = (message: SDKMessage) => {
+        opts.onMessage(normalizeClaudeToolUseNamesInSdkMessage(message));
+    };
 
     const buildSystemPrompt = (): any => {
         if (customSystemPrompt) {
@@ -231,11 +248,12 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
         return { type: 'preset', preset: 'claude_code', append };
     };
 
-    const buildClaudeSubprocessEnv = (): Record<string, string> => {
-        const allowExact = new Set<string>([
-            'PATH',
-            'HOME',
-            'USER',
+        const buildClaudeSubprocessEnv = (): Record<string, string> => {
+            const explicitSpawnEnvKeys = new Set(parseExplicitSpawnEnvKeysFromProcessEnv(process.env));
+            const allowExact = new Set<string>([
+                'PATH',
+                'HOME',
+                'USER',
             'LOGNAME',
             'SHELL',
             'TERM',
@@ -277,49 +295,50 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
             'HAPPY_E2E_',
         ];
 
-        const explicitSpawnEnvKeys = new Set(parseExplicitSpawnEnvKeysFromProcessEnv(process.env));
-
-        const out: Record<string, string> = {};
-        for (const [key, value] of Object.entries(process.env)) {
-            if (typeof value !== 'string') continue;
-            if (explicitSpawnEnvKeys.has(key) || allowExact.has(key) || allowPrefixes.some((p) => key.startsWith(p))) {
-                out[key] = value;
+            const out: Record<string, string> = Object.create(null);
+            for (const [key, value] of Object.entries(process.env)) {
+                if (!isValidEnvVarKey(key)) continue;
+                if (typeof value !== 'string') continue;
+                if (explicitSpawnEnvKeys.has(key) || allowExact.has(key) || allowPrefixes.some((p) => key.startsWith(p))) {
+                    out[key] = value;
+                }
             }
-        }
 
-        delete out.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON;
+            delete out.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON;
+            return { ...out };
+        };
 
-        return { ...out, ...(opts.claudeEnvVars ?? {}) };
-    };
-
-    const mappedPermissionMode = resolveClaudeSdkPermissionModeFromEnhancedMode(mode);
-    const resumeSessionAt =
-        typeof opts.resumeSessionAt === 'string' && opts.resumeSessionAt.trim().length > 0
-            ? opts.resumeSessionAt.trim()
-            : null;
-	    const queryOptions: Record<string, unknown> = {
-	        abortController,
-	        cwd: opts.path,
-	        continue: shouldContinue || undefined,
-	        resume: startFrom ?? undefined,
-	        ...(startFrom && resumeSessionAt ? { resumeSessionAt } : {}),
-	        permissionMode: mappedPermissionMode,
-	        allowDangerouslySkipPermissions: mappedPermissionMode === 'bypassPermissions',
-	        model: argOverrides.model ?? mode.model,
+        const mappedPermissionMode = resolveClaudeSdkPermissionModeFromEnhancedMode(mode);
+        const experimentalEnvOverlay = resolveClaudeCodeExperimentalEnvOverlay({
+            claudeCodeExperimentalAgentTeamsEnabled: mode.claudeCodeExperimentalAgentTeamsEnabled,
+        });
+        const resumeSessionAt =
+            typeof opts.resumeSessionAt === 'string' && opts.resumeSessionAt.trim().length > 0
+                ? opts.resumeSessionAt.trim()
+                : null;
+            const queryOptions: Record<string, unknown> = {
+                abortController,
+                cwd: opts.path,
+            continue: shouldContinue || undefined,
+            resume: startFrom ?? undefined,
+            ...(startFrom && resumeSessionAt ? { resumeSessionAt } : {}),
+            permissionMode: mappedPermissionMode,
+            allowDangerouslySkipPermissions: mappedPermissionMode === 'bypassPermissions',
+            model: argOverrides.model ?? mode.model,
         fallbackModel: argOverrides.fallbackModel ?? mode.fallbackModel,
         maxTurns: argOverrides.maxTurns,
         systemPrompt: buildSystemPrompt(),
         strictMcpConfig: mode.claudeRemoteStrictMcpServerConfig === true || argOverrides.strictMcpConfig,
-        canUseTool: built.canUseTool,
-        ...(effectiveMcpServers ? { mcpServers: effectiveMcpServers } : {}),
-        env: buildClaudeSubprocessEnv(),
-        executable: opts.jsRuntime ?? 'node',
-        pathToClaudeCodeExecutable: opts.claudeExecutablePath ?? getDefaultClaudeCodePathForAgentSdk(),
+        canUseTool,
+        ...(opts.happierMcpServers ? { mcpServers: opts.happierMcpServers } : {}),
+            env: { ...buildClaudeSubprocessEnv(), ...experimentalEnvOverlay },
+            executable: opts.jsRuntime ?? 'node',
+            pathToClaudeCodeExecutable: opts.claudeExecutablePath ?? getDefaultClaudeCodePathForAgentSdk(),
         includePartialMessages: mode.claudeRemoteIncludePartialMessages === true || undefined,
         enableFileCheckpointing: enableFileCheckpointing || undefined,
         extraArgs: enableFileCheckpointing ? { 'replay-user-messages': null } : undefined,
         maxThinkingTokens: typeof mode.claudeRemoteMaxThinkingTokens === 'number' ? mode.claudeRemoteMaxThinkingTokens : undefined,
-        hooks: built.hooks,
+        hooks,
     };
 
     if (settingSources !== undefined) {
@@ -653,18 +672,18 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
                         streamingToolResult.content += textDelta;
                         continue;
                     }
-                    if (mode.claudeRemoteIncludePartialMessages === true) {
-                        emitMessage({
-                            type: 'assistant',
-                            happierPartial: true,
-                            session_id: (message as any).session_id,
-                            parent_tool_use_id: null,
-                            message: {
-                                role: 'assistant',
-                                content: [{ type: 'text', text: textDelta }],
-                            },
-                        } as any);
-                    }
+                        if (mode.claudeRemoteIncludePartialMessages === true) {
+                            emitMessage({
+                                type: 'assistant',
+                                happierPartial: true,
+                                session_id: (message as any).session_id,
+                                parent_tool_use_id: null,
+                                message: {
+                                    role: 'assistant',
+                                    content: [{ type: 'text', text: textDelta }],
+                                },
+                            } as any);
+                        }
                     continue;
                 }
 
@@ -753,11 +772,11 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
                     // Not a boundary that implies the tool ran (tool_result) and not the assembled tool_use;
                     // keep buffering so we can still dedupe when the assistant tool_use arrives.
                 } else {
-                    const deduped = stripSeenToolBlocksFromMessage(pendingToolUseMessage.message, seen);
-                    if (deduped) {
-                        emitMessage(deduped);
-                        recordSeenToolBlocks(deduped, seen);
-                    }
+                        const deduped = stripSeenToolBlocksFromMessage(pendingToolUseMessage.message, seen);
+                        if (deduped) {
+                            emitMessage(deduped);
+                            recordSeenToolBlocks(deduped, seen);
+                        }
                     pendingToolUseMessage = null;
                 }
             }
@@ -766,31 +785,31 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
                 if (messageContainsToolResultForToolUseId(message, pendingToolResultMessage.toolUseId)) {
                     pendingToolResultMessage = null;
                 } else {
-                    const deduped = stripSeenToolBlocksFromMessage(pendingToolResultMessage.message, seen);
-                    if (deduped) {
-                        emitMessage(deduped);
-                        recordSeenToolBlocks(deduped, seen);
-                    }
+                        const deduped = stripSeenToolBlocksFromMessage(pendingToolResultMessage.message, seen);
+                        if (deduped) {
+                            emitMessage(deduped);
+                            recordSeenToolBlocks(deduped, seen);
+                        }
                     pendingToolResultMessage = null;
                 }
             }
 
-            const sdkMessage = message as SDKMessage;
-            const deduped = stripSeenToolBlocksFromMessage(sdkMessage, seen);
-            if (!deduped) continue;
-            emitMessage(deduped);
-            recordSeenToolBlocks(deduped, seen);
+                const sdkMessage = message as SDKMessage;
+                const deduped = stripSeenToolBlocksFromMessage(sdkMessage, seen);
+                if (!deduped) continue;
+                emitMessage(deduped);
+                recordSeenToolBlocks(deduped, seen);
 
-            if (message && message.type === 'system' && message.subtype === 'init') {
-                const init = message as SDKSystemMessage;
-                if (init.session_id) {
-                    const transcriptPath = join(
-                        getProjectPath(opts.path, resolveClaudeConfigDirOverride(process.env)),
-                        `${init.session_id}.jsonl`,
-                    );
-                    opts.onSessionFound(init.session_id, { transcript_path: transcriptPath, transcriptPath });
+                if (message && message.type === 'system' && message.subtype === 'init') {
+                    const init = message as SDKSystemMessage;
+                    if (init.session_id) {
+                        const transcriptPath = join(
+                            getProjectPath(opts.path, resolveClaudeConfigDirOverride(process.env)),
+                            `${init.session_id}.jsonl`,
+                        );
+                        opts.onSessionFound(init.session_id, { transcript_path: transcriptPath, transcriptPath });
+                    }
                 }
-            }
 
             if (message && message.type === 'user') {
                 const msg = message as any;
@@ -839,6 +858,15 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
         if (e instanceof AgentSdkAbortError) {
             logger.debug('[claudeRemoteAgentSdk] Aborted');
             return;
+        }
+        if (e && typeof e === 'object') {
+            const err = e as any;
+            if (!err.happierClaudeCodeArtifacts) {
+                err.happierClaudeCodeArtifacts = {
+                    debugFilePath: debugFilePath ?? null,
+                    stderrFilePath: stderrAppender?.path ?? null,
+                };
+            }
         }
         throw e;
     } finally {
