@@ -11,43 +11,39 @@ import { StyleSheet } from 'react-native-unistyles';
 import { t } from '@/text';
 import { StructuredResultView } from '@/components/tools/renderers/system/StructuredResultView';
 import { normalizeToolCallForRendering } from '@/components/tools/normalization/core/normalizeToolCallForRendering';
-import { inferToolNameForRendering } from '@/components/tools/normalization/policy/toolNameInference';
-import { knownTools } from '@/components/tools/catalog';
 import { PermissionFooter } from '../permissions/PermissionFooter';
 import { useSetting } from '@/sync/domains/state/storage';
 import { MessageView } from '@/components/sessions/transcript/MessageView';
 import { useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
+import { resolveToolHeaderTextPresentation } from '@/components/tools/shell/presentation/resolveToolHeaderTextPresentation';
+import { TranscriptMessageBlockList } from '@/components/sessions/transcript/messageBlocks/TranscriptMessageBlockList';
+import { shouldShowGenericPermissionPromptForRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
 
-
-const KNOWN_TOOL_KEYS = Object.keys(knownTools);
 
 interface ToolFullViewProps {
     tool: ToolCall;
     sessionId?: string;
     metadata?: Metadata | null;
     messages?: Message[];
+    jumpChildId?: string | null;
     interaction?: {
         canSendMessages: boolean;
         canApprovePermissions: boolean;
-        permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted';
+        permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
     };
 }
 
-export function ToolFullView({ tool, sessionId, metadata, messages = [], interaction }: ToolFullViewProps) {
+export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChildId, interaction }: ToolFullViewProps) {
     const { theme } = useUnistyles();
     const toolForRendering = React.useMemo<ToolCall>(() => normalizeToolCallForRendering(tool), [tool]);
+    const scrollRef = React.useRef<ScrollView | null>(null);
+
+    const normalizedJumpChildId = typeof jumpChildId === 'string' && jumpChildId.length > 0 ? jumpChildId : null;
 
     const normalizedToolName = React.useMemo(() => {
-        if (toolForRendering.name.startsWith('mcp__')) return toolForRendering.name;
-        const inferred = inferToolNameForRendering({
-            toolName: toolForRendering.name,
-            toolInput: toolForRendering.input,
-            toolDescription: toolForRendering.description,
-            knownToolKeys: KNOWN_TOOL_KEYS,
-        });
-        return inferred.normalizedToolName;
-    }, [toolForRendering.name, toolForRendering.input, toolForRendering.description]);
+        return resolveToolHeaderTextPresentation({ tool: toolForRendering, metadata: metadata ?? null }).normalizedToolName;
+    }, [metadata, toolForRendering]);
 
     // Check if there's a specialized content view for this tool.
     // ToolFullView always renders the same tool renderer in `detailLevel="full"` mode.
@@ -58,31 +54,35 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], interac
     const isWaitingForPermission =
         toolForRendering.permission?.status === 'pending' && toolForRendering.state !== 'completed';
     const canRenderTaskTranscript =
-        (normalizedToolName === 'Task' || normalizedToolName === 'SubAgentRun') &&
+        (normalizedToolName === 'Task' || normalizedToolName === 'SubAgentRun' || normalizedToolName === 'Agent') &&
         messages.length > 0 &&
         typeof sessionId === 'string' &&
         sessionId.length > 0;
 
     return (
-        <ScrollView style={[styles.container, { paddingHorizontal: screenWidth > 700 ? 16 : 0 }]}>
+        <ScrollView ref={(node) => { scrollRef.current = node; }} style={[styles.container, { paddingHorizontal: screenWidth > 700 ? 16 : 0 }]}>
             <View style={styles.contentWrapper}>
                 {/* Tool-specific content or generic fallback */}
                 {canRenderTaskTranscript ? (
                     <View style={styles.sectionFullWidth}>
-                        {messages.map((message) => (
-                            <MessageView
-                                key={message.id}
-                                message={message}
-                                metadata={metadata || null}
-                                sessionId={sessionId}
-                                interaction={{
-                                    canSendMessages: interaction?.canSendMessages ?? true,
-                                    canApprovePermissions: interaction?.canApprovePermissions ?? true,
-                                    permissionDisabledReason: interaction?.permissionDisabledReason,
-                                    disableToolNavigation: true,
-                                }}
-                            />
-                        ))}
+                        <TranscriptMessageBlockList
+                            messages={messages}
+                            sessionId={sessionId}
+                            metadata={metadata || null}
+                            interaction={{
+                                canSendMessages: interaction?.canSendMessages ?? true,
+                                canApprovePermissions: interaction?.canApprovePermissions ?? true,
+                                permissionDisabledReason: interaction?.permissionDisabledReason,
+                                disableToolNavigation: true,
+                            }}
+                            jumpToMessageId={normalizedJumpChildId}
+                            onResolvedJumpToMessageY={(y) => {
+                                const node: any = scrollRef.current as any;
+                                if (!node || typeof node.scrollTo !== 'function') return;
+                                node.scrollTo({ y, animated: true });
+                            }}
+                            messageWrapperTestIdPrefix="tool-fullview-transcript-message"
+                        />
                     </View>
                 ) : SpecializedFullView ? (
                     <SpecializedFullView
@@ -172,7 +172,10 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], interac
                 )}
 
                 {/* Permission footer - allow approve/deny from the full view */}
-                {isWaitingForPermission && toolForRendering.permission && sessionId && toolForRendering.name !== 'AskUserQuestion' && toolForRendering.name !== 'ExitPlanMode' && toolForRendering.name !== 'exit_plan_mode' && toolForRendering.name !== 'AcpHistoryImport' && (
+                {isWaitingForPermission &&
+                    toolForRendering.permission &&
+                    sessionId &&
+                    shouldShowGenericPermissionPromptForRequest({ toolName: toolForRendering.name, requestKind: toolForRendering.permission.kind }) && (
                     <PermissionFooter
                         permission={toolForRendering.permission}
                         sessionId={sessionId}
@@ -210,6 +213,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], interac
                                 completedAt: toolForRendering.completedAt,
                                 permission: toolForRendering.permission,
                                 messages,
+                                jumpChildId: normalizedJumpChildId,
                             }, null, 2)}
                         />
                     )}

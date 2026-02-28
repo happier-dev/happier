@@ -72,6 +72,22 @@ vi.mock('@/components/sessions/transcript/MessageView', () => ({
     },
 }));
 
+// ToolFullView uses TranscriptMessageBlockList for Task/SubAgentRun sidechains. Mock it to avoid
+// unrelated async effects/timers in transcript rendering from impacting these selection tests.
+vi.mock('@/components/sessions/transcript/messageBlocks/TranscriptMessageBlockList', () => ({
+    TranscriptMessageBlockList: (props: any) => {
+        const messages = Array.isArray(props?.messages) ? props.messages : [];
+        for (const m of messages) {
+            renderedMessageViewSpy({ message: m, sessionId: props.sessionId, interaction: props.interaction });
+        }
+        return React.createElement(
+            React.Fragment,
+            null,
+            ...messages.map((m: any) => React.createElement('MessageView', { key: String(m?.id ?? Math.random()) })),
+        );
+    },
+}));
+
 describe('ToolFullView (Task transcript reuse)', () => {
     it('renders Task sidechain messages through MessageView instead of Task renderer in full view', async () => {
         renderedSpecificTaskViewSpy.mockReset();
@@ -159,6 +175,51 @@ describe('ToolFullView (Task transcript reuse)', () => {
                 interaction: expect.objectContaining({ disableToolNavigation: true }),
             }),
         );
+        expect(renderedSpecificSubAgentRunViewSpy).not.toHaveBeenCalled();
+    });
+
+    it('renders Agent sidechain messages through MessageView in full view', async () => {
+        renderedSpecificTaskViewSpy.mockReset();
+        renderedSpecificSubAgentRunViewSpy.mockReset();
+        renderedMessageViewSpy.mockReset();
+        const { ToolFullView } = await import('./ToolFullView');
+
+        const tool = makeToolCall({
+            name: 'Agent',
+            input: { name: 'Alpha', team_name: 'probe' },
+            result: null,
+        });
+        const child: Message = {
+            kind: 'agent-text',
+            id: 'child-msg-3',
+            localId: null,
+            createdAt: 1002,
+            text: 'From Alpha: hello',
+            isThinking: false,
+        };
+
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(ToolFullView, {
+                    tool,
+                    metadata: null,
+                    messages: [child],
+                    sessionId: 's1',
+                    interaction: { canSendMessages: true, canApprovePermissions: true },
+                }),
+            );
+        });
+
+        expect(tree.root.findAllByType('MessageView' as any)).toHaveLength(1);
+        expect(renderedMessageViewSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: child,
+                sessionId: 's1',
+                interaction: expect.objectContaining({ disableToolNavigation: true }),
+            }),
+        );
+        expect(renderedSpecificTaskViewSpy).not.toHaveBeenCalled();
         expect(renderedSpecificSubAgentRunViewSpy).not.toHaveBeenCalled();
     });
 });
