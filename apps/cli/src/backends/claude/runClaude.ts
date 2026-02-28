@@ -12,6 +12,8 @@ import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { startCaffeinate, stopCaffeinate } from '@/integrations/caffeinate';
 import { extractSDKMetadataAsync } from '@/backends/claude/sdk/metadataExtractor';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
+import { parseParticipantMessageMeta } from '@/backends/claude/utils/participantRouting/parseParticipantMessageMeta';
+import { formatClaudeTeamRoutedPrompt } from '@/backends/claude/utils/participantRouting/formatClaudeTeamRoutedPrompt';
 import { getEnvironmentInfo } from '@/ui/doctor';
 import { configuration } from '@/configuration';
 import { initialMachineMetadata } from '@/daemon/startDaemon';
@@ -580,6 +582,13 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             );
         }
 
+        const participantRouting = parseParticipantMessageMeta(message.meta);
+        const queuedText = participantRouting
+            ? formatClaudeTeamRoutedPrompt({ originalText: message.content.text, recipient: participantRouting.recipient })
+            : message.content.text;
+
+        // Participant-routed user messages must be treated as plain text (no special command parsing).
+        if (!participantRouting) {
         // Check for special commands before processing
         const specialCommand = parseSpecialCommand(message.content.text);
 
@@ -614,6 +623,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             logger.debugLargeJson('[start] /clear command pushed to queue:', message);
             return;
         }
+        }
 
         // Push with resolved permission mode, model, system prompts, and tools
 	        const enhancedMode: EnhancedMode = {
@@ -625,7 +635,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
 	            appendSystemPrompt: messageAppendSystemPrompt,
 	            ...currentClaudeRemoteMetaState,
 	        };
-        messageQueue.push(message.content.text, enhancedMode);
+        messageQueue.push(queuedText, enhancedMode);
         logger.debugLargeJson('User message pushed to queue:', message)
     });
 
@@ -1092,6 +1102,13 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         );
                     }
 
+                    const participantRouting = parseParticipantMessageMeta(message.meta);
+                    const queuedText = participantRouting
+                        ? formatClaudeTeamRoutedPrompt({ originalText: message.content.text, recipient: participantRouting.recipient })
+                        : message.content.text;
+
+                    // Participant-routed user messages must be treated as plain text (no special command parsing).
+                    if (!participantRouting) {
                     const specialCommand = parseSpecialCommand(message.content.text);
 	                    if (specialCommand.type === 'compact' || specialCommand.type === 'clear') {
 	                        const enhancedMode: EnhancedMode = {
@@ -1106,6 +1123,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         messageQueue.pushIsolateAndClear(specialCommand.originalMessage || message.content.text, enhancedMode);
                         return;
                     }
+                    }
 
 	                    const enhancedMode: EnhancedMode = {
 	                        permissionMode: messagePermissionMode || 'default',
@@ -1116,7 +1134,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
 	                        appendSystemPrompt: messageAppendSystemPrompt,
 	                        ...currentClaudeRemoteMetaState,
 	                    };
-                    messageQueue.push(message.content.text, enhancedMode);
+                    messageQueue.push(queuedText, enhancedMode);
                 });
 
                 if (timing.enabled) {

@@ -1,0 +1,63 @@
+import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
+
+function clampUtf16(value: string, maxChars: number): string {
+    if (value.length <= maxChars) return value;
+    return `${value.slice(0, maxChars)}…`;
+}
+
+function coerceNonEmpty(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
+}
+
+export function formatClaudeTeamRoutedPrompt(params: Readonly<{
+    originalText: string;
+    recipient: ParticipantRecipientV1;
+}>): string {
+    const maxIdChars = 200;
+    const maxMessageChars = 12_000;
+
+    const originalText = coerceNonEmpty(params.originalText);
+    const message = clampUtf16(originalText, maxMessageChars);
+
+    const r = params.recipient;
+    if (r.kind === 'agent_team_member') {
+        const teamId = clampUtf16(coerceNonEmpty(r.teamId), maxIdChars);
+        const memberId = clampUtf16(coerceNonEmpty(r.memberId), maxIdChars);
+        const memberLabel = clampUtf16(coerceNonEmpty(r.memberLabel), maxIdChars);
+        const teammateDescriptor = memberLabel ? `${memberLabel} (${memberId})` : memberId;
+
+        return [
+            'You are the lead agent coordinating an Agent Team.',
+            '',
+            'Task: Send the user message to the specified teammate using the Agent Teams messaging tool.',
+            'Rules:',
+            '- Do not answer the user directly.',
+            '- Send the message exactly as provided under "User message".',
+            '',
+            `Team: ${teamId}`,
+            `Teammate: ${teammateDescriptor}`,
+            '',
+            'User message:',
+            message,
+        ].join('\n');
+    }
+
+    if (r.kind === 'agent_team_broadcast') {
+        const teamId = clampUtf16(coerceNonEmpty(r.teamId), maxIdChars);
+        return [
+            'You are the lead agent coordinating an Agent Team.',
+            '',
+            'Task: Broadcast the user message to the entire team using the Agent Teams messaging tool.',
+            'Rules:',
+            '- Do not answer the user directly.',
+            '- Send the message exactly as provided under "User message".',
+            '',
+            `Team: ${teamId}`,
+            '',
+            'User message:',
+            message,
+        ].join('\n');
+    }
+
+    return message;
+}
