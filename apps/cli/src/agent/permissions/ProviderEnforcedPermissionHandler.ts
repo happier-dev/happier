@@ -13,13 +13,17 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import {
   BasePermissionHandler,
+  type PermissionRequestPushSender,
   type PendingRequest,
   type PermissionResult,
 } from '@/agent/permissions/BasePermissionHandler';
+import type { AccountSettings } from '@happier-dev/protocol';
 
 export type { PermissionResult, PendingRequest };
 
 type HandlerOpts = Readonly<{
+  pushSender?: PermissionRequestPushSender | null;
+  getAccountSettings?: (() => AccountSettings | null) | null;
   onAbortRequested?: (() => void | Promise<void>) | null;
   alwaysAutoApproveToolNameIncludes?: ReadonlyArray<string>;
   alwaysAutoApproveToolCallIdIncludes?: ReadonlyArray<string>;
@@ -51,7 +55,11 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     session: ApiSessionClient,
     params: Readonly<{ logPrefix: string }> & HandlerOpts,
   ) {
-    super(session, { onAbortRequested: params.onAbortRequested ?? null });
+    super(session, {
+      pushSender: params.pushSender ?? null,
+      getAccountSettings: params.getAccountSettings ?? null,
+      onAbortRequested: params.onAbortRequested ?? null,
+    });
     this.logPrefix = params.logPrefix;
     this.alwaysAutoApproveToolNameIncludes = [
       ...DEFAULT_ALWAYS_AUTO_APPROVE_TOOL_NAME_INCLUDES,

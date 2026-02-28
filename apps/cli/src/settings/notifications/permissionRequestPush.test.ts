@@ -2,79 +2,65 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { accountSettingsParse } from '@happier-dev/protocol';
 
-import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { sendPermissionRequestPushNotificationAsync } from './permissionRequestPush';
 
-import { sendPermissionRequestPushNotificationForActiveAccount } from './permissionRequestPush';
-
-describe('sendPermissionRequestPushNotificationForActiveAccount', () => {
-  it('does not send when permissionRequest pushes are disabled', () => {
-    const sendToAllDevices = vi.fn();
-    setActiveAccountSettingsSnapshot({
-      source: 'cache',
-      settingsVersion: 1,
-      loadedAtMs: Date.now(),
-      settings: accountSettingsParse({
-        notificationsSettingsV1: { v: 1, pushEnabled: true, ready: true, permissionRequest: false },
-      }),
+describe('sendPermissionRequestPushNotificationAsync', () => {
+  it('does not send when permissionRequest pushes are disabled', async () => {
+    const sendToAllDevicesAsync = vi.fn(async () => {});
+    const settings = accountSettingsParse({
+      notificationsSettingsV1: { v: 1, pushEnabled: true, ready: true, permissionRequest: false },
     });
 
-    sendPermissionRequestPushNotificationForActiveAccount({
-      pushSender: { sendToAllDevices },
+    await sendPermissionRequestPushNotificationAsync({
+      pushSender: { sendToAllDevicesAsync },
       sessionId: 's1',
       permissionId: 'p1',
       toolName: 'Read',
+      settings,
     });
 
-    expect(sendToAllDevices).not.toHaveBeenCalled();
+    expect(sendToAllDevicesAsync).not.toHaveBeenCalled();
   });
 
-  it('sends when enabled', () => {
-    const sendToAllDevices = vi.fn();
-    setActiveAccountSettingsSnapshot({
-      source: 'cache',
-      settingsVersion: 1,
-      loadedAtMs: Date.now(),
-      settings: accountSettingsParse({
-        notificationsSettingsV1: { v: 1, pushEnabled: true, ready: true, permissionRequest: true },
-      }),
+  it('sends when enabled', async () => {
+    const sendToAllDevicesAsync = vi.fn(async () => {});
+    const settings = accountSettingsParse({
+      notificationsSettingsV1: { v: 1, pushEnabled: true, ready: true, permissionRequest: true },
     });
 
-    sendPermissionRequestPushNotificationForActiveAccount({
-      pushSender: { sendToAllDevices },
+    await sendPermissionRequestPushNotificationAsync({
+      pushSender: { sendToAllDevicesAsync },
       sessionId: 's1',
       permissionId: 'p1',
       toolName: 'Read',
+      settings,
     });
 
-    expect(sendToAllDevices).toHaveBeenCalledTimes(1);
-    expect(sendToAllDevices).toHaveBeenCalledWith(
+    expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(1);
+    expect(sendToAllDevicesAsync).toHaveBeenCalledWith(
       'Permission Request',
       expect.stringContaining('Read'),
       expect.objectContaining({ sessionId: 's1', requestId: 'p1' }),
     );
   });
 
-  it('does not throw when push sender throws', () => {
-    setActiveAccountSettingsSnapshot({
-      source: 'cache',
-      settingsVersion: 1,
-      loadedAtMs: Date.now(),
-      settings: accountSettingsParse({
-        notificationsSettingsV1: { v: 1, pushEnabled: true, ready: true, permissionRequest: true },
-      }),
+  it('does not throw when push sender throws', async () => {
+    const settings = accountSettingsParse({
+      notificationsSettingsV1: { v: 1, pushEnabled: true, ready: true, permissionRequest: true },
     });
 
-    const sendToAllDevices = () => {
+    const sendToAllDevicesAsync = async () => {
       throw new Error('push down');
     };
 
-    expect(() => {
-      sendPermissionRequestPushNotificationForActiveAccount({
-        pushSender: { sendToAllDevices },
+    await expect(
+      sendPermissionRequestPushNotificationAsync({
+        pushSender: { sendToAllDevicesAsync },
         sessionId: 's1',
         permissionId: 'p1',
         toolName: 'Read',
-      });
-    }).not.toThrow();
+        settings,
+      }),
+    ).resolves.toBe(false);
   });
 });

@@ -40,6 +40,25 @@ class TestPermissionHandler extends BasePermissionHandler {
 }
 
 describe('BasePermissionHandler allowlist', () => {
+  it('records the request kind for interactive tool prompts vs permissions', async () => {
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as any);
+
+    const askPromise = handler.request('perm-ask', 'AskUserQuestion', { questions: [] });
+    expect(session.agentState.requests['perm-ask']).toEqual(
+      expect.objectContaining({ tool: 'AskUserQuestion', kind: 'user_action' }),
+    );
+
+    const bashPromise = handler.request('perm-bash', 'Bash', { command: ['bash', '-lc', 'echo hello'] });
+    expect(session.agentState.requests['perm-bash']).toEqual(
+      expect.objectContaining({ tool: 'Bash', kind: 'permission' }),
+    );
+
+    handler.reset();
+    await expect(askPromise).rejects.toThrow('Session reset');
+    await expect(bashPromise).rejects.toThrow('Session reset');
+  });
+
   it('finalizes agentState requests even when the pending request map is missing the entry (lifecycle mismatch)', async () => {
     const session = new FakeSession();
     // Simulate a permission prompt that exists in UI state, but the handler has lost the pending promise
@@ -85,6 +104,22 @@ describe('BasePermissionHandler allowlist', () => {
 
     handler.reset();
     expect(handler.isAllowed('bash', input)).toBe(false);
+  });
+
+  it('returns structured answers for AskUserQuestion responses', async () => {
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as any);
+
+    const input = { questions: [{ question: 'q1', choices: ['a', 'b'] }] };
+    const promise = handler.request('perm-ask', 'AskUserQuestion', input);
+
+    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    expect(rpc).toBeDefined();
+    await rpc!({ id: 'perm-ask', approved: true, answers: { q1: 'a' } });
+
+    const result = await promise;
+    expect(result.decision).toBe('approved');
+    expect((result as any).answers).toEqual({ q1: 'a' });
   });
 
   it('invokes onAbortRequested when user responds with abort', async () => {

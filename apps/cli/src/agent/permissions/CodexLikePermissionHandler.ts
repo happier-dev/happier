@@ -13,11 +13,13 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { AgentState, PermissionMode } from '@/api/types';
 import {
   BasePermissionHandler,
+  type PermissionRequestPushSender,
   type PermissionResult,
   type PendingRequest,
 } from '@/agent/permissions/BasePermissionHandler';
 import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import type { ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
+import type { AccountSettings } from '@happier-dev/protocol';
 
 export type { PermissionResult, PendingRequest };
 
@@ -58,11 +60,15 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
     session: ApiSessionClient;
     logPrefix: string;
     isWriteLikeToolName?: (toolName: string) => boolean;
+    pushSender?: PermissionRequestPushSender | null;
+    getAccountSettings?: (() => AccountSettings | null) | null;
     onAbortRequested?: (() => void | Promise<void>) | null;
     toolTrace?: { protocol: ToolTraceProtocol; provider: string } | null;
     triggerAbortCallbackOnAbortDecision?: boolean;
   }) {
     super(params.session, {
+      pushSender: params.pushSender ?? null,
+      getAccountSettings: params.getAccountSettings ?? null,
       onAbortRequested: params.onAbortRequested,
       toolTrace: params.toolTrace ?? null,
       triggerAbortCallbackOnAbortDecision: params.triggerAbortCallbackOnAbortDecision,
