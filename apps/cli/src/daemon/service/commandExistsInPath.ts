@@ -1,21 +1,13 @@
-import { delimiter, join } from 'node:path';
 import { existsSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
+
+import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 
 function normalizePathList(envPath: string | undefined): string[] {
   return String(envPath ?? '')
     .split(delimiter)
     .map((p) => p.trim())
     .filter(Boolean);
-}
-
-function normalizePathext(pathext: string | undefined): string[] {
-  const raw = String(pathext ?? '').trim() || '.EXE;.CMD;.BAT;.COM';
-  const parts = raw
-    .split(';')
-    .map((p) => p.trim())
-    .filter(Boolean);
-  // Ensure each extension starts with a dot and is lowercase for comparisons.
-  return parts.map((p) => (p.startsWith('.') ? p : `.${p}`)).map((p) => p.toLowerCase());
 }
 
 export function commandExistsInPath(params: Readonly<{
@@ -27,28 +19,22 @@ export function commandExistsInPath(params: Readonly<{
   const cmd = String(params.cmd ?? '').trim();
   if (!cmd) return false;
 
+  if (params.platform === 'win32') {
+    return (
+      resolveWindowsCommandOnPath(cmd, {
+        PATH: params.envPath,
+        PATHEXT: params.pathext,
+      }) !== null
+    );
+  }
+
   const pathDirs = normalizePathList(params.envPath);
   if (pathDirs.length === 0) return false;
 
-  if (params.platform !== 'win32') {
-    for (const dir of pathDirs) {
-      const full = join(dir, cmd);
-      if (existsSync(full)) return true;
-    }
-    return false;
-  }
-
-  const exts = normalizePathext(params.pathext);
-  const cmdLower = cmd.toLowerCase();
-  const hasExt = exts.some((ext) => cmdLower.endsWith(ext));
-  const candidates = hasExt ? [cmd] : [cmd, ...exts.map((ext) => `${cmd}${ext}`)];
-
   for (const dir of pathDirs) {
-    for (const c of candidates) {
-      const full = join(dir, c);
-      if (existsSync(full)) return true;
-    }
+    const full = join(dir, cmd);
+    if (existsSync(full)) return true;
   }
+
   return false;
 }
-
