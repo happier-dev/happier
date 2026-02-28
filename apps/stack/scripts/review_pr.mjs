@@ -1,9 +1,9 @@
 import './utils/env/env.mjs';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { basename, dirname, join, resolve } from 'node:path';
 import { getRootDir } from './utils/paths/paths.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { parseArgs } from './utils/cli/args.mjs';
@@ -16,11 +16,17 @@ import { inferPrStackBaseName } from './utils/stack/pr_stack_name.mjs';
 import { sanitizeStackName } from './utils/stack/names.mjs';
 import { listReviewPrSandboxes, reviewPrSandboxPrefixPath, writeReviewPrSandboxMeta } from './utils/sandbox/review_pr_sandbox.mjs';
 import { bold, cyan, dim } from './utils/ui/ansi.mjs';
+import { expandHome } from './utils/paths/canonical_home.mjs';
+import { fastForwardBranchToRemote } from './utils/git/fast_forward_to_remote.mjs';
+import { resolveDefaultRemoteBranch } from './utils/git/default_branch.mjs';
+import { shouldRunYarnInstall } from './utils/worktrees/yarn_install_guard.mjs';
+import { run } from './utils/proc/proc.mjs';
+import { applyStackCacheEnv } from './utils/proc/pm.mjs';
  
 function usage() {
   return [
     '[review-pr] usage:',
-    '  hstack tools review-pr --repo=<pr-url|number> [--name=<stack>] [--dev|--start] [--mobile|--no-mobile] [--forks|--upstream] [--seed-auth|--no-seed-auth] [--copy-auth-from=<stack>] [--link-auth|--copy-auth] [--update] [--force] [--keep-sandbox] [--json] [-- <stack dev/start args...>]',
+    '  hstack tools review-pr --repo=<pr-url|number> [--name=<stack>] [--dev|--start] [--mobile|--no-mobile] [--workspace-cache|--no-workspace-cache] [--workspace-cache-dir=<dir>] [--forks|--upstream] [--seed-auth|--no-seed-auth] [--copy-auth-from=<stack>] [--link-auth|--copy-auth] [--update] [--force] [--keep-sandbox] [--json] [-- <stack dev/start args...>]',
     '',
     'VM port forwarding (optional):',
     '- `--vm-ports`: convenience preset for port-forwarded VMs (stack ports ~13xxx, Expo ports ~18xxx)',
@@ -31,8 +37,9 @@ function usage() {
     '',
     'What it does:',
     '- creates a temporary sandbox dir',
-    '- runs `hstack tools setup-pr ...` inside that sandbox (fully isolated state)',
+    '- runs `hstack tools setup-pr ...` inside that sandbox (sandboxed home/runtime/storage; optional shared workspace cache)',
     '- on exit (including Ctrl+C): stops sandbox processes and deletes the sandbox dir',
+    '- prints a "Terminal usage" section with the exact env exports + `happier` command to run sessions against the sandbox server/account',
     '',
   ].join('\n');
 }
@@ -131,6 +138,97 @@ function resolveSandboxPortEnvOverrides(argv) {
   return Object.keys(overrides).length ? overrides : null;
 }
 
+function resolveWorkspaceCacheConfig(argv) {
+  const enabledByDefault = true;
+  const disabled = argvHasFlag(argv, ['--no-workspace-cache']);
+  const enabled = argvHasFlag(argv, ['--workspace-cache']) ? true : !disabled && enabledByDefault;
+  const explicitDirRaw = (kvValue(argv, ['--workspace-cache-dir']) ?? '').trim();
+
+  if (!enabled) return { enabled: false, workspaceDir: '', legacy: false, suggestedDir: '' };
+
+  const workspaceDir = (() => {
+    if (explicitDirRaw) {
+      return resolve(expandHome(explicitDirRaw));
+    }
+    const baseHome = (process.env.HAPPIER_STACK_HOME_DIR ?? '').trim()
+      ? process.env.HAPPIER_STACK_HOME_DIR.trim()
+      : join(homedir(), '.happier-stack');
+    const nextDefault = resolve(join(baseHome, 'cache', 'sandbox', 'workspace'));
+    const legacyDefault = resolve(join(baseHome, 'cache', 'review-pr', 'workspace'));
+    // Backwards-compat: if an existing cache already lives at the legacy path, keep using it
+    // unless the new default exists too.
+    if (existsSync(legacyDefault) && !existsSync(nextDefault)) {
+      return legacyDefault;
+    }
+    return nextDefault;
+  })();
+
+  const baseHome = (process.env.HAPPIER_STACK_HOME_DIR ?? '').trim()
+    ? process.env.HAPPIER_STACK_HOME_DIR.trim()
+    : join(homedir(), '.happier-stack');
+  const suggestedDir = resolve(join(baseHome, 'cache', 'sandbox', 'workspace'));
+  const legacyDir = resolve(join(baseHome, 'cache', 'review-pr', 'workspace'));
+  const legacy = !explicitDirRaw && resolve(workspaceDir) === legacyDir;
+
+  return { enabled: true, workspaceDir, legacy, suggestedDir };
+}
+
+function isPidAlive(pid) {
+  const n = Number(pid);
+  if (!Number.isFinite(n) || n <= 1) return false;
+  try {
+    process.kill(n, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolvePmCacheBaseDirFromWorkspaceDir(workspaceDir) {
+  const ws = String(workspaceDir ?? '').trim();
+  if (!ws) return '';
+  const abs = resolve(ws);
+  // Default cache layout: <home>/cache/sandbox/{workspace,pm}
+  if (basename(abs) === 'workspace') {
+    return join(dirname(abs), 'pm');
+  }
+  // Custom workspace roots: keep caches inside to avoid surprising global writes.
+  return join(abs, '.hstack-cache', 'pm');
+}
+
+async function acquireWorkspaceCacheLock(workspaceDir) {
+  const dir = String(workspaceDir ?? '').trim();
+  if (!dir) return { ok: true, lockPath: '' };
+  await mkdir(dir, { recursive: true });
+
+  const lockPath = join(dir, '.hstack-sandbox-workspace.lock');
+  try {
+    await writeFile(lockPath, `${process.pid}\n${Date.now()}\n`, { encoding: 'utf-8', flag: 'wx' });
+    return { ok: true, lockPath };
+  } catch {
+    // Best-effort stale lock recovery.
+    try {
+      const raw = await readFile(lockPath, 'utf-8');
+      const pid = Number(raw.split('\n')[0] ?? NaN);
+      if (isPidAlive(pid)) {
+        return {
+          ok: false,
+          lockPath,
+          error:
+            `[review-pr] workspace cache is currently in use (lock: ${lockPath}, pid=${pid}).\n` +
+            `[review-pr] Fix: wait for the other run to finish, or re-run with --no-workspace-cache, or set --workspace-cache-dir=...`,
+        };
+      }
+    } catch {
+      // ignore
+    }
+    // Stale or unreadable lock: remove and retry once.
+    await rm(lockPath, { force: true }).catch(() => {});
+    await writeFile(lockPath, `${process.pid}\n${Date.now()}\n`, { encoding: 'utf-8', flag: 'wx' });
+    return { ok: true, lockPath };
+  }
+}
+
 async function main() {
   const rootDir = getRootDir(import.meta.url);
   const argv = process.argv.slice(2);
@@ -177,6 +275,7 @@ async function main() {
   // Look for leftover sandboxes for the same PR base name (typically due to --keep-sandbox / failures).
   const canPrompt = Boolean(process.stdout.isTTY && process.stdin.isTTY && !json);
   const existingSandboxes = canPrompt ? await listReviewPrSandboxes({ baseStackName }) : [];
+  const workspaceCache = resolveWorkspaceCacheConfig(argv);
 
   if (process.stdout.isTTY && !json) {
     const intro = [
@@ -188,21 +287,38 @@ async function main() {
       dim('Uses the light server flavor by default (no Redis, no Postgres, no Docker).'),
       dim('Desktop browser + optional mobile review (Expo dev-client).'),
       '',
+      workspaceCache.enabled
+        ? dim(
+            `Workspace cache: enabled (${workspaceCache.workspaceDir}). Disable with --no-workspace-cache.${
+              workspaceCache.legacy && workspaceCache.suggestedDir
+                ? ` (legacy path; recommended: ${workspaceCache.suggestedDir})`
+                : ''
+            }`
+          )
+        : dim('Workspace cache: disabled (fresh workspace per run).'),
+      '',
       bold('What will happen:'),
       `- ${cyan('sandbox')}: temporary isolated Happier install`,
-      `- ${cyan('repos')}: clone/install (inside the sandbox only)`,
+      workspaceCache.enabled
+        ? `- ${cyan('repos')}: update cached sandbox workspace (faster repeats)`
+        : `- ${cyan('repos')}: clone/install (inside the sandbox only)`,
       `- ${cyan('start')}: start the Happier stack in sandbox (server, daemon, web, mobile)`,
       `- ${cyan('login')}: guide you through Happier login for this sandbox`,
       `- ${cyan('browser')}: open the Happier web app`,
       `- ${cyan('mobile')}: start Expo dev-client (optional)`,
       `- ${cyan('cleanup')}: stop processes + delete sandbox on exit`,
       '',
-      dim('Everything is deleted automatically when you exit.'),
+      dim(
+        workspaceCache.enabled
+          ? 'Sandbox dirs are deleted automatically when you exit. Workspace cache is preserved.'
+          : 'Everything is deleted automatically when you exit.'
+      ),
       dim('Your main Happier installation remains untouched.'),
       '',
       dim('Tips:'),
       dim('- Add `-v` / `-vv` / `-vvv` to show the full logs'),
       dim('- Add `--keep-sandbox` to keep the sandbox directory between runs'),
+      dim('- To start a CLI session from another terminal, use the printed "Terminal usage" exports, then run `happier`'),
       '',
       existingSandboxes.length
         ? bold('Choose how to proceed') + dim(' (or Ctrl+C to cancel).')
@@ -284,6 +400,14 @@ async function main() {
   let child = null;
   let gotSignal = null;
   let childExitCode = null;
+  const lock = workspaceCache.enabled ? await acquireWorkspaceCacheLock(workspaceCache.workspaceDir) : { ok: true, lockPath: '' };
+  if (!lock.ok) {
+    throw new Error(lock.error || '[review-pr] failed to acquire workspace cache lock');
+  }
+  const releaseWorkspaceLock = async () => {
+    if (!lock.lockPath) return;
+    await rm(lock.lockPath, { force: true }).catch(() => {});
+  };
  
   const forwardSignal = (sig) => {
     const first = gotSignal == null;
@@ -304,9 +428,95 @@ async function main() {
   process.on('SIGINT', onSigInt);
   process.on('SIGTERM', onSigTerm);
  
-  try {
-    const wantsStart = flags.has('--start') || flags.has('--prod');
-    const hasMobileFlag = argv.includes('--mobile') || argv.includes('--with-mobile') || argv.includes('--no-mobile');
+    try {
+      if (workspaceCache.enabled) {
+        const updateSteps = createStepPrinter({ enabled: Boolean(process.stdout.isTTY && !json && verbosity === 0) });
+        const mainDir = join(workspaceCache.workspaceDir, 'main');
+        if (existsSync(join(mainDir, '.git'))) {
+          const stableBranch =
+            (process.env.HAPPIER_STACK_STABLE_BRANCH ?? '').trim() ||
+            (await resolveDefaultRemoteBranch({ dir: mainDir, remote: 'origin' })) ||
+            'main';
+          const label = `update cached workspace (main:${stableBranch})`;
+          updateSteps.start(label);
+          try {
+            const res = await fastForwardBranchToRemote({ dir: mainDir, remote: 'origin', branch: stableBranch });
+            if (res.ok && (res.updated || res.reason === 'up-to-date')) {
+              updateSteps.stop('✓', label);
+            } else {
+              updateSteps.stop('!', label);
+              if (!json && res.reason && res.reason !== 'up-to-date') {
+                // eslint-disable-next-line no-console
+                console.warn(
+                  `[review-pr] warning: could not update cached workspace main checkout (${mainDir}).\n` +
+                    `Reason: ${res.reason}${res.error ? `\n${res.error}` : ''}`
+                );
+              }
+            }
+          } catch (e) {
+            updateSteps.stop('!', label);
+            if (!json) {
+              // eslint-disable-next-line no-console
+              console.warn(
+                `[review-pr] warning: failed to update cached workspace main checkout (${mainDir}).\n` +
+                  `${e instanceof Error ? e.message : String(e)}`
+              );
+            }
+          }
+
+          // Warm base dependencies in the cached workspace so new PR worktrees can seed node_modules quickly.
+          // Best-effort: if it fails, PR worktrees will fall back to installing their own deps.
+          const depsLabel = 'warm cached workspace deps (yarn)';
+          updateSteps.start(depsLabel);
+          try {
+            const needs = await shouldRunYarnInstall({ installDir: mainDir, componentDir: mainDir });
+            if (!needs) {
+              updateSteps.stop('✓', depsLabel);
+            } else {
+              const pmCacheBaseDir = resolvePmCacheBaseDirFromWorkspaceDir(workspaceCache.workspaceDir);
+              const env = await applyStackCacheEnv({
+                ...process.env,
+                HAPPIER_STACK_PM_CACHE_BASE_DIR: pmCacheBaseDir,
+                HAPPIER_STACK_PM_ISOLATE_HOME: '1',
+              });
+              const quiet = verbosity === 0 && !json;
+              try {
+                await run('yarn', ['install', '--frozen-lockfile'], { cwd: mainDir, env, stdio: quiet ? 'ignore' : 'inherit' });
+                updateSteps.stop('✓', depsLabel);
+              } catch (e) {
+                // Re-run once with logs for diagnosis, then warn and continue.
+                if (quiet) {
+                  try {
+                    await run('yarn', ['install', '--frozen-lockfile'], { cwd: mainDir, env, stdio: 'inherit' });
+                  } catch {
+                    // ignore
+                  }
+                }
+                updateSteps.stop('!', depsLabel);
+                if (!json) {
+                  // eslint-disable-next-line no-console
+                  console.warn(
+                    `[review-pr] warning: failed to warm cached workspace deps (${mainDir}).\n` +
+                      `${e instanceof Error ? e.message : String(e)}`
+                  );
+                }
+              }
+            }
+          } catch (e) {
+            updateSteps.stop('!', depsLabel);
+            if (!json) {
+              // eslint-disable-next-line no-console
+              console.warn(
+                `[review-pr] warning: failed to warm cached workspace deps (${mainDir}).\n` +
+                  `${e instanceof Error ? e.message : String(e)}`
+              );
+            }
+          }
+        }
+      }
+
+      const wantsStart = flags.has('--start') || flags.has('--prod');
+      const hasMobileFlag = argv.includes('--mobile') || argv.includes('--with-mobile') || argv.includes('--no-mobile');
     const argvWithDefaults =
       process.stdout.isTTY && !json && !wantsStart && !hasMobileFlag ? [...argv, '--mobile'] : argv;
 
@@ -324,11 +534,20 @@ async function main() {
       '--expo-dev-port-base',
       '--expo-dev-port-range',
       '--expo-dev-port',
+      '--workspace-cache',
+      '--no-workspace-cache',
+      '--workspace-cache-dir',
     ]);
 
+    const childEnv = portEnv ? { ...process.env, ...portEnv } : { ...process.env };
+    if (workspaceCache.enabled) {
+      childEnv.HAPPIER_STACK_SANDBOX_WORKSPACE_DIR = workspaceCache.workspaceDir;
+    } else {
+      delete childEnv.HAPPIER_STACK_SANDBOX_WORKSPACE_DIR;
+    }
     child = spawn(process.execPath, [bin, '--sandbox-dir', sandboxDir, 'setup-pr', ...argvForSetupPr], {
       cwd: rootDir,
-      env: portEnv ? { ...process.env, ...portEnv } : process.env,
+      env: childEnv,
       stdio: 'inherit',
     });
  
@@ -418,6 +637,7 @@ async function main() {
         const code = gotSignal === 'SIGINT' ? 130 : gotSignal === 'SIGTERM' ? 143 : 1;
         process.exitCode = process.exitCode ?? code;
       }
+      await releaseWorkspaceLock();
       return;
     }
     // Preserve conventional exit codes on signals.
@@ -425,6 +645,7 @@ async function main() {
       const code = gotSignal === 'SIGINT' ? 130 : gotSignal === 'SIGTERM' ? 143 : 1;
       process.exitCode = process.exitCode ?? code;
     }
+    await releaseWorkspaceLock();
   }
 }
  
