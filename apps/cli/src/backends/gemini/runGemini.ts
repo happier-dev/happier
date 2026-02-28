@@ -36,8 +36,8 @@ import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendAp
 import { archiveAndCloseSession } from '@/agent/runtime/archiveAndCloseSession';
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
 import { initializeRuntimeOverridesSynchronizer } from '@/agent/runtime/runtimeOverridesSynchronizer';
-import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
+import { shouldSendReadyPushNotification } from '@/settings/notifications/notificationsPolicy';
 
 import type { AgentBackend } from '@/agent';
 import { GeminiDiffProcessor } from '@/backends/gemini/utils/diffProcessor';
@@ -71,6 +71,8 @@ import { sendGeminiPromptWithRetry } from '@/backends/gemini/runtime/sendGeminiP
 import { createGeminiTerminalUi } from '@/backends/gemini/runtime/createGeminiTerminalUi';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
 import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/createProviderEnforcedPermissionHandler';
+import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
+import { resolveGeminiQueuedPromptWithReplaySeed } from '@/backends/gemini/runtime/resolveGeminiQueuedPromptWithReplaySeed';
 
 
 /**
@@ -88,6 +90,7 @@ export async function runGemini(opts: {
   modelUpdatedAt?: number;
   existingSessionId?: string;
   resume?: string;
+  accountSettingsContext?: import('@/settings/accountSettings/bootstrapAccountSettingsContext').AccountSettingsContext | null;
 }): Promise<void> {
   //
   // Define session
@@ -145,7 +148,7 @@ export async function runGemini(opts: {
   // Create session
   //
 
-  const accountSettings = getActiveAccountSettingsSnapshot()?.settings ?? null;
+  const accountSettings = opts.accountSettingsContext?.settings ?? null;
   const permissionModeSeed = resolvePermissionModeSeedForAgentStart({
     agentId: 'gemini',
     explicitPermissionMode: opts.permissionMode,
@@ -231,6 +234,7 @@ export async function runGemini(opts: {
   const messageQueue = new MessageQueue2<GeminiMode>((mode) => hashObject({
     permissionMode: mode.permissionMode,
     model: mode.model,
+    replaySeedAllowed: mode.replaySeedAllowed !== false,
   }));
 
   // Conversation history for context preservation across model changes
@@ -322,6 +326,8 @@ export async function runGemini(opts: {
       permissionMode: messagePermissionMode || 'default',
       model: messageModel,
       originalUserMessage, // Store original message separately
+      localId: message.localId ?? null,
+      replaySeedAllowed: parseSpecialCommand(originalUserMessage).type === null,
     };
     messageQueue.push(fullPrompt, mode);
     
@@ -344,6 +350,7 @@ export async function runGemini(opts: {
       pushSender: api.push(),
       waitingForCommandLabel: 'Gemini',
       logPrefix: '[Gemini]',
+      shouldSendPush: () => shouldSendReadyPushNotification(opts.accountSettingsContext?.settings ?? null),
     });
   };
 
@@ -504,6 +511,8 @@ export async function runGemini(opts: {
   permissionHandler = createProviderEnforcedPermissionHandler({
     session,
     logPrefix: '[Gemini]',
+    pushSender: api.push(),
+    getAccountSettings: () => opts.accountSettingsContext?.settings ?? null,
     onAbortRequested: handleAbort,
     alwaysAutoApproveToolNameIncludes: ['geminireasoning', 'codexreasoning'],
   });
@@ -595,6 +604,7 @@ export async function runGemini(opts: {
 	    const syncControlsFromMetadata = () => {
 	      runtimeOverridesSync?.syncFromMetadata();
 	    };
+	    let didReplaySeedBootstrap = false;
 
     while (!shouldExit) {
       let message: { message: string; mode: GeminiMode; isolate: boolean; hash: string } | null = pending;
@@ -756,8 +766,7 @@ export async function runGemini(opts: {
           throw new Error('Gemini backend or session not initialized');
         }
         
-        // The prompt already includes system prompt and change_title instruction (added in onUserMessage handler)
-        // This is done in the message queue, so message.message already contains everything
+        // The prompt already includes system prompt and change_title instruction (added in onUserMessage handler).
         let promptToSend = message.message;
         
         // Inject conversation history context if model was just changed
@@ -767,6 +776,16 @@ export async function runGemini(opts: {
           logger.debug(`[gemini] Injected conversation history context (${historyContext.length} chars)`);
           // Don't clear history - keep accumulating for future model changes
         }
+
+        const replaySeedResolution = await resolveGeminiQueuedPromptWithReplaySeed({
+          sessionClient: session,
+          text: promptToSend,
+          localId: message.mode?.localId ?? null,
+          replaySeedAllowed: message.mode?.replaySeedAllowed !== false,
+          didBootstrap: didReplaySeedBootstrap,
+        });
+        didReplaySeedBootstrap = replaySeedResolution.didBootstrap;
+        promptToSend = replaySeedResolution.text;
         
         logger.debug(`[gemini] Sending prompt to Gemini (length: ${promptToSend.length}): ${promptToSend.substring(0, 100)}...`);
         logger.debug(`[gemini] Full prompt: ${promptToSend}`);
