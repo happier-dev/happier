@@ -1,6 +1,11 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
+vi.mock("@/app/auth/auth", () => ({
+    auth: {
+        verifyToken: vi.fn(async (token: string) => (token === "token_1" ? { userId: "user-1" } : null)),
+    },
+}));
 vi.mock("@/storage/db", () => ({
     db: {
         voiceSessionLease: {
@@ -52,11 +57,12 @@ describe("voiceRoutes (rate limit)", () => {
         expect(opts).toBeTruthy();
         expect(opts?.config?.rateLimit).toEqual(
             expect.objectContaining({
-                max: expect.any(Number),
+                max: 10,
+                timeWindow: "1 minute",
             }),
         );
         expect(opts?.config?.rateLimit?.keyGenerator).toEqual(expect.any(Function));
-        expect(opts?.config?.rateLimit?.keyGenerator?.({ headers: { authorization: "Bearer token_1" }, ip: "203.0.113.9" })).toMatch(/^auth:/);
+        expect(await opts?.config?.rateLimit?.keyGenerator?.({ headers: { authorization: "Bearer token_1" }, ip: "203.0.113.9" })).toBe("uid:user-1");
     });
 
     it("registers /v1/voice/session/complete with a per-user rate limit by default", async () => {
@@ -68,10 +74,45 @@ describe("voiceRoutes (rate limit)", () => {
         expect(opts).toBeTruthy();
         expect(opts?.config?.rateLimit).toEqual(
             expect.objectContaining({
-                max: expect.any(Number),
+                max: 60,
+                timeWindow: "1 minute",
             }),
         );
         expect(opts?.config?.rateLimit?.keyGenerator).toEqual(expect.any(Function));
-        expect(opts?.config?.rateLimit?.keyGenerator?.({ headers: { authorization: "Bearer token_1" }, ip: "203.0.113.9" })).toMatch(/^auth:/);
+        expect(await opts?.config?.rateLimit?.keyGenerator?.({ headers: { authorization: "Bearer token_1" }, ip: "203.0.113.9" })).toBe("uid:user-1");
+    });
+
+    it("can force ip-only route keying strategy via HAPPIER_API_RATE_LIMITS_ROUTE_KEY_STRATEGY", async () => {
+        process.env = {
+            ...process.env,
+            HAPPIER_API_RATE_LIMITS_ROUTE_KEY_STRATEGY: "ip-only",
+        };
+
+        const { voiceRoutes } = await import("./voiceRoutes");
+        const app = new FakeApp();
+        voiceRoutes(app as any);
+
+        const opts = app.postOptsByPath.get("/v1/voice/token");
+        expect(await opts?.config?.rateLimit?.keyGenerator?.({ headers: { authorization: "Bearer token_1" }, ip: "203.0.113.9" })).toBe("ip:203.0.113.9");
+    });
+
+    it("allows overriding voice token max/window via HAPPIER_VOICE_TOKEN_RATE_LIMIT_*", async () => {
+        process.env = {
+            ...process.env,
+            HAPPIER_VOICE_TOKEN_RATE_LIMIT_MAX: "7",
+            HAPPIER_VOICE_TOKEN_RATE_LIMIT_WINDOW: "30 seconds",
+        };
+
+        const { voiceRoutes } = await import("./voiceRoutes");
+        const app = new FakeApp();
+        voiceRoutes(app as any);
+
+        const opts = app.postOptsByPath.get("/v1/voice/token");
+        expect(opts?.config?.rateLimit).toEqual(
+            expect.objectContaining({
+                max: 7,
+                timeWindow: "30 seconds",
+            }),
+        );
     });
 });

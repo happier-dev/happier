@@ -5,7 +5,7 @@ import { parseIntEnv } from "@/config/env";
 import { resolveElevenLabsAgentId, resolveElevenLabsApiBaseUrl } from "@/voice/elevenLabsEnv";
 import { readVoiceFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveServerFeaturesForGating } from "@/app/features/catalog/serverFeatureGate";
-import { createApiRateLimitKeyGenerator, gateRateLimitConfig } from "@/app/api/utils/apiRateLimitPolicy";
+import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { type Fastify } from "../../types";
 
 type VoiceDenyReason =
@@ -31,23 +31,9 @@ function hasRevenueCatVoiceEntitlement(payload: any): boolean {
 export function registerVoiceMintRoute(app: Fastify, path: "/v1/voice/token" | "/v1/voice/lease/mint"): void {
     app.post(path, {
         preHandler: app.authenticate,
-        config: (() => {
-            const maxPerMinute = Math.max(0, parseIntEnv(process.env.VOICE_TOKEN_MAX_PER_MINUTE, 10));
-            return {
-                rateLimit:
-                    gateRateLimitConfig(
-                        process.env,
-                        maxPerMinute <= 0
-                            ? false
-                            : {
-                              max: maxPerMinute,
-                              timeWindow: "1 minute",
-                              // Prefer Authorization-header-derived keys to avoid proxy/IP misconfig surprises.
-                              keyGenerator: createApiRateLimitKeyGenerator(),
-                          },
-                    ),
-            };
-        })(),
+        config: {
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "voice.token"),
+        },
         schema: {
             body: z
                 .object({

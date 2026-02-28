@@ -1,5 +1,6 @@
 import { db } from "@/storage/db";
 import { log } from "@/utils/logging/log";
+import { maybeCaptureSentryMonitorCheckIn } from "@/app/monitoring/sentryMonitors";
 
 function clampInt(value: number, min: number, max: number): number {
     if (!Number.isFinite(value)) return min;
@@ -34,25 +35,33 @@ export function startVoiceSessionLeaseCleanupFromEnv(): { stop: () => void } | n
     let stopped = false;
 
     const run = async (reason: "startup" | "interval") => {
-        try {
-            const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
-            const result = await pruneExpiredVoiceSessionLeasesOnce({ cutoff });
-            log(
-                { module: "voice-lease-cleanup", reason, deleted: result.deleted, retentionDays },
-                `VoiceSessionLease cleanup ran (${reason})`,
-            );
-        } catch (error) {
-            log(
-                { module: "voice-lease-cleanup", reason, error: error instanceof Error ? error.message : String(error) },
-                `VoiceSessionLease cleanup failed (${reason})`,
-            );
-        }
+        await maybeCaptureSentryMonitorCheckIn({
+            env: process.env,
+            monitorSlug: "server.voiceLeaseCleanup",
+            intervalMs,
+            run: async () => {
+                try {
+                    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+                    const result = await pruneExpiredVoiceSessionLeasesOnce({ cutoff });
+                    log(
+                        { module: "voice-lease-cleanup", reason, deleted: result.deleted, retentionDays },
+                        `VoiceSessionLease cleanup ran (${reason})`,
+                    );
+                } catch (error) {
+                    log(
+                        { module: "voice-lease-cleanup", reason, error: error instanceof Error ? error.message : String(error) },
+                        `VoiceSessionLease cleanup failed (${reason})`,
+                    );
+                    throw error;
+                }
+            },
+        });
     };
 
-    void run("startup");
+    void run("startup").catch(() => {});
     const timer = setInterval(() => {
         if (stopped) return;
-        void run("interval");
+        void run("interval").catch(() => {});
     }, intervalMs);
     timer.unref?.();
 
@@ -63,4 +72,3 @@ export function startVoiceSessionLeaseCleanupFromEnv(): { stop: () => void } | n
         },
     };
 }
-
