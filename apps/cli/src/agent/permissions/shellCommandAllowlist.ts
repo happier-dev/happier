@@ -2,6 +2,12 @@ type ShellSplitResult =
   | { ok: true; segments: string[] }
   | { ok: false };
 
+type ShellSplitOp = 'seq' | 'pipe' | 'and' | 'or' | 'bg';
+type ShellSplitItem = { segment: string; opBefore: ShellSplitOp | null };
+type ShellSplitDetailedResult =
+  | { ok: true; items: ShellSplitItem[] }
+  | { ok: false };
+
 function matchesPrefixTokenBoundary(command: string, prefix: string): boolean {
   if (!command || !prefix) return false;
   if (!command.startsWith(prefix)) return false;
@@ -37,19 +43,26 @@ export function stripSimpleEnvPrelude(command: string): string {
  * - If quotes are unbalanced, we fail-closed (ok: false).
  */
 export function splitShellCommandTopLevel(command: string): ShellSplitResult {
+  const detailed = splitShellCommandTopLevelDetailed(command);
+  if (!detailed.ok) return { ok: false };
+  return { ok: true, segments: detailed.items.map((it) => it.segment) };
+}
+
+function splitShellCommandTopLevelDetailed(command: string): ShellSplitDetailedResult {
   const src = command.trim();
-  if (!src) return { ok: true, segments: [] };
+  if (!src) return { ok: true, items: [] };
 
   let inSingle = false;
   let inDouble = false;
   let escaped = false;
 
-  const segments: string[] = [];
+  const items: ShellSplitItem[] = [];
   let current = '';
+  let currentOpBefore: ShellSplitOp | null = null;
 
   const flush = () => {
     const trimmed = current.trim();
-    if (trimmed.length > 0) segments.push(trimmed);
+    if (trimmed.length > 0) items.push({ segment: trimmed, opBefore: currentOpBefore });
     current = '';
   };
 
@@ -91,18 +104,23 @@ export function splitShellCommandTopLevel(command: string): ShellSplitResult {
       // Control operators.
       if (ch === '\n' || ch === ';') {
         flush();
+        currentOpBefore = 'seq';
         continue;
       }
 
       if (ch === '&') {
-        if (src[i + 1] === '&') i++; // consume second &
+        const isAnd = src[i + 1] === '&';
+        if (isAnd) i++; // consume second &
         flush();
+        currentOpBefore = isAnd ? 'and' : 'bg';
         continue;
       }
 
       if (ch === '|') {
-        if (src[i + 1] === '|') i++; // consume second |
+        const isOr = src[i + 1] === '|';
+        if (isOr) i++; // consume second |
         flush();
+        currentOpBefore = isOr ? 'or' : 'pipe';
         continue;
       }
     }
@@ -112,7 +130,7 @@ export function splitShellCommandTopLevel(command: string): ShellSplitResult {
 
   if (escaped || inSingle || inDouble) return { ok: false };
   flush();
-  return { ok: true, segments };
+  return { ok: true, items };
 }
 
 type ShellAllowPattern =
@@ -176,20 +194,37 @@ export function isShellCommandAllowed(command: string, patterns: ShellAllowPatte
     if (p.kind === 'exact' && p.value === raw) return true;
   }
 
-  const split = splitShellCommandTopLevel(raw);
+  const split = splitShellCommandTopLevelDetailed(raw);
   if (!split.ok) return false;
 
   // Some provider runtimes prepend a simple `unset VAR VAR2; ...` prelude to scrub secrets.
   // Treat those leading segments as an ignorable prelude so command-name allow rules work.
-  const segments = [...split.segments];
-  while (segments.length > 0 && isSimpleUnsetOnlySegment(segments[0])) {
-    segments.shift();
+  const items = [...split.items];
+  while (items.length > 0 && isSimpleUnsetOnlySegment(items[0].segment)) {
+    items.shift();
   }
 
   // If there are no operators, split.segments will be [raw] and this behaves like a normal match.
-  for (const segment of segments) {
-    if (!isSegmentAllowed(segment, patterns)) return false;
+  const SAFE_PIPE_FILTERS = new Set(['head', 'tail', 'wc', 'sort', 'uniq', 'cut', 'tr']);
+  const isSafePipeFilterSegment = (segment: string): boolean => {
+    const trimmed = segment.trim();
+    if (!trimmed) return false;
+    // Fail-closed on redirections: they can write files or read from unexpected sources.
+    if (trimmed.includes('>') || trimmed.includes('<')) return false;
+    const effective = stripSimpleEnvPrelude(trimmed);
+    const firstWord = effective.split(/\s+/).filter(Boolean)[0] ?? '';
+    return SAFE_PIPE_FILTERS.has(firstWord);
+  };
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (i === 0) {
+      if (!isSegmentAllowed(item.segment, patterns)) return false;
+      continue;
+    }
+    if (item.opBefore === 'pipe' && isSafePipeFilterSegment(item.segment)) continue;
+    if (!isSegmentAllowed(item.segment, patterns)) return false;
   }
 
-  return segments.length > 0;
+  return items.length > 0;
 }

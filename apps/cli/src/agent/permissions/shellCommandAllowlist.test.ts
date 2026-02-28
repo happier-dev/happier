@@ -34,4 +34,24 @@ describe('shellCommandAllowlist', () => {
       ),
     ).toBe(false);
   });
+
+  it('allows safe pipe filters after an allowed command-name segment', () => {
+    const patterns = [{ kind: 'prefix' as const, value: 'find' }];
+    expect(
+      isShellCommandAllowed(
+        'find . -maxdepth 2 -type f | head -n 5',
+        patterns,
+      ),
+    ).toBe(true);
+  });
+
+  it('does not treat safe filter commands as allowed when chained with &&', () => {
+    const patterns = [{ kind: 'prefix' as const, value: 'find' }];
+    expect(
+      isShellCommandAllowed(
+        'find . -maxdepth 2 -type f && head -n 5 /etc/hosts',
+        patterns,
+      ),
+    ).toBe(false);
+  });
 });
