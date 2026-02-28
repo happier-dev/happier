@@ -118,7 +118,6 @@ happier gemini project get          # Show current Google Cloud Project ID
 - `-m, --model <model>` - Claude model to use (default: sonnet)
 - `-p, --permission-mode <mode>` - Permission mode: `default`, `read-only`, `safe-yolo`, `yolo`, `plan` (aliases like `ro`, `safe`, `full-access`, `accept-edits`, `bypass-permissions` are accepted)
 - `--permission-mode-updated-at <unix-ms>` - Optional timestamp (ms) for ordering permission changes across devices
-- `--claude-env KEY=VALUE` - Set environment variable for Claude Code
 - `--claude-arg ARG` - Pass additional argument to Claude CLI
 
 ### Session Options (agent commands)
@@ -203,7 +202,11 @@ For the full user guide (UI behavior, defaults, apply timing), see the app docs:
 
 ### Happier Configuration
 
-- `HAPPIER_SERVER_URL` - Custom server URL (default: https://api.happier.dev)
+- `HAPPIER_PUBLIC_SERVER_URL` - Canonical/share server URL (used in QR/deep links; should work from your phone)
+- `HAPPIER_LOCAL_SERVER_URL` - Optional local API URL optimization (only used for API calls, never embedded in links)
+- `HAPPIER_SERVER_URL` - Legacy/compat server URL
+  - If `HAPPIER_PUBLIC_SERVER_URL` is unset: treated as the canonical/share URL
+  - If `HAPPIER_PUBLIC_SERVER_URL` is set: treated as a local API URL override
 - `HAPPIER_WEBAPP_URL` - Custom web app URL (default: https://app.happier.dev)
 - `HAPPIER_HOME_DIR` - Custom home directory for Happier data (default: ~/.happier)
 - `HAPPIER_DISABLE_CAFFEINATE` - Disable macOS sleep prevention (set to `true`, `1`, or `yes`)
