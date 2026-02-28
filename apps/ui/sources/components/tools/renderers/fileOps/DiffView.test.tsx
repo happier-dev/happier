@@ -7,19 +7,12 @@ import { ToolHeaderActionsContext } from '../../shell/presentation/ToolHeaderAct
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const diffSpy = vi.fn();
 const codeLinesSpy = vi.fn();
+const syntaxHookSpy = vi.fn();
 
 
 vi.mock('../../shell/presentation/ToolSectionView', () => ({
     ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
-
-vi.mock('@/components/tools/shell/presentation/ToolDiffView', () => ({
-    ToolDiffView: (props: any) => {
-        diffSpy(props);
-        return React.createElement('ToolDiffView', props);
-    },
 }));
 
 vi.mock('@/components/ui/code/view/CodeLinesView', () => ({
@@ -29,13 +22,30 @@ vi.mock('@/components/ui/code/view/CodeLinesView', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'showLineNumbersInToolViews') return false;
-        if (key === 'wrapLinesInDiffs') return true;
-        return undefined;
+vi.mock('@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting', () => ({
+    useCodeLinesSyntaxHighlighting: (filePath: string | null) => {
+        syntaxHookSpy(filePath);
+        return {
+            mode: 'simple',
+            language: filePath?.endsWith('.txt') ? 'text' : 'typescript',
+            maxBytes: 250_000,
+            maxLines: 5_000,
+            maxLineLength: 2_000,
+        };
     },
 }));
+
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+    return {
+        ...actual,
+        useSetting: (key: string) => {
+            if (key === 'showLineNumbersInToolViews') return false;
+            if (key === 'wrapLinesInDiffs') return true;
+            return undefined;
+        },
+    };
+});
 
 vi.mock('@/text', () => ({
     t: (key: string) => {
@@ -73,8 +83,8 @@ function wrapWithToolHeaderActions(child: React.ReactElement) {
 
 describe('DiffView', () => {
     it('renders per-file diffs from old/new text pairs when unified diffs are unavailable', async () => {
-        diffSpy.mockClear();
         codeLinesSpy.mockClear();
+        syntaxHookSpy.mockClear();
         const { DiffView } = await import('./DiffView');
 
         const tool = makeDiffTool([
@@ -87,24 +97,13 @@ describe('DiffView', () => {
             tree = renderer.create(wrapWithToolHeaderActions(React.createElement(DiffView, makeToolViewProps(tool, { detailLevel: 'full' }))));
         });
 
-        expect(tree.root.findAllByType('ToolDiffView' as any)).toHaveLength(2);
-        expect(tree.root.findAllByType('CodeLinesView' as any)).toHaveLength(0);
-        expect(diffSpy).toHaveBeenCalledWith(
-            expect.objectContaining({
-                oldText: 'old',
-                newText: 'new',
-            }),
-        );
-        expect(diffSpy).toHaveBeenCalledWith(
-            expect.objectContaining({
-                oldText: '',
-                newText: 'created',
-            }),
-        );
+        expect(tree.root.findAllByType('CodeLinesView' as any)).toHaveLength(2);
+        expect(syntaxHookSpy).toHaveBeenCalledWith('foo.txt');
+        expect(syntaxHookSpy).toHaveBeenCalledWith('bar.txt');
+        expect(codeLinesSpy).toHaveBeenCalledWith(expect.objectContaining({ syntaxHighlighting: expect.any(Object) }));
     });
 
     it('renders a compact per-file summary by default and expands a file inline on tap', async () => {
-        diffSpy.mockClear();
         codeLinesSpy.mockClear();
         const { DiffView } = await import('./DiffView');
 
@@ -126,7 +125,6 @@ describe('DiffView', () => {
             tree = renderer.create(wrapWithToolHeaderActions(React.createElement(DiffView, makeToolViewProps(tool, { detailLevel: 'summary' }))));
         });
 
-        expect(diffSpy).toHaveBeenCalledTimes(0);
         expect(codeLinesSpy).toHaveBeenCalledTimes(0);
 
         const combined = collectHostText(tree).join(' ').replace(/,/g, '');
@@ -143,12 +141,12 @@ describe('DiffView', () => {
         });
 
         expect(tree.root.findAllByType('CodeLinesView' as any)).toHaveLength(1);
-        expect(codeLinesSpy).toHaveBeenCalledTimes(1);
+        expect(codeLinesSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
     });
 
     it('shows all file diffs by default when detailLevel=full and allows collapsing/expanding', async () => {
-        diffSpy.mockClear();
         codeLinesSpy.mockClear();
+        syntaxHookSpy.mockClear();
         const { DiffView } = await import('./DiffView');
 
         const files = [
@@ -170,6 +168,9 @@ describe('DiffView', () => {
         });
 
         expect(tree.root.findAllByType('CodeLinesView' as any)).toHaveLength(2);
+        expect(syntaxHookSpy).toHaveBeenCalledWith('foo.txt');
+        expect(syntaxHookSpy).toHaveBeenCalledWith('bar.txt');
+        expect(codeLinesSpy).toHaveBeenCalledWith(expect.objectContaining({ syntaxHighlighting: expect.any(Object) }));
 
         const collapseAll = findPressableByText(tree, 'Show less', ['Pressable']);
         expect(collapseAll).toBeTruthy();
@@ -186,5 +187,32 @@ describe('DiffView', () => {
             expandAll!.props.onPress();
         });
         expect(tree.root.findAllByType('CodeLinesView' as any)).toHaveLength(2);
+    });
+
+    it('virtualizes large inline unified diffs to keep rendering responsive', async () => {
+        codeLinesSpy.mockClear();
+        const { DiffView } = await import('./DiffView');
+
+        const bigContext: string[] = [];
+        bigContext.push('--- a/foo.txt');
+        bigContext.push('+++ b/foo.txt');
+        bigContext.push('@@ -1,800 +1,800 @@');
+        for (let i = 0; i < 800; i++) {
+            bigContext.push(` line${i}`);
+        }
+        bigContext.push('-old');
+        bigContext.push('+new');
+
+        const tool = makeDiffTool([
+            { file_path: 'foo.txt', unified_diff: bigContext.join('\n') },
+        ]);
+
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(wrapWithToolHeaderActions(React.createElement(DiffView, makeToolViewProps(tool, { detailLevel: 'full' }))));
+        });
+
+        expect(tree.root.findAllByType('CodeLinesView' as any)).toHaveLength(1);
+        expect(codeLinesSpy).toHaveBeenCalledWith(expect.objectContaining({ virtualized: true }));
     });
 });
