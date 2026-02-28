@@ -3,6 +3,8 @@ import type {
     ScmBackendDescribeResponse,
     ScmChangeApplyRequest,
     ScmChangeApplyResponse,
+    ScmChangeDiscardRequest,
+    ScmChangeDiscardResponse,
     ScmCommitBackoutRequest,
     ScmCommitBackoutResponse,
     ScmCommitCreateRequest,
@@ -101,6 +103,18 @@ export function registerScmHandlers(rpcHandlerManager: RpcHandlerRegistrar, work
                 onNonRepository: async () => notRepositoryResponse<ScmChangeApplyResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.changeExclude({ context, request }),
+            })
+    );
+
+    rpcHandlerManager.registerHandler<ScmChangeDiscardRequest, ScmChangeDiscardResponse>(
+        RPC_METHODS.SCM_CHANGE_DISCARD,
+        async (request) =>
+            runScmRoute<ScmChangeDiscardRequest, ScmChangeDiscardResponse>({
+                request,
+                workingDirectory,
+                onNonRepository: async () => notRepositoryResponse<ScmChangeDiscardResponse>(),
+                runWithBackend: ({ context, selection }) =>
+                    selection.backend.changeDiscard({ context, request }),
             })
     );
 
