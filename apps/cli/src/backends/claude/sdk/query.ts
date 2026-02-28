@@ -27,6 +27,7 @@ import type { Writable } from 'node:stream'
 import { logger } from '@/ui/logger'
 import { createManagedChildProcess } from '@/subprocess/supervision/managedChildProcess'
 import { stripNestedSessionDetectionEnv } from '@/utils/processEnv/stripNestedSessionDetectionEnv'
+import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process'
 
 /**
  * Query class manages Claude Code process interaction
@@ -339,7 +340,7 @@ export function query(config: {
 
     // Determine how to spawn Claude Code
     // - If it's a .js/.cjs file → spawn('node', [path, ...args])
-    // - If it's just 'claude' command → spawn('claude', args) with shell on Windows
+    // - If it's just 'claude' command → resolve + wrap on Windows (PATHEXT .cmd/.bat)
     // - If it's a full path to binary → spawn(path, args)
     const isJsFile = pathToClaudeCodeExecutable.endsWith('.js') || pathToClaudeCodeExecutable.endsWith('.cjs')
     const isCommandOnly = pathToClaudeCodeExecutable === 'claude'
@@ -360,23 +361,24 @@ export function query(config: {
     // Use clean env for global claude to avoid local node_modules/.bin taking precedence
     const baseEnv = isCommandOnly ? getCleanEnv() : process.env
     const spawnEnv: NodeJS.ProcessEnv = stripNestedSessionDetectionEnv({ ...baseEnv, ...envOverlay })
+    // Internal daemon→CLI marker used for strict env filtering in Agent SDK remote mode.
+    // Never forward it into the Claude Code subprocess environment.
+    delete spawnEnv.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON;
     logDebug(`Spawning Claude Code process: ${spawnCommand} ${spawnArgs.join(' ')} (using ${isCommandOnly ? 'clean' : 'normal'} env)`)
 
-    const lowerSpawnCommand = typeof spawnCommand === 'string' ? spawnCommand.toLowerCase() : '';
-    const shouldUseShell =
-        process.platform === 'win32' &&
-        !isJsFile &&
-        (isCommandOnly || lowerSpawnCommand.endsWith('.cmd') || lowerSpawnCommand.endsWith('.bat'));
+    const invocation = resolveWindowsCommandInvocation({
+        command: spawnCommand,
+        args: spawnArgs,
+        env: spawnEnv,
+    });
 
-    const child = spawn(spawnCommand, spawnArgs, {
+    const child = spawn(invocation.command, invocation.args, {
         cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
         signal: config.options?.abort,
         env: spawnEnv,
-        // Use a shell on Windows only when needed to execute command-only or shell-script entrypoints.
-        // Avoid shell for native binaries to reduce quoting and spawn-surface variability.
-        shell: shouldUseShell,
         windowsHide: true,
+        ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
     }) as ChildProcessWithoutNullStreams
     const managedChild = createManagedChildProcess(child)
 
