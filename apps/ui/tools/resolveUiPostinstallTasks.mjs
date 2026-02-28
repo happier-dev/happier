@@ -18,6 +18,8 @@ export function resolveUiPostinstallTasks({ env }) {
             'setup-skia-web',
             'vendor-monaco',
             'vendor-kokoro-web',
+            'vendor-pierre-diffs-worker',
+            'vendor-codemirror-webview-bundle',
         )
     }
 
