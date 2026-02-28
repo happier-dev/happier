@@ -50,3 +50,21 @@ test('buildExpoDevEnv forces stack context in stack mode even when base env sets
 
   assert.equal(env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT, 'stack');
 });
+
+test('buildExpoDevEnv does not set EXPO_APP_SLUG in dev-client mode (slug must match EAS project)', () => {
+  const baseEnv = {
+    ...process.env,
+    EXPO_APP_SLUG: undefined,
+  };
+
+  const env = buildExpoDevEnv({
+    baseEnv,
+    apiServerUrl: 'http://localhost:3013',
+    wantDevClient: true,
+    wantWeb: false,
+    stackMode: true,
+    stackName: 'qa-agent-2',
+  });
+
+  assert.equal(env.EXPO_APP_SLUG, undefined);
+});
