@@ -6,7 +6,9 @@
       "read_known_file",
       "permission_surface_outside_workspace",
       "permission_deny_outside_workspace",
-      "abort_turn_then_continue"
+      "abort_turn_then_continue",
+      "agent_sdk_agent_teams_participant_routing_broadcast",
+      "agent_sdk_agent_teams_participant_routing_member"
     ]
   },
   "tiersByAuthMode": {
@@ -16,6 +18,8 @@
         "mcp_merge_preserves_user_tools",
         "read_known_file",
         "agent_sdk_read_known_file",
+        "agent_sdk_agent_teams_participant_routing_broadcast",
+        "agent_sdk_agent_teams_participant_routing_member",
         "permission_surface_outside_workspace",
         "agent_sdk_permission_surface_outside_workspace",
         "permission_deny_outside_workspace",
@@ -33,6 +37,8 @@
         "mcp_merge_preserves_user_tools",
         "read_known_file",
         "agent_sdk_read_known_file",
+        "agent_sdk_agent_teams_participant_routing_broadcast",
+        "agent_sdk_agent_teams_participant_routing_member",
         "permission_surface_outside_workspace",
         "agent_sdk_permission_surface_outside_workspace",
         "permission_deny_outside_workspace",

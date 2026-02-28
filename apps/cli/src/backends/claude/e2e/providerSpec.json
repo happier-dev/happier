@@ -19,7 +19,8 @@
     "extraArgs": ["--happy-starting-mode", "remote", "--started-by", "terminal"],
     "env": {
       "HEADLESS": "1",
-      "HAPPIER_VARIANT": "dev"
+      "HAPPIER_VARIANT": "dev",
+      "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
     }
   }
 }
