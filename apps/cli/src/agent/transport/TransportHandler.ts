@@ -20,7 +20,7 @@ export interface ToolPattern {
   /** Canonical tool name */
   name: string;
   /** Patterns to match in toolCallId (case-insensitive) */
-  patterns: string[];
+  patterns: readonly string[];
 }
 
 /**
