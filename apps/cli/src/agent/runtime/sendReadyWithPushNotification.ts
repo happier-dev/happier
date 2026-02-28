@@ -1,5 +1,4 @@
 import { logger } from '@/ui/logger'
-import { shouldSendReadyPushNotificationForActiveAccount } from '@/settings/notifications/notificationsPolicy'
 import type { SessionClientPort } from '@/api/session/sessionClientPort'
 import axios from 'axios'
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog'
@@ -19,7 +18,7 @@ export function sendReadyWithPushNotification(opts: {
   opts.session.sendSessionEvent({ type: 'ready' })
 
   try {
-    const shouldSend = opts.shouldSendPush ?? shouldSendReadyPushNotificationForActiveAccount
+    const shouldSend = opts.shouldSendPush ?? (() => true)
     if (shouldSend() !== true) return
     opts.pushSender.sendToAllDevices(
       "It's ready!",
