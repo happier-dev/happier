@@ -19,6 +19,8 @@ import {
   type InitializeRequest,
   type InitializeResponse,
   type NewSessionRequest,
+  type ForkSessionRequest,
+  type ForkSessionResponse,
   type LoadSessionRequest,
   type PromptRequest,
   type SetSessionModeRequest,
@@ -1286,6 +1288,64 @@ export class AcpBackend implements AgentBackend {
       return { ...result, replay };
     } finally {
       this.replayCapture = null;
+    }
+  }
+
+  /**
+   * Fork an existing session using ACP session/fork (UNSTABLE).
+   *
+   * This is only available when the agent advertises session.fork; callers should
+   * treat failures as "not supported" and fall back to other mechanisms.
+   */
+  async forkSession(params: Readonly<{ sessionId: SessionId; cwd?: string }>): Promise<StartSessionResult> {
+    if (this.disposed) {
+      throw new Error('Backend has been disposed');
+    }
+
+    const normalized = typeof params.sessionId === 'string' ? params.sessionId.trim() : '';
+    if (!normalized) {
+      throw new Error('Session ID is required');
+    }
+
+    this.emit({ type: 'status', status: 'starting' });
+
+    try {
+      if (!this.connection) {
+        await this.createConnectionAndInitialize({ operationId: randomUUID() });
+      }
+      const connection = this.connection;
+      const unstableForkSession = (connection as unknown as { unstable_forkSession?: unknown }).unstable_forkSession;
+      if (!connection || typeof unstableForkSession !== 'function') {
+        throw new Error(`${this.transport.agentName} does not support ACP session/fork`);
+      }
+
+      const request: ForkSessionRequest = {
+        sessionId: normalized,
+        cwd: typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : this.options.cwd,
+        mcpServers: this.buildAcpMcpServersForSessionRequest() as unknown as ForkSessionRequest['mcpServers'],
+      };
+
+      const response = await (unstableForkSession as (req: ForkSessionRequest) => Promise<ForkSessionResponse>)(request);
+      const forkedSessionId = typeof response?.sessionId === 'string' ? response.sessionId.trim() : '';
+      if (!forkedSessionId) {
+        throw new Error('Fork response did not include a session id');
+      }
+
+      this.acpSessionId = forkedSessionId;
+      this.seedSessionModesFromSessionResponse(response);
+      this.seedSessionModelsFromSessionResponse(response);
+      this.seedSessionConfigOptionsFromSessionResponse(response);
+      this.emitIdleStatus();
+
+      return { sessionId: forkedSessionId };
+    } catch (error) {
+      logger.debug('[AcpBackend] Error forking session:', error);
+      this.emit({
+        type: 'status',
+        status: 'error',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
     }
   }
 
