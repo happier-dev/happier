@@ -337,7 +337,7 @@ export const SidebarView = React.memo(() => {
                             onPress={handleAutomations}
                             hitSlop={15}
                             accessibilityRole="button"
-                            accessibilityLabel="Open automations"
+                            accessibilityLabel={t('automations.openA11y')}
                             style={styles.iconButton}
                         >
                             <Ionicons name="timer-outline" size={22} color={theme.colors.header.tint} />

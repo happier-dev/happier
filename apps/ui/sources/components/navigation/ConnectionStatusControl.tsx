@@ -341,44 +341,44 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                             maxHeight={Math.max(220, Math.min(maxHeight, 520))}
                             keyboardShouldPersistTaps="always"
                             edgeFades={{ top: true, bottom: true, size: 18 }}
-                            edgeIndicators={true}
-                        >
-                            <View style={{ paddingTop: 8 }}>
-                                <Text style={styles.popoverTitle}>Connection</Text>
+                                edgeIndicators={true}
+                            >
+                                <View style={{ paddingTop: 8 }}>
+                                    <Text style={styles.popoverTitle}>{t('connectionStatus.title')}</Text>
 
-                                <View style={styles.popoverRow}>
-                                    <Text style={styles.popoverLabel}>Server</Text>
-                                    <Text style={styles.popoverValue} numberOfLines={2}>{toServerUrlDisplay(getServerUrl())}</Text>
-                                </View>
-
-                                <View style={styles.popoverRow}>
-                                    <Text style={styles.popoverLabel}>Socket</Text>
-                                    <Text style={styles.popoverValue}>{socketStatus.status}</Text>
-                                </View>
-
-                                <View style={styles.popoverRow}>
-                                    <Text style={styles.popoverLabel}>Authenticated</Text>
-                                    <Text style={styles.popoverValue}>{auth.isAuthenticated ? 'Yes' : 'No'}</Text>
-                                </View>
-
-                                <View style={styles.popoverRow}>
-                                    <Text style={styles.popoverLabel}>Last sync</Text>
-                                    <Text style={styles.popoverValue}>{formatTime(lastSyncAt)}</Text>
-                                </View>
-
-                                {syncError?.nextRetryAt ? (
                                     <View style={styles.popoverRow}>
-                                        <Text style={styles.popoverLabel}>Next retry</Text>
-                                        <Text style={styles.popoverValue}>{formatTime(syncError.nextRetryAt)}</Text>
+                                        <Text style={styles.popoverLabel}>{t('connectionStatus.labels.server')}</Text>
+                                        <Text style={styles.popoverValue} numberOfLines={2}>{toServerUrlDisplay(getServerUrl())}</Text>
                                     </View>
-                                ) : null}
 
-                                {syncError ? (
                                     <View style={styles.popoverRow}>
-                                        <Text style={styles.popoverLabel}>Last error</Text>
-                                        <Text style={styles.popoverValue} numberOfLines={3}>{syncError.message}</Text>
+                                        <Text style={styles.popoverLabel}>{t('connectionStatus.labels.socket')}</Text>
+                                        <Text style={styles.popoverValue}>{socketStatus.status}</Text>
                                     </View>
-                                ) : null}
+
+                                    <View style={styles.popoverRow}>
+                                        <Text style={styles.popoverLabel}>{t('connectionStatus.labels.authenticated')}</Text>
+                                        <Text style={styles.popoverValue}>{auth.isAuthenticated ? t('common.yes') : t('common.no')}</Text>
+                                    </View>
+
+                                    <View style={styles.popoverRow}>
+                                        <Text style={styles.popoverLabel}>{t('connectionStatus.labels.lastSync')}</Text>
+                                        <Text style={styles.popoverValue}>{formatTime(lastSyncAt)}</Text>
+                                    </View>
+
+                                    {syncError?.nextRetryAt ? (
+                                        <View style={styles.popoverRow}>
+                                            <Text style={styles.popoverLabel}>{t('connectionStatus.labels.nextRetry')}</Text>
+                                            <Text style={styles.popoverValue}>{formatTime(syncError.nextRetryAt)}</Text>
+                                        </View>
+                                    ) : null}
+
+                                    {syncError ? (
+                                        <View style={styles.popoverRow}>
+                                            <Text style={styles.popoverLabel}>{t('connectionStatus.labels.lastError')}</Text>
+                                            <Text style={styles.popoverValue} numberOfLines={3}>{syncError.message}</Text>
+                                        </View>
+                                    ) : null}
 
                                 {serverTargets.length > 0 ? (
                                     <ConnectionTargetList
