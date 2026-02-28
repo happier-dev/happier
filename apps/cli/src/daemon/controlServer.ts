@@ -157,16 +157,19 @@ export function createDaemonControlApp({
   });
 
   // Spawn new session
-  typed.post('/spawn-session', {
-    schema: {
-      body: z.object({
-        directory: z.string(),
-        sessionId: z.string().optional(),
-        agent: z.enum(asNonEmptyStringTuple(CATALOG_AGENT_IDS as readonly CatalogAgentId[])).optional(),
-        terminal: z.object({
-          mode: z.enum(['plain', 'tmux']).optional(),
-          tmux: z.object({
-            sessionName: z.string().optional(),
+      typed.post('/spawn-session', {
+        schema: {
+          body: z.object({
+            directory: z.string(),
+            sessionId: z.string().optional(),
+            agent: z.enum(asNonEmptyStringTuple(CATALOG_AGENT_IDS as readonly CatalogAgentId[])).optional(),
+            token: z.string().optional(),
+            experimentalCodexResume: z.boolean().optional(),
+            experimentalCodexAcp: z.boolean().optional(),
+            terminal: z.object({
+              mode: z.enum(['plain', 'tmux']).optional(),
+              tmux: z.object({
+                sessionName: z.string().optional(),
             isolated: z.boolean().optional(),
             tmpDir: z.union([z.string(), z.null()]).optional(),
           }).optional(),
@@ -194,18 +197,38 @@ export function createDaemonControlApp({
         })
       }
     },
-    preHandler: requireAuth,
-  }, async (request, reply) => {
-    const { directory, sessionId, agent, terminal, environmentVariables, connectedServices } = request.body;
+        preHandler: requireAuth,
+      }, async (request, reply) => {
+        const {
+          directory,
+          sessionId,
+          agent,
+          token,
+          experimentalCodexResume,
+          experimentalCodexAcp,
+          terminal,
+          environmentVariables,
+          connectedServices,
+        } = request.body;
 
     logger.debug(`[CONTROL SERVER] Spawn session request: dir=${directory}, sessionId=${sessionId || 'new'}`);
-    let result: SpawnSessionResult;
-    try {
-      result = await spawnSession({ directory, sessionId, agent, terminal, environmentVariables, connectedServices });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      reply.code(500);
-      return {
+        let result: SpawnSessionResult;
+        try {
+          result = await spawnSession({
+            directory,
+            sessionId,
+            agent,
+            token,
+            experimentalCodexResume,
+            experimentalCodexAcp,
+            terminal,
+            environmentVariables,
+            connectedServices,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          reply.code(500);
+          return {
         success: false,
         error: `Failed to spawn session: ${message}`,
         errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,

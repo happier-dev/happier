@@ -43,7 +43,7 @@ describe('daemon control server: /spawn-session', () => {
     }
   });
 
-  it('passes terminal + environmentVariables through to spawnSession', async () => {
+  it('passes terminal + environmentVariables + token through to spawnSession', async () => {
     let observed: any = null;
 
     const app = createDaemonControlApp({
@@ -67,7 +67,9 @@ describe('daemon control server: /spawn-session', () => {
         payload: JSON.stringify({
           directory: '/tmp',
           sessionId: 'explicit-session',
-          agent: 'pi',
+          agent: 'codex',
+          token: 'dummy-token',
+          experimentalCodexAcp: true,
           terminal: {
             mode: 'tmux',
             tmux: { sessionName: 'happy-e2e', isolated: true, tmpDir: '/tmp/happy-tmux' },
@@ -96,7 +98,9 @@ describe('daemon control server: /spawn-session', () => {
       expect(observed).toEqual({
         directory: '/tmp',
         sessionId: 'explicit-session',
-        agent: 'pi',
+        agent: 'codex',
+        token: 'dummy-token',
+        experimentalCodexAcp: true,
         terminal: {
           mode: 'tmux',
           tmux: { sessionName: 'happy-e2e', isolated: true, tmpDir: '/tmp/happy-tmux' },
