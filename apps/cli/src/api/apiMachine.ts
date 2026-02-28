@@ -154,6 +154,9 @@ export class ApiMachineClient {
             const isReconnect = this.hasConnectedOnce;
             this.hasConnectedOnce = true;
 
+            // Register all handlers first so RPC routing is available immediately on connect.
+            this.rpcHandlerManager.onSocketConnect(this.socket);
+
             // Update daemon state to running
             // We need to override previous state because the daemon (this process)
             // has restarted with new PID & port
@@ -169,10 +172,6 @@ export class ApiMachineClient {
                     message: error instanceof Error ? error.message : String(error),
                 });
             });
-
-
-            // Register all handlers
-            this.rpcHandlerManager.onSocketConnect(this.socket);
 
             // Catch up on coalesced account changes (optional). This is a safety net for reconnects:
             // if we missed socket updates while disconnected, we can resync our machine state.
