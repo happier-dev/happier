@@ -8,6 +8,11 @@ export type PermissionRpcPayload = {
   allowedTools?: string[];
   allowTools?: string[]; // legacy alias
   /**
+   * Optional permission updates to apply inside the agent runtime (provider-specific).
+   * For Claude Agent SDK / Claude Code hooks, this matches `updatedPermissions` / `PermissionUpdate[]`.
+   */
+  updatedPermissions?: unknown;
+  /**
    * AskUserQuestion: structured answers keyed by question text.
    * Claude Code may use this to complete the interaction without a TUI.
    */
@@ -17,4 +22,3 @@ export type PermissionRpcPayload = {
    */
   receivedAt?: number;
 };
-

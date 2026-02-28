@@ -83,6 +83,65 @@ describe('ClaudeLocalPermissionBridge', () => {
     });
   });
 
+  it('includes updatedPermissions in allow hook responses when supplied by the UI', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-updated-permissions');
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
+    bridge.activate();
+
+    const pending = bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'ExitPlanMode',
+      tool_input: { plan: 'do things' },
+      tool_use_id: 'toolu_allow_updates_1',
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    const permissionHandler = client.rpcHandlerManager.getHandler('permission');
+    expect(permissionHandler).toBeDefined();
+    await permissionHandler?.({
+      id: 'toolu_allow_updates_1',
+      approved: true,
+      updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }],
+    });
+
+    await expect(pending).resolves.toMatchObject({
+      continue: true,
+      suppressOutput: true,
+      hookSpecificOutput: {
+        hookEventName: 'PermissionRequest',
+        decision: {
+          behavior: 'allow',
+          updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }],
+        },
+      },
+    });
+
+    expect(client.agentState.completedRequests.toolu_allow_updates_1).toMatchObject({
+      status: 'approved',
+      updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }],
+    });
+  });
+
+  it('captures permission_suggestions from hook payloads into agentState requests', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-suggestions');
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
+    bridge.activate();
+
+    bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Read',
+      tool_input: { file_path: '/tmp/file.txt' },
+      tool_use_id: 'toolu_suggest_1',
+      permission_suggestions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }],
+    } as any);
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.agentState.requests.toolu_suggest_1).toMatchObject({
+      tool: 'Read',
+      permissionSuggestions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }],
+    });
+  });
+
   it('maps deny decisions from RPC responses to hook deny responses', async () => {
     const { session, client } = createPermissionHandlerSessionStub('session-2');
     const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
@@ -115,6 +174,58 @@ describe('ClaudeLocalPermissionBridge', () => {
     expect(client.agentState.completedRequests.toolu_deny_1).toMatchObject({
       status: 'denied',
       reason: 'Denied from UI',
+    });
+  });
+
+  it('auto-allows new permission hooks after a session allowlist update', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-auto-allow');
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
+    bridge.activate();
+
+    const first = bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Bash',
+      tool_input: { command: 'unset FOO; find .' },
+      tool_use_id: 'toolu_allowlist_1',
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.agentState.requests.toolu_allowlist_1).toBeDefined();
+
+    const permissionHandler = client.rpcHandlerManager.getHandler('permission');
+    expect(permissionHandler).toBeDefined();
+    await permissionHandler?.({
+      id: 'toolu_allowlist_1',
+      approved: true,
+      updatedPermissions: [
+        {
+          type: 'addRules',
+          behavior: 'allow',
+          destination: 'session',
+          rules: [{ toolName: 'Bash', ruleContent: 'find:*' }],
+        },
+      ],
+    });
+
+    await expect(first).resolves.toMatchObject({
+      hookSpecificOutput: {
+        decision: { behavior: 'allow' },
+      },
+    });
+
+    const second = bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Bash',
+      tool_input: { command: 'unset BAR; find src -maxdepth 1' },
+      tool_use_id: 'toolu_allowlist_2',
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.agentState.requests.toolu_allowlist_2).toBeUndefined();
+    await expect(second).resolves.toMatchObject({
+      hookSpecificOutput: {
+        decision: { behavior: 'allow' },
+      },
     });
   });
 
@@ -259,6 +370,62 @@ describe('ClaudeLocalPermissionBridge', () => {
       expect(client.agentState.completedRequests.toolu_transcript_1).toMatchObject({
         status: 'approved',
         tool: 'Bash',
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('recovers tool_use_id from the session transcriptPath when transcript_path is missing in the hook payload', async () => {
+    vi.useRealTimers();
+    const dir = await mkdtemp(join(tmpdir(), 'happier-claude-perm-'));
+    const transcriptPath = join(dir, 'transcript.jsonl');
+    try {
+      await writeFile(
+        transcriptPath,
+        `${JSON.stringify({
+          message: {
+            content: [
+              {
+                type: 'tool_use',
+                id: 'toolu_transcript_2',
+                name: 'Bash',
+                input: { command: 'node --version' },
+              },
+            ],
+          },
+        })}\n`,
+        'utf8',
+      );
+
+      const { session, client } = createPermissionHandlerSessionStub('session-6');
+      (session as any).transcriptPath = transcriptPath;
+
+      const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
+      bridge.activate();
+
+      const pending = bridge.handlePermissionHook({
+        hook_event_name: 'PermissionRequest',
+        tool_name: 'Bash',
+        tool_input: { command: 'node --version' },
+      });
+
+      const waitStarted = Date.now();
+      while (Object.keys(client.agentState.requests).length === 0 && Date.now() - waitStarted < 250) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      }
+
+      const pendingIds = Object.keys(client.agentState.requests);
+      expect(pendingIds).toContain('toolu_transcript_2');
+
+      const permissionHandler = client.rpcHandlerManager.getHandler('permission');
+      await permissionHandler?.({ id: 'toolu_transcript_2', approved: true });
+
+      await expect(pending).resolves.toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: 'PermissionRequest',
+          decision: { behavior: 'allow' },
+        },
       });
     } finally {
       await rm(dir, { recursive: true, force: true });
