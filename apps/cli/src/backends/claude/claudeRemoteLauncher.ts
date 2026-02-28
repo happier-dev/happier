@@ -23,6 +23,7 @@ import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTa
 import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
 import { ClaudeRemoteTaskOutputCollector } from './remote/sidechains/claudeRemoteTaskOutputCollector';
 import { ClaudeRemoteSubagentFileCollector } from './remote/sidechains/claudeRemoteSubagentFileCollector';
+import { resolveClaudeSubagentJsonlPathForRemoteSession } from './remote/sidechains/resolveClaudeSubagentJsonlPathForRemoteSession';
 import { resolveHasTTY } from '@/ui/tty/resolveHasTTY';
 import { createNonBlockingStdout } from '@/ui/ink/nonBlockingStdout';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
@@ -269,10 +270,14 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             messageQueue.enqueue(body, { meta });
         },
         resolveJsonlPathForAgentId: ({ agentId, claudeSessionId }) => {
-            if (!claudeSessionId) return null;
             const sanitized = String(agentId ?? '').trim();
             if (!sanitized) return null;
-            return join(resolveClaudeProjectDir(session), claudeSessionId, 'subagents', `agent-${sanitized}.jsonl`);
+            return resolveClaudeSubagentJsonlPathForRemoteSession({
+                transcriptPath: session.transcriptPath ?? null,
+                projectDir: resolveClaudeProjectDir(session),
+                claudeSessionId: claudeSessionId ?? session.sessionId,
+                agentId: sanitized,
+            });
         },
     });
 
