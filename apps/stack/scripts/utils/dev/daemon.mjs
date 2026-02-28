@@ -150,16 +150,15 @@ export function watchHappyCliAndRestartDaemon({
   // Watch only source/config paths, not build outputs. Watching the whole repo can
   // trigger rebuild loops because `yarn build` writes to `dist/` (and may touch other
   // generated files), which then retriggers the watcher.
-  const watchPaths = [
-    join(cliDir, 'src'),
-    join(cliDir, 'bin'),
-    join(cliDir, 'codex'),
-    join(cliDir, 'package.json'),
-    join(cliDir, 'tsconfig.json'),
-    join(cliDir, 'tsconfig.build.json'),
-    join(cliDir, 'pkgroll.config.mjs'),
-    join(cliDir, 'yarn.lock'),
-  ].filter((p) => existsSyncImpl(p));
+    const watchPaths = [
+      join(cliDir, 'src'),
+      join(cliDir, 'bin'),
+      join(cliDir, 'codex'),
+      join(cliDir, 'package.json'),
+      join(cliDir, 'tsconfig.json'),
+      join(cliDir, 'tsconfig.build.json'),
+      join(cliDir, 'pkgroll.config.mjs'),
+    ].filter((p) => existsSyncImpl(p));
 
   return watchDebouncedImpl({
     paths: (watchPaths.length ? watchPaths : [cliDir]).map((p) => resolve(p)),

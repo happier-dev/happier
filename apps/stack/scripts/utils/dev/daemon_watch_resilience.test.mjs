@@ -173,6 +173,37 @@ test('watch forwards stack context to daemon restart', async () => {
   assert.equal(restartArgs.env?.TEST_ENV, '1');
 });
 
+test('watch does not include cliDir/yarn.lock in watched paths (prevents rebuild loops)', async () => {
+  let capturedPaths = null;
+
+  watchHappyCliAndRestartDaemon(
+    {
+      enabled: true,
+      startDaemon: true,
+      buildCli: true,
+      cliDir: '/tmp/happy-cli',
+      cliBin: '/tmp/happy-cli/bin/happier.mjs',
+      cliHomeDir: '/tmp/happy-cli-home',
+      internalServerUrl: 'http://127.0.0.1:3009',
+      publicServerUrl: 'http://localhost:3009',
+      isShuttingDown: () => false,
+    },
+    {
+      watchDebouncedImpl: ({ paths }) => {
+        capturedPaths = paths;
+        return { close() {} };
+      },
+      ensureCliBuiltImpl: async () => ({ built: true, reason: 'test' }),
+      startLocalDaemonWithAuthImpl: async () => {},
+      existsSyncImpl: () => true,
+      logger: { log() {}, warn() {}, error() {} },
+    },
+  );
+
+  assert.ok(Array.isArray(capturedPaths));
+  assert.ok(!capturedPaths.includes('/tmp/happy-cli/yarn.lock'));
+});
+
 test('ensureDevCliReady keeps existing dist output when build fails', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-daemon-cli-ready-'));
   t.after(async () => {
