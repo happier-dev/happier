@@ -30,15 +30,13 @@ import { getDaemonShutdownExitCode, getDaemonShutdownWatchdogTimeoutMs } from '.
 
 import { cleanupDaemonState, isDaemonRunningCurrentlyInstalledHappyVersion, stopDaemon } from './controlClient';
 import { startDaemonControlServer } from './controlServer';
-import { findHappyProcessByPid } from './doctor';
-import { hashProcessCommand } from './sessionRegistry';
-import { findRunningTrackedSessionById } from './findRunningTrackedSessionById';
 import { reattachTrackedSessionsFromMarkers } from './sessions/reattachFromMarkers';
 import { createOnHappySessionWebhook } from './sessions/onHappySessionWebhook';
 import { createOnChildExited } from './sessions/onChildExited';
 import { waitForVisibleConsoleSessionWebhook } from './sessions/visibleConsoleSpawnWaiter';
 import { createStopSession } from './sessions/stopSession';
 import { resolveSpawnWebhookResult } from './sessions/resolveSpawnWebhookResult';
+import { isSessionRunnerActive as isSessionRunnerActiveInDaemon } from './sessions/isSessionRunnerActive';
 import { startDaemonHeartbeatLoop } from './lifecycle/heartbeat';
 import { createSessionRunnerRespawnManager } from './processSupervision/sessionRunnerRespawn';
 import { publishShutdownStateBestEffort } from './lifecycle/publishShutdownState';
@@ -64,6 +62,7 @@ import { waitForSessionWebhook } from './spawn/waitForSessionWebhook';
 import { resolveSpawnChildEnvironment } from './spawn/resolveSpawnChildEnvironment';
 import { buildSpawnChildProcessEnv } from './spawn/buildSpawnChildProcessEnv';
 import { createSpawnConcurrencyGate } from './spawn/createSpawnConcurrencyGate';
+import { computeDaemonSpawnRequestKey, createSpawnRequestCoalescer } from './spawn/spawnRequestCoalescer';
 import { startAutomationWorker, type AutomationWorkerHandle } from './automation/automationWorker';
 import { startMemoryWorker, type MemoryWorkerHandle } from './memory/memoryWorker';
 import { resolveConnectedServiceAuthForSpawn } from './connectedServices/resolveConnectedServiceAuthForSpawn';
@@ -161,140 +160,146 @@ export async function startDaemon(): Promise<void> {
       logger.debug('[DAEMON RUN] Sleep prevention enabled');
     }
 
-	    // Setup state - key by PID
-	    const pidToTrackedSession = new Map<number, TrackedSession>();
-	    const spawnResourceCleanupByPid = new Map<number, () => void>();
-	    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+        // Setup state - key by PID
+        const pidToTrackedSession = new Map<number, TrackedSession>();
+        const spawnResourceCleanupByPid = new Map<number, () => void>();
+        const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
       const connectedServicesMaterializationBaseDir = join(configuration.happyHomeDir, 'daemon', 'connected-services', 'materialized');
       let connectedServiceRefreshCoordinator: ConnectedServiceRefreshCoordinator | null = null;
       let connectedServiceRefreshInterval: NodeJS.Timeout | null = null;
       let connectedServiceQuotasCoordinator: ConnectedServiceQuotasCoordinator | null = null;
       let connectedServiceQuotasLoopHandle: ConnectedServiceQuotasLoopHandle | null = null;
-		    let apiMachineForSessions: ApiMachineClient | null = null;
+            let apiMachineForSessions: ApiMachineClient | null = null;
       let automationWorker: AutomationWorkerHandle | null = null;
       let memoryWorker: MemoryWorkerHandle | null = null;
 
-	    // Session spawning awaiter system
-	    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
-	    const pidToSpawnResultResolver = new Map<number, (result: SpawnSessionResult) => void>();
-	    const pidToSpawnWebhookTimeout = new Map<number, NodeJS.Timeout>();
-	    const spawnConcurrencyGate = createSpawnConcurrencyGate(
-	      resolvePositiveIntEnv(process.env.HAPPIER_DAEMON_MAX_CONCURRENT_SPAWNS, 4, { min: 1, max: 64 }),
-	    );
+        // Session spawning awaiter system
+        const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
+            const pidToSpawnResultResolver = new Map<number, (result: SpawnSessionResult) => void>();
+            const pidToSpawnWebhookTimeout = new Map<number, NodeJS.Timeout>();
+            const spawnConcurrencyGate = createSpawnConcurrencyGate(
+              resolvePositiveIntEnv(process.env.HAPPIER_DAEMON_MAX_CONCURRENT_SPAWNS, 4, { min: 1, max: 64 }),
+            );
 
-    // Helper functions
-    const getCurrentChildren = () => Array.from(pidToTrackedSession.values());
+        const spawnRecentSuccessTtlMs = resolvePositiveIntEnv(
+          process.env.HAPPIER_DAEMON_SPAWN_RECENT_SUCCESS_TTL_MS,
+          2000,
+          { min: 0, max: 60_000 },
+        );
+        const spawnRequestCoalescer = createSpawnRequestCoalescer({
+          recentSuccessTtlMs: spawnRecentSuccessTtlMs,
+        });
 
-	    await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+        const isSessionRunnerActive = async (sessionIdRaw: string): Promise<boolean> => {
+          return await isSessionRunnerActiveInDaemon({
+            sessionId: sessionIdRaw,
+            trackedSessions: pidToTrackedSession.values(),
+          });
+        };
 
-	    // Handle webhook from happy session reporting itself
-	    const onHappySessionWebhook = createOnHappySessionWebhook({ pidToTrackedSession, pidToAwaiter });
-	    const resolveCanonicalTrackedSessionId = (pid: number): string => {
-	      const session = pidToTrackedSession.get(pid);
-	      const sessionId = typeof session?.happySessionId === 'string' ? session.happySessionId.trim() : '';
-	      if (!sessionId) return '';
-	      if (/^PID-\d+$/.test(sessionId)) return '';
-	      return sessionId;
-	    };
+        // Helper functions
+        const getCurrentChildren = () => Array.from(pidToTrackedSession.values());
 
-	    // Spawn a new session (sessionId reserved for future Happy session resume; vendor resume uses options.resume).
-		    const spawnSession = async (options: SpawnSessionOptions): Promise<SpawnSessionResult> => {
-	      return await spawnConcurrencyGate.run(async () => {
-	      // Do NOT log raw options: it may include secrets (token / env vars).
-	      const envKeysPreview = options.environmentVariables && typeof options.environmentVariables === 'object'
-	        ? Object.keys(options.environmentVariables as Record<string, unknown>)
-	        : [];
-	      const environmentVariablesValidation = validateEnvVarRecordStrict(options.environmentVariables);
-		      logger.debugLargeJson('[DAEMON RUN] Spawning session', {
-		        directory: options.directory,
-		        sessionId: options.sessionId,
-		        machineId: options.machineId,
-		        approvedNewDirectoryCreation: options.approvedNewDirectoryCreation,
-		        agent: options.agent,
-		        profileId: options.profileId,
-		        hasToken: !!options.token,
-		        hasInitialPrompt: typeof options.initialPrompt === 'string' && options.initialPrompt.trim().length > 0,
-		        hasResume: typeof options.resume === 'string' && options.resume.trim().length > 0,
-		        windowsRemoteSessionConsole: options.windowsRemoteSessionConsole,
-		        environmentVariableCount: envKeysPreview.length,
-		        environmentVariableKeys: envKeysPreview,
-		        environmentVariablesValid: environmentVariablesValidation.ok,
-		        environmentVariablesError: environmentVariablesValidation.ok ? null : environmentVariablesValidation.error,
-		      });
+        await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
 
-	      if (!environmentVariablesValidation.ok) {
-	        return {
+        // Handle webhook from happy session reporting itself
+        const onHappySessionWebhook = createOnHappySessionWebhook({ pidToTrackedSession, pidToAwaiter });
+        const resolveCanonicalTrackedSessionId = (pid: number): string => {
+          const session = pidToTrackedSession.get(pid);
+          const sessionId = typeof session?.happySessionId === 'string' ? session.happySessionId.trim() : '';
+          if (!sessionId) return '';
+          if (/^PID-\d+$/.test(sessionId)) return '';
+          return sessionId;
+        };
+
+            // Spawn a new session (sessionId reserved for future Happy session resume; vendor resume uses options.resume).
+                const spawnSession = async (options: SpawnSessionOptions): Promise<SpawnSessionResult> => {
+          const key = computeDaemonSpawnRequestKey(options);
+          return await spawnRequestCoalescer.run(key, async () => {
+            const normalizedExistingSessionId = typeof options.existingSessionId === 'string' ? options.existingSessionId.trim() : '';
+            if (normalizedExistingSessionId) {
+              // Idempotency: a resume/attach request must never spawn a duplicate process.
+              // This covers both:
+              // - sessions we are tracking (including in-flight attaches), and
+              // - runners started outside this daemon (lock file check).
+              if (await isSessionRunnerActive(normalizedExistingSessionId)) {
+                logger.debug(`[DAEMON RUN] Resume requested for ${normalizedExistingSessionId}, but session is already running`);
+                return { type: 'success', sessionId: normalizedExistingSessionId };
+              }
+            }
+
+            return await spawnConcurrencyGate.run(async () => {
+              // Do NOT log raw options: it may include secrets (token / env vars).
+              const envKeysPreview = options.environmentVariables && typeof options.environmentVariables === 'object'
+                ? Object.keys(options.environmentVariables as Record<string, unknown>)
+                : [];
+          const environmentVariablesValidation = validateEnvVarRecordStrict(options.environmentVariables);
+              logger.debugLargeJson('[DAEMON RUN] Spawning session', {
+                directory: options.directory,
+                sessionId: options.sessionId,
+                machineId: options.machineId,
+                approvedNewDirectoryCreation: options.approvedNewDirectoryCreation,
+                agent: options.agent,
+                profileId: options.profileId,
+                hasToken: !!options.token,
+                hasInitialPrompt: typeof options.initialPrompt === 'string' && options.initialPrompt.trim().length > 0,
+                hasResume: typeof options.resume === 'string' && options.resume.trim().length > 0,
+                windowsRemoteSessionConsole: options.windowsRemoteSessionConsole,
+                environmentVariableCount: envKeysPreview.length,
+                environmentVariableKeys: envKeysPreview,
+                environmentVariablesValid: environmentVariablesValidation.ok,
+                environmentVariablesError: environmentVariablesValidation.ok ? null : environmentVariablesValidation.error,
+              });
+
+          if (!environmentVariablesValidation.ok) {
+            return {
             type: 'error',
             errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_ENVIRONMENT_VARIABLES,
             errorMessage: environmentVariablesValidation.error,
           };
-	      }
+          }
 
-			      const {
-			        directory,
-			        sessionId,
-			        machineId,
-			        approvedNewDirectoryCreation = true,
-			        resume,
-			        existingSessionId,
-			        permissionMode,
-			        permissionModeUpdatedAt,
-			        modelId,
-			        modelUpdatedAt,
-			        initialPrompt,
-			        experimentalCodexResume,
-			        experimentalCodexAcp
-			      } = options;
-		      const normalizedResume = typeof resume === 'string' ? resume.trim() : '';
-		      const normalizedExistingSessionId = typeof existingSessionId === 'string' ? existingSessionId.trim() : '';
+                  const {
+                    directory,
+                    sessionId,
+                    machineId,
+                    approvedNewDirectoryCreation = true,
+                    resume,
+                    existingSessionId,
+                    permissionMode,
+                    permissionModeUpdatedAt,
+                    modelId,
+                    modelUpdatedAt,
+                    initialPrompt,
+                    experimentalCodexResume,
+                    experimentalCodexAcp
+                  } = options;
+              const normalizedResume = typeof resume === 'string' ? resume.trim() : '';
+              const normalizedExistingSessionId = typeof existingSessionId === 'string' ? existingSessionId.trim() : '';
 
-		      const normalizedInitialPrompt = normalizeDaemonInitialPrompt(initialPrompt);
+              const normalizedInitialPrompt = normalizeDaemonInitialPrompt(initialPrompt);
 
-		      // Idempotency: a resume request should not spawn a duplicate process when the session is already running.
-	      // This is especially important for pending-queue wake-ups, where the UI may attempt a best-effort wake
-	      // even if a session is already attached.
-		      if (normalizedExistingSessionId) {
-		        const existingTracked = await findRunningTrackedSessionById({
-		          sessions: pidToTrackedSession.values(),
-		          happySessionId: normalizedExistingSessionId,
-	          isPidAlive: async (pid) => {
-	            try {
-	              process.kill(pid, 0);
-	              return true;
-	            } catch {
-	              return false;
-	            }
-	          },
-	          getProcessCommandHash: async (pid) => {
-	            const proc = await findHappyProcessByPid(pid);
-	            return proc?.command ? hashProcessCommand(proc.command) : null;
-	          },
-	        });
-	        if (existingTracked) {
-	          logger.debug(`[DAEMON RUN] Resume requested for ${normalizedExistingSessionId}, but session is already running (pid=${existingTracked.pid})`);
-		          return { type: 'success', sessionId: normalizedExistingSessionId };
-		        }
-		      }
-		      const effectiveResume = normalizedResume;
-          const catalogAgentId = resolveCatalogAgentId(options.agent ?? null);
+          // NOTE: existing-session idempotency is handled before entering the spawn concurrency gate.
+                  const effectiveResume = normalizedResume;
+              const catalogAgentId = resolveCatalogAgentId(options.agent ?? null);
 
-		      // Only gate vendor resume. Happy-session reconnect (existingSessionId) is supported for all agents.
-		      if (effectiveResume) {
+              // Only gate vendor resume. Happy-session reconnect (existingSessionId) is supported for all agents.
+              if (effectiveResume) {
             const vendorResumeSupport = await getVendorResumeSupport(options.agent ?? null);
             const ok = vendorResumeSupport({ experimentalCodexResume, experimentalCodexAcp });
             if (!ok) {
               const supportLevel = AGENTS[catalogAgentId].vendorResumeSupport;
               const qualifier = supportLevel === 'experimental' ? ' (experimental and not enabled)' : '';
-		        return {
-		          type: 'error',
+                return {
+                  type: 'error',
               errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED,
-		          errorMessage: `Resume is not supported for agent '${catalogAgentId}'${qualifier}.`,
-		        };
+                  errorMessage: `Resume is not supported for agent '${catalogAgentId}'${qualifier}.`,
+                };
             }
-		      }
+              }
 
-		      let normalizedSessionEncryptionKeyBase64 = '';
-		      if (normalizedExistingSessionId) {
+              let normalizedSessionEncryptionKeyBase64 = '';
+              if (normalizedExistingSessionId) {
             const credentials = await readCredentials().catch(() => null);
             if (!credentials || credentials.encryption.type !== 'dataKey') {
               return {
@@ -317,27 +322,27 @@ export async function startDaemon(): Promise<void> {
             }
 
             normalizedSessionEncryptionKeyBase64 = resolved;
-		      }
-		      let directoryCreated = false;
+              }
+              let directoryCreated = false;
 
           const daemonSpawnHooks = AGENTS[catalogAgentId].getDaemonSpawnHooks
             ? await AGENTS[catalogAgentId].getDaemonSpawnHooks!()
             : null;
 
-		      let spawnResourceCleanupOnFailure: (() => void) | null = null;
-		      let spawnResourceCleanupOnExit: (() => void) | null = null;
-		      let spawnResourceCleanupArmed = false;
-		      let sessionAttachCleanup: (() => Promise<void>) | null = null;
+              let spawnResourceCleanupOnFailure: (() => void) | null = null;
+              let spawnResourceCleanupOnExit: (() => void) | null = null;
+              let spawnResourceCleanupArmed = false;
+              let sessionAttachCleanup: (() => Promise<void>) | null = null;
 
-	      const ensuredDirectory = await ensureSessionDirectory({
-	        directory,
-	        approvedNewDirectoryCreation,
-	      });
-	      if (!ensuredDirectory.ok) {
-	        logger.debug(`[DAEMON RUN] Directory setup failed for ${directory}`, ensuredDirectory.response);
-	        return ensuredDirectory.response;
-	      }
-	      directoryCreated = ensuredDirectory.directoryCreated;
+          const ensuredDirectory = await ensureSessionDirectory({
+            directory,
+            approvedNewDirectoryCreation,
+          });
+          if (!ensuredDirectory.ok) {
+            logger.debug(`[DAEMON RUN] Directory setup failed for ${directory}`, ensuredDirectory.response);
+            return ensuredDirectory.response;
+          }
+          directoryCreated = ensuredDirectory.directoryCreated;
 
       try {
 
@@ -405,97 +410,97 @@ export async function startDaemon(): Promise<void> {
         const extraEnv = spawnEnvironment.expandedEnvironmentVariables;
         const extraEnvForChild = spawnEnvironment.extraEnvForChild;
 
-	        const terminalRequest = resolveTerminalRequestFromSpawnOptions({
-	          happyHomeDir: configuration.happyHomeDir,
-	          terminal: options.terminal,
-	          environmentVariables: extraEnv,
-	        });
-	        let sessionAttachFilePath: string | null = null;
-	        if (normalizedExistingSessionId) {
-	          const attach = await createSessionAttachFile({
-	            happySessionId: normalizedExistingSessionId,
-	            payload: {
-	              encryptionKeyBase64: normalizedSessionEncryptionKeyBase64,
-	              encryptionVariant: 'dataKey',
-	            },
-	          });
-	          sessionAttachFilePath = attach.filePath;
-	          sessionAttachCleanup = attach.cleanup;
-	        }
+            const terminalRequest = resolveTerminalRequestFromSpawnOptions({
+              happyHomeDir: configuration.happyHomeDir,
+              terminal: options.terminal,
+              environmentVariables: extraEnv,
+            });
+            let sessionAttachFilePath: string | null = null;
+            if (normalizedExistingSessionId) {
+              const attach = await createSessionAttachFile({
+                happySessionId: normalizedExistingSessionId,
+                payload: {
+                  encryptionKeyBase64: normalizedSessionEncryptionKeyBase64,
+                  encryptionVariant: 'dataKey',
+                },
+              });
+              sessionAttachFilePath = attach.filePath;
+              sessionAttachCleanup = attach.cleanup;
+            }
 
-	        const extraEnvForChildWithMessage = {
-	          ...extraEnvForChild,
-	          ...(sessionAttachFilePath
-	            ? { HAPPIER_SESSION_ATTACH_FILE: sessionAttachFilePath }
-	            : {}),
-	          ...(normalizedInitialPrompt
-	            ? { [HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY]: normalizedInitialPrompt }
-	            : {}),
-	        };
+            const extraEnvForChildWithMessage = {
+              ...extraEnvForChild,
+              ...(sessionAttachFilePath
+                ? { HAPPIER_SESSION_ATTACH_FILE: sessionAttachFilePath }
+                : {}),
+              ...(normalizedInitialPrompt
+                ? { [HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY]: normalizedInitialPrompt }
+                : {}),
+            };
 
-	        // Check if tmux is available and should be used
-	        const tmuxAvailable = await isTmuxAvailable();
-	        const tmuxRequested = terminalRequest.requested === 'tmux';
-	        let useTmux = tmuxAvailable && tmuxRequested;
+            // Check if tmux is available and should be used
+            const tmuxAvailable = await isTmuxAvailable();
+            const tmuxRequested = terminalRequest.requested === 'tmux';
+            let useTmux = tmuxAvailable && tmuxRequested;
 
-	        const tmuxSessionName = tmuxRequested ? terminalRequest.tmux.sessionName : undefined;
-	        const tmuxTmpDir = tmuxRequested ? terminalRequest.tmux.tmpDir : null;
-	        const tmuxCommandEnv: Record<string, string> = {};
-	        if (tmuxTmpDir) {
-	          tmuxCommandEnv.TMUX_TMPDIR = tmuxTmpDir;
-	        }
+            const tmuxSessionName = tmuxRequested ? terminalRequest.tmux.sessionName : undefined;
+            const tmuxTmpDir = tmuxRequested ? terminalRequest.tmux.tmpDir : null;
+            const tmuxCommandEnv: Record<string, string> = {};
+            if (tmuxTmpDir) {
+              tmuxCommandEnv.TMUX_TMPDIR = tmuxTmpDir;
+            }
 
-	        let tmuxFallbackReason: string | null = null;
+            let tmuxFallbackReason: string | null = null;
 
-	        if (!tmuxAvailable && tmuxRequested) {
-	          tmuxFallbackReason = 'tmux is not available on this machine';
-	          logger.debug('[DAEMON RUN] tmux requested but tmux is not available; falling back to regular spawning');
-	        }
+            if (!tmuxAvailable && tmuxRequested) {
+              tmuxFallbackReason = 'tmux is not available on this machine';
+              logger.debug('[DAEMON RUN] tmux requested but tmux is not available; falling back to regular spawning');
+            }
 
-	        if (useTmux && tmuxSessionName !== undefined) {
-	          // Resolve empty-string session name (legacy "current/most recent") deterministically.
-	          let resolvedTmuxSessionName = tmuxSessionName;
-	          if (tmuxSessionName === '') {
-	            try {
-	              const tmuxForDiscovery = new TmuxUtilities(undefined, tmuxCommandEnv);
-	              const listResult = await tmuxForDiscovery.executeTmuxCommand([
-	                'list-sessions',
-	                '-F',
-	                '#{session_name}\t#{session_attached}\t#{session_last_attached}',
-	              ]);
-	              resolvedTmuxSessionName =
-	                selectPreferredTmuxSessionName(listResult?.stdout ?? '') ?? TmuxUtilities.DEFAULT_SESSION_NAME;
-	            } catch (error) {
-	              logger.debug('[DAEMON RUN] Failed to resolve current/most-recent tmux session; defaulting to "happy"', error);
-	              resolvedTmuxSessionName = TmuxUtilities.DEFAULT_SESSION_NAME;
-	            }
-	          }
+            if (useTmux && tmuxSessionName !== undefined) {
+              // Resolve empty-string session name (legacy "current/most recent") deterministically.
+              let resolvedTmuxSessionName = tmuxSessionName;
+              if (tmuxSessionName === '') {
+                try {
+                  const tmuxForDiscovery = new TmuxUtilities(undefined, tmuxCommandEnv);
+                  const listResult = await tmuxForDiscovery.executeTmuxCommand([
+                    'list-sessions',
+                    '-F',
+                    '#{session_name}\t#{session_attached}\t#{session_last_attached}',
+                  ]);
+                  resolvedTmuxSessionName =
+                    selectPreferredTmuxSessionName(listResult?.stdout ?? '') ?? TmuxUtilities.DEFAULT_SESSION_NAME;
+                } catch (error) {
+                  logger.debug('[DAEMON RUN] Failed to resolve current/most-recent tmux session; defaulting to "happy"', error);
+                  resolvedTmuxSessionName = TmuxUtilities.DEFAULT_SESSION_NAME;
+                }
+              }
 
-	          // Try to spawn in tmux session
-	          const sessionDesc = resolvedTmuxSessionName || 'current/most recent session';
-	          logger.debug(`[DAEMON RUN] Attempting to spawn session in tmux: ${sessionDesc}`);
+              // Try to spawn in tmux session
+              const sessionDesc = resolvedTmuxSessionName || 'current/most recent session';
+              logger.debug(`[DAEMON RUN] Attempting to spawn session in tmux: ${sessionDesc}`);
 
-	          const agentSubcommand = resolveAgentCliSubcommand(options.agent);
-	          const windowName = `happy-${Date.now()}-${agentSubcommand}`;
-	          const tmuxTarget = `${resolvedTmuxSessionName}:${windowName}`;
+              const agentSubcommand = resolveAgentCliSubcommand(options.agent);
+              const windowName = `happy-${Date.now()}-${agentSubcommand}`;
+              const tmuxTarget = `${resolvedTmuxSessionName}:${windowName}`;
 
-	          const terminalRuntimeArgs = [
-	            '--happy-terminal-mode',
-	            'tmux',
-	            '--happy-terminal-requested',
-	            'tmux',
-	            '--happy-tmux-target',
-	            tmuxTarget,
-	            ...(tmuxTmpDir ? ['--happy-tmux-tmpdir', tmuxTmpDir] : []),
-	          ];
+              const terminalRuntimeArgs = [
+                '--happy-terminal-mode',
+                'tmux',
+                '--happy-terminal-requested',
+                'tmux',
+                '--happy-tmux-target',
+                tmuxTarget,
+                ...(tmuxTmpDir ? ['--happy-tmux-tmpdir', tmuxTmpDir] : []),
+              ];
 
-		          const { commandTokens, tmuxEnv } = buildTmuxSpawnConfig({
-		            agent: agentSubcommand,
-		            directory,
-		            extraEnv: extraEnvForChildWithMessage,
-		            tmuxCommandEnv,
-		            extraArgs: [
-		              ...terminalRuntimeArgs,
+                  const { commandTokens, tmuxEnv } = buildTmuxSpawnConfig({
+                    agent: agentSubcommand,
+                    directory,
+                    extraEnv: extraEnvForChildWithMessage,
+                    tmuxCommandEnv,
+                    extraArgs: [
+                      ...terminalRuntimeArgs,
                   ...buildHappySessionControlArgs({
                     resume: effectiveResume,
                     existingSessionId: normalizedExistingSessionId,
@@ -504,28 +509,28 @@ export async function startDaemon(): Promise<void> {
                     modelId,
                     modelUpdatedAt,
                   }),
-		            ],
-		          });
-	          const tmux = new TmuxUtilities(resolvedTmuxSessionName, tmuxCommandEnv);
+                    ],
+                  });
+              const tmux = new TmuxUtilities(resolvedTmuxSessionName, tmuxCommandEnv);
 
           // Spawn in tmux with environment variables
           // IMPORTANT: `spawnInTmux` uses `-e KEY=VALUE` flags for the window.
           // Use merged env so tmux mode matches regular process spawn behavior.
           // Note: this may add many `-e` flags; if it becomes a problem we can optimize
           // by diffing against `tmux show-environment` in a follow-up.
-	          if (tmuxTmpDir) {
-	            try {
-	              await fs.mkdir(tmuxTmpDir, { recursive: true });
-	            } catch (error) {
-	              logger.debug('[DAEMON RUN] Failed to ensure TMUX_TMPDIR exists; tmux may fail to start', error);
-	            }
-	          }
+              if (tmuxTmpDir) {
+                try {
+                  await fs.mkdir(tmuxTmpDir, { recursive: true });
+                } catch (error) {
+                  logger.debug('[DAEMON RUN] Failed to ensure TMUX_TMPDIR exists; tmux may fail to start', error);
+                }
+              }
 
-	          const tmuxResult = await tmux.spawnInTmux(commandTokens, {
-	            sessionName: resolvedTmuxSessionName,
-	            windowName: windowName,
-	            cwd: directory
-	          }, tmuxEnv);  // Pass complete environment for tmux session
+              const tmuxResult = await tmux.spawnInTmux(commandTokens, {
+                sessionName: resolvedTmuxSessionName,
+                windowName: windowName,
+                cwd: directory
+              }, tmuxEnv);  // Pass complete environment for tmux session
 
           if (tmuxResult.success) {
             logger.debug(`[DAEMON RUN] Successfully spawned in tmux session: ${tmuxResult.sessionId}, PID: ${tmuxResult.pid}`);
@@ -539,21 +544,21 @@ export async function startDaemon(): Promise<void> {
             // Resolve the actual tmux session name used (important when sessionName was empty/undefined)
             const tmuxSession = tmuxResult.sessionName ?? (resolvedTmuxSessionName || 'happy');
 
-	            // Create a tracked session for tmux windows - now we have the real PID!
-	            const trackedSession: TrackedSession = {
-	              startedBy: 'daemon',
-	              pid: tmuxPid, // Real PID from tmux -P flag
-	              spawnOptions: options,
-	              tmuxSessionId: tmuxResult.sessionId,
-	              vendorResumeId: effectiveResume || undefined,
-	              directoryCreated,
-	              message: directoryCreated
-	                ? `The path '${directory}' did not exist. We created a new folder and spawned a new session in tmux session '${tmuxSession}'. Use 'tmux attach -t ${tmuxSession}' to view the session.`
-	                : `Spawned new session in tmux session '${tmuxSession}'. Use 'tmux attach -t ${tmuxSession}' to view the session.`
-	            };
+                // Create a tracked session for tmux windows - now we have the real PID!
+                const trackedSession: TrackedSession = {
+                  startedBy: 'daemon',
+                  pid: tmuxPid, // Real PID from tmux -P flag
+                  spawnOptions: options,
+                  tmuxSessionId: tmuxResult.sessionId,
+                  vendorResumeId: effectiveResume || undefined,
+                  directoryCreated,
+                  message: directoryCreated
+                    ? `The path '${directory}' did not exist. We created a new folder and spawned a new session in tmux session '${tmuxSession}'. Use 'tmux attach -t ${tmuxSession}' to view the session.`
+                    : `Spawned new session in tmux session '${tmuxSession}'. Use 'tmux attach -t ${tmuxSession}' to view the session.`
+                };
 
-	            // Add to tracking map so webhook can find it later
-	            pidToTrackedSession.set(tmuxPid, trackedSession);
+                // Add to tracking map so webhook can find it later
+                pidToTrackedSession.set(tmuxPid, trackedSession);
               if (connectedServiceAuth && options.connectedServices) {
                 connectedServiceRefreshCoordinator?.registerSpawnTarget({
                   pid: tmuxPid,
@@ -566,14 +571,14 @@ export async function startDaemon(): Promise<void> {
                   connectedServicesBindingsRaw: options.connectedServices,
                 });
               }
-	            if (spawnResourceCleanupOnExit) {
-	              spawnResourceCleanupByPid.set(tmuxPid, spawnResourceCleanupOnExit);
-	              spawnResourceCleanupArmed = true;
-	            }
-	            if (sessionAttachCleanup) {
-	              sessionAttachCleanupByPid.set(tmuxPid, sessionAttachCleanup);
-	              sessionAttachCleanup = null;
-	            }
+                if (spawnResourceCleanupOnExit) {
+                  spawnResourceCleanupByPid.set(tmuxPid, spawnResourceCleanupOnExit);
+                  spawnResourceCleanupArmed = true;
+                }
+                if (sessionAttachCleanup) {
+                  sessionAttachCleanupByPid.set(tmuxPid, sessionAttachCleanup);
+                  sessionAttachCleanup = null;
+                }
 
             // Wait for webhook to populate session with happySessionId (exact same as regular flow)
             logger.debug(`[DAEMON RUN] Waiting for session webhook for PID ${tmuxPid} (tmux)`);
@@ -598,35 +603,35 @@ export async function startDaemon(): Promise<void> {
                 warn: (message) => logger.warn(message),
               }),
             );
-	          } else {
-	            tmuxFallbackReason = tmuxResult.error ?? 'tmux spawn failed';
-	            logger.debug(`[DAEMON RUN] Failed to spawn in tmux: ${tmuxResult.error}, falling back to regular spawning`);
-	            useTmux = false;
-	          }
-	        }
-	
-	        // Regular process spawning (fallback or if tmux not available)
-	        if (!useTmux) {
-	          logger.debug(`[DAEMON RUN] Using regular process spawning`);
+              } else {
+                tmuxFallbackReason = tmuxResult.error ?? 'tmux spawn failed';
+                logger.debug(`[DAEMON RUN] Failed to spawn in tmux: ${tmuxResult.error}, falling back to regular spawning`);
+                useTmux = false;
+              }
+            }
+
+            // Regular process spawning (fallback or if tmux not available)
+            if (!useTmux) {
+              logger.debug(`[DAEMON RUN] Using regular process spawning`);
 
           const agentCommand = resolveAgentCliSubcommand(options.agent);
-	          const args = [
-	            agentCommand,
-	            '--happy-starting-mode', 'remote',
-	            '--started-by', 'daemon'
-	          ];
+              const args = [
+                agentCommand,
+                '--happy-starting-mode', 'remote',
+                '--started-by', 'daemon'
+              ];
 
-	          if (tmuxRequested) {
-	            const reason = tmuxFallbackReason ?? 'tmux was not used';
-	            args.push(
-	              '--happy-terminal-mode',
-	              'plain',
+              if (tmuxRequested) {
+                const reason = tmuxFallbackReason ?? 'tmux was not used';
+                args.push(
+                  '--happy-terminal-mode',
+                  'plain',
               '--happy-terminal-requested',
               'tmux',
-	              '--happy-terminal-fallback-reason',
-	              reason,
-	            );
-	          }
+                  '--happy-terminal-fallback-reason',
+                  reason,
+                );
+              }
 
               args.push(...buildHappySessionControlArgs({
                 resume: effectiveResume,
@@ -637,60 +642,60 @@ export async function startDaemon(): Promise<void> {
                 modelUpdatedAt,
               }));
 
-		          const windowsConsoleMode = resolveWindowsRemoteSessionConsoleMode({
-		            platform: process.platform,
-		            requested: options.windowsRemoteSessionConsole,
-		            env: process.env,
-		          });
+                  const windowsConsoleMode = resolveWindowsRemoteSessionConsoleMode({
+                    platform: process.platform,
+                    requested: options.windowsRemoteSessionConsole,
+                    env: process.env,
+                  });
 
-				          if (windowsConsoleMode === 'visible') {
-				            const launchSpec = buildHappyCliSubprocessLaunchSpec(args);
-				            const started = await startHappySessionInVisibleWindowsConsole({
-				              filePath: launchSpec.filePath,
-				              args: launchSpec.args,
-				              workingDirectory: directory,
-				              env: {
-				                ...process.env,
-				                ...extraEnvForChildWithMessage,
-				                ...(launchSpec.env ?? {}),
-				              },
-				            });
+                          if (windowsConsoleMode === 'visible') {
+                            const launchSpec = buildHappyCliSubprocessLaunchSpec(args);
+                            const started = await startHappySessionInVisibleWindowsConsole({
+                              filePath: launchSpec.filePath,
+                              args: launchSpec.args,
+                              workingDirectory: directory,
+                              env: {
+                                ...process.env,
+                                ...extraEnvForChildWithMessage,
+                                ...(launchSpec.env ?? {}),
+                              },
+                            });
 
-		            if (!started.ok) {
-		              logger.debug('[DAEMON RUN] Failed to spawn visible Windows console session', { error: started.errorMessage });
-		              if (spawnResourceCleanupOnFailure && !spawnResourceCleanupArmed) {
-		                spawnResourceCleanupOnFailure();
-		                spawnResourceCleanupOnFailure = null;
-		                spawnResourceCleanupOnExit = null;
-		              }
-		              if (sessionAttachCleanup) {
-		                await sessionAttachCleanup();
-		                sessionAttachCleanup = null;
-		              }
-		              return {
-		                type: 'error',
-		                errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
-		                errorMessage: started.errorMessage,
-		              };
-		            }
+                    if (!started.ok) {
+                      logger.debug('[DAEMON RUN] Failed to spawn visible Windows console session', { error: started.errorMessage });
+                      if (spawnResourceCleanupOnFailure && !spawnResourceCleanupArmed) {
+                        spawnResourceCleanupOnFailure();
+                        spawnResourceCleanupOnFailure = null;
+                        spawnResourceCleanupOnExit = null;
+                      }
+                      if (sessionAttachCleanup) {
+                        await sessionAttachCleanup();
+                        sessionAttachCleanup = null;
+                      }
+                      return {
+                        type: 'error',
+                        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+                        errorMessage: started.errorMessage,
+                      };
+                    }
 
-		            const pid = started.pid;
-		            logger.debug(`[DAEMON RUN] Spawned visible-console session with PID ${pid}`);
+                    const pid = started.pid;
+                    logger.debug(`[DAEMON RUN] Spawned visible-console session with PID ${pid}`);
 
-		            if (sessionAttachCleanup) {
-		              sessionAttachCleanupByPid.set(pid, sessionAttachCleanup);
-		              sessionAttachCleanup = null;
-		            }
+                    if (sessionAttachCleanup) {
+                      sessionAttachCleanupByPid.set(pid, sessionAttachCleanup);
+                      sessionAttachCleanup = null;
+                    }
 
-		            const trackedSession: TrackedSession = {
-		              startedBy: 'daemon',
-		              pid,
-		              spawnOptions: options,
-		              vendorResumeId: effectiveResume || undefined,
-		              directoryCreated,
-		              message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined,
-		            };
-		            pidToTrackedSession.set(pid, trackedSession);
+                    const trackedSession: TrackedSession = {
+                      startedBy: 'daemon',
+                      pid,
+                      spawnOptions: options,
+                      vendorResumeId: effectiveResume || undefined,
+                      directoryCreated,
+                      message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined,
+                    };
+                    pidToTrackedSession.set(pid, trackedSession);
                 if (connectedServiceAuth && options.connectedServices) {
                   connectedServiceRefreshCoordinator?.registerSpawnTarget({
                     pid,
@@ -704,65 +709,65 @@ export async function startDaemon(): Promise<void> {
                   });
                 }
 
-		            if (spawnResourceCleanupOnExit) {
-		              spawnResourceCleanupByPid.set(pid, spawnResourceCleanupOnExit);
-		              spawnResourceCleanupArmed = true;
-		            }
+                    if (spawnResourceCleanupOnExit) {
+                      spawnResourceCleanupByPid.set(pid, spawnResourceCleanupOnExit);
+                      spawnResourceCleanupArmed = true;
+                    }
 
-		            // Best-effort: poll for exit so we can run cleanup hooks (e.g. Codex tmp CODEX_HOME).
-		            const pollMsRaw = typeof process.env.HAPPIER_DAEMON_VISIBLE_CONSOLE_EXIT_POLL_MS === 'string'
-		              ? process.env.HAPPIER_DAEMON_VISIBLE_CONSOLE_EXIT_POLL_MS.trim()
-		              : '';
-		            const pollMsParsed = pollMsRaw ? Number(pollMsRaw) : NaN;
-		            const pollMs = Number.isFinite(pollMsParsed) && pollMsParsed > 0 ? pollMsParsed : 5000;
+                    // Best-effort: poll for exit so we can run cleanup hooks (e.g. Codex tmp CODEX_HOME).
+                    const pollMsRaw = typeof process.env.HAPPIER_DAEMON_VISIBLE_CONSOLE_EXIT_POLL_MS === 'string'
+                      ? process.env.HAPPIER_DAEMON_VISIBLE_CONSOLE_EXIT_POLL_MS.trim()
+                      : '';
+                    const pollMsParsed = pollMsRaw ? Number(pollMsRaw) : NaN;
+                    const pollMs = Number.isFinite(pollMsParsed) && pollMsParsed > 0 ? pollMsParsed : 5000;
 
-			            // Wait for webhook to populate session with happySessionId
-			            logger.debug(`[DAEMON RUN] Waiting for session webhook for PID ${pid} (visible console)`);
+                        // Wait for webhook to populate session with happySessionId
+                        logger.debug(`[DAEMON RUN] Waiting for session webhook for PID ${pid} (visible console)`);
 
-				            return waitForVisibleConsoleSessionWebhook({
-				              pid,
-				              pollMs,
-				              pidToAwaiter,
-				              pidToSpawnResultResolver,
-				              pidToSpawnWebhookTimeout,
-				              onChildExited,
-				              resolveExistingSessionId: () => resolveCanonicalTrackedSessionId(pid),
-				            }).then((result) => {
-			              const resolved = resolveSpawnWebhookResult({
-			                pid,
-			                result,
-			                pidToTrackedSession,
-			                warn: (message) => logger.warn(message),
-			              });
-			              if (resolved.type === 'success') {
-			                logger.debug(
-			                  `[DAEMON RUN] Session ${resolved.sessionId} fully spawned with webhook (visible console)`,
-			                );
-			              } else if (
-			                resolved.type === 'error' &&
-			                resolved.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT
-			              ) {
-			                logger.debug(`[DAEMON RUN] Session webhook timeout for PID ${pid} (visible console)`);
-			              }
-			              return resolved;
-			            });
-			          }
+                            return waitForVisibleConsoleSessionWebhook({
+                              pid,
+                              pollMs,
+                              pidToAwaiter,
+                              pidToSpawnResultResolver,
+                              pidToSpawnWebhookTimeout,
+                              onChildExited,
+                              resolveExistingSessionId: () => resolveCanonicalTrackedSessionId(pid),
+                            }).then((result) => {
+                          const resolved = resolveSpawnWebhookResult({
+                            pid,
+                            result,
+                            pidToTrackedSession,
+                            warn: (message) => logger.warn(message),
+                          });
+                          if (resolved.type === 'success') {
+                            logger.debug(
+                              `[DAEMON RUN] Session ${resolved.sessionId} fully spawned with webhook (visible console)`,
+                            );
+                          } else if (
+                            resolved.type === 'error' &&
+                            resolved.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT
+                          ) {
+                            logger.debug(`[DAEMON RUN] Session webhook timeout for PID ${pid} (visible console)`);
+                          }
+                          return resolved;
+                        });
+                      }
 
-		          // NOTE: sessionId is reserved for future Happy session resume; we currently ignore it.
-	          const happyProcess = spawnHappyCLI(args, {
-		            cwd: directory,
-		            detached: true,  // Sessions stay alive when daemon stops
-	            stdio: ['ignore', 'pipe', 'pipe'],  // Capture stdout/stderr for debugging
-	            windowsHide: true,
-	            env: buildSpawnChildProcessEnv({
-	              processEnv: process.env,
-	              extraEnv: extraEnvForChildWithMessage,
-	            })
-	          });
+                  // NOTE: sessionId is reserved for future Happy session resume; we currently ignore it.
+              const happyProcess = spawnHappyCLI(args, {
+                    cwd: directory,
+                    detached: true,  // Sessions stay alive when daemon stops
+                stdio: ['ignore', 'pipe', 'pipe'],  // Capture stdout/stderr for debugging
+                windowsHide: true,
+                env: buildSpawnChildProcessEnv({
+                  processEnv: process.env,
+                  extraEnv: extraEnvForChildWithMessage,
+                })
+              });
 
-	          // Log output for debugging
-	          if (process.env.DEBUG) {
-	            happyProcess.stdout?.on('data', (data) => {
+              // Log output for debugging
+              if (process.env.DEBUG) {
+                happyProcess.stdout?.on('data', (data) => {
               logger.debug(`[DAEMON RUN] Child stdout: ${data.toString()}`);
             });
             happyProcess.stderr?.on('data', (data) => {
@@ -770,39 +775,39 @@ export async function startDaemon(): Promise<void> {
             });
           }
 
-	          if (!happyProcess.pid) {
-	            logger.debug('[DAEMON RUN] Failed to spawn process - no PID returned');
-	            if (spawnResourceCleanupOnFailure && !spawnResourceCleanupArmed) {
-	              spawnResourceCleanupOnFailure();
-	              spawnResourceCleanupOnFailure = null;
-	              spawnResourceCleanupOnExit = null;
-	            }
-	            if (sessionAttachCleanup) {
-	              await sessionAttachCleanup();
-	              sessionAttachCleanup = null;
-	            }
-	            return {
-	              type: 'error',
+              if (!happyProcess.pid) {
+                logger.debug('[DAEMON RUN] Failed to spawn process - no PID returned');
+                if (spawnResourceCleanupOnFailure && !spawnResourceCleanupArmed) {
+                  spawnResourceCleanupOnFailure();
+                  spawnResourceCleanupOnFailure = null;
+                  spawnResourceCleanupOnExit = null;
+                }
+                if (sessionAttachCleanup) {
+                  await sessionAttachCleanup();
+                  sessionAttachCleanup = null;
+                }
+                return {
+                  type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_NO_PID,
-	              errorMessage: 'Failed to spawn Happier process - no PID returned'
-	            };
-	          }
+                  errorMessage: 'Failed to spawn Happier process - no PID returned'
+                };
+              }
 
-	          logger.debug(`[DAEMON RUN] Spawned process with PID ${happyProcess.pid}`);
-	          if (sessionAttachCleanup) {
-	            sessionAttachCleanupByPid.set(happyProcess.pid, sessionAttachCleanup);
-	            sessionAttachCleanup = null;
-	          }
+              logger.debug(`[DAEMON RUN] Spawned process with PID ${happyProcess.pid}`);
+              if (sessionAttachCleanup) {
+                sessionAttachCleanupByPid.set(happyProcess.pid, sessionAttachCleanup);
+                sessionAttachCleanup = null;
+              }
 
-		          const trackedSession: TrackedSession = {
-		            startedBy: 'daemon',
-		            pid: happyProcess.pid,
-		            childProcess: happyProcess,
-		            spawnOptions: options,
-		            vendorResumeId: effectiveResume || undefined,
-		            directoryCreated,
-		            message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined
-		          };
+                  const trackedSession: TrackedSession = {
+                    startedBy: 'daemon',
+                    pid: happyProcess.pid,
+                    childProcess: happyProcess,
+                    spawnOptions: options,
+                    vendorResumeId: effectiveResume || undefined,
+                    directoryCreated,
+                    message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined
+                  };
 
           pidToTrackedSession.set(happyProcess.pid, trackedSession);
           if (connectedServiceAuth && options.connectedServices) {
@@ -864,18 +869,18 @@ export async function startDaemon(): Promise<void> {
 
           // Wait for webhook to populate session with happySessionId
           logger.debug(`[DAEMON RUN] Waiting for session webhook for PID ${happyProcess.pid}`);
-	          return waitForSessionWebhook({
-	            pid: happyProcess.pid!,
-	            pidToAwaiter,
-	            pidToSpawnResultResolver,
-	            pidToSpawnWebhookTimeout,
-	            timeoutErrorMessage: `Session webhook timeout for PID ${happyProcess.pid}`,
-	            resolveExistingSessionId: () => resolveCanonicalTrackedSessionId(happyProcess.pid!),
-	            onTimeout: () => {
-	              logger.debug(`[DAEMON RUN] Session webhook timeout for PID ${happyProcess.pid}`);
-	            },
-	            onSuccess: (completedSession) => {
-	              logger.debug(`[DAEMON RUN] Session ${completedSession.happySessionId} fully spawned with webhook`);
+              return waitForSessionWebhook({
+                pid: happyProcess.pid!,
+                pidToAwaiter,
+                pidToSpawnResultResolver,
+                pidToSpawnWebhookTimeout,
+                timeoutErrorMessage: `Session webhook timeout for PID ${happyProcess.pid}`,
+                resolveExistingSessionId: () => resolveCanonicalTrackedSessionId(happyProcess.pid!),
+                onTimeout: () => {
+                  logger.debug(`[DAEMON RUN] Session webhook timeout for PID ${happyProcess.pid}`);
+                },
+                onSuccess: (completedSession) => {
+                  logger.debug(`[DAEMON RUN] Session ${completedSession.happySessionId} fully spawned with webhook`);
             },
           }).then((result) =>
             resolveSpawnWebhookResult({
@@ -893,28 +898,29 @@ export async function startDaemon(): Promise<void> {
           errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
           errorMessage: 'Unexpected error in session spawning'
         };
-		      } catch (error) {
-		        if (spawnResourceCleanupOnFailure && !spawnResourceCleanupArmed) {
-		          spawnResourceCleanupOnFailure();
-		          spawnResourceCleanupOnFailure = null;
-	          spawnResourceCleanupOnExit = null;
-	        }
-	        if (sessionAttachCleanup) {
-	          await sessionAttachCleanup();
-	          sessionAttachCleanup = null;
-	        }
-		        const errorMessage = error instanceof Error ? error.message : String(error);
-		        logger.debug('[DAEMON RUN] Failed to spawn session:', error);
-		        return {
-		          type: 'error',
-	            errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
-		          errorMessage: `Failed to spawn session: ${errorMessage}`
-		        };
-		      }
-	      });
-		    };
-	
-		    const stopSessionCore = createStopSession({ pidToTrackedSession });
+              } catch (error) {
+                if (spawnResourceCleanupOnFailure && !spawnResourceCleanupArmed) {
+                  spawnResourceCleanupOnFailure();
+                  spawnResourceCleanupOnFailure = null;
+              spawnResourceCleanupOnExit = null;
+            }
+            if (sessionAttachCleanup) {
+              await sessionAttachCleanup();
+              sessionAttachCleanup = null;
+            }
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                logger.debug('[DAEMON RUN] Failed to spawn session:', error);
+                    return {
+                      type: 'error',
+                    errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+                      errorMessage: `Failed to spawn session: ${errorMessage}`
+                    };
+                  }
+              });
+          });
+                };
+
+            const stopSessionCore = createStopSession({ pidToTrackedSession });
 
         const resolveBoolEnv = (raw: string | undefined, fallback: boolean): boolean => {
           const value = (raw ?? '').trim().toLowerCase();
@@ -946,14 +952,11 @@ export async function startDaemon(): Promise<void> {
           { min: 0, max: 10_000 },
         );
 
-	        const isSessionAlreadyRunning = (sessionId: string): boolean => {
-	          for (const tracked of pidToTrackedSession.values()) {
-	            if (tracked.happySessionId === sessionId) return true;
-	          }
-	          return false;
-	        };
+                const isSessionAlreadyRunning = async (sessionId: string): Promise<boolean> => {
+              return await isSessionRunnerActive(sessionId);
+                };
         const sessionRespawnMaxRestarts = sessionRespawnMaxAttempts === 0 ? null : sessionRespawnMaxAttempts;
-	        const sessionRunnerRespawnManager = createSessionRunnerRespawnManager({
+            const sessionRunnerRespawnManager = createSessionRunnerRespawnManager({
           enabled: sessionRespawnEnabled,
           maxRestarts: sessionRespawnMaxRestarts,
           baseDelayMs: sessionRespawnBaseDelayMs,
@@ -968,19 +971,19 @@ export async function startDaemon(): Promise<void> {
 
         const connectedServicesRestartRequestedPids = new Set<number>();
 
-		    // Handle child process exit
-		    const onChildExitedBase = createOnChildExited({
-		      pidToTrackedSession,
-		      spawnResourceCleanupByPid,
-		      sessionAttachCleanupByPid,
-		      getApiMachineForSessions: () => apiMachineForSessions,
+            // Handle child process exit
+            const onChildExitedBase = createOnChildExited({
+              pidToTrackedSession,
+              spawnResourceCleanupByPid,
+              sessionAttachCleanupByPid,
+              getApiMachineForSessions: () => apiMachineForSessions,
           onUnexpectedExit: sessionRunnerRespawnManager.handleUnexpectedExit,
           isExitUnexpectedOverride: (tracked, _exit) => {
             if (!connectedServicesRestartRequestedPids.has(tracked.pid)) return null;
             connectedServicesRestartRequestedPids.delete(tracked.pid);
             return true;
           },
-		    });
+            });
         const onChildExited = (pid: number, exit: { reason: string; code: number | null; signal: string | null }) => {
           connectedServiceRefreshCoordinator?.unregisterPid(pid);
           connectedServiceQuotasCoordinator?.unregisterPid(pid);
@@ -1017,16 +1020,16 @@ export async function startDaemon(): Promise<void> {
     writeDaemonState(fileState);
     logger.debug('[DAEMON RUN] Daemon state written');
 
-	    // Prepare initial daemon state
-	    const initialDaemonState: DaemonState = {
-	      status: 'offline',
-	      pid: process.pid,
-	      httpPort: controlPort,
-	      startedAt: Date.now()
-	    };
+        // Prepare initial daemon state
+        const initialDaemonState: DaemonState = {
+          status: 'offline',
+          pid: process.pid,
+          httpPort: controlPort,
+          startedAt: Date.now()
+        };
 
-	    // Create API client
-	    const api = await ApiClient.create(credentials);
+        // Create API client
+        const api = await ApiClient.create(credentials);
       const connectedServicesRefreshEnabled = resolveBoolEnv(process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED, true);
       if (connectedServicesRefreshEnabled) {
         const refreshTickMs = resolvePositiveIntEnv(
@@ -1083,33 +1086,33 @@ export async function startDaemon(): Promise<void> {
         timeoutMs: 1500,
       });
       if (connectedServicesQuotasEnabled) {
-	        const quotasTickMs = resolvePositiveIntEnv(
-	          process.env.HAPPIER_CONNECTED_SERVICES_QUOTAS_TICK_MS,
-	          60_000,
-	          { min: 5_000, max: 30 * 60_000 },
-	        );
-	        const {
-	          fetchTimeoutMs,
-	          discoveryEnabled,
-	          discoveryIntervalMs,
-	          failureBackoffMinMs,
-	          failureBackoffMaxMs,
-	          failureBackoffJitterPct,
-	        } = resolveConnectedServiceQuotasDaemonOptions(process.env);
+            const quotasTickMs = resolvePositiveIntEnv(
+              process.env.HAPPIER_CONNECTED_SERVICES_QUOTAS_TICK_MS,
+              60_000,
+              { min: 5_000, max: 30 * 60_000 },
+            );
+            const {
+              fetchTimeoutMs,
+              discoveryEnabled,
+              discoveryIntervalMs,
+              failureBackoffMinMs,
+              failureBackoffMaxMs,
+              failureBackoffJitterPct,
+            } = resolveConnectedServiceQuotasDaemonOptions(process.env);
 
-	        connectedServiceQuotasCoordinator = new ConnectedServiceQuotasCoordinator({
-	          api,
-	          credentials,
-	          quotaFetchers: createConnectedServiceQuotaFetchers(process.env),
-	          fetchTimeoutMs,
-	          discoveryEnabled,
-	          discoveryIntervalMs,
-	          failureBackoffMinMs,
-	          failureBackoffMaxMs,
-	          failureBackoffJitterPct,
-	          now: () => Date.now(),
-	          randomBytes: (length) => randomBytes(length),
-	        });
+            connectedServiceQuotasCoordinator = new ConnectedServiceQuotasCoordinator({
+              api,
+              credentials,
+              quotaFetchers: createConnectedServiceQuotaFetchers(process.env),
+              fetchTimeoutMs,
+              discoveryEnabled,
+              discoveryIntervalMs,
+              failureBackoffMinMs,
+              failureBackoffMaxMs,
+              failureBackoffJitterPct,
+              now: () => Date.now(),
+              randomBytes: (length) => randomBytes(length),
+            });
 
         connectedServiceQuotasLoopHandle = startConnectedServiceQuotasLoop({
           enabled: true,
@@ -1121,10 +1124,10 @@ export async function startDaemon(): Promise<void> {
         });
       }
 
-		    let apiMachine: ApiMachineClient | null = null;
+            let apiMachine: ApiMachineClient | null = null;
       let shutdownInitiated = false;
-		    const preferredHost = await getPreferredHostName();
-	    const machineRegistrationTimeoutMs = resolvePositiveIntEnv(
+            const preferredHost = await getPreferredHostName();
+        const machineRegistrationTimeoutMs = resolvePositiveIntEnv(
         process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_TIMEOUT_MS,
         10_000,
         { min: 250, max: 120_000 },
@@ -1132,60 +1135,70 @@ export async function startDaemon(): Promise<void> {
 
       // Do machine bootstrap in the background so shutdown requests are not blocked by /v1/machines latency.
       void (async () => {
-	      try {
-	        const metadataForRegistration: MachineMetadata = { ...initialMachineMetadata, host: preferredHost };
-	        const ensured = await ensureMachineRegistered({
-	          api,
-	          machineId,
-	          metadata: metadataForRegistration,
-	          daemonState: initialDaemonState,
-	          timeoutMs: machineRegistrationTimeoutMs,
-	          caller: 'startDaemon',
-	        });
-	        machineId = ensured.machineId;
-	        const machine = ensured.machine;
-	        logger.debug(`[DAEMON RUN] Machine registered: ${machine.id}`);
+          try {
+            const metadataForRegistration: MachineMetadata = { ...initialMachineMetadata, host: preferredHost };
+            const ensured = await ensureMachineRegistered({
+              api,
+              machineId,
+              metadata: metadataForRegistration,
+              daemonState: initialDaemonState,
+              timeoutMs: machineRegistrationTimeoutMs,
+              caller: 'startDaemon',
+            });
+            machineId = ensured.machineId;
+            const machine = ensured.machine;
+            logger.debug(`[DAEMON RUN] Machine registered: ${machine.id}`);
 
           if (shutdownInitiated) {
             return;
           }
 
-	        // Create realtime machine session
-	        const connectedApiMachine = api.machineSyncClient(machine);
-	        apiMachine = connectedApiMachine;
-	        apiMachineForSessions = connectedApiMachine;
+            // Create realtime machine session
+            const connectedApiMachine = api.machineSyncClient(machine);
+            apiMachine = connectedApiMachine;
+            apiMachineForSessions = connectedApiMachine;
 
-	        // Set RPC handlers
-	          automationWorker = startAutomationWorker({
-	            token: credentials.token,
-	            machineId,
-	            encryption: credentials.encryption,
-	            spawnSession,
-	          });
+            // Set RPC handlers
+              automationWorker = startAutomationWorker({
+                token: credentials.token,
+                machineId,
+                encryption: credentials.encryption,
+                spawnSession,
+              });
 
-	          memoryWorker = (() => {
-	            try {
-	              return startMemoryWorker({
-	                credentials,
-	                machineId,
-	              });
-	            } catch (error) {
-	              logger.warn('[DAEMON RUN] Failed to start memory worker (best-effort)', error);
-	              return null;
-	            }
-	          })();
+              memoryWorker = (() => {
+                try {
+                  return startMemoryWorker({
+                    credentials,
+                    machineId,
+                  });
+                } catch (error) {
+                  logger.warn('[DAEMON RUN] Failed to start memory worker (best-effort)', error);
+                  return null;
+                }
+              })();
 
-	        connectedApiMachine.setRPCHandlers({
-	          spawnSession,
-	          stopSession,
-	          requestShutdown: () => requestShutdown('happier-app'),
+            connectedApiMachine.setRPCHandlers({
+              spawnSession,
+              stopSession,
+              requestShutdown: () => requestShutdown('happier-app'),
             ...(memoryWorker ? { memory: memoryWorker } : {}),
-	        });
+            });
 
-	        let didRefreshMachineMetadata = false;
-	        connectedApiMachine.connect({
-	          onConnect: async () => {
-	            if (shutdownInitiated) return;
+          connectedApiMachine.onUpdate((update) => {
+            if (!automationWorker) return false;
+            const t = (update?.body as any)?.t;
+            if (t === 'automation-assignment-updated' || t === 'automation-run-updated') {
+              automationWorker.handleServerUpdate(update);
+              return true;
+            }
+            return false;
+          });
+
+            let didRefreshMachineMetadata = false;
+            connectedApiMachine.connect({
+              onConnect: async () => {
+                if (shutdownInitiated) return;
 
               if (automationWorker) {
                 await automationWorker.refreshAssignments().catch((error) => {
@@ -1193,49 +1206,49 @@ export async function startDaemon(): Promise<void> {
                 });
               }
 
-	            if (didRefreshMachineMetadata) return;
-	            didRefreshMachineMetadata = true;
-	            // Keep machine metadata fresh without clobbering user-provided fields (e.g. displayName) that may exist.
-	            await connectedApiMachine.updateMachineMetadata((metadata) => {
-	              const base = (metadata ?? (machine.metadata as any) ?? {}) as any;
-	              const next: MachineMetadata = {
-	                ...base,
-	                host: preferredHost,
-	                platform: os.platform(),
-	                happyCliVersion: packageJson.version,
-	                homeDir: os.homedir(),
-	                happyHomeDir: configuration.happyHomeDir,
-	                happyLibDir: projectPath(),
-	              } as MachineMetadata;
+                if (didRefreshMachineMetadata) return;
+                didRefreshMachineMetadata = true;
+                // Keep machine metadata fresh without clobbering user-provided fields (e.g. displayName) that may exist.
+                await connectedApiMachine.updateMachineMetadata((metadata) => {
+                  const base = (metadata ?? (machine.metadata as any) ?? {}) as any;
+                  const next: MachineMetadata = {
+                    ...base,
+                    host: preferredHost,
+                    platform: os.platform(),
+                    happyCliVersion: packageJson.version,
+                    homeDir: os.homedir(),
+                    happyHomeDir: configuration.happyHomeDir,
+                    happyLibDir: projectPath(),
+                  } as MachineMetadata;
 
-	              // If nothing changes, skip emitting an update entirely.
-	              const current = base as Partial<MachineMetadata>;
-	              const isSame =
-	                current.host === next.host &&
-	                current.platform === next.platform &&
-	                current.happyCliVersion === next.happyCliVersion &&
-	                current.homeDir === next.homeDir &&
-	                current.happyHomeDir === next.happyHomeDir &&
-	                current.happyLibDir === next.happyLibDir;
+                  // If nothing changes, skip emitting an update entirely.
+                  const current = base as Partial<MachineMetadata>;
+                  const isSame =
+                    current.host === next.host &&
+                    current.platform === next.platform &&
+                    current.happyCliVersion === next.happyCliVersion &&
+                    current.homeDir === next.homeDir &&
+                    current.happyHomeDir === next.happyHomeDir &&
+                    current.happyLibDir === next.happyLibDir;
 
-	              if (isSame) {
-	                return base as MachineMetadata;
-	              }
+                  if (isSame) {
+                    return base as MachineMetadata;
+                  }
 
-	              return next;
-	            }).catch((error) => {
-	              didRefreshMachineMetadata = false;
-	              logger.warn('[DAEMON RUN] Failed to refresh machine metadata on reconnect', error);
-	            });
-	          },
-	        });
-	      } catch (error) {
-	        // IMPORTANT: Do not log raw Axios errors here; they can contain bearer tokens.
-	        logger.warn(
-	          '[DAEMON RUN] Machine registration unavailable at startup; continuing without machine sync until next restart',
-	          serializeAxiosErrorForLog(error),
-	        );
-	      }
+                  return next;
+                }).catch((error) => {
+                  didRefreshMachineMetadata = false;
+                  logger.warn('[DAEMON RUN] Failed to refresh machine metadata on reconnect', error);
+                });
+              },
+            });
+          } catch (error) {
+            // IMPORTANT: Do not log raw Axios errors here; they can contain bearer tokens.
+            logger.warn(
+              '[DAEMON RUN] Machine registration unavailable at startup; continuing without machine sync until next restart',
+              serializeAxiosErrorForLog(error),
+            );
+          }
       })();
 
     // Every 60 seconds:
@@ -1255,22 +1268,22 @@ export async function startDaemon(): Promise<void> {
       requestShutdown,
     });
 
-		    // Setup signal handlers
-			    const cleanupAndShutdown = async (source: 'happier-app' | 'happier-cli' | 'os-signal' | 'exception', errorMessage?: string) => {
+            // Setup signal handlers
+                const cleanupAndShutdown = async (source: 'happier-app' | 'happier-cli' | 'os-signal' | 'exception', errorMessage?: string) => {
           shutdownInitiated = true;
-	      const exitCode = getDaemonShutdownExitCode(source);
-	      const shutdownWatchdog = setTimeout(async () => {
-	        logger.debug(`[DAEMON RUN] Shutdown timed out, forcing exit with code ${exitCode}`);
-	        await new Promise((resolve) => setTimeout(resolve, 100));
-	        process.exit(exitCode);
-	      }, getDaemonShutdownWatchdogTimeoutMs());
-	      shutdownWatchdog.unref?.();
+          const exitCode = getDaemonShutdownExitCode(source);
+          const shutdownWatchdog = setTimeout(async () => {
+            logger.debug(`[DAEMON RUN] Shutdown timed out, forcing exit with code ${exitCode}`);
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            process.exit(exitCode);
+          }, getDaemonShutdownWatchdogTimeoutMs());
+          shutdownWatchdog.unref?.();
 
-	      logger.debug(`[DAEMON RUN] Starting proper cleanup (source: ${source}, errorMessage: ${errorMessage})...`);
+          logger.debug(`[DAEMON RUN] Starting proper cleanup (source: ${source}, errorMessage: ${errorMessage})...`);
 
-	      // Clear health check interval
-	      if (restartOnStaleVersionAndHeartbeat) {
-	        clearInterval(restartOnStaleVersionAndHeartbeat);
+          // Clear health check interval
+          if (restartOnStaleVersionAndHeartbeat) {
+            clearInterval(restartOnStaleVersionAndHeartbeat);
         logger.debug('[DAEMON RUN] Health check interval cleared');
       }
       if (connectedServiceRefreshInterval) {
@@ -1282,7 +1295,7 @@ export async function startDaemon(): Promise<void> {
         connectedServiceQuotasLoopHandle = null;
       }
 
-	      if (apiMachine) {
+          if (apiMachine) {
           const daemonStateUpdateTimeoutMs = resolvePositiveIntEnv(
             process.env.HAPPIER_DAEMON_SHUTDOWN_STATE_UPDATE_TIMEOUT_MS,
             250,
@@ -1309,16 +1322,16 @@ export async function startDaemon(): Promise<void> {
         memoryWorker.stop();
       }
       await stopControlServer();
-	      await cleanupDaemonState();
-	      await stopCaffeinate();
-	      if (daemonLockHandle) {
-	        await releaseDaemonLock(daemonLockHandle);
-	      }
+          await cleanupDaemonState();
+          await stopCaffeinate();
+          if (daemonLockHandle) {
+            await releaseDaemonLock(daemonLockHandle);
+          }
 
-	      logger.debug('[DAEMON RUN] Cleanup completed, exiting process');
-	      clearTimeout(shutdownWatchdog);
-	      process.exit(exitCode);
-	    };
+          logger.debug('[DAEMON RUN] Cleanup completed, exiting process');
+          clearTimeout(shutdownWatchdog);
+          process.exit(exitCode);
+        };
 
     logger.debug('[DAEMON RUN] Daemon started successfully, waiting for shutdown request');
 
