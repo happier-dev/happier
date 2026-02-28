@@ -38,6 +38,7 @@ export function createSessionControlActionExecutor(params: Readonly<{
 
     // These actions are not exposed on the session-control CLI surface today.
     sessionOpen: async () => notSupported(),
+    sessionFork: async () => notSupported(),
     sessionSpawnNew: async () => notSupported(),
     sessionSpawnPicker: async () => notSupported(),
     workspacesListRecent: async () => notSupported(),
