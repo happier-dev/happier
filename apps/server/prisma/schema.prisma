@@ -3,6 +3,8 @@
 
 generator client {
     provider        = "prisma-client-js"
+    // Include Linux query engines so macOS-built release artifacts can run on Linux (self-host).
+    binaryTargets   = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x"]
     previewFeatures = ["metrics", "relationJoins"]
 }
 
@@ -52,6 +54,7 @@ model Account {
     VoiceConversation      VoiceConversation[]
     TerminalAuthRequest    TerminalAuthRequest[]
     AccountAuthRequest     AccountAuthRequest[]
+    AuthPairingSession     AuthPairingSession[]
     UsageReport            UsageReport[]
     Machine                Machine[]
     UploadedFile           UploadedFile[]
@@ -211,6 +214,22 @@ model AccountAuthRequest {
     responseAccount   Account? @relation(fields: [responseAccountId], references: [id])
     createdAt         DateTime @default(now())
     updatedAt         DateTime @updatedAt
+}
+
+model AuthPairingSession {
+    id                 String   @id @default(cuid())
+    accountId           String
+    account             Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    secretHash          String
+    requestedPublicKey  String?
+    requestedDeviceLabel String?
+    requestedAt         DateTime?
+    expiresAt           DateTime
+    createdAt           DateTime @default(now())
+    updatedAt           DateTime @updatedAt
+
+    @@index([accountId, expiresAt])
+    @@index([expiresAt])
 }
 
 model AccountPushToken {
