@@ -407,7 +407,7 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
         let streamingToolUse:
             | { sessionId: string; id: string; name: string; inputJson: string; initialInput: unknown }
             | null = null;
-        let streamingToolResult: { sessionId: string; toolUseId: string; content: string } | null = null;
+        let streamingToolResult: { sessionId: string; toolUseId: string; content: string; isError: boolean } | null = null;
         let pendingToolUseMessage: { toolUseId: string; message: SDKMessage } | null = null;
         let pendingToolResultMessage: { toolUseId: string; message: SDKMessage } | null = null;
         const seen = { toolUseIds: new Set<string>(), toolResultIds: new Set<string>() };
@@ -635,7 +635,8 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
                     streamingToolResult = {
                         sessionId: typeof (message as any).session_id === 'string' ? (message as any).session_id : '',
                         toolUseId: toolResultStart.toolUseId,
-                        content: '',
+                        content: toolResultStart.content ?? '',
+                        isError: toolResultStart.isError ?? false,
                     };
                     continue;
                 }
@@ -725,7 +726,7 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
                                         type: 'tool_result',
                                         tool_use_id: streamingToolResult.toolUseId,
                                         content: streamingToolResult.content,
-                                        is_error: false,
+                                        is_error: Boolean((streamingToolResult as any).isError),
                                     },
                                 ],
                             },

@@ -641,4 +641,66 @@ describe('claudeRemoteAgentSdk stream events', () => {
             }),
         }));
     });
+
+    it('captures initial tool_result content from content_block_start when no text_delta events are emitted', async () => {
+        const onMessage = vi.fn();
+
+        const createQuery = vi.fn((_params: any) => {
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_start',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_start',
+                            content_block: { type: 'tool_result', tool_use_id: 'toolu_1', content: 'Spawned successfully.\nagent_id: Alpha@team\n' },
+                        },
+                    } as any;
+                    yield {
+                        type: 'stream_event',
+                        uuid: 'evt_stop',
+                        session_id: 'sess_1',
+                        parent_tool_use_id: null,
+                        event: {
+                            type: 'content_block_stop',
+                        },
+                    } as any;
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage: async () => ({
+                message: 'hello',
+                mode: makeMode({ claudeRemoteAgentSdkEnabled: true }),
+            }),
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage,
+            createQuery,
+        } as any);
+
+        const toolResult = onMessage.mock.calls
+            .map(([msg]) => msg)
+            .find((msg) => msg?.type === 'user' && Array.isArray((msg as any)?.message?.content) && (msg as any).message.content.some((c: any) => c?.type === 'tool_result'));
+        expect(toolResult).toBeTruthy();
+        const block = (toolResult as any).message.content.find((c: any) => c?.type === 'tool_result' && c?.tool_use_id === 'toolu_1');
+        expect(block?.content).toContain('Spawned successfully');
+        expect(block?.content).toContain('agent_id:');
+    });
 });

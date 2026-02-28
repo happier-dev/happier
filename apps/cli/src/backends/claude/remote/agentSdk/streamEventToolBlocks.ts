@@ -55,7 +55,7 @@ export function extractToolUseInputJsonDeltaFromStreamEvent(message: unknown): s
   return typeof partialJson === 'string' ? partialJson : null;
 }
 
-export type StreamEventToolResultStart = { toolUseId: string };
+export type StreamEventToolResultStart = { toolUseId: string; content: string; isError: boolean };
 
 export function extractToolResultStartFromStreamEvent(message: unknown): StreamEventToolResultStart | null {
   if (!message || typeof message !== 'object') return null;
@@ -77,7 +77,21 @@ export function extractToolResultStartFromStreamEvent(message: unknown): StreamE
         ? (block as any).toolUseId
         : null;
   if (!toolUseId) return null;
-  return { toolUseId };
+  const contentRaw = (block as any).content;
+  const content = (() => {
+    if (typeof contentRaw === 'string') return contentRaw;
+    if (!Array.isArray(contentRaw)) return '';
+    const parts: string[] = [];
+    for (const item of contentRaw) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+      if ((item as any).type !== 'text') continue;
+      const text = (item as any).text;
+      if (typeof text === 'string') parts.push(text);
+    }
+    return parts.join('');
+  })();
+  const isError = typeof (block as any).is_error === 'boolean' ? Boolean((block as any).is_error) : false;
+  return { toolUseId, content, isError };
 }
 
 export function isContentBlockStopStreamEvent(message: unknown): boolean {
