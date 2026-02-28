@@ -130,8 +130,12 @@ class ApiSocket {
         if (!sessionEncryption) {
             throw new Error(`Session encryption not found for ${sessionId}`);
         }
-        const scmDebug = __DEV__ && method.startsWith('scm.');
+        const scmDebug =
+            __DEV__
+            && process.env.EXPO_PUBLIC_HAPPIER_DEBUG_SCM_RPC === 'true'
+            && method.startsWith('scm.');
         if (scmDebug) {
+            // eslint-disable-next-line no-console
             console.log('[SCM_RPC][call]', { sessionId, method });
         }
         
@@ -141,6 +145,7 @@ class ApiSocket {
         });
         if (scmDebug) {
             const rawResult = result?.result;
+            // eslint-disable-next-line no-console
             console.log('[SCM_RPC][ack]', {
                 method,
                 ok: Boolean(result?.ok),
@@ -155,6 +160,7 @@ class ApiSocket {
         if (result.ok) {
             const decrypted = await sessionEncryption.decryptRaw(result.result);
             if (scmDebug) {
+                // eslint-disable-next-line no-console
                 console.log('[SCM_RPC][decrypt]', {
                     method,
                     decryptedType: decrypted === null ? 'null' : typeof decrypted,
