@@ -28,6 +28,7 @@ import { resolveHasTTY } from '@/ui/tty/resolveHasTTY';
 import { createNonBlockingStdout } from '@/ui/ink/nonBlockingStdout';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
+import { shouldSendReadyPushNotification } from '@/settings/notifications/notificationsPolicy';
 import { dirname, join } from 'node:path';
 import { getProjectPath } from './utils/path';
 import { resolveClaudeConfigDirOverride } from './utils/resolveClaudeConfigDirOverride';
@@ -493,6 +494,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                     logPrefix: '[remote]',
                     getPending: () => pending,
                     getQueueSize: () => session.queue.size(),
+                    shouldSendPush: () => shouldSendReadyPushNotification(session.accountSettings ?? null),
                 });
 
                 const { mcpServers: baseMcpServers, mcpConfigJson: baseMcpConfigJson } = await session.getOrCreateHappierMcpBridge();
