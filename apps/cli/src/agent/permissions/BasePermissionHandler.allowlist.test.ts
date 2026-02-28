@@ -106,6 +106,83 @@ describe('BasePermissionHandler allowlist', () => {
     expect(handler.isAllowed('bash', input)).toBe(false);
   });
 
+  it('applies updatedPermissions addRules to the allowlist (for Claude-style permission updates)', async () => {
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as any);
+
+    const input = { command: ['bash', '-lc', 'find . -maxdepth 2 -type f | head -n 5'] };
+    const promise = handler.request('perm-1', 'Bash', input);
+
+    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    expect(rpc).toBeDefined();
+    await rpc!({
+      id: 'perm-1',
+      approved: true,
+      updatedPermissions: [
+        {
+          type: 'addRules',
+          behavior: 'allow',
+          destination: 'session',
+          rules: [{ toolName: 'Bash', ruleContent: 'find:*' }],
+        },
+      ],
+    });
+
+    await promise;
+
+    expect(handler.isAllowed('Bash', { command: ['bash', '-lc', 'find . -maxdepth 1 -type f'] })).toBe(true);
+
+    const completed = session.agentState.completedRequests['perm-1'];
+    expect(completed).toBeTruthy();
+    expect(completed.updatedPermissions).toBeTruthy();
+
+    // A fresh handler instance should seed the allowlist from completedRequests.
+    const handler2 = new TestPermissionHandler(session as any);
+    expect(handler2.isAllowed('Bash', { command: ['bash', '-lc', 'find . -maxdepth 1 -type f'] })).toBe(true);
+  });
+
+  it('auto-approves other pending permission prompts once an allowlist update makes them allowed', async () => {
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as any);
+
+    const input1 = { command: ['bash', '-lc', 'find . -maxdepth 2 -type f | head -n 5'] };
+    const input2 = { command: ['bash', '-lc', 'find . -maxdepth 1 -type f | head -n 5'] };
+    const p1 = handler.request('perm-1', 'Bash', input1);
+    const p2 = handler.request('perm-2', 'Bash', input2);
+
+    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    expect(rpc).toBeDefined();
+
+    await rpc!({
+      id: 'perm-1',
+      approved: true,
+      updatedPermissions: [
+        {
+          type: 'addRules',
+          behavior: 'allow',
+          destination: 'session',
+          rules: [{ toolName: 'Bash', ruleContent: 'find:*' }],
+        },
+      ],
+    });
+
+    await expect(p1).resolves.toEqual(expect.objectContaining({ decision: 'approved' }));
+
+    const raced = await Promise.race([
+      p2.then(() => 'resolved' as const),
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 20)),
+    ]);
+    expect(raced).toBe('resolved');
+
+    expect(session.agentState.requests['perm-2']).toBeUndefined();
+    expect(session.agentState.completedRequests['perm-2']).toEqual(
+      expect.objectContaining({
+        tool: 'Bash',
+        status: 'approved',
+      }),
+    );
+  });
+
   it('returns structured answers for AskUserQuestion responses', async () => {
     const session = new FakeSession();
     const handler = new TestPermissionHandler(session as any);

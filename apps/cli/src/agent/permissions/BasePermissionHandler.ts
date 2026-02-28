@@ -12,6 +12,7 @@ import { ApiSessionClient } from "@/api/session/sessionClient";
 import { AgentState } from "@/api/types";
 import { updateAgentStateBestEffort as updateAgentStateBestEffortShared } from "@/api/session/sessionWritesBestEffort";
 import { isToolAllowedForSession, makeToolIdentifier } from './permissionToolIdentifier';
+import { applyAllowedToolsToAllowlist, applyUpdatedPermissionsToAllowlist, seedAllowlistFromCompletedRequests } from './applyPermissionAllowlistUpdates';
 import { recordToolTraceEvent, type ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
 import type { AccountSettings } from '@happier-dev/protocol';
 import { PermissionRequestPushNotifier } from '@/settings/notifications/permissionRequestPushNotifier';
@@ -38,6 +39,8 @@ export interface PermissionResponse {
     // When the user chooses "don't ask again (session)", the UI may send a tool allowlist.
     allowedTools?: string[];
     allowTools?: string[]; // legacy alias
+    // Claude Agent SDK / Claude Code hook responses may attach provider-specific permission updates.
+    updatedPermissions?: unknown;
     /**
      * Structured user answers (AskUserQuestion user action).
      *
@@ -199,18 +202,7 @@ export abstract class BasePermissionHandler {
             const snapshot = this.session.getAgentStateSnapshot?.() ?? null;
             const completed = snapshot?.completedRequests;
             if (!completed) return;
-
-            for (const entry of Object.values(completed)) {
-                if (!entry || entry.status !== 'approved') continue;
-                // Legacy sessions may still have `allowTools`; prefer canonical `allowedTools`.
-                const list = (entry as any).allowedTools ?? (entry as any).allowTools;
-                if (!Array.isArray(list)) continue;
-                for (const item of list) {
-                    if (typeof item === 'string' && item.trim().length > 0) {
-                        this.allowedToolIdentifiers.add(item.trim());
-                    }
-                }
-            }
+            seedAllowlistFromCompletedRequests(this.allowedToolIdentifiers, completed);
         } catch (error) {
             logger.debug(`${this.getLogPrefix()} Failed to seed allowlist from agentState`, error);
         }
@@ -224,6 +216,7 @@ export abstract class BasePermissionHandler {
             'permission',
             async (response) => {
                 const responseAllowedTools = response.allowedTools ?? response.allowTools;
+                const updatedPermissions = (response as any).updatedPermissions;
                 const pending = this.pendingRequests.get(response.id);
                 if (!pending) {
                     // Lifecycle mismatch / race: UI responded, but the in-memory pending promise is gone
@@ -249,13 +242,9 @@ export abstract class BasePermissionHandler {
                     }
 
                     if (response.approved) {
-                        if (Array.isArray(responseAllowedTools)) {
-                            for (const item of responseAllowedTools) {
-                                if (typeof item === 'string' && item.trim().length > 0) {
-                                    this.allowedToolIdentifiers.add(item.trim());
-                                }
-                            }
-                        } else if (result.decision === 'approved_for_session') {
+                        applyUpdatedPermissionsToAllowlist(this.allowedToolIdentifiers, updatedPermissions);
+                        applyAllowedToolsToAllowlist(this.allowedToolIdentifiers, responseAllowedTools);
+                        if (!Array.isArray(responseAllowedTools) && result.decision === 'approved_for_session') {
                             try {
                                 const snapshot = this.session.getAgentStateSnapshot?.() ?? null;
                                 const request = snapshot?.requests?.[response.id] ?? null;
@@ -266,6 +255,10 @@ export abstract class BasePermissionHandler {
                                 logger.debug(`${this.getLogPrefix()} Failed to derive per-session allowlist (non-fatal)`, error);
                             }
                         }
+                    }
+
+                    if (response.approved) {
+                        this.autoApproveNowAllowedPendingRequests(response.id);
                     }
 
                     if (this.toolTrace) {
@@ -309,6 +302,7 @@ export abstract class BasePermissionHandler {
                         completedEntry.status = response.approved ? 'approved' : 'denied';
                         completedEntry.decision = result.decision;
                         if (derivedAllowTools) completedEntry.allowedTools = derivedAllowTools;
+                        if (typeof updatedPermissions !== 'undefined') completedEntry.updatedPermissions = updatedPermissions;
                         completedRequests[response.id] = completedEntry;
 
                             return { ...currentState, requests, completedRequests } satisfies AgentState;
@@ -374,18 +368,18 @@ export abstract class BasePermissionHandler {
                 // Per-session allowlist: if user chooses "approved_for_session", remember this tool (and for
                 // shell/exec tools, remember the exact command) so future prompts can auto-approve.
                 if (response.approved) {
-                    if (Array.isArray(responseAllowedTools)) {
-                        for (const item of responseAllowedTools) {
-                            if (typeof item === 'string' && item.trim().length > 0) {
-                                this.allowedToolIdentifiers.add(item.trim());
-                            }
-                        }
-                    } else if (result.decision === 'approved_for_session') {
+                    applyUpdatedPermissionsToAllowlist(this.allowedToolIdentifiers, updatedPermissions);
+                    applyAllowedToolsToAllowlist(this.allowedToolIdentifiers, responseAllowedTools);
+                    if (!Array.isArray(responseAllowedTools) && result.decision === 'approved_for_session') {
                         this.allowedToolIdentifiers.add(makeToolIdentifier(pending.toolName, pending.input));
                     }
                 }
 
                 pending.resolve(result);
+
+                if (response.approved) {
+                    this.autoApproveNowAllowedPendingRequests(response.id);
+                }
 
                 if (this.toolTrace) {
                     recordToolTraceEvent({
@@ -432,15 +426,16 @@ export abstract class BasePermissionHandler {
                         delete requests[response.id];
 
                         const completedRequests = cloneStringKeyedRecordToNullProto<AgentStateCompletedRequestEntry>(currentState.completedRequests);
-                        const completedEntry = Object.create(null) as AgentStateCompletedRequestEntry;
-                        completedEntry.tool = request.tool;
-                        completedEntry.kind = request.kind ?? resolveAgentRequestKind(request.tool);
-                        completedEntry.arguments = request.arguments;
-                        completedEntry.createdAt = request.createdAt;
-                        completedEntry.completedAt = Date.now();
-                        completedEntry.status = response.approved ? 'approved' : 'denied';
-                        completedEntry.decision = result.decision;
+                    const completedEntry = Object.create(null) as AgentStateCompletedRequestEntry;
+                    completedEntry.tool = request.tool;
+                    completedEntry.kind = request.kind ?? resolveAgentRequestKind(request.tool);
+                    completedEntry.arguments = request.arguments;
+                    completedEntry.createdAt = request.createdAt;
+                    completedEntry.completedAt = Date.now();
+                    completedEntry.status = response.approved ? 'approved' : 'denied';
+                    completedEntry.decision = result.decision;
                     if (derivedAllowTools) completedEntry.allowedTools = derivedAllowTools;
+                    if (typeof updatedPermissions !== 'undefined') completedEntry.updatedPermissions = updatedPermissions;
                     completedRequests[response.id] = completedEntry;
 
                     return { ...currentState, requests, completedRequests } satisfies AgentState;
@@ -449,6 +444,40 @@ export abstract class BasePermissionHandler {
                 logger.debug(`${this.getLogPrefix()} Permission ${response.approved ? 'approved' : 'denied'} for ${pending.toolName}`);
             }
         );
+    }
+
+    private autoApproveNowAllowedPendingRequests(excludePermissionId: string): void {
+        for (const [permissionId, pending] of this.pendingRequests.entries()) {
+            if (permissionId === excludePermissionId) continue;
+            if (resolveAgentRequestKind(pending.toolName) !== 'permission') continue;
+            if (!this.isAllowedForSession(pending.toolName, pending.input)) continue;
+
+            this.pendingRequests.delete(permissionId);
+            this.markPermissionRequestCompletedBestEffort(permissionId);
+
+            pending.resolve({ decision: 'approved' });
+
+            this.updateAgentStateBestEffort((currentState) => {
+                const requests = cloneStringKeyedRecordToNullProto<AgentStateRequestEntry>(currentState.requests);
+                const request = requests[permissionId];
+                if (!request) return currentState;
+
+                delete requests[permissionId];
+
+                const completedRequests = cloneStringKeyedRecordToNullProto<AgentStateCompletedRequestEntry>(currentState.completedRequests);
+                const completedEntry = Object.create(null) as AgentStateCompletedRequestEntry;
+                completedEntry.tool = request.tool;
+                completedEntry.kind = request.kind ?? resolveAgentRequestKind(request.tool);
+                completedEntry.arguments = request.arguments;
+                completedEntry.createdAt = request.createdAt;
+                completedEntry.completedAt = Date.now();
+                completedEntry.status = 'approved';
+                completedEntry.decision = 'approved';
+                completedRequests[permissionId] = completedEntry;
+
+                return { ...currentState, requests, completedRequests } satisfies AgentState;
+            }, 'permission auto-approval (allowlist)');
+        }
     }
 
     protected isAllowedForSession(toolName: string, input: unknown): boolean {
