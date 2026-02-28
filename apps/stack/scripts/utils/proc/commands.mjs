@@ -1,4 +1,6 @@
 import { runCapture } from './proc.mjs';
+import { accessSync, constants, existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 export async function resolveCommandPath(cmd, { cwd, env, timeoutMs } = {}) {
   const c = String(cmd ?? '').trim();
@@ -10,9 +12,38 @@ export async function resolveCommandPath(cmd, { cwd, env, timeoutMs } = {}) {
       const first = out.split(/\r?\n/).map((s) => s.trim()).find(Boolean) || '';
       return first;
     }
-    return (
-      await runCapture('sh', ['-lc', `command -v "${c}" 2>/dev/null || true`], { cwd, env, timeoutMs })
-    ).trim();
+
+    // Do not invoke a login shell to resolve PATH:
+    // - `sh -lc` can source profile scripts that clobber PATH (breaking hermetic callers/tests)
+    // - scanning PATH is deterministic and avoids shell injection edge cases
+    if (c.includes('/') || c.includes('\\')) {
+      if (!existsSync(c)) return '';
+      try {
+        accessSync(c, constants.X_OK);
+        return c;
+      } catch {
+        return '';
+      }
+    }
+
+    const e = env && typeof env === 'object' ? env : process.env;
+    const delimiter = process.platform === 'win32' ? ';' : ':';
+    const pathEntries = String(e.PATH ?? '')
+      .split(delimiter)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    for (const dir of pathEntries) {
+      const candidate = join(dir, c);
+      if (!existsSync(candidate)) continue;
+      try {
+        accessSync(candidate, constants.X_OK);
+        return candidate;
+      } catch {
+        // ignore non-executable candidates
+      }
+    }
+    return '';
   } catch {
     return '';
   }
