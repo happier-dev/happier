@@ -1,13 +1,11 @@
 import * as React from 'react';
-import { Platform } from 'react-native';
-import { CameraView } from 'expo-camera';
+import { Platform, useWindowDimensions } from 'react-native';
 import { router } from 'expo-router';
 import { useAuth } from '@/auth/context/AuthContext';
 import { TokenStorage, type AuthCredentials, isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
 import { decodeBase64 } from '@/encryption/base64';
 import { authApprove } from '@/auth/flows/approve';
 import { buildTerminalResponseV1, buildTerminalResponseV2 } from '@/auth/terminal/terminalProvisioning';
-import { useCheckScannerPermissions } from '@/hooks/ui/useCheckCameraPermissions';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { sync } from '@/sync/sync';
@@ -16,6 +14,8 @@ import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domain
 import { clearPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { parseTerminalConnectUrl } from '@/utils/path/terminalConnectUrl';
 import { storage } from '@/sync/domains/state/storageStore';
+import { isRunningOnMac } from '@/utils/platform/platform';
+import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
 
 interface UseConnectTerminalOptions {
     onSuccess?: () => void;
@@ -24,14 +24,13 @@ interface UseConnectTerminalOptions {
 
 export function useConnectTerminal(options?: UseConnectTerminalOptions) {
     const auth = useAuth();
+    const { width, height } = useWindowDimensions();
     const [isLoading, setIsLoading] = React.useState(false);
-    const checkScannerPermissions = useCheckScannerPermissions();
-    const isProcessingRef = React.useRef(false);
 
     const processAuthUrl = React.useCallback(async (url: string) => {
         const parsed = parseTerminalConnectUrl(url);
         if (!parsed) {
-            Modal.alert(t('common.error'), t('modals.invalidAuthUrl'), [{ text: t('common.ok') }]);
+            await Modal.alertAsync(t('common.error'), t('modals.invalidAuthUrl'), [{ text: t('common.ok') }]);
             return false;
         }
         
@@ -63,7 +62,7 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
                     publicKeyB64Url: parsed.publicKeyB64Url,
                     serverUrl: normalizeServerUrl(parsed.serverUrl ?? '') || getActiveServerUrl(),
                 });
-                await Modal.alert(t('terminal.connectTerminal'), t('modals.pleaseSignInFirst'), [
+                await Modal.alertAsync(t('terminal.connectTerminal'), t('modals.pleaseSignInFirst'), [
                     { text: t('common.continue') },
                 ]);
                 router.replace('/');
@@ -97,7 +96,7 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
             clearPendingTerminalConnect();
 
             if (approvalResult === 'approved') {
-                Modal.alert(t('common.success'), t('modals.terminalConnectedSuccessfully'), [
+                await Modal.alertAsync(t('common.success'), t('modals.terminalConnectedSuccessfully'), [
                     {
                         text: t('common.ok'),
                         onPress: () => options?.onSuccess?.()
@@ -107,7 +106,7 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
             }
 
             if (approvalResult === 'already_authorized') {
-                Modal.alert(
+                await Modal.alertAsync(
                     t('modals.terminalAlreadyConnected'),
                     t('modals.terminalConnectionAlreadyUsedDescription'),
                     [{ text: t('common.ok') }]
@@ -116,7 +115,7 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
             }
 
             if (approvalResult === 'not_found') {
-                Modal.alert(
+                await Modal.alertAsync(
                     t('modals.authRequestExpired'),
                     t('modals.authRequestExpiredDescription'),
                     [{ text: t('common.ok') }]
@@ -126,8 +125,7 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
 
             return true;
         } catch (e) {
-            console.error(e);
-            Modal.alert(t('common.error'), t('modals.failedToConnectTerminal'), [{ text: t('common.ok') }]);
+            await Modal.alertAsync(t('common.error'), t('modals.failedToConnectTerminal'), [{ text: t('common.ok') }]);
             options?.onError?.(e);
             return false;
         } finally {
@@ -136,45 +134,17 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
     }, [auth.credentials, options]);
 
     const connectTerminal = React.useCallback(async () => {
-        if (await checkScannerPermissions()) {
-            // Use camera scanner
-            CameraView.launchScanner({
-                barcodeTypes: ['qr']
-            });
-        } else {
-            Modal.alert(t('common.error'), t('modals.cameraPermissionsRequiredToConnectTerminal'), [{ text: t('common.ok') }]);
+        const isPhoneSizedWeb = Platform.OS === 'web' && isWebMobileLikeQrScannerHost({ width, height });
+        const canUseScanner = !isRunningOnMac() && (Platform.OS !== 'web' || isPhoneSizedWeb);
+        if (!canUseScanner) {
+            await Modal.alertAsync(t('common.error'), t('modals.qrScannerUnavailable'), [{ text: t('common.ok') }]);
+            return;
         }
-    }, [checkScannerPermissions]);
+        router.push('/scan/terminal');
+    }, [height, width]);
 
     const connectWithUrl = React.useCallback(async (url: string) => {
         return await processAuthUrl(url);
-    }, [processAuthUrl]);
-
-    // Set up barcode scanner listener
-    React.useEffect(() => {
-        if (CameraView.isModernBarcodeScannerAvailable) {
-            const subscription = CameraView.onModernBarcodeScanned(async (event) => {
-                if (!parseTerminalConnectUrl(event.data)) return;
-                if (isProcessingRef.current) return;
-
-                isProcessingRef.current = true;
-                try {
-                    // Dismiss scanner on Android is called automatically when barcode is scanned
-                    if (Platform.OS === 'ios') {
-                        await CameraView.dismissScanner().catch(() => {});
-                    }
-                    await processAuthUrl(event.data);
-                } finally {
-                    isProcessingRef.current = false;
-                }
-            });
-            return () => {
-                subscription.remove();
-                if (Platform.OS === 'ios') {
-                    void CameraView.dismissScanner().catch(() => {});
-                }
-            };
-        }
     }, [processAuthUrl]);
 
     return {

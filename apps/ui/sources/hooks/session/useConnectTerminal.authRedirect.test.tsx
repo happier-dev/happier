@@ -19,6 +19,10 @@ let contentPublicKey = new Uint8Array([9, 9, 9]);
 
 vi.mock('react-native', () => ({
     Platform: { OS: 'ios' },
+    Dimensions: {
+        get: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
+    },
+    useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
 }));
 
 vi.mock('expo-router', () => ({
@@ -45,13 +49,10 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
     isLegacyAuthCredentials: (creds: { encryption?: { type?: string } } | null) => creds?.encryption?.type === 'legacy',
 }));
 
-vi.mock('@/hooks/ui/useCheckCameraPermissions', () => ({
-    useCheckScannerPermissions: () => vi.fn(async () => true),
-}));
-
 vi.mock('@/modal', () => ({
     Modal: {
         alert: modalAlertSpy,
+        alertAsync: modalAlertSpy,
         confirm: modalConfirmSpy,
     },
 }));
