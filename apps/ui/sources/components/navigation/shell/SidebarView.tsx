@@ -25,6 +25,9 @@ import { isUsingCustomServer } from '@/sync/domains/server/serverConfig';
 import { resolveVisibleAppEnvironmentBadge } from '@/sync/runtime/appVariant';
 import { Text } from '@/components/ui/text/Text';
 
+export type SidebarViewProps = Readonly<{
+    sidebarWidthPx?: number | null;
+}>;
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
@@ -203,7 +206,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
 }));
 
-export const SidebarView = React.memo(() => {
+export const SidebarView = React.memo((props: SidebarViewProps) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const safeArea = useSafeAreaInsets();
@@ -264,7 +267,9 @@ export const SidebarView = React.memo(() => {
     // Calculate sidebar width and determine title positioning
     // Uses same formula as SidebarNavigator.tsx:18 for consistency
     const { width: windowWidth } = useWindowDimensions();
-    const sidebarWidth = Math.min(Math.max(Math.floor(windowWidth * 0.3), 250), 360);
+    const sidebarWidth = typeof props.sidebarWidthPx === 'number' && Number.isFinite(props.sidebarWidthPx)
+        ? props.sidebarWidthPx
+        : Math.min(Math.max(Math.floor(windowWidth * 0.3), 250), 360);
     const showZen = useFeatureEnabled('zen.navigation');
     const voiceEnabled = useFeatureEnabled('voice');
     // With Zen enabled: 4 icons (148px total), threshold 408px > max 360px → always left-justify
