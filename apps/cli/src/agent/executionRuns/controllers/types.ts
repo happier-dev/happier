@@ -1,5 +1,14 @@
 import type { AgentBackend, SessionId } from '@/agent/core/AgentBackend';
 
+export type ExecutionRunSendDelivery = 'prompt' | 'steer_if_supported' | 'interrupt';
+
+export type ExecutionRunExternalMessage = Readonly<{
+  message: string;
+  delivery: ExecutionRunSendDelivery;
+  resolve: () => void;
+  reject: (e: Error) => void;
+}>;
+
 export type ExecutionRunBackendController = {
   kind: 'backend';
   backend: AgentBackend;
@@ -9,6 +18,12 @@ export type ExecutionRunBackendController = {
   sidechainStreamKey: string;
   cancelled: boolean;
   turnCount: number;
+  turnEpoch: number;
+  turnInFlight: boolean;
+  turnCancelReason: 'steer' | 'stop' | 'timeout' | null;
+  turnCancelEpoch: number | null;
+  pendingExternalMessages: ExecutionRunExternalMessage[];
+  pendingExternalMessagesSignal: { promise: Promise<void>; resolve: () => void } | null;
   lastMarkerWriteAtMs: number;
   terminalMarkerWritePromise?: Promise<void>;
   terminalPromise: Promise<void>;
@@ -35,4 +50,3 @@ export function readBackendChildSessionId(ctrl: ExecutionRunController | null): 
   if (!ctrl) return null;
   return ctrl.kind === 'backend' ? ctrl.childSessionId : null;
 }
-

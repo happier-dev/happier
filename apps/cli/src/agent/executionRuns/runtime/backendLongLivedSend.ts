@@ -6,10 +6,11 @@ import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionR
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import type { FinishExecutionRun } from '@/agent/executionRuns/runtime/executionRunFinishRun';
 import { resumeBackendControllerForResumableRun } from '@/agent/executionRuns/runtime/resumeBackendController';
+import { isAbortLikeError, normalizeExecutionRunSendDelivery, resolveInFlightDeliveryAction } from '@/agent/executionRuns/runtime/turnDelivery';
 
 export async function sendBackendLongLivedRun(args: Readonly<{
   runId: string;
-  params: Readonly<{ message: string; resume?: boolean }>;
+  params: Readonly<{ message: string; resume?: boolean; delivery?: unknown }>;
   runs: Map<string, ExecutionRunState>;
   controllers: Map<string, ExecutionRunController>;
   budgetRegistry: ExecutionBudgetRegistry | null;
@@ -20,10 +21,11 @@ export async function sendBackendLongLivedRun(args: Readonly<{
   sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
   parentProvider: ACPProvider;
   writeActivityMarker: (runId: string, nowMs: number, opts?: Readonly<{ force?: boolean }>) => Promise<void>;
-}>): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
+  }>): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
   const run = args.runs.get(args.runId);
   if (!run) return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
   const wantsResume = args.params.resume === true;
+  const delivery = normalizeExecutionRunSendDelivery(args.params.delivery);
   if (run.status !== 'running' && !(wantsResume && run.retentionPolicy === 'resumable')) {
     return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Not running' };
   }
@@ -64,11 +66,42 @@ export async function sendBackendLongLivedRun(args: Readonly<{
   }
   if (ctrl2.cancelled) return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Not running' };
 
+  if (ctrl2.turnInFlight) {
+    const hasSteer = typeof ctrl2.backend.sendSteerPrompt === 'function';
+    const action = resolveInFlightDeliveryAction({ delivery, hasSteer });
+    if (action === 'busy') {
+      return { ok: false, errorCode: 'execution_run_busy', error: 'Run is busy' };
+    }
+    if (action === 'steer') {
+      try {
+        await ctrl2.backend.sendSteerPrompt!(ctrl2.childSessionId, args.params.message);
+      } catch (e) {
+        return { ok: false, errorCode: 'execution_run_failed', error: e instanceof Error ? e.message : 'Steer failed' };
+      }
+      await args.writeActivityMarker(args.runId, args.getNowMs(), { force: true });
+      return { ok: true };
+    }
+
+    // cancel_and_send
+    ctrl2.turnCancelReason = 'steer';
+    ctrl2.turnCancelEpoch = ctrl2.turnEpoch;
+    try {
+      await ctrl2.backend.cancel(ctrl2.childSessionId);
+    } catch {
+      // best effort
+    }
+  }
+
   if (typeof args.maxTurns === 'number' && ctrl2.turnCount >= args.maxTurns) {
     return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Turn limit exceeded' };
   }
 
+  const thisEpoch = ctrl2.turnEpoch + 1;
+  ctrl2.turnEpoch = thisEpoch;
+  ctrl2.turnInFlight = true;
   ctrl2.buffer = '';
+  ctrl2.sidechainStreamBuffer = '';
+  ctrl2.sidechainStreamKey = '';
   try {
     ctrl2.turnCount += 1;
     await ctrl2.backend.sendPrompt(ctrl2.childSessionId, args.params.message);
@@ -76,6 +109,18 @@ export async function sendBackendLongLivedRun(args: Readonly<{
       await ctrl2.backend.waitForResponseComplete();
     }
   } catch (e: any) {
+    if (
+      ctrl2.turnCancelReason === 'steer'
+      && ctrl2.turnCancelEpoch === thisEpoch
+      && isAbortLikeError(e)
+    ) {
+      // The active turn was intentionally interrupted for steering; do not terminalize the run.
+      ctrl2.turnCancelReason = null;
+      ctrl2.turnCancelEpoch = null;
+      if (ctrl2.turnEpoch === thisEpoch) ctrl2.turnInFlight = false;
+      await args.writeActivityMarker(args.runId, args.getNowMs(), { force: true });
+      return { ok: true };
+    }
     const message = e instanceof Error ? e.message : 'Execution failed';
     const finishedAtMs = args.getNowMs();
     args.finishRun(
@@ -109,6 +154,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
     args.controllers.delete(args.runId);
     return { ok: false, errorCode: 'execution_run_failed', error: message };
   }
+  if (ctrl2.turnEpoch === thisEpoch) ctrl2.turnInFlight = false;
 
   const rawText = ctrl2.buffer.trim();
   const streamed = run.ioMode === 'streaming' && ctrl2.sidechainStreamBuffer.trim().length > 0;

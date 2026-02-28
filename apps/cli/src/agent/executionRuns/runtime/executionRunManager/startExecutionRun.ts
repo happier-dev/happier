@@ -78,7 +78,10 @@ export async function startExecutionRun(args: Readonly<{
   writeActivityMarker: (runId: string, nowMs: number, opts?: Readonly<{ force?: boolean }>) => Promise<void>;
   finishRun: FinishRun;
   executeBoundedRun: ExecuteBoundedRun;
-  send: (runId: string, params: Readonly<{ message: string; resume?: boolean }>) => Promise<{ ok: boolean; errorCode?: string; error?: string }>;
+  send: (
+    runId: string,
+    params: Readonly<{ message: string; resume?: boolean; delivery?: unknown }>,
+  ) => Promise<{ ok: boolean; errorCode?: string; error?: string }>;
   voiceAgentManager: VoiceAgentManager;
   getDepthByCallId: (callId: string) => number | null;
 }>): Promise<ExecutionRunStartResult> {
@@ -256,6 +259,12 @@ export async function startExecutionRun(args: Readonly<{
       sidechainStreamKey: '',
       cancelled: false,
       turnCount: 0,
+      turnEpoch: 0,
+      turnInFlight: false,
+      turnCancelReason: null,
+      turnCancelEpoch: null,
+      pendingExternalMessages: [],
+      pendingExternalMessagesSignal: null,
       lastMarkerWriteAtMs: 0,
       terminalPromise,
       resolveTerminal,

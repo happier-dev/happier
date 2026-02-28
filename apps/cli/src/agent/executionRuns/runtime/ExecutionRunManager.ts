@@ -294,7 +294,61 @@ export class ExecutionRunManager {
     });
   }
 
-  async send(runId: string, params: Readonly<{ message: string; resume?: boolean }>): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
+  async send(
+    runId: string,
+    params: Readonly<{ message: string; resume?: boolean; delivery?: unknown }>,
+  ): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
+    const run = this.runs.get(runId) ?? null;
+    if (!run) return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
+
+    if (params.resume === true) {
+      // Resume semantics are already centralized in the long-lived sender; preserve that behavior for resumable bounded runs.
+      return sendBackendLongLivedRun({
+        runId,
+        params,
+        runs: this.runs,
+        controllers: this.controllers,
+        budgetRegistry: this.budgetRegistry,
+        createBackend: ({ backendId, permissionMode }) => this.createBackend({ backendId, permissionMode }),
+        maxTurns: this.maxTurns,
+        getNowMs: this.getNowMs,
+        finishRun: this.finishRun.bind(this),
+        sendAcp: this.sendAcp,
+        parentProvider: this.parentProvider,
+        writeActivityMarker: this.writeActivityMarker.bind(this),
+      });
+    }
+
+    if (run.runClass === 'bounded') {
+      const ctrl = this.controllers.get(runId) ?? null;
+      if (!ctrl || ctrl.kind !== 'backend' || !ctrl.childSessionId) {
+        return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Not running' };
+      }
+      if (ctrl.cancelled) return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Not running' };
+      if (!ctrl.turnInFlight) return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Not in flight' };
+
+      const delivery = params.delivery;
+      const normalized = delivery === undefined ? 'prompt' : delivery;
+      if (normalized === 'prompt') {
+        return { ok: false, errorCode: 'execution_run_busy', error: 'Run is busy' };
+      }
+      // enqueue: bounded runner will implement delivery semantics while the turn is running
+      return new Promise((resolve) => {
+        ctrl.pendingExternalMessages.push({
+          message: params.message,
+          delivery: (normalized === 'prompt' || normalized === 'steer_if_supported' || normalized === 'interrupt')
+            ? normalized
+            : 'prompt',
+          resolve: () => resolve({ ok: true }),
+          reject: (e) => resolve({ ok: false, errorCode: 'execution_run_failed', error: e.message }),
+        });
+        if (ctrl.pendingExternalMessagesSignal) {
+          ctrl.pendingExternalMessagesSignal.resolve();
+          ctrl.pendingExternalMessagesSignal = null;
+        }
+      });
+    }
+
     return sendBackendLongLivedRun({
       runId,
       params,

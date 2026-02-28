@@ -3,6 +3,7 @@ import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTy
 import type { ExecutionRunManagerStartParams } from '@/agent/executionRuns/runtime/executionRunTypes';
 import type { ExecutionRunController, ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 import type { FinishExecutionRun } from '@/agent/executionRuns/runtime/executionRunFinishRun';
+import { isAbortLikeError, normalizeExecutionRunSendDelivery, resolveInFlightDeliveryAction } from '@/agent/executionRuns/runtime/turnDelivery';
 
 function stripTrailingJsonObjectFromText(text: string): string {
   const trimmed = String(text ?? '');
@@ -67,14 +68,115 @@ export async function executeBoundedBackendRun(args: Readonly<{
     } as const;
     const prompt = profile.buildPrompt(start);
 
-    async function runOneTurn(turnPrompt: string): Promise<void> {
+    function waitForExternalMessage(): Promise<void> {
+      if (backendCtrl.pendingExternalMessages.length > 0) return Promise.resolve();
+      if (!backendCtrl.pendingExternalMessagesSignal) {
+        let resolve!: () => void;
+        const promise = new Promise<void>((r) => {
+          resolve = r;
+        });
+        backendCtrl.pendingExternalMessagesSignal = { promise, resolve };
+      }
+      return backendCtrl.pendingExternalMessagesSignal.promise;
+    }
+
+    async function sendTurnPrompt(turnPrompt: string): Promise<void> {
+      backendCtrl.turnCount += 1;
+      backendCtrl.turnEpoch += 1;
+      backendCtrl.turnInFlight = true;
+      backendCtrl.buffer = '';
+      backendCtrl.sidechainStreamBuffer = '';
+      backendCtrl.sidechainStreamKey = '';
       await backendCtrl.backend.sendPrompt(backendCtrl.childSessionId!, turnPrompt);
+    }
+
+    async function waitForTurnComplete(): Promise<void> {
       if (backendCtrl.backend.waitForResponseComplete) {
         await backendCtrl.backend.waitForResponseComplete();
       }
     }
 
-    const runPromise = runOneTurn(prompt);
+    async function runTurnWithExternalMessages(turnPrompt: string): Promise<void> {
+      backendCtrl.turnCancelReason = null;
+      backendCtrl.turnCancelEpoch = null;
+      await sendTurnPrompt(turnPrompt);
+      let activeEpoch = backendCtrl.turnEpoch;
+      let completionPromise: Promise<void> = waitForTurnComplete();
+
+      while (true) {
+        if (backendCtrl.cancelled) return;
+        const raced = await Promise.race([
+          completionPromise.then(() => ({ t: 'complete' as const })).catch((e) => ({ t: 'error' as const, e })),
+          waitForExternalMessage().then(() => ({ t: 'external' as const })),
+        ]);
+
+        if (raced.t === 'complete') break;
+        if (raced.t === 'error') {
+          const e = raced.e;
+          if (
+            backendCtrl.turnCancelReason === 'steer'
+            && backendCtrl.turnCancelEpoch === activeEpoch
+            && isAbortLikeError(e)
+          ) {
+            backendCtrl.turnCancelReason = null;
+            backendCtrl.turnCancelEpoch = null;
+            continue;
+          }
+          throw e;
+        }
+
+        // external message
+        const next = backendCtrl.pendingExternalMessages.shift() ?? null;
+        if (!next) continue;
+
+        const hasSteer = typeof backendCtrl.backend.sendSteerPrompt === 'function';
+        const delivery = normalizeExecutionRunSendDelivery(next.delivery);
+        const action = resolveInFlightDeliveryAction({ delivery, hasSteer });
+
+        if (action === 'busy') {
+          next.reject(new Error('Run is busy'));
+          continue;
+        }
+
+        if (action === 'steer') {
+          try {
+            await backendCtrl.backend.sendSteerPrompt!(backendCtrl.childSessionId!, next.message);
+            next.resolve();
+          } catch (e: any) {
+            next.reject(e instanceof Error ? e : new Error('Steer failed'));
+          }
+          continue;
+        }
+
+        // cancel_and_send
+        backendCtrl.turnCancelReason = 'steer';
+        backendCtrl.turnCancelEpoch = activeEpoch;
+        try {
+          await backendCtrl.backend.cancel(backendCtrl.childSessionId!);
+        } catch {
+          // best effort
+        }
+
+        // Ensure the canceled completion promise is fully settled before starting a new prompt.
+        // This avoids unhandled rejections if the backend signals a cancellation error.
+        try {
+          await completionPromise;
+        } catch (e: any) {
+          if (!isAbortLikeError(e)) throw e;
+        }
+
+        await sendTurnPrompt(next.message);
+        activeEpoch = backendCtrl.turnEpoch;
+        backendCtrl.turnCancelReason = null;
+        backendCtrl.turnCancelEpoch = null;
+        completionPromise = waitForTurnComplete();
+        next.resolve();
+      }
+
+      backendCtrl.turnInFlight = false;
+    }
+
+    const runPromise = runTurnWithExternalMessages(prompt);
 
     const timeoutMs = args.boundedTimeoutMs;
     if (typeof timeoutMs === 'number') {
@@ -132,9 +234,9 @@ export async function executeBoundedBackendRun(args: Readonly<{
         backendCtrl.buffer = '';
         backendCtrl.sidechainStreamBuffer = '';
         backendCtrl.sidechainStreamKey = '';
-        backendCtrl.turnCount += 1;
+        backendCtrl.turnInFlight = false;
 
-        await runOneTurn(repairPrompt);
+        await runTurnWithExternalMessages(repairPrompt);
 
         const repairedRawText = backendCtrl.buffer.trim();
         completion = profile.onBoundedComplete({
