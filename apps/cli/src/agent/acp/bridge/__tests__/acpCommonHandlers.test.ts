@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { forwardAcpPermissionRequest } from '../acpCommonHandlers';
+import { forwardAcpPermissionRequest, normalizePermissionRequestOptionsForAcp } from '../acpCommonHandlers';
 
 describe('forwardAcpPermissionRequest', () => {
   it('copies toolCall into options.input when input is empty', () => {
@@ -34,8 +34,7 @@ describe('forwardAcpPermissionRequest', () => {
       toolName: 'write',
       options: {
         input: {
-          kind: 'edit',
-          toolCallId: 'write_file-1',
+          filepath: '/tmp/happy-tool-ux.txt',
         },
       },
     });
@@ -77,7 +76,7 @@ describe('forwardAcpPermissionRequest', () => {
       options: {
         options: {
           input: {
-            path: '/tmp/happy-tool-ux.txt',
+            filepath: '/tmp/happy-tool-ux.txt',
           },
         },
       },
@@ -103,5 +102,26 @@ describe('forwardAcpPermissionRequest', () => {
 
     const [, message] = sendAgentMessage.mock.calls[0];
     expect((message as any).options.input).toEqual({ locations: [{ path: '/tmp/x' }] });
+  });
+});
+
+describe('normalizePermissionRequestOptionsForAcp', () => {
+  it('backfills input.filepath from toolCall.rawInput without retaining circular references', () => {
+    const rawInput: any = { filepath: '/tmp/cycle.txt', diff: 'x' };
+    rawInput.self = rawInput;
+    const out = normalizePermissionRequestOptionsForAcp({
+      input: {},
+      toolCall: {
+        kind: 'edit',
+        rawInput,
+      },
+    });
+
+    expect(out).toMatchObject({
+      input: {
+        filepath: '/tmp/cycle.txt',
+      },
+    });
+    expect((out as any).input.self).toBeUndefined();
   });
 });

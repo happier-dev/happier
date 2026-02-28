@@ -64,10 +64,63 @@ export function forwardAcpPermissionRequest(params: {
 }
 
 export function normalizePermissionRequestOptionsForAcp(payload: unknown): unknown {
-  const hasMeaningfulInput = (input: unknown): boolean => {
-    if (Array.isArray(input)) return input.length > 0;
-    if (!input || typeof input !== 'object') return false;
-    return Object.keys(input as Record<string, unknown>).length > 0;
+  const asRecord = (value: unknown): Record<string, unknown> | null => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return value as Record<string, unknown>;
+  };
+
+  const extractFilepath = (value: unknown): string | null => {
+    const rec = asRecord(value);
+    if (!rec) return null;
+    const candidates = [rec.filepath, rec.filePath, rec.path];
+    for (const cand of candidates) {
+      if (typeof cand === 'string' && cand.trim().length > 0) return cand.trim();
+    }
+    return null;
+  };
+
+  const extractFilepathFromToolCall = (toolCall: unknown): string | null => {
+    const rec = asRecord(toolCall);
+    if (!rec) return null;
+
+    const rawInput = rec.rawInput;
+    const fromRaw = extractFilepath(rawInput);
+    if (fromRaw) return fromRaw;
+
+    const locations = Array.isArray(rec.locations) ? rec.locations : null;
+    if (locations) {
+      for (const loc of locations) {
+        const locRec = asRecord(loc);
+        const path = locRec && typeof locRec.path === 'string' ? locRec.path.trim() : '';
+        if (path) return path;
+      }
+    }
+
+    const content = Array.isArray(rec.content) ? rec.content : null;
+    if (content) {
+      for (const entry of content) {
+        const entryRec = asRecord(entry);
+        const path = entryRec && typeof entryRec.path === 'string' ? entryRec.path.trim() : '';
+        if (path) return path;
+      }
+    }
+
+    const files = Array.isArray((rawInput as any)?.files) ? (rawInput as any).files : null;
+    if (files) {
+      for (const file of files) {
+        const fileRec = asRecord(file);
+        const path = fileRec ? extractFilepath(fileRec) : null;
+        if (path) return path;
+      }
+    }
+
+    return null;
+  };
+
+  const buildSafeInputFromToolCall = (toolCall: unknown): Record<string, unknown> | null => {
+    const filepath = extractFilepathFromToolCall(toolCall);
+    if (!filepath) return null;
+    return { filepath };
   };
 
   const backfillInputFromToolCall = (container: unknown): unknown => {
@@ -75,17 +128,13 @@ export function normalizePermissionRequestOptionsForAcp(payload: unknown): unkno
     if (Array.isArray(container)) return container;
 
     const record = container as Record<string, unknown>;
-    const input = record.input;
-    if (hasMeaningfulInput(input)) return container;
-
     const toolCall = record.toolCall;
     if (!toolCall || typeof toolCall !== 'object' || Array.isArray(toolCall)) return container;
 
-    const toolCallRecord = toolCall as Record<string, unknown>;
-    const toolCallRawInput = toolCallRecord.rawInput;
-    const backfilledInput = hasMeaningfulInput(toolCallRawInput) ? toolCallRawInput : toolCall;
+    const safeInput = buildSafeInputFromToolCall(toolCall);
+    if (!safeInput) return container;
 
-    return { ...record, input: backfilledInput };
+    return { ...record, input: safeInput };
   };
 
   const topLevel = backfillInputFromToolCall(payload);
