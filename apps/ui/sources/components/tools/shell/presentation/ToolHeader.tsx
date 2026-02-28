@@ -1,10 +1,9 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { ToolCall } from '@/sync/domains/messages/messageTypes';
-import { knownTools } from '@/components/tools/catalog';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
+import { buildToolHeaderModel } from '@/components/tools/shell/presentation/buildToolHeaderModel';
 
 
 interface ToolHeaderProps {
@@ -13,50 +12,25 @@ interface ToolHeaderProps {
 
 export function ToolHeader({ tool }: ToolHeaderProps) {
     const { theme } = useUnistyles();
-    const knownTool = knownTools[tool.name as keyof typeof knownTools] as any;
-
-    // Extract status first for Bash tool to potentially use as title
-    let status: string | null = null;
-    if (knownTool && typeof knownTool.extractStatus === 'function') {
-        const extractedStatus = knownTool.extractStatus({ tool, metadata: null });
-        if (typeof extractedStatus === 'string' && extractedStatus) {
-            status = extractedStatus;
-        }
-    }
-
-    // Handle optional title and function type
-    let toolTitle = tool.name;
-    if (knownTool?.title) {
-        if (typeof knownTool.title === 'function') {
-            toolTitle = knownTool.title({ tool, metadata: null });
-        } else {
-            toolTitle = knownTool.title;
-        }
-    }
-
-    const icon =
-        typeof knownTool?.icon === 'function'
-            ? knownTool.icon(18, theme.colors.header.tint)
-            : <Ionicons name="construct-outline" size={18} color={theme.colors.header.tint} />;
-
-    // Extract subtitle using the same logic as ToolView
-    let subtitle = null;
-    if (knownTool && typeof knownTool.extractSubtitle === 'function') {
-        const extractedSubtitle = knownTool.extractSubtitle({ tool, metadata: null });
-        if (typeof extractedSubtitle === 'string' && extractedSubtitle) {
-            subtitle = extractedSubtitle;
-        }
-    }
+    const model = React.useMemo(() => {
+        return buildToolHeaderModel({
+            tool,
+            metadata: null,
+            iconSize: 18,
+            iconColorPrimary: theme.colors.header.tint,
+            iconColorSecondary: theme.colors.header.tint,
+        });
+    }, [theme.colors.header.tint, tool]);
 
     return (
         <View style={styles.container}>
             <View style={styles.titleContainer}>
                 <View style={styles.titleRow}>
-                    {icon}
-                    <Text style={styles.title} numberOfLines={1}>{toolTitle}</Text>
+                    {model.icon}
+                    <Text style={styles.title} numberOfLines={1}>{model.title}</Text>
                 </View>
-                {subtitle && (
-                    <Text style={styles.subtitle} numberOfLines={1}>{subtitle}</Text>
+                {model.subtitle && (
+                    <Text style={styles.subtitle} numberOfLines={1}>{model.subtitle}</Text>
                 )}
             </View>
         </View>
