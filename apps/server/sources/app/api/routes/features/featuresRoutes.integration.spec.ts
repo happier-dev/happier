@@ -257,10 +257,12 @@ describe("featuresRoutes", () => {
             const payload = await getFeaturesPayload();
             expect(payload.features.encryption.plaintextStorage.enabled).toBe(false);
             expect(payload.features.encryption.accountOptOut.enabled).toBe(false);
-            expect(payload.capabilities.encryption).toEqual({
+            expect(payload.capabilities.encryption).toMatchObject({
                 storagePolicy: "required_e2ee",
                 allowAccountOptOut: false,
                 defaultAccountMode: "e2ee",
+                plainAccountSettingsAtRest: "server_sealed",
+                plainAccountCredentialsAtRest: "server_sealed",
             });
         });
 
@@ -272,10 +274,12 @@ describe("featuresRoutes", () => {
             const payload = await getFeaturesPayload();
             expect(payload.features.encryption.plaintextStorage.enabled).toBe(true);
             expect(payload.features.encryption.accountOptOut.enabled).toBe(true);
-            expect(payload.capabilities.encryption).toEqual({
+            expect(payload.capabilities.encryption).toMatchObject({
                 storagePolicy: "optional",
                 allowAccountOptOut: true,
                 defaultAccountMode: "plain",
+                plainAccountSettingsAtRest: "server_sealed",
+                plainAccountCredentialsAtRest: "server_sealed",
             });
         });
     });
@@ -379,6 +383,44 @@ describe("featuresRoutes", () => {
             process.env.HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED = "0";
             const payload = await getFeaturesPayload();
             expect(payload.features.connectedServices.quotas.enabled).toBe(false);
+        });
+    });
+
+    describe("server url capabilities", () => {
+        it("exposes canonicalServerUrl + webappUrl when configured via env", async () => {
+            process.env.HAPPIER_PUBLIC_SERVER_URL = "https://stack.example.test/";
+            process.env.HAPPIER_WEBAPP_URL = "https://ui.example.test/";
+
+            const payload = await getFeaturesPayload();
+            expect(payload.capabilities.server.canonicalServerUrl).toBe("https://stack.example.test");
+            expect(payload.capabilities.server.webappUrl).toBe("https://ui.example.test");
+        });
+
+        it("exposes canonicalServerUrl when only HAPPIER_PUBLIC_SERVER_URL is set", async () => {
+            process.env.HAPPIER_PUBLIC_SERVER_URL = "https://stack.example.test/";
+            delete process.env.HAPPIER_WEBAPP_URL;
+
+            const payload = await getFeaturesPayload();
+            expect(payload.capabilities.server.canonicalServerUrl).toBe("https://stack.example.test");
+            expect(payload.capabilities.server.webappUrl).toBeUndefined();
+        });
+
+        it("exposes webappUrl when only HAPPIER_WEBAPP_URL is set", async () => {
+            delete process.env.HAPPIER_PUBLIC_SERVER_URL;
+            process.env.HAPPIER_WEBAPP_URL = "https://ui.example.test/";
+
+            const payload = await getFeaturesPayload();
+            expect(payload.capabilities.server.canonicalServerUrl).toBeUndefined();
+            expect(payload.capabilities.server.webappUrl).toBe("https://ui.example.test");
+        });
+
+        it("strips userinfo/query/hash from advertised urls", async () => {
+            process.env.HAPPIER_PUBLIC_SERVER_URL = "https://user:pass@stack.example.test/?q=1#frag";
+            process.env.HAPPIER_WEBAPP_URL = "https://user:pass@ui.example.test/app/?q=1#frag";
+
+            const payload = await getFeaturesPayload();
+            expect(payload.capabilities.server.canonicalServerUrl).toBe("https://stack.example.test");
+            expect(payload.capabilities.server.webappUrl).toBe("https://ui.example.test/app");
         });
     });
 });
