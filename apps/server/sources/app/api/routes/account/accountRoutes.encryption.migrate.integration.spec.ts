@@ -153,6 +153,160 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
         await app.close();
     });
 
+    it("stores v2 settings sealed at rest for plain accounts when configured", async () => {
+        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
+        process.env.HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT = "1";
+        process.env.HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_SETTINGS_AT_REST = "server_sealed";
+
+        const kp = tweetnacl.sign.keyPair();
+        const publicKeyHex = privacyKit.encodeHex(new Uint8Array(kp.publicKey));
+
+        const account = await db.account.create({
+            data: { publicKey: publicKeyHex, encryptionMode: "e2ee", settings: "ciphertext", settingsVersion: 0 },
+            select: { id: true },
+        });
+
+        const app = createTestApp();
+        registerAccountSettingsRoutes(app as any);
+        registerAccountEncryptionMigrateRoutes(app as any);
+        await app.ready();
+
+        const migrate = await app.inject({
+            method: "POST",
+            url: "/v1/account/encryption/migrate",
+            headers: { "content-type": "application/json", "x-test-user-id": account.id },
+            payload: {
+                toMode: "plain",
+                expectedSettingsVersion: 0,
+                settingsContent: { t: "plain", v: { schemaVersion: 2, pushEnabled: true } },
+                connectedServices: { action: "assert_empty" },
+                automations: { action: "assert_empty" },
+            },
+        });
+
+        expect(migrate.statusCode).toBe(200);
+        expect(migrate.json()).toMatchObject({ success: true, mode: "plain", settingsVersion: 1 });
+
+        const storedAccount = await db.account.findUnique({
+            where: { id: account.id },
+            select: { encryptionMode: true, settingsVersion: true, settings: true, publicKey: true },
+        });
+        expect(storedAccount?.encryptionMode).toBe("plain");
+        expect(storedAccount?.settingsVersion).toBe(1);
+        expect(storedAccount?.publicKey).toBe(publicKeyHex);
+        expect(typeof storedAccount?.settings).toBe("string");
+        const wrapper = JSON.parse(storedAccount?.settings ?? "{}") as any;
+        expect(wrapper?.t).toBe("sealed_v1");
+
+        const getV2 = await app.inject({
+            method: "GET",
+            url: "/v2/account/settings",
+            headers: { "x-test-user-id": account.id },
+        });
+        expect(getV2.statusCode).toBe(200);
+        expect(getV2.json()).toMatchObject({
+            version: 1,
+            content: { t: "plain", v: expect.objectContaining({ schemaVersion: 2, pushEnabled: true }) },
+        });
+
+        await app.close();
+    });
+
+    it("does not allow rotating the account signing key across encryption-mode toggles", async () => {
+        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
+        process.env.HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT = "1";
+
+        const kp1 = tweetnacl.sign.keyPair();
+        const kp2 = tweetnacl.sign.keyPair();
+        const publicKeyHex1 = privacyKit.encodeHex(new Uint8Array(kp1.publicKey));
+
+        const account = await db.account.create({
+            data: { publicKey: publicKeyHex1, encryptionMode: "e2ee", settings: "ciphertext", settingsVersion: 0 },
+            select: { id: true },
+        });
+
+        const app = createTestApp();
+        registerAccountEncryptionMigrateRoutes(app as any);
+        await app.ready();
+
+        const toPlain = await app.inject({
+            method: "POST",
+            url: "/v1/account/encryption/migrate",
+            headers: { "content-type": "application/json", "x-test-user-id": account.id },
+            payload: {
+                toMode: "plain",
+                expectedSettingsVersion: 0,
+                settingsContent: { t: "plain", v: { schemaVersion: 2 } },
+                connectedServices: { action: "assert_empty" },
+                automations: { action: "assert_empty" },
+            },
+        });
+        expect(toPlain.statusCode).toBe(200);
+
+        const storedAfterPlain = await db.account.findUnique({
+            where: { id: account.id },
+            select: { encryptionMode: true, publicKey: true, settingsVersion: true },
+        });
+        expect(storedAfterPlain?.encryptionMode).toBe("plain");
+        expect(storedAfterPlain?.publicKey).toBe(publicKeyHex1);
+        expect(storedAfterPlain?.settingsVersion).toBe(1);
+
+        const challenge2 = Uint8Array.from(crypto.getRandomValues(new Uint8Array(32)));
+        const signature2 = Uint8Array.from(tweetnacl.sign.detached(challenge2, Uint8Array.from(kp2.secretKey)));
+        const mismatchedKey = await app.inject({
+            method: "POST",
+            url: "/v1/account/encryption/migrate",
+            headers: { "content-type": "application/json", "x-test-user-id": account.id },
+            payload: {
+                toMode: "e2ee",
+                expectedSettingsVersion: 1,
+                settingsContent: { t: "encrypted", c: "settings-ciphertext" },
+                connectedServices: { action: "assert_empty" },
+                automations: { action: "assert_empty" },
+                keyProof: {
+                    publicKey: privacyKit.encodeBase64(new Uint8Array(kp2.publicKey)),
+                    challenge: privacyKit.encodeBase64(challenge2),
+                    signature: privacyKit.encodeBase64(signature2),
+                },
+            },
+        });
+        expect(mismatchedKey.statusCode).toBe(400);
+        expect(mismatchedKey.json()).toEqual({ error: "invalid-params", reason: "restore_required" });
+
+        const challenge1 = Uint8Array.from(crypto.getRandomValues(new Uint8Array(32)));
+        const signature1 = Uint8Array.from(tweetnacl.sign.detached(challenge1, Uint8Array.from(kp1.secretKey)));
+        const correctKey = await app.inject({
+            method: "POST",
+            url: "/v1/account/encryption/migrate",
+            headers: { "content-type": "application/json", "x-test-user-id": account.id },
+            payload: {
+                toMode: "e2ee",
+                expectedSettingsVersion: 1,
+                settingsContent: { t: "encrypted", c: "settings-ciphertext" },
+                connectedServices: { action: "assert_empty" },
+                automations: { action: "assert_empty" },
+                keyProof: {
+                    publicKey: privacyKit.encodeBase64(new Uint8Array(kp1.publicKey)),
+                    challenge: privacyKit.encodeBase64(challenge1),
+                    signature: privacyKit.encodeBase64(signature1),
+                },
+            },
+        });
+        expect(correctKey.statusCode).toBe(200);
+        expect(correctKey.json()).toMatchObject({ success: true, mode: "e2ee", settingsVersion: 2 });
+
+        const storedAfterE2ee = await db.account.findUnique({
+            where: { id: account.id },
+            select: { encryptionMode: true, publicKey: true, settings: true, settingsVersion: true },
+        });
+        expect(storedAfterE2ee?.encryptionMode).toBe("e2ee");
+        expect(storedAfterE2ee?.publicKey).toBe(publicKeyHex1);
+        expect(storedAfterE2ee?.settings).toBe("settings-ciphertext");
+        expect(storedAfterE2ee?.settingsVersion).toBe(2);
+
+        await app.close();
+    });
+
     it("migrates plain -> e2ee atomically and requires keyProof", async () => {
         process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
         process.env.HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT = "1";
@@ -202,7 +356,7 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
             },
         });
         expect(missingProof.statusCode).toBe(400);
-        expect(missingProof.json()).toEqual({ error: "invalid-params" });
+        expect(missingProof.json()).toEqual({ error: "invalid-params", reason: "key_proof_required" });
 
         const kp = tweetnacl.sign.keyPair();
         const publicKey = Uint8Array.from(kp.publicKey);

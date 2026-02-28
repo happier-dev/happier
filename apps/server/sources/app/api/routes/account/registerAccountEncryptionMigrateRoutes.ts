@@ -1,115 +1,36 @@
-import { z } from "zod";
-
 import { type Fastify } from "../../types";
 import { inTx } from "@/storage/inTx";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import {
-    AccountSettingsStoredContentEnvelopeSchema,
-    ConnectedServiceCredentialRecordV1Schema,
-    ConnectedServiceIdSchema,
-    SealedConnectedServiceCredentialV1Schema,
+    AccountEncryptionMigrateRequestSchema,
+    AccountEncryptionMigrateSuccessResponseSchema,
+    AccountEncryptionMigrateBadRequestResponseSchema,
+    AccountEncryptionMigrateForbiddenResponseSchema,
+    AccountEncryptionMigrateNotFoundResponseSchema,
+    AccountEncryptionMigrateConflictResponseSchema,
+    AccountEncryptionMigrateInternalResponseSchema,
+    AccountEncryptionMigrateInvalidParamsReasonSchema,
 } from "@happier-dev/protocol";
 import { storePlainAccountSettingsDbValue } from "@/app/encryption/accountSettingsStorage";
 import * as privacyKit from "privacy-kit";
 import tweetnacl from "tweetnacl";
 import { encodeCredentialTokenBytes } from "@/app/api/routes/connect/connectedServicesV2/credentialTokenCodec";
-import { ConnectedServiceProfileIdSchema } from "@/app/api/routes/connect/connectedServicesV2/profileIdSchema";
 import { encryptString } from "@/modules/encrypt";
 import { encodeUtf8Bytes } from "@/app/api/routes/connect/connectedServicesV3/bytesCodec";
 import { AutomationValidationError, parseAutomationPatchInput } from "@/app/automations/automationValidation";
-
-const KeyProofSchema = z.object({
-    publicKey: z.string().min(1),
-    challenge: z.string().min(1),
-    signature: z.string().min(1),
-    contentPublicKey: z.string().min(1).optional(),
-    contentPublicKeySig: z.string().min(1).optional(),
-}).strict().superRefine((value, ctx) => {
-    const hasContentKey = typeof value.contentPublicKey === "string";
-    const hasContentSig = typeof value.contentPublicKeySig === "string";
-    if (hasContentKey !== hasContentSig) {
-        ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: "contentPublicKey and contentPublicKeySig must be provided together",
-        });
-    }
-});
-
-const ConnectedServiceCredentialMigrationItemSchema = z.object({
-    serviceId: ConnectedServiceIdSchema,
-    profileId: ConnectedServiceProfileIdSchema,
-    kind: z.enum(["plain", "sealed"]),
-    record: ConnectedServiceCredentialRecordV1Schema.optional(),
-    sealed: SealedConnectedServiceCredentialV1Schema.optional(),
-    metadata: z.object({
-        kind: z.enum(["oauth", "token"]),
-        providerEmail: z.string().min(1).nullable().optional(),
-        providerAccountId: z.string().min(1).nullable().optional(),
-        expiresAt: z.number().int().nonnegative().nullable().optional(),
-    }).optional(),
-}).strict().superRefine((value, ctx) => {
-    if (value.kind === "plain") {
-        if (!value.record) {
-            ctx.addIssue({ code: z.ZodIssueCode.custom, message: "record is required for plain migrations" });
-        }
-        if (value.sealed) {
-            ctx.addIssue({ code: z.ZodIssueCode.custom, message: "sealed must not be provided for plain migrations" });
-        }
-    } else {
-        if (!value.sealed) {
-            ctx.addIssue({ code: z.ZodIssueCode.custom, message: "sealed is required for sealed migrations" });
-        }
-        if (value.record) {
-            ctx.addIssue({ code: z.ZodIssueCode.custom, message: "record must not be provided for sealed migrations" });
-        }
-    }
-});
-
-const ConnectedServicesDirectiveSchema = z.discriminatedUnion("action", [
-    z.object({ action: z.literal("assert_empty") }).strict(),
-    z.object({ action: z.literal("clear") }).strict(),
-    z.object({
-        action: z.literal("migrate"),
-        credentials: z.array(ConnectedServiceCredentialMigrationItemSchema).max(500),
-    }).strict(),
-]);
-
-const AutomationsMigrationItemSchema = z.object({
-    automationId: z.string().min(1),
-    templateCiphertext: z.string().min(1),
-}).strict();
-
-const AutomationsDirectiveSchema = z.discriminatedUnion("action", [
-    z.object({ action: z.literal("assert_empty") }).strict(),
-    z.object({ action: z.literal("clear") }).strict(),
-    z.object({ action: z.literal("migrate"), templates: z.array(AutomationsMigrationItemSchema).max(500) }).strict(),
-]);
-
-const MigrateRequestSchema = z.object({
-    toMode: z.enum(["plain", "e2ee"]),
-    expectedSettingsVersion: z.number().int().min(0),
-    settingsContent: AccountSettingsStoredContentEnvelopeSchema.nullable(),
-    connectedServices: ConnectedServicesDirectiveSchema,
-    automations: AutomationsDirectiveSchema,
-    keyProof: KeyProofSchema.optional(),
-}).strict();
 
 export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
     app.post("/v1/account/encryption/migrate", {
         preHandler: app.authenticate,
         schema: {
-            body: MigrateRequestSchema,
+            body: AccountEncryptionMigrateRequestSchema,
             response: {
-                200: z.object({
-                    success: z.literal(true),
-                    mode: z.enum(["plain", "e2ee"]),
-                    settingsVersion: z.number().int().min(0),
-                }).strict(),
-                400: z.object({ error: z.enum(["invalid-params", "connected_services_not_empty", "automations_not_empty"]) }).strict(),
-                403: z.object({ error: z.enum(["e2ee-required", "plaintext-only"]) }).strict(),
-                404: z.object({ error: z.literal("not_found") }).strict(),
-                409: z.object({ error: z.literal("version-mismatch"), currentVersion: z.number().int().min(0) }).strict(),
-                500: z.object({ error: z.literal("internal") }).strict(),
+                200: AccountEncryptionMigrateSuccessResponseSchema,
+                400: AccountEncryptionMigrateBadRequestResponseSchema,
+                403: AccountEncryptionMigrateForbiddenResponseSchema,
+                404: AccountEncryptionMigrateNotFoundResponseSchema,
+                409: AccountEncryptionMigrateConflictResponseSchema,
+                500: AccountEncryptionMigrateInternalResponseSchema,
             },
         },
     }, async (request, reply) => {
@@ -140,7 +61,9 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                 return reply.code(400).send({ error: "invalid-params" });
             }
             if (!keyProof) {
-                return reply.code(400).send({ error: "invalid-params" });
+                return reply
+                    .code(400)
+                    .send({ error: "invalid-params", reason: AccountEncryptionMigrateInvalidParamsReasonSchema.enum.key_proof_required });
             }
         }
 
@@ -188,7 +111,10 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                     }
                     const publicKeyHex = privacyKit.encodeHex(new Uint8Array(publicKeyBytes));
                     if (account.publicKey && account.publicKey !== publicKeyHex) {
-                        return { type: "invalid-params" as const };
+                        return {
+                            type: "invalid-params" as const,
+                            reason: AccountEncryptionMigrateInvalidParamsReasonSchema.enum.restore_required,
+                        };
                     }
                     publicKeyHexUpdate = publicKeyHex;
 
@@ -391,7 +317,13 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
             });
 
             if (result.type === "internal-error") return reply.code(500).send({ error: "internal" });
-            if (result.type === "invalid-params") return reply.code(400).send({ error: "invalid-params" });
+            if (result.type === "invalid-params") {
+                return reply.code(400).send(
+                    result.reason
+                        ? { error: "invalid-params", reason: result.reason }
+                        : { error: "invalid-params" },
+                );
+            }
             if (result.type === "version-mismatch") {
                 return reply.code(409).send({ error: "version-mismatch", currentVersion: result.currentVersion });
             }

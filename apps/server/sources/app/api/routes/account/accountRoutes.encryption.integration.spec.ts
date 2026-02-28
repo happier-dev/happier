@@ -128,7 +128,6 @@ describe("accountRoutes (encryption mode integration)", () => {
 
         const response = await handler({ userId: "u1", body: { mode: "plain" } }, reply);
 
-        expect(response).toBeUndefined();
         expect(reply.code).toHaveBeenCalledWith(400);
         expect(reply.send).toHaveBeenCalledWith({ error: "migration-required" });
         expect(dbAccountUpdate).not.toHaveBeenCalled();

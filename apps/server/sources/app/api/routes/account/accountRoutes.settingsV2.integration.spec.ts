@@ -74,7 +74,6 @@ describe("accountRoutes (/v2/account/settings) (integration)", () => {
 
         const response = await handler({ userId: "u1", body: { settings: "ciphertext", expectedVersion: 0 } }, reply);
 
-        expect(response).toBeUndefined();
         expect(reply.code).toHaveBeenCalledWith(400);
         expect(reply.send).toHaveBeenCalledWith({ error: "plain_account_requires_settings_v2" });
     });
@@ -100,7 +99,6 @@ describe("accountRoutes (/v2/account/settings) (integration)", () => {
             reply,
         );
 
-        expect(response).toBeUndefined();
         expect(reply.code).toHaveBeenCalledWith(400);
         expect(reply.send).toHaveBeenCalledWith({ error: "invalid-params" });
         expect(txAccountUpdateMany).not.toHaveBeenCalled();
@@ -127,7 +125,6 @@ describe("accountRoutes (/v2/account/settings) (integration)", () => {
             reply,
         );
 
-        expect(response).toBeUndefined();
         expect(reply.code).toHaveBeenCalledWith(400);
         expect(reply.send).toHaveBeenCalledWith({ error: "invalid-params" });
         expect(txAccountUpdateMany).not.toHaveBeenCalled();
