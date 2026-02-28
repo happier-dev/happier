@@ -525,12 +525,24 @@ export function renderServerEnvFile({
       : `file:${dbPath}`;
   const uiDirRaw = typeof uiDir === 'string' && uiDir.trim() ? uiDir.trim() : '';
   const serverBinDirRaw = typeof serverBinDir === 'string' && serverBinDir.trim() ? serverBinDir.trim() : '';
-  const prismaEngineCandidate = serverBinDirRaw && p === 'darwin' && a === 'arm64'
-    ? join(serverBinDirRaw, 'generated', 'sqlite-client', 'libquery_engine-darwin-arm64.dylib.node')
-    : serverBinDirRaw && p === 'linux' && a === 'arm64'
-      ? join(serverBinDirRaw, 'generated', 'sqlite-client', 'libquery_engine-linux-arm64-openssl-1.1.x.so.node')
-      : '';
-  const prismaEnginePath = prismaEngineCandidate && existsSync(prismaEngineCandidate) ? prismaEngineCandidate : '';
+  const prismaEngineCandidates = [];
+  if (serverBinDirRaw && p === 'darwin' && a === 'arm64') {
+    prismaEngineCandidates.push(
+      join(serverBinDirRaw, 'node_modules', '.prisma', 'client', 'libquery_engine-darwin-arm64.dylib.node'),
+      join(serverBinDirRaw, 'generated', 'sqlite-client', 'libquery_engine-darwin-arm64.dylib.node'),
+    );
+  } else if (serverBinDirRaw && p === 'linux' && a === 'arm64') {
+    prismaEngineCandidates.push(
+      join(serverBinDirRaw, 'node_modules', '.prisma', 'client', 'libquery_engine-linux-arm64-openssl-3.0.x.so.node'),
+      join(serverBinDirRaw, 'generated', 'sqlite-client', 'libquery_engine-linux-arm64-openssl-3.0.x.so.node'),
+    );
+  } else if (serverBinDirRaw && p === 'linux' && a === 'x64') {
+    prismaEngineCandidates.push(
+      join(serverBinDirRaw, 'node_modules', '.prisma', 'client', 'libquery_engine-debian-openssl-3.0.x.so.node'),
+      join(serverBinDirRaw, 'generated', 'sqlite-client', 'libquery_engine-debian-openssl-3.0.x.so.node'),
+    );
+  }
+  const prismaEnginePath = prismaEngineCandidates.find((candidate) => existsSync(candidate)) || '';
   return [
     `PORT=${port}`,
     `HAPPIER_SERVER_HOST=${host}`,

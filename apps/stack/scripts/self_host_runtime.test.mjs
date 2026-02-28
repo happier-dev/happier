@@ -473,6 +473,26 @@ test('renderServerEnvFile includes PRISMA_QUERY_ENGINE_LIBRARY when a packaged s
   assert.match(envText, new RegExp(`PRISMA_QUERY_ENGINE_LIBRARY=${enginePath.replaceAll('\\\\', '\\\\\\\\')}`));
 });
 
+test('renderServerEnvFile includes PRISMA_QUERY_ENGINE_LIBRARY for packaged postgres prisma engine on linux arm64', async () => {
+  const serverBinDir = await mkdtemp(join(tmpdir(), 'happier-self-host-bin-postgres-'));
+  await mkdir(join(serverBinDir, 'node_modules', '.prisma', 'client'), { recursive: true });
+  const enginePath = join(serverBinDir, 'node_modules', '.prisma', 'client', 'libquery_engine-linux-arm64-openssl-3.0.x.so.node');
+  await writeFile(enginePath, 'stub', 'utf-8');
+
+  const envText = renderServerEnvFile({
+    port: 3005,
+    host: '127.0.0.1',
+    platform: 'linux',
+    arch: 'arm64',
+    serverBinDir,
+    dataDir: '/var/lib/happier',
+    filesDir: '/var/lib/happier/files',
+    dbDir: '/var/lib/happier/pglite',
+  });
+  assert.match(envText, /PRISMA_CLIENT_ENGINE_TYPE=library/);
+  assert.match(envText, new RegExp(`PRISMA_QUERY_ENGINE_LIBRARY=${enginePath.replaceAll('\\\\', '\\\\\\\\')}`));
+});
+
 test('renderServerEnvFile uses file URL semantics on Windows', () => {
   const envText = renderServerEnvFile({
     port: 3005,
