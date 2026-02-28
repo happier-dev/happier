@@ -236,6 +236,12 @@ async function main() {
       const exportDirAbs = path.dirname(artifactAbs);
       const exportedOutJsonAbs = path.join(exportDirAbs, outJsonName);
 
+      const expoAppSlug = String(process.env.EXPO_APP_SLUG ?? '').trim();
+      const expoAppScheme = String(process.env.EXPO_APP_SCHEME ?? '').trim();
+      const expoAppName = String(process.env.EXPO_APP_NAME ?? '').trim();
+      const expoAppBundleId = String(process.env.EXPO_APP_BUNDLE_ID ?? '').trim();
+      const sentryAuthToken = String(process.env.SENTRY_AUTH_TOKEN ?? '').trim();
+
       const staged = dryRun ? null : stageRepoForDagger({ repoRoot });
       const daggerRepoArg = dryRun ? '.' : staged?.stagedRepoDir;
 
@@ -266,8 +272,13 @@ async function main() {
             outJsonName,
             '--expo-token',
             'env://EXPO_TOKEN',
+            ...(sentryAuthToken ? ['--sentry-auth-token', 'env://SENTRY_AUTH_TOKEN'] : []),
             '--eas-cli-version',
             easCliVersion,
+            ...(expoAppSlug ? ['--expo-app-slug', expoAppSlug] : []),
+            ...(expoAppScheme ? ['--expo-app-scheme', expoAppScheme] : []),
+            ...(expoAppName ? ['--expo-app-name', expoAppName] : []),
+            ...(expoAppBundleId ? ['--expo-app-bundle-id', expoAppBundleId] : []),
           ],
           { cwd: repoRoot, stdio: 'inherit' },
         );

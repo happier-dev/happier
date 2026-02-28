@@ -16,6 +16,13 @@ test('expo native-build wrapper allows long-running Android builds (timeout >= 4
   );
 });
 
+test('dagger expoAndroidLocalBuild forwards Expo app identity env vars to the container (dev-client isolation)', () => {
+  const src = fs.readFileSync(path.join(repoRoot, 'dagger', 'src', 'index.ts'), 'utf8');
+  assert.match(src, /EXPO_APP_SCHEME/);
+  assert.match(src, /EXPO_APP_NAME/);
+  assert.match(src, /EXPO_APP_BUNDLE_ID/);
+});
+
 function makeTempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'happier-pipeline-expo-dagger-'));
 }
@@ -90,6 +97,10 @@ test('expo native-build can delegate local Android builds to Dagger runtime', ()
     ...process.env,
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
     EXPO_TOKEN: 'test-token',
+    SENTRY_AUTH_TOKEN: 'sentry-token',
+    EXPO_APP_SCHEME: 'happier-dev',
+    EXPO_APP_NAME: 'Happier Dev',
+    EXPO_APP_BUNDLE_ID: 'dev.happier.stack.dev.leeroy',
   };
 
   const stdout = execFileSync(
@@ -116,6 +127,13 @@ test('expo native-build can delegate local Android builds to Dagger runtime', ()
   assert.match(stdout, /runtime=dagger/);
   assert.match(stdout, /DAGGER --progress plain -m \.\/dagger call -o .* expo-android-local-build/);
   assert.match(stdout, /--repo\b/);
+  assert.ok(
+    stdout.includes('--sentry-auth-token env://SENTRY_AUTH_TOKEN'),
+    'expected dagger runtime wrapper to forward SENTRY_AUTH_TOKEN to the build container when set',
+  );
+  assert.match(stdout, /--expo-app-scheme happier-dev\b/);
+  assert.match(stdout, /--expo-app-name Happier Dev\b/);
+  assert.match(stdout, /--expo-app-bundle-id dev\.happier\.stack\.dev\.leeroy\b/);
   assert.ok(fs.existsSync(artifactOut), 'expected dagger runtime to create/export artifact');
   assert.ok(fs.existsSync(outJson), 'expected dagger runtime to create/export metadata json');
 });
