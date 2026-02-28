@@ -11,6 +11,7 @@ import type { JsRuntime } from "./runClaude";
 import { getClaudeRemoteSystemPrompt } from "./utils/remoteSystemPrompt";
 import { parseClaudeSdkFlagOverridesFromArgs } from "./remote/sdkFlagOverrides";
 import { resolveClaudeRemoteSessionStartPlan } from "./remote/sessionStartPlan";
+import { resolveClaudeCodeExperimentalEnvOverlay } from "./spawn/resolveClaudeCodeExperimentalEnvOverlay";
 
 function extractMcpConfigPassthroughArgs(args?: string[]): string[] | undefined {
     const input = args ?? [];
@@ -151,6 +152,9 @@ export async function claudeRemote(opts: {
         pathToClaudeCodeExecutable: (() => {
             return resolve(join(projectPath(), 'scripts', 'claude_remote_launcher.cjs'));
         })(),
+        env: resolveClaudeCodeExperimentalEnvOverlay({
+            claudeCodeExperimentalAgentTeamsEnabled: mode.claudeCodeExperimentalAgentTeamsEnabled,
+        }),
         settingsPath: opts.hookSettingsPath,
     }
 
