@@ -294,7 +294,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
             >
                 <Pressable
                     style={styles.statusContainer}
-                    onPress={() => setOpen(true)}
+                    onPress={() => setOpen((currentOpen) => !currentOpen)}
                     accessibilityRole="button"
                 >
                     <StatusDot
