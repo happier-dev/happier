@@ -58,7 +58,7 @@ describe('generateWebAuthUrl', () => {
     );
   });
 
-  it('uses persisted publicServerUrl from the active server profile when HAPPIER_PUBLIC_SERVER_URL is unset', async () => {
+  it('uses persisted canonical serverUrl from the active server profile when HAPPIER_PUBLIC_SERVER_URL is unset', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-webAuth-public-profile-'));
 
     try {
@@ -71,15 +71,15 @@ describe('generateWebAuthUrl', () => {
         join(home, 'settings.json'),
         JSON.stringify(
           {
-            schemaVersion: 5,
+            schemaVersion: 6,
             onboardingCompleted: true,
             activeServerId: 'local',
             servers: {
               local: {
                 id: 'local',
                 name: 'Local',
-                serverUrl: 'http://127.0.0.1:53545',
-                publicServerUrl: 'https://my-stack.example.test',
+                serverUrl: 'https://my-stack.example.test',
+                localServerUrl: 'http://127.0.0.1:53545',
                 webappUrl: 'https://app.happier.dev',
                 createdAt: 1,
                 updatedAt: 1,

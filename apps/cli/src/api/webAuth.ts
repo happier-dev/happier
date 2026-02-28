@@ -11,7 +11,7 @@ export function generateWebAuthUrl(publicKey: Uint8Array): string {
     const publicKeyB64Url = encodeBase64(publicKey, 'base64url');
     return buildTerminalConnectLinks({
         webappUrl: configuration.webappUrl,
-        serverUrl: configuration.publicServerUrl,
+        serverUrl: configuration.serverUrl,
         publicKeyB64Url,
     }).webUrl;
 }
