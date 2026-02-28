@@ -1,6 +1,6 @@
 import { EnhancedMode } from "./loop";
 import { query, type QueryOptions, type SDKMessage, type SDKSystemMessage, AbortError, SDKUserMessage } from '@/backends/claude/sdk'
-import { mapToClaudeMode } from "./utils/permissionMode";
+import { resolveClaudeSdkPermissionModeFromEnhancedMode } from "./utils/permissionMode";
 import { join, resolve } from 'node:path';
 import { projectPath } from "@/projectPath";
 import { parseSpecialCommand } from "@/cli/parsers/specialCommands";
@@ -131,7 +131,7 @@ export async function claudeRemote(opts: {
         cwd: opts.path,
         continue: shouldContinue || undefined,
         resume: startFrom ?? undefined,
-        permissionMode: mapToClaudeMode(initial.mode.permissionMode),
+        permissionMode: resolveClaudeSdkPermissionModeFromEnhancedMode(initial.mode),
         model: argOverrides.model ?? initial.mode.model,
         fallbackModel: argOverrides.fallbackModel ?? initial.mode.fallbackModel,
         maxTurns: argOverrides.maxTurns,
