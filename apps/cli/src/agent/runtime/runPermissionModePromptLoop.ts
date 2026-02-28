@@ -9,6 +9,9 @@ import {
 import { waitForNextPermissionModeMessage } from '@/agent/runtime/waitForNextPermissionModeMessage';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import type { PermissionModeQueuedPrompt } from '@/agent/runtime/permission/permissionModeQueuedPrompt';
+import {
+  resolveProviderPromptWithReplaySeed,
+} from '@/agent/runtime/replaySeed/replaySeedV1';
 
 type PromptRuntime = {
   beginTurn: () => void;
@@ -30,25 +33,6 @@ type QueuedPermissionModeMessage = {
   mode: { permissionMode: PermissionMode };
   hash: string;
 };
-
-type ReplaySeedV1 = {
-  v: 1;
-  seedText: string;
-  sourceSessionId: string;
-  sourceCutoffSeqInclusive: number;
-  createdAtMs: number;
-  appliedToLocalId?: string;
-  appliedAtMs?: number;
-};
-
-function readReplaySeedV1FromMetadata(metadata: unknown): ReplaySeedV1 | null {
-  if (!metadata || typeof metadata !== 'object') return null;
-  const seed = (metadata as any).replaySeedV1;
-  if (!seed || typeof seed !== 'object') return null;
-  if ((seed as any).v !== 1) return null;
-  if (typeof (seed as any).seedText !== 'string') return null;
-  return seed as ReplaySeedV1;
-}
 
 export async function runPermissionModePromptLoop(opts: {
   providerName: string;
@@ -77,6 +61,7 @@ export async function runPermissionModePromptLoop(opts: {
   let currentModeHash: string | null = null;
   let pending: QueuedPermissionModeMessage | null = null;
   let storedSessionIdForResume: string | null = null;
+  let didReplaySeedBootstrap = false;
 
   const normalizedResumeId = typeof opts.initialResumeId === 'string' ? opts.initialResumeId.trim() : '';
   if (normalizedResumeId) {
@@ -185,36 +170,21 @@ export async function runPermissionModePromptLoop(opts: {
         await overrideSync.flushPendingAfterStart();
       }
 
+      const localId = typeof message.message.localId === 'string' && message.message.localId ? message.message.localId : null;
       const special = parseSpecialCommand(message.message.text);
-      const seed = special.type === null ? readReplaySeedV1FromMetadata(opts.session.getMetadataSnapshot()) : null;
-      const shouldApplySeed = Boolean(seed && seed.seedText && !seed.appliedToLocalId);
-      const providerPrompt = shouldApplySeed ? `${seed!.seedText}\n\n${message.message.text}` : message.message.text;
-
-      if (shouldApplySeed) {
-        const localId = typeof message.message.localId === 'string' && message.message.localId ? message.message.localId : null;
-        const appliedToLocalId = localId ?? '';
-        const nowMs = Date.now();
-        try {
-          await opts.session.updateMetadata((current) => {
-            const currentSeed = readReplaySeedV1FromMetadata(current);
-            if (!currentSeed || currentSeed.appliedToLocalId) return current as any;
-            return {
-              ...(current as any),
-              replaySeedV1: {
-                ...currentSeed,
-                seedText: '',
-                appliedToLocalId,
-                appliedAtMs: nowMs,
-              },
-            };
-          });
-        } catch {
-          // Best-effort: avoid blocking the first turn if metadata updates are unavailable.
-        }
-      }
+      const nowMs = Date.now();
+      const seedResolution = await resolveProviderPromptWithReplaySeed({
+        session: opts.session,
+        userText: message.message.text,
+        allowSeed: special.type === null,
+        localId,
+        nowMs,
+        refreshMetadataBeforeRead: !didReplaySeedBootstrap,
+      });
+      didReplaySeedBootstrap = true;
+      const providerPrompt = seedResolution.providerPrompt;
 
       if (typeof opts.runtime.sendPromptWithMeta === 'function') {
-        const localId = typeof message.message.localId === 'string' && message.message.localId ? message.message.localId : null;
         await opts.runtime.sendPromptWithMeta({ text: providerPrompt, localId });
       } else {
         await opts.runtime.sendPrompt(providerPrompt);

@@ -21,6 +21,17 @@ const { readCredentialsMock, psListMock } = vi.hoisted(() => ({
   psListMock: vi.fn(async () => [] as any[]),
 }));
 
+const { updateSessionMetadataWithRetryMock } = vi.hoisted(() => ({
+  updateSessionMetadataWithRetryMock: vi.fn(async (args: any) => ({
+    version: Number(args?.rawSession?.metadataVersion ?? 0) + 1,
+    metadata: (args?.updater ? args.updater({}) : {}) as Record<string, unknown>,
+  })),
+}));
+
+const { forkOpenCodeSessionNativeMock } = vi.hoisted(() => ({
+  forkOpenCodeSessionNativeMock: vi.fn(async () => null as any),
+}));
+
 vi.mock('ps-list', () => ({
   default: psListMock,
 }));
@@ -38,11 +49,20 @@ vi.mock('@/persistence', async (importOriginal) => {
 vi.mock('@/configuration', () => ({
   configuration: {
     serverUrl: 'http://example.invalid',
+    apiServerUrl: 'http://example.invalid',
     happyHomeDir: '/tmp/happier-test-home',
     logsDir: '/tmp',
     daemonStateFile: '/tmp/happier-test-home/daemon.state.json',
     isDaemonProcess: false,
   },
+}));
+
+vi.mock('@/sessionControl/updateSessionMetadataWithRetry', () => ({
+  updateSessionMetadataWithRetry: updateSessionMetadataWithRetryMock,
+}));
+
+vi.mock('@/backends/opencode/server/nativeFork', () => ({
+  forkOpenCodeSessionNative: forkOpenCodeSessionNativeMock,
 }));
 
 describe('registerMachineRpcHandlers', () => {
@@ -246,7 +266,7 @@ describe('registerMachineRpcHandlers', () => {
     }
   });
 
-  it('continues a session by spawning a new one and returning a Happier replay seed draft', async () => {
+  it('continues a session by spawning a new one and storing a Happier replay seed in child metadata', async () => {
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
@@ -287,40 +307,60 @@ describe('registerMachineRpcHandlers', () => {
     const encryptedTwo = encodeBase64(
       encrypt(sessionEncryptionKey, 'dataKey', { role: 'agent', content: { type: 'text', text: 'two' } }),
     );
-	    const encryptedThree = encodeBase64(
-	      encrypt(sessionEncryptionKey, 'dataKey', { role: 'user', content: { type: 'text', text: 'three' } }),
-	    );
+    const encryptedThree = encodeBase64(
+      encrypt(sessionEncryptionKey, 'dataKey', { role: 'user', content: { type: 'text', text: 'three' } }),
+    );
 
-	    const getSpy = vi.spyOn(axios, 'get');
-	    getSpy
-	      .mockResolvedValueOnce({
-	        status: 200,
-	        data: {
-	          session: {
-	            id: 'sess_prev',
-	            seq: 0,
-	            createdAt: 1,
-	            updatedAt: 2,
-	            active: true,
-	            activeAt: 2,
-	            metadata: '',
-	            metadataVersion: 0,
-	            agentState: null,
-	            agentStateVersion: 0,
-	            dataEncryptionKey: encodeBase64(envelope),
-	          },
-	        },
-	      } as any)
-	      .mockResolvedValueOnce({
-	        status: 200,
-	        data: {
-	          messages: [
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_prev',
+            seq: 3,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            metadata: '',
+            metadataVersion: 0,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: encodeBase64(envelope),
+          },
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          messages: [
             { createdAt: 1, content: { t: 'encrypted', c: encryptedOne } },
             { createdAt: 2, content: { t: 'encrypted', c: encryptedTwo } },
             { createdAt: 3, content: { t: 'encrypted', c: encryptedThree } },
           ],
         },
+      } as any)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_new',
+            seq: 0,
+            createdAt: 10,
+            updatedAt: 10,
+            active: true,
+            activeAt: 10,
+            metadata: '',
+            metadataVersion: 0,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: encodeBase64(envelope),
+          },
+        },
       } as any);
+
+    updateSessionMetadataWithRetryMock.mockClear();
 
     const result = await handler!({
       directory: '/repo',
@@ -330,7 +370,6 @@ describe('registerMachineRpcHandlers', () => {
         previousSessionId: 'sess_prev',
         strategy: 'recent_messages',
         recentMessagesCount: 2,
-        seedMode: 'draft',
       },
     });
 
@@ -341,12 +380,391 @@ describe('registerMachineRpcHandlers', () => {
         approvedNewDirectoryCreation: true,
       }),
     );
-    expect(getSpy).toHaveBeenCalledTimes(2);
+    expect(getSpy).toHaveBeenCalledTimes(3);
     expect(result).toMatchObject({ type: 'success', sessionId: 'sess_new' });
-    expect(String(result.seedDraft ?? '')).toContain('Previous session id: sess_prev');
-    expect(String(result.seedDraft ?? '')).toContain('Assistant: two');
-    expect(String(result.seedDraft ?? '')).toContain('User: three');
-    expect(String(result.seedDraft ?? '')).not.toContain('User: one');
+    expect((result as any).seedDraft).toBeUndefined();
+    expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
+    const updater = (updateSessionMetadataWithRetryMock as any).mock.calls[0][0].updater as (m: any) => any;
+    const updated = updater({ path: '/repo', flavor: 'claude' });
+    expect(updated.forkV1).toMatchObject({ v: 1, parentSessionId: 'sess_prev', parentCutoffSeqInclusive: 3, strategy: 'replay' });
+    expect(updated.replaySeedV1).toMatchObject({ v: 1, sourceSessionId: 'sess_prev', sourceCutoffSeqInclusive: 3 });
+    expect(String(updated.replaySeedV1.seedText ?? '')).toContain('Assistant: two');
+    expect(String(updated.replaySeedV1.seedText ?? '')).toContain('User: three');
+    expect(String(updated.replaySeedV1.seedText ?? '')).not.toContain('User: one');
+  });
+
+  it('forks a session by replaying transcript context and storing forkV1/replaySeedV1 in child metadata', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
+    expect(handler).toBeDefined();
+
+    const machineKey = new Uint8Array(32).fill(11);
+    const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'dataKey', machineKey, publicKey },
+    });
+
+    const sessionEncryptionKey = new Uint8Array(32).fill(5);
+    const envelope = sealEncryptedDataKeyEnvelopeV1({
+      dataKey: sessionEncryptionKey,
+      recipientPublicKey: publicKey,
+      randomBytes: (length: number) => new Uint8Array(length).fill(7),
+    });
+
+    const parentMetadataCiphertext = encodeBase64(
+      encrypt(sessionEncryptionKey, 'dataKey', { path: '/repo', flavor: 'claude', permissionMode: { v: 1, mode: 'default', updatedAt: 1 } }),
+    );
+
+    const encryptedOne = encodeBase64(
+      encrypt(sessionEncryptionKey, 'dataKey', { role: 'user', content: { type: 'text', text: 'hello fork' } }),
+    );
+    const encryptedTwo = encodeBase64(
+      encrypt(sessionEncryptionKey, 'dataKey', { role: 'agent', content: { type: 'text', text: 'hi fork' } }),
+    );
+
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy
+      // fetch parent session record (for fork handler)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 0,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            metadata: parentMetadataCiphertext,
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: encodeBase64(envelope),
+          },
+        },
+      } as any)
+      // hydrateReplayDialogFromTranscript -> fetchSessionById(previousSessionId)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 0,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            metadata: parentMetadataCiphertext,
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: encodeBase64(envelope),
+          },
+        },
+      } as any)
+      // hydrateReplayDialogFromTranscript -> fetchEncryptedTranscriptMessages
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          messages: [
+            { seq: 1, createdAt: 1, content: { t: 'encrypted', c: encryptedOne } },
+            { seq: 2, createdAt: 2, content: { t: 'encrypted', c: encryptedTwo } },
+          ],
+        },
+      } as any)
+      // fetch child session record for metadata update
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_child',
+            seq: 0,
+            createdAt: 10,
+            updatedAt: 10,
+            active: true,
+            activeAt: 10,
+            metadata: encodeBase64(encrypt(sessionEncryptionKey, 'dataKey', { path: '/repo', flavor: 'claude' })),
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: encodeBase64(envelope),
+          },
+        },
+      } as any);
+
+    updateSessionMetadataWithRetryMock.mockClear();
+
+    const result = await handler!({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'seq', upToSeqInclusive: 2 },
+      strategy: 'replay',
+    });
+    expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({ directory: '/repo', agent: 'claude' }));
+    expect(getSpy).toHaveBeenCalled();
+    expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
+    const updater = (updateSessionMetadataWithRetryMock as any).mock.calls[0][0].updater as (m: any) => any;
+    const updated = updater({ path: '/repo', flavor: 'claude' });
+    expect(updated.forkV1).toMatchObject({ v: 1, parentSessionId: 'sess_parent', parentCutoffSeqInclusive: 2 });
+    expect(updated.replaySeedV1).toMatchObject({ v: 1, sourceSessionId: 'sess_parent', sourceCutoffSeqInclusive: 2 });
+  });
+
+  it('forks an OpenCode session via provider-native server fork when backendMode is server', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
+    expect(handler).toBeDefined();
+
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    });
+
+    forkOpenCodeSessionNativeMock.mockResolvedValueOnce({ vendorSessionId: 'op_ses_forked' });
+
+    const parentMetadataPlain = JSON.stringify({
+      path: '/repo',
+      flavor: 'opencode',
+      opencodeSessionId: 'op_ses_parent',
+      opencodeBackendMode: 'server',
+    });
+    const childMetadataPlain = JSON.stringify({ path: '/repo', flavor: 'opencode' });
+
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 5,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadata: parentMetadataPlain,
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_child',
+            seq: 0,
+            createdAt: 10,
+            updatedAt: 10,
+            active: true,
+            activeAt: 10,
+            encryptionMode: 'plain',
+            metadata: childMetadataPlain,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any);
+
+    updateSessionMetadataWithRetryMock.mockClear();
+
+    const result = await handler!({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      strategy: 'auto',
+    });
+
+    expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
+    expect(forkOpenCodeSessionNativeMock).toHaveBeenCalledWith(expect.objectContaining({
+      parentHappySessionId: 'sess_parent',
+      parentOpenCodeSessionId: 'op_ses_parent',
+      forkPoint: { type: 'latest' },
+    }));
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      directory: '/repo',
+      agent: 'opencode',
+      resume: 'op_ses_forked',
+      environmentVariables: { HAPPIER_OPENCODE_BACKEND_MODE: 'server' },
+    }));
+    expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
+    const updater = (updateSessionMetadataWithRetryMock as any).mock.calls[0][0].updater as (m: any) => any;
+    const updated = updater({ path: '/repo', flavor: 'opencode' });
+    expect(updated.opencodeSessionId).toBe('op_ses_forked');
+    expect(updated.opencodeBackendMode).toBe('server');
+    expect(updated.forkV1).toMatchObject({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      parentCutoffSeqInclusive: 5,
+      strategy: 'provider_native',
+      providerHint: { providerId: 'opencode', backendMode: 'server', vendorSessionId: 'op_ses_forked' },
+    });
+  });
+
+  it('preserves OpenCode backend mode when replay-forking an ACP-backed OpenCode session', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
+    expect(handler).toBeDefined();
+
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    });
+
+    const parentMetadataPlain = JSON.stringify({
+      path: '/repo',
+      flavor: 'opencode',
+      opencodeSessionId: 'op_ses_parent',
+      opencodeBackendMode: 'acp',
+    });
+    const childMetadataPlain = JSON.stringify({ path: '/repo', flavor: 'opencode' });
+
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy
+      // fetch parent session record (for fork handler)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 2,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadata: parentMetadataPlain,
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any)
+      // hydrateReplayDialogFromTranscript -> fetchSessionById(previousSessionId)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 2,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadata: parentMetadataPlain,
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any)
+      // hydrateReplayDialogFromTranscript -> fetchEncryptedTranscriptMessages
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          messages: [
+            { seq: 1, createdAt: 1, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello fork' } } } },
+            { seq: 2, createdAt: 2, content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'hi fork' } } } },
+          ],
+        },
+      } as any)
+      // fetch child session record for metadata update
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_child',
+            seq: 0,
+            createdAt: 10,
+            updatedAt: 10,
+            active: true,
+            activeAt: 10,
+            encryptionMode: 'plain',
+            metadata: childMetadataPlain,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any);
+
+    updateSessionMetadataWithRetryMock.mockClear();
+
+    const result = await handler!({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'seq', upToSeqInclusive: 2 },
+      strategy: 'replay',
+    });
+
+    expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      directory: '/repo',
+      agent: 'opencode',
+      environmentVariables: { HAPPIER_OPENCODE_BACKEND_MODE: 'acp' },
+    }));
+    expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
+    const updater = (updateSessionMetadataWithRetryMock as any).mock.calls[0][0].updater as (m: any) => any;
+    const updated = updater({ path: '/repo', flavor: 'opencode' });
+    expect(updated.opencodeBackendMode).toBe('acp');
   });
 
   it('rejects unknown replay agent ids (fail closed)', async () => {
@@ -398,7 +816,7 @@ describe('registerMachineRpcHandlers', () => {
     expect(result).toMatchObject({ type: 'error' });
   });
 
-  it('does not env-inject oversized seed drafts (falls back to draft mode)', async () => {
+  it('does not inject replay seeds as initial prompts (seed is stored in metadata)', async () => {
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
@@ -419,59 +837,70 @@ describe('registerMachineRpcHandlers', () => {
     const handler = registered.get(RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY);
     expect(handler).toBeDefined();
 
-    const prevMaxSeed = process.env.HAPPIER_REPLAY_MAX_ENV_SEED_CHARS;
-    const prevMaxText = process.env.HAPPIER_REPLAY_MAX_TEXT_CHARS;
-    process.env.HAPPIER_REPLAY_MAX_ENV_SEED_CHARS = '50';
-    process.env.HAPPIER_REPLAY_MAX_TEXT_CHARS = '100';
+    const machineKey = new Uint8Array(32).fill(11);
+    const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'dataKey', machineKey, publicKey },
+    });
 
-    try {
-      const machineKey = new Uint8Array(32).fill(11);
-      const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
-      readCredentialsMock.mockResolvedValueOnce({
-        token: 'token-1',
-        encryption: { type: 'dataKey', machineKey, publicKey },
-      });
+    const sessionEncryptionKey = new Uint8Array(32).fill(5);
+    const envelope = sealEncryptedDataKeyEnvelopeV1({
+      dataKey: sessionEncryptionKey,
+      recipientPublicKey: publicKey,
+      randomBytes: (length: number) => new Uint8Array(length).fill(7),
+    });
 
-      const sessionEncryptionKey = new Uint8Array(32).fill(5);
-      const envelope = sealEncryptedDataKeyEnvelopeV1({
-        dataKey: sessionEncryptionKey,
-        recipientPublicKey: publicKey,
-        randomBytes: (length: number) => new Uint8Array(length).fill(7),
-      });
+    const encryptedOne = encodeBase64(
+      encrypt(sessionEncryptionKey, 'dataKey', { role: 'user', content: { type: 'text', text: 'hello' } }),
+    );
 
-      const longText = 'x'.repeat(120);
-      const encryptedOne = encodeBase64(
-        encrypt(sessionEncryptionKey, 'dataKey', { role: 'user', content: { type: 'text', text: longText } }),
-      );
-
-	      const getSpy = vi.spyOn(axios, 'get');
-	      getSpy
-	        .mockResolvedValueOnce({
-	          status: 200,
-	          data: {
-	            session: {
-	              id: 'sess_prev',
-	              seq: 0,
-	              createdAt: 1,
-	              updatedAt: 2,
-	              active: true,
-	              activeAt: 2,
-	              metadata: '',
-	              metadataVersion: 0,
-	              agentState: null,
-	              agentStateVersion: 0,
-	              dataEncryptionKey: encodeBase64(envelope),
-	            },
-	          },
-	        } as any)
-	        .mockResolvedValueOnce({
-	          status: 200,
-	          data: {
-	            messages: [
-              { seq: 1, createdAt: 1, content: { t: 'encrypted', c: encryptedOne } },
-            ],
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_prev',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            metadata: '',
+            metadataVersion: 0,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: encodeBase64(envelope),
           },
-        } as any);
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          messages: [{ seq: 1, createdAt: 1, content: { t: 'encrypted', c: encryptedOne } }],
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_new',
+            seq: 0,
+            createdAt: 10,
+            updatedAt: 10,
+            active: true,
+            activeAt: 10,
+            metadata: '',
+            metadataVersion: 0,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: encodeBase64(envelope),
+          },
+        },
+      } as any);
+
+    updateSessionMetadataWithRetryMock.mockClear();
 
       const result = await handler!({
         directory: '/repo',
@@ -490,13 +919,8 @@ describe('registerMachineRpcHandlers', () => {
       const arg = ((spawnSession as any).mock?.calls?.[0] as any[] | undefined)?.[0] ?? null;
       expect(arg && typeof arg === 'object' && 'initialPrompt' in arg).toBe(false);
       expect(result).toMatchObject({ type: 'success', sessionId: 'sess_new' });
-      expect(String(result.seedDraft ?? '')).toContain('Previous session id: sess_prev');
-    } finally {
-      if (prevMaxSeed === undefined) delete process.env.HAPPIER_REPLAY_MAX_ENV_SEED_CHARS;
-      else process.env.HAPPIER_REPLAY_MAX_ENV_SEED_CHARS = prevMaxSeed;
-      if (prevMaxText === undefined) delete process.env.HAPPIER_REPLAY_MAX_TEXT_CHARS;
-      else process.env.HAPPIER_REPLAY_MAX_TEXT_CHARS = prevMaxText;
-    }
+      expect((result as any).seedDraft).toBeUndefined();
+      expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
   });
 
   it('includes stack diagnostics context for bug report collection when stack env is set', async () => {
@@ -549,16 +973,10 @@ describe('registerMachineRpcHandlers', () => {
       const collectHandler = registered.get(RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS);
       expect(collectHandler).toBeDefined();
       const diagnostics = await collectHandler!({});
-      const expected = await collectBugReportMachineDiagnosticsSnapshot({
-        daemonLogLimit: 5,
-        stackLogLimit: 3,
-        stackRuntimeMaxChars: 400_000,
-      });
-
-      expect(diagnostics).toEqual(expected);
       expect(diagnostics.stackContext?.stackName).toBe(stackName);
       expect(diagnostics.stackContext?.runtimeStatePath).toBe(runtimePath);
       expect(diagnostics.stackContext?.logCandidates).toContain(runnerLogPath);
+      expect(diagnostics.doctorSnapshot).toBeDefined();
     } finally {
       if (previousStackName === undefined) {
         delete process.env.HAPPIER_STACK_STACK;

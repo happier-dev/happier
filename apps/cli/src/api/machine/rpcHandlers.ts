@@ -1,6 +1,8 @@
 import { realpath } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { logger } from '@/ui/logger';
-import { collectBugReportMachineDiagnosticsSnapshot, readBugReportLogTail } from '@/diagnostics/bugReportMachineDiagnostics';
+import { readBugReportLogTail } from '@/diagnostics/bugReportMachineDiagnostics';
+import { collectBugReportMachineDiagnosticsSnapshotForBugReport } from '@/diagnostics/bugReportMachineDiagnosticsRecipe';
 
 import {
   SPAWN_SESSION_ERROR_CODES,
@@ -8,13 +10,16 @@ import {
   type SpawnSessionResult,
 } from '@/rpc/handlers/registerSessionHandlers';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { SessionContinueWithReplayRpcParamsSchema } from '@happier-dev/protocol';
+import { SessionContinueWithReplayRpcParamsSchema, SessionForkRpcParamsSchema } from '@happier-dev/protocol';
 import { buildHappierReplayPromptFromDialog } from '@happier-dev/agents';
 import { isPermissionMode } from '@/api/types';
 import { CATALOG_AGENT_IDS } from '@/backends/types';
 import type { CatalogAgentId } from '@/backends/types';
 import { readCredentials } from '@/persistence';
 import { hydrateReplayDialogFromTranscript } from '@/session/replay/hydrateReplayDialogFromTranscript';
+import { fetchSessionById } from '@/sessionControl/sessionsHttp';
+import { tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
+import { updateSessionMetadataWithRetry } from '@/sessionControl/updateSessionMetadataWithRetry';
 import { listExecutionRunMarkers } from '@/daemon/executionRunRegistry';
 import psList from 'ps-list';
 import type { DaemonExecutionRunEntry, DaemonExecutionRunProcessInfo } from '@happier-dev/protocol';
@@ -240,12 +245,10 @@ export function registerMachineRpcHandlers(params: Readonly<{
       };
     }
 
-    const maxEnvSeedChars =
-      parseEnvBoundedInt('HAPPIER_REPLAY_MAX_ENV_SEED_CHARS', { min: 1, max: 500_000 }, 20_000) ?? 20_000;
     const maxTextChars = parseEnvBoundedInt('HAPPIER_REPLAY_MAX_TEXT_CHARS', { min: 1, max: 50_000 }, null);
 
     const credentials = await readCredentials().catch(() => null);
-    if (!credentials || credentials.encryption.type !== 'dataKey') {
+    if (!credentials) {
       return {
         type: 'error',
         errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
@@ -300,11 +303,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
       dialogCount: hydrated.dialog.length,
       strategy: replay.strategy ?? 'recent_messages',
       recentMessagesCount: replay.recentMessagesCount ?? 16,
-      seedMode: replay.seedMode ?? 'draft',
     });
-
-    const shouldInjectSeedDraftAsInitialPrompt =
-      replay.seedMode === 'daemon_initial_prompt' && seedDraft.length <= maxEnvSeedChars;
 
     const result = await spawnSession({
       directory,
@@ -314,7 +313,6 @@ export function registerMachineRpcHandlers(params: Readonly<{
       permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt,
       modelId: normalizedModelId,
       modelUpdatedAt: typeof modelUpdatedAt === 'number' ? modelUpdatedAt : undefined,
-      ...(shouldInjectSeedDraftAsInitialPrompt ? { initialPrompt: seedDraft } : {}),
     } satisfies SpawnSessionOptions);
 
     if (result.type === 'success') {
@@ -325,10 +323,378 @@ export function registerMachineRpcHandlers(params: Readonly<{
           errorMessage: 'Spawn succeeded but no session id was returned',
         };
       }
-      return { type: 'success', sessionId: result.sessionId, seedDraft };
+      const childSessionId = result.sessionId;
+
+      const childRaw = await fetchSessionById({ token: credentials.token, sessionId: childSessionId }).catch(() => null);
+      if (childRaw) {
+        await updateSessionMetadataWithRetry({
+          token: credentials.token,
+          credentials,
+          sessionId: childSessionId,
+          rawSession: childRaw,
+          updater: (metadata) => ({
+            ...metadata,
+            forkV1: {
+              v: 1,
+              parentSessionId: replay.previousSessionId,
+              parentCutoffSeqInclusive: hydrated.sourceCutoffSeqInclusive,
+              createdAtMs: Date.now(),
+              strategy: 'replay',
+              providerHint: { providerId: agent },
+            },
+            replaySeedV1: {
+              v: 1,
+              seedText: seedDraft,
+              sourceSessionId: replay.previousSessionId,
+              sourceCutoffSeqInclusive: hydrated.sourceCutoffSeqInclusive,
+              createdAtMs: Date.now(),
+            },
+          }),
+          maxAttempts: 6,
+        });
+      }
+
+      return { type: 'success', sessionId: childSessionId };
     }
 
     return result;
+  });
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.SESSION_FORK, async (raw: unknown) => {
+    const parsed = SessionForkRpcParamsSchema.safeParse(raw);
+    if (!parsed.success) {
+      return {
+        ok: false,
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Invalid params',
+      };
+    }
+
+    const { parentSessionId, forkPoint } = parsed.data;
+    const requestedStrategy = typeof parsed.data.strategy === 'string' ? parsed.data.strategy : 'auto';
+
+    const credentials = await readCredentials().catch(() => null);
+    if (!credentials) {
+      return {
+        ok: false,
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Not authenticated',
+      };
+    }
+
+    const parentSession = await fetchSessionById({ token: credentials.token, sessionId: parentSessionId }).catch(() => null);
+    if (!parentSession) {
+      return {
+        ok: false,
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Session not found',
+      };
+    }
+
+    const parentMetadata = tryDecryptSessionMetadata({
+      credentials,
+      rawSession: parentSession,
+    });
+    if (!parentMetadata) {
+      return {
+        ok: false,
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Unable to decrypt session metadata',
+      };
+    }
+
+    const directory = typeof parentMetadata.path === 'string' && parentMetadata.path.trim().length > 0
+      ? parentMetadata.path.trim()
+      : '';
+    if (!directory) {
+      return {
+        ok: false,
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Session metadata missing path',
+      };
+    }
+
+    const agentRaw = typeof parentMetadata.flavor === 'string' ? parentMetadata.flavor.trim() : '';
+    if (!agentRaw || !isKnownAgentId(agentRaw)) {
+      return {
+        ok: false,
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Session metadata missing agent flavor',
+      };
+    }
+
+    const opencodeBackendModeFromParent =
+      agentRaw === 'opencode'
+        ? (() => {
+          const raw = typeof (parentMetadata as any)?.opencodeBackendMode === 'string'
+            ? String((parentMetadata as any).opencodeBackendMode).trim()
+            : '';
+          return raw === 'acp' ? 'acp' : raw === 'server' ? 'server' : null;
+        })()
+        : null;
+
+    const cutoffSeqInclusive = forkPoint.type === 'seq'
+      ? forkPoint.upToSeqInclusive
+      : (typeof (parentSession as any)?.seq === 'number' && Number.isFinite((parentSession as any).seq) ? Math.max(0, Math.floor((parentSession as any).seq)) : 0);
+
+    // Spawn request coalescing dedupes identical spawn fingerprints within a short window. Forking must
+    // be able to create multiple sessions quickly (e.g. multi-level fork chains), so provide a
+    // fork-specific nonce to guarantee unique spawn keys without leaking extra env vars to the child.
+    const spawnNonce = `fork:${parentSessionId}:${cutoffSeqInclusive}:${randomUUID()}`;
+
+    const maxTextChars = parseEnvBoundedInt('HAPPIER_REPLAY_MAX_TEXT_CHARS', { min: 1, max: 50_000 }, null);
+
+    const shouldAttemptProviderNative =
+      (requestedStrategy === 'auto' || requestedStrategy === 'provider_native');
+
+    if (shouldAttemptProviderNative && agentRaw === 'opencode') {
+      try {
+        const backendModeRaw = typeof (parentMetadata as any)?.opencodeBackendMode === 'string'
+          ? String((parentMetadata as any).opencodeBackendMode).trim()
+          : '';
+        const backendMode = backendModeRaw === 'server' ? 'server' : backendModeRaw === 'acp' ? 'acp' : '';
+        const vendorSessionIdRaw = typeof (parentMetadata as any)?.opencodeSessionId === 'string'
+          ? String((parentMetadata as any).opencodeSessionId).trim()
+          : '';
+
+        if (backendMode === 'server' && vendorSessionIdRaw) {
+          const { forkOpenCodeSessionNative } = await import('@/backends/opencode/server/nativeFork');
+          const forked = await forkOpenCodeSessionNative({
+            credentials,
+            parentHappySessionId: parentSessionId,
+            parentRawSession: parentSession,
+            directory,
+            parentOpenCodeSessionId: vendorSessionIdRaw,
+            forkPoint: forkPoint.type === 'seq'
+              ? { type: 'seq', upToSeqInclusive: cutoffSeqInclusive }
+              : { type: 'latest' },
+          }).catch(() => null);
+
+          const forkedVendorSessionId = typeof forked?.vendorSessionId === 'string' ? forked.vendorSessionId.trim() : '';
+          if (forkedVendorSessionId) {
+            const result = await spawnSession({
+              directory,
+              agent: agentRaw,
+              approvedNewDirectoryCreation: true,
+              spawnNonce,
+              resume: forkedVendorSessionId,
+              environmentVariables: { HAPPIER_OPENCODE_BACKEND_MODE: 'server' },
+            } satisfies SpawnSessionOptions);
+
+            if (result.type === 'success' && result.sessionId) {
+              const childSessionId = result.sessionId;
+              if (childSessionId === parentSessionId) {
+                return { ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'Fork spawn returned parent session id' };
+              }
+              const childRaw = await fetchSessionById({ token: credentials.token, sessionId: childSessionId }).catch(() => null);
+              if (childRaw) {
+                await updateSessionMetadataWithRetry({
+                  token: credentials.token,
+                  credentials,
+                  sessionId: childSessionId,
+                  rawSession: childRaw,
+                  updater: (metadata) => ({
+                    ...metadata,
+                    opencodeSessionId: forkedVendorSessionId,
+                    opencodeBackendMode: 'server',
+                    forkV1: {
+                      v: 1,
+                      parentSessionId,
+                      parentCutoffSeqInclusive: cutoffSeqInclusive,
+                      createdAtMs: Date.now(),
+                      strategy: 'provider_native',
+                      providerHint: {
+                        providerId: agentRaw,
+                        backendMode: 'server',
+                        vendorSessionId: forkedVendorSessionId,
+                      },
+                    },
+                  }),
+                  maxAttempts: 6,
+                });
+              }
+              return { ok: true, childSessionId };
+            }
+          }
+        }
+      } catch {
+        // Ignore and fall back (auto) or error below (provider_native).
+      }
+    }
+
+    const shouldAttemptAcpForkLatest =
+      (requestedStrategy === 'auto' || requestedStrategy === 'acp_fork_latest') &&
+      (forkPoint.type === 'latest') &&
+      (agentRaw !== 'opencode' || opencodeBackendModeFromParent === 'acp');
+
+    if (shouldAttemptAcpForkLatest) {
+      // Best-effort ACP fork: only applies when the parent session can be resumed as an ACP session.
+      // If unsupported, fall back to replay fork below.
+      try {
+        const vendorSessionIdKey = `${agentRaw}SessionId`;
+          const vendorSessionIdRaw = typeof (parentMetadata as any)?.[vendorSessionIdKey] === 'string'
+          ? String((parentMetadata as any)[vendorSessionIdKey]).trim()
+          : '';
+
+        if (vendorSessionIdRaw) {
+          const { createCatalogAcpBackend } = await import('@/agent/acp/createCatalogAcpBackend');
+          const created = await createCatalogAcpBackend(agentRaw as any, {
+            cwd: directory,
+            mcpServers: {},
+            permissionHandler: {
+              handleToolCall: async () => ({ decision: 'denied' as const }),
+            },
+          } as any);
+
+          try {
+            if (typeof created.backend.loadSession === 'function' && typeof (created.backend as any).forkSession === 'function') {
+              await created.backend.loadSession(vendorSessionIdRaw as any);
+              const forked = await (created.backend as any).forkSession({
+                sessionId: vendorSessionIdRaw,
+              });
+              const forkedSessionId = typeof forked?.sessionId === 'string' ? String(forked.sessionId).trim() : '';
+              if (forkedSessionId) {
+                const result = await spawnSession({
+                  directory,
+                  agent: agentRaw,
+                  approvedNewDirectoryCreation: true,
+                  resume: forkedSessionId,
+                } satisfies SpawnSessionOptions);
+
+                if (result.type === 'success' && result.sessionId) {
+                  const childSessionId = result.sessionId;
+                  if (childSessionId === parentSessionId) {
+                    return { ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'Fork spawn returned parent session id' };
+                  }
+                  const childRaw = await fetchSessionById({ token: credentials.token, sessionId: childSessionId }).catch(() => null);
+                  if (childRaw) {
+                    await updateSessionMetadataWithRetry({
+                      token: credentials.token,
+                      credentials,
+                      sessionId: childSessionId,
+                      rawSession: childRaw,
+                      updater: (metadata) => ({
+                        ...metadata,
+                        forkV1: {
+                          v: 1,
+                          parentSessionId,
+                          parentCutoffSeqInclusive: cutoffSeqInclusive,
+                          createdAtMs: Date.now(),
+                          strategy: 'acp_fork_latest',
+                          providerHint: { providerId: agentRaw, vendorSessionId: forkedSessionId },
+                        },
+                      }),
+                      maxAttempts: 6,
+                    });
+                  }
+                  return { ok: true, childSessionId };
+                }
+              }
+            }
+          } finally {
+            await created.backend.dispose().catch(() => {});
+          }
+        }
+      } catch {
+        // Ignore and fall back to replay fork below.
+      }
+    }
+
+    if (requestedStrategy !== 'auto' && requestedStrategy !== 'replay') {
+      return {
+        ok: false,
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Requested fork strategy is not supported',
+      };
+    }
+
+    const hydrated = await hydrateReplayDialogFromTranscript({
+      credentials,
+      previousSessionId: parentSessionId,
+      limit: 200,
+      maxTextChars: maxTextChars ?? undefined,
+      ...(forkPoint.type === 'seq' ? { upToSeqInclusive: forkPoint.upToSeqInclusive } : {}),
+    }).catch(() => null);
+    if (!hydrated || hydrated.dialog.length === 0) {
+      return {
+        ok: false,
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Unable to hydrate replay dialog from transcript.',
+      };
+    }
+
+    const seedDraft = buildHappierReplayPromptFromDialog({
+      previousSessionId: parentSessionId,
+      strategy: 'recent_messages',
+      recentMessagesCount: 16,
+      dialog: hydrated.dialog,
+    });
+
+    if (!seedDraft.trim()) {
+      return {
+        ok: false,
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Replay seed draft is empty',
+      };
+    }
+
+    const spawnResult = await spawnSession({
+      directory,
+      agent: agentRaw,
+      approvedNewDirectoryCreation: true,
+      spawnNonce,
+      ...(agentRaw === 'opencode'
+        ? { environmentVariables: { HAPPIER_OPENCODE_BACKEND_MODE: opencodeBackendModeFromParent ?? 'server' } }
+        : {}),
+    } satisfies SpawnSessionOptions);
+
+    if (spawnResult.type !== 'success' || !spawnResult.sessionId) {
+      return {
+        ok: false,
+        errorCode: (spawnResult as any)?.errorCode ?? SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+        errorMessage: (spawnResult as any)?.errorMessage ?? 'Failed to spawn fork session',
+      };
+    }
+
+    const childSessionId = spawnResult.sessionId;
+    if (childSessionId === parentSessionId) {
+      return { ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'Fork spawn returned parent session id' };
+    }
+    const childRaw = await fetchSessionById({ token: credentials.token, sessionId: childSessionId }).catch(() => null);
+    if (childRaw) {
+      await updateSessionMetadataWithRetry({
+        token: credentials.token,
+        credentials,
+        sessionId: childSessionId,
+        rawSession: childRaw,
+        updater: (metadata) => ({
+          ...metadata,
+          ...(agentRaw === 'opencode'
+            ? { opencodeBackendMode: opencodeBackendModeFromParent ?? 'server' }
+            : {}),
+          forkV1: {
+            v: 1,
+            parentSessionId,
+            parentCutoffSeqInclusive: cutoffSeqInclusive,
+            createdAtMs: Date.now(),
+            strategy: 'replay',
+            providerHint: { providerId: agentRaw },
+          },
+          replaySeedV1: {
+            v: 1,
+            seedText: seedDraft,
+            sourceSessionId: parentSessionId,
+            sourceCutoffSeqInclusive: cutoffSeqInclusive,
+            createdAtMs: Date.now(),
+          },
+        }),
+        maxAttempts: 6,
+      }).catch(() => {
+        // Best-effort; fork session still exists even if metadata write fails.
+      });
+    }
+
+    return { ok: true, childSessionId };
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST, async () => {
@@ -391,11 +757,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS, async () => {
-    return await collectBugReportMachineDiagnosticsSnapshot({
-      daemonLogLimit: 5,
-      stackLogLimit: 3,
-      stackRuntimeMaxChars: 400_000,
-    });
+    return await collectBugReportMachineDiagnosticsSnapshotForBugReport();
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.BUGREPORT_GET_LOG_TAIL, async (params: any) => {
@@ -403,11 +765,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
       ? Math.min(Math.max(Math.floor(params.maxBytes), 1024), 1_000_000)
       : 200_000;
     const path = typeof params?.path === 'string' && params.path.trim().length > 0 ? params.path.trim() : '';
-    const diagnostics = await collectBugReportMachineDiagnosticsSnapshot({
-      daemonLogLimit: 5,
-      stackLogLimit: 3,
-      stackRuntimeMaxChars: 400_000,
-    });
+    const diagnostics = await collectBugReportMachineDiagnosticsSnapshotForBugReport();
     const allowedPaths = new Set<string>();
     if (diagnostics.daemonState?.daemonLogPath) {
       allowedPaths.add(diagnostics.daemonState.daemonLogPath.trim());
