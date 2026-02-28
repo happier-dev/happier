@@ -75,6 +75,35 @@ export function emitAutomationRunUpdated(params: {
     });
 }
 
+export function emitAutomationRunUpdatedToMachineOnly(params: {
+    accountId: string;
+    machineId: string;
+    run: AutomationRunItem | AutomationRunWithAutomation;
+    cursor: number;
+}): void {
+    eventRouter.emitUpdate({
+        userId: params.accountId,
+        payload: {
+            id: randomKeyNaked(12),
+            seq: params.cursor,
+            body: {
+                t: "automation-run-updated",
+                runId: params.run.id,
+                automationId: params.run.automationId,
+                state: params.run.state,
+                scheduledAt: params.run.scheduledAt.getTime(),
+                startedAt: params.run.startedAt ? params.run.startedAt.getTime() : null,
+                finishedAt: params.run.finishedAt ? params.run.finishedAt.getTime() : null,
+                updatedAt: params.run.updatedAt.getTime(),
+                machineId: params.run.claimedByMachineId,
+                targetMachineId: params.machineId,
+            },
+            createdAt: Date.now(),
+        },
+        recipientFilter: { type: "machine-only", machineId: params.machineId },
+    });
+}
+
 export function emitAutomationAssignmentUpdated(params: {
     accountId: string;
     machineId: string;

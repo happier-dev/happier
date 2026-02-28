@@ -33,6 +33,9 @@ export type RecipientFilter =
     // Note: despite the name, this intentionally includes the user's `user-scoped:*` room as well as their per-account
     // machine room. This avoids relying on the global `user:*` room for machine-daemon connections.
     | { type: 'machine-scoped-only'; machineId: string }
+    // Machine daemon only (excludes user-scoped connections). Use this for daemon-only wakeups/hints that would otherwise
+    // duplicate in user-scoped channels.
+    | { type: 'machine-only'; machineId: string }
     | { type: 'all-user-authenticated-connections' };
 
 // === UPDATE EVENT TYPES (Persistent) ===

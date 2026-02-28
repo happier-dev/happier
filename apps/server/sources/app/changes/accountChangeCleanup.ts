@@ -1,5 +1,6 @@
 import { db } from "@/storage/db";
 import { log } from "@/utils/logging/log";
+import { maybeCaptureSentryMonitorCheckIn } from "@/app/monitoring/sentryMonitors";
 
 type PruneKind = "session" | "share" | "machine" | "artifact";
 
@@ -89,24 +90,32 @@ export function startAccountChangeCleanupFromEnv(): { stop: () => void } | null 
     let stopped = false;
 
     const run = async (reason: "startup" | "interval") => {
-        try {
-            const result = await pruneOrphanAccountChangesOnce();
-            log(
-                { module: "account-change-cleanup", reason, deletedRows: result.deletedRows, affectedAccounts: result.affectedAccounts },
-                `AccountChange cleanup ran (${reason})`,
-            );
-        } catch (error) {
-            log(
-                { module: "account-change-cleanup", reason, error: error instanceof Error ? error.message : String(error) },
-                `AccountChange cleanup failed (${reason})`,
-            );
-        }
+        await maybeCaptureSentryMonitorCheckIn({
+            env: process.env,
+            monitorSlug: "server.accountChangeCleanup",
+            intervalMs,
+            run: async () => {
+                try {
+                    const result = await pruneOrphanAccountChangesOnce();
+                    log(
+                        { module: "account-change-cleanup", reason, deletedRows: result.deletedRows, affectedAccounts: result.affectedAccounts },
+                        `AccountChange cleanup ran (${reason})`,
+                    );
+                } catch (error) {
+                    log(
+                        { module: "account-change-cleanup", reason, error: error instanceof Error ? error.message : String(error) },
+                        `AccountChange cleanup failed (${reason})`,
+                    );
+                    throw error;
+                }
+            },
+        });
     };
 
-    void run("startup");
+    void run("startup").catch(() => {});
     const timer = setInterval(() => {
         if (stopped) return;
-        void run("interval");
+        void run("interval").catch(() => {});
     }, intervalMs);
     timer.unref?.();
 

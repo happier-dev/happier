@@ -1,7 +1,8 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { eventRouter } from "@/app/events/eventRouter";
 
 import { createAutomation, runAutomationNow, setAutomationEnabled, updateAutomation } from "./automationCrudService";
 import { AutomationValidationError } from "./automationValidation";
@@ -16,6 +17,7 @@ function buildTemplateEnvelope(existingSessionId?: string): string {
 
 describe("automationCrudService (integration)", () => {
     let harness: LightSqliteHarness;
+    let ioTo: ReturnType<typeof vi.fn>;
 
     beforeAll(async () => {
         harness = await createLightSqliteHarness({ tempDirPrefix: "happier-automation-crud-service-" });
@@ -25,8 +27,16 @@ describe("automationCrudService (integration)", () => {
         await harness.close();
     });
 
+    beforeEach(() => {
+        ioTo = vi.fn();
+        const emit = vi.fn();
+        ioTo.mockReturnValue({ emit });
+        eventRouter.setIo({ to: ioTo } as any);
+    });
+
     afterEach(async () => {
         harness.restoreEnv();
+        eventRouter.clearIo();
         await harness.resetDbTables([
             () => db.accountChange.deleteMany(),
             () => db.automationRun.deleteMany(),
@@ -179,6 +189,11 @@ describe("automationCrudService (integration)", () => {
             automationId: created.id,
         });
         expect(immediate).not.toBeNull();
+
+        // User-scoped update (UI) + machine-only wakeup (daemon).
+        const targets = ioTo.mock.calls.map(([arg]) => arg);
+        expect(targets).toContain(`user-scoped:${account.id}`);
+        expect(targets).toContain(`machine:machine-1:${account.id}`);
 
         const afterRunNow = await db.automationRun.findMany({
             where: {

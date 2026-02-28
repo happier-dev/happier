@@ -86,6 +86,22 @@ describe("eventRouter (rooms)", () => {
         expect(emit).toHaveBeenCalledWith("update", expect.anything());
     });
 
+    it("routes machine-only to machine room only", () => {
+        const ioTo = vi.fn();
+        const emit = vi.fn();
+        ioTo.mockReturnValue({ emit });
+        eventRouter.setIo({ to: ioTo } as any);
+
+        eventRouter.emitUpdate({
+            userId: "u1",
+            payload: { id: "x", seq: 1, body: { t: "update-machine" }, createdAt: 0 } as any,
+            recipientFilter: { type: "machine-only", machineId: "m1" },
+        });
+
+        expect(ioTo).toHaveBeenCalledWith("machine:m1:u1");
+        expect(emit).toHaveBeenCalledWith("update", expect.anything());
+    });
+
     it("never emits per-account update containers to shared session/machine rooms", () => {
         const ioTo = vi.fn();
         const emit = vi.fn();
@@ -102,6 +118,12 @@ describe("eventRouter (rooms)", () => {
             userId: "u1",
             payload: { id: "x", seq: 1, body: { t: "update-machine" }, createdAt: 0 } as any,
             recipientFilter: { type: "machine-scoped-only", machineId: "m1" },
+        });
+
+        eventRouter.emitUpdate({
+            userId: "u1",
+            payload: { id: "x", seq: 1, body: { t: "update-machine" }, createdAt: 0 } as any,
+            recipientFilter: { type: "machine-only", machineId: "m1" },
         });
 
         const targets = ioTo.mock.calls.map(([arg]) => arg);
