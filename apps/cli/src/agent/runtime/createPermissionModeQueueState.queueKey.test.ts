@@ -17,11 +17,10 @@ describe('createPermissionModeQueueState (queue key)', () => {
       resolvePermissionModeQueueKey: () => 'same',
     } as any);
 
-    messageQueue.push('one', { permissionMode: 'default' as any });
-    messageQueue.push('two', { permissionMode: 'yolo' as any });
+    messageQueue.push({ text: 'one', localId: 'local-1' }, { permissionMode: 'default' as any });
+    messageQueue.push({ text: 'two', localId: 'local-2' }, { permissionMode: 'yolo' as any });
 
     const batch = await messageQueue.waitForMessagesAndGetAsString();
-    expect(batch?.message).toBe('one\ntwo');
+    expect(batch?.message.text).toBe('one\ntwo');
   });
 });
-

@@ -8,11 +8,13 @@ import {
 } from '@/agent/runtime/permission/permissionModeStateSync';
 import { waitForNextPermissionModeMessage } from '@/agent/runtime/waitForNextPermissionModeMessage';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
+import type { PermissionModeQueuedPrompt } from '@/agent/runtime/permission/permissionModeQueuedPrompt';
 
 type PromptRuntime = {
   beginTurn: () => void;
   startOrLoad: (opts: { resumeId?: string }) => Promise<unknown>;
   sendPrompt: (message: string) => Promise<void>;
+  sendPromptWithMeta?: (params: { text: string; localId?: string | null }) => Promise<void>;
   flushTurn: () => void;
   reset: () => Promise<void>;
   getSessionId: () => string | null;
@@ -24,17 +26,36 @@ type OverrideSynchronizer = {
 };
 
 type QueuedPermissionModeMessage = {
-  message: string;
+  message: PermissionModeQueuedPrompt;
   mode: { permissionMode: PermissionMode };
   hash: string;
 };
+
+type ReplaySeedV1 = {
+  v: 1;
+  seedText: string;
+  sourceSessionId: string;
+  sourceCutoffSeqInclusive: number;
+  createdAtMs: number;
+  appliedToLocalId?: string;
+  appliedAtMs?: number;
+};
+
+function readReplaySeedV1FromMetadata(metadata: unknown): ReplaySeedV1 | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const seed = (metadata as any).replaySeedV1;
+  if (!seed || typeof seed !== 'object') return null;
+  if ((seed as any).v !== 1) return null;
+  if (typeof (seed as any).seedText !== 'string') return null;
+  return seed as ReplaySeedV1;
+}
 
 export async function runPermissionModePromptLoop(opts: {
   providerName: string;
   agentMessageType: Parameters<ApiSessionClient['sendAgentMessage']>[0];
   explicitPermissionMode: PermissionMode | undefined;
   session: ApiSessionClient;
-  messageQueue: MessageQueue2<{ permissionMode: PermissionMode }>;
+  messageQueue: MessageQueue2<{ permissionMode: PermissionMode }, PermissionModeQueuedPrompt>;
   permissionHandler: ProviderEnforcedPermissionHandler;
   runtime: PromptRuntime;
   createOverrideSynchronizer: (isStarted: () => boolean) => OverrideSynchronizer;
@@ -123,9 +144,9 @@ export async function runPermissionModePromptLoop(opts: {
     }
 
     currentModeHash = message.hash;
-    opts.messageBuffer.addMessage(message.message, 'user');
+    opts.messageBuffer.addMessage(message.message.text, 'user');
 
-    const special = parseSpecialCommand(message.message);
+    const special = parseSpecialCommand(message.message.text);
     if (special.type === 'clear') {
       opts.messageBuffer.addMessage(`Resetting ${opts.providerName} session…`, 'status');
       await opts.runtime.reset();
@@ -163,7 +184,41 @@ export async function runPermissionModePromptLoop(opts: {
         wasStarted = true;
         await overrideSync.flushPendingAfterStart();
       }
-      await opts.runtime.sendPrompt(message.message);
+
+      const special = parseSpecialCommand(message.message.text);
+      const seed = special.type === null ? readReplaySeedV1FromMetadata(opts.session.getMetadataSnapshot()) : null;
+      const shouldApplySeed = Boolean(seed && seed.seedText && !seed.appliedToLocalId);
+      const providerPrompt = shouldApplySeed ? `${seed!.seedText}\n\n${message.message.text}` : message.message.text;
+
+      if (shouldApplySeed) {
+        const localId = typeof message.message.localId === 'string' && message.message.localId ? message.message.localId : null;
+        const appliedToLocalId = localId ?? '';
+        const nowMs = Date.now();
+        try {
+          await opts.session.updateMetadata((current) => {
+            const currentSeed = readReplaySeedV1FromMetadata(current);
+            if (!currentSeed || currentSeed.appliedToLocalId) return current as any;
+            return {
+              ...(current as any),
+              replaySeedV1: {
+                ...currentSeed,
+                seedText: '',
+                appliedToLocalId,
+                appliedAtMs: nowMs,
+              },
+            };
+          });
+        } catch {
+          // Best-effort: avoid blocking the first turn if metadata updates are unavailable.
+        }
+      }
+
+      if (typeof opts.runtime.sendPromptWithMeta === 'function') {
+        const localId = typeof message.message.localId === 'string' && message.message.localId ? message.message.localId : null;
+        await opts.runtime.sendPromptWithMeta({ text: providerPrompt, localId });
+      } else {
+        await opts.runtime.sendPrompt(providerPrompt);
+      }
     } catch (error) {
       opts.session.sendAgentMessage(opts.agentMessageType, { type: 'message', message: opts.formatPromptErrorMessage(error) });
     } finally {

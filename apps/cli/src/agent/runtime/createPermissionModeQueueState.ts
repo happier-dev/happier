@@ -4,6 +4,10 @@ import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { hashObject } from '@/utils/deterministicJson';
 import { registerPermissionModeMessageQueueBinding, type InFlightSteerController } from '@/agent/runtime/permission/bindPermissionModeQueue';
 import { readPermissionModeUpdatedAtFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeStateSync';
+import {
+  combinePermissionModeQueuedPrompts,
+  type PermissionModeQueuedPrompt,
+} from '@/agent/runtime/permission/permissionModeQueuedPrompt';
 
 export function createPermissionModeQueueState(opts: {
   session: ApiSessionClient;
@@ -17,16 +21,22 @@ export function createPermissionModeQueueState(opts: {
    */
   resolvePermissionModeQueueKey?: (permissionMode: PermissionMode) => string;
 }): {
-  messageQueue: MessageQueue2<{ permissionMode: PermissionMode }>;
+  messageQueue: MessageQueue2<{ permissionMode: PermissionMode }, PermissionModeQueuedPrompt>;
   getCurrentPermissionMode: () => PermissionMode | undefined;
   setCurrentPermissionMode: (mode: PermissionMode | undefined) => void;
   getCurrentPermissionModeUpdatedAt: () => number;
   setCurrentPermissionModeUpdatedAt: (updatedAt: number) => void;
 } {
   const resolveQueueKey = opts.resolvePermissionModeQueueKey;
-  const messageQueue = new MessageQueue2<{ permissionMode: PermissionMode }>((mode) => hashObject({
-    permissionMode: resolveQueueKey ? resolveQueueKey(mode.permissionMode) : mode.permissionMode,
-  }));
+  const messageQueue = new MessageQueue2<{ permissionMode: PermissionMode }, PermissionModeQueuedPrompt>(
+    (mode) =>
+      hashObject({
+        permissionMode: resolveQueueKey ? resolveQueueKey(mode.permissionMode) : mode.permissionMode,
+      }),
+    {
+      batcher: (messages) => combinePermissionModeQueuedPrompts(messages),
+    },
+  );
 
   let currentPermissionMode: PermissionMode | undefined = opts.initialPermissionMode;
   let currentPermissionModeUpdatedAt = readPermissionModeUpdatedAtFromMetadataSnapshot(

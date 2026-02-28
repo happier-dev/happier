@@ -241,4 +241,40 @@ describe('waitForMessagesOrPending', () => {
 
         expect(result?.message).toBe('race-message');
     });
+
+    it('retries pending materialization while idle even without metadata updates', async () => {
+        type Mode = { id: string };
+        const mode: Mode = { id: 'm1' };
+        const queue = new MessageQueue2<Mode>(() => 'hash');
+
+        let popCount = 0;
+        const popPendingMessage = async () => {
+            popCount += 1;
+            if (popCount < 2) return false;
+            queue.pushImmediate('late-pending', mode);
+            return true;
+        };
+
+        const waitForMetadataUpdate = async (abortSignal?: AbortSignal) => {
+            if (abortSignal?.aborted) return false;
+            return await new Promise<boolean>((resolve) => {
+                abortSignal?.addEventListener('abort', () => resolve(false), { once: true });
+            });
+        };
+
+        const abortController = new AbortController();
+        const promise = waitForMessagesOrPending({
+            messageQueue: queue,
+            abortSignal: abortController.signal,
+            popPendingMessage,
+            waitForMetadataUpdate,
+        });
+
+        const result = await Promise.race([
+            promise,
+            new Promise<null>((_, reject) => setTimeout(() => reject(new Error('waitForMessagesOrPending hung')), 1_500)),
+        ]);
+
+        expect(result?.message).toBe('late-pending');
+    });
 });

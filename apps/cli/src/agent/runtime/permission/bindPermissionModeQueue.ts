@@ -1,11 +1,12 @@
 import type { Metadata, PermissionMode, UserMessage } from '@/api/types';
 
-import { pushTextToMessageQueueWithSpecialCommands, type SpecialCommandQueue } from '@/agent/runtime/queueSpecialCommands';
+import { pushMessageToQueueWithSpecialCommands, type SpecialCommandQueue } from '@/agent/runtime/queueSpecialCommands';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 
 import { resolvePermissionModeUpdatedAtFromMessage } from './permissionModeCanonical';
 import { resolvePermissionModeForQueueingUserMessage } from './permissionModeFromUserMessage';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import type { PermissionModeQueuedPrompt } from '@/agent/runtime/permission/permissionModeQueuedPrompt';
 
 export type InFlightSteerController = Readonly<{
   /**
@@ -29,7 +30,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
     onUserMessage: (handler: (message: UserMessage) => void) => void;
     updateMetadata: (updater: (current: Metadata) => Metadata) => Promise<void> | void;
   };
-  queue: SpecialCommandQueue<{ permissionMode: PermissionMode }>;
+  queue: SpecialCommandQueue<{ permissionMode: PermissionMode }, PermissionModeQueuedPrompt>;
   getCurrentPermissionMode: () => PermissionMode | undefined;
   setCurrentPermissionMode: (mode: PermissionMode | undefined) => void;
   inFlightSteer?: InFlightSteerController | null;
@@ -71,8 +72,9 @@ export function registerPermissionModeMessageQueueBinding(opts: {
           return;
         } catch {
           try {
-            pushTextToMessageQueueWithSpecialCommands({
+            pushMessageToQueueWithSpecialCommands({
               queue: opts.queue,
+              message: { text, localId: message.localId ?? null },
               text,
               mode: { permissionMode: resolvedMode.queuePermissionMode },
             });
@@ -84,8 +86,9 @@ export function registerPermissionModeMessageQueueBinding(opts: {
       return;
     }
 
-    pushTextToMessageQueueWithSpecialCommands({
+    pushMessageToQueueWithSpecialCommands({
       queue: opts.queue,
+      message: { text, localId: message.localId ?? null },
       text,
       mode: { permissionMode: resolvedMode.queuePermissionMode },
     });

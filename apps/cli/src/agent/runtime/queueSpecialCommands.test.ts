@@ -1,16 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { pushTextToMessageQueueWithSpecialCommands } from './queueSpecialCommands';
+import { pushMessageToQueueWithSpecialCommands } from './queueSpecialCommands';
 
-describe('pushTextToMessageQueueWithSpecialCommands', () => {
+describe('pushMessageToQueueWithSpecialCommands', () => {
   it('pushes clear commands via isolate+clear', () => {
     const queue = {
       push: vi.fn(),
       pushIsolateAndClear: vi.fn(),
     };
 
-    pushTextToMessageQueueWithSpecialCommands({
+    pushMessageToQueueWithSpecialCommands({
       queue,
+      message: '/clear',
       text: '/clear',
       mode: { permissionMode: 'default' },
     });
@@ -25,8 +26,9 @@ describe('pushTextToMessageQueueWithSpecialCommands', () => {
       pushIsolateAndClear: vi.fn(),
     };
 
-    pushTextToMessageQueueWithSpecialCommands({
+    pushMessageToQueueWithSpecialCommands({
       queue,
+      message: 'hello',
       text: 'hello',
       mode: { permissionMode: 'default' },
     });
