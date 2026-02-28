@@ -33,6 +33,8 @@ import { ensureEnvLocalUpdated } from './utils/env/env_local.mjs';
 import { ensureEnvFilePruned, ensureEnvFileUpdated } from './utils/env/env_file.mjs';
 import { isSandboxed } from './utils/env/sandbox.mjs';
 import { applyStackCacheEnv } from './utils/proc/pm.mjs';
+import { seedNodeModulesFromBase } from './utils/worktrees/seed_node_modules.mjs';
+import { shouldRunYarnInstall } from './utils/worktrees/yarn_install_guard.mjs';
 import { existsSync } from 'node:fs';
 import { getHomeEnvLocalPath, getHomeEnvPath, resolveUserConfigEnvPath } from './utils/env/config.mjs';
 import { detectServerComponentDirMismatch } from './utils/server/validate.mjs';
@@ -381,6 +383,15 @@ async function installDependencies({ dir }) {
 
   const env = await applyStackCacheEnv(process.env);
 
+  // Yarn-only, monorepo-friendly: avoid redundant installs when nothing changed.
+  // This keeps `wt pr --update` fast for the common case where PR code changed but deps did not.
+  if (pm.kind === 'yarn') {
+    const needs = await shouldRunYarnInstall({ installDir: dir, componentDir: dir });
+    if (!needs) {
+      return { installed: false, reason: 'up-to-date' };
+    }
+  }
+
   // IMPORTANT:
   // When a caller requests --json, stdout must be reserved for JSON output only.
   // Package managers (especially Yarn) write progress to stdout, which would corrupt JSON parsing
@@ -445,6 +456,11 @@ async function maybeSetupDeps({ repoRoot, baseDir, worktreeDir, depsMode, compon
       // fall through to install
     }
   }
+
+  // Install path (also used for link-or-install fallthrough).
+  // In sandbox contexts, try to seed node_modules from the base checkout first (copy-on-write reflink)
+  // to make first-time PR worktrees much faster while keeping them fully isolated (no symlinks).
+  await seedNodeModulesFromBase({ baseDir: linkFrom, worktreeDir });
 
   const inst = await installDependencies({ dir: worktreeDir });
   return { mode: depsMode, linked: false, installed: Boolean(inst.installed), message: inst.reason };
