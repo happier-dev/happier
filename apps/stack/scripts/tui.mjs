@@ -24,6 +24,8 @@ import {
   normalizeTuiForwardedArgs,
 } from './utils/tui/args.mjs';
 import { terminateProcessGroup } from './utils/proc/terminate.mjs';
+import { getProcessGroupId } from './utils/proc/ownership.mjs';
+import { killPid } from './utils/expo/expo.mjs';
 import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs';
 import { mergeEnvForTuiSummary } from './utils/tui/summary_env.mjs';
 import { hasStackCredentials } from './utils/auth/daemon_gate.mjs';
@@ -35,6 +37,7 @@ import { buildTuiAuthArgs, buildTuiDaemonStartArgs, shouldHoldAfterAuthExit } fr
 import { shouldAttemptTuiDaemonAutostart } from './utils/tui/daemon_autostart.mjs';
 import { reconcileDaemonPaneAfterDaemonStarts } from './utils/tui/daemon_pane_reconcile.mjs';
 import { buildScriptPtyArgs } from './utils/tui/script_pty_command.mjs';
+import { resolveTuiChildTerminationPlan } from './utils/tui/child_termination_plan.mjs';
 
 function nowTs() {
   const d = new Date();
@@ -947,7 +950,13 @@ async function main() {
 
     const childPid = Number(child?.pid);
     if (child && child.exitCode == null && Number.isFinite(childPid) && childPid > 1) {
-      await terminateProcessGroup(childPid, { graceMs: 900 });
+      const [childPgid, selfPgid] = await Promise.all([getProcessGroupId(childPid), getProcessGroupId(process.pid)]);
+      const plan = resolveTuiChildTerminationPlan({ childPid, childPgid, selfPgid });
+      if (plan.strategy === 'pgid') {
+        await terminateProcessGroup(plan.target, { graceMs: 900 });
+      } else if (plan.strategy === 'pid') {
+        await killPid(plan.target);
+      }
     }
 
     try {
@@ -1328,7 +1337,13 @@ async function main() {
     if (child.exitCode == null && Number.isFinite(childPid) && childPid > 1) {
       // Ensure the child is actually gone before stack infra cleanup, otherwise a still-running
       // watch process can immediately respawn server/daemon and re-lock the DB.
-      await terminateProcessGroup(childPid, { graceMs: 900 });
+      const [childPgid, selfPgid] = await Promise.all([getProcessGroupId(childPid), getProcessGroupId(process.pid)]);
+      const plan = resolveTuiChildTerminationPlan({ childPid, childPgid, selfPgid });
+      if (plan.strategy === 'pgid') {
+        await terminateProcessGroup(plan.target, { graceMs: 900 });
+      } else if (plan.strategy === 'pid') {
+        await killPid(plan.target);
+      }
     }
 
     // Best-effort cleanup: when the TUI runs a long-lived `dev/start` command, ensure all
