@@ -46,11 +46,6 @@ export const OPENCODE_TIMEOUTS = {
 
 const OPENCODE_TOOL_PATTERNS: readonly ToolPatternWithInputFields[] = [
   {
-    name: 'change_title',
-    patterns: CHANGE_TITLE_TOOL_NAME_ALIASES,
-    inputFields: ['title'],
-  },
-  {
     name: 'save_memory',
     patterns: ['save_memory', 'save-memory'],
     inputFields: ['memory', 'content'],
@@ -59,6 +54,13 @@ const OPENCODE_TOOL_PATTERNS: readonly ToolPatternWithInputFields[] = [
     name: 'think',
     patterns: ['think'],
     inputFields: ['thought', 'thinking'],
+  },
+  // OpenCode sometimes reports file edits as kind="other" with a title/description like "apply_patch".
+  // Match these before generic patterns like change_title (which can otherwise match via inferred `title`).
+  {
+    name: 'apply_patch',
+    patterns: ['apply_patch', 'apply-diff', 'apply_diff', 'apply-patch', 'patch'],
+    inputFields: ['patchText', 'patch_text', 'patch', 'changes', 'diff'],
   },
   // OpenCode CLI tool conventions
   {
@@ -95,6 +97,11 @@ const OPENCODE_TOOL_PATTERNS: readonly ToolPatternWithInputFields[] = [
     name: 'task',
     patterns: ['task'],
     inputFields: ['prompt', 'subagent_type'],
+  },
+  {
+    name: 'change_title',
+    patterns: CHANGE_TITLE_TOOL_NAME_ALIASES,
+    inputFields: ['title'],
   },
 ] as const;
 
@@ -234,6 +241,27 @@ export class OpenCodeTransport implements TransportHandler {
     input: Record<string, unknown>,
     _context: ToolNameContext
   ): string {
+    const inferredTitle = (() => {
+      const rawAcpTitle = input?._acp;
+      const acpTitle =
+        rawAcpTitle && typeof rawAcpTitle === 'object' && !Array.isArray(rawAcpTitle) && typeof (rawAcpTitle as any).title === 'string'
+          ? String((rawAcpTitle as any).title).trim()
+          : '';
+      const title = typeof input.title === 'string' ? input.title.trim() : '';
+      const description = typeof input.description === 'string' ? input.description.trim() : '';
+      return (acpTitle || description || title).toLowerCase();
+    })();
+
+    // OpenCode sometimes sends kind="other" tool calls with no structured input on the first update,
+    // but sets the tool title/description to "apply_patch". In that case, treat it as Patch immediately
+    // so subsequent tool_call_update events don't get stuck under a generic name like change_title.
+    if (
+      (toolName === 'other' || toolName === 'Unknown tool') &&
+      (inferredTitle === 'apply_patch' || inferredTitle === 'apply-patch' || inferredTitle === 'apply_diff' || inferredTitle === 'apply-diff' || inferredTitle === 'patch')
+    ) {
+      return 'apply_patch';
+    }
+
     // OpenCode uses `change_title` as the task/subagent tool in some ACP implementations.
     // Map it to `Task` when ACP metadata indicates this is the task tool so that downstream
     // features (like sidechain replay import) can key off a stable name.

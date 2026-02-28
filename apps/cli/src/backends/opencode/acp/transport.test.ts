@@ -55,6 +55,29 @@ describe('OpenCodeTransport determineToolName', () => {
       expected: 'edit',
     },
     {
+      label: 'infers apply_patch from patchText input (avoids misclassifying as change_title via title)',
+      toolName: 'other',
+      toolCallId: 'call-123',
+      input: {
+        patchText: '*** Begin Patch\n*** End Patch',
+        title: 'apply_patch',
+        description: 'apply_patch',
+        _acp: { title: 'apply_patch' },
+      },
+      expected: 'apply_patch',
+    },
+    {
+      label: 'infers apply_patch from ACP title even before patchText is present',
+      toolName: 'other',
+      toolCallId: 'call-124',
+      input: {
+        title: 'apply_patch',
+        description: 'apply_patch',
+        _acp: { title: 'apply_patch' },
+      },
+      expected: 'apply_patch',
+    },
+    {
       label: 'does not guess when input is empty and id has no mapping',
       toolName: 'other',
       toolCallId: 'unknown-3',
