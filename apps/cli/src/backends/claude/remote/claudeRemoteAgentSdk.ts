@@ -60,6 +60,8 @@ export async function claudeRemoteAgentSdk(opts: {
 	    claudeEnvVars?: Record<string, string>;
 	    claudeArgs?: string[];
     claudeExecutablePath?: string;
+    /** Optional anchor UUID for resuming at a specific assistant message. */
+    resumeSessionAt?: string | null;
     /**
      * Optional MCP servers to inject into the Claude Agent SDK invocation (e.g. Happier MCP).
      * This should be additive with the user's config (no strict MCP unless explicitly requested).
@@ -289,11 +291,16 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
     };
 
     const mappedPermissionMode = mapToClaudeMode(mode.permissionMode);
+    const resumeSessionAt =
+        typeof opts.resumeSessionAt === 'string' && opts.resumeSessionAt.trim().length > 0
+            ? opts.resumeSessionAt.trim()
+            : null;
 	    const queryOptions: Record<string, unknown> = {
 	        abortController,
 	        cwd: opts.path,
 	        continue: shouldContinue || undefined,
 	        resume: startFrom ?? undefined,
+	        ...(startFrom && resumeSessionAt ? { resumeSessionAt } : {}),
 	        permissionMode: mappedPermissionMode,
 	        allowDangerouslySkipPermissions: mappedPermissionMode === 'bypassPermissions',
 	        model: argOverrides.model ?? mode.model,

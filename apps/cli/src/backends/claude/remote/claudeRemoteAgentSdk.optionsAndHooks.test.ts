@@ -142,6 +142,57 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(capturedOptions.settingSources).toEqual(['project']);
     });
 
+
+    it('sets resumeSessionAt when resuming and caller provides an anchor uuid', async () => {
+        let capturedOptions: any = null;
+
+        const createQuery = vi.fn((_params: any) => {
+            capturedOptions = _params.options;
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        const dir = await mkdtemp(join(tmpdir(), 'happier-claude-agent-sdk-'));
+        const transcriptPath = join(dir, 'sess_1.jsonl');
+        await writeFile(transcriptPath, `${JSON.stringify({ uuid: 'line_1' })}\n`);
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: 'sess_1',
+            transcriptPath,
+            path: '/tmp',
+            claudeEnvVars: {},
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            resumeSessionAt: 'asst_uuid_99',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            createQuery,
+        } as any);
+
+        expect(capturedOptions?.resume).toBe('sess_1');
+        expect(capturedOptions?.resumeSessionAt).toBe('asst_uuid_99');
+    });
+
     it('injects Happier MCP servers when provided', async () => {
         let capturedOptions: any = null;
 
