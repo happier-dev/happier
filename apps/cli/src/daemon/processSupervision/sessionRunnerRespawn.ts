@@ -54,7 +54,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
   baseDelayMs: number;
   maxDelayMs: number;
   jitterMs: number;
-  isSessionAlreadyRunning: (sessionId: string) => boolean;
+  isSessionAlreadyRunning: (sessionId: string) => boolean | Promise<boolean>;
   spawnSession: (opts: SpawnSessionOptions) => Promise<unknown>;
   random: () => number;
   logDebug: (message: string, payload?: unknown) => void;
@@ -101,74 +101,79 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
     if (!existing) return;
 
     const timer = setTimeout(() => {
-      if (params.isSessionAlreadyRunning(sessionId)) return;
-      const stopRequest = stopRequestedBySessionId.get(sessionId);
-      if (stopRequest) return;
+      void (async () => {
+        const alreadyRunning = await params.isSessionAlreadyRunning(sessionId);
+        if (alreadyRunning) return;
+        const stopRequest = stopRequestedBySessionId.get(sessionId);
+        if (stopRequest) return;
 
-      const respawnOptions = buildRespawnOptions({ spawnOptions, sessionId });
-      params.logDebug(
-        `[DAEMON RUN] Respawning runner for session ${sessionId} after ${delayMs}ms (attempt ${attempt})`,
-        { exit: event },
-      );
+        const respawnOptions = buildRespawnOptions({ spawnOptions, sessionId });
+        params.logDebug(
+          `[DAEMON RUN] Respawning runner for session ${sessionId} after ${delayMs}ms (attempt ${attempt})`,
+          { exit: event },
+        );
 
-      void params
-        .spawnSession(respawnOptions)
-        .then((result) => {
-          if (result && typeof result === 'object' && (result as any).type === 'success') {
-            stateBySessionId.delete(sessionId);
-            return;
-          }
-
-          if (result && typeof result === 'object' && (result as any).type === 'requestToApproveDirectoryCreation') {
-            params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (directory approval required)`);
-            stateBySessionId.delete(sessionId);
-            return;
-          }
-
-          params.logDebug(`[DAEMON RUN] Respawn attempt returned non-success for session ${sessionId}`, result);
-          const state = stateBySessionId.get(sessionId);
-          if (!state) return;
-
-          const retryEvent: TerminationEvent = {
-            type: 'spawn_error',
-            errorName: 'Error',
-            errorMessage:
-              result && typeof result === 'object' && typeof (result as any).errorCode === 'string'
-                ? `respawn_failed:${String((result as any).errorCode)}`
-                : 'respawn_failed',
-          };
-
-          const decision = state.controller.nextDecisionForTermination(retryEvent);
-          if (decision.type === 'no_restart') {
-            if (decision.reason.startsWith('max_restarts_exceeded')) {
-              params.logWarn(`[DAEMON RUN] Session ${sessionId} crashed; respawn suppressed (${decision.reason})`);
+        void params
+          .spawnSession(respawnOptions)
+          .then((result) => {
+            if (result && typeof result === 'object' && (result as any).type === 'success') {
+              stateBySessionId.delete(sessionId);
+              return;
             }
-            stateBySessionId.delete(sessionId);
-            return;
-          }
 
-          scheduleSpawn(sessionId, spawnOptions, decision.delayMs, decision.attempt, retryEvent);
-        })
-        .catch((error) => {
-          params.logDebug(`[DAEMON RUN] Failed to respawn runner for session ${sessionId}`, error);
-          const state = stateBySessionId.get(sessionId);
-          if (!state) return;
-
-          const retryEvent: TerminationEvent = {
-            type: 'spawn_error',
-            errorName: error instanceof Error ? error.name : 'Error',
-            errorMessage: error instanceof Error ? error.message : String(error),
-          };
-          const decision = state.controller.nextDecisionForTermination(retryEvent);
-          if (decision.type === 'no_restart') {
-            if (decision.reason.startsWith('max_restarts_exceeded')) {
-              params.logWarn(`[DAEMON RUN] Session ${sessionId} crashed; respawn suppressed (${decision.reason})`);
+            if (result && typeof result === 'object' && (result as any).type === 'requestToApproveDirectoryCreation') {
+              params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (directory approval required)`);
+              stateBySessionId.delete(sessionId);
+              return;
             }
-            stateBySessionId.delete(sessionId);
-            return;
-          }
-          scheduleSpawn(sessionId, spawnOptions, decision.delayMs, decision.attempt, retryEvent);
-        });
+
+            params.logDebug(`[DAEMON RUN] Respawn attempt returned non-success for session ${sessionId}`, result);
+            const state = stateBySessionId.get(sessionId);
+            if (!state) return;
+
+            const retryEvent: TerminationEvent = {
+              type: 'spawn_error',
+              errorName: 'Error',
+              errorMessage:
+                result && typeof result === 'object' && typeof (result as any).errorCode === 'string'
+                  ? `respawn_failed:${String((result as any).errorCode)}`
+                  : 'respawn_failed',
+            };
+
+            const decision = state.controller.nextDecisionForTermination(retryEvent);
+            if (decision.type === 'no_restart') {
+              if (decision.reason.startsWith('max_restarts_exceeded')) {
+                params.logWarn(`[DAEMON RUN] Session ${sessionId} crashed; respawn suppressed (${decision.reason})`);
+              }
+              stateBySessionId.delete(sessionId);
+              return;
+            }
+
+            scheduleSpawn(sessionId, spawnOptions, decision.delayMs, decision.attempt, retryEvent);
+          })
+          .catch((error) => {
+            params.logDebug(`[DAEMON RUN] Failed to respawn runner for session ${sessionId}`, error);
+            const state = stateBySessionId.get(sessionId);
+            if (!state) return;
+
+            const retryEvent: TerminationEvent = {
+              type: 'spawn_error',
+              errorName: error instanceof Error ? error.name : 'Error',
+              errorMessage: error instanceof Error ? error.message : String(error),
+            };
+            const decision = state.controller.nextDecisionForTermination(retryEvent);
+            if (decision.type === 'no_restart') {
+              if (decision.reason.startsWith('max_restarts_exceeded')) {
+                params.logWarn(`[DAEMON RUN] Session ${sessionId} crashed; respawn suppressed (${decision.reason})`);
+              }
+              stateBySessionId.delete(sessionId);
+              return;
+            }
+            scheduleSpawn(sessionId, spawnOptions, decision.delayMs, decision.attempt, retryEvent);
+          });
+      })().catch((error) => {
+        params.logDebug(`[DAEMON RUN] Failed to evaluate respawn preflight for session ${sessionId}`, error);
+      });
     }, delayMs) as unknown as { unref?: () => void };
     timer.unref?.();
     stateBySessionId.set(sessionId, { controller: existing.controller, timer: timer as any });
