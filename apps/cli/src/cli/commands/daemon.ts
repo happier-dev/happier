@@ -1,10 +1,8 @@
 import chalk from 'chalk';
 
 import { checkIfDaemonRunningAndCleanupStaleState, listDaemonSessions, stopDaemon, stopDaemonSession } from '@/daemon/controlClient';
-import { install } from '@/daemon/install';
 import { startDaemon } from '@/daemon/startDaemon';
 import { runDaemonServiceCliCommand } from '@/daemon/service/cli';
-import { uninstall } from '@/daemon/uninstall';
 import { getLatestDaemonLog } from '@/ui/logger';
 import { runDoctorCommand } from '@/ui/doctor';
 import { listDaemonStatusesForAllKnownServers, stopAllDaemonsBestEffort } from '@/daemon/multiDaemon';
@@ -171,7 +169,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
 
   if (daemonSubcommand === 'install') {
     try {
-      await install();
+      await runDaemonServiceCliCommand({ argv: ['install', ...args.slice(2)] });
     } catch (error) {
       console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');
       process.exit(1);
@@ -181,7 +179,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
 
   if (daemonSubcommand === 'uninstall') {
     try {
-      await uninstall();
+      await runDaemonServiceCliCommand({ argv: ['uninstall', ...args.slice(2)] });
     } catch (error) {
       console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');
       process.exit(1);
