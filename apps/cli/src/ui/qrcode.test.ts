@@ -19,7 +19,7 @@ describe('QR Code Utility', () => {
     vi.restoreAllMocks();
   });
 
-  it('renders the title banner and indented qr lines', () => {
+  it('renders an optional title banner and indented qr lines', () => {
     const logs: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
       logs.push(args.map((arg) => String(arg)).join(' '));
@@ -29,7 +29,7 @@ describe('QR Code Utility', () => {
       callback?.('line-1\nline-2');
     });
 
-    displayQRCode('handy://test');
+    displayQRCode('handy://test', { title: 'Scan this QR code:' } as any);
 
     expect(vi.mocked(qrcode.generate)).toHaveBeenCalledWith(
       'handy://test',
@@ -37,7 +37,8 @@ describe('QR Code Utility', () => {
       expect.any(Function),
     );
     expect(logs).toContain('=========='.repeat(8));
-    expect(logs).toContain('📱 To authenticate, scan this QR code with your mobile device:');
+    expect(logs).toContain('Scan this QR code:');
+    expect(logs).not.toContain('📱 To authenticate, scan this QR code with your mobile device:');
     expect(logs).toContain('          line-1');
     expect(logs).toContain('          line-2');
   });
