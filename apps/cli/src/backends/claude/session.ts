@@ -60,10 +60,17 @@ export class Session {
     lastPermissionModeUpdatedAt: number = 0;
 
     /**
-     * Timestamp of the most recent user-initiated abort request.
+     * Claude Code experimental feature toggles derived from provider settings.
+     * Applied on the next Claude subprocess spawn (local + remote).
+     */
+    claudeCodeExperimentalAgentTeamsEnabled: boolean = false;
+
+    /**
+     * Timestamp of the most recent user-initiated abort request (UI abort, Ctrl-C exit,
+     * or mode-switch abort).
      *
-     * Used as a narrow safety valve to avoid treating known abort cancellation
-     * signals as crashes when they surface as process-level unhandled rejections.
+     * Used as a narrow safety valve to avoid treating known "abort" cancellation signals
+     * as crashes when they surface as process-level unhandled rejections.
      */
     private lastUserAbortRequestedAtMs: number = 0;
     
