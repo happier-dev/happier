@@ -25,3 +25,24 @@ For detailed server profile, switching, and multi-daemon guidance, see [Features
 ## Notifications
 
 See [Notifications](./notifications) for push notification setup (Expo + APNs/FCM) and self-hosting notes.
+
+## Updates
+
+- **Hosted web app**: updates land via deploys; refresh to pick up changes.
+- **Mobile app**: native updates come from the App Store / Play Store; OTA updates (when enabled) are fetched in-app and applied via an “Update available” banner (reload).
+- **Self-hosted UI**: if you’re serving the web UI from your own server (Docker/self-host runtime/runner), UI updates track your server/runtime update path.
+
+Full matrix (all apps/assets): [Updates](/docs/advanced/updates).
+
+## Authentication (keyed vs keyless)
+
+Happier supports both:
+
+- **Device-key accounts (default)**: end-to-end encrypted by default; users must **restore** access on new devices/browsers by providing their secret key (for example via “Login with mobile app”).
+- **Keyless accounts (enterprise)**: no device keys; sign-in can be **seamless across devices**, typically paired with plaintext storage mode.
+
+The app discovers available login and signup options from your server via `GET /v1/features` and renders what the server advertises.
+
+For operator configuration, see:
+- [Server Auth](/docs/server/auth)
+- [Encryption & plaintext storage](/docs/server/encryption)

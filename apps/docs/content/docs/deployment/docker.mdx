@@ -32,6 +32,19 @@ Tags:
 - `:preview-<short-sha>` (immutable preview build)
 - `:stable` / `:latest` (stable channel, when enabled)
 
+## Updates
+
+Docker images do **not** update themselves. To upgrade, pull a newer tag and restart/recreate your container:
+
+```bash
+docker pull happierdev/relay-server:preview
+docker compose up -d --force-recreate
+```
+
+For strict control, pin to an immutable tag (for example `:preview-<short-sha>`) or a digest.
+
+Full matrix (all apps/assets): [Updates](/docs/advanced/updates).
+
 The `relay-server` image defaults to the **light flavor + SQLite**, with all data stored under `/data`. Mount it as a volume so upgrades and restarts are safe.
 
 ```bash

@@ -10,6 +10,8 @@ Happier currently supports two **different** self-host “shapes”:
 
 They are complementary, but they are not the same thing.
 
+For a complete “what updates automatically vs manually” matrix across all shipped assets (desktop/mobile/web, CLI installers, Docker images, and runners), see: [Updates](/docs/advanced/updates).
+
 ## Option A: Managed self-host install (recommended when you want a service)
 
 Use the self-host installer (or `hstack self-host install`) when you want:
@@ -91,4 +93,3 @@ Important: because this is a runner, `hstack self-host config` / `hstack self-ho
 - If you already have a process manager (Docker/Compose/systemd/nomad/k8s) and just want a **runner** → use **Option B**.
 
 If you’re unsure, start with Docker (runner) and switch to a managed install later.
-
