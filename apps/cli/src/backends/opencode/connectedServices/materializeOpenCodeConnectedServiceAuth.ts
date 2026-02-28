@@ -28,8 +28,7 @@ export async function materializeOpenCodeConnectedServiceAuth(params: Readonly<{
 
   if (params.anthropic) {
     if (params.anthropic.kind === 'oauth') {
-      const record = requireConnectedServiceOauthCredentialRecordWithExpiry(params.anthropic);
-      auth.anthropic = buildConnectedServiceOauthAuthEntry(record);
+      throw new Error('Anthropic OAuth credentials are not supported. Reconnect using an Anthropic API key.');
     } else {
       auth.anthropic = {
         type: 'api',
