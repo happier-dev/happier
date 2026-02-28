@@ -249,9 +249,28 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
     }, permissionHandler.getResponses());
 
 
+    let lastAssistantUuidSeen: string | null = null;
+
     function onMessage(message: SDKMessage) {
         let releaseIds: string[] = [];
 
+        if (message && message.type === 'assistant') {
+            const parentToolUseId =
+                typeof (message as any).parent_tool_use_id === 'string' ? (message as any).parent_tool_use_id.trim() : '';
+            const maybeUuid = typeof (message as any).uuid === 'string' ? (message as any).uuid.trim() : '';
+            if (!parentToolUseId && maybeUuid.length > 0 && maybeUuid !== lastAssistantUuidSeen) {
+                lastAssistantUuidSeen = maybeUuid;
+                updateMetadataBestEffort(
+                    session.client,
+                    (metadata) => ({
+                        ...metadata,
+                        claudeLastAssistantUuid: maybeUuid,
+                    }),
+                    '[remote]',
+                    'last_assistant_uuid',
+                );
+            }
+        }
         // Write to message log
         formatClaudeMessageForInk(message, messageBuffer);
 
@@ -441,12 +460,19 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                 const effectiveMcpServers = mergedMcp ? mergedMcp.mergedMcpServers : baseMcpServers;
                 const effectiveMcpConfigJson = mergedMcp ? mergedMcp.mergedMcpConfigJson : baseMcpConfigJson;
 
+                const resumeSessionAt = (() => {
+                    const snapshot = session.client.getMetadataSnapshot?.() as any;
+                    const value = typeof snapshot?.claudeLastAssistantUuid === 'string' ? snapshot.claudeLastAssistantUuid.trim() : '';
+                    return value.length > 0 ? value : null;
+                })();
+
                 const remoteResult = await claudeRemoteDispatch({
                     sessionId: session.sessionId,
                     transcriptPath: session.transcriptPath,
                     path: session.path,
                     hookSettingsPath: session.hookSettingsPath,
                     jsRuntime: session.jsRuntime,
+                    resumeSessionAt,
                     happierMcpServers: effectiveMcpServers,
                     happierMcpConfigJson: effectiveMcpConfigJson,
                     canCallTool: permissionHandler.handleToolCall,

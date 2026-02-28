@@ -128,7 +128,7 @@ function createRemoteHarness(options?: { sessionId?: string | null }): RemoteHar
     },
     sendClaudeSessionMessage,
     sendSessionEvent: vi.fn(),
-    getMetadataSnapshot: () => null,
+    getMetadataSnapshot: () => (options as any)?.metadata ?? null,
     waitForMetadataUpdate: vi.fn(async () => false),
     popPendingMessage: vi.fn(async () => false),
     peekPendingMessageQueueV2Count: vi.fn(async () => 0),
@@ -241,6 +241,95 @@ describe.sequential('claudeRemoteLauncher', () => {
     expect(Object.prototype.hasOwnProperty.call(captured?.happierMcpServers ?? {}, 'custom')).toBe(true);
 
     const switchHandler = await switchHandlerReady;
+    expect(await switchHandler({ to: 'local' })).toBe(true);
+    await expect(launcherPromise).resolves.toBe('switch');
+  }, 30_000);
+  it('passes resumeSessionAt from metadata snapshot into the remote dispatch options', async () => {
+    const { session, switchHandlerReady } = createRemoteHarness({
+      sessionId: 'sess_0',
+      metadata: { claudeLastAssistantUuid: 'asst_uuid_1' },
+    } as any);
+
+    const dispatchStarted = createDeferred<void>();
+    let capturedOpts: any = null;
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
+      capturedOpts = opts as any;
+      dispatchStarted.resolve(undefined);
+      await waitForAbort((capturedOpts as any).signal);
+    });
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(session);
+
+    const switchHandler = await switchHandlerReady;
+    await dispatchStarted.promise;
+
+    expect(capturedOpts?.resumeSessionAt).toBe('asst_uuid_1');
+
+    expect(await switchHandler({ to: 'local' })).toBe(true);
+    await expect(launcherPromise).resolves.toBe('switch');
+  }, 30_000);
+
+  it('persists the last assistant uuid into session metadata when observed in remote messages', async () => {
+    const { session, client, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
+
+    const dispatchStarted = createDeferred<void>();
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
+      const dispatchOpts = opts as any;
+      dispatchStarted.resolve(undefined);
+      dispatchOpts.onMessage?.({
+        type: 'assistant',
+        uuid: 'asst_uuid_2',
+        session_id: 'sess_0',
+        parent_tool_use_id: null,
+        message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
+      });
+      await waitForAbort(dispatchOpts.signal);
+    });
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(session);
+
+    const switchHandler = await switchHandlerReady;
+    await dispatchStarted.promise;
+
+    expect(client.updateMetadata).toHaveBeenCalled();
+    const updater = (client.updateMetadata as any).mock.calls[0][0];
+    expect(updater({})).toEqual(expect.objectContaining({ claudeLastAssistantUuid: 'asst_uuid_2' }));
+
+    expect(await switchHandler({ to: 'local' })).toBe(true);
+    await expect(launcherPromise).resolves.toBe('switch');
+  }, 30_000);
+
+  it('does not persist assistant uuids from sidechain messages (parent_tool_use_id)', async () => {
+    const { session, client, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
+
+    const dispatchStarted = createDeferred<void>();
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
+      const dispatchOpts = opts as any;
+      dispatchStarted.resolve(undefined);
+      dispatchOpts.onMessage?.({
+        type: 'assistant',
+        uuid: 'asst_uuid_sidechain',
+        session_id: 'sess_0',
+        parent_tool_use_id: 'toolu_parent',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'hi from sidechain' }] },
+      });
+      await waitForAbort(dispatchOpts.signal);
+    });
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(session);
+
+    const switchHandler = await switchHandlerReady;
+    await dispatchStarted.promise;
+
+    const updateCalls = (client.updateMetadata as any).mock.calls ?? [];
+    for (const [updater] of updateCalls) {
+      expect(typeof updater).toBe('function');
+      expect(updater({})).not.toHaveProperty('claudeLastAssistantUuid');
+    }
+
     expect(await switchHandler({ to: 'local' })).toBe(true);
     await expect(launcherPromise).resolves.toBe('switch');
   }, 30_000);
