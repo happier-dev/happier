@@ -10,6 +10,19 @@ function buildRecipientPublicKeyB64Url(): string {
 }
 
 describe("exchangeConnectedServiceOauthTokens", () => {
+    it("rejects anthropic oauth exchange", async () => {
+        await expect(exchangeConnectedServiceOauthTokens({
+            serviceId: "anthropic",
+            publicKeyB64Url: buildRecipientPublicKeyB64Url(),
+            code: "c",
+            verifier: "v",
+            redirectUri: "http://localhost:54545/oauth2callback",
+            now: 1700000000000,
+            fetcher: vi.fn() as any,
+            state: "s",
+        })).rejects.toThrow(/anthropic/i);
+    });
+
     it("exchanges gemini tokens without sending client_secret", async () => {
         const fetchMock = vi.fn(async (_url: any, init: any) => {
             const body = String(init?.body?.toString?.() ?? init?.body ?? "");

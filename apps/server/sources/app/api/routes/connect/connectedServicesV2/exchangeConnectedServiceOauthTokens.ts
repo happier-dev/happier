@@ -16,13 +16,6 @@ export class ConnectedServiceOauthTimeoutError extends Error {
     }
 }
 
-export class ConnectedServiceOauthStateMismatchError extends Error {
-    constructor() {
-        super("OAuth state mismatch");
-        this.name = "ConnectedServiceOauthStateMismatchError";
-    }
-}
-
 type OauthExchangeInput = Readonly<{
     serviceId: ConnectedServiceId;
     publicKeyB64Url: string;
@@ -59,14 +52,6 @@ function resolveOpenAiCodexOauthClientId(env: NodeJS.ProcessEnv): string {
 
 function resolveOpenAiCodexOauthTokenUrl(env: NodeJS.ProcessEnv): string {
     return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_OAUTH_TOKEN_URL, "https://auth.openai.com/oauth/token");
-}
-
-function resolveAnthropicOauthClientId(env: NodeJS.ProcessEnv): string {
-    return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_ANTHROPIC_OAUTH_CLIENT_ID, "9d1c250a-e61b-44d9-88ed-5944d1962f5e");
-}
-
-function resolveAnthropicOauthTokenUrl(env: NodeJS.ProcessEnv): string {
-    return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_ANTHROPIC_OAUTH_TOKEN_URL, "https://console.anthropic.com/v1/oauth/token");
 }
 
 function resolveGeminiOauthClientId(env: NodeJS.ProcessEnv): string {
@@ -194,56 +179,6 @@ async function exchangeOpenAiCodex(params: Readonly<{
     };
 }
 
-async function exchangeAnthropic(params: Readonly<{
-    code: string;
-    verifier: string;
-    redirectUri: string;
-    state: string;
-    now: number;
-    fetcher: typeof fetch;
-}>): Promise<OauthExchangePayload> {
-    const clientId = resolveAnthropicOauthClientId(process.env);
-    const tokenUrl = resolveAnthropicOauthTokenUrl(process.env);
-
-    const response = await params.fetcher(tokenUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            grant_type: "authorization_code",
-            code: params.code,
-            redirect_uri: params.redirectUri,
-            client_id: clientId,
-            code_verifier: params.verifier,
-            state: params.state,
-        }),
-    });
-    if (!response.ok) {
-        throw new Error(`Token exchange failed: ${response.status}`);
-    }
-
-    const json = (await response.json()) as any;
-    const accessToken = assertNonEmptyString(json?.access_token, "access_token");
-    const refreshToken = assertNonEmptyString(json?.refresh_token, "refresh_token");
-    const expiresIn = Number.isFinite(json?.expires_in) ? Number(json.expires_in) : NaN;
-    const expiresAt = Number.isFinite(expiresIn) && expiresIn > 0 ? params.now + Math.trunc(expiresIn) * 1000 : null;
-
-    const providerEmail = typeof json?.account?.email_address === "string" ? json.account.email_address : null;
-    const providerAccountId = typeof json?.account?.uuid === "string" ? json.account.uuid : null;
-
-    return {
-        serviceId: "anthropic",
-        accessToken,
-        refreshToken,
-        idToken: null,
-        scope: typeof json?.scope === "string" ? json.scope : null,
-        tokenType: typeof json?.token_type === "string" ? json.token_type : null,
-        providerEmail,
-        providerAccountId,
-        expiresAt,
-        raw: json,
-    };
-}
-
 async function exchangeGemini(params: Readonly<{
     code: string;
     verifier: string;
@@ -310,16 +245,7 @@ export async function exchangeConnectedServiceOauthTokens(params: OauthExchangeI
             });
         }
         if (params.serviceId === "anthropic") {
-            const state = params.state?.trim() ?? "";
-            if (!state) throw new ConnectedServiceOauthStateMismatchError();
-            return await exchangeAnthropic({
-                code: params.code,
-                verifier: params.verifier,
-                redirectUri: params.redirectUri,
-                state,
-                now: params.now,
-                fetcher,
-            });
+            throw new Error("Anthropic OAuth exchange is not supported. Use an API key instead.");
         }
         if (params.serviceId === "gemini") {
             return await exchangeGemini({
