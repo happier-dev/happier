@@ -8,11 +8,19 @@ export function getInvokedCwd(env = process.env) {
   const explicit = String(env.HAPPIER_STACK_INVOKED_CWD ?? '').trim();
   if (explicit) return explicit;
 
+  const actualCwd = String(process.cwd()).trim();
+
   const pwd = String(env.PWD ?? '').trim();
   // Prefer PWD when it already looks like a checkout/worktree root.
   // This avoids surprising behavior when OLDPWD points at a different repo/worktree.
   if (pwd) {
     try {
+      // When callers spawn this process with an explicit cwd, `process.cwd()` reflects that cwd,
+      // but `PWD` can still be inherited from the parent environment (and therefore be stale).
+      // If they disagree, prefer the actual cwd.
+      if (actualCwd && resolve(pwd) !== resolve(actualCwd)) {
+        return actualCwd;
+      }
       if (existsSync(pwd) && existsSync(join(pwd, '.git'))) {
         return pwd;
       }
@@ -34,7 +42,7 @@ export function getInvokedCwd(env = process.env) {
     }
   }
 
-  return pwd || String(process.cwd()).trim();
+  return pwd || actualCwd;
 }
 
 function hasGitMarker(dir) {

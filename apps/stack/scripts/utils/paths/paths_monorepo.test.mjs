@@ -81,3 +81,20 @@ test('getRepoDir falls back to the monorepo containing the CLI root when HAPPIER
 
   assert.equal(getRepoDir(rootDir, env), monoRoot);
 });
+
+test('getRepoDir ignores the monorepo containing the CLI root in sandbox mode', async (t) => {
+  const tmpRoot = await withTempRoot(t);
+
+  const workspaceDir = join(tmpRoot, 'workspace');
+  const monoRoot = join(tmpRoot, 'happier');
+  await writeHappyMonorepoStubAt({ monoRoot });
+
+  // Sandbox runs must be isolated: no implicit repo-local checkouts.
+  const rootDir = join(monoRoot, 'apps', 'stack');
+  const env = {
+    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
+    HAPPIER_STACK_SANDBOX_DIR: join(tmpRoot, 'sandbox'),
+  };
+
+  assert.equal(getRepoDir(rootDir, env), join(workspaceDir, 'main'));
+});
