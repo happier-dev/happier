@@ -6,7 +6,7 @@ import { redactBugReportSensitiveText } from "@happier-dev/protocol";
 
 import { parseBooleanEnv, parseIntEnv } from "@/config/env";
 import { isServerOwnerUserId, resolveServerOwnerUserIds } from "@/app/features/serverOwners";
-import { gateRateLimitConfig } from "@/app/api/utils/apiRateLimitPolicy";
+import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { type Fastify } from "../../types";
 
 function resolveServerLogPath(): string | null {
@@ -50,21 +50,6 @@ async function readTailBytes(path: string, maxBytes: number): Promise<string> {
     }
 }
 
-function resolveDiagnosticsRateLimitMax(raw: string | undefined): number {
-    const fallback = 30;
-    const min = 1;
-    const max = 5_000;
-    if (typeof raw !== "string") return fallback;
-    const parsed = Number.parseInt(raw.trim(), 10);
-    if (!Number.isFinite(parsed)) return fallback;
-    return Math.max(min, Math.min(max, parsed));
-}
-
-function resolveDiagnosticsRateLimitWindow(raw: string | undefined): string {
-    const value = (raw ?? "").trim();
-    return value.length > 0 ? value : "1 minute";
-}
-
 type DiagnosticsAccessMode = "authenticated" | "owner";
 
 function resolveDiagnosticsAccessMode(raw: string | undefined): { mode: DiagnosticsAccessMode; invalid: boolean } {
@@ -84,10 +69,7 @@ export function bugReportDiagnosticsRoutes(app: Fastify) {
         },
         preHandler: app.authenticate,
         config: {
-            rateLimit: gateRateLimitConfig(process.env, {
-                max: resolveDiagnosticsRateLimitMax(process.env.HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_RATE_LIMIT_MAX),
-                timeWindow: resolveDiagnosticsRateLimitWindow(process.env.HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_RATE_LIMIT_WINDOW),
-            }),
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "diagnostics.bugReportSnapshot"),
         },
     }, async (request, reply) => {
         const enabled = parseBooleanEnv(process.env.HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_ENABLED, false);
