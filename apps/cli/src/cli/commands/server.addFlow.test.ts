@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 import { reloadConfiguration } from '@/configuration';
 import { readSettings } from '@/persistence';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
 
 let promptAnswers: string[] = [];
 let promptQuestions: string[] = [];
@@ -22,6 +23,15 @@ vi.mock('node:readline', () => ({
 const spawnHappyCLIMock = vi.fn();
 vi.mock('@/utils/spawnHappyCLI', () => ({
   spawnHappyCLI: (...args: unknown[]) => spawnHappyCLIMock(...args),
+}));
+
+const fetchServerFeaturesSnapshotMock = vi.fn<
+  (params: Readonly<{ serverUrl: string; timeoutMs?: number }>) => Promise<unknown>
+>();
+
+vi.mock('@/features/serverFeaturesClient', () => ({
+  fetchServerFeaturesSnapshot: (params: Readonly<{ serverUrl: string; timeoutMs?: number }>) =>
+    fetchServerFeaturesSnapshotMock(params),
 }));
 
 import { handleServerCommand } from './server';
@@ -78,6 +88,50 @@ describe('happier server add guided flow', () => {
       expect(settings.servers?.Company?.serverUrl).toBe('https://company.example.test');
       expect(settings.servers?.Company?.webappUrl).toBe('https://company.example.test');
       expect(spawnHappyCLIMock).not.toHaveBeenCalled();
+    } finally {
+      restoreTty();
+      if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = prevHome;
+      if (prevServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
+      else process.env.HAPPIER_SERVER_URL = prevServerUrl;
+      if (prevWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
+      else process.env.HAPPIER_WEBAPP_URL = prevWebappUrl;
+      reloadConfiguration();
+      await rm(home, { recursive: true, force: true });
+      promptAnswers = [];
+      promptQuestions = [];
+      spawnHappyCLIMock.mockReset();
+    }
+  });
+
+  it('prompts for a canonical share URL when the interactive --server-url looks local-only', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-server-add-guided-local-'));
+    const prevHome = process.env.HAPPIER_HOME_DIR;
+    const prevServerUrl = process.env.HAPPIER_SERVER_URL;
+    const prevWebappUrl = process.env.HAPPIER_WEBAPP_URL;
+    const restoreTty = setTtyMode(true, true);
+    promptAnswers = [
+      'http://127.0.0.1:53545', // local server URL
+      'y', // local-only confirmation
+      'https://company.example.test', // canonical share URL
+      'Local', // profile name
+      'y', // use as active
+    ];
+    promptQuestions = [];
+
+    try {
+      process.env.HAPPIER_HOME_DIR = home;
+      delete process.env.HAPPIER_SERVER_URL;
+      delete process.env.HAPPIER_WEBAPP_URL;
+      reloadConfiguration();
+
+      await handleServerCommand(['add']);
+
+      const settings = await readSettings();
+      expect(settings.activeServerId).toBe('Local');
+      expect(settings.servers?.Local?.serverUrl).toBe('https://company.example.test');
+      expect((settings.servers as any)?.Local?.localServerUrl).toBe('http://127.0.0.1:53545');
+      expect(settings.servers?.Local?.webappUrl).toBe('https://company.example.test');
     } finally {
       restoreTty();
       if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
@@ -261,7 +315,7 @@ describe('happier server add guided flow', () => {
     }
   });
 
-  it('persists --public-server-url for QR/deep links', async () => {
+  it('treats legacy --public-server-url as canonical serverUrl and legacy --server-url as localServerUrl', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-server-add-public-url-'));
     const prevHome = process.env.HAPPIER_HOME_DIR;
     const restoreTty = setTtyMode(false, false);
@@ -284,7 +338,8 @@ describe('happier server add guided flow', () => {
       ]);
 
       const raw = JSON.parse(await readFile(join(home, 'settings.json'), 'utf-8'));
-      expect(raw?.servers?.Company?.publicServerUrl).toBe('https://company.example.test');
+      expect(raw?.servers?.Company?.serverUrl).toBe('https://company.example.test');
+      expect(raw?.servers?.Company?.localServerUrl).toBe('http://127.0.0.1:53545');
     } finally {
       restoreTty();
       if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
@@ -324,13 +379,59 @@ describe('happier server add guided flow', () => {
       ]);
 
       const raw = JSON.parse(await readFile(join(home, 'settings.json'), 'utf-8'));
-      expect(raw?.servers?.Local?.publicServerUrl).toBe('https://my-machine.tailnet.ts.net');
+      expect(raw?.servers?.Local?.serverUrl).toBe('https://my-machine.tailnet.ts.net');
+      expect(raw?.servers?.Local?.localServerUrl).toBe('http://127.0.0.1:53545');
     } finally {
       restoreTty();
       if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
       else process.env.HAPPIER_HOME_DIR = prevHome;
       reloadConfiguration();
       await rm(home, { recursive: true, force: true });
+      runTailscaleServeStatusMock.mockReset();
+      spawnHappyCLIMock.mockReset();
+    }
+  });
+
+  it('adopts canonical URL from server capabilities without persisting remote http as localServerUrl', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-server-add-adopt-canonical-safe-'));
+    const prevHome = process.env.HAPPIER_HOME_DIR;
+    const restoreTty = setTtyMode(false, false);
+
+    fetchServerFeaturesSnapshotMock.mockResolvedValueOnce({
+      status: 'ready',
+      features: FeaturesResponseSchema.parse({
+        features: {},
+        capabilities: {
+          server: {
+            canonicalServerUrl: 'https://public.example.test',
+          },
+        },
+      }),
+    });
+
+    try {
+      process.env.HAPPIER_HOME_DIR = home;
+      reloadConfiguration();
+
+      await handleServerCommand([
+        'add',
+        '--name',
+        'Selfhost',
+        '--server-url',
+        'http://public.example.test',
+        '--use',
+      ]);
+
+      const raw = JSON.parse(await readFile(join(home, 'settings.json'), 'utf-8'));
+      expect(raw?.servers?.Selfhost?.serverUrl).toBe('https://public.example.test');
+      expect(raw?.servers?.Selfhost?.localServerUrl).toBeUndefined();
+    } finally {
+      restoreTty();
+      if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = prevHome;
+      reloadConfiguration();
+      await rm(home, { recursive: true, force: true });
+      fetchServerFeaturesSnapshotMock.mockReset();
       runTailscaleServeStatusMock.mockReset();
       spawnHappyCLIMock.mockReset();
     }
