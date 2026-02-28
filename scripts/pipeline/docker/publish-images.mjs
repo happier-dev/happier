@@ -3,6 +3,8 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { resolveOptionalDockerBuildArgs } from './resolve-build-args.mjs';
+import { maybeTrackSentryRelease } from '../sentry/track-release.mjs';
+import { runCommandWithEnv } from './runCommandWithEnv.mjs';
 
 function fail(message) {
   console.error(message);
@@ -66,6 +68,16 @@ function run(cmd, args, opts) {
     stdio,
     timeout: timeoutMs,
   });
+}
+
+/**
+ * @param {string} cmd
+ * @param {string[]} args
+ * @param {{ env?: NodeJS.ProcessEnv; stdio?: 'inherit' | 'pipe' }} [opts]
+ */
+function runWithEnv(cmd, args, opts) {
+  const stdio = opts?.stdio ?? 'inherit';
+  runCommandWithEnv({ cmd, args, env: opts?.env ?? process.env, stdio });
 }
 
 /**
@@ -547,6 +559,25 @@ async function main() {
         dockerPreflight({ dryRun: false });
       },
     });
+
+    try {
+      const tracked = maybeTrackSentryRelease({
+        repoRoot: process.cwd(),
+        env: process.env,
+        release: defaultSentryRelease,
+        channel,
+        dryRun,
+        run: (cmd, cmdArgs, opts) => runWithEnv(cmd, cmdArgs, opts),
+      });
+      if (tracked.status === 'tracked') {
+        console.log(`[pipeline] sentry release tracking complete: ${defaultSentryRelease}`);
+      } else if (tracked.status === 'skipped') {
+        console.log(`[pipeline] sentry release tracking skipped: ${tracked.reason ?? 'disabled'}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[pipeline] sentry release tracking failed (ignored): ${msg}`);
+    }
   }
 
   if (buildDevBox) {
