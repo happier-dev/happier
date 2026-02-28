@@ -3,7 +3,9 @@ import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ConnectedServiceQuotaSnapshotV1Schema, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
+import type { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { getConnectedServiceQuotaSnapshotSealed } from '@/sync/api/account/apiConnectedServicesQuotasV2';
+import type { getConnectedServiceQuotaSnapshotPlain } from '@/sync/api/account/apiConnectedServicesQuotasV3';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -44,14 +46,36 @@ vi.mock('@/sync/store/hooks', () => ({
   useLocalSetting: () => 1,
 }));
 
-const { getConnectedServiceQuotaSnapshotSealedSpy } = vi.hoisted(() => ({
+const {
+  fetchAccountEncryptionModeSpy,
+  getConnectedServiceQuotaSnapshotPlainSpy,
+  getConnectedServiceQuotaSnapshotSealedSpy,
+} = vi.hoisted(() => ({
+  fetchAccountEncryptionModeSpy: vi.fn<
+    (...args: Parameters<typeof fetchAccountEncryptionMode>) => ReturnType<typeof fetchAccountEncryptionMode>
+  >(async () => ({ mode: 'e2ee' as const, updatedAt: 0 })),
+  getConnectedServiceQuotaSnapshotPlainSpy: vi.fn<
+    (...args: Parameters<typeof getConnectedServiceQuotaSnapshotPlain>) => ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>
+  >(async () => null),
   getConnectedServiceQuotaSnapshotSealedSpy: vi.fn<
     (...args: Parameters<typeof getConnectedServiceQuotaSnapshotSealed>) => ReturnType<typeof getConnectedServiceQuotaSnapshotSealed>
   >(async () => null),
 }));
+vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
+  fetchAccountEncryptionMode: fetchAccountEncryptionModeSpy,
+}));
 vi.mock('@/sync/api/account/apiConnectedServicesQuotasV2', () => ({
   getConnectedServiceQuotaSnapshotSealed: getConnectedServiceQuotaSnapshotSealedSpy,
 }));
+vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
+  getConnectedServiceQuotaSnapshotPlain: getConnectedServiceQuotaSnapshotPlainSpy,
+}));
+
+async function flushAsyncEffects(turns: number = 3) {
+  for (let index = 0; index < turns; index += 1) {
+    await Promise.resolve();
+  }
+}
 
 describe('ConnectedServicesSettingsView quotas', () => {
   it('shows quota badges on service rows when pinned meters exist', async () => {
@@ -99,7 +123,7 @@ describe('ConnectedServicesSettingsView quotas', () => {
     });
 
     await act(async () => {
-      await Promise.resolve();
+      await flushAsyncEffects();
     });
 
     expect(tree.root.findAll((n) => n.props?.children === 'Weekly 18%')).not.toHaveLength(0);

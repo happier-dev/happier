@@ -52,8 +52,9 @@ export function useConnectedServiceQuotaBadges(
     cacheByKeyRef.current = cacheByKey;
   }, [cacheByKey]);
 
-  const accountModeRef = React.useRef<'plain' | 'e2ee' | null>(null);
-  const accountModePromiseRef = React.useRef<Promise<'plain' | 'e2ee'> | null>(null);
+  type AccountMode = 'plain' | 'e2ee';
+  const accountModeRef = React.useRef<AccountMode | null>(null);
+  const accountModePromiseRef = React.useRef<Promise<AccountMode> | null>(null);
   React.useEffect(() => {
     accountModeRef.current = null;
     accountModePromiseRef.current = null;
@@ -62,20 +63,22 @@ export function useConnectedServiceQuotaBadges(
   const pinnedByKey = settings.connectedServicesQuotaPinnedMeterIdsByKey;
   const strategyByKey = settings.connectedServicesQuotaSummaryStrategyByKey;
 
-  const resolveAccountMode = React.useCallback(async (): Promise<'plain' | 'e2ee'> => {
-    if (accountModeRef.current) return accountModeRef.current;
+  const resolveAccountMode = React.useCallback(async (): Promise<AccountMode> => {
+    const cached = accountModeRef.current;
+    if (cached) return cached;
     if (!credentials) return 'e2ee';
 
-    if (!accountModePromiseRef.current) {
-      accountModePromiseRef.current = fetchAccountEncryptionMode(credentials)
-        .then((res) => (res.mode === 'plain' ? 'plain' : 'e2ee'))
-        .catch(() => 'e2ee')
-        .then((mode) => {
+    const promise =
+      accountModePromiseRef.current ??
+      (accountModePromiseRef.current = fetchAccountEncryptionMode(credentials)
+        .then((res): AccountMode => (res.mode === 'plain' ? 'plain' : 'e2ee'))
+        .catch((): AccountMode => 'e2ee')
+        .then((mode): AccountMode => {
           accountModeRef.current = mode;
           return mode;
-        });
-    }
-    return await accountModePromiseRef.current;
+        }));
+
+    return await promise;
   }, [credentials]);
 
   React.useEffect(() => {

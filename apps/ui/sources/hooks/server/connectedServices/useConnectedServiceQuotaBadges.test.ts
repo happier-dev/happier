@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { ConnectedServiceQuotaSnapshotV1Schema, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
+import type { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { getConnectedServiceQuotaSnapshotSealed } from '@/sync/api/account/apiConnectedServicesQuotasV2';
 import type { getConnectedServiceQuotaSnapshotPlain } from '@/sync/api/account/apiConnectedServicesQuotasV3';
 
@@ -22,7 +23,9 @@ const useSettingsSpy = vi.fn(() => ({
 const useFeatureEnabledSpy = vi.fn((_featureId: string) => true);
 
 const { fetchAccountEncryptionModeSpy, getConnectedServiceQuotaSnapshotPlainSpy, getConnectedServiceQuotaSnapshotSealedSpy } = vi.hoisted(() => ({
-  fetchAccountEncryptionModeSpy: vi.fn(async () => ({ mode: 'e2ee' as const, updatedAt: 0 })),
+  fetchAccountEncryptionModeSpy: vi.fn<
+    (...args: Parameters<typeof fetchAccountEncryptionMode>) => ReturnType<typeof fetchAccountEncryptionMode>
+  >(async () => ({ mode: 'e2ee', updatedAt: 0 })),
   getConnectedServiceQuotaSnapshotPlainSpy: vi.fn<
     (...args: Parameters<typeof getConnectedServiceQuotaSnapshotPlain>) => ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>
   >(async () => null),
