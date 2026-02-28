@@ -12,6 +12,7 @@ import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/per
 import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
 import { configuration } from '@/configuration';
 import { tryMergeUserMcpConfigArgsIntoHappierMcp } from './utils/mcpConfigMerge';
+import { resolveClaudeConfigDirOverride } from './utils/resolveClaudeConfigDirOverride';
 
 function upsertClaudePermissionModeArgs(args: string[] | undefined, mode: PermissionMode): string[] | undefined {
     const filtered: string[] = [];
@@ -59,11 +60,11 @@ export async function claudeLocalLauncher(
 
         const entry = opts?.entry ?? 'initial';
 
-	    // Create scanner
-	    const scanner = await createSessionScanner({
+        // Create scanner
+            const scanner = await createSessionScanner({
         sessionId: session.sessionId,
         transcriptPath: session.transcriptPath,
-        claudeConfigDir: session.claudeEnvVars?.CLAUDE_CONFIG_DIR ?? null,
+        claudeConfigDir: resolveClaudeConfigDirOverride(process.env),
         workingDirectory: session.path,
         onMessage: (message) => { 
             // Block SDK summary messages - we generate our own
