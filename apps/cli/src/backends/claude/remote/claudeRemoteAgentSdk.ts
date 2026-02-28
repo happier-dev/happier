@@ -17,6 +17,7 @@ import { resolveClaudeRemoteSessionStartPlan } from '@/backends/claude/remote/se
 import { tryMergeUserMcpConfigArgsIntoHappierMcp } from '@/backends/claude/utils/mcpConfigMerge';
 import { parseCheckpointsCommand, parseRewindCommand } from './agentSdk/claudeAgentSdkSlashCommands';
 import { parseExplicitSpawnEnvKeysFromProcessEnv } from './agentSdk/explicitSpawnEnvKeysMarker';
+import { buildClaudeAgentSdkHooks } from './agentSdk/buildClaudeAgentSdkHooks';
 import {
     extractTextDeltaFromStreamEvent,
     extractToolResultStartFromStreamEvent,
@@ -49,20 +50,6 @@ type AgentSdkQueryFactory = (params: {
 }
 
 
-function toAgentSdkPermissionResult(result: PermissionResult): any {
-    if (result.behavior === 'allow') {
-        return {
-            behavior: 'allow',
-            updatedInput: result.updatedInput,
-        };
-    }
-
-    return {
-        behavior: 'deny',
-        message: result.message,
-        ...(result.interrupt !== undefined ? { interrupt: result.interrupt } : {}),
-    };
-}
 
 
 export async function claudeRemoteAgentSdk(opts: {
@@ -222,155 +209,14 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
         )
         : undefined;
 
-    const BASH_SECRET_SCRUB_ENV_KEYS = [
-        'ANTHROPIC_API_KEY',
-        'ANTHROPIC_AUTH_TOKEN',
-        'ANTHROPIC_OAUTH_TOKEN',
-        'CLAUDE_CODE_OAUTH_TOKEN',
-        'CLAUDE_CODE_SETUP_TOKEN',
-    ] as const;
 
-    const hooks = {
-        SessionStart: [
-            {
-                hooks: [
-                    async (input: any) => {
-                        const sessionId =
-                            input && typeof input.session_id === 'string'
-                                ? input.session_id
-                                : input && typeof input.sessionId === 'string'
-                                    ? input.sessionId
-                                    : undefined;
-                        if (sessionId) {
-                            const transcriptRaw =
-                                typeof input.transcript_path === 'string'
-                                    ? input.transcript_path
-                                    : typeof input.transcriptPath === 'string'
-                                        ? input.transcriptPath
-                                        : undefined;
-                            const transcriptPathFallback =
-                                transcriptRaw ??
-                                join(
-                                    getProjectPath(opts.path, opts.claudeEnvVars?.CLAUDE_CONFIG_DIR ?? null),
-                                    `${sessionId}.jsonl`,
-                                );
-                            opts.onSessionFound(
-                                sessionId,
-                                { transcript_path: transcriptPathFallback, transcriptPath: transcriptPathFallback },
-                            );
-                        }
-                        return { continue: true };
-                    },
-                ],
-            },
-        ],
-        PreToolUse: [
-            {
-                hooks: [
-                    async (input: any) => {
-                        if (!input || typeof input !== 'object') {
-                            return { continue: true, suppressOutput: true };
-                        }
-
-                        const toolName = typeof input.tool_name === 'string' ? input.tool_name : '';
-                        if (toolName !== 'Bash') {
-                            return { continue: true, suppressOutput: true };
-                        }
-
-                        const toolInput = (input as any).tool_input;
-                        if (!toolInput || typeof toolInput !== 'object' || Array.isArray(toolInput)) {
-                            return { continue: true, suppressOutput: true };
-                        }
-
-                        const command = typeof (toolInput as any).command === 'string' ? (toolInput as any).command : '';
-                        if (!command.trim()) {
-                            return { continue: true, suppressOutput: true };
-                        }
-
-                        const prefix = `unset ${BASH_SECRET_SCRUB_ENV_KEYS.join(' ')}; `;
-                        const nextCommand = command.startsWith(prefix) ? command : prefix + command;
-
-                        return {
-                            continue: true,
-                            suppressOutput: true,
-                            hookSpecificOutput: {
-                                hookEventName: 'PreToolUse',
-                                updatedInput: {
-                                    ...(toolInput as Record<string, unknown>),
-                                    command: nextCommand,
-                                },
-                            },
-                        };
-                    },
-                ],
-            },
-        ],
-        PermissionRequest: [
-            {
-                hooks: [
-                    async (input: any, toolUseID: string | undefined, options: { signal: AbortSignal }) => {
-                        if (!input || typeof input !== 'object') {
-                            return { continue: true, suppressOutput: true };
-                        }
-                        const toolName = typeof input.tool_name === 'string' ? input.tool_name : '';
-                        const toolInput = (input as any).tool_input;
-                        if (!toolName) {
-                            return { continue: true, suppressOutput: true };
-                        }
-
-                        const result = await opts.canCallTool(toolName, toolInput, mode, {
-                            signal: options.signal,
-                            toolUseId: typeof toolUseID === 'string' ? toolUseID : null,
-                            suggestions: (input as any).permission_suggestions,
-                        });
-
-                        if (result.behavior === 'allow') {
-                            const updatedInput =
-                                result.updatedInput && typeof result.updatedInput === 'object' && !Array.isArray(result.updatedInput)
-                                    ? (result.updatedInput as Record<string, unknown>)
-                                    : undefined;
-                            return {
-                                continue: true,
-                                suppressOutput: true,
-                                hookSpecificOutput: {
-                                    hookEventName: 'PermissionRequest',
-                                    decision: {
-                                        behavior: 'allow',
-                                        ...(updatedInput ? { updatedInput } : {}),
-                                    },
-                                },
-                            };
-                        }
-
-                        return {
-                            continue: true,
-                            suppressOutput: true,
-                            hookSpecificOutput: {
-                                hookEventName: 'PermissionRequest',
-                                decision: {
-                                    behavior: 'deny',
-                                    ...(typeof result.message === 'string' && result.message.length > 0 ? { message: result.message } : {}),
-                                    ...(result.interrupt !== undefined ? { interrupt: result.interrupt } : {}),
-                                },
-                            },
-                        };
-                    },
-                ],
-            },
-        ],
-    };
-
-    const canUseTool = async (toolName: string, input: Record<string, unknown>, options: any) => {
-        const result = await opts.canCallTool(toolName, input, mode, {
-            signal: options.signal,
-            toolUseId: typeof options?.toolUseID === 'string' ? options.toolUseID : null,
-            agentId: typeof options?.agentID === 'string' ? options.agentID : null,
-            suggestions: options?.suggestions,
-            blockedPath: typeof options?.blockedPath === 'string' ? options.blockedPath : null,
-            decisionReason: typeof options?.decisionReason === 'string' ? options.decisionReason : null,
-        });
-        return toAgentSdkPermissionResult(result);
-    };
+    const built = buildClaudeAgentSdkHooks({
+        cwd: opts.path,
+        claudeConfigDir: opts.claudeEnvVars?.CLAUDE_CONFIG_DIR ?? null,
+        getMode: () => mode,
+        onSessionFound: opts.onSessionFound,
+        canCallTool: opts.canCallTool,
+    });
 
     const buildSystemPrompt = (): any => {
         if (customSystemPrompt) {
@@ -455,7 +301,7 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
         maxTurns: argOverrides.maxTurns,
         systemPrompt: buildSystemPrompt(),
         strictMcpConfig: mode.claudeRemoteStrictMcpServerConfig === true || argOverrides.strictMcpConfig,
-        canUseTool,
+        canUseTool: built.canUseTool,
         ...(effectiveMcpServers ? { mcpServers: effectiveMcpServers } : {}),
         env: buildClaudeSubprocessEnv(),
         executable: opts.jsRuntime ?? 'node',
@@ -464,7 +310,7 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
         enableFileCheckpointing: enableFileCheckpointing || undefined,
         extraArgs: enableFileCheckpointing ? { 'replay-user-messages': null } : undefined,
         maxThinkingTokens: typeof mode.claudeRemoteMaxThinkingTokens === 'number' ? mode.claudeRemoteMaxThinkingTokens : undefined,
-        hooks,
+        hooks: built.hooks,
     };
 
     if (settingSources !== undefined) {
