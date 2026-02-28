@@ -25,7 +25,10 @@ import { getPendingTerminalConnect } from '@/sync/domains/pending/pendingTermina
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text } from '@/components/ui/text/Text';
+import { bootstrapActiveServerFromWebLocation, readWebServerUrlOverrideFromLocation } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
 import { PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol';
+
+const bootstrappedWebServerOverride = bootstrapActiveServerFromWebLocation({ scope: 'device' });
 
 
 export const unstable_settings = {
@@ -63,31 +66,6 @@ function findSavedServerProfileForUrl(serverUrl: string): { id: string; serverUr
     return null;
 }
 
-function readServerUrlOverrideFromWebLocation(): Readonly<{ serverUrl: string; cleanedRelativeUrl: string }> | null {
-    if (typeof window === 'undefined') return null;
-    if (typeof window.location?.href !== 'string') return null;
-
-    try {
-        const current = new URL(window.location.href);
-        const rawServer = (current.searchParams.get('server') ?? '').trim();
-        const rawLegacyUrl = (current.searchParams.get('url') ?? '').trim();
-        const rawLegacyAuto = (current.searchParams.get('auto') ?? '').trim().toLowerCase();
-        const legacyAutoEnabled = rawLegacyAuto === '1' || rawLegacyAuto === 'true' || rawLegacyAuto === 'yes' || rawLegacyAuto === 'on';
-
-        const serverUrl = normalizeServerUrl(rawServer) || (legacyAutoEnabled ? normalizeServerUrl(rawLegacyUrl) : null);
-        if (!serverUrl) return null;
-
-        current.searchParams.delete('server');
-        current.searchParams.delete('url');
-        current.searchParams.delete('auto');
-        const search = current.searchParams.toString();
-        const cleanedRelativeUrl = `${current.pathname}${search ? `?${search}` : ''}${current.hash ?? ''}`;
-        return { serverUrl, cleanedRelativeUrl };
-    } catch {
-        return null;
-    }
-}
-
 function readLegacySessionIdFromWebLocation(): Readonly<{ sessionId: string; cleanedRelativeUrl: string }> | null {
     if (typeof window === 'undefined') return null;
     if (typeof window.location?.href !== 'string') return null;
@@ -119,7 +97,7 @@ export default function RootLayout() {
     const webServerOverrideHandledRef = React.useRef(false);
     React.useEffect(() => {
         if (webServerOverrideHandledRef.current) return;
-        const override = readServerUrlOverrideFromWebLocation();
+        const override = readWebServerUrlOverrideFromLocation();
         if (!override) return;
         webServerOverrideHandledRef.current = true;
 
@@ -128,6 +106,9 @@ export default function RootLayout() {
 
         const current = normalizeServerUrl(getActiveServerUrl());
         if (desired === current) {
+            if (bootstrappedWebServerOverride && bootstrappedWebServerOverride.serverUrl === desired) {
+                fireAndForget(auth.refreshFromActiveServer(), { tag: 'RootLayout.webServerOverrideBootstrapped.refreshAuth' });
+            }
             try {
                 window.history.replaceState(null, '', override.cleanedRelativeUrl);
             } catch {

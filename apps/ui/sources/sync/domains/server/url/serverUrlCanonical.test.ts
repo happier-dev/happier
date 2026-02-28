@@ -13,6 +13,11 @@ describe('serverUrlCanonical', () => {
         ).toBe('https://admin:secret@example.com:8443/api');
     });
 
+    it('accepts hostnames without a scheme and defaults to https', () => {
+        expect(canonicalizeServerUrl('api.happier.dev')).toBe('https://api.happier.dev');
+        expect(canonicalizeServerUrl('example.com:8443/path')).toBe('https://example.com:8443/path');
+    });
+
     it('rejects non-http protocols', () => {
         expect(canonicalizeServerUrl('ftp://example.com')).toBe('');
         expect(canonicalizeServerUrl('file:///tmp/server')).toBe('');
