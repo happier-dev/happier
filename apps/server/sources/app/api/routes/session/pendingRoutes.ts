@@ -1,4 +1,3 @@
-import type { PrismaJson } from "@prisma/client";
 import { z } from "zod";
 import { type Fastify } from "../../types";
 import { buildNewMessageUpdate, buildPendingChangedUpdate, eventRouter } from "@/app/events/eventRouter";
@@ -16,7 +15,9 @@ import {
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { log } from "@/utils/logging/log";
 import { SessionStoredMessageContentSchema } from "@happier-dev/protocol";
-import { resolveRouteRateLimit } from "@/app/api/utils/apiRateLimitPolicy";
+import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
+
+type SessionStoredMessageContent = z.infer<typeof SessionStoredMessageContentSchema>;
 
 function toPendingJson(row: PendingMessageRow) {
     return {
@@ -92,12 +93,7 @@ export function sessionPendingRoutes(app: Fastify) {
                     .optional(),
             },
             config: {
-                rateLimit: resolveRouteRateLimit(process.env, {
-                    maxEnvKey: "HAPPIER_SESSION_PENDING_RATE_LIMIT_MAX",
-                    windowEnvKey: "HAPPIER_SESSION_PENDING_RATE_LIMIT_WINDOW",
-                    defaultMax: 600,
-                    defaultWindow: "1 minute",
-                }),
+                rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.pending"),
             },
         },
         async (request, reply) => {
@@ -158,7 +154,7 @@ export function sessionPendingRoutes(app: Fastify) {
                     : null;
             const content =
                 body && typeof body === "object" && "content" in body
-                    ? ((body as { content: PrismaJson.SessionPendingMessageContent }).content ?? null)
+                    ? ((body as { content: SessionStoredMessageContent }).content ?? null)
                     : null;
 
             const res = await (content
@@ -225,7 +221,7 @@ export function sessionPendingRoutes(app: Fastify) {
                     : null;
             const content =
                 body && typeof body === "object" && "content" in body
-                    ? ((body as { content: PrismaJson.SessionPendingMessageContent }).content ?? null)
+                    ? ((body as { content: SessionStoredMessageContent }).content ?? null)
                     : null;
 
             const res = await (content
@@ -382,12 +378,7 @@ export function sessionPendingRoutes(app: Fastify) {
             preHandler: app.authenticate,
             schema: { params: z.object({ sessionId: z.string() }) },
             config: {
-                rateLimit: resolveRouteRateLimit(process.env, {
-                    maxEnvKey: "HAPPIER_SESSION_PENDING_MATERIALIZE_RATE_LIMIT_MAX",
-                    windowEnvKey: "HAPPIER_SESSION_PENDING_MATERIALIZE_RATE_LIMIT_WINDOW",
-                    defaultMax: 120,
-                    defaultWindow: "1 minute",
-                }),
+                rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.pending.materialize"),
             },
         },
         async (request, reply) => {

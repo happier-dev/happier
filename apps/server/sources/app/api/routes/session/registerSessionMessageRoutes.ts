@@ -1,4 +1,4 @@
-import type { Prisma, PrismaJson } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 
 import { buildNewMessageUpdate, eventRouter } from "@/app/events/eventRouter";
@@ -8,8 +8,10 @@ import { createSessionMessage } from "@/app/session/sessionWriteService";
 import { checkSessionAccess } from "@/app/share/accessControl";
 import { db } from "@/storage/db";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
-import { resolveRouteRateLimit } from "@/app/api/utils/apiRateLimitPolicy";
+import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { type Fastify } from "../../types";
+
+type SessionStoredMessageContent = z.infer<typeof SessionStoredMessageContentSchema>;
 
 export function registerSessionMessageRoutes(app: Fastify) {
     app.get('/v2/sessions/:sessionId/messages/by-local-id/:localId', {
@@ -34,12 +36,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
         },
         preHandler: app.authenticate,
         config: {
-            rateLimit: resolveRouteRateLimit(process.env, {
-                maxEnvKey: "HAPPIER_SESSION_MESSAGES_BY_LOCAL_ID_RATE_LIMIT_MAX",
-                windowEnvKey: "HAPPIER_SESSION_MESSAGES_BY_LOCAL_ID_RATE_LIMIT_WINDOW",
-                defaultMax: 600,
-                defaultWindow: "1 minute",
-            }),
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.messages.byLocalId"),
         },
     }, async (request, reply) => {
         const userId = request.userId;
@@ -97,12 +94,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
         },
         preHandler: app.authenticate,
         config: {
-            rateLimit: resolveRouteRateLimit(process.env, {
-                maxEnvKey: "HAPPIER_SESSION_MESSAGES_RATE_LIMIT_MAX",
-                windowEnvKey: "HAPPIER_SESSION_MESSAGES_RATE_LIMIT_WINDOW",
-                defaultMax: 600,
-                defaultWindow: "1 minute",
-            }),
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.messages"),
         },
     }, async (request, reply) => {
         const userId = request.userId;
@@ -211,7 +203,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
     }, async (request, reply) => {
         const userId = request.userId;
         const { sessionId } = request.params;
-        const body = request.body as Readonly<{ localId?: string } & ({ ciphertext: string } | { content: PrismaJson.SessionMessageContent })>;
+        const body = request.body as Readonly<{ localId?: string } & ({ ciphertext: string } | { content: SessionStoredMessageContent })>;
         const localId = typeof body.localId === "string" ? body.localId : undefined;
 
         const headerKey = request.headers["idempotency-key"];
