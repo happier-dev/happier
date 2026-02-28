@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { commandHelpArgs, renderhstackRootHelp, resolvehstackCommand } from '../scripts/utils/cli/cli_registry.mjs';
 import { expandHome, getCanonicalHomeEnvPathFromEnv } from '../scripts/utils/paths/canonical_home.mjs';
@@ -157,7 +157,14 @@ function applySandboxDirIfRequested(argv) {
   // Keep all state under one folder that can be deleted to reset completely.
   const canonicalHomeDir = join(sandboxDir, 'canonical');
   const homeDir = join(sandboxDir, 'home');
-  const workspaceDir = join(sandboxDir, 'workspace');
+  const workspaceOverrideRaw = (process.env.HAPPIER_STACK_SANDBOX_WORKSPACE_DIR ?? '').trim();
+  const workspaceOverrideExpanded = workspaceOverrideRaw ? expandHome(workspaceOverrideRaw) : '';
+  const workspaceOverride = workspaceOverrideExpanded
+    ? isAbsolute(workspaceOverrideExpanded)
+      ? workspaceOverrideExpanded
+      : resolve(sandboxDir, workspaceOverrideExpanded)
+    : '';
+  const workspaceDir = workspaceOverride || join(sandboxDir, 'workspace');
   const runtimeDir = join(sandboxDir, 'runtime');
   const storageDir = join(sandboxDir, 'storage');
 
@@ -193,17 +200,44 @@ function applySandboxDirIfRequested(argv) {
 
   process.env.HAPPIER_STACK_HOME_DIR = homeDir;
 
-  process.env.HAPPIER_STACK_WORKSPACE_DIR = workspaceDir;
+    process.env.HAPPIER_STACK_WORKSPACE_DIR = workspaceDir;
 
-  process.env.HAPPIER_STACK_RUNTIME_DIR = runtimeDir;
+    process.env.HAPPIER_STACK_RUNTIME_DIR = runtimeDir;
 
-  process.env.HAPPIER_STACK_STORAGE_DIR = storageDir;
+    process.env.HAPPIER_STACK_STORAGE_DIR = storageDir;
 
-  // Sandbox default: disallow global side effects unless explicitly opted in.
-  // This keeps sandbox runs fast, deterministic, and isolated.
-  if (!allowGlobal) {
-    // Network-y UX (background update checks) are not useful in a temporary sandbox.
-    process.env.HAPPIER_STACK_UPDATE_CHECK = '0';
+    // When sandboxing with a shared (non-temporary) workspace, keep package-manager caches stable
+    // across runs. This makes `yarn install` much faster and avoids re-downloading toolchains.
+    const pmCacheBaseRaw = (process.env.HAPPIER_STACK_PM_CACHE_BASE_DIR ?? '').trim();
+    const sandboxAbs = resolve(sandboxDir);
+    const wsAbs = resolve(workspaceDir);
+    const isSharedWorkspace = wsAbs !== sandboxAbs && !wsAbs.startsWith(sandboxAbs + '/');
+    if (!pmCacheBaseRaw && isSharedWorkspace) {
+      const base = basename(wsAbs) === 'workspace'
+        ? join(dirname(wsAbs), 'pm')
+        : join(wsAbs, '.hstack-cache', 'pm');
+      process.env.HAPPIER_STACK_PM_CACHE_BASE_DIR = base;
+    }
+
+    // When sandboxing with a shared workspace, keep Expo/Metro transform caches stable across runs.
+    // This dramatically speeds up repeated `expo start` for review-pr flows.
+    const expoTmpBaseRaw = (process.env.HAPPIER_STACK_EXPO_SHARED_TMPDIR_BASE_DIR ?? '').trim();
+    if (!expoTmpBaseRaw && isSharedWorkspace) {
+      const base = basename(wsAbs) === 'workspace'
+        ? join(dirname(wsAbs), 'expo')
+        : join(wsAbs, '.hstack-cache', 'expo');
+      process.env.HAPPIER_STACK_EXPO_SHARED_TMPDIR_BASE_DIR = base;
+    }
+    const expoTmpKeyRaw = (process.env.HAPPIER_STACK_EXPO_SHARED_TMPDIR_KEY ?? '').trim();
+    if (!expoTmpKeyRaw && isSharedWorkspace) {
+      process.env.HAPPIER_STACK_EXPO_SHARED_TMPDIR_KEY = wsAbs;
+    }
+
+    // Sandbox default: disallow global side effects unless explicitly opted in.
+    // This keeps sandbox runs fast, deterministic, and isolated.
+    if (!allowGlobal) {
+      // Network-y UX (background update checks) are not useful in a temporary sandbox.
+      process.env.HAPPIER_STACK_UPDATE_CHECK = '0';
     process.env.HAPPIER_STACK_UPDATE_CHECK_INTERVAL_MS = '0';
     process.env.HAPPIER_STACK_UPDATE_NOTIFY_INTERVAL_MS = '0';
 

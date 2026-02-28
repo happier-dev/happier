@@ -266,7 +266,9 @@ Optional: enable Expo dev-client for mobile reviewers (works with both default `
 npx --yes -p @happier-dev/stack hstack tools setup-pr --repo=123 --dev --mobile
 ```
 
-Optional: run it in a self-contained sandbox folder (auto-cleaned):
+Optional: run it in a sandbox folder (auto-cleaned).
+
+Note: `review-pr` uses a persistent sandbox workspace cache by default to speed up repeat runs (default: `~/.happier-stack/cache/sandbox/workspace`). Add `--no-workspace-cache` for a fully self-contained sandbox, or `--workspace-cache-dir=...` to customize the location.
 
 ```bash
 SANDBOX="$(mktemp -d /tmp/hstack-review-pr.XXXXXX)"
