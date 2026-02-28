@@ -24,6 +24,29 @@ function asNonEmptyStringArray(value: unknown): string[] | null {
     return out.length > 0 ? out : null;
 }
 
+function parseApplyPatchTextChanges(patchText: string): Record<string, unknown> | null {
+    const lines = patchText.replace(/\r\n/g, '\n').split('\n');
+    const changes: Record<string, unknown> = {};
+
+    for (const line of lines) {
+        const match = line.match(/^\*\*\*\s+(Update File|Add File|Delete File):\s+(.+)\s*$/);
+        if (!match) continue;
+        const path = match[2].trim();
+        if (!path) continue;
+
+        const label = match[1].toLowerCase();
+        const type =
+            label.startsWith('add')
+                ? 'add'
+                : label.startsWith('delete')
+                    ? 'delete'
+                    : 'update';
+        changes[path] = { type };
+    }
+
+    return Object.keys(changes).length > 0 ? changes : null;
+}
+
 function normalizeSinglePatchChange(raw: unknown): UnknownRecord {
     const record = asRecord(raw);
     if (!record) return { value: raw };
@@ -152,13 +175,24 @@ export function normalizePatchInput(rawInput: unknown): UnknownRecord {
         // Some providers emit a standalone delete tool (e.g. Auggie) with file_paths.
         // Normalize it into a Patch changes map so the UI can reuse the Patch renderer.
         const filePaths = asNonEmptyStringArray((record as any).file_paths);
-        if (!filePaths) return { ...record };
-
-        const normalizedChanges: Record<string, unknown> = {};
-        for (const filePath of filePaths) {
-            normalizedChanges[filePath] = { delete: { content: '' }, type: 'delete' };
+        if (filePaths) {
+            const normalizedChanges: Record<string, unknown> = {};
+            for (const filePath of filePaths) {
+                normalizedChanges[filePath] = { delete: { content: '' }, type: 'delete' };
+            }
+            return { ...record, changes: normalizedChanges };
         }
-        return { ...record, changes: normalizedChanges };
+
+        const patchText =
+            firstNonEmptyString((record as any).patchText) ??
+            firstNonEmptyString((record as any).patch_text) ??
+            firstNonEmptyString((record as any).patch);
+        if (patchText) {
+            const inferred = parseApplyPatchTextChanges(patchText);
+            if (inferred) return { ...record, changes: inferred };
+        }
+
+        return { ...record };
     }
 
     const normalizedChanges: Record<string, unknown> = {};
