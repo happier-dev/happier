@@ -2,6 +2,7 @@ export type ClaudeRemoteMetaState = Readonly<{
     claudeRemoteAgentSdkEnabled: boolean;
     claudeRemoteSettingSources: 'project' | 'user_project' | 'none';
     claudeRemoteIncludePartialMessages: boolean;
+    claudeCodeExperimentalAgentTeamsEnabled: boolean;
     claudeLocalPermissionBridgeEnabled: boolean;
     claudeLocalPermissionBridgeWaitIndefinitely: boolean;
     claudeLocalPermissionBridgeTimeoutSeconds: number;
@@ -18,6 +19,7 @@ export const DEFAULT_CLAUDE_REMOTE_META_STATE: ClaudeRemoteMetaState = Object.fr
     // globally configured MCP servers (and other preferences) when launched by Happier.
     claudeRemoteSettingSources: 'user_project',
     claudeRemoteIncludePartialMessages: false,
+    claudeCodeExperimentalAgentTeamsEnabled: false,
     claudeLocalPermissionBridgeEnabled: true,
     claudeLocalPermissionBridgeWaitIndefinitely: false,
     claudeLocalPermissionBridgeTimeoutSeconds: 600,
@@ -54,6 +56,10 @@ export function applyClaudeRemoteMetaState(prev: ClaudeRemoteMetaState, meta: un
 
     if (typeof record.claudeRemoteIncludePartialMessages === 'boolean') {
         next.claudeRemoteIncludePartialMessages = record.claudeRemoteIncludePartialMessages;
+    }
+
+    if (typeof record.claudeCodeExperimentalAgentTeamsEnabled === 'boolean') {
+        next.claudeCodeExperimentalAgentTeamsEnabled = record.claudeCodeExperimentalAgentTeamsEnabled;
     }
 
     if (typeof record.claudeLocalPermissionBridgeEnabled === 'boolean') {

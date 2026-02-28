@@ -54,6 +54,7 @@ describe('applyClaudeRemoteMetaState', () => {
       claudeRemoteEnableFileCheckpointing: true,
       claudeRemoteDisableTodos: true,
       claudeRemoteStrictMcpServerConfig: true,
+      claudeCodeExperimentalAgentTeamsEnabled: true,
     });
 
     expect(next).toMatchObject({
@@ -64,6 +65,7 @@ describe('applyClaudeRemoteMetaState', () => {
       claudeRemoteEnableFileCheckpointing: true,
       claudeRemoteDisableTodos: true,
       claudeRemoteStrictMcpServerConfig: true,
+      claudeCodeExperimentalAgentTeamsEnabled: true,
     });
   });
 
