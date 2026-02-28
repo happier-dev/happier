@@ -98,6 +98,7 @@ export async function runCodex(opts: {
     existingSessionId?: string;
     resume?: string;
     startingMode?: 'local' | 'remote';
+    accountSettingsContext?: import('@/settings/accountSettings/bootstrapAccountSettingsContext').AccountSettingsContext | null;
 }): Promise<void> {
     // Use shared PermissionMode type for cross-agent compatibility
     type PermissionMode = import('@/api/types').PermissionMode;
@@ -789,6 +790,8 @@ export async function runCodex(opts: {
             // NOTE: Codex resume support varies by build; forks may seed `codex-reply` with a stored session id.
             permissionHandler = createCodexPermissionHandler({
                 session,
+                pushSender: api.push(),
+                getAccountSettings: () => opts.accountSettingsContext?.settings ?? null,
                 onAbortRequested: handleAbort,
                 toolTrace: { protocol: useCodexAcp ? 'acp' : 'codex', provider: 'codex' },
                 triggerAbortCallbackOnAbortDecision: useCodexAcp,

@@ -23,6 +23,8 @@ import {
   type PermissionResult,
 } from '@/agent/permissions/CodexLikePermissionHandler';
 import type { ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
+import type { PermissionRequestPushSender } from '@/agent/permissions/BasePermissionHandler';
+import type { AccountSettings } from '@happier-dev/protocol';
 
 export type { PermissionResult, PendingRequest };
 
@@ -30,6 +32,8 @@ export class CodexPermissionHandler extends CodexLikePermissionHandler {
   constructor(
     session: ApiSessionClient,
     opts?: {
+      pushSender?: PermissionRequestPushSender | null;
+      getAccountSettings?: (() => AccountSettings | null) | null;
       onAbortRequested?: (() => void | Promise<void>) | null;
       toolTrace?: { protocol: ToolTraceProtocol; provider: string } | null;
       triggerAbortCallbackOnAbortDecision?: boolean;
@@ -38,6 +42,8 @@ export class CodexPermissionHandler extends CodexLikePermissionHandler {
     super({
       session,
       logPrefix: '[Codex]',
+      pushSender: opts?.pushSender ?? null,
+      getAccountSettings: opts?.getAccountSettings ?? null,
       onAbortRequested: opts?.onAbortRequested ?? null,
       toolTrace: opts?.toolTrace ?? null,
       triggerAbortCallbackOnAbortDecision: opts?.triggerAbortCallbackOnAbortDecision,
