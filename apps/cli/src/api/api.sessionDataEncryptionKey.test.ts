@@ -21,6 +21,7 @@ vi.mock('axios', () => ({
 vi.mock('@/configuration', () => ({
   configuration: {
     serverUrl: 'https://api.example.com',
+    apiServerUrl: 'https://api.example.com',
   },
 }));
 
