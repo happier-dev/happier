@@ -45,6 +45,9 @@ class Configuration {
   public readonly sessionKeepAliveIdleMs: number
   public readonly sessionKeepAliveThinkingMs: number
 
+  // Pending queue V2: idle wake polling (ensures queued prompts are materialized even if socket wakeups are missed).
+  public readonly pendingQueueIdleWakePollIntervalMs: number
+
   // MCP server SSE keepalive (prevents client idle timeouts on long-lived streams).
   public readonly mcpSseKeepAliveIntervalMs: number | null
 
@@ -60,6 +63,9 @@ class Configuration {
   public readonly transcriptRecoveryMaxConcurrent: number
   public readonly transcriptRecoveryErrorLogThrottleMs: number
 
+  // Startup transcript catch-up (avoids missing early prompts; prevents replaying entire history into the agent queue).
+  public readonly startupTranscriptCatchUpLookbackMs: number
+
   // Claude remote TaskOutput sidechain import limits (defense-in-depth against huge transcripts).
   public readonly claudeTaskOutputMaxPendingPerAgent: number
   public readonly claudeTaskOutputMaxSeenUuidsPerSidechain: number
@@ -71,9 +77,17 @@ class Configuration {
 
   // Claude Task tool policy (remote mode).
   public readonly claudeTaskAllowRunInBackground: boolean
-
-  // Claude abort handling (prevents noisy post-abort unhandledRejection crashes).
+  /**
+   * When a user aborts a Claude session, the vendor SDK may surface a cancellation as a process-level
+   * unhandledRejection (known "Operation aborted" error). Within this short window after a user abort,
+   * the CLI treats that specific error as non-fatal so the session runner does not crash and respawn.
+   */
   public readonly claudeAbortUnhandledRejectionIgnoreWindowMs: number
+
+  // Permission-request push notifications (best-effort; bounded retries).
+  public readonly permissionRequestPushRetryDelaysMs: readonly number[]
+  public readonly permissionRequestPushRetryMaxMs: number
+  public readonly permissionRequestPushDedupeMaxEntries: number
 
   // Execution runs and ephemeral tasks (session-process budgets).
   public readonly executionRunsMaxConcurrentPerSession: number
@@ -172,12 +186,53 @@ class Configuration {
     this.sessionKeepAliveIdleMs = Number.isFinite(idleMsRaw) && idleMsRaw >= 1000 ? idleMsRaw : 15_000;
     this.sessionKeepAliveThinkingMs = Number.isFinite(thinkingMsRaw) && thinkingMsRaw >= 500 ? thinkingMsRaw : 2_000;
 
+    const pendingWakeRaw = String(process.env.HAPPIER_PENDING_QUEUE_IDLE_WAKE_POLL_INTERVAL_MS ?? '').trim();
+    const pendingWakeMs = Number.parseInt(pendingWakeRaw, 10);
+    // Default: 1s. Set to 0 to disable.
+    this.pendingQueueIdleWakePollIntervalMs =
+      pendingWakeRaw === '0'
+        ? 0
+        : (Number.isFinite(pendingWakeMs) && pendingWakeMs >= 50
+            ? Math.min(pendingWakeMs, 60_000)
+            : 1_000);
+
     const mcpKeepAliveRaw = String(process.env.HAPPIER_MCP_SSE_KEEPALIVE_INTERVAL_MS ?? '').trim();
     const mcpKeepAliveMs = Number.parseInt(mcpKeepAliveRaw, 10);
     // Default: 15s. Must be < client idle timeouts (~5 minutes observed in Claude Code logs).
     // Set to 0 to disable (not recommended).
     this.mcpSseKeepAliveIntervalMs =
       mcpKeepAliveRaw === '0' ? null : (Number.isFinite(mcpKeepAliveMs) && mcpKeepAliveMs >= 10 ? mcpKeepAliveMs : 15_000);
+
+    const parseCsvNumberList = (raw: string, opts: { min: number; max: number }): number[] | null => {
+      const value = raw.trim();
+      if (!value) return null;
+      const out: number[] = [];
+      const seen = new Set<number>();
+      for (const part of value.split(',')) {
+        const trimmed = part.trim();
+        if (!trimmed) continue;
+        const parsed = Number.parseInt(trimmed, 10);
+        if (!Number.isFinite(parsed)) continue;
+        const clamped = Math.max(opts.min, Math.min(opts.max, parsed));
+        if (seen.has(clamped)) continue;
+        seen.add(clamped);
+        out.push(clamped);
+      }
+      return out.length > 0 ? out : null;
+    };
+
+    const pushRetryDelays =
+      parseCsvNumberList(String(process.env.HAPPIER_PERMISSION_REQUEST_PUSH_RETRY_DELAYS_MS ?? ''), { min: 0, max: 600_000 })
+      ?? [2_500, 10_000, 30_000, 60_000];
+    this.permissionRequestPushRetryDelaysMs = pushRetryDelays;
+
+    const pushRetryMaxRaw = Number.parseInt(String(process.env.HAPPIER_PERMISSION_REQUEST_PUSH_RETRY_MAX_MS ?? ''), 10);
+    this.permissionRequestPushRetryMaxMs =
+      Number.isFinite(pushRetryMaxRaw) && pushRetryMaxRaw >= 0 ? Math.min(pushRetryMaxRaw, 60 * 60_000) : 10 * 60_000;
+
+    const dedupeMaxRaw = Number.parseInt(String(process.env.HAPPIER_PERMISSION_REQUEST_PUSH_DEDUPE_MAX ?? ''), 10);
+    this.permissionRequestPushDedupeMaxEntries =
+      Number.isFinite(dedupeMaxRaw) && dedupeMaxRaw >= 0 ? Math.min(dedupeMaxRaw, 50_000) : 2_000;
 
     const transcriptLookupRequestTimeoutRaw = Number.parseInt(
       String(process.env.HAPPIER_TRANSCRIPT_LOOKUP_REQUEST_TIMEOUT_MS ?? ''),
