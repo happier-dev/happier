@@ -1,5 +1,6 @@
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 
 import { logger } from '@/ui/logger';
 import { restoreStdinBestEffort } from '@/ui/ink/restoreStdinBestEffort';
@@ -20,7 +21,7 @@ import { startHookServer } from '@/backends/claude/utils/startHookServer';
 import { generateHookSettingsFile, cleanupHookSettingsFile } from '@/backends/claude/utils/generateHookSettings';
 import { registerKillSessionHandler } from '@/rpc/handlers/killSession';
 import { projectPath } from '../../projectPath';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { startOfflineReconnection, connectionState } from '@/api/offline/serverConnectionErrors';
 import { claudeLocal } from '@/backends/claude/claudeLocal';
 import { createSessionScanner } from '@/backends/claude/utils/sessionScanner';
@@ -84,6 +85,36 @@ export interface StartOptions {
      * Used for resuming inactive sessions.
      */
     existingSessionId?: string
+    /**
+     * When true, disables automatic pass-through of MCP servers from the local
+     * Claude Code settings.json. By default (false/undefined), Happier reads
+     * `mcpServers` from `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`)
+     * and passes them to Claude Code via `--mcp-config` so they are available in
+     * Happier-managed sessions.
+     */
+    disableLocalMcpPassthrough?: boolean
+}
+
+/**
+ * Read `mcpServers` from the local Claude Code settings.json so that any MCP
+ * servers the user has configured for Claude Code's TUI mode are also available
+ * in Happier-managed sessions.
+ *
+ * Reads from `$CLAUDE_CONFIG_DIR/settings.json` when the env var is set, or
+ * the default `~/.claude/settings.json` otherwise. Returns an empty object if
+ * the file is absent or unreadable — never throws.
+ */
+export function readLocalClaudeMcpServers(claudeEnvVars?: Record<string, string>): Record<string, any> {
+    try {
+        const configDir = claudeEnvVars?.CLAUDE_CONFIG_DIR ?? join(os.homedir(), '.claude');
+        const settingsPath = join(configDir, 'settings.json');
+        if (!existsSync(settingsPath)) return {};
+        const raw = readFileSync(settingsPath, 'utf-8');
+        const settings = JSON.parse(raw) as { mcpServers?: Record<string, any> };
+        return settings.mcpServers ?? {};
+    } catch {
+        return {};
+    }
 }
 
 export function extractMcpServersFromClaudeArgs(args?: string[]): { claudeArgs?: string[]; mcpServers: Record<string, any> } {
@@ -838,6 +869,8 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             }
         },
 	        mcpServers: {
+	            // Local Claude Code settings.json MCPs (unless disabled via --no-local-mcp).
+	            ...(options.disableLocalMcpPassthrough ? {} : readLocalClaudeMcpServers(options.claudeEnvVars)),
 	            ...extractedMcp.mcpServers,
 	            // Keep Happy MCP server last so a user-provided "happy" entry cannot override it.
 	            happy: {
@@ -1368,6 +1401,8 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         }
                     },
                     mcpServers: {
+                        // Local Claude Code settings.json MCPs (unless disabled via --no-local-mcp).
+                        ...(options.disableLocalMcpPassthrough ? {} : readLocalClaudeMcpServers(options.claudeEnvVars)),
                         ...extractedMcp.mcpServers,
                         happy: {
                             type: 'http' as const,

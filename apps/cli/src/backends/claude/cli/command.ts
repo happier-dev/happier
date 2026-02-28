@@ -153,6 +153,8 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
       chromeOverride = true;
     } else if (arg === '--no-chrome') {
       chromeOverride = false;
+    } else if (arg === '--no-local-mcp') {
+      options.disableLocalMcpPassthrough = true;
     } else {
       unknownArgs.push(arg);
       // Check if this arg expects a value (simplified check for common patterns)
@@ -200,6 +202,7 @@ ${chalk.bold('Examples:')}
                               happier sugar for --dangerously-skip-permissions
   happier --chrome           Enable Chrome browser access for this session
   happier --no-chrome        Disable Chrome even if default is on
+  happier --no-local-mcp     Don't pass local Claude Code MCP servers to session
   happier --js-runtime bun   Use bun instead of node to spawn Claude Code
   happier --claude-env ANTHROPIC_BASE_URL=http://127.0.0.1:3456
                              Use a custom API endpoint (e.g., claude-code-router)
