@@ -181,6 +181,123 @@ describe('sessionScanner', () => {
     }
   })
 
+  it('streams Claude team inbox messages into Agent sidechains', async () => {
+    const sessionId = 'session-team-inbox-1'
+    const sessionFile = join(projectDir, `${sessionId}.jsonl`)
+
+    // Claude team lives under CLAUDE_CONFIG_DIR/teams/<teamName>/inboxes/team-lead.json
+    const teamName = 'happier-ui-test'
+    const teamInboxDir = join(claudeConfigDir, 'teams', teamName, 'inboxes')
+    await mkdir(teamInboxDir, { recursive: true })
+    const leadInboxPath = join(teamInboxDir, 'team-lead.json')
+
+    // Start with one unread message from Alpha.
+    await writeFile(
+      leadInboxPath,
+      JSON.stringify([
+        {
+          from: 'Alpha',
+          text: 'hello from Alpha',
+          timestamp: '2026-02-28T12:00:00.000Z',
+          read: false,
+          color: 'blue',
+        },
+      ]),
+      'utf-8',
+    )
+
+    scanner = await createSessionScanner({
+      sessionId: null,
+      workingDirectory: testDir,
+      onMessage: (msg) => collectedMessages.push(msg),
+    })
+
+    // Minimal Claude JSONL to establish team + teammate spawn mapping.
+    const lines: unknown[] = [
+      {
+        type: 'assistant',
+        uuid: 'a1',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_teamcreate_1',
+              name: 'AgentTeamCreate',
+              input: { team_name: teamName, description: 'test' },
+            },
+          ],
+        },
+      },
+      {
+        type: 'assistant',
+        uuid: 'a2',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_alpha_spawn_1',
+              name: 'Agent',
+              input: { name: 'Alpha', team_name: teamName, run_in_background: true },
+            },
+          ],
+        },
+      },
+      {
+        type: 'user',
+        uuid: 'u1',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_alpha_spawn_1',
+              is_error: false,
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    tool_use_result: {
+                      status: 'teammate_spawned',
+                      agent_id: `Alpha@${teamName}`,
+                      name: 'Alpha',
+                      color: 'blue',
+                      team_name: teamName,
+                    },
+                  }),
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ]
+
+    await writeFile(sessionFile, lines.map((l) => JSON.stringify(l)).join('\n') + '\n', 'utf-8')
+    scanner.onNewSession(sessionId)
+
+    await waitFor(
+      () =>
+        collectedMessages.some(
+          (m) =>
+            m.type === 'assistant' &&
+            (m as any).sidechainId === 'toolu_alpha_spawn_1' &&
+            (m as any).isSidechain === true,
+        ),
+      4000,
+    )
+
+    const sidechain = collectedMessages.find(
+      (m) => m.type === 'assistant' && (m as any).sidechainId === 'toolu_alpha_spawn_1',
+    ) as any
+    expect(sidechain).toBeTruthy()
+    expect(getFirstTextFromContent(sidechain?.message?.content)).toContain('hello from Alpha')
+
+    const inboxAfter = JSON.parse(await readFile(leadInboxPath, 'utf-8'))
+    expect(inboxAfter[0].read).toBe(true)
+  })
+
   it('should read from transcriptPath when provided (even if projectDir differs)', async () => {
     scanner = await createSessionScanner({
       sessionId: null,
@@ -251,6 +368,39 @@ describe('sessionScanner', () => {
     await waitFor(() => collectedMessages.length >= 1, 1000)
     expect(collectedMessages).toHaveLength(1)
     expect(collectedMessages[0].type).toBe('assistant')
+  })
+
+  it('normalizes Claude Agent Teams tool names to canonical tool names', async () => {
+    scanner = await createSessionScanner({
+      sessionId: null,
+      workingDirectory: testDir,
+      onMessage: (msg) => collectedMessages.push(msg),
+    })
+
+    const sessionId = '33333333-3333-3333-3333-333333333333'
+    const sessionFile = join(projectDir, `${sessionId}.jsonl`)
+    await mkdir(projectDir, { recursive: true })
+
+    const assistantMessage = {
+      type: 'assistant',
+      uuid: 'a1',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'tool_1', name: 'TeamCreate', input: {} },
+        ],
+      },
+    }
+
+    await writeFile(sessionFile, JSON.stringify(assistantMessage) + '\n')
+    scanner.onNewSession(sessionId)
+
+    await waitFor(() => collectedMessages.some((m) => m.type === 'assistant'))
+    const firstAssistant = collectedMessages.find((m) => m.type === 'assistant') as any
+    const content = firstAssistant?.message?.content
+    expect(Array.isArray(content)).toBe(true)
+    const toolUse = Array.isArray(content) ? content.find((c: any) => c?.type === 'tool_use') : null
+    expect(toolUse?.name).toBe('AgentTeamCreate')
   })
 
   it('imports Task output_file sidechain transcript even when initial messages are pre-processed', async () => {

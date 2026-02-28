@@ -37,6 +37,66 @@ function makeJsonl(lines: unknown[]): string {
 }
 
 describe('ClaudeRemoteSubagentFileCollector', () => {
+  it('imports agent-team subagent JSONL records as sidechains keyed by the Agent tool_use id', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happy-agent-team-sidechains-'));
+    const agentId = 'Alpha@team-test';
+    const jsonlPath = join(dir, `agent-hash.jsonl`);
+
+    const a1 = {
+      type: 'assistant',
+      uuid: 'a1',
+      isSidechain: true,
+      agentId,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'from alpha' }] },
+    };
+
+    await writeFile(jsonlPath, makeJsonl([a1]), 'utf8');
+
+    const imported: Array<{ body: RawJSONLines; meta: Record<string, unknown> }> = [];
+    const collector = new ClaudeRemoteSubagentFileCollector({
+      emitImported: (body: RawJSONLines, meta: Record<string, unknown>) => imported.push({ body, meta }),
+      watchFile: () => () => {},
+      resolveJsonlPathForAgentId: ({ agentId: id }) => (id === agentId ? jsonlPath : null),
+    });
+
+    try {
+      collector.observe({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 'tool_agent_1', name: 'Agent', input: { team_name: 'team-test', name: 'Alpha' } }],
+        },
+        parent_tool_use_id: null,
+        session_id: 'sess_1',
+      } as any);
+
+      collector.observe({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'tool_agent_1', content: 'Spawned.' }],
+        },
+        tool_use_result: { status: 'teammate_spawned', agent_id: agentId, team_name: 'team-test', name: 'Alpha' },
+        parent_tool_use_id: null,
+        session_id: 'sess_1',
+      } as any);
+
+      await collector.syncAll();
+
+      expect(imported).toHaveLength(1);
+      expect(imported[0]?.body?.type).toBe('assistant');
+      expect(imported[0]?.body?.sidechainId).toBe('tool_agent_1');
+      expect(imported[0]?.meta).toMatchObject({
+        importedFrom: 'claude-subagent-file',
+        claudeAgentId: agentId,
+        sidechainId: 'tool_agent_1',
+      });
+    } finally {
+      collector.cleanup();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('imports subagent JSONL file records as sidechains keyed by the Task tool_use id', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happy-subagent-sidechains-'));
     const agentId = 'aa5e728';
