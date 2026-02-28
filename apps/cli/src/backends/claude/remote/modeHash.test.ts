@@ -87,14 +87,15 @@ describe('hashClaudeEnhancedModeForQueue', () => {
         expect(next).not.toBe(base);
     });
 
-    it('changes when permission mode toggles between plan and non-plan (Agent SDK disabled)', () => {
+    it('changes when agent mode toggles between plan and non-plan (Agent SDK disabled)', () => {
         const base = hashClaudeEnhancedModeForQueue(makeMode({
             permissionMode: 'default',
             claudeRemoteAgentSdkEnabled: false,
         }));
 
         const next = hashClaudeEnhancedModeForQueue(makeMode({
-            permissionMode: 'plan',
+            permissionMode: 'read-only',
+            agentModeId: 'plan',
             claudeRemoteAgentSdkEnabled: false,
         }));
 
