@@ -8,6 +8,7 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerBackMock = vi.fn();
+const getPendingTerminalConnectMock = vi.fn(() => null);
 const globalWindow = globalThis as unknown as { window?: Window };
 const originalWindow = globalWindow.window;
 
@@ -26,7 +27,7 @@ vi.mock('@/auth/context/AuthContext', () => ({
 vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
     setPendingTerminalConnect: vi.fn(),
     clearPendingTerminalConnect: vi.fn(),
-    getPendingTerminalConnect: () => null,
+    getPendingTerminalConnect: getPendingTerminalConnectMock,
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
@@ -83,6 +84,7 @@ describe('TerminalConnectScreen hash parsing', () => {
     beforeEach(() => {
         vi.resetModules();
         routerBackMock.mockClear();
+        getPendingTerminalConnectMock.mockReset();
         globalWindow.window = {
             location: {
                 hash: '#server=https%3A%2F%2Fexample.test&key=abcdefghijklmnop',
@@ -102,7 +104,7 @@ describe('TerminalConnectScreen hash parsing', () => {
     });
 
     it('parses key even when it is not the first hash parameter', async () => {
-        const Screen = (await import('./connect')).default;
+        const Screen = (await import('@/app/(app)/terminal/connect')).default;
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
@@ -136,7 +138,7 @@ describe('TerminalConnectScreen hash parsing', () => {
             history: { replaceState: vi.fn() },
         } as unknown as Window;
 
-        const Screen = (await import('./connect')).default;
+        const Screen = (await import('@/app/(app)/terminal/connect')).default;
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
             await act(async () => {
@@ -151,6 +153,44 @@ describe('TerminalConnectScreen hash parsing', () => {
                 .findAll((node) => typeof node.props?.children === 'string')
                 .map((node) => String(node.props.children));
             expect(textValues).toContain('terminal.invalidConnectionLink');
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+        }
+    });
+
+    it('restores key from pending terminal connect when hash is empty (dev strict-mode remount safety)', async () => {
+        getPendingTerminalConnectMock.mockReturnValue({
+            publicKeyB64Url: 'abcdefghijklmnop',
+            serverUrl: 'https://example.test',
+        });
+
+        globalWindow.window = {
+            location: {
+                hash: '',
+                pathname: '/terminal/connect',
+                search: '',
+            },
+            history: { replaceState: vi.fn() },
+        } as unknown as Window;
+
+        const Screen = (await import('@/app/(app)/terminal/connect')).default;
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        try {
+            await act(async () => {
+                tree = renderer.create(<Screen />);
+            });
+            await act(async () => {});
+            if (!tree) {
+                throw new Error('Expected terminal connect renderer');
+            }
+
+            const renderedItems = tree.root.findAll((node) => (node.type as unknown) === 'Item');
+            const publicKeyItem = renderedItems.find((item) => item.props?.title === 'terminal.publicKey');
+            expect(publicKeyItem).toBeTruthy();
+            expect(publicKeyItem?.props?.detail).toBe('abcdefghijkl...');
         } finally {
             act(() => {
                 tree?.unmount();
