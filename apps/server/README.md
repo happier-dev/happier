@@ -105,8 +105,8 @@ Server diagnostics (used by bug reports when enabled):
 - `HAPPIER_SERVER_OWNER_USER_IDS` (comma-separated account ids allowed for owner-only server features)
 - `HAPPIER_BUG_REPORTS_SERVER_LOG_PATH` (optional explicit path; fallback uses `HAPPIER_SELF_HOST_LOG_DIR/server.log`)
 - `HAPPIER_BUG_REPORTS_SERVER_LOG_MAX_BYTES` (default `262144`, max tail bytes read per snapshot request)
-- `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_RATE_LIMIT_MAX` (default `30`)
-- `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_RATE_LIMIT_WINDOW` (default `1 minute`)
+- `HAPPIER_DIAGNOSTICS_BUG_REPORT_SNAPSHOT_RATE_LIMIT_MAX` (default `30`)
+- `HAPPIER_DIAGNOSTICS_BUG_REPORT_SNAPSHOT_RATE_LIMIT_WINDOW` (default `1 minute`)
 
 To fully disable server log exfiltration for self-hosted deployments:
 
