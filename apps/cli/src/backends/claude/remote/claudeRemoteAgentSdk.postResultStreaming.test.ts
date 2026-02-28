@@ -64,16 +64,15 @@ describe('claudeRemoteAgentSdk post-result streaming', () => {
             return await secondMessagePromise;
         });
 
-        const runnerPromise = claudeRemoteAgentSdk({
-            sessionId: null,
-            transcriptPath: null,
-            path: '/tmp',
-            claudeEnvVars: {},
-            claudeArgs: [],
-            claudeExecutablePath: '/tmp/claude',
-            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
-            isAborted: () => false,
-            nextMessage,
+            const runnerPromise = claudeRemoteAgentSdk({
+                sessionId: null,
+                transcriptPath: null,
+                path: '/tmp',
+                claudeArgs: [],
+                claudeExecutablePath: '/tmp/claude',
+                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+                isAborted: () => false,
+                nextMessage,
             onReady: () => {},
             onSessionFound: () => {},
             onMessage: () => {},
