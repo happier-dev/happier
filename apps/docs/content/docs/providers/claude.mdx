@@ -14,8 +14,8 @@ Happier supports two ways of running Claude:
 
 Remote mode currently has **two implementations**:
 
-- **Legacy remote** (default while we roll out): our existing “SDK-like” shim that spawns `claude` with a streaming output format and uses a hook-forwarding workaround for session info.
-- **Agent SDK remote** (opt-in): uses the official `@anthropic-ai/claude-agent-sdk` to run Claude, publish capabilities, and (optionally) enable file checkpointing.
+- **Agent SDK remote** (default): uses the official `@anthropic-ai/claude-agent-sdk` to run Claude, publish capabilities, and (optionally) enable file checkpointing.
+- **Legacy remote** (fallback): our older “SDK-like” shim that spawns `claude` with a streaming output format and uses a hook-forwarding workaround for session info.
 
 ## Permissions
 
@@ -68,15 +68,60 @@ The one exception is **Experimental: local permission bridge**, which affects **
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| **Use Agent SDK (remote)** | Off | Enables the official Agent SDK remote runner (`@anthropic-ai/claude-agent-sdk`). When off, Happier uses the legacy remote runner. |
-| **Setting sources** | Project only | Controls what Claude settings get loaded: **Project only** loads repo config (for example `CLAUDE.md`); **User + Project** includes user-global config too; **None** ignores both for maximum determinism. |
+| **Use Agent SDK (remote)** | On | Enables the official Agent SDK remote runner (`@anthropic-ai/claude-agent-sdk`). When off, Happier uses the legacy remote runner. |
+| **Setting sources** | User + Project | Controls what Claude settings get loaded: **Project only** loads repo config (for example `CLAUDE.md`); **User + Project** includes user-global config too (including user-defined MCP servers); **None** ignores both for maximum determinism. |
 | **Partial streaming updates** | Off | Shows partial assistant output while Claude is still responding (remote Agent SDK only). |
-| **Experimental: local permission bridge** | Off | In local mode, forwards Claude permission prompts into Happier so you can approve/deny from the app UI instead of only in the terminal. |
+| **Force-enable Agent Teams (experimental)** | Off | When enabled, Happier force-enables Claude Code experimental Agent Teams for all Claude starts (local + remote). When off, Happier does not force-disable and Claude uses its own defaults. |
+| **Experimental: local permission bridge** | On | In local mode, forwards Claude permission prompts into Happier so you can approve/deny from the app UI instead of only in the terminal. |
 | **File checkpointing + /rewind** | Off | Enables file checkpoint capture and the `/rewind` command (remote Agent SDK only). Adds overhead. |
 | **Max thinking tokens** | Default | Sets an upper bound on Claude’s internal thinking budget (remote Agent SDK only). |
 | **Disable TODOs** | Off | Adds a remote-mode system instruction that asks Claude not to create TODO items/lists in its output. |
 | **Strict MCP server config** | Off | Fails the remote start if any MCP server config is invalid (instead of trying to continue). |
 | **Advanced options (JSON)** | Empty | Power-user overrides for a limited allowlist of Agent SDK query options (remote Agent SDK only). Invalid JSON is ignored with a user-visible warning. |
+
+## Environment variables
+
+Happier does not have a Claude-specific “env var” CLI flag. To set environment variables for Claude:
+
+- **Local mode**: export env vars in your shell before running `happier` (Claude inherits them).
+- **Remote mode (from the app UI)**: set env vars on the profile/session in the UI (Happier forwards them to the spawned Claude process).
+
+Remote Agent SDK mode uses a filtered environment by default, but **explicit** GUI/profile env vars (and connected-services auth env vars) are forwarded to the Claude subprocess so workflows like GitHub integration can work without leaking the full parent `process.env`.
+
+## Agent Teams (Claude swarms) in Happier
+
+When Agent Teams are enabled in Claude, Happier can:
+
+- **Force-enable Agent Teams** for all Claude starts (local + remote) via the **Force-enable Agent Teams (experimental)** setting.
+- **Route user messages** from the main session composer to:
+  - a specific **team member** (1:1), or
+  - a **team broadcast** (team-wide).
+
+### Routing UI (recipient chip)
+
+When a Claude session has an active team, the session composer shows a **“To:” recipient chip**. Use it to:
+
+- send to the **Lead** (default),
+- pick a specific teammate, or
+- pick **Broadcast**.
+
+Routed messages are stored as a provider-agnostic structured message kind (`participant_message.v1`) so Happier can render them as a distinct card in the transcript (instead of looking like a normal bubble).
+
+### View-aware default recipient
+
+When you open a focused tool transcript view:
+
+- `Task` transcripts that contain a teammate spawn event can auto-select that teammate as the recipient (if you haven’t manually picked a different recipient).
+- `SubAgentRun` transcripts auto-select the running execution run as the recipient (while it is running).
+
+### Current limitation: attachments and review comments
+
+Routed messages currently do **not** support:
+
+- attachments, or
+- review comment drafts.
+
+Send those as regular lead messages instead.
 
 ## Local permission bridge (experimental)
 
