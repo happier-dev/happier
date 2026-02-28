@@ -75,6 +75,49 @@ describe("rpcHandler", () => {
     );
   });
 
+  it("falls back to in-memory rpc listener when Redis has no mapping (redis enabled)", async () => {
+    vi.resetModules();
+    const hmget = vi.fn().mockResolvedValue([null]);
+    const evalFn = vi.fn();
+    const multi = vi.fn(() => ({ hset: () => ({ expire: () => ({ exec: vi.fn() }) }) }));
+
+    vi.doMock("@/storage/redis/redis", () => ({
+      getRedisClient: () => ({ hmget, eval: evalFn, multi }),
+    }));
+
+    const { rpcHandler } = await import("./rpcHandler");
+    const userRpcListeners = new Map<string, any>();
+    const allRpcListeners = new Map<string, any>();
+
+    const targetEmitWithAck = vi.fn().mockResolvedValue({ ok: true, value: 123 });
+    const targetTimeout = vi.fn(() => ({ emitWithAck: targetEmitWithAck }));
+    const targetSocket = createFakeSocket({ connected: true, timeout: targetTimeout as any, id: "target-local" });
+    userRpcListeners.set("some-method", targetSocket as any);
+
+    const callerSocket = createFakeSocket({ emit: vi.fn() });
+    rpcHandler("user-1", callerSocket as any, userRpcListeners as any, allRpcListeners as any, {
+      io: {} as any,
+      redisRegistry: { enabled: true, instanceId: "instance-1", ttlSeconds: 120 },
+    } as any);
+
+    const handler = getSocketHandler(callerSocket, SOCKET_RPC_EVENTS.CALL);
+    const callback = vi.fn();
+    await handler({ method: "some-method", params: { a: 1 } }, callback);
+
+    expect(hmget).toHaveBeenCalled();
+    expect(targetTimeout).toHaveBeenCalledWith(30000);
+    expect(targetEmitWithAck).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST, {
+      method: "some-method",
+      params: { a: 1 },
+    });
+    expect(callback).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ok: true,
+        result: { ok: true, value: 123 },
+      }),
+    );
+  });
+
   it("treats an empty io.emitWithAck response as method not available and cleans up stale Redis mapping", async () => {
     vi.resetModules();
     const targetSocketId = "target-socket";
