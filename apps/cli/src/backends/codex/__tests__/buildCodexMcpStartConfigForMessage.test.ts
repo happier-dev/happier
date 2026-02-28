@@ -6,6 +6,11 @@ import { EXEC_SEQUENCING_INSTRUCTION } from '@/agent/runtime/execSequencingInstr
 import { buildCodexMcpStartConfigForMessage } from '../utils/buildCodexMcpStartConfigForMessage';
 
 describe('buildCodexMcpStartConfigForMessage', () => {
+  it('uses provider-agnostic change_title tool naming', () => {
+    expect(CHANGE_TITLE_INSTRUCTION).not.toContain('functions.happier__change_title');
+    expect(CHANGE_TITLE_INSTRUCTION).toContain('change_title');
+  });
+
   it('threads model override into the start config', () => {
     const config = buildCodexMcpStartConfigForMessage({
       message: 'Hello',
