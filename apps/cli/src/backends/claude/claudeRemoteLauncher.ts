@@ -147,6 +147,7 @@ export function createClaudeRemoteReadyHandler(params: Readonly<{
     logPrefix: string;
     getPending: () => unknown;
     getQueueSize: () => number;
+    shouldSendPush?: () => boolean;
 }>): () => void {
     return () => {
         if (params.getPending()) return;
@@ -160,6 +161,7 @@ export function createClaudeRemoteReadyHandler(params: Readonly<{
             pushSender: params.pushSender,
             waitingForCommandLabel: params.waitingForCommandLabel,
             logPrefix: params.logPrefix,
+            shouldSendPush: params.shouldSendPush,
         });
     };
 }
