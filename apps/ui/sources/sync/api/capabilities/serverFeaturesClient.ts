@@ -1,7 +1,7 @@
 import type { FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
 import { AsyncTtlCache } from '@happier-dev/protocol';
 
-import { serverFetch } from '@/sync/http/client';
+import { ServerFetchAbortedForServerSwitchError, serverFetch } from '@/sync/http/client';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { parseServerFeatures } from './serverFeaturesParse';
@@ -84,11 +84,19 @@ function joinBaseAndPath(baseUrl: string, path: string): string {
     return `${base}${normalizedPath}`;
 }
 
-export async function getServerFeaturesSnapshot(params?: {
-    timeoutMs?: number;
-    force?: boolean;
-    serverId?: string;
-}): Promise<ServerFeaturesSnapshot> {
+function isAbortErrorLike(error: unknown): boolean {
+    if (!error || typeof error !== 'object') return false;
+    return 'name' in error && (error as { name?: unknown }).name === 'AbortError';
+}
+
+async function getServerFeaturesSnapshotWithRetry(
+    params: {
+        timeoutMs?: number;
+        force?: boolean;
+        serverId?: string;
+    } | undefined,
+    remainingSwitchAbortRetries: number,
+): Promise<ServerFeaturesSnapshot> {
     const force = params?.force ?? false;
     const timeoutMs = params?.timeoutMs ?? 800;
     const cacheKey = getCacheKey(params?.serverId);
@@ -133,75 +141,115 @@ export async function getServerFeaturesSnapshot(params?: {
             return value;
         }
 
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        let remainingRetries = remainingSwitchAbortRetries;
+        // If a server switch is in-flight, it can cancel multiple feature probes in a row. Treat those aborts as
+        // transient and retry a couple times so the UI doesn't get stuck behind a manual "Retry".
+        // This is separate from network timeouts (which should still be cached briefly).
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-        try {
-            let response: Response;
             try {
-                response = isExplicitServerRequest
-                    ? await runtimeFetch(joinBaseAndPath(explicitServerUrl!, '/v1/features'), {
-                        method: 'GET',
-                        signal: controller.signal,
-                    })
-                    : await serverFetch(
-                        '/v1/features',
-                        {
+                let response: Response;
+                try {
+                    response = isExplicitServerRequest
+                        ? await runtimeFetch(joinBaseAndPath(explicitServerUrl!, '/v1/features'), {
                             method: 'GET',
                             signal: controller.signal,
-                        },
-                        { includeAuth: false },
-                    );
-            } catch (error) {
-                const aborted = controller.signal.aborted || (error instanceof Error && error.name === 'AbortError');
-                const value: ServerFeaturesSnapshot = { status: 'error', reason: aborted ? 'timeout' : 'network' };
+                        })
+                        : await serverFetch(
+                            '/v1/features',
+                            {
+                                method: 'GET',
+                                signal: controller.signal,
+                            },
+                            { includeAuth: false },
+                        );
+                } catch (error) {
+                    const timedOut = controller.signal.aborted;
+                    const aborted = isAbortErrorLike(error);
+                    const serverSwitchAbort = error instanceof ServerFetchAbortedForServerSwitchError;
+
+                    if (!isExplicitServerRequest && serverSwitchAbort && remainingRetries > 0) {
+                        const current = getActiveServerSnapshot();
+                        const activeChanged =
+                            current.serverId !== activeSnapshot.serverId || current.generation !== activeSnapshot.generation;
+                        remainingRetries -= 1;
+                        // If we switched to a different active server, restart the whole flow so caching/dedupe uses
+                        // the new server's key. Otherwise, the abort was likely caused by the switch itself racing
+                        // with a follow-up probe against the already-selected server.
+                        if (activeChanged) {
+                            return await getServerFeaturesSnapshotWithRetry(params, remainingRetries);
+                        }
+                        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+                        continue;
+                    }
+
+                    if (!timedOut && aborted) {
+                        const current = getActiveServerSnapshot();
+                        const activeChanged =
+                            current.serverId !== activeSnapshot.serverId || current.generation !== activeSnapshot.generation;
+                        if (!isExplicitServerRequest && activeChanged && remainingRetries > 0) {
+                            remainingRetries -= 1;
+                            return await getServerFeaturesSnapshotWithRetry(params, remainingRetries);
+                        }
+                        // Likely cancelled upstream (e.g. unmount). Do not cache.
+                        return { status: 'error', reason: 'network' };
+                    }
+
+                    const value: ServerFeaturesSnapshot = { status: 'error', reason: timedOut ? 'timeout' : 'network' };
+                    cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
+                    return value;
+                }
+
+                if (!response.ok) {
+                    const value: ServerFeaturesSnapshot = isEndpointMissing(response.status)
+                        ? { status: 'unsupported', reason: 'endpoint_missing' }
+                        : { status: 'error', reason: 'response_status' };
+                    cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
+                    return value;
+                }
+
+                const contentType = String(response.headers?.get?.('content-type') ?? '').toLowerCase();
+                if (contentType && !contentType.includes('application/json') && !contentType.includes('+json')) {
+                    const value: ServerFeaturesSnapshot = { status: 'unsupported', reason: 'invalid_payload' };
+                    cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
+                    return value;
+                }
+
+                let payload: unknown;
+                try {
+                    payload = await response.json();
+                } catch {
+                    const value: ServerFeaturesSnapshot = { status: 'unsupported', reason: 'invalid_payload' };
+                    cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
+                    return value;
+                }
+
+                const parsed = parseServerFeatures(payload);
+                if (!parsed) {
+                    const value: ServerFeaturesSnapshot = { status: 'unsupported', reason: 'invalid_payload' };
+                    cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
+                    return value;
+                }
+
+                const value: ServerFeaturesSnapshot = { status: 'ready', features: parsed };
                 cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
                 return value;
+            } finally {
+                clearTimeout(timer);
             }
-
-            if (!response.ok) {
-                const value: ServerFeaturesSnapshot = isEndpointMissing(response.status)
-                    ? { status: 'unsupported', reason: 'endpoint_missing' }
-                    : { status: 'error', reason: 'response_status' };
-                cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
-                return value;
-            }
-
-            const contentType = String(response.headers?.get?.('content-type') ?? '').toLowerCase();
-            if (contentType && !contentType.includes('application/json') && !contentType.includes('+json')) {
-                const value: ServerFeaturesSnapshot = { status: 'unsupported', reason: 'invalid_payload' };
-                cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
-                return value;
-            }
-
-            let payload: unknown;
-            try {
-                payload = await response.json();
-            } catch {
-                const value: ServerFeaturesSnapshot = { status: 'unsupported', reason: 'invalid_payload' };
-                cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
-                return value;
-            }
-
-            const parsed = parseServerFeatures(payload);
-            if (!parsed) {
-                const value: ServerFeaturesSnapshot = { status: 'unsupported', reason: 'invalid_payload' };
-                cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
-                return value;
-            }
-
-            const value: ServerFeaturesSnapshot = { status: 'ready', features: parsed };
-            cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
-            return value;
-        } catch (error) {
-            const aborted = controller.signal.aborted || (error instanceof Error && error.name === 'AbortError');
-            const value: ServerFeaturesSnapshot = { status: 'error', reason: aborted ? 'timeout' : 'network' };
-            cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
-            return value;
-        } finally {
-            clearTimeout(timer);
         }
     });
+}
+
+export async function getServerFeaturesSnapshot(params?: {
+    timeoutMs?: number;
+    force?: boolean;
+    serverId?: string;
+}): Promise<ServerFeaturesSnapshot> {
+    return await getServerFeaturesSnapshotWithRetry(params, 2);
 }
 
 export function getCachedServerFeaturesSnapshot(params?: { serverId?: string }): ServerFeaturesSnapshot | null {

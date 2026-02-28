@@ -11,6 +11,13 @@ export class StaleServerGenerationError extends Error {
     }
 }
 
+export class ServerFetchAbortedForServerSwitchError extends Error {
+    constructor() {
+        super('Aborted request due to an active server switch');
+        this.name = 'ServerFetchAbortedForServerSwitchError';
+    }
+}
+
 type ServerFetchOptions = Readonly<{
     includeAuth?: boolean;
 }>;
@@ -114,11 +121,24 @@ export async function serverFetch(
     let response: Response | null = null;
     try {
         for (let attempt = 0; attempt < 2; attempt += 1) {
-            response = await runtimeFetch(requestUrl, {
-                ...init,
-                headers,
-                signal: requestController.signal,
-            });
+            try {
+                response = await runtimeFetch(requestUrl, {
+                    ...init,
+                    headers,
+                    signal: requestController.signal,
+                });
+            } catch (error) {
+                const aborted =
+                    requestController.signal.aborted || (error instanceof Error && error.name === 'AbortError');
+                if (aborted) {
+                    const reason = (requestController.signal as unknown as { reason?: unknown }).reason;
+                    const serverSwitchAbort = reason === 'server-switch' || abortSequence !== localAbortSequence;
+                    if (serverSwitchAbort) {
+                        throw new ServerFetchAbortedForServerSwitchError();
+                    }
+                }
+                throw error;
+            }
 
             const current = getActiveServerSnapshot();
             if (current.generation !== snapshot.generation || current.serverId !== snapshot.serverId) {

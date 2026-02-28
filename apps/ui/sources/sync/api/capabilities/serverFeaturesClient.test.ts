@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+let activeServerSnapshot = {
+    serverId: 'server-a',
+    serverUrl: 'https://active.example.test',
+    generation: 1,
+};
+
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({
-        serverId: 'server-a',
-        serverUrl: 'https://active.example.test',
-        generation: 1,
-    }),
+    getActiveServerSnapshot: () => activeServerSnapshot,
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
@@ -30,6 +32,11 @@ describe('serverFeaturesClient', () => {
     const originalFetch = globalThis.fetch;
 
     beforeEach(() => {
+        activeServerSnapshot = {
+            serverId: 'server-a',
+            serverUrl: 'https://active.example.test',
+            generation: 1,
+        };
         globalThis.fetch = vi.fn() as unknown as typeof fetch;
     });
 
@@ -238,6 +245,196 @@ describe('serverFeaturesClient', () => {
         const third = await getServerFeaturesSnapshot({ timeoutMs: 50 });
         expect(third.status).toBe('ready');
         expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
+    });
+
+    it('retries a server-switch abort without caching a timeout error', async () => {
+        const payload = {
+            features: {
+                sharing: { session: { enabled: true }, public: { enabled: true }, contentKeys: { enabled: true }, pendingQueueV2: { enabled: true } },
+                voice: { enabled: false, configured: false, provider: null },
+                social: { friends: { enabled: true, allowUsername: false, requiredIdentityProviderId: 'github' } },
+                oauth: { providers: {} },
+                auth: {
+                    signup: { methods: [] },
+                    login: { requiredProviders: [] },
+                    recovery: { providerReset: { enabled: false, providers: [] } },
+                    ui: { autoRedirect: { enabled: false, providerId: null }, recoveryKeyReminder: { enabled: true } },
+                    providers: {},
+                    misconfig: [],
+                },
+            },
+        };
+
+        const abortError = new Error('aborted');
+        abortError.name = 'AbortError';
+
+        (globalThis.fetch as unknown as ReturnType<typeof vi.fn>)
+            .mockImplementationOnce(() => {
+                activeServerSnapshot = {
+                    serverId: 'server-b',
+                    serverUrl: 'https://other.example.test',
+                    generation: 2,
+                };
+                return Promise.reject(abortError);
+            })
+            .mockResolvedValueOnce(createResponse(200, payload));
+
+        const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+
+        const first = await getServerFeaturesSnapshot({ timeoutMs: 50 });
+        expect(first.status).toBe('ready');
+
+        const calls = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls;
+        expect(calls.length).toBe(2);
+        expect(String(calls[0]?.[0] ?? '')).toContain('https://active.example.test');
+        expect(String(calls[1]?.[0] ?? '')).toContain('https://other.example.test');
+
+        const second = await getServerFeaturesSnapshot({ timeoutMs: 50 });
+        expect(second.status).toBe('ready');
+        expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
+    });
+
+    it('recovers from a server-switch abort race by retrying automatically', async () => {
+        const payload = {
+            features: {
+                sharing: { session: { enabled: true }, public: { enabled: true }, contentKeys: { enabled: true }, pendingQueueV2: { enabled: true } },
+                voice: { enabled: false, configured: false, provider: null },
+                social: { friends: { enabled: true, allowUsername: false, requiredIdentityProviderId: 'github' } },
+                oauth: { providers: {} },
+                auth: {
+                    signup: { methods: [] },
+                    login: { requiredProviders: [] },
+                    recovery: { providerReset: { enabled: false, providers: [] } },
+                    ui: { autoRedirect: { enabled: false, providerId: null }, recoveryKeyReminder: { enabled: true } },
+                    providers: {},
+                    misconfig: [],
+                },
+            },
+        };
+
+        const abortError = new Error('aborted');
+        abortError.name = 'AbortError';
+
+        let firstCallSignal: AbortSignal | null = null;
+        (globalThis.fetch as unknown as ReturnType<typeof vi.fn>)
+            .mockImplementationOnce((_input: RequestInfo | URL, init?: RequestInit) => {
+                return new Promise<Response>((_resolve, reject) => {
+                    const signal = init?.signal;
+                    if (!signal) {
+                        reject(new Error('missing signal'));
+                        return;
+                    }
+                    firstCallSignal = signal;
+                    if (signal.aborted) {
+                        reject(abortError);
+                        return;
+                    }
+                    signal.addEventListener('abort', () => reject(abortError), { once: true });
+                });
+            })
+            .mockResolvedValueOnce(createResponse(200, payload));
+
+        const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
+        const { abortServerFetches } = await import('@/sync/http/client');
+        resetServerFeaturesClientForTests();
+
+        const pending = getServerFeaturesSnapshot({ timeoutMs: 2000, force: true });
+        activeServerSnapshot = {
+            serverId: 'server-b',
+            serverUrl: 'https://other.example.test',
+            generation: 2,
+        };
+        abortServerFetches();
+
+        // Defensive: ensure our fetch mock observed the abort signal wiring.
+        expect(firstCallSignal).toBeTruthy();
+
+        const result = await pending;
+        expect(result.status).toBe('ready');
+
+        const calls = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls;
+        expect(calls.length).toBe(2);
+        expect(String(calls[0]?.[0] ?? '')).toContain('https://active.example.test');
+        expect(String(calls[1]?.[0] ?? '')).toContain('https://other.example.test');
+    });
+
+    it('retries again when a server-switch abort also cancels the retry attempt', async () => {
+        const payload = {
+            features: {
+                sharing: { session: { enabled: true }, public: { enabled: true }, contentKeys: { enabled: true }, pendingQueueV2: { enabled: true } },
+                voice: { enabled: false, configured: false, provider: null },
+                social: { friends: { enabled: true, allowUsername: false, requiredIdentityProviderId: 'github' } },
+                oauth: { providers: {} },
+                auth: {
+                    signup: { methods: [] },
+                    login: { requiredProviders: [] },
+                    recovery: { providerReset: { enabled: false, providers: [] } },
+                    ui: { autoRedirect: { enabled: false, providerId: null }, recoveryKeyReminder: { enabled: true } },
+                    providers: {},
+                    misconfig: [],
+                },
+            },
+        };
+
+        const abortError = new Error('aborted');
+        abortError.name = 'AbortError';
+
+        let callIndex = 0;
+        let secondCallStartedResolve: (() => void) | null = null;
+        const secondCallStarted = new Promise<void>((resolve) => {
+            secondCallStartedResolve = resolve;
+        });
+
+        (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation((_input: RequestInfo | URL, init?: RequestInit) => {
+            callIndex += 1;
+            const signal = init?.signal;
+            if (!signal) return Promise.reject(new Error('missing signal'));
+
+            if (callIndex === 2) {
+                secondCallStartedResolve?.();
+                secondCallStartedResolve = null;
+            }
+
+            if (callIndex >= 3) {
+                return Promise.resolve(createResponse(200, payload));
+            }
+
+            return new Promise<Response>((_resolve, reject) => {
+                if (signal.aborted) {
+                    reject(abortError);
+                    return;
+                }
+                signal.addEventListener('abort', () => reject(abortError), { once: true });
+            });
+        });
+
+        const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
+        const { abortServerFetches } = await import('@/sync/http/client');
+        resetServerFeaturesClientForTests();
+
+        const pending = getServerFeaturesSnapshot({ timeoutMs: 2000, force: true });
+
+        // First abort occurs while switching from server-a -> server-b.
+        activeServerSnapshot = {
+            serverId: 'server-b',
+            serverUrl: 'https://other.example.test',
+            generation: 2,
+        };
+        abortServerFetches();
+
+        // Second abort simulates the race where the retry is also cancelled by the same switch.
+        await secondCallStarted;
+        abortServerFetches();
+
+        const result = await pending;
+        expect(result.status).toBe('ready');
+
+        const calls = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls;
+        expect(calls.length).toBe(3);
+        expect(String(calls[0]?.[0] ?? '')).toContain('https://active.example.test');
+        expect(String(calls[1]?.[0] ?? '')).toContain('https://other.example.test');
+        expect(String(calls[2]?.[0] ?? '')).toContain('https://other.example.test');
     });
 
     it('fetches features against the explicit serverId url (not the active server)', async () => {
