@@ -257,6 +257,7 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
       settings: snapshot.settings,
       session: null,
     });
+    options.accountSettings = snapshot.settings;
     options.terminalRuntime = context.terminalRuntime;
     await runClaude(credentials, options);
   } catch (error) {
