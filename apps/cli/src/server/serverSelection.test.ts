@@ -6,6 +6,8 @@ import { join } from 'node:path';
 describe('server selection flags', () => {
   const prevHomeDir = process.env.HAPPIER_HOME_DIR;
   const prevServerUrl = process.env.HAPPIER_SERVER_URL;
+  const prevLocalServerUrl = process.env.HAPPIER_LOCAL_SERVER_URL;
+  const prevPublicServerUrl = process.env.HAPPIER_PUBLIC_SERVER_URL;
   const prevWebappUrl = process.env.HAPPIER_WEBAPP_URL;
 
   afterEach(() => {
@@ -13,12 +15,16 @@ describe('server selection flags', () => {
     else process.env.HAPPIER_HOME_DIR = prevHomeDir;
     if (prevServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
     else process.env.HAPPIER_SERVER_URL = prevServerUrl;
+    if (prevLocalServerUrl === undefined) delete process.env.HAPPIER_LOCAL_SERVER_URL;
+    else process.env.HAPPIER_LOCAL_SERVER_URL = prevLocalServerUrl;
+    if (prevPublicServerUrl === undefined) delete process.env.HAPPIER_PUBLIC_SERVER_URL;
+    else process.env.HAPPIER_PUBLIC_SERVER_URL = prevPublicServerUrl;
     if (prevWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
     else process.env.HAPPIER_WEBAPP_URL = prevWebappUrl;
     vi.resetModules();
   });
 
-  it('persists a new server profile when --server-url is used (default)', async () => {
+  it('does not persist when --server-url is used (default)', async () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-server-select-'));
     process.env.HAPPIER_HOME_DIR = homeDir;
     delete process.env.HAPPIER_SERVER_URL;
@@ -33,22 +39,48 @@ describe('server selection flags', () => {
       const remaining = await applyServerSelectionFromArgs(['--server-url', 'https://stack.example.test']);
       expect(remaining).toEqual([]);
       expect(config.configuration.serverUrl).toBe('https://stack.example.test');
-      const active = await getActiveServerProfile();
-      expect(active.serverUrl).toBe('https://stack.example.test');
-      expect(active.webappUrl).toBe('https://stack.example.test');
       expect(config.configuration.webappUrl).toBe('https://stack.example.test');
-
-      const settingsRaw = JSON.parse(readFileSync(join(homeDir, 'settings.json'), 'utf8'));
-      expect(settingsRaw.schemaVersion).toBe(5);
-      expect(settingsRaw.activeServerId).not.toBe('cloud');
+      expect(process.env.HAPPIER_WEBAPP_URL).toBe('https://stack.example.test');
+      expect((await getActiveServerProfile()).id).toBe('cloud');
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
       delete process.env.HAPPIER_HOME_DIR;
     }
   });
 
-  it('does not persist when --no-persist is provided', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-server-select-np-'));
+  it('supports --local-server-url to keep deep links canonical while using local API (no persist)', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-server-select-local-'));
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    delete process.env.HAPPIER_SERVER_URL;
+    delete process.env.HAPPIER_WEBAPP_URL;
+    delete process.env.HAPPIER_LOCAL_SERVER_URL;
+    delete process.env.HAPPIER_PUBLIC_SERVER_URL;
+
+    try {
+      vi.resetModules();
+      const { applyServerSelectionFromArgs } = await import('./serverSelection');
+      const config = await import('@/configuration');
+
+      const remaining = await applyServerSelectionFromArgs([
+        '--server-url',
+        'https://stack.example.test',
+        '--local-server-url',
+        'http://127.0.0.1:53545',
+      ]);
+      expect(remaining).toEqual([]);
+      expect(config.configuration.serverUrl).toBe('https://stack.example.test');
+      expect((config.configuration as any).apiServerUrl).toBe('http://127.0.0.1:53545');
+      expect(process.env.HAPPIER_PUBLIC_SERVER_URL).toBe('https://stack.example.test');
+      expect(process.env.HAPPIER_SERVER_URL).toBe('http://127.0.0.1:53545');
+      expect(process.env.HAPPIER_LOCAL_SERVER_URL).toBe('http://127.0.0.1:53545');
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+      delete process.env.HAPPIER_HOME_DIR;
+    }
+  });
+
+  it('persists a new server profile when --server-url is used with --persist', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-server-select-persist-'));
     process.env.HAPPIER_HOME_DIR = homeDir;
     delete process.env.HAPPIER_SERVER_URL;
     delete process.env.HAPPIER_WEBAPP_URL;
@@ -59,11 +91,17 @@ describe('server selection flags', () => {
       const { getActiveServerProfile } = await import('./serverProfiles');
       const config = await import('@/configuration');
 
-      await applyServerSelectionFromArgs(['--server-url', 'https://stack.example.test', '--no-persist']);
+      const remaining = await applyServerSelectionFromArgs(['--server-url', 'https://stack.example.test', '--persist']);
+      expect(remaining).toEqual([]);
       expect(config.configuration.serverUrl).toBe('https://stack.example.test');
+      const active = await getActiveServerProfile();
+      expect(active.serverUrl).toBe('https://stack.example.test');
+      expect(active.webappUrl).toBe('https://stack.example.test');
       expect(config.configuration.webappUrl).toBe('https://stack.example.test');
-      expect(process.env.HAPPIER_WEBAPP_URL).toBe('https://stack.example.test');
-      expect((await getActiveServerProfile()).id).toBe('cloud');
+
+      const settingsRaw = JSON.parse(readFileSync(join(homeDir, 'settings.json'), 'utf8'));
+      expect(settingsRaw.schemaVersion).toBe(6);
+      expect(settingsRaw.activeServerId).not.toBe('cloud');
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
       delete process.env.HAPPIER_HOME_DIR;
