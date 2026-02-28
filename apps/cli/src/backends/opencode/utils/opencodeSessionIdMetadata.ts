@@ -10,14 +10,12 @@ export async function maybeUpdateOpenCodeSessionIdMetadata(params: {
   const next = typeof raw === 'string' ? raw.trim() : '';
   if (!next) return;
 
-  const rawBackendMode = typeof params.backendMode === 'string' ? params.backendMode.trim() : '';
-  const backendMode = rawBackendMode === 'server' || rawBackendMode === 'acp' ? rawBackendMode : null;
-
+  const backendMode = params.backendMode === 'acp' ? 'acp' : params.backendMode === 'server' ? 'server' : null;
   if (params.lastPublished.sessionId === next && params.lastPublished.backendMode === backendMode) return;
 
   await params.updateHappySessionMetadata((metadata) => ({
     ...metadata,
-    // Happy metadata field name. Value is OpenCode sessionId (OpenCode uses sessionId as the stable resume id).
+    // Happy metadata field name. Value is OpenCode ACP sessionId (OpenCode uses sessionId as the stable resume id).
     opencodeSessionId: next,
     ...(backendMode ? { opencodeBackendMode: backendMode } : {}),
   }));
