@@ -226,6 +226,24 @@ CI sets these for relevant jobs. Local runs can set them manually when you need 
   - `smoke`: minimal scenario tier, but still real provider execution when run via `test:providers:*` wrappers or `providers:run`.
   - `extended`: broader scenario tier with more scenarios; in CI this typically runs with env-key/secrets overlays.
 
+#### Real Claude Agent Teams probe (opt-in)
+
+Happier includes a small opt-in probe that runs your locally installed `claude` CLI to discover the exact Agent Teams tool names and capture representative payload shapes:
+
+- Test file: `packages/tests/suites/providers/claude.agentTeams.toolNames.realProbe.test.ts`
+
+Run it locally (requires Claude Code installed and already authenticated on the host):
+
+```bash
+HAPPIER_TEST_REAL_CLAUDE=1 yarn -s workspace @happier-dev/tests test:providers claude.agentTeams.toolNames.realProbe.test.ts
+```
+
+Extended signal (spawns teammates and sends messages; may take longer):
+
+```bash
+HAPPIER_TEST_REAL_CLAUDE=1 HAPPIER_TEST_REAL_CLAUDE_FULL=1 yarn -s workspace @happier-dev/tests test:providers claude.agentTeams.toolNames.realProbe.test.ts
+```
+
 ### Stress (`yarn test:stress`)
 - Requires: Node + Yarn.
 - Longer-running reliability loops; keep out of PR default local loop.
