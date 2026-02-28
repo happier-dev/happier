@@ -14,12 +14,22 @@ import { OpenCodeTerminalDisplay } from '@/backends/opencode/ui/OpenCodeTerminal
 
 import { maybeUpdateOpenCodeSessionIdMetadata } from './utils/opencodeSessionIdMetadata';
 import { createOpenCodeAcpRuntime } from './acp/runtime';
+import { createOpenCodeServerRuntime } from './server/runtime';
+
+function resolveOpenCodeBackendModeFromEnv(): 'server' | 'acp' {
+  const raw = typeof process.env.HAPPIER_OPENCODE_BACKEND_MODE === 'string'
+    ? process.env.HAPPIER_OPENCODE_BACKEND_MODE.trim().toLowerCase()
+    : '';
+  if (raw === 'acp') return 'acp';
+  return 'server';
+}
 
 export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
   credentials: Credentials;
   permissionMode?: PermissionMode;
 }): Promise<void> {
   const lastPublishedOpenCodeSessionMetadata = { sessionId: null as string | null, backendMode: null as 'server' | 'acp' | null };
+  const backendMode = resolveOpenCodeBackendModeFromEnv();
 
   await runStandardAcpProvider(opts, {
     flavor: 'opencode',
@@ -31,15 +41,29 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
     machineMetadata: initialMachineMetadata,
     terminalDisplay: OpenCodeTerminalDisplay,
     resolveRuntimeDirectory: ({ session, metadata }) => session.getMetadataSnapshot()?.path ?? metadata.path,
-    createRuntime: ({ directory, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode }) => createOpenCodeAcpRuntime({
-      directory,
-      session,
-      messageBuffer,
-      mcpServers,
-      permissionHandler,
-      onThinkingChange: setThinking,
-      getPermissionMode,
-    }),
+    createRuntime: ({ directory, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode }) => {
+      if (backendMode === 'acp') {
+        return createOpenCodeAcpRuntime({
+          directory,
+          session,
+          messageBuffer,
+          mcpServers,
+          permissionHandler,
+          onThinkingChange: setThinking,
+          getPermissionMode,
+        });
+      }
+
+      return createOpenCodeServerRuntime({
+        directory,
+        session,
+        messageBuffer,
+        mcpServers,
+        permissionHandler,
+        onThinkingChange: setThinking,
+        getPermissionMode,
+      });
+    },
     onAttachMetadataSnapshotError: (error) => {
       logger.debug(`[opencode] Error fetching session metadata snapshot (non-fatal): ${String(error instanceof Error ? error.message : error)}`);
     },
@@ -68,7 +92,7 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
 
         await maybeUpdateOpenCodeSessionIdMetadata({
           getOpenCodeSessionId: () => openCodeSessionId,
-          backendMode: 'acp',
+          backendMode,
           updateHappySessionMetadata: (updater) => session.updateMetadata(updater),
           lastPublished: lastPublishedOpenCodeSessionMetadata,
         });
