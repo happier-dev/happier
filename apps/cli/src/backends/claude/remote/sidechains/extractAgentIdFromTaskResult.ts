@@ -2,8 +2,8 @@ export function extractAgentIdFromTaskResultText(text: string): { agentId: strin
   const raw = String(text ?? '');
 
   const agentId =
-    raw.match(/\bagentId\s*[:=]\s*([A-Za-z0-9._-]+)/i)?.[1] ??
-    raw.match(/\bagent_id\s*[:=]\s*([A-Za-z0-9._-]+)/i)?.[1] ??
+    raw.match(/\bagentId\s*[:=]\s*([A-Za-z0-9@._-]+)/i)?.[1] ??
+    raw.match(/\bagent_id\s*[:=]\s*([A-Za-z0-9@._-]+)/i)?.[1] ??
     null;
 
   const taskId =
@@ -16,4 +16,3 @@ export function extractAgentIdFromTaskResultText(text: string): { agentId: strin
     taskId: taskId ? String(taskId) : null,
   };
 }
-

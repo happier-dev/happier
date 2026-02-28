@@ -92,4 +92,72 @@ describe('ClaudeRemoteTaskOutputCollector', () => {
       }),
     );
   });
+
+  it('flushes TaskOutput records when Task tool_result includes tool_use_result.agent_id (without agent_id in tool_result text)', () => {
+    const collector = new ClaudeRemoteTaskOutputCollector();
+
+    const assistant: SDKAssistantMessage = {
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'tool_task_1', name: 'Task', input: { prompt: 'do work' } },
+          { type: 'tool_use', id: 'tool_taskoutput_1', name: 'TaskOutput', input: { task_id: 'agent_1', block: true } },
+        ],
+      },
+    } as any;
+
+    collector.observe(assistant);
+
+    const taskOutputResult: SDKUserMessage = {
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'tool_taskoutput_1',
+            content: [
+              {
+                type: 'text',
+                text: makeJsonl([
+                  {
+                    type: 'assistant',
+                    uuid: 'u1',
+                    parentUuid: null,
+                    timestamp: new Date().toISOString(),
+                    sessionId: 'sess_1',
+                    userType: 'external',
+                    cwd: '/tmp',
+                    version: '0.0.0',
+                    gitBranch: 'main',
+                    isSidechain: true,
+                    agentId: 'agent_1',
+                    message: { role: 'assistant', content: [{ type: 'text', text: 'SUBTASK_OK' }] },
+                  },
+                ]),
+              },
+            ],
+          },
+        ],
+      },
+    } as any;
+
+    const beforeMap = collector.observe(taskOutputResult);
+    expect(beforeMap.imported.length).toBe(0);
+
+    const taskResult: SDKUserMessage = {
+      type: 'user',
+      tool_use_result: { status: 'teammate_spawned', agent_id: 'agent_1', team_name: 'probe', name: 'alpha' },
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'tool_task_1', content: 'Agent is now running and will receive instructions via mailbox.' }],
+      },
+    } as any;
+
+    const afterMap = collector.observe(taskResult);
+    expect(afterMap.imported.length).toBe(1);
+    expect((afterMap.imported[0]?.body as any).sidechainId).toBe('tool_task_1');
+  });
 });

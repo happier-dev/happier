@@ -110,6 +110,61 @@ describe('ClaudeRemoteSubagentFileCollector', () => {
     }
   });
 
+  it('resolves subagent JSONL from tool_use_result.agent_id when agentId/output_file are missing from Task tool_result text', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happy-subagent-sidechains-'));
+    const agentId = 'a030eff830514eadc';
+    const jsonlPath = join(dir, `agent-${agentId}.jsonl`);
+
+    const a1 = {
+      type: 'assistant',
+      uuid: 'a1',
+      isSidechain: true,
+      agentId,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+    };
+    await writeFile(jsonlPath, makeJsonl([a1]), 'utf8');
+
+    const imported: Array<{ body: RawJSONLines; meta: Record<string, unknown> }> = [];
+    const collector = new ClaudeRemoteSubagentFileCollector({
+      emitImported: (body: RawJSONLines, meta: Record<string, unknown>) => imported.push({ body, meta }),
+      watchFile: () => () => {},
+      resolveJsonlPathForAgentId: ({ agentId: requested }) => (requested === agentId ? jsonlPath : null),
+    });
+
+    try {
+      collector.observe(taskToolUseMessage());
+      collector.observe({
+        type: 'user',
+        tool_use_result: { status: 'teammate_spawned', agent_id: agentId, team_name: 'probe', name: 'researcher' },
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'tool_task_1',
+              content: 'Agent is now running and will receive instructions via mailbox.',
+            },
+          ],
+        },
+        parent_tool_use_id: null,
+        session_id: 'sess_1',
+      } as any);
+
+      await collector.syncAll();
+      expect(imported).toHaveLength(1);
+      expect(imported[0]?.body?.type).toBe('assistant');
+      expect(imported[0]?.body?.sidechainId).toBe('tool_task_1');
+      expect(imported[0]?.meta).toMatchObject({
+        importedFrom: 'claude-subagent-file',
+        claudeAgentId: agentId,
+        sidechainId: 'tool_task_1',
+      });
+    } finally {
+      collector.cleanup();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('falls back to resolving subagent JSONL from agentId when output_file is missing (using system session_id)', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happy-subagent-sidechains-'));
     const agentId = 'a6ca4a6';
@@ -149,6 +204,67 @@ describe('ClaudeRemoteSubagentFileCollector', () => {
       collector.observe(taskToolUseMessage());
       collector.observe(taskToolResultMessage(`done\nagentId: ${agentId}\n`));
 
+      await collector.syncAll();
+
+      expect(resolvedSessionIds).toContain('sess_1');
+      expect(imported).toHaveLength(1);
+      expect(imported[0]?.body?.type).toBe('assistant');
+      expect(imported[0]?.body?.sidechainId).toBe('tool_task_1');
+    } finally {
+      collector.cleanup();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('registers and imports subagent JSONL after session_id becomes available (late session init)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happy-subagent-sidechains-'));
+    const agentId = 'a6ca4a6';
+    const jsonlPath = join(dir, `agent-${agentId}.jsonl`);
+
+    const rootPrompt = {
+      type: 'user',
+      uuid: 'u_root_late',
+      isSidechain: true,
+      agentId,
+      message: { role: 'user', content: 'Do work' },
+    };
+    const a1 = {
+      type: 'assistant',
+      uuid: 'a1_late',
+      isSidechain: true,
+      agentId,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+    };
+
+    await writeFile(jsonlPath, makeJsonl([rootPrompt, a1]), 'utf8');
+
+    const imported: Array<{ body: RawJSONLines; meta: Record<string, unknown> }> = [];
+    const resolvedSessionIds: Array<string | null> = [];
+
+    const collector = new ClaudeRemoteSubagentFileCollector({
+      emitImported: (body: RawJSONLines, meta: Record<string, unknown>) => imported.push({ body, meta }),
+      watchFile: () => () => {},
+      resolveJsonlPathForAgentId: ({ claudeSessionId }) => {
+        resolvedSessionIds.push(claudeSessionId);
+        return claudeSessionId === 'sess_1' ? jsonlPath : null;
+      },
+    });
+
+    try {
+      const toolUse = taskToolUseMessage();
+      (toolUse as any).session_id = undefined;
+      collector.observe(toolUse as any);
+
+      const toolResult = taskToolResultMessage(`done\nagentId: ${agentId}\n`);
+      (toolResult as any).session_id = undefined;
+      collector.observe(toolResult as any);
+
+      // No session_id yet, should not import.
+      await collector.syncAll();
+      expect(imported).toHaveLength(0);
+
+      // Later: system init provides session_id.
+      collector.observe({ type: 'system', subtype: 'session_start', session_id: 'sess_1' } as any);
       await collector.syncAll();
 
       expect(resolvedSessionIds).toContain('sess_1');

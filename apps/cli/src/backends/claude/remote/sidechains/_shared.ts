@@ -1,4 +1,7 @@
 import type { RawJSONLines } from '@/backends/claude/types';
+import { LruSet, setBoundedMap } from '@/utils/collections/lru';
+
+export { LruSet, setBoundedMap };
 
 export function extractOutputFilePathFromTaskResultText(text: string): string | null {
   const raw = String(text ?? '');
@@ -11,6 +14,40 @@ export function extractOutputFilePathFromTaskResultText(text: string): string | 
 export function coerceToolResultText(content: unknown): string {
   if (typeof content === 'string') return content;
   if (content == null) return '';
+
+  if (typeof content === 'object' && !Array.isArray(content)) {
+    const record = content as any;
+    const base = 'content' in record ? coerceToolResultText(record.content) : '';
+
+    const toolUseResult = record.tool_use_result;
+    if (toolUseResult && typeof toolUseResult === 'object' && !Array.isArray(toolUseResult)) {
+      const extras: string[] = [];
+
+      const agentIdRaw = (toolUseResult as any).agent_id ?? (toolUseResult as any).agentId ?? (toolUseResult as any).teammate_id;
+      const agentId = typeof agentIdRaw === 'string' ? agentIdRaw.trim() : '';
+      if (agentId && !/\bagent_id\b|\bagentId\b|\bteammate_id\b/i.test(base)) {
+        extras.push(`agent_id: ${agentId}`);
+      }
+
+      const taskIdRaw = (toolUseResult as any).task_id ?? (toolUseResult as any).taskId;
+      const taskId = typeof taskIdRaw === 'string' ? taskIdRaw.trim() : '';
+      if (taskId && !/\btask_id\b|\btaskId\b/i.test(base)) {
+        extras.push(`task_id: ${taskId}`);
+      }
+
+      const teamNameRaw = (toolUseResult as any).team_name ?? (toolUseResult as any).teamName;
+      const teamName = typeof teamNameRaw === 'string' ? teamNameRaw.trim() : '';
+      if (teamName && !/\bteam_name\b|\bteamName\b/i.test(base)) {
+        extras.push(`team_name: ${teamName}`);
+      }
+
+      if (extras.length > 0) {
+        return base ? `${base}\n${extras.join('\n')}` : extras.join('\n');
+      }
+    }
+
+    return base;
+  }
 
   // Some SDK surfaces return a content-block array (e.g. [{type:'text', text:'...'}]).
   // For Task/TaskOutput we only need best-effort text extraction.
@@ -43,49 +80,6 @@ export function markRecordAsSidechain(record: RawJSONLines, sidechainId: string)
   (record as any).isSidechain = true;
   (record as any).sidechainId = sidechainId;
   return record;
-}
-
-export class LruSet {
-  private readonly max: number;
-  private readonly map = new Map<string, true>();
-
-  constructor(max: number) {
-    this.max = Math.max(0, Math.floor(max));
-  }
-
-  has(value: string): boolean {
-    return this.map.has(value);
-  }
-
-  add(value: string): void {
-    if (this.max === 0) return;
-    if (this.map.has(value)) {
-      this.map.delete(value);
-    }
-    this.map.set(value, true);
-    while (this.map.size > this.max) {
-      const oldest = this.map.keys().next().value as string | undefined;
-      if (!oldest) break;
-      this.map.delete(oldest);
-    }
-  }
-}
-
-export function setBoundedMap<K, V>(map: Map<K, V>, key: K, value: V, maxKeys: number): void {
-  const limit = Math.max(0, Math.floor(maxKeys));
-  if (map.has(key)) {
-    map.delete(key); // refresh insertion order
-  }
-  map.set(key, value);
-  if (limit === 0) {
-    map.clear();
-    return;
-  }
-  while (map.size > limit) {
-    const oldest = map.keys().next().value as K | undefined;
-    if (oldest === undefined) break;
-    map.delete(oldest);
-  }
 }
 
 export function markUuidSeenAndReturnIsDuplicate(params: {
