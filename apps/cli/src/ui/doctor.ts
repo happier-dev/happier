@@ -16,6 +16,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { projectPath } from '@/projectPath'
 import packageJson from '../../package.json'
+import { buildDoctorSnapshot, type DoctorSnapshot } from '@/ui/doctorSnapshot'
 
 export function maskValue(value: string): string;
 export function maskValue(value: string | undefined): string | undefined;
@@ -128,6 +129,13 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
 
     // For 'all' filter, show everything. For 'daemon', only show daemon-related info
     if (filter === 'all') {
+        let snapshot: DoctorSnapshot | null = null;
+        try {
+            snapshot = await buildDoctorSnapshot();
+        } catch {
+            snapshot = null;
+        }
+
         // Version and basic info
         console.log(chalk.bold('📋 Basic Information'));
         console.log(`Happier CLI Version: ${chalk.green(packageJson.version)}`);
@@ -163,6 +171,35 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
         console.log(`DEBUG: ${env.DEBUG ? chalk.green(env.DEBUG) : chalk.gray('not set')}`);
         console.log(`NODE_ENV: ${env.NODE_ENV ? chalk.green(env.NODE_ENV) : chalk.gray('not set')}`);
 
+        // Connections summary (server/account/server profiles)
+        if (snapshot) {
+            console.log(chalk.bold('\n🧭 Connections'));
+            console.log(`Resolved Server ID: ${chalk.green(snapshot.server.activeServerId)}`);
+            console.log(`Resolved Server URL: ${chalk.blue(snapshot.server.serverUrl)}`);
+            if (snapshot.accountId) {
+                console.log(`Account: ${chalk.green(snapshot.accountId)}`);
+            } else {
+                console.log(`Account: ${chalk.gray('(unknown)')}`);
+            }
+
+            const settingsActive = snapshot.settings.activeServerId;
+            if (settingsActive && settingsActive !== snapshot.server.activeServerId) {
+                console.log(chalk.yellow(`⚠️  settings.json activeServerId (${settingsActive}) differs from resolved server id (${snapshot.server.activeServerId})`));
+            }
+
+            if (snapshot.settings.servers.length > 0) {
+                console.log('Configured servers:');
+                for (const server of snapshot.settings.servers.slice(0, 12)) {
+                    console.log(`  - ${server.name} (${server.id}) → ${server.serverUrl}`);
+                }
+                if (snapshot.settings.servers.length > 12) {
+                    console.log(`  … and ${snapshot.settings.servers.length - 12} more`);
+                }
+            } else {
+                console.log(`Configured servers: ${chalk.gray('(none)')}`);
+            }
+        }
+
         // Settings
         try {
             const settings = await readSettings();
@@ -179,6 +216,9 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
             const credentials = await readCredentials();
             if (credentials) {
                 console.log(chalk.green('✓ Authenticated (credentials found)'));
+                if (snapshot?.accountId) {
+                    console.log(`  Account: ${chalk.green(snapshot.accountId)}`);
+                }
             } else {
                 console.log(chalk.yellow('⚠️  Not authenticated (no credentials)'));
             }

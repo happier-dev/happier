@@ -20,9 +20,12 @@ import {
 
 import packageJson from '../../package.json';
 import { configuration } from '@/configuration';
-import { readCredentials } from '@/persistence';
+import { readCredentials, readSettings } from '@/persistence';
 import { collectBugReportMachineDiagnosticsSnapshot, readBugReportLogTail } from '@/diagnostics/bugReportMachineDiagnostics';
+import { collectBugReportMachineDiagnosticsSnapshotForBugReport } from '@/diagnostics/bugReportMachineDiagnosticsRecipe';
 import { normalizeBaseUrl, withAbortTimeout } from '@/diagnostics/httpClient';
+import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
+import { buildDoctorSnapshot } from '@/ui/doctorSnapshot';
 
 export type CollectBugReportDiagnosticsArtifactsInput = {
   includeDiagnostics: boolean;
@@ -134,6 +137,65 @@ export async function collectBugReportDiagnosticsArtifacts(
     acceptedKinds: input.acceptedKinds,
   };
 
+  let credentialsToken: string | null = null;
+  let accountId: string | null = null;
+  let settingsActiveServerId: string | null = null;
+  let settingsKnownAccountIds: string[] = [];
+  let settingsServers: Array<{
+    id: string;
+    name: string;
+    serverUrl: string;
+    localServerUrl?: string;
+    webappUrl: string;
+    lastUsedAt: number;
+  }> = [];
+
+  try {
+    const credentials = await readCredentials();
+    credentialsToken = credentials?.token ?? null;
+    if (credentialsToken) {
+      const payload = decodeJwtPayload(credentialsToken);
+      const sub = payload && typeof payload.sub === 'string' ? payload.sub.trim() : '';
+      if (sub) accountId = sub;
+    }
+  } catch {
+    // optional
+  }
+
+  try {
+    const settings = await readSettings();
+    settingsActiveServerId = settings.activeServerId ? String(settings.activeServerId).trim() : null;
+
+    const byServer = settings.lastChangesCursorByServerIdByAccountId ?? {};
+    const accountIds: string[] = [];
+    for (const map of Object.values(byServer)) {
+      if (!map || typeof map !== 'object') continue;
+      for (const key of Object.keys(map)) {
+        const normalized = String(key ?? '').trim();
+        if (normalized) accountIds.push(normalized);
+      }
+    }
+    if (accountId) accountIds.push(accountId);
+    settingsKnownAccountIds = Array.from(new Set(accountIds)).sort();
+
+    settingsServers = Object.values(settings.servers ?? {})
+      .filter((entry) => entry && typeof entry === 'object')
+      .map((entry) => ({
+        id: String(entry.id ?? '').trim(),
+        name: String(entry.name ?? '').trim(),
+        serverUrl: sanitizeBugReportUrl(String(entry.serverUrl ?? '').trim()) ?? String(entry.serverUrl ?? '').trim(),
+        localServerUrl: entry.localServerUrl
+          ? (sanitizeBugReportUrl(String(entry.localServerUrl).trim()) ?? String(entry.localServerUrl).trim())
+          : undefined,
+        webappUrl: sanitizeBugReportUrl(String(entry.webappUrl ?? '').trim()) ?? String(entry.webappUrl ?? '').trim(),
+        lastUsedAt: Number(entry.lastUsedAt ?? 0) || 0,
+      }))
+      .filter((entry) => entry.id && entry.name && entry.serverUrl && entry.webappUrl)
+      .sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0));
+  } catch {
+    // optional
+  }
+
   const diagnosticsCollection: Record<string, DiagnosticsCollectionEntry> = {
     cliLog: { status: 'skipped', detail: 'not attempted' },
     machineDiagnostics: { status: 'skipped', detail: 'source kind not accepted' },
@@ -173,11 +235,7 @@ export async function collectBugReportDiagnosticsArtifacts(
       diagnosticsCollection.stackLogTails = { status: 'skipped', detail: 'no stack log tail available' };
     }
     try {
-      const machineDiagnostics = await collectBugReportMachineDiagnosticsSnapshot({
-        daemonLogLimit: 3,
-        stackLogLimit: 3,
-        stackRuntimeMaxChars: 400_000,
-      });
+      const machineDiagnostics = await collectBugReportMachineDiagnosticsSnapshotForBugReport();
       diagnosticsCollection.machineDiagnostics = { status: 'collected' };
 
       if (hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'daemon')) {
@@ -258,15 +316,14 @@ export async function collectBugReportDiagnosticsArtifacts(
   if (hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'server')) {
     diagnosticsCollection.serverDiagnostics = { status: 'skipped', detail: 'missing credentials token' };
     try {
-      const credentials = await readCredentials();
-      if (credentials?.token) {
+      if (credentialsToken) {
         diagnosticsCollection.serverDiagnostics = { status: 'skipped', detail: 'server diagnostics endpoint unavailable' };
         const lines = resolveBugReportServerDiagnosticsLines(input.contextWindowMs);
         const response = await withAbortTimeout(6_000, async (signal) =>
           await fetch(`${normalizeBaseUrl(input.serverUrl)}/v1/diagnostics/bug-report-snapshot?lines=${lines}`, {
             method: 'GET',
             headers: {
-              Authorization: `Bearer ${credentials.token}`,
+              Authorization: `Bearer ${credentialsToken}`,
             },
             signal,
           }),
@@ -279,6 +336,8 @@ export async function collectBugReportDiagnosticsArtifacts(
             content: await response.text(),
           }, limits);
           diagnosticsCollection.serverDiagnostics = { status: 'collected' };
+        } else if (response.status === 404) {
+          diagnosticsCollection.serverDiagnostics = { status: 'skipped', detail: 'server diagnostics endpoint disabled (404)' };
         } else {
           diagnosticsCollection.serverDiagnostics = { status: 'error', detail: `server responded with status ${response.status}` };
         }
@@ -294,8 +353,12 @@ export async function collectBugReportDiagnosticsArtifacts(
     contentType: 'application/json',
     content: JSON.stringify({
       capturedAt: new Date().toISOString(),
+      accountId,
       activeServerId: input.activeServerId,
       serverUrl: sanitizeBugReportUrl(input.serverUrl) ?? input.serverUrl,
+      settingsActiveServerId,
+      settingsKnownAccountIds,
+      settingsServers,
       cwd: sanitizeBugReportArtifactPath(process.cwd()),
       platform: process.platform,
       nodeVersion: process.version,
@@ -305,6 +368,20 @@ export async function collectBugReportDiagnosticsArtifacts(
       diagnosticsCollection,
     }, null, 2),
   }, limits);
+
+  if (hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'cli')) {
+    try {
+      const snapshot = await buildDoctorSnapshot();
+      pushBugReportArtifact(artifacts, {
+        filename: 'doctor-snapshot.json',
+        sourceKind: 'cli',
+        contentType: 'application/json',
+        content: JSON.stringify(snapshot, null, 2),
+      }, limits);
+    } catch {
+      // Optional artifact; cli-context.json already captures the basics.
+    }
+  }
 
   return { artifacts, environment };
 }
