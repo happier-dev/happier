@@ -23,7 +23,9 @@ Tip: on iOS, you can “Add to Home Screen” from Safari to use it like an app.
 
 ## Automation
 
-If Serve is already configured, `hstack start` will automatically prefer the `https://*.ts.net` URL for “public” links unless you explicitly set `HAPPIER_STACK_SERVER_URL`.
+If Serve is already configured, `hstack start` will automatically prefer the `https://*.ts.net` URL for canonical/share links unless you explicitly set `HAPPIER_STACK_SERVER_URL`.
+
+Tip: for self-hosted servers, also set `HAPPIER_PUBLIC_SERVER_URL` (usually to the same `https://*.ts.net` URL). That value is advertised by the server via `GET /v1/features` and is what clients embed in QR/deep links.
 
 You can also ask hstack to enable Serve automatically at boot:
 

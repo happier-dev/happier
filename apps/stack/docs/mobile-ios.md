@@ -145,6 +145,8 @@ HAPPIER_STACK_SERVER_URL="https://<your-machine>.<tailnet>.ts.net" hstack mobile
 
 Note: changing `HAPPIER_STACK_SERVER_URL` requires rebuilding/reinstalling the app you care about.
 
+Tip: `HAPPIER_STACK_SERVER_URL` should be the canonical/share URL your phone can reach. For self-hosted deployments, the server-side equivalent is `HAPPIER_PUBLIC_SERVER_URL` (often the same value).
+
 Important:
 
 - For **non-main stacks**, `HAPPIER_STACK_SERVER_URL` is only respected if it’s set **in that stack’s env file**
