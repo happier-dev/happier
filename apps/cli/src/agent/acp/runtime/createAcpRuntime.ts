@@ -22,6 +22,7 @@ import { getAgentModelConfig, type AgentId } from '@happier-dev/agents';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 
 const DEFAULT_STREAM_DELTA_FLUSH_INTERVAL_MS = 50;
+const DEFAULT_SESSION_CONTROL_TIMEOUT_MS = 15_000;
 
 function resolveStreamDeltaFlushIntervalMs(input: unknown): number {
   if (typeof input === 'number' && Number.isFinite(input) && input >= 0) {
@@ -33,6 +34,14 @@ function resolveStreamDeltaFlushIntervalMs(input: unknown): number {
 
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_STREAM_DELTA_FLUSH_INTERVAL_MS;
+  return Math.trunc(parsed);
+}
+
+function resolveSessionControlTimeoutMs(): number {
+  const raw = (process.env.HAPPIER_ACP_SESSION_CONTROL_TIMEOUT_MS ?? '').toString().trim();
+  if (!raw) return DEFAULT_SESSION_CONTROL_TIMEOUT_MS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SESSION_CONTROL_TIMEOUT_MS;
   return Math.trunc(parsed);
 }
 
@@ -1086,6 +1095,7 @@ export function createAcpRuntime(params: {
       if (!normalizedModelId) return;
       if (!sessionId) return;
 
+      const controlTimeoutMs = resolveSessionControlTimeoutMs();
       const modelConfigOptionId = (() => {
         try {
           return getAgentModelConfig(params.provider as AgentId).acpModelConfigOptionId ?? 'model';
@@ -1100,30 +1110,34 @@ export function createAcpRuntime(params: {
 
       const b = await ensureBackend();
       if (b.setSessionModel) {
+        const timeoutPromise = new Promise<{ ok: false; error: Error }>((resolve) => {
+          const timer = setTimeout(
+            () => resolve({ ok: false, error: new Error('ACP session/set_model timed out') }),
+            controlTimeoutMs,
+          );
+          timer.unref?.();
+        });
+
+        const outcome = await Promise.race([
+          b
+            .setSessionModel(sessionId, normalizedModelId)
+            .then(() => ({ ok: true as const }))
+            .catch((error) => ({ ok: false as const, error })),
+          timeoutPromise,
+        ]);
+        if (outcome.ok) return;
+
+        const e = outcome.error;
+        // Some ACP agents may not support `session/set_model` but may expose an equivalent
+        // `model` config option. Fall back best-effort; callers already treat this as non-fatal.
+        if (!b.setSessionConfigOption) throw e;
+
         try {
-          await b.setSessionModel(sessionId, normalizedModelId);
-          return;
-        } catch (e: any) {
-          // Some ACP agents may not support `session/set_model` but may expose an equivalent
-          // `model` config option. Fall back best-effort; callers already treat this as non-fatal.
-          if (!b.setSessionConfigOption) throw e;
-
-          const msg = typeof e?.message === 'string' ? e.message : '';
-          const codeCandidate =
-            typeof e?.code === 'number'
-              ? e.code
-              : (typeof e?.error?.code === 'number' ? e.error.code : null);
-          const isMethodNotFound = codeCandidate === -32601 || /method not found/i.test(msg);
-          const isUnsupported =
-            isMethodNotFound ||
-            msg.includes('session/set_model') ||
-            msg.includes('set_model') ||
-            msg.includes('unstable_setSessionModel') ||
-            msg.includes('setSessionModel');
-          if (!isUnsupported) throw e;
-
           await b.setSessionConfigOption(sessionId, modelConfigOptionId, normalizedModelId);
           return;
+        } catch {
+          // If the fallback also fails, surface the original error so callers can retry.
+          throw e;
         }
       }
 
