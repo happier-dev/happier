@@ -9,7 +9,7 @@ import { activityCache } from "@/app/presence/sessionCache";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { timingSafeEqual } from "node:crypto";
-import { resolveRouteRateLimit } from "@/app/api/utils/apiRateLimitPolicy";
+import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 
 function bytesEqual(a: Uint8Array | null, b: Uint8Array | null) {
     if (a === b) return true;
@@ -322,12 +322,7 @@ export function machinesRoutes(app: Fastify) {
     app.get('/v1/machines', {
         preHandler: app.authenticate,
         config: {
-            rateLimit: resolveRouteRateLimit(process.env, {
-                maxEnvKey: "HAPPIER_MACHINES_RATE_LIMIT_MAX",
-                windowEnvKey: "HAPPIER_MACHINES_RATE_LIMIT_WINDOW",
-                defaultMax: 300,
-                defaultWindow: "1 minute",
-            }),
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "machines"),
         },
     }, async (request, reply) => {
         const userId = request.userId;
@@ -344,12 +339,7 @@ export function machinesRoutes(app: Fastify) {
     app.get('/v1/machines/:id', {
         preHandler: app.authenticate,
         config: {
-            rateLimit: resolveRouteRateLimit(process.env, {
-                maxEnvKey: "HAPPIER_MACHINES_RATE_LIMIT_MAX",
-                windowEnvKey: "HAPPIER_MACHINES_RATE_LIMIT_WINDOW",
-                defaultMax: 300,
-                defaultWindow: "1 minute",
-            }),
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "machines"),
         },
         schema: {
             params: z.object({

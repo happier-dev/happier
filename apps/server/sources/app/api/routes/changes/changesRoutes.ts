@@ -3,7 +3,7 @@ import { z } from "zod";
 import { type Fastify } from "../../types";
 import { changesRequestsCounter, changesReturnedChangesCounter } from "@/app/monitoring/metrics2";
 import { debug, warn } from "@/utils/logging/log";
-import { resolveRouteRateLimit } from "@/app/api/utils/apiRateLimitPolicy";
+import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 
 function redactIdForLogs(id: string): string {
     if (id.length <= 8) return `${id.slice(0, 2)}…`;
@@ -23,12 +23,7 @@ export function changesRoutes(app: Fastify) {
             },
         },
         config: {
-            rateLimit: resolveRouteRateLimit(process.env, {
-                maxEnvKey: "HAPPIER_CHANGES_RATE_LIMIT_MAX",
-                windowEnvKey: "HAPPIER_CHANGES_RATE_LIMIT_WINDOW",
-                defaultMax: 600,
-                defaultWindow: "1 minute",
-            }),
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "changes"),
         },
     }, async (request, reply) => {
         const userId = request.userId;
@@ -53,12 +48,7 @@ export function changesRoutes(app: Fastify) {
             }).optional(),
         },
         config: {
-            rateLimit: resolveRouteRateLimit(process.env, {
-                maxEnvKey: "HAPPIER_CHANGES_RATE_LIMIT_MAX",
-                windowEnvKey: "HAPPIER_CHANGES_RATE_LIMIT_WINDOW",
-                defaultMax: 600,
-                defaultWindow: "1 minute",
-            }),
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "changes"),
         },
     }, async (request, reply) => {
         const userId = request.userId;
