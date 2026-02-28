@@ -19,6 +19,7 @@ describe('apps/cli package publish contract', () => {
     expect(bundled).toContain('@happier-dev/agents');
     expect(bundled).toContain('@happier-dev/cli-common');
     expect(bundled).toContain('@happier-dev/protocol');
+    expect(bundled).toContain('@happier-dev/release-runtime');
 
     // External runtime deps used by protocol should be declared on protocol itself
     // (and vendored into the bundled protocol package during `prepack`).

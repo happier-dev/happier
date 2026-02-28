@@ -41,11 +41,13 @@ describe('bundleWorkspaceDeps', () => {
     const agentsDir = resolve(repoRoot, 'packages', 'agents');
     const cliCommonDir = resolve(repoRoot, 'packages', 'cli-common');
     const protocolDir = resolve(repoRoot, 'packages', 'protocol');
+    const releaseRuntimeDir = resolve(repoRoot, 'packages', 'release-runtime');
     const happyCliDir = resolve(repoRoot, 'apps', 'cli');
 
     mkdirSync(resolve(agentsDir, 'dist'), { recursive: true });
     mkdirSync(resolve(cliCommonDir, 'dist'), { recursive: true });
     mkdirSync(resolve(protocolDir, 'dist'), { recursive: true });
+    mkdirSync(resolve(releaseRuntimeDir, 'dist'), { recursive: true });
     mkdirSync(happyCliDir, { recursive: true });
 
     writeJson(resolve(agentsDir, 'package.json'), {
@@ -81,10 +83,21 @@ describe('bundleWorkspaceDeps', () => {
       exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
       scripts: { postinstall: 'echo should-not-run' },
     });
+    writeJson(resolve(releaseRuntimeDir, 'package.json'), {
+      name: '@happier-dev/release-runtime',
+      version: '0.0.0',
+      type: 'module',
+      main: './dist/index.js',
+      types: './dist/index.d.ts',
+      exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
+      scripts: { postinstall: 'echo should-not-run' },
+      devDependencies: { typescript: '^5' },
+    });
 
     writeFileSync(resolve(agentsDir, 'dist', 'index.js'), 'export const x = 1;\n', 'utf8');
     writeFileSync(resolve(protocolDir, 'dist', 'index.js'), 'export const y = 2;\n', 'utf8');
     writeFileSync(resolve(cliCommonDir, 'dist', 'index.js'), 'export const z = 3;\n', 'utf8');
+    writeFileSync(resolve(releaseRuntimeDir, 'dist', 'index.js'), 'export const w = 4;\n', 'utf8');
 
     bundleWorkspaceDeps({ repoRoot, happyCliDir });
 
@@ -118,6 +131,9 @@ describe('bundleWorkspaceDeps', () => {
     const bundledCommonPkgJson = JSON.parse(
       readFileSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'cli-common', 'package.json'), 'utf8'),
     );
+    const bundledReleaseRuntimePkgJson = JSON.parse(
+      readFileSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'release-runtime', 'package.json'), 'utf8'),
+    );
 
     expect(bundledAgentsPkgJson.scripts).toBeUndefined();
     expect(bundledAgentsPkgJson.devDependencies).toBeUndefined();
@@ -128,6 +144,10 @@ describe('bundleWorkspaceDeps', () => {
 
     expect(bundledCommonPkgJson.scripts).toBeUndefined();
     expect(bundledCommonPkgJson.name).toBe('@happier-dev/cli-common');
+
+    expect(bundledReleaseRuntimePkgJson.scripts).toBeUndefined();
+    expect(bundledReleaseRuntimePkgJson.devDependencies).toBeUndefined();
+    expect(bundledReleaseRuntimePkgJson.name).toBe('@happier-dev/release-runtime');
   });
 
   it('vendors the external runtime dependency tree for bundled workspace packages', () => {
@@ -136,12 +156,14 @@ describe('bundleWorkspaceDeps', () => {
     writeFileSync(resolve(repoRoot, 'yarn.lock'), '# lock\n', 'utf8');
 
     const protocolDir = resolve(repoRoot, 'packages', 'protocol');
+    const releaseRuntimeDir = resolve(repoRoot, 'packages', 'release-runtime');
     const happyCliDir = resolve(repoRoot, 'apps', 'cli');
 
     const depADir = resolve(repoRoot, 'node_modules', 'dep-a');
     const depBDir = resolve(repoRoot, 'node_modules', 'dep-b');
 
     mkdirSync(resolve(protocolDir, 'dist'), { recursive: true });
+    mkdirSync(resolve(releaseRuntimeDir, 'dist'), { recursive: true });
     mkdirSync(happyCliDir, { recursive: true });
     mkdirSync(depADir, { recursive: true });
     mkdirSync(depBDir, { recursive: true });
@@ -158,6 +180,15 @@ describe('bundleWorkspaceDeps', () => {
       },
     });
     writeFileSync(resolve(protocolDir, 'dist', 'index.js'), 'export const y = 2;\n', 'utf8');
+    writeJson(resolve(releaseRuntimeDir, 'package.json'), {
+      name: '@happier-dev/release-runtime',
+      version: '0.0.0',
+      type: 'module',
+      main: './dist/index.js',
+      types: './dist/index.d.ts',
+      exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
+    });
+    writeFileSync(resolve(releaseRuntimeDir, 'dist', 'index.js'), 'export const w = 4;\n', 'utf8');
 
     writeJson(resolve(depADir, 'package.json'), {
       name: 'dep-a',
