@@ -114,7 +114,7 @@ export function planDaemonServiceInstall(params: Readonly<{
     const stderrPath = join(params.happierHomeDir, 'logs', `daemon-service.${instanceId}.err.log`);
 
     const env: Record<string, string> = {
-      PATH: buildLaunchdPath({ execPath: params.nodePath }),
+      PATH: buildLaunchdPath({ execPath: params.nodePath, homeDir: params.userHomeDir }),
       HAPPIER_HOME_DIR: params.happierHomeDir,
       HAPPIER_SERVER_URL: params.serverUrl,
       HAPPIER_WEBAPP_URL: params.webappUrl,
@@ -209,7 +209,7 @@ export function planDaemonServiceInstall(params: Readonly<{
     execStart: programArgs.map(escapeSystemdValue).join(' '),
     workingDirectory: '%h',
     env: {
-      PATH: buildSystemdPath({ execPath: params.nodePath }),
+      PATH: buildSystemdPath({ execPath: params.nodePath, homeDir: params.userHomeDir }),
       HAPPIER_HOME_DIR: params.happierHomeDir,
       HAPPIER_SERVER_URL: params.serverUrl,
       HAPPIER_WEBAPP_URL: params.webappUrl,

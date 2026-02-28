@@ -6,7 +6,7 @@
  * deduplication and order preservation.
  */
 
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const FALLBACK_PATH = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
 
@@ -25,18 +25,23 @@ function splitPath(p: string): string[] {
 export function buildServicePath(params: Readonly<{
   execPath?: string;
   basePath?: string;
+  homeDir?: string;
   defaultPath?: string;
 }> = {}): string {
   const execPath = params.execPath ?? process.execPath;
   const basePath = params.basePath ?? process.env.PATH ?? '';
   const nodeDir = execPath ? dirname(execPath) : '';
+  const homeDir = typeof params.homeDir === 'string' ? params.homeDir.trim() : '';
   const defaults = splitPath(params.defaultPath ?? FALLBACK_PATH);
   const fromNode = nodeDir ? [nodeDir] : [];
   const fromEnv = splitPath(basePath);
+  const fromHome = homeDir
+    ? [join(homeDir, '.local', 'bin'), join(homeDir, 'bin')]
+    : [];
 
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const part of [...fromNode, ...fromEnv, ...defaults]) {
+  for (const part of [...fromNode, ...fromEnv, ...fromHome, ...defaults]) {
     if (seen.has(part)) continue;
     seen.add(part);
     out.push(part);
