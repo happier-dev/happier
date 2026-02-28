@@ -34,7 +34,7 @@ function mockServerConfig() {
 describe('apiConnectedServicesV3', () => {
   it('registers a plaintext credential record at the v3 endpoint', async () => {
     mockServerConfig();
-    const fetchMock = vi.fn(async () => ({
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({
       ok: true,
       status: 200,
       json: async () => ({ success: true }),
@@ -54,7 +54,7 @@ describe('apiConnectedServicesV3', () => {
         updatedAt: Date.now(),
         expiresAt: null,
         oauth: null,
-        token: { token: 'tok', providerAccountId: null, providerEmail: null },
+        token: { token: 'tok', providerAccountId: null, providerEmail: null, raw: null },
       },
     });
 
@@ -101,9 +101,9 @@ describe('apiConnectedServicesV3', () => {
       updatedAt: Date.now(),
       expiresAt: null,
       oauth: null,
-      token: { token: 'tok', providerAccountId: null, providerEmail: null },
+      token: { token: 'tok', providerAccountId: null, providerEmail: null, raw: null },
     };
-    const fetchMock = vi.fn(async () => ({
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({
       ok: true,
       status: 200,
       json: async () => ({ content: { t: 'plain', v: record } }),

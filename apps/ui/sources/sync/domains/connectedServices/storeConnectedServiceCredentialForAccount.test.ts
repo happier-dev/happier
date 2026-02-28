@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
 
 vi.mock('@/utils/timing/time', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/utils/timing/time')>();
@@ -33,18 +34,18 @@ const legacyCredentials: AuthCredentials = {
   secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
 };
 
-function sampleRecord() {
+function sampleRecord(): ConnectedServiceCredentialRecordV1 {
   const now = Date.now();
   return {
     v: 1,
     serviceId: 'openai-codex',
     profileId: 'work',
-    kind: 'token' as const,
+    kind: 'token',
     createdAt: now,
     updatedAt: now,
     expiresAt: null,
     oauth: null,
-    token: { token: 'tok', providerAccountId: null, providerEmail: null },
+    token: { token: 'tok', providerAccountId: null, providerEmail: null, raw: null },
   };
 }
 
