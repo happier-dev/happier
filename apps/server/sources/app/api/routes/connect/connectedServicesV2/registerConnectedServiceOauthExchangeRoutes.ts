@@ -4,6 +4,7 @@ import type { Fastify } from "../../../types";
 import { ConnectedServiceIdSchema, type ConnectedServiceId } from "@happier-dev/protocol";
 
 import {
+  ConnectedServiceOauthStateMismatchError,
   ConnectedServiceOauthTimeoutError,
   exchangeConnectedServiceOauthTokens,
 } from "./exchangeConnectedServiceOauthTokens";
@@ -69,6 +70,9 @@ export function registerConnectedServiceOauthExchangeRoutes(app: Fastify): void 
     } catch (error) {
       if (error instanceof ConnectedServiceOauthTimeoutError) {
         return reply.code(400).send({ error: "connect_oauth_timeout" });
+      }
+      if (error instanceof ConnectedServiceOauthStateMismatchError) {
+        return reply.code(400).send({ error: "connect_oauth_state_mismatch" });
       }
       return reply.code(400).send({ error: "connect_oauth_exchange_failed" });
     }

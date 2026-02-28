@@ -16,6 +16,13 @@ export class ConnectedServiceOauthTimeoutError extends Error {
     }
 }
 
+export class ConnectedServiceOauthStateMismatchError extends Error {
+    constructor() {
+        super("OAuth state mismatch");
+        this.name = "ConnectedServiceOauthStateMismatchError";
+    }
+}
+
 type OauthExchangeInput = Readonly<{
     serviceId: ConnectedServiceId;
     publicKeyB64Url: string;
@@ -63,6 +70,14 @@ function resolveGeminiOauthClientId(env: NodeJS.ProcessEnv): string {
 
 function resolveGeminiOauthTokenUrl(env: NodeJS.ProcessEnv): string {
     return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_TOKEN_URL, "https://oauth2.googleapis.com/token");
+}
+
+function resolveClaudeSubscriptionOauthClientId(env: NodeJS.ProcessEnv): string {
+    return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID, "9d1c250a-e61b-44d9-88ed-5944d1962f5e");
+}
+
+function resolveClaudeSubscriptionOauthTokenUrl(env: NodeJS.ProcessEnv): string {
+    return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL, "https://console.anthropic.com/v1/oauth/token");
 }
 
 function parseRecipientPublicKey(publicKeyB64Url: string): Uint8Array {
@@ -226,6 +241,56 @@ async function exchangeGemini(params: Readonly<{
     };
 }
 
+async function exchangeClaudeSubscription(params: Readonly<{
+    code: string;
+    verifier: string;
+    redirectUri: string;
+    state: string;
+    now: number;
+    fetcher: typeof fetch;
+}>): Promise<OauthExchangePayload> {
+    const clientId = resolveClaudeSubscriptionOauthClientId(process.env);
+    const tokenUrl = resolveClaudeSubscriptionOauthTokenUrl(process.env);
+
+    const response = await params.fetcher(tokenUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            grant_type: "authorization_code",
+            code: params.code,
+            redirect_uri: params.redirectUri,
+            client_id: clientId,
+            code_verifier: params.verifier,
+            state: params.state,
+        }),
+    });
+    if (!response.ok) {
+        throw new Error(`Token exchange failed: ${response.status}`);
+    }
+
+    const json = (await response.json()) as any;
+    const accessToken = assertNonEmptyString(json?.access_token, "access_token");
+    const refreshToken = assertNonEmptyString(json?.refresh_token, "refresh_token");
+    const expiresIn = Number.isFinite(json?.expires_in) ? Number(json.expires_in) : NaN;
+    const expiresAt = Number.isFinite(expiresIn) && expiresIn > 0 ? params.now + Math.trunc(expiresIn) * 1000 : null;
+
+    const providerEmail = typeof json?.account?.email_address === "string" ? json.account.email_address : null;
+    const providerAccountId = typeof json?.account?.uuid === "string" ? json.account.uuid : null;
+
+    return {
+        serviceId: "claude-subscription",
+        accessToken,
+        refreshToken,
+        idToken: null,
+        scope: typeof json?.scope === "string" ? json.scope : null,
+        tokenType: typeof json?.token_type === "string" ? json.token_type : null,
+        providerEmail,
+        providerAccountId,
+        expiresAt,
+        raw: json,
+    };
+}
+
 export async function exchangeConnectedServiceOauthTokens(params: OauthExchangeInput): Promise<Readonly<{
     bundleB64Url: string;
 }>> {
@@ -246,6 +311,18 @@ export async function exchangeConnectedServiceOauthTokens(params: OauthExchangeI
         }
         if (params.serviceId === "anthropic") {
             throw new Error("Anthropic OAuth exchange is not supported. Use an API key instead.");
+        }
+        if (params.serviceId === "claude-subscription") {
+            const state = params.state?.trim() ?? "";
+            if (!state) throw new ConnectedServiceOauthStateMismatchError();
+            return await exchangeClaudeSubscription({
+                code: params.code,
+                verifier: params.verifier,
+                redirectUri: params.redirectUri,
+                state,
+                now: params.now,
+                fetcher,
+            });
         }
         if (params.serviceId === "gemini") {
             return await exchangeGemini({

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { encodeBase64, BOX_BUNDLE_PUBLIC_KEY_BYTES } from "@happier-dev/protocol";
 
-import { ConnectedServiceOauthTimeoutError, exchangeConnectedServiceOauthTokens } from "./exchangeConnectedServiceOauthTokens";
+import { ConnectedServiceOauthStateMismatchError, ConnectedServiceOauthTimeoutError, exchangeConnectedServiceOauthTokens } from "./exchangeConnectedServiceOauthTokens";
 
 function buildRecipientPublicKeyB64Url(): string {
     const bytes = new Uint8Array(BOX_BUNDLE_PUBLIC_KEY_BYTES).fill(7);
@@ -21,6 +21,53 @@ describe("exchangeConnectedServiceOauthTokens", () => {
             fetcher: vi.fn() as any,
             state: "s",
         })).rejects.toThrow(/anthropic/i);
+    });
+
+    it("exchanges claude-subscription tokens", async () => {
+        const fetchMock = vi.fn(async (_url: any, init: any) => {
+            const body = JSON.parse(String(init?.body ?? "{}"));
+            expect(body.grant_type).toBe("authorization_code");
+            expect(body.code).toBe("c");
+            expect(body.client_id).toBeTruthy();
+            expect(body.code_verifier).toBe("v");
+            expect(body.state).toBe("s");
+            return new Response(JSON.stringify({
+                access_token: "at",
+                refresh_token: "rt",
+                expires_in: 3600,
+                token_type: "Bearer",
+                scope: "user:inference",
+                account: { uuid: "acct", email_address: "user@example.com" },
+            }), { status: 200, headers: { "Content-Type": "application/json" } });
+        });
+
+        const res = await exchangeConnectedServiceOauthTokens({
+            serviceId: "claude-subscription",
+            publicKeyB64Url: buildRecipientPublicKeyB64Url(),
+            code: "c",
+            verifier: "v",
+            redirectUri: "http://localhost:54545/oauth2callback",
+            now: 1700000000000,
+            fetcher: fetchMock as any,
+            state: "s",
+        });
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(typeof res.bundleB64Url).toBe("string");
+        expect(res.bundleB64Url.length).toBeGreaterThan(0);
+    });
+
+    it("rejects claude-subscription exchange when state is missing", async () => {
+        await expect(exchangeConnectedServiceOauthTokens({
+            serviceId: "claude-subscription",
+            publicKeyB64Url: buildRecipientPublicKeyB64Url(),
+            code: "c",
+            verifier: "v",
+            redirectUri: "http://localhost:54545/oauth2callback",
+            now: 1700000000000,
+            fetcher: vi.fn() as any,
+            state: "",
+        })).rejects.toBeInstanceOf(ConnectedServiceOauthStateMismatchError);
     });
 
     it("exchanges gemini tokens without sending client_secret", async () => {
