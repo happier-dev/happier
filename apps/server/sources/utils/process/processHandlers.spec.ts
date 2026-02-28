@@ -5,8 +5,18 @@ vi.mock("./shutdown", () => ({ initiateShutdown }));
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
+const sentryCaptureException = vi.fn<(...args: unknown[]) => void>(() => {});
+const sentryFlush = vi.fn<(...args: unknown[]) => Promise<boolean>>(async () => true);
+vi.mock("@sentry/node", () => ({
+    getClient: () => ({}),
+    captureException: (...args: unknown[]) => sentryCaptureException(...args),
+    flush: (...args: unknown[]) => sentryFlush(...args),
+}));
+
 beforeEach(() => {
     initiateShutdown.mockClear();
+    sentryCaptureException.mockClear();
+    sentryFlush.mockClear();
 });
 
 function restoreEnvVar(name: string, value: string | undefined) {
@@ -80,6 +90,8 @@ describe("registerProcessHandlers", () => {
             handler!(new Error("boom"));
             await new Promise((r) => setImmediate(r));
 
+            expect(sentryCaptureException).toHaveBeenCalledTimes(1);
+            expect(sentryFlush).toHaveBeenCalledTimes(1);
             expect(initiateShutdown).toHaveBeenCalledWith("fatal:uncaughtException");
             expect(process.exitCode).toBe(1);
             expect(exitSpy).toHaveBeenCalledWith(1);
@@ -112,6 +124,8 @@ describe("registerProcessHandlers", () => {
             handler!("nope", Promise.resolve());
             await new Promise((r) => setImmediate(r));
 
+            expect(sentryCaptureException).toHaveBeenCalledTimes(1);
+            expect(sentryFlush).toHaveBeenCalledTimes(1);
             expect(initiateShutdown).toHaveBeenCalledWith("fatal:unhandledRejection");
             expect(process.exitCode).toBe(1);
             expect(exitSpy).not.toHaveBeenCalled();

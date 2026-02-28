@@ -1,5 +1,6 @@
 import { log } from '@/utils/logging/log';
 import { initiateShutdown } from './shutdown';
+import * as Sentry from '@sentry/node';
 
 export function registerProcessHandlers(): void {
     if ((globalThis as any).__HAPPY_PROCESS_HANDLERS_INSTALLED) {
@@ -77,6 +78,16 @@ async function handleFatal(type: 'uncaughtException' | 'unhandledRejection', rea
         },
         type === 'uncaughtException' ? `Uncaught Exception: ${errorMsg}` : `Unhandled Rejection: ${errorMsg}`,
     );
+
+    try {
+        if (Sentry.getClient()) {
+            const err = reason instanceof Error ? reason : new Error(String(reason));
+            Sentry.captureException(err);
+            await Sentry.flush(2_000);
+        }
+    } catch {
+        // ignore Sentry failures during fatal error handling
+    }
 
     if (type === 'uncaughtException') {
         console.error('Uncaught Exception:', reason);
