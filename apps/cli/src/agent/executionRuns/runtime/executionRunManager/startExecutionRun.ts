@@ -157,6 +157,7 @@ export async function startExecutionRun(args: Readonly<{
       callId,
       name: 'SubAgentRun',
       input: {
+        runId,
         intent: args.params.intent,
         backendId: args.params.backendId,
         instructions: args.params.instructions ?? '',

@@ -132,6 +132,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const toolCall = sent.find((m) => (m.body as any)?.type === 'tool-call');
     expect(toolCall).toBeTruthy();
     expect((toolCall?.body as any).name).toBe('SubAgentRun');
+    expect((toolCall?.body as any)?.input?.runId).toBe(started.runId);
 
     const sidechainToolCall = sent.find((m) => (m.body as any)?.type === 'tool-call' && (m.body as any)?.name === 'read_file');
     expect(sidechainToolCall).toBeTruthy();
