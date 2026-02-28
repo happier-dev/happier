@@ -11,6 +11,7 @@ import type { JsRuntime } from "./runClaude";
 import { getClaudeRemoteSystemPrompt } from "./utils/remoteSystemPrompt";
 import { parseClaudeSdkFlagOverridesFromArgs } from "./remote/sdkFlagOverrides";
 import { resolveClaudeRemoteSessionStartPlan } from "./remote/sessionStartPlan";
+import { resolveClaudeConfigDirOverride } from "./utils/resolveClaudeConfigDirOverride";
 import { resolveClaudeCodeExperimentalEnvOverlay } from "./spawn/resolveClaudeCodeExperimentalEnvOverlay";
 
 function extractMcpConfigPassthroughArgs(args?: string[]): string[] | undefined {
@@ -41,7 +42,6 @@ export async function claudeRemote(opts: {
     sessionId: string | null,
     transcriptPath: string | null,
     path: string,
-    claudeEnvVars?: Record<string, string>,
     claudeArgs?: string[],
     /**
      * Optional MCP config JSON to inject into the Claude Code CLI invocation (e.g. Happier MCP).
@@ -78,16 +78,10 @@ export async function claudeRemote(opts: {
         sessionId: opts.sessionId,
         transcriptPath: opts.transcriptPath,
         path: opts.path,
-        claudeConfigDir: opts.claudeEnvVars?.CLAUDE_CONFIG_DIR ?? null,
+        claudeConfigDir: resolveClaudeConfigDirOverride(process.env),
         claudeArgs: opts.claudeArgs,
     });
 
-    // Set environment variables for Claude Code SDK
-    if (opts.claudeEnvVars) {
-        Object.entries(opts.claudeEnvVars).forEach(([key, value]) => {
-            process.env[key] = value;
-        });
-    }
 
     // Get initial message
     const initial = await opts.nextMessage();
