@@ -345,6 +345,53 @@ export function createGitSessionRpcHarness(workspace: string) {
             return { success: true, stdout: '', stderr: '' };
         }
 
+        if (method === RPC_METHODS.SCM_CHANGE_DISCARD) {
+            const entries = Array.isArray(request?.entries) ? request.entries : [];
+            if (entries.length === 0) {
+                return {
+                    success: false,
+                    error: 'Missing entries',
+                    errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+                };
+            }
+
+            for (const entry of entries) {
+                const path = typeof entry?.path === 'string' ? entry.path : '';
+                const kind = typeof entry?.kind === 'string' ? entry.kind : '';
+                if (!path) {
+                    return {
+                        success: false,
+                        error: 'Invalid entry path',
+                        errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+                    };
+                }
+
+                const shouldRemove = kind === 'untracked' || kind === 'added';
+                const restore = runGit(cwd, ['restore', '--staged', '--worktree', '--', path]);
+                if (!restore.success && !shouldRemove) {
+                    return {
+                        success: false,
+                        error: restore.stderr || 'Failed to discard file',
+                        errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+                        stderr: restore.stderr,
+                    };
+                }
+                if (shouldRemove) {
+                    const clean = runGit(cwd, ['clean', '-f', '--', path]);
+                    if (!clean.success) {
+                        return {
+                            success: false,
+                            error: clean.stderr || 'Failed to discard file',
+                            errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+                            stderr: clean.stderr,
+                        };
+                    }
+                }
+            }
+
+            return { success: true, stdout: '', stderr: '' };
+        }
+
         if (method === RPC_METHODS.SCM_COMMIT_CREATE) {
             const message = (request?.message as string | undefined)?.trim();
             if (!message) {
