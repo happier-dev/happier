@@ -5,16 +5,19 @@ import { Future } from "@/utils/future";
 import { createSessionScanner } from "./utils/sessionScanner";
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import type { PermissionMode } from "@/api/types";
-import { mapToClaudeMode } from "./utils/permissionMode";
+import { resolveClaudeSdkPermissionModeFromEnhancedMode } from "./utils/permissionMode";
 import { discardQueuedAndPendingForLocalSwitch } from '@/agent/localControl/discardQueuedAndPendingForLocalSwitch';
 import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
-import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
+import { resolveAcpSessionModeOverrideFromMetadataSnapshot, resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
 import { configuration } from '@/configuration';
 import { tryMergeUserMcpConfigArgsIntoHappierMcp } from './utils/mcpConfigMerge';
 import { resolveClaudeConfigDirOverride } from './utils/resolveClaudeConfigDirOverride';
 
-function upsertClaudePermissionModeArgs(args: string[] | undefined, mode: PermissionMode): string[] | undefined {
+function upsertClaudePermissionModeArgs(
+    args: string[] | undefined,
+    mode: { permissionMode: PermissionMode; agentModeId?: string | null },
+): string[] | undefined {
     const filtered: string[] = [];
     const input = args ?? [];
 
@@ -35,7 +38,7 @@ function upsertClaudePermissionModeArgs(args: string[] | undefined, mode: Permis
         filtered.push(arg);
     }
 
-    const claudeMode = mapToClaudeMode(mode);
+    const claudeMode = resolveClaudeSdkPermissionModeFromEnhancedMode(mode);
     if (claudeMode !== 'default') {
         filtered.push('--permission-mode', claudeMode);
     }
@@ -233,7 +236,17 @@ export async function claudeLocalLauncher(
 
                 // Ensure local Claude Code is spawned with the current session permission mode.
                 // This is essential for remote → local switches where the app-selected mode must carry over.
-                session.claudeArgs = upsertClaudePermissionModeArgs(session.claudeArgs, session.lastPermissionMode);
+                const metadataSnapshot =
+                    clientEmitter && typeof clientEmitter.getMetadataSnapshot === 'function'
+                        ? clientEmitter.getMetadataSnapshot()
+                        : null;
+                const resolvedAgentMode = resolveAcpSessionModeOverrideFromMetadataSnapshot({
+                    metadata: metadataSnapshot,
+                });
+                session.claudeArgs = upsertClaudePermissionModeArgs(session.claudeArgs, {
+                    permissionMode: session.lastPermissionMode,
+                    agentModeId: resolvedAgentMode ? resolvedAgentMode.modeId : null,
+                });
 
                 const { mcpServers: baseMcpServers, mcpConfigJson: baseMcpConfigJson } = await session.getOrCreateHappierMcpBridge();
 
