@@ -1,6 +1,7 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import type { PendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect.shared';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -8,7 +9,7 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerBackMock = vi.fn();
-const getPendingTerminalConnectMock = vi.fn(() => null);
+const getPendingTerminalConnectMock = vi.fn<() => PendingTerminalConnect | null>(() => null);
 const globalWindow = globalThis as unknown as { window?: Window };
 const originalWindow = globalWindow.window;
 
