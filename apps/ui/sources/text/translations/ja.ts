@@ -217,6 +217,30 @@ export const ja: TranslationStructure = {
     },
   },
 
+  appCrash: {
+    title: "問題が発生しました",
+    subtitle:
+      "Happierで予期しないエラーが発生しました。アプリUIを再起動するか、サポート用に詳細をコピーできます。",
+    detailsTitle: "エラーの詳細",
+    restart: "アプリを再起動",
+    copyDetails: "エラー詳細をコピー",
+  },
+
+  webCryptoGate: {
+    title: "安全な接続が必要です",
+    subtitle:
+      "このページはデータを安全に保つためにWebCryptoが必要です。ブラウザはセキュアコンテキスト（HTTPS/localhost）以外ではWebCryptoを利用できません。",
+    howToFix: "解決方法",
+    fixHttps: "HTTPSでUIを開いてください（推奨）。",
+    fixTunnel: "LANからアクセスする場合は、HTTPSトンネルまたはTLS付きのリバースプロキシを使用してください。",
+    fixLocalhost:
+      "同じマシンで開いている場合は http://localhost を使用してください（ループバックはセキュアとして扱われます）。",
+    currentOrigin: "現在のオリジン",
+    secureContext: "セキュアコンテキスト",
+    copyDetails: "詳細をコピー",
+    reload: "再読み込み",
+  },
+
   common: {
     // Simple string constants
     add: "追加",
@@ -226,9 +250,11 @@ export const ja: TranslationStructure = {
     moreActionsHint: "追加の操作メニューを開きます",
     cancel: "キャンセル",
     close: "閉じる",
-    done: "完了",
-    authenticate: "認証",
-    save: "保存",
+      open: "開く",
+      done: "完了",
+      reorder: "並べ替え",
+      authenticate: "認証",
+      save: "保存",
     error: "エラー",
     success: "成功",
     ok: "OK",
@@ -244,6 +270,7 @@ export const ja: TranslationStructure = {
     applied: "適用済み",
     signOut: "サインアウト",
     keep: "保持",
+    use: "使用する",
     reset: "リセット",
     logout: "ログアウト",
     yes: "はい",
@@ -259,6 +286,8 @@ export const ja: TranslationStructure = {
     copied: "コピーしました",
     copy: "コピー",
     copyWithLabel: ({ label }: { label: string }) => `${label} をコピー`,
+    expand: "展開",
+    collapse: "折りたたむ",
     command: "コマンド",
     scanning: "スキャン中...",
     urlPlaceholder: "https://example.com",
@@ -644,6 +673,7 @@ export const ja: TranslationStructure = {
     online: "オンライン",
     offline: "オフライン",
     lastSeen: ({ time }: { time: string }) => `最終アクセス: ${time}`,
+    actionRequired: "操作が必要",
     permissionRequired: "権限が必要です",
     activeNow: "アクティブ",
     unknown: "不明",
@@ -673,6 +703,9 @@ export const ja: TranslationStructure = {
     invalidSecretKey:
       "シークレットキーが無効です。確認して再試行してください。",
     enterUrlManually: "URLを手動で入力",
+    scanComputerQrUnavailableTitle: "PCのQRスキャンは利用できません",
+    scanComputerQrUnavailableBody:
+      "このサーバーではこのサインイン方法が無効になっています。下の別の方法でアカウントを復元してください。",
     scanComputerQrInstructions: "パソコンの Happier（設定 → スマホを追加）に表示されたQRコードをスキャンします。",
     scanComputerQrButton: "QRをスキャンしてサインイン",
     waitingForApproval: "承認待ち…",
@@ -680,14 +713,19 @@ export const ja: TranslationStructure = {
     addPhoneQrInstructions: "Happier モバイルアプリでこのQRコードをスキャンして、スマホでサインインします。",
     pairingRequestTitle: "ペアリング要求",
     pairingRequestBody: "スマホに表示されたコードと一致することを確認してから承認してください。",
+    pairingAlreadyRequestedTitle: "コードは使用済みです",
+    pairingAlreadyRequestedBody:
+      "このQRコードは別の端末で既にスキャンされています。パソコン側で新しいコードを生成してください。",
     deviceLabel: "デバイス",
     confirmCodeLabel: "確認コード",
     approveButton: "承認",
     generateNewQrCode: "新しいQRコードを生成",
+    pairingQrExpired: "このQRコードは期限切れです。新しいコードを生成してください。",
     openMachine: "マシンを開く",
     terminalUrlPlaceholder: "happier://terminal?...",
+    accountUrlPlaceholder: "happier:///account?...",
     restoreQrInstructions:
-      "1. モバイル端末で Happier を開く\n2. 設定 → アカウント に移動\n3. 「新しいデバイスをリンク」をタップ\n4. この QR コードをスキャン",
+      "すでにサインインしている端末で、設定 → アカウント に移動してこのQRコードをスキャンしてください。",
     externalAuthVerifiedTitle: ({ provider }: { provider: string }) =>
       `${provider} の認証が完了しました`,
     externalAuthVerifiedBody: ({ provider }: { provider: string }) =>
@@ -713,6 +751,8 @@ export const ja: TranslationStructure = {
     unsupported: {
       connectTitle: ({ name }: { name: string }) => `${name} を接続`,
       runCommandInTerminal: "ターミナルで次のコマンドを実行してください:",
+      runCommandInTerminalWithCommand: ({ command }: { command: string }) =>
+        `ターミナルで次のコマンドを実行してください:\n\n${command}`,
       command: ({ name }: { name: string }) => `happier connect ${name}`,
     },
   },
@@ -1383,17 +1423,50 @@ export const ja: TranslationStructure = {
       pasteRedirectUrl: "リダイレクト URL を貼り付け",
       pasteRedirectUrlPromptBody:
         "OAuth を完了したら、ブラウザのアドレスバーに表示されている最終的なリダイレクト URL をコピーして、ここに貼り付けてください。",
+      tryDeviceInstead: "デバイス認証を試す",
+      tryEmbeddedInstead: "アプリ内ブラウザを試す",
       working: "処理中…",
       alerts: {
         connectedTitle: "接続済み",
         connectedBody: ({ serviceId, profileId }: { serviceId: string; profileId: string }) =>
           `${serviceId}（${profileId}）を接続しました。`,
+        failedToOpenUrl: "URL を開けませんでした",
         failedToConnect: "接続に失敗しました",
+      },
+    },
+    deviceAuth: {
+      invalidConfig: "接続済みサービスの設定が無効です。",
+      title: "接続（デバイス）",
+      description:
+        "検証ページを開き、コードを入力して、接続が完了するまでこの画面を開いたままにしてください。",
+      openVerificationUrl: "検証ページを開く",
+      userCode: "ユーザーコード",
+      securityHint:
+        "ヒント:「コピー」をタップしてコードをコピーできます。入力するのは auth.openai.com のみで、誰とも共有しないでください。",
+      deviceAuthDisabledHint:
+        "検証ページでデバイスコード認可が無効と表示される場合は、ChatGPT の設定で「Enable device code authorization for Codex」を有効にして再試行してください。",
+      preparing: "準備中…",
+      waiting: "承認待ち…",
+      polling: "承認を確認中…",
+      usePasteInstead: "代わりにリダイレクトURLを貼り付ける",
+      useBrowserInstead: "代わりにアプリ内ブラウザを使用する",
+      alerts: {
+        connectedTitle: "接続済み",
+        connectedBody: ({ serviceId, profileId }: { serviceId: string; profileId: string }) =>
+          `${serviceId}（${profileId}）を接続しました。`,
+        failedToConnect: "接続に失敗しました",
+        failedToStart: "デバイス認証の開始に失敗しました",
       },
     },
     detail: {
       unknownService: "不明な接続済みサービスです。",
       actionsGroupTitle: "操作",
+      actions: {
+        setDefault: "既定に設定",
+        unsetDefault: "既定を解除",
+        editLabel: "ラベルを編集",
+        reconnect: "再接続",
+      },
       setDefaultProfileTitle: "既定のプロファイルを設定",
       setDefaultProfileSubtitleDefault: ({ profileId }: { profileId: string }) =>
         `既定: ${profileId}`,
@@ -1403,15 +1476,27 @@ export const ja: TranslationStructure = {
       setProfileLabelSubtitle: "認証ピッカーに表示される任意のラベル",
       addOauthProfileTitle: "OAuthプロファイルを追加",
       addOauthProfileSubtitle: "新しいアカウントプロファイルを接続",
+      addOauthProfileDeviceTitle: "デバイス認証で追加",
+      addOauthProfileDeviceSubtitle: "Web/リモート環境に推奨",
+      addOauthProfilePasteTitle: "リダイレクト貼り付けで追加",
+      addOauthProfilePasteSubtitle: "URL をコピー/貼り付けする手動フロー",
+      addOauthProfileBrowserTitle: "アプリ内ブラウザで追加",
+      addOauthProfileBrowserSubtitle: "対応環境では組み込みブラウザを使用",
+      connectApiKeyTitle: "APIキーで接続",
+      connectApiKeySubtitle: "Anthropic の API キーを貼り付け",
       connectSetupTokenTitle: "setup-token で接続",
-      connectSetupTokenSubtitle: "Claude の setup-token を貼り付け",
+      connectSetupTokenSubtitle: "Claude の setup-token（claude setup-token）を貼り付け",
       disconnectConfirmBody: ({ service, profileId }: { service: string; profileId: string }) =>
         `「${service}（${profileId}）」を切断しますか？`,
       prompts: {
         profileIdTitle: "プロファイルID",
         profileIdBody: "work / personal / alt のような短いラベルを使ってください。",
+        apiKeyTitle: "API キー",
+        apiKeyBody: "Anthropic の API キーを貼り付けてください。",
+        apiKeyPlaceholder: "例: sk-ant-…",
         setupTokenTitle: "セットアップトークン",
-        setupTokenBody: "Claude の setup-token を貼り付けてください。",
+        setupTokenBody: "Claude の setup-token（claude setup-token）を貼り付けてください。",
+        setupTokenPlaceholder: "例: sk-ant-oat01-…",
         profileLabelTitle: "プロファイルラベル",
         profileLabelBody: "任意。認証ピッカーに表示されます。",
         profileLabelPlaceholder: "仕事用アカウント",
@@ -1430,6 +1515,17 @@ export const ja: TranslationStructure = {
         defaultBadge: "既定",
         needsReauth: "再認証が必要",
       },
+    },
+    profile: {
+      profileId: "プロファイルID",
+      status: "状態",
+      email: "メール",
+      accountId: "アカウントID",
+      quotaTitle: "クォータ",
+      defaultSubtitle: "このプロファイルは既定で選択されています",
+      setDefaultSubtitle: "このプロファイルを既定で使用します",
+      disconnectSubtitle: "このプロファイルの資格情報を削除します",
+      reconnectSubtitle: "このプロファイルを再認証します",
     },
     authModal: {
       nativeAuthTitle: "バックエンドのネイティブ認証",
@@ -1741,76 +1837,77 @@ export const ja: TranslationStructure = {
     },
   },
 
-	  notifications: {
-	    actions: {
-	      allow: '許可',
-	      deny: '拒否',
-	      answer: '回答',
-	    },
-	    channels: {
-	      default: 'デフォルト',
-	      permissionRequests: '権限リクエスト',
-	      userActionRequests: 'アクションリクエスト',
-	    },
-	  },
+    notifications: {
+      actions: {
+        allow: '許可',
+        deny: '拒否',
+        answer: '回答',
+      },
+      channels: {
+        default: 'デフォルト',
+        permissionRequests: '権限リクエスト',
+        userActionRequests: 'アクションリクエスト',
+      },
+    },
 
   settingsProviders: {
-	    title: "AIプロバイダー設定",
-	    entrySubtitle: "プロバイダー固有のオプションを設定します",
-	    footer:
+      title: "AIプロバイダー設定",
+      entrySubtitle: "プロバイダー固有のオプションを設定します",
+      footer:
       "プロバイダー固有のオプションを設定します。これらの設定はセッションの動作に影響する場合があります。",
     providerSubtitle: "プロバイダー固有の設定",
-	    stateEnabled: "有効",
-	    stateDisabled: "無効",
-	    channelStable: "安定版",
-	    channelExperimental: "実験版",
-	    supported: "対応",
-	    notSupported: "未対応",
-	    allowed: "許可",
-	    notAllowed: "不許可",
-	    notAvailable: "利用不可",
-	    enabledTitle: "有効",
-	    enabledSubtitle: "ピッカー、プロファイル、セッションでこのバックエンドを使用",
-	    releaseChannelTitle: "リリースチャネル",
-	    capabilitiesTitle: "機能",
-	    resumeSupportTitle: "再開サポート",
-	    sessionModeSupportTitle: "セッションモード対応",
-	    runtimeModeSwitchingTitle: "実行時モード切り替え",
-	    localControlTitle: "ローカル制御",
-	    resumeSupportSupported: "対応",
-	    resumeSupportSupportedExperimental: "対応（実験）",
-	    resumeSupportRuntimeGatedAcpLoadSession:
-	      "ACP loadSession による実行時ゲート",
-	    resumeSupportNotSupported: "未対応",
-	    sessionModeNone: "ACP モードなし",
-	    sessionModeAcpPolicyPresets: "ACP ポリシープリセット",
-	    sessionModeAcpAgentModes: "ACP エージェントモード",
-	    runtimeSwitchNone: "実行時切り替えなし",
-	    runtimeSwitchMetadataGating: "メタデータによるゲート",
-	    runtimeSwitchAcpSetSessionMode: "ACP: setSessionMode",
-	    runtimeSwitchProviderNative: "プロバイダー固有",
-	    modelsTitle: "モデル",
-	    modelSelectionTitle: "モデル選択",
-	    freeformModelIdsTitle: "自由入力モデルID",
-	    defaultModelTitle: "デフォルトモデル",
-	    catalogModelListTitle: "カタログモデル一覧",
-	    catalogModelListEmpty: "利用可能なカタログモデルがありません",
-	    dynamicModelProbeTitle: "動的モデルプローブ",
-	    dynamicModelProbeAuto: "自動",
-	    dynamicModelProbeStaticOnly: "静的のみ",
-	    nonAcpApplyScopeTitle: "非ACP モデル適用範囲",
-	    nonAcpApplyScopeSpawnOnly: "セッション開始時に適用",
-	    nonAcpApplyScopeNextPrompt: "次のメッセージで適用",
-	    acpApplyBehaviorTitle: "ACP モデル適用動作",
-	    acpApplyBehaviorSetModel: "ライブでモデルを設定",
-	    acpApplyBehaviorRestartSession: "セッションを再起動",
-	    acpConfigOptionTitle: "ACP モデル設定オプションID",
-	    cliConnectionTitle: "CLI と接続",
-	    targetMachineTitle: "対象マシン",
-	    detectedCliTitle: "検出された CLI",
-	    installSetupTitle: "インストール / セットアップ",
-	    installInfoSeeSetupGuide: "セットアップガイドを見る",
-	    installInfoUseProviderCliInstaller: "プロバイダーの CLI インストーラーを使用",
+      stateEnabled: "有効",
+      stateDisabled: "無効",
+      channelStable: "安定版",
+      channelExperimental: "実験版",
+      supported: "対応",
+      notSupported: "未対応",
+      allowed: "許可",
+      notAllowed: "不許可",
+      notAvailable: "利用不可",
+      enabledTitle: "有効",
+      enabledSubtitle: "ピッカー、プロファイル、セッションでこのバックエンドを使用",
+      releaseChannelTitle: "リリースチャネル",
+      capabilitiesTitle: "機能",
+      resumeSupportTitle: "再開サポート",
+      sessionModeSupportTitle: "セッションモード対応",
+      runtimeModeSwitchingTitle: "実行時モード切り替え",
+      localControlTitle: "ローカル制御",
+      resumeSupportSupported: "対応",
+      resumeSupportSupportedExperimental: "対応（実験）",
+      resumeSupportRuntimeGatedAcpLoadSession:
+        "ACP loadSession による実行時ゲート",
+      resumeSupportNotSupported: "未対応",
+      sessionModeNone: "ACP モードなし",
+      sessionModeAcpPolicyPresets: "ACP ポリシープリセット",
+      sessionModeAcpAgentModes: "ACP エージェントモード",
+      sessionModeStaticAgentModes: "静的エージェントモード",
+      runtimeSwitchNone: "実行時切り替えなし",
+      runtimeSwitchMetadataGating: "メタデータによるゲート",
+      runtimeSwitchAcpSetSessionMode: "ACP: setSessionMode",
+      runtimeSwitchProviderNative: "プロバイダー固有",
+      modelsTitle: "モデル",
+      modelSelectionTitle: "モデル選択",
+      freeformModelIdsTitle: "自由入力モデルID",
+      defaultModelTitle: "デフォルトモデル",
+      catalogModelListTitle: "カタログモデル一覧",
+      catalogModelListEmpty: "利用可能なカタログモデルがありません",
+      dynamicModelProbeTitle: "動的モデルプローブ",
+      dynamicModelProbeAuto: "自動",
+      dynamicModelProbeStaticOnly: "静的のみ",
+      nonAcpApplyScopeTitle: "非ACP モデル適用範囲",
+      nonAcpApplyScopeSpawnOnly: "セッション開始時に適用",
+      nonAcpApplyScopeNextPrompt: "次のメッセージで適用",
+      acpApplyBehaviorTitle: "ACP モデル適用動作",
+      acpApplyBehaviorSetModel: "ライブでモデルを設定",
+      acpApplyBehaviorRestartSession: "セッションを再起動",
+      acpConfigOptionTitle: "ACP モデル設定オプションID",
+      cliConnectionTitle: "CLI と接続",
+      targetMachineTitle: "対象マシン",
+      detectedCliTitle: "検出された CLI",
+      installSetupTitle: "インストール / セットアップ",
+      installInfoSeeSetupGuide: "セットアップガイドを見る",
+      installInfoUseProviderCliInstaller: "プロバイダーの CLI インストーラーを使用",
       cliInstaller: {
         installTitle: ({ provider }: { provider: string }) => `${provider} CLI をインストール`,
         reinstallTitle: ({ provider }: { provider: string }) => `${provider} CLI を再インストール`,
@@ -1825,9 +1922,9 @@ export const ja: TranslationStructure = {
         installed: "インストール済み。",
         logPath: ({ logPath }: { logPath: string }) => `ログ: ${logPath}`,
       },
-	    setupGuideUrlTitle: "セットアップガイド URL",
-	    connectedServiceTitle: "接続済みサービス",
-	    notFoundTitle: "プロバイダーが見つかりません",
+      setupGuideUrlTitle: "セットアップガイド URL",
+      connectedServiceTitle: "接続済みサービス",
+      notFoundTitle: "プロバイダーが見つかりません",
     notFoundSubtitle: "このプロバイダーには設定画面がありません。",
     noOptionsAvailable: "利用可能なオプションはありません",
     invalidNumber: "無効な数値です",
@@ -1853,6 +1950,9 @@ export const ja: TranslationStructure = {
     multiPanePanels: "右パネル",
     multiPanePanelsDescription:
       "ファイルとソース管理のための右側パネルを表示（Web/タブレット）",
+    sessionsRightPaneDefaultOpen: "セッションで右サイドバーを常に表示",
+    sessionsRightPaneDefaultOpenDescription:
+      "セッションを開くと右サイドバーを自動的に開きます（Web/タブレット）",
     detailsPaneTabsBehavior: "エディタのタブ",
     detailsPaneTabsBehaviorDescription:
       "エディタパネル内のファイルタブの挙動を選択します",
@@ -1979,9 +2079,6 @@ export const ja: TranslationStructure = {
     expFilesEditor: "埋め込みファイルエディタ",
     expFilesEditorSubtitle:
       "ファイルブラウザから直接編集を有効化（Web/デスクトップはMonaco、ネイティブはCodeMirror）",
-    expShowThinkingMessages: "思考メッセージを表示",
-    expShowThinkingMessagesSubtitle:
-      "チャットでアシスタントの思考/ステータスメッセージを表示",
     expSessionType: "セッションタイプ選択",
     expSessionTypeSubtitle:
       "セッションタイプ選択を表示（シンプル/ワークツリー）",
@@ -2017,13 +2114,11 @@ export const ja: TranslationStructure = {
       "ArrowUp/ArrowDown で、このターミナル内のみの送信履歴を巡回するか、全ターミナルの履歴を巡回するかを選択します。",
     historyScopePerSessionOption: "ターミナルごと",
     historyScopeGlobalOption: "グローバル",
-    commandPalette: "コマンドパレット",
-    commandPaletteEnabled: "⌘Kで開く",
-    commandPaletteDisabled: "クイックコマンドアクセスは無効",
-    markdownCopyV2: "Markdownコピー v2",
-    markdownCopyV2Subtitle: "長押しでコピーモーダルを開く",
-    hideInactiveSessions: "非アクティブセッションを非表示",
-    hideInactiveSessionsSubtitle: "アクティブなチャットのみをリストに表示",
+      commandPalette: "コマンドパレット",
+      commandPaletteEnabled: "⌘Kで開く",
+      commandPaletteDisabled: "クイックコマンドアクセスは無効",
+      hideInactiveSessions: "非アクティブセッションを非表示",
+      hideInactiveSessionsSubtitle: "アクティブなチャットのみをリストに表示",
     sessionListActiveGrouping: "アクティブセッションのグループ化",
     sessionListActiveGroupingSubtitle:
       "サイドバーでアクティブセッションをどのようにグループ化するか選択します",
@@ -2064,17 +2159,18 @@ export const ja: TranslationStructure = {
     connectionTimeout: "接続がタイムアウトしました",
     authenticationFailed: "認証に失敗しました",
     permissionDenied: "権限がありません",
-	    fileNotFound: "ファイルが見つかりません",
-	    invalidFormat: "フォーマットが無効です",
-	    operationFailed: "操作に失敗しました",
-	    daemonUnavailableTitle: "デーモンを利用できません",
-	    daemonUnavailableBody:
-	      "このマシン上のデーモンに接続できません。オフライン、起動中、またはサーバーから切断されている可能性があります。",
-	    tryAgain: "再試行してください",
-	    contactSupport: "問題が続く場合はサポートにお問い合わせください",
-	    sessionNotFound: "セッションが見つかりません",
-	    voiceSessionFailed: "音声セッションの開始に失敗しました",
-	    voiceServiceUnavailable: "音声サービスは一時的に利用できません",
+      fileNotFound: "ファイルが見つかりません",
+      invalidFormat: "フォーマットが無効です",
+      operationFailed: "操作に失敗しました",
+      failedToForkSession: "セッションの分岐に失敗しました",
+      daemonUnavailableTitle: "デーモンを利用できません",
+      daemonUnavailableBody:
+        "このマシン上のデーモンに接続できません。オフライン、起動中、またはサーバーから切断されている可能性があります。",
+      tryAgain: "再試行してください",
+      contactSupport: "問題が続く場合はサポートにお問い合わせください",
+      sessionNotFound: "セッションが見つかりません",
+      voiceSessionFailed: "音声セッションの開始に失敗しました",
+      voiceServiceUnavailable: "音声サービスは一時的に利用できません",
     voiceAlreadyStarting: "音声は別のセッションで起動中です",
     oauthInitializationFailed: "OAuth フローの初期化に失敗しました",
     tokenStorageFailed: "認証トークンの保存に失敗しました",
@@ -2362,6 +2458,14 @@ export const ja: TranslationStructure = {
   session: {
     inputPlaceholder: "メッセージを入力...",
     activity: "アクティビティ",
+    activityCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} 件…`,
+    forking: {
+      dividerTitle: "以前のコンテキストから分岐しました",
+      dividerSubtitle: "以前のコンテキスト（読み取り専用）",
+      openParent: "開く",
+      openParentA11y: "親セッションを開く",
+      forkFromMessageA11y: "このメッセージから分岐",
+    },
     resuming: "再開中...",
     resumeFailed: "セッションの再開に失敗しました",
     resumeSupportNoteChecking:
@@ -2384,28 +2488,37 @@ export const ja: TranslationStructure = {
     machineOfflineNoticeTitle: "マシンがオフラインです",
     machineOfflineNoticeBody: ({ machine }: { machine: string }) =>
       `“${machine}” がオフラインのため、Happier はまだこのセッションを再開できません。オンラインに戻して続行してください。`,
-	    machineOfflineCannotResume:
-	      "マシンがオフラインです。オンラインに戻してこのセッションを再開してください。",
-	    openRuns: "セッションの実行を開く",
-	    openAutomations: "セッションの自動化を開く",
-      actionMenu: {
-        openA11y: "セッションの操作を開く",
-      },
-	    detailsPanel: {
-	      emptyHint: "右側パネルからファイルまたは差分を開いてください。",
-	      unsupportedTab: "未対応の詳細タブです。",
-	      closeA11y: "詳細を閉じる",
+      machineOfflineCannotResume:
+        "マシンがオフラインです。オンラインに戻してこのセッションを再開してください。",
+        openRuns: "セッションの実行を開く",
+        openAutomations: "セッションの自動化を開く",
+        participants: {
+          to: '宛先',
+          lead: 'メイン',
+          sendToTitle: '送信先',
+          broadcast: ({ teamId }: { teamId: string }) => `ブロードキャスト: ${teamId}`,
+          executionRun: ({ runId }: { runId: string }) => `実行 ${runId}`,
+          cardTo: ({ label }: { label: string }) => `宛先: ${label}`,
+          unsupportedAttachmentsOrReviewComments: '宛先指定での送信は現在、添付ファイルやレビューコメントに対応していません。',
+        },
+        actionMenu: {
+          openA11y: "セッションの操作を開く",
+        },
+      detailsPanel: {
+        emptyHint: "右側パネルからファイルまたは差分を開いてください。",
+        unsupportedTab: "未対応の詳細タブです。",
+        closeA11y: "詳細を閉じる",
           openTabA11y: ({ title }: { title: string }) => `${title} を開く`,
           pinTabA11y: "タブを固定",
           pinnedTabA11y: "固定されたタブ",
           closeTabA11y: "タブを閉じる",
           enterFocusModeA11y: "エディタ集中モードに入る",
           exitFocusModeA11y: "エディタ集中モードを終了",
-	    },
-	
-	    actionsDraft: {
-	      noInputHints: "このアクションには入力ヒントがありません。",
-	    },
+      },
+  
+      actionsDraft: {
+        noInputHints: "このアクションには入力ヒントがありません。",
+      },
 
     planOutput: {
       title: "プラン",
@@ -2453,61 +2566,63 @@ export const ja: TranslationStructure = {
       },
     },
 
-	    pendingMessages: {
-	      title: "保留中メッセージ",
+      pendingMessages: {
+        title: "保留中メッセージ",
         indicator: ({ count }: { count: number }) => `保留中 (${count})`,
         badgeLabel: ({ count }: { count: number }) =>
           count > 0 ? `保留中 (+${count})` : "保留中",
-	      empty: "保留中のメッセージはありません。",
-	      actions: {
-	        up: "上へ",
-	        down: "下へ",
-	        edit: "編集",
-	        steerNow: "今すぐ挿入",
-	        sendNow: "今すぐ送信",
-	        sendNowInterrupt: "今すぐ送信（中断）",
-	        requeue: "キューに戻す",
-	      },
-	      editPrompt: {
-	        title: "保留中メッセージを編集",
-	      },
-	      removeConfirm: {
-	        title: "保留中メッセージを削除しますか？",
-	        body: "保留中メッセージを削除します。",
-	      },
-	      steerConfirm: {
-	        title: "今すぐ挿入しますか？",
-	        body: "現在のターンを止めずに、このメッセージを現在のターンに追加します。",
-	      },
-	      sendConfirm: {
-	        title: "今すぐ送信しますか？",
-	        interruptTitle: "今すぐ送信（中断）しますか？",
-	        body: "現在のターンを停止し、このメッセージをすぐに送信します。",
-	      },
-	      discarded: {
-	        title: "破棄されたメッセージ",
-	        subtitle:
-	          "これらのメッセージはエージェントに送信されませんでした（例: リモートからローカルへ切り替えたとき）。",
-	        label: "破棄済み",
-	        removeConfirm: {
-	          title: "破棄されたメッセージを削除しますか？",
-	          body: "破棄されたメッセージを削除します。",
-	        },
-	      },
-	      errors: {
-	        updateFailed: "保留中メッセージの更新に失敗しました",
-	        deleteFailed: "保留中メッセージの削除に失敗しました",
-	        sendFailed: "保留中メッセージの送信に失敗しました",
-	        restoreFailed: "破棄されたメッセージの復元に失敗しました",
-	        deleteDiscardedFailed: "破棄されたメッセージの削除に失敗しました",
-	        sendDiscardedFailed: "破棄されたメッセージの送信に失敗しました",
-	        reorderFailed: "保留中メッセージの並び替えに失敗しました",
-	      },
-	    },
-	    sharing: {
-	      title: "共有",
-	      directSharing: "直接共有",
-	      addShare: "友達と共有",
+        empty: "保留中のメッセージはありません。",
+        actions: {
+          up: "上へ",
+          down: "下へ",
+          edit: "編集",
+            viewMore: "もっと見る",
+            viewLess: "折りたたむ",
+          steerNow: "今すぐ挿入",
+          sendNow: "今すぐ送信",
+          sendNowInterrupt: "今すぐ送信（中断）",
+          requeue: "キューに戻す",
+        },
+        editPrompt: {
+          title: "保留中メッセージを編集",
+        },
+        removeConfirm: {
+          title: "保留中メッセージを削除しますか？",
+          body: "保留中メッセージを削除します。",
+        },
+        steerConfirm: {
+          title: "今すぐ挿入しますか？",
+          body: "現在のターンを止めずに、このメッセージを現在のターンに追加します。",
+        },
+        sendConfirm: {
+          title: "今すぐ送信しますか？",
+          interruptTitle: "今すぐ送信（中断）しますか？",
+          body: "現在のターンを停止し、このメッセージをすぐに送信します。",
+        },
+        discarded: {
+          title: "破棄されたメッセージ",
+          subtitle:
+            "これらのメッセージはエージェントに送信されませんでした（例: リモートからローカルへ切り替えたとき）。",
+          label: "破棄済み",
+          removeConfirm: {
+            title: "破棄されたメッセージを削除しますか？",
+            body: "破棄されたメッセージを削除します。",
+          },
+        },
+        errors: {
+          updateFailed: "保留中メッセージの更新に失敗しました",
+          deleteFailed: "保留中メッセージの削除に失敗しました",
+          sendFailed: "保留中メッセージの送信に失敗しました",
+          restoreFailed: "破棄されたメッセージの復元に失敗しました",
+          deleteDiscardedFailed: "破棄されたメッセージの削除に失敗しました",
+          sendDiscardedFailed: "破棄されたメッセージの送信に失敗しました",
+          reorderFailed: "保留中メッセージの並び替えに失敗しました",
+        },
+      },
+      sharing: {
+        title: "共有",
+        directSharing: "直接共有",
+        addShare: "友達と共有",
       accessLevel: "アクセスレベル",
       shareWith: "共有先",
       sharedWith: "共有中",
@@ -2532,6 +2647,8 @@ export const ja: TranslationStructure = {
       permissionApprovalsDisabledPublic:
         "公開リンクは閲覧専用です。権限承認は利用できません。",
       permissionApprovalsDisabledReadOnly: "このセッションは閲覧専用です。",
+      permissionApprovalsDisabledInactive:
+        "このセッションは非アクティブです。権限承認は利用できません。",
       permissionApprovalsDisabledNotGranted:
         "オーナーはこのセッションでの権限承認を許可していません。",
       publicReadOnlyTitle: "公開リンク（閲覧専用）",
@@ -2695,10 +2812,16 @@ export const ja: TranslationStructure = {
     makeDefaultOnDevice: "この端末のデフォルトにする",
     serverNameLabel: "サーバー名",
     addAndUse: "追加して使用",
-    addTargetsTitle: "追加",
-    addServerSubtitle: "新しいサーバーを追加して切り替え",
-    notificationAddServerHint: "このサーバーはまだこの端末に保存されていません。続行するには下で追加してください。",
-    serverCount: ({ count }: { count: number }) => `${count} サーバー`,
+      addTargetsTitle: "追加",
+      addServerSubtitle: "新しいサーバーを追加して切り替え",
+      notificationAddServerHint: "このサーバーはまだこの端末に保存されていません。続行するには下で追加してください。",
+      serverCount: ({ count }: { count: number }) => `${count} サーバー`,
+      useCanonicalServerUrlTitle: "正規のサーバーURLを使用しますか？",
+    useCanonicalServerUrlBody:
+      "このサーバーは他の端末からも使える正規のURLを案内しています。入力したURLの代わりにこちらを使用しますか？",
+    insecureHttpUrlTitle: "安全でないサーバーURL",
+    insecureHttpUrlBody:
+      "このURLは http:// を使用しており、スマホやLAN外からは動作しない可能性があります。可能であればHTTPSを使用してください。それでも続行しますか？",
     signedOutSwitchConfirmTitle: "接続されていません",
     signedOutSwitchConfirmBody:
       "このサーバーに切り替えてホーム画面へ進み、サインインまたはアカウント作成を行いますか？",
@@ -2854,6 +2977,8 @@ export const ja: TranslationStructure = {
     renameSession: "セッション名を変更",
     renameSessionSubtitle: "このセッションの表示名を変更します",
     renameSessionPlaceholder: "セッション名を入力...",
+    forkSession: "セッションを分岐",
+    forkSessionSubtitle: "最新のコンテキストから新しいセッションを作成します",
     failedToRenameSession: "セッション名の変更に失敗しました",
     sessionRenamed: "セッション名を変更しました",
   },
@@ -3016,6 +3141,24 @@ export const ja: TranslationStructure = {
       fileLabel: "ファイル",
       folderLabel: "フォルダ",
     },
+    mode: {
+      sectionTitle: "モード",
+      badge: ({ name }: { name: string }) => `モード: ${name}`,
+      badgePending: ({ name }: { name: string }) => `モード: ${name} (保留中)`,
+      badgeA11y: ({ name }: { name: string }) => `モード: ${name}`,
+      refreshModesA11y: "モードを更新",
+      pendingSwitching: ({ from, to }: { from: string; to: string }) =>
+        `保留中: ${from} から ${to} に切り替え中`,
+      currentMode: ({ name }: { name: string }) => `現在: ${name}`,
+      loadingModes: "モードを読み込み中…",
+      refreshingModes: "モードを更新中…",
+      useDefaultModeHint: "このエージェントのデフォルトモードを使用します。",
+      startIn: ({ name }: { name: string }) => `開始: ${name}`,
+      build: "ビルド",
+      buildDescription: "デフォルトの動作",
+      plan: "プラン",
+      planDescription: "最初に考える",
+    },
     acp: {
       modeSectionTitle: "モード",
       refreshModesA11y: "モードを更新",
@@ -3066,6 +3209,12 @@ export const ja: TranslationStructure = {
     common: {
       more: ({ count }: { count: number }) => `+${count} 件`,
       elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,
+      unknownToolTitle: "ツール",
+    },
+    bashView: {
+      commandDiffTitle: "生のコマンド",
+      commandDiffHint:
+        "読みやすくするため、コマンドのプレビューでは短い環境クリーンアップの接頭辞を隠しています。完全な生のコマンドは下に表示されます。",
     },
     webFetch: {
       httpStatus: ({ status }: { status: number }) => `HTTP ${status}`,
@@ -3145,6 +3294,8 @@ export const ja: TranslationStructure = {
       approve: "プランを承認",
       reject: "拒否",
       requestChanges: "変更を依頼",
+      planMissing:
+        "プランの本文が提供されていません。直前のメッセージ内のプランを確認するか、承認リクエストにプラン本文を含めるようエージェントに依頼してください。",
       requestChangesPlaceholder:
         "このプランで変更したい点をClaudeに伝えてください…",
       requestChangesSend: "フィードバックを送信",
@@ -3300,10 +3451,10 @@ export const ja: TranslationStructure = {
     notRepo: "ソース管理リポジトリではありません",
     notUnderSourceControl: "このディレクトリはソース管理下にありません",
     searching: "ファイルを検索中...",
-	    noFilesFound: "ファイルが見つかりません",
-	    noFilesInProject: "プロジェクトにファイルがありません",
-	    repositoryFolderLoadFailed: "フォルダを読み込めません",
-	    repositoryCollapseAll: "すべて折りたたむ",
+      noFilesFound: "ファイルが見つかりません",
+      noFilesInProject: "プロジェクトにファイルがありません",
+      repositoryFolderLoadFailed: "フォルダを読み込めません",
+      repositoryCollapseAll: "すべて折りたたむ",
     sourceControlOperationsLog: {
       title: "最近のソース管理操作",
       allSessions: "すべてのセッション",
@@ -3315,29 +3466,29 @@ export const ja: TranslationStructure = {
       noCommitsAvailable: "利用可能なコミットがありません。",
       loadMore: "さらに読み込む",
     },
-	    reviewFilterPlaceholder: "ファイルを絞り込む...",
-	    reviewNoMatches: "一致するものがありません",
-	    reviewLargeDiffOneAtATime: "大きな差分を検出しました。スクロールに応じて差分を読み込みます。",
-	    reviewDiffRequestFailed: "差分を読み込めません",
-	    reviewUnableToLoadDiff: "差分を読み込めません",
-	    tryDifferentTerm: "別の検索語を試してください",
-	    searchResults: ({ count }: { count: number }) => `検索結果 (${count})`,
-	    projectRoot: "プロジェクトルート",
+      reviewFilterPlaceholder: "ファイルを絞り込む...",
+      reviewNoMatches: "一致するものがありません",
+      reviewLargeDiffOneAtATime: "大きな差分を検出しました。スクロールに応じて差分を読み込みます。",
+      reviewDiffRequestFailed: "差分を読み込めません",
+      reviewUnableToLoadDiff: "差分を読み込めません",
+      tryDifferentTerm: "別の検索語を試してください",
+      searchResults: ({ count }: { count: number }) => `検索結果 (${count})`,
+      projectRoot: "プロジェクトルート",
     stagedChanges: ({ count }: { count: number }) =>
       `ステージ済みの変更 (${count})`,
-	    unstagedChanges: ({ count }: { count: number }) =>
-	      `未ステージの変更 (${count})`,
-	    // File viewer strings
-	    fileReadFailed: "ファイルを読み込めませんでした",
-	    fileWriteFailed: "ファイルを書き込めませんでした",
+      unstagedChanges: ({ count }: { count: number }) =>
+        `未ステージの変更 (${count})`,
+      // File viewer strings
+      fileReadFailed: "ファイルを読み込めませんでした",
+      fileWriteFailed: "ファイルを書き込めませんでした",
       fileEditor: {
         experimentalHint:
           "編集は実験的です。保存すると変更がセッションの worktree に書き戻されます。",
       },
-	    fileEditingUnsupported:
-	      "接続されたデーモンはファイル編集をサポートしていません。書き込み操作を有効にするには、マシン上のHappierを更新してください。",
-	    selectionFailed: "選択を更新できませんでした",
-	    openReviewCommentsFailed: "レビューコメントを開けませんでした",
+      fileEditingUnsupported:
+        "接続されたデーモンはファイル編集をサポートしていません。書き込み操作を有効にするには、マシン上のHappierを更新してください。",
+      selectionFailed: "選択を更新できませんでした",
+      openReviewCommentsFailed: "レビューコメントを開けませんでした",
         reviewComments: {
           title: ({ count }: { count: number }) => `レビューコメント (${count})`,
           placeholder: "レビューコメントを追加…",
@@ -3376,12 +3527,13 @@ export const ja: TranslationStructure = {
           generateFailed: "コミットメッセージを生成できませんでした",
           generatorDisabled: "コミットメッセージ生成が無効です",
         },
-	    loadingFile: ({ fileName }: { fileName: string }) =>
-	      `${fileName}を読み込み中...`,
-	    binaryFile: "バイナリファイル",
-	    cannotDisplayBinary: "バイナリファイルの内容を表示できません",
-	    diff: "差分",
-    file: "ファイル",
+      loadingFile: ({ fileName }: { fileName: string }) =>
+        `${fileName}を読み込み中...`,
+        binaryFile: "バイナリファイル",
+        imagePreviewTooLarge: "画像プレビューが大きすぎて表示できません",
+        cannotDisplayBinary: "バイナリファイルの内容を表示できません",
+        diff: "差分",
+      file: "ファイル",
     diffModes: {
       pending: "保留中",
       included: "含めた",
@@ -3499,139 +3651,174 @@ export const ja: TranslationStructure = {
       title: "メッセージ送信",
       footer:
         "エージェント実行中にメッセージを送信したときの挙動を設定します。",
-	      queueInAgentTitle: "エージェントにキュー（現在）",
-	      queueInAgentSubtitle:
-	        "すぐにトランスクリプトに書き込み、エージェントが準備できたら処理します。",
-	      interruptTitle: "中断して送信",
-	      interruptSubtitle: "現在のターンを中断し、すぐに送信します。",
-	      pendingTitle: "準備できるまで保留",
-	      pendingSubtitle:
-	        "メッセージを保留キューに保持し、準備ができたらエージェントが取り込みます。",
-	      busySteerPolicyTitle: "エージェントが忙しいとき（ステア可能）",
-	      busySteerPolicyFooter:
-	        "エージェントが実行中ステアリングをサポートしている場合、すぐにステアするか、先に保留へ送るかを選びます。",
-	      busySteerPolicy: {
-	        steerImmediatelyTitle: "すぐにステア",
-	        steerImmediatelySubtitle:
-	          "すぐに送信して現在のターンをステアします（中断なし）。",
-	        queueForReviewTitle: "保留にキュー",
-	        queueForReviewSubtitle:
-	          "まず保留に入れ、後で「今すぐステア」で送信します。",
-	      },
-	    },
-	    thinking: {
-	      title: "思考",
-	      footer:
-	        "思考メッセージをセッションのトランスクリプトにどう表示するかを設定します。",
-	      displayModeTitle: "思考の表示",
-	      displayMode: {
-	        inlineTitle: "インライン（デフォルト）",
-	        inlineSubtitle:
-	          "思考メッセージをトランスクリプトに直接表示します。",
-	        toolTitle: "ツールカード",
-	        toolSubtitle: "思考メッセージを「推論」ツールカードとして表示します。",
-	        hiddenTitle: "非表示",
-	        hiddenSubtitle: "思考メッセージをトランスクリプトから非表示にします。",
-	      },
-	    },
-	    toolRendering: {
-	      title: "ツール表示",
-	      footer:
-	        "セッションのタイムラインに表示するツールの詳細量を設定します。これはUI設定であり、エージェントの動作は変わりません。",
-	      defaultToolDetailLevelTitle: "デフォルトのツール詳細レベル",
-	      expandedToolDetailLevelTitle: "展開時のツール詳細レベル",
-	      timelineChrome: {
-	        title: "タイムラインのツール表示スタイル",
-	        cardsTitle: "カード",
-	        cardsSubtitle:
-	          "詳細レベルに応じて、ツールカードに内容をインライン表示します。",
-	        activityFeedTitle: "アクティビティフィード",
-	        activityFeedSubtitle: "高密度表示に最適化されたコンパクトな行表示。",
-	      },
-	      cardDensity: {
-	        title: "カード密度",
-	        comfortableTitle: "ゆったり",
-	        comfortableSubtitle: "余白が多く、より明確に区切ります。",
-	        compactTitle: "コンパクト",
-	        compactSubtitle: "ヘッダーを詰め、パディングを減らします。",
-	      },
-	      activityFeed: {
-	        defaultDetailTitle: "アクティビティフィードの既定詳細",
-	        expandedDetailTitle: "アクティビティフィードの展開時詳細",
-	        tapActionTitle: "タップ動作（アクティビティフィード）",
-	        tapAction: {
-	          expandTitle: "展開",
-	          expandSubtitle: "タップでインライン詳細を展開/折りたたみします。",
-	          openTitle: "開く",
-	          openSubtitle: "タップでフルツールビュー画面を開きます。",
-	        },
-	        defaultExpandedTitle: "既定で展開",
-	        defaultExpandedSubtitle:
-	          "アクティビティフィードでツール行を既定で展開します。",
-	      },
-	      localControlDefaultTitle: "ローカル制御のデフォルト",
-	      showDebugByDefaultTitle: "デフォルトでデバッグを表示",
-	      showDebugByDefaultSubtitle:
-	        "フルツールビューで生のツールペイロードを自動展開します。",
-	    },
-	    transcript: {
-	      title: "トランスクリプト",
-	      entrySubtitle: "トランスクリプト設定を開く",
-	      footer:
-	        "チャットの表示方法とトランスクリプトの挙動をカスタマイズします。",
-	      layoutTitle: "レイアウト",
-	      layoutFooter:
-	        "シンプルな線形トランスクリプトとターン表示を選べます。",
-	      layoutPickerTitle: "トランスクリプトレイアウト",
-	      layout: {
-	        linearTitle: "線形（現在）",
-	        linearSubtitle: "メッセージをフラットなリストとして表示します。",
-	        turnsTitle: "ターン",
-	        turnsSubtitle: "ユーザー/アシスタントのターンにまとめます。",
-	      },
-	      activityGroupTitle: "ツールをアクティビティにまとめる",
-	      activityGroupSubtitle:
-	        "各ターン内でツール呼び出しを「アクティビティ」セクションにまとめます。",
-	      toolAppearanceTitle: "ツールの見た目",
-	      toolAppearanceSubtitle:
-	        "トランスクリプト内のツール表示をカスタマイズします。",
-	      motionTitle: "モーション",
-	      motionFooter: "トランスクリプトのアニメーションを制御します。",
-	      motionPickerTitle: "アニメーション",
-	      motion: {
-	        offTitle: "オフ",
-	        offSubtitle: "トランスクリプトのアニメーションを無効化します。",
-	        subtleTitle: "控えめ（既定）",
-	        subtleSubtitle: "新しいアクティビティに最小限の素早いモーション。",
-	        fullTitle: "フル",
-	        fullSubtitle: "より表現豊かなモーションと遷移。",
-	      },
-	      advancedMotionTitle: "詳細モーション…",
-	      advancedMotionSubtitle:
-	        "フレッシュネスとアニメーションのトグルを調整します。",
-	      scrollTitle: "スクロール",
-	      scrollFooter:
-	        "ピン留めスクロールと最下部ジャンプの挙動を制御します。",
-	      scrollPinTitle: "最下部にピン留め",
-	      scrollPinSubtitle: "最下部にいる間、新しいメッセージに追従します。",
-	      jumpToBottomTitle: "最下部へジャンプボタン",
-	      jumpToBottomSubtitle:
-	        "上にスクロールしている間に新しいアクティビティが来たら表示します。",
-	      advancedScrollTitle: "詳細スクロール…",
-	      advancedScrollSubtitle: "しきい値とカウンターを調整します。",
-	      advanced: {
-	        turnGroupingTitle: "ターンのグルーピング",
-	        turnGroupingFooter:
-	          "ターン内でアクティビティをどう形成するかを制御します。",
-	        activityStrategyTitle: "アクティビティのグルーピング戦略",
-	        activityStrategy: {
-	          consecutiveTitle: "連続ツール（既定）",
-	          consecutiveSubtitle:
-	            "連続するツール呼び出しのみをアクティビティにまとめます。",
-	          allToolsTitle: "ターン内の全ツール",
-	          allToolsSubtitle:
-	            "ターン内の全ツール呼び出しを1つのアクティビティにまとめます。",
-	        },
+        queueInAgentTitle: "エージェントにキュー（現在）",
+        queueInAgentSubtitle:
+          "すぐにトランスクリプトに書き込み、エージェントが準備できたら処理します。",
+        interruptTitle: "中断して送信",
+        interruptSubtitle: "現在のターンを中断し、すぐに送信します。",
+        pendingTitle: "準備できるまで保留",
+        pendingSubtitle:
+          "メッセージを保留キューに保持し、準備ができたらエージェントが取り込みます。",
+        busySteerPolicyTitle: "エージェントが忙しいとき（ステア可能）",
+        busySteerPolicyFooter:
+          "エージェントが実行中ステアリングをサポートしている場合、すぐにステアするか、先に保留へ送るかを選びます。",
+        busySteerPolicy: {
+          steerImmediatelyTitle: "すぐにステア",
+          steerImmediatelySubtitle:
+            "すぐに送信して現在のターンをステアします（中断なし）。",
+          queueForReviewTitle: "保留にキュー",
+          queueForReviewSubtitle:
+            "まず保留に入れ、後で「今すぐステア」で送信します。",
+        },
+      },
+      thinking: {
+        title: "思考",
+        footer:
+          "思考メッセージをセッションのトランスクリプトにどう表示するかを設定します。",
+          displayModeTitle: "思考の表示",
+          displayMode: {
+            inlineSummaryTitle: "インライン（要約）",
+            inlineSummarySubtitle: "1行の要約を表示します。タップで展開します。",
+            inlineTitle: "インライン（全文）",
+            inlineSubtitle: "思考メッセージ全文をトランスクリプトに直接表示します。",
+            toolTitle: "ツールカード",
+            toolSubtitle: "思考メッセージを「推論」ツールカードとして表示します。",
+            hiddenTitle: "非表示",
+            hiddenSubtitle: "思考メッセージをトランスクリプトから非表示にします。",
+          },
+              inlineChromeTitle: "思考カード",
+              inlineChromeSubtitle: "インライン思考を控えめなカード背景で表示します。",
+        },
+      toolRendering: {
+        title: "ツール表示",
+          footer:
+            "セッションのタイムラインに表示するツールの詳細量を設定します。これはUI設定であり、エージェントの動作は変わりません。",
+          defaultToolDetailLevelTitle: "デフォルトのツール詳細レベル",
+          expandedToolDetailLevelTitle: "展開時のツール詳細レベル",
+          cardTapActionTitle: "タップ動作（ツールカード）",
+          timelineChrome: {
+            title: "タイムラインのツール表示スタイル",
+            cardsTitle: "カード",
+          cardsSubtitle:
+            "詳細レベルに応じて、ツールカードに内容をインライン表示します。",
+          activityFeedTitle: "アクティビティフィード",
+          activityFeedSubtitle: "高密度表示に最適化されたコンパクトな行表示。",
+        },
+        cardDensity: {
+          title: "カード密度",
+          comfortableTitle: "ゆったり",
+          comfortableSubtitle: "余白が多く、より明確に区切ります。",
+          compactTitle: "コンパクト",
+          compactSubtitle: "ヘッダーを詰め、パディングを減らします。",
+        },
+        activityFeed: {
+          defaultDetailTitle: "アクティビティフィードの既定詳細",
+          expandedDetailTitle: "アクティビティフィードの展開時詳細",
+          tapActionTitle: "タップ動作（アクティビティフィード）",
+          tapAction: {
+            expandTitle: "展開",
+            expandSubtitle: "タップでインライン詳細を展開/折りたたみします。",
+            openTitle: "開く",
+            openSubtitle: "タップでフルツールビュー画面を開きます。",
+          },
+          defaultExpandedTitle: "既定で展開",
+          defaultExpandedSubtitle:
+            "アクティビティフィードでツール行を既定で展開します。",
+        },
+        localControlDefaultTitle: "ローカル制御のデフォルト",
+        showDebugByDefaultTitle: "デフォルトでデバッグを表示",
+        showDebugByDefaultSubtitle:
+          "フルツールビューで生のツールペイロードを自動展開します。",
+      },
+      transcript: {
+        title: "トランスクリプト",
+        entrySubtitle: "トランスクリプト設定を開く",
+        footer:
+          "チャットの表示方法とトランスクリプトの挙動をカスタマイズします。",
+        layoutTitle: "レイアウト",
+        layoutFooter:
+          "シンプルな線形トランスクリプトとターン表示を選べます。",
+        layoutPickerTitle: "トランスクリプトレイアウト",
+        layout: {
+          linearTitle: "線形（現在）",
+          linearSubtitle: "メッセージをフラットなリストとして表示します。",
+          turnsTitle: "ターン",
+          turnsSubtitle: "ユーザー/アシスタントのターンにまとめます。",
+        },
+        activityGroupTitle: "ツールをアクティビティにまとめる",
+        activityGroupSubtitle:
+          "各ターン内でツール呼び出しを「アクティビティ」セクションにまとめます。",
+        toolAppearanceTitle: "ツールの見た目",
+        toolAppearanceSubtitle:
+          "トランスクリプト内のツール表示をカスタマイズします。",
+        motionTitle: "モーション",
+        motionFooter: "トランスクリプトのアニメーションを制御します。",
+        motionPickerTitle: "アニメーション",
+        motion: {
+          offTitle: "オフ",
+          offSubtitle: "トランスクリプトのアニメーションを無効化します。",
+          subtleTitle: "控えめ（既定）",
+          subtleSubtitle: "新しいアクティビティに最小限の素早いモーション。",
+          fullTitle: "フル",
+          fullSubtitle: "より表現豊かなモーションと遷移。",
+        },
+        advancedMotionTitle: "詳細モーション…",
+        advancedMotionSubtitle:
+          "フレッシュネスとアニメーションのトグルを調整します。",
+        scrollTitle: "スクロール",
+        scrollFooter:
+          "ピン留めスクロールと最下部ジャンプの挙動を制御します。",
+          scrollPinTitle: "最下部にピン留め",
+          scrollPinSubtitle: "最下部にいる間、新しいメッセージに追従します。",
+          jumpToBottomTitle: "最下部へジャンプボタン",
+          jumpToBottomButtonLabel: "最下部へ移動",
+            jumpToBottomSubtitle:
+              "上にスクロールしている間に新しいアクティビティが来たら表示します。",
+            advancedScrollTitle: "詳細スクロール…",
+          advancedScrollSubtitle: "しきい値とカウンターを調整します。",
+          advancedTitle: "高度な設定…",
+          advancedSubtitle: "パフォーマンスとデバッグの設定。",
+          advanced: {
+            turnGroupingTitle: "ターンのグルーピング",
+            turnGroupingFooter:
+            "ターン内でアクティビティをどう形成するかを制御します。",
+            performanceTitle: "パフォーマンス",
+            performanceFooter: "ストリーミングとリストのパフォーマンス設定。",
+            coalesceEnabledTitle: "ストリーミング更新をまとめる",
+            coalesceEnabledSubtitle:
+              "ソケット更新をまとめてスクロールを滑らかに保ちます。",
+            coalesceWindowTitle: "まとめる間隔",
+            coalesceWindowSubtitle: ({ value }: { value: string }) => `現在: ${value}ms`,
+            coalesceWindowPromptTitle: "まとめる間隔（ms）",
+            coalesceWindowPromptBody:
+              "まとめたストリーミング更新をストアへ反映する頻度を設定します。",
+            coalesceMaxBatchTitle: "最大バッチサイズ",
+            coalesceMaxBatchSubtitle: ({ value }: { value: string }) => `現在: ${value}`,
+            coalesceMaxBatchPromptTitle: "最大バッチサイズ",
+            coalesceMaxBatchPromptBody:
+              "1 回のフラッシュで適用するメッセージ数の上限を設定します。",
+            thinkingPulseStaleTitle: "思考の失効ウィンドウ",
+            thinkingPulseStaleSubtitle: ({ value }: { value: string }) => `現在: ${value}ms`,
+            thinkingPulseStalePromptTitle: "思考の失効ウィンドウ（ms）",
+            thinkingPulseStalePromptBody:
+              "更新がない場合、この時間を超えるとアクティブ思考を隠します。",
+            listImplementationTitle: "トランスクリプトのリスト実装",
+            listImplementationSubtitle: "リストエンジンを切り替え（デバッグ）。",
+            listImplementation: {
+              flashTitle: "FlashList v2（推奨）",
+              flashSubtitle: "長いトランスクリプトで最適な性能。",
+              legacyTitle: "従来の FlatList",
+              legacySubtitle: "互換性デバッグ用の代替。",
+            },
+          activityStrategyTitle: "アクティビティのグルーピング戦略",
+          activityStrategy: {
+            consecutiveTitle: "連続ツール（既定）",
+            consecutiveSubtitle:
+              "連続するツール呼び出しのみをアクティビティにまとめます。",
+            allToolsTitle: "ターン内の全ツール",
+            allToolsSubtitle:
+              "ターン内の全ツール呼び出しを1つのアクティビティにまとめます。",
+          },
             activityCollapsedPreviewCountTitle: "プレビュー（折りたたみ時）",
             activityCollapsedPreviewCountSubtitle: ({ value }: { value: string }) => `アクティビティが折りたたまれているとき、最新の ${value} 件のツールを表示します。`,
             activityCollapsedPreviewCount: {
@@ -3643,141 +3830,147 @@ export const ja: TranslationStructure = {
               twoSubtitle: "最新 2 件のツールをプレビュー行として表示します。",
               threeTitle: "3 ツール",
               threeSubtitle: "最新 3 件のツールをプレビュー行として表示します。",
+              countTitle: ({ value }: { value: string }) => `${value} ツール`,
+              countSubtitle: ({ value }: { value: string }) =>
+                `最新 ${value} 件のツールをプレビュー行として表示します。`,
             },
-	        motionTitle: "モーション（詳細）",
-	        motionFooter:
-	          "履歴を安定させるため、アニメーションはフレッシュネスで制限されます。",
-	        freshnessTitle: "フレッシュネスウィンドウ",
-	        freshnessSubtitle: ({ value }: { value: string }) => `現在: ${value}ms`,
-	        freshnessPromptTitle: "フレッシュネスウィンドウ（ms）",
-	        freshnessPromptBody:
-	          "新しい項目がアニメーション対象となる時間（フレッシュ）を設定します。",
-	        animateNewItemsTitle: "新規項目をアニメーション",
-	        animateNewItemsSubtitle:
-	          "ストリーミングで追加された新しいメッセージ/ツールをアニメーションします。",
-	        animateToolExpandCollapseTitle: "ツールの展開/折りたたみをアニメーション",
-	        animateToolExpandCollapseSubtitle:
-	          "インラインの展開/折りたたみ遷移をアニメーションします。",
-	        animateToolExpandCollapseFreshOnlyTitle:
-	          "フレッシュのみ展開/折りたたみ",
-	        animateToolExpandCollapseFreshOnlySubtitle:
-	          "フレッシュなツールのみ展開/折りたたみをアニメーションします。",
-	        animateThinkingTitle: "思考をアニメーション",
-	        animateThinkingSubtitle:
-	          "可視の場合、ストリーミング思考メッセージをアニメーションします。",
-	        scrollTitle: "スクロール（詳細）",
-	        scrollFooter: "ピン留めしきい値とジャンプ挙動を調整します。",
-	        pinOffsetTitle: "ピン留めオフセットしきい値",
-	        pinOffsetSubtitle: ({ value }: { value: string }) => `現在: ${value}px`,
-	        pinOffsetPromptTitle: "ピン留めオフセットしきい値（px）",
-	        pinOffsetPromptBody:
-	          "最下部からどれだけ離れていてもピン留め扱いにするかを設定します。",
-	        autoFollowTitle: "ピン留め時に自動追従",
-	        autoFollowSubtitle:
-	          "ピン留め中は新しいアクティビティに自動で追従します。",
-	        jumpMinNewCountTitle: "ジャンプボタンの最小カウント",
-	        jumpMinNewCountSubtitle: ({ value }: { value: string }) => `現在: ${value}`,
-	        jumpMinNewCountPromptTitle: "ジャンプボタンの最小カウント",
-	        jumpMinNewCountPromptBody:
-	          "この数だけ新規項目が来た場合にのみジャンプボタンを表示します。",
-	        jumpAnimateScrollTitle: "最下部ジャンプをアニメーション",
-	        jumpAnimateScrollSubtitle:
-	          "最下部へジャンプする際のスクロールをアニメーションします。",
-	      },
-	    },
-	    toolDetailOverrides: {
-	      title: "ツール詳細の上書き",
-	      footer:
-	        "特定のツールの詳細レベルを上書きします。上書きはレガシー正規化後の正規ツール名（V2）に適用されます。",
-	    },
-	    permissions: {
-	      title: "権限",
-	      entrySubtitle: "権限設定を開く",
-	      footer:
-	        "デフォルト権限と、変更が実行中セッションにどう適用されるかを設定します。",
-	      promptSurfaceTitle: "権限の承認プロンプト",
-	      promptSurfaceFooter:
-	        "セッション中に承認プロンプトをどこに表示するかを選びます。",
-	      applyChangesFooter:
-	        "実行中セッションに対して権限変更をいつ適用するかを選びます。",
-	      backendFooter:
-	        "このバックエンドでセッション開始時に使うデフォルト権限モードを設定します。",
-	      defaultPermissionModeTitle: "デフォルト権限モード",
-	      promptSurface: {
-	        composerTitle: "入力付近（推奨）",
-	        composerSubtitle: "入力の近くにリッチな権限カードを表示します。",
-	        transcriptTitle: "トランスクリプト内",
-	        transcriptSubtitle: "ツールメッセージ内に権限プロンプトを表示します。",
-	        bothTitle: "両方",
-	        bothSubtitle: "入力付近とトランスクリプト内の両方に表示します。",
-	      },
-	      applyTiming: {
-	        immediateTitle: "すぐに適用",
-	        nextPromptTitle: "次のメッセージで適用",
-	      },
-	    },
-	    subAgentGuidanceEntry: {
-	      openSubtitle: "サブエージェント設定を開く",
-	    },
-	    actionsEntry: {
-	      footer:
-	        "サーフェスと配置（UI、音声、MCP）ごとにアクションを有効化し、表示場所を制御します。",
-	      openSubtitle: "アクション設定を開く",
-	    },
-	    defaultPermissions: {
-	      title: "デフォルト権限",
-	      footer:
-	        "新しいセッション開始時に適用されます。プロファイルで上書きすることもできます。",
-	      applyPermissionChangesTitle: "権限変更を適用",
-	      applyPermissionChangesImmediateSubtitle:
-	        "実行中セッションにすぐ適用（セッションメタデータを更新）。",
-	      applyPermissionChangesNextPromptSubtitle: "次のメッセージでのみ適用します。",
-	    },
-	    replayResume: {
-	      title: "リプレイ再開",
-	      footer:
-	        "ベンダーの再開が利用できない場合、最近のトランスクリプトメッセージを新しいセッションへリプレイしてコンテキストにできます。",
-	      enabledTitle: "リプレイ再開を有効化",
-	      enabledSubtitleOn:
-	        "ベンダー再開が利用できない場合にリプレイ再開を提案します。",
-	      enabledSubtitleOff: "リプレイ再開を提案しません。",
-	      strategyTitle: "リプレイ戦略",
-	      strategy: {
-	        recentTitle: "最近のメッセージ",
-	        recentSubtitle:
-	          "最も最近のトランスクリプトメッセージのみを使用します。",
-	        summaryRecentTitle: "要約 + 最近（実験的）",
-	        summaryRecentSubtitle:
-	          "短い要約と最近のメッセージを含めます（ベストエフォート）。",
-	      },
-	      recentMessagesTitle: "含める最近メッセージ",
-	      recentMessagesPlaceholder: "16",
-	    },
-	    toolDetailLevel: {
-	      titleOnlyTitle: "タイトルのみ",
-	      titleOnlySubtitle:
-	        "タイムラインにツール名のみを表示します（サブタイトルなし、本文なし）。",
-	      compactTitle: "コンパクト",
-	      compactSubtitle: "タイムラインにツール名＋短いサブタイトルを同じ行に表示します（本文なし）。",
-	      summaryTitle: "要約",
-	      summarySubtitle: "タイムラインにコンパクトで安全な要約を表示します。",
-	      fullTitle: "詳細",
-	      fullSubtitle: "タイムラインに詳細をインラインで表示します。",
-	      defaultTitle: "デフォルト",
-	      defaultSubtitle: "グローバルのデフォルトを使用します。",
+          motionTitle: "モーション（詳細）",
+          motionFooter:
+            "履歴を安定させるため、アニメーションはフレッシュネスで制限されます。",
+          freshnessTitle: "フレッシュネスウィンドウ",
+          freshnessSubtitle: ({ value }: { value: string }) => `現在: ${value}ms`,
+          freshnessPromptTitle: "フレッシュネスウィンドウ（ms）",
+          freshnessPromptBody:
+            "新しい項目がアニメーション対象となる時間（フレッシュ）を設定します。",
+          animateNewItemsTitle: "新規項目をアニメーション",
+          animateNewItemsSubtitle:
+            "ストリーミングで追加された新しいメッセージ/ツールをアニメーションします。",
+          animateToolExpandCollapseTitle: "ツールの展開/折りたたみをアニメーション",
+          animateToolExpandCollapseSubtitle:
+            "インラインの展開/折りたたみ遷移をアニメーションします。",
+          animateToolExpandCollapseFreshOnlyTitle:
+            "フレッシュのみ展開/折りたたみ",
+          animateToolExpandCollapseFreshOnlySubtitle:
+            "フレッシュなツールのみ展開/折りたたみをアニメーションします。",
+          animateThinkingTitle: "思考をアニメーション",
+          animateThinkingSubtitle:
+            "可視の場合、ストリーミング思考メッセージをアニメーションします。",
+          scrollTitle: "スクロール（詳細）",
+          scrollFooter: "ピン留めしきい値とジャンプ挙動を調整します。",
+          pinOffsetTitle: "ピン留めオフセットしきい値",
+          pinOffsetSubtitle: ({ value }: { value: string }) => `現在: ${value}px`,
+          pinOffsetPromptTitle: "ピン留めオフセットしきい値（px）",
+          pinOffsetPromptBody:
+            "最下部からどれだけ離れていてもピン留め扱いにするかを設定します。",
+          autoFollowTitle: "ピン留め時に自動追従",
+          autoFollowSubtitle:
+            "ピン留め中は新しいアクティビティに自動で追従します。",
+          jumpMinNewCountTitle: "ジャンプボタンの最小カウント",
+          jumpMinNewCountSubtitle: ({ value }: { value: string }) => `現在: ${value}`,
+          jumpMinNewCountPromptTitle: "ジャンプボタンの最小カウント",
+          jumpMinNewCountPromptBody:
+            "この数だけ新規項目が来た場合にのみジャンプボタンを表示します。",
+          jumpAnimateScrollTitle: "最下部ジャンプをアニメーション",
+          jumpAnimateScrollSubtitle:
+            "最下部へジャンプする際のスクロールをアニメーションします。",
+        },
+      },
+        toolDetailOverrides: {
+          title: "ツール詳細の上書き",
+          entrySubtitle: "ツールごとの上書き",
+          footer:
+            "特定のツールの詳細レベルを上書きします。上書きはレガシー正規化後の正規ツール名（V2）に適用されます。",
+          expandedTitle: "展開時詳細の上書き",
+          expandedFooter: "特定のツールの展開時詳細レベルを上書きします。",
+        },
+      permissions: {
+        title: "権限",
+        entrySubtitle: "権限設定を開く",
+        footer:
+          "デフォルト権限と、変更が実行中セッションにどう適用されるかを設定します。",
+        promptSurfaceTitle: "権限の承認プロンプト",
+        promptSurfaceFooter:
+          "セッション中に承認プロンプトをどこに表示するかを選びます。",
+        applyChangesFooter:
+          "実行中セッションに対して権限変更をいつ適用するかを選びます。",
+        backendFooter:
+          "このバックエンドでセッション開始時に使うデフォルト権限モードを設定します。",
+        defaultPermissionModeTitle: "デフォルト権限モード",
+        promptSurface: {
+          composerTitle: "入力付近（推奨）",
+          composerSubtitle: "入力の近くにリッチな権限カードを表示します。",
+          transcriptTitle: "トランスクリプト内",
+          transcriptSubtitle: "ツールメッセージ内に権限プロンプトを表示します。",
+          bothTitle: "両方",
+          bothSubtitle: "入力付近とトランスクリプト内の両方に表示します。",
+        },
+        applyTiming: {
+          immediateTitle: "すぐに適用",
+          nextPromptTitle: "次のメッセージで適用",
+        },
+      },
+      subAgentGuidanceEntry: {
+        openSubtitle: "サブエージェント設定を開く",
+      },
+      actionsEntry: {
+        footer:
+          "サーフェスと配置（UI、音声、MCP）ごとにアクションを有効化し、表示場所を制御します。",
+        openSubtitle: "アクション設定を開く",
+      },
+      defaultPermissions: {
+        title: "デフォルト権限",
+        footer:
+          "新しいセッション開始時に適用されます。プロファイルで上書きすることもできます。",
+        applyPermissionChangesTitle: "権限変更を適用",
+        applyPermissionChangesImmediateSubtitle:
+          "実行中セッションにすぐ適用（セッションメタデータを更新）。",
+        applyPermissionChangesNextPromptSubtitle: "次のメッセージでのみ適用します。",
+      },
+      replayResume: {
+        title: "リプレイ再開",
+        footer:
+          "ベンダーの再開が利用できない場合、最近のトランスクリプトメッセージを新しいセッションへリプレイしてコンテキストにできます。",
+        enabledTitle: "リプレイ再開を有効化",
+        enabledSubtitleOn:
+          "ベンダー再開が利用できない場合にリプレイ再開を提案します。",
+        enabledSubtitleOff: "リプレイ再開を提案しません。",
+        strategyTitle: "リプレイ戦略",
+        strategy: {
+          recentTitle: "最近のメッセージ",
+          recentSubtitle:
+            "最も最近のトランスクリプトメッセージのみを使用します。",
+          summaryRecentTitle: "要約 + 最近（実験的）",
+          summaryRecentSubtitle:
+            "短い要約と最近のメッセージを含めます（ベストエフォート）。",
+        },
+        recentMessagesTitle: "含める最近メッセージ",
+        recentMessagesPlaceholder: "16",
+      },
+      toolDetailLevel: {
+        titleOnlyTitle: "タイトルのみ",
+        titleOnlySubtitle:
+          "タイムラインにツール名のみを表示します（サブタイトルなし、本文なし）。",
+        compactTitle: "コンパクト",
+        compactSubtitle: "タイムラインにツール名＋短いサブタイトルを同じ行に表示します（本文なし）。",
+        summaryTitle: "要約",
+        summarySubtitle: "タイムラインにコンパクトで安全な要約を表示します。",
+        fullTitle: "詳細",
+        fullSubtitle: "タイムラインに詳細をインラインで表示します。",
+        defaultTitle: "デフォルト",
+        defaultSubtitle: "グローバルのデフォルトを使用します。",
           styleDefaultTitle: "デフォルト（推奨）",
           styleDefaultSubtitle: "カード: 要約。アクティビティフィード: コンパクト。",
           expandedStyleDefaultTitle: "デフォルト（推奨）",
           expandedStyleDefaultSubtitle: "カード: 詳細。アクティビティフィード: 要約。",
-	    },
-	    terminalConnect: {
-	      title: "ターミナル接続",
-	      legacySecretExportTitle: "旧シークレットのエクスポート（互換）",
-	      legacySecretExportEnabledSubtitle:
-	        "有効：旧アカウントシークレットをターミナルへエクスポートし、古いターミナルが接続できるようにします。推奨されません。",
-	      legacySecretExportDisabledSubtitle:
-	        "無効（推奨）：コンテンツキーのみでターミナルをプロビジョニングします（Terminal Connect V2）。",
-	    },
+      },
+      terminalConnect: {
+        title: "ターミナル接続",
+        legacySecretExportTitle: "旧シークレットのエクスポート（互換）",
+        legacySecretExportEnabledSubtitle:
+          "有効：旧アカウントシークレットをターミナルへエクスポートし、古いターミナルが接続できるようにします。推奨されません。",
+        legacySecretExportDisabledSubtitle:
+          "無効（推奨）：コンテンツキーのみでターミナルをプロビジョニングします（Terminal Connect V2）。",
+      },
     sessionList: {
       title: "セッション一覧",
       footer: "各セッション行に表示する内容をカスタマイズします。",
@@ -4624,8 +4817,8 @@ export const ja: TranslationStructure = {
     anonymousId: "匿名ID",
     publicId: "公開ID",
     notAvailable: "利用不可",
-    linkNewDevice: "新しいデバイスをリンク",
-    linkNewDeviceSubtitle: "QRコードをスキャンしてデバイスをリンク",
+    linkNewDevice: "QRをスキャンして新しいデバイスをリンク",
+    linkNewDeviceSubtitle: "新しいデバイスに表示されたQRコードをスキャンします",
     profile: "プロフィール",
     name: "名前",
     github: "GitHub",
@@ -4659,7 +4852,10 @@ export const ja: TranslationStructure = {
     logoutConfirm:
       "ログアウトしてもよろしいですか？シークレットキーのバックアップを取っていることを確認してください！",
     encryptionUpdateFailed: "暗号化設定の更新に失敗しました",
-    secretKeyMissing: "Secret key unavailable. Please restore your account first.",
+    secretKeyMissing: "秘密鍵を利用できません。先にアカウントを復元してください。",
+    restoreRequiredTitle: "復元が必要です",
+    restoreRequiredBody:
+      "このアカウントには暗号化された履歴があります。このデバイスで暗号化を再度有効にするには、秘密鍵を復元してください。鍵を紛失した場合は、アカウントをリセットして新しく開始できます（以前の暗号化履歴は復元できません）。",
   },
 
   settingsLanguage: {
@@ -4799,10 +4995,10 @@ export const ja: TranslationStructure = {
     subtitle:
       "エンドツーエンド暗号化され、アカウントはデバイスにのみ保存されます。",
     createAccount: "アカウントを作成",
-    chooseEncryptionTitle: "Choose encryption",
-    chooseEncryptionBody: "This server supports both encrypted and non-encrypted accounts. Choose how you want to store your account data.",
-    chooseEncryptionEncrypted: "Continue with end-to-end encryption",
-    chooseEncryptionPlain: "Continue without encryption",
+    chooseEncryptionTitle: "暗号化を選択",
+    chooseEncryptionBody: "このサーバーは暗号化あり／なしのアカウントに対応しています。アカウントデータの保存方法を選択してください。",
+    chooseEncryptionEncrypted: "エンドツーエンド暗号化で続行",
+    chooseEncryptionPlain: "暗号化なしで続行",
     signUpWithProvider: ({ provider }: { provider: string }) =>
       `${provider}で続行`,
     signInWithCertificate: "証明書でサインイン",
@@ -4830,7 +5026,7 @@ export const ja: TranslationStructure = {
       `${label}がクリップボードにコピーされました`,
   },
 
-	  machine: {
+    machine: {
     launchNewSessionInDirectory: "ディレクトリで新しいセッションを起動",
     offlineUnableToSpawn: "マシンがオフラインのためランチャーは無効です",
     offlineHelp:
@@ -4879,22 +5075,22 @@ export const ja: TranslationStructure = {
     renameTitle: "マシン名を変更",
     renameDescription:
       "このマシンにカスタム名を設定します。空欄の場合はデフォルトのホスト名を使用します。",
-	    renamePlaceholder: "マシン名を入力",
-	    renamedSuccess: "マシン名を変更しました",
-	    renameFailed: "マシン名の変更に失敗しました",
-		    actions: {
-		      removeMachine: "マシンを削除",
-		      removeMachineSubtitle:
-		        "このマシンの権限を取り消し、アカウントから削除します。",
-		      removeMachineConfirmBody:
-		        "このマシンからのアクセス（アクセスキーやオートメーション割り当てを含む）を取り消します。後でCLIから再度サインインして再接続できます。",
-		      removeMachineAlreadyRemoved:
-		        "このマシンはすでにアカウントから削除されています。",
-		    },
-	    lastKnownPid: "最後に確認されたPID",
-	    lastKnownHttpPort: "最後に確認されたHTTPポート",
-	    startedAt: "開始時刻",
-	    cliVersion: "CLIバージョン",
+      renamePlaceholder: "マシン名を入力",
+      renamedSuccess: "マシン名を変更しました",
+      renameFailed: "マシン名の変更に失敗しました",
+        actions: {
+          removeMachine: "マシンを削除",
+          removeMachineSubtitle:
+            "このマシンの権限を取り消し、アカウントから削除します。",
+          removeMachineConfirmBody:
+            "このマシンからのアクセス（アクセスキーやオートメーション割り当てを含む）を取り消します。後でCLIから再度サインインして再接続できます。",
+          removeMachineAlreadyRemoved:
+            "このマシンはすでにアカウントから削除されています。",
+        },
+      lastKnownPid: "最後に確認されたPID",
+      lastKnownHttpPort: "最後に確認されたHTTPポート",
+      startedAt: "開始時刻",
+      cliVersion: "CLIバージョン",
     daemonStateVersion: "デーモン状態バージョン",
     activeSessions: ({ count }: { count: number }) =>
       `アクティブセッション (${count})`,
@@ -4965,29 +5161,29 @@ export const ja: TranslationStructure = {
     switchToLocal: "ローカルに切り替え",
   },
 
-  codex: {
-    // Codex permission dialog buttons
-    permissions: {
-      yesAlwaysAllowCommand: "はい、グローバルに常に許可",
-      yesForSession: "はい、このセッションでは確認しない",
-      stop: "停止",
-      stopAndExplain: "停止して、何をすべきか説明",
+    codex: {
+      // Codex permission dialog buttons
+      permissions: {
+        yesAlwaysAllowCommand: "はい、グローバルに常に許可",
+        yesForSession: "はい、このセッションでは確認しない",
+        stop: "停止",
+        stopAndExplain: "停止して、何をすべきか説明",
+      },
     },
-  },
 
-  claude: {
-    // Claude permission dialog buttons
-    permissions: {
-      yesAllowAllEdits: "はい、このセッション中のすべての編集を許可",
-      yesForTool: "はい、このツールについては確認しない",
-      yesForCommandPrefix:
-        "はい、このコマンドプレフィックスについては確認しない",
-      yesForSubcommand: "はい、このサブコマンドについては確認しない",
-      yesForCommandName: "はい、このコマンドについては確認しない",
-      stop: "停止",
-      noTellClaude: "いいえ、フィードバックを提供",
+    claude: {
+      // Claude permission dialog buttons
+      permissions: {
+        yesAllowAllEdits: "はい、このセッション中のすべての編集を許可",
+        yesForTool: "はい、このツールについては確認しない",
+        yesForCommandPrefix:
+          "はい、このコマンドプレフィックスについては確認しない",
+        yesForSubcommand: "はい、このサブコマンドについては確認しない",
+        yesForCommandName: "はい、このコマンドについては確認しない",
+        stop: "停止",
+        noTellClaude: "いいえ、フィードバックを提供",
+      },
     },
-  },
 
   textSelection: {
     // Text selection screen

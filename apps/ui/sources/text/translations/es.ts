@@ -233,6 +233,31 @@ export const es: TranslationStructure = {
     },
   },
 
+  appCrash: {
+    title: "Algo salió mal",
+    subtitle:
+      "Happier tuvo un error inesperado. Puedes reiniciar la interfaz de la app o copiar los detalles para soporte.",
+    detailsTitle: "Detalles del error",
+    restart: "Reiniciar app",
+    copyDetails: "Copiar detalles del error",
+  },
+
+  webCryptoGate: {
+    title: "Se requiere una conexión segura",
+    subtitle:
+      "Esta página necesita WebCrypto para mantener tus datos seguros. WebCrypto no está disponible en este origen porque los navegadores requieren un contexto seguro.",
+    howToFix: "Cómo solucionarlo",
+    fixHttps: "Abre la UI con HTTPS (recomendado).",
+    fixTunnel:
+      "Si necesitas acceso por LAN, usa un túnel HTTPS o un proxy inverso con TLS.",
+    fixLocalhost:
+      "Si estás en la misma máquina, usa http://localhost (el loopback se trata como seguro).",
+    currentOrigin: "Origen actual",
+    secureContext: "Contexto seguro",
+    copyDetails: "Copiar detalles",
+    reload: "Recargar",
+  },
+
   common: {
     // Simple string constants
     add: "Añadir",
@@ -242,9 +267,11 @@ export const es: TranslationStructure = {
     moreActionsHint: "Abre un menú con más acciones",
     cancel: "Cancelar",
     close: "Cerrar",
-    done: "Hecho",
-    authenticate: "Autenticar",
-    save: "Guardar",
+      open: "Abrir",
+      done: "Hecho",
+      reorder: "Reordenar",
+      authenticate: "Autenticar",
+      save: "Guardar",
     saveAs: "Guardar como",
     error: "Error",
     success: "Éxito",
@@ -261,6 +288,7 @@ export const es: TranslationStructure = {
     applied: "Aplicado",
     signOut: "Cerrar sesión",
     keep: "Conservar",
+    use: "Usar",
     reset: "Restablecer",
     logout: "Cerrar sesión",
     yes: "Sí",
@@ -276,6 +304,8 @@ export const es: TranslationStructure = {
     copied: "Copiado",
     copy: "Copiar",
     copyWithLabel: ({ label }: { label: string }) => `Copiar ${label}`,
+    expand: "Expandir",
+    collapse: "Colapsar",
     command: "Comando",
     scanning: "Escaneando...",
     urlPlaceholder: "https://ejemplo.com",
@@ -341,6 +371,7 @@ export const es: TranslationStructure = {
     online: "en línea",
     offline: "desconectado",
     lastSeen: ({ time }: { time: string }) => `visto por última vez ${time}`,
+    actionRequired: "acción requerida",
     permissionRequired: "permiso requerido",
     activeNow: "Activo ahora",
     unknown: "desconocido",
@@ -371,6 +402,9 @@ export const es: TranslationStructure = {
     enterSecretKey: "Ingresa tu clave secreta",
     invalidSecretKey: "Clave secreta inválida. Verifica e intenta de nuevo.",
     enterUrlManually: "Ingresar URL manualmente",
+    scanComputerQrUnavailableTitle: "Escaneo de QR del ordenador no disponible",
+    scanComputerQrUnavailableBody:
+      "Este método de inicio de sesión está deshabilitado en este servidor. Usa otra opción a continuación para restaurar tu cuenta.",
     scanComputerQrInstructions: "Escanea el código QR que se muestra en Happier en tu computadora (Configuración → Añade tu teléfono).",
     scanComputerQrButton: "Escanear QR para iniciar sesión",
     waitingForApproval: "Esperando aprobación…",
@@ -378,14 +412,19 @@ export const es: TranslationStructure = {
     addPhoneQrInstructions: "Escanea este código QR con la app móvil de Happier para iniciar sesión en tu teléfono.",
     pairingRequestTitle: "Solicitud de vinculación",
     pairingRequestBody: "Verifica que este código coincida con el que ves en tu teléfono y luego aprueba.",
+    pairingAlreadyRequestedTitle: "Código ya usado",
+    pairingAlreadyRequestedBody:
+      "Este código QR ya se escaneó en otro teléfono. Pide a la computadora que genere uno nuevo.",
     deviceLabel: "Dispositivo",
     confirmCodeLabel: "Código de confirmación",
     approveButton: "Aprobar",
     generateNewQrCode: "Generar nuevo código QR",
+    pairingQrExpired: "Este código QR ha caducado. Genera uno nuevo.",
     openMachine: "Abrir máquina",
     terminalUrlPlaceholder: "happier://terminal?...",
+    accountUrlPlaceholder: "happier:///account?...",
     restoreQrInstructions:
-      '1. Abre Happier en tu dispositivo móvil\n2. Ve a Configuración → Cuenta\n3. Toca "Vincular nuevo dispositivo"\n4. Escanea este código QR',
+      "En un dispositivo que ya haya iniciado sesión, ve a Configuración → Cuenta y escanea este código QR.",
     externalAuthVerifiedTitle: ({ provider }: { provider: string }) =>
       `${provider} verificado`,
     externalAuthVerifiedBody: ({ provider }: { provider: string }) =>
@@ -411,6 +450,8 @@ export const es: TranslationStructure = {
     unsupported: {
       connectTitle: ({ name }: { name: string }) => `Conectar ${name}`,
       runCommandInTerminal: "Ejecuta el siguiente comando en tu terminal:",
+      runCommandInTerminalWithCommand: ({ command }: { command: string }) =>
+        `Ejecuta el siguiente comando en tu terminal:\n\n${command}`,
       command: ({ name }: { name: string }) => `happier connect ${name}`,
     },
   },
@@ -804,23 +845,23 @@ export const es: TranslationStructure = {
     addYourPhoneSubtitle: "Muestra un código QR para iniciar sesión en tu teléfono",
     appearance: "Apariencia",
     appearanceSubtitle: "Personaliza como se ve la app",
-	    voiceAssistant: "Asistente de voz",
-	    voiceAssistantSubtitle: "Configura las preferencias de voz",
-	    memorySearch: "Búsqueda de memoria local",
-	    memorySearchSubtitle: "Busca en conversaciones anteriores (en el dispositivo)",
-	    notifications: "Notificaciones",
-	    notificationsSubtitle: "Preferencias de notificaciones push",
-	    attachments: "Adjuntos",
-	    attachmentsSubtitle: "Preferencias de subida de archivos",
-	    sourceControl: "Control de versiones",
-	    sourceControlSubtitle: "Estrategia de commits y comportamiento del backend",
-	    automations: "Automatizaciones",
-	    automationsSubtitle: "Gestiona sesiones programadas y ejecuciones recurrentes",
-	    executionRunsSubtitle: "Ejecuciones en distintas máquinas",
-	    connectedServices: "Servicios conectados",
-	    connectedServicesSubtitle: "Suscripciones de Claude/Codex y perfiles OAuth",
-	    featuresTitle: "Características",
-	    featuresSubtitle: "Habilitar o deshabilitar funciones de la aplicación",
+      voiceAssistant: "Asistente de voz",
+      voiceAssistantSubtitle: "Configura las preferencias de voz",
+      memorySearch: "Búsqueda de memoria local",
+      memorySearchSubtitle: "Busca en conversaciones anteriores (en el dispositivo)",
+      notifications: "Notificaciones",
+      notificationsSubtitle: "Preferencias de notificaciones push",
+      attachments: "Adjuntos",
+      attachmentsSubtitle: "Preferencias de subida de archivos",
+      sourceControl: "Control de versiones",
+      sourceControlSubtitle: "Estrategia de commits y comportamiento del backend",
+      automations: "Automatizaciones",
+      automationsSubtitle: "Gestiona sesiones programadas y ejecuciones recurrentes",
+      executionRunsSubtitle: "Ejecuciones en distintas máquinas",
+      connectedServices: "Servicios conectados",
+      connectedServicesSubtitle: "Suscripciones de Claude/Codex y perfiles OAuth",
+      featuresTitle: "Características",
+      featuresSubtitle: "Habilitar o deshabilitar funciones de la aplicación",
     developer: "Desarrollador",
     developerTools: "Herramientas de desarrollador",
     about: "Acerca de",
@@ -1097,17 +1138,50 @@ export const es: TranslationStructure = {
       pasteRedirectUrl: "Pegar URL de redirección",
       pasteRedirectUrlPromptBody:
         "Después de completar OAuth, copia la URL final redirigida desde la barra de direcciones del navegador y pégala aquí.",
+      tryDeviceInstead: "Probar autenticación por dispositivo",
+      tryEmbeddedInstead: "Probar navegador integrado",
       working: "Trabajando…",
       alerts: {
         connectedTitle: "Conectado",
         connectedBody: ({ serviceId, profileId }: { serviceId: string; profileId: string }) =>
           `${serviceId} (${profileId}) está conectado.`,
+        failedToOpenUrl: "No se pudo abrir la URL",
         failedToConnect: "No se pudo conectar",
+      },
+    },
+    deviceAuth: {
+      invalidConfig: "Configuración del servicio conectado no válida.",
+      title: "Conectar (dispositivo)",
+      description:
+        "Abre la página de verificación, introduce el código y mantén esta pantalla abierta hasta que se complete la conexión.",
+      openVerificationUrl: "Abrir página de verificación",
+      userCode: "Código de usuario",
+      securityHint:
+        "Consejo: toca Copiar para copiar el código. Introdúcelo solo en auth.openai.com. No lo compartas con nadie.",
+      deviceAuthDisabledHint:
+        "Si la página de verificación indica que la autorización por código de dispositivo está desactivada, activa “Enable device code authorization for Codex” en la configuración de ChatGPT e inténtalo de nuevo.",
+      preparing: "Preparando…",
+      waiting: "Esperando aprobación…",
+      polling: "Comprobando aprobación…",
+      usePasteInstead: "Usar URL de redirección pegada",
+      useBrowserInstead: "Usar navegador integrado",
+      alerts: {
+        connectedTitle: "Conectado",
+        connectedBody: ({ serviceId, profileId }: { serviceId: string; profileId: string }) =>
+          `${serviceId} (${profileId}) está conectado.`,
+        failedToConnect: "No se pudo conectar",
+        failedToStart: "No se pudo iniciar la autenticación del dispositivo",
       },
     },
     detail: {
       unknownService: "Servicio conectado desconocido.",
       actionsGroupTitle: "Acciones",
+      actions: {
+        setDefault: "Establecer como predeterminado",
+        unsetDefault: "Quitar predeterminado",
+        editLabel: "Editar etiqueta",
+        reconnect: "Reconectar",
+      },
       setDefaultProfileTitle: "Establecer perfil predeterminado",
       setDefaultProfileSubtitleDefault: ({ profileId }: { profileId: string }) =>
         `Predeterminado: ${profileId}`,
@@ -1118,15 +1192,27 @@ export const es: TranslationStructure = {
         "Etiqueta opcional mostrada en los selectores de autenticación",
       addOauthProfileTitle: "Añadir perfil OAuth",
       addOauthProfileSubtitle: "Conectar un perfil de cuenta nuevo",
-      connectSetupTokenTitle: "Conectar mediante setup-token",
-      connectSetupTokenSubtitle: "Pega un setup-token de Claude",
+      addOauthProfileDeviceTitle: "Añadir con autenticación del dispositivo",
+      addOauthProfileDeviceSubtitle: "Recomendado para web/entornos remotos",
+      addOauthProfilePasteTitle: "Añadir pegando redirección",
+      addOauthProfilePasteSubtitle: "Flujo manual de copiar/pegar URL de redirección",
+      addOauthProfileBrowserTitle: "Añadir con navegador en la app",
+      addOauthProfileBrowserSubtitle: "Usa un navegador integrado cuando sea compatible",
+      connectApiKeyTitle: "Conectar con clave API",
+      connectApiKeySubtitle: "Pega una clave API de Anthropic",
+      connectSetupTokenTitle: "Conectar con setup-token",
+      connectSetupTokenSubtitle: "Pega un setup-token de Claude (de claude setup-token)",
       disconnectConfirmBody: ({ service, profileId }: { service: string; profileId: string }) =>
         `¿Desconectar ${service} (${profileId})?`,
       prompts: {
         profileIdTitle: "ID de perfil",
         profileIdBody: "Usa una etiqueta corta como work, personal o alt.",
+        apiKeyTitle: "Clave API",
+        apiKeyBody: "Pega tu clave API de Anthropic.",
+        apiKeyPlaceholder: "p. ej. sk-ant-…",
         setupTokenTitle: "Token de configuración",
-        setupTokenBody: "Pega el setup-token de Claude.",
+        setupTokenBody: "Pega tu setup-token de Claude (de claude setup-token).",
+        setupTokenPlaceholder: "p. ej. sk-ant-oat01-…",
         profileLabelTitle: "Etiqueta de perfil",
         profileLabelBody: "Opcional. Se muestra en los selectores de autenticación.",
         profileLabelPlaceholder: "Cuenta de trabajo",
@@ -1144,6 +1230,17 @@ export const es: TranslationStructure = {
         defaultBadge: "Predeterminado",
         needsReauth: "Requiere reautenticación",
       },
+    },
+    profile: {
+      profileId: "ID de perfil",
+      status: "Estado",
+      email: "Correo",
+      accountId: "ID de cuenta",
+      quotaTitle: "Cuotas",
+      defaultSubtitle: "Este perfil está seleccionado por defecto",
+      setDefaultSubtitle: "Usar este perfil por defecto",
+      disconnectSubtitle: "Eliminar credenciales de este perfil",
+      reconnectSubtitle: "Reautenticar este perfil",
     },
     authModal: {
       nativeAuthTitle: "Autenticación nativa del backend",
@@ -1462,94 +1559,95 @@ export const es: TranslationStructure = {
     },
   },
 
-	  notifications: {
-	    actions: {
-	      allow: 'Permitir',
-	      deny: 'Denegar',
-	      answer: 'Responder',
-	    },
-	    channels: {
-	      default: 'Predeterminado',
-	      permissionRequests: 'Solicitudes de permisos',
-	      userActionRequests: 'Solicitudes de acción',
-	    },
-	  },
+    notifications: {
+      actions: {
+        allow: 'Permitir',
+        deny: 'Denegar',
+        answer: 'Responder',
+      },
+      channels: {
+        default: 'Predeterminado',
+        permissionRequests: 'Solicitudes de permisos',
+        userActionRequests: 'Solicitudes de acción',
+      },
+    },
 
   settingsProviders: {
     title: "Configuración del proveedor de IA",
     entrySubtitle: "Configura opciones específicas del proveedor",
     footer:
-	      "Configura opciones específicas del proveedor. Estos ajustes pueden afectar el comportamiento de la sesión.",
-	    providerSubtitle: "Ajustes específicos del proveedor",
-	    stateEnabled: "Habilitado",
-	    stateDisabled: "Deshabilitado",
-	    channelStable: "Estable",
-	    channelExperimental: "En pruebas",
-	    supported: "Compatible",
-	    notSupported: "No compatible",
-	    allowed: "Permitido",
-	    notAllowed: "No permitido",
-	    notAvailable: "No disponible",
-	    enabledTitle: "Habilitado",
-	    enabledSubtitle: "Usa este backend en selectores, perfiles y sesiones",
-	    releaseChannelTitle: "Canal de lanzamiento",
-	    capabilitiesTitle: "Capacidades",
-	    resumeSupportTitle: "Soporte de reanudación",
-	    sessionModeSupportTitle: "Soporte de modo de sesión",
-	    runtimeModeSwitchingTitle: "Cambio de modo en tiempo de ejecución",
-	    localControlTitle: "Control local",
-	    resumeSupportSupported: "Compatible",
-	    resumeSupportSupportedExperimental: "Compatible (en pruebas)",
-	    resumeSupportRuntimeGatedAcpLoadSession:
-	      "Controlado en tiempo de ejecución vía ACP loadSession",
-	    resumeSupportNotSupported: "No compatible",
-	    sessionModeNone: "Sin modos ACP",
-	    sessionModeAcpPolicyPresets: "Preajustes de políticas ACP",
-	    sessionModeAcpAgentModes: "Modos de agente ACP",
-	    runtimeSwitchNone: "Sin cambio en tiempo de ejecución",
-	    runtimeSwitchMetadataGating: "Controlado por metadatos",
-	    runtimeSwitchAcpSetSessionMode: "ACP: setSessionMode",
-	    runtimeSwitchProviderNative: "Nativo del proveedor",
-	    modelsTitle: "Modelos",
-	    modelSelectionTitle: "Selección de modelo",
-	    freeformModelIdsTitle: "IDs de modelo libres",
-	    defaultModelTitle: "Modelo predeterminado",
-	    catalogModelListTitle: "Lista de modelos del catálogo",
-	    catalogModelListEmpty: "No hay modelos de catálogo disponibles",
-	    dynamicModelProbeTitle: "Sondeo dinámico de modelos",
-	    dynamicModelProbeAuto: "Automático",
-	    dynamicModelProbeStaticOnly: "Solo estático",
-	    nonAcpApplyScopeTitle: "Ámbito de aplicación del modelo (sin ACP)",
-	    nonAcpApplyScopeSpawnOnly: "Aplicar al iniciar la sesión",
-	    nonAcpApplyScopeNextPrompt: "Aplicar en el próximo mensaje",
-	    acpApplyBehaviorTitle: "Comportamiento de aplicación del modelo (ACP)",
-	    acpApplyBehaviorSetModel: "Cambiar modelo en vivo",
-	    acpApplyBehaviorRestartSession: "Reiniciar sesión",
-		    acpConfigOptionTitle: "ID de opción de configuración del modelo ACP",
-		    cliConnectionTitle: "CLI y conexión",
-		    targetMachineTitle: "Máquina de destino",
-		    detectedCliTitle: "CLI detectado",
-		    installSetupTitle: "Instalación / configuración",
-		    installInfoSeeSetupGuide: "Ver guía de configuración",
-	    installInfoUseProviderCliInstaller: "Usa el instalador CLI del proveedor",
-	    cliInstaller: {
-	      installTitle: ({ provider }: { provider: string }) => `Instalar CLI de ${provider}`,
-	      reinstallTitle: ({ provider }: { provider: string }) => `Reinstalar CLI de ${provider}`,
-	      autoInstallUnavailable: "La instalación automática no está disponible para esta máquina.",
-	      installSubtitle: "Instala la CLI del proveedor en la máquina seleccionada (mejor esfuerzo).",
-	      reinstallSubtitle: "Vuelve a ejecutar el instalador del proveedor aunque la CLI ya esté presente.",
-	      noMachineSelected: "No se seleccionó ninguna máquina.",
-	      installNotSupported: "La instalación no está soportada en esta máquina.",
-	      installFailed: "La instalación falló.",
-	      installed: "Instalado.",
-	      logPath: ({ logPath }: { logPath: string }) => `Log: ${logPath}`,
-	    },
-	    setupGuideUrlTitle: "URL de la guía de configuración",
-	    connectedServiceTitle: "Servicio conectado",
-	    notFoundTitle: "Proveedor no encontrado",
-	    notFoundSubtitle: "Este proveedor no tiene pantalla de configuración.",
-	    noOptionsAvailable: "No hay opciones disponibles",
-	    invalidNumber: "Número inválido",
+        "Configura opciones específicas del proveedor. Estos ajustes pueden afectar el comportamiento de la sesión.",
+      providerSubtitle: "Ajustes específicos del proveedor",
+      stateEnabled: "Habilitado",
+      stateDisabled: "Deshabilitado",
+      channelStable: "Estable",
+      channelExperimental: "En pruebas",
+      supported: "Compatible",
+      notSupported: "No compatible",
+      allowed: "Permitido",
+      notAllowed: "No permitido",
+      notAvailable: "No disponible",
+      enabledTitle: "Habilitado",
+      enabledSubtitle: "Usa este backend en selectores, perfiles y sesiones",
+      releaseChannelTitle: "Canal de lanzamiento",
+      capabilitiesTitle: "Capacidades",
+      resumeSupportTitle: "Soporte de reanudación",
+      sessionModeSupportTitle: "Soporte de modo de sesión",
+      runtimeModeSwitchingTitle: "Cambio de modo en tiempo de ejecución",
+      localControlTitle: "Control local",
+      resumeSupportSupported: "Compatible",
+      resumeSupportSupportedExperimental: "Compatible (en pruebas)",
+      resumeSupportRuntimeGatedAcpLoadSession:
+        "Controlado en tiempo de ejecución vía ACP loadSession",
+      resumeSupportNotSupported: "No compatible",
+      sessionModeNone: "Sin modos ACP",
+      sessionModeAcpPolicyPresets: "Preajustes de políticas ACP",
+      sessionModeAcpAgentModes: "Modos de agente ACP",
+      sessionModeStaticAgentModes: "Modos de agente estáticos",
+      runtimeSwitchNone: "Sin cambio en tiempo de ejecución",
+      runtimeSwitchMetadataGating: "Controlado por metadatos",
+      runtimeSwitchAcpSetSessionMode: "ACP: setSessionMode",
+      runtimeSwitchProviderNative: "Nativo del proveedor",
+      modelsTitle: "Modelos",
+      modelSelectionTitle: "Selección de modelo",
+      freeformModelIdsTitle: "IDs de modelo libres",
+      defaultModelTitle: "Modelo predeterminado",
+      catalogModelListTitle: "Lista de modelos del catálogo",
+      catalogModelListEmpty: "No hay modelos de catálogo disponibles",
+      dynamicModelProbeTitle: "Sondeo dinámico de modelos",
+      dynamicModelProbeAuto: "Automático",
+      dynamicModelProbeStaticOnly: "Solo estático",
+      nonAcpApplyScopeTitle: "Ámbito de aplicación del modelo (sin ACP)",
+      nonAcpApplyScopeSpawnOnly: "Aplicar al iniciar la sesión",
+      nonAcpApplyScopeNextPrompt: "Aplicar en el próximo mensaje",
+      acpApplyBehaviorTitle: "Comportamiento de aplicación del modelo (ACP)",
+      acpApplyBehaviorSetModel: "Cambiar modelo en vivo",
+      acpApplyBehaviorRestartSession: "Reiniciar sesión",
+        acpConfigOptionTitle: "ID de opción de configuración del modelo ACP",
+        cliConnectionTitle: "CLI y conexión",
+        targetMachineTitle: "Máquina de destino",
+        detectedCliTitle: "CLI detectado",
+        installSetupTitle: "Instalación / configuración",
+        installInfoSeeSetupGuide: "Ver guía de configuración",
+      installInfoUseProviderCliInstaller: "Usa el instalador CLI del proveedor",
+      cliInstaller: {
+        installTitle: ({ provider }: { provider: string }) => `Instalar CLI de ${provider}`,
+        reinstallTitle: ({ provider }: { provider: string }) => `Reinstalar CLI de ${provider}`,
+        autoInstallUnavailable: "La instalación automática no está disponible para esta máquina.",
+        installSubtitle: "Instala la CLI del proveedor en la máquina seleccionada (mejor esfuerzo).",
+        reinstallSubtitle: "Vuelve a ejecutar el instalador del proveedor aunque la CLI ya esté presente.",
+        noMachineSelected: "No se seleccionó ninguna máquina.",
+        installNotSupported: "La instalación no está soportada en esta máquina.",
+        installFailed: "La instalación falló.",
+        installed: "Instalado.",
+        logPath: ({ logPath }: { logPath: string }) => `Log: ${logPath}`,
+      },
+      setupGuideUrlTitle: "URL de la guía de configuración",
+      connectedServiceTitle: "Servicio conectado",
+      notFoundTitle: "Proveedor no encontrado",
+      notFoundSubtitle: "Este proveedor no tiene pantalla de configuración.",
+      noOptionsAvailable: "No hay opciones disponibles",
+      invalidNumber: "Número inválido",
     invalidJson: "JSON inválido",
   },
 
@@ -1572,6 +1670,10 @@ export const es: TranslationStructure = {
     multiPanePanels: "Paneles derechos",
     multiPanePanelsDescription:
       "Muestra paneles laterales redimensionables para archivos y control de código fuente (web/tablet)",
+    sessionsRightPaneDefaultOpen:
+      "Mostrar siempre la barra lateral derecha en las sesiones",
+    sessionsRightPaneDefaultOpenDescription:
+      "Abrir automáticamente la barra lateral derecha al entrar en una sesión (web/tablet)",
     detailsPaneTabsBehavior: "Pestañas del editor",
     detailsPaneTabsBehaviorDescription:
       "Elige cómo se comportan las pestañas de archivos en el panel del editor",
@@ -1679,56 +1781,53 @@ export const es: TranslationStructure = {
         code: string;
       }) => `${state} (bloqueadoPor=${blockedBy ?? "null"}, código=${code})`,
     },
-		    expAutomations: "Automatizaciones",
-		    expAutomationsSubtitle: "Habilitar interfaz de automatizaciones y programación",
-		    expExecutionRuns: "Ejecuciones",
-	    expExecutionRunsSubtitle:
-	      "Habilitar superficies de control para ejecuciones (subagentes / revisiones)",
-	    expAttachmentsUploads: "Subida de adjuntos",
-	    expAttachmentsUploadsSubtitle:
-	      "Habilitar la subida de archivos/imágenes para que el agente pueda leerlos desde el disco",
-	    expUsageReporting: "Informe de uso",
+        expAutomations: "Automatizaciones",
+        expAutomationsSubtitle: "Habilitar interfaz de automatizaciones y programación",
+        expExecutionRuns: "Ejecuciones",
+      expExecutionRunsSubtitle:
+        "Habilitar superficies de control para ejecuciones (subagentes / revisiones)",
+      expAttachmentsUploads: "Subida de adjuntos",
+      expAttachmentsUploadsSubtitle:
+        "Habilitar la subida de archivos/imágenes para que el agente pueda leerlos desde el disco",
+      expUsageReporting: "Informe de uso",
     expUsageReportingSubtitle: "Habilitar pantallas de uso y reporte de tokens",
     expScmOperations: "Operaciones de control de versiones",
     expScmOperationsSubtitle:
       "Habilitar operaciones de escritura experimentales de control de versiones (stage/commit/push/pull)",
-	    expFilesReviewComments: "Comentarios de revisión de archivos",
-	    expFilesReviewCommentsSubtitle:
-	      "Añade comentarios de revisión por línea desde las vistas de archivo y diff, y luego envíalos como un mensaje estructurado",
-	    expFilesDiffSyntaxHighlighting: "Resaltado de sintaxis en diffs",
-	    expFilesDiffSyntaxHighlightingSubtitle:
-	      "Habilita el resaltado de sintaxis en diffs y vistas de código (con límites de rendimiento)",
-	    expFilesAdvancedSyntaxHighlighting: "Resaltado de sintaxis avanzado",
-	    expFilesAdvancedSyntaxHighlightingSubtitle:
-	      "Usa un resaltado más pesado y de mayor fidelidad (solo web, puede ser más lento)",
-	    expFilesEditor: "Editor de archivos integrado",
-	    expFilesEditorSubtitle:
-	      "Habilita editar archivos directamente desde el explorador de archivos (Monaco en web/escritorio, CodeMirror en nativo)",
-	    expShowThinkingMessages: "Mostrar mensajes de pensamiento",
-    expShowThinkingMessagesSubtitle:
-      "Mostrar mensajes de pensamiento/estado del asistente en el chat",
-	    expSessionType: "Selector de tipo de sesión",
+      expFilesReviewComments: "Comentarios de revisión de archivos",
+      expFilesReviewCommentsSubtitle:
+        "Añade comentarios de revisión por línea desde las vistas de archivo y diff, y luego envíalos como un mensaje estructurado",
+      expFilesDiffSyntaxHighlighting: "Resaltado de sintaxis en diffs",
+      expFilesDiffSyntaxHighlightingSubtitle:
+        "Habilita el resaltado de sintaxis en diffs y vistas de código (con límites de rendimiento)",
+      expFilesAdvancedSyntaxHighlighting: "Resaltado de sintaxis avanzado",
+      expFilesAdvancedSyntaxHighlightingSubtitle:
+        "Usa un resaltado más pesado y de mayor fidelidad (solo web, puede ser más lento)",
+      expFilesEditor: "Editor de archivos integrado",
+      expFilesEditorSubtitle:
+        "Habilita editar archivos directamente desde el explorador de archivos (Monaco en web/escritorio, CodeMirror en nativo)",
+      expSessionType: "Selector de tipo de sesión",
     expSessionTypeSubtitle:
       "Mostrar el selector de tipo de sesión (simple vs worktree)",
-	    expZen: "Modo Zen",
+      expZen: "Modo Zen",
     expZenSubtitle: "Habilitar la entrada de navegación Zen",
-	    expVoiceAuthFlow: "Flujo de autenticación de voz",
+      expVoiceAuthFlow: "Flujo de autenticación de voz",
     expVoiceAuthFlowSubtitle:
       "Usar flujo autenticado de token de voz (con paywall)",
     voice: "Voz",
     voiceSubtitle: "Activar funciones de voz",
-	    expVoiceAgent: "Agente de voz",
-	    expVoiceAgentSubtitle:
-	      "Habilitar superficies de agente de voz respaldadas por daemon (requiere ejecuciones)",
-	    expConnectedServices: "Servicios conectados",
-	    expConnectedServicesSubtitle:
-	      "Habilitar configuración de servicios conectados y vinculaciones de sesión",
-	    expConnectedServicesQuotas: "Cuotas de servicios conectados",
-	    expConnectedServicesQuotasSubtitle:
-	      "Mostrar insignias de cuota y medidores de uso para servicios conectados",
-	    expMemorySearch: "Búsqueda de memoria",
-	    expMemorySearchSubtitle:
-	      "Habilitar pantallas y ajustes de búsqueda de memoria local",
+      expVoiceAgent: "Agente de voz",
+      expVoiceAgentSubtitle:
+        "Habilitar superficies de agente de voz respaldadas por daemon (requiere ejecuciones)",
+      expConnectedServices: "Servicios conectados",
+      expConnectedServicesSubtitle:
+        "Habilitar configuración de servicios conectados y vinculaciones de sesión",
+      expConnectedServicesQuotas: "Cuotas de servicios conectados",
+      expConnectedServicesQuotasSubtitle:
+        "Mostrar insignias de cuota y medidores de uso para servicios conectados",
+      expMemorySearch: "Búsqueda de memoria",
+      expMemorySearchSubtitle:
+        "Habilitar pantallas y ajustes de búsqueda de memoria local",
     expFriends: "Amigos",
     expFriendsSubtitle: "Activa las funciones de amigos (pestaña Bandeja de entrada y compartir sesiones)",
     webFeatures: "Características web",
@@ -1738,21 +1837,19 @@ export const es: TranslationStructure = {
     enterToSendEnabled:
       "Presiona Enter para enviar (Shift+Enter para una nueva línea)",
     enterToSendDisabled: "Enter inserta una nueva línea",
-	    historyScope: "Historial de mensajes",
-	    historyScopePerSession: "Recorrer el historial por terminal",
-	    historyScopeGlobal: "Recorrer el historial en todos los terminales",
-	    historyScopeModalTitle: "Historial de mensajes",
-	    historyScopeModalMessage:
-	      "Elige si Flecha arriba/Flecha abajo recorre solo los mensajes enviados en este terminal, o en todos los terminales.",
-	    historyScopePerSessionOption: "Por terminal",
-	    historyScopeGlobalOption: "Global (todos)",
-    commandPalette: "Paleta de comandos",
-    commandPaletteEnabled: "Presione ⌘K para abrir",
-    commandPaletteDisabled: "Acceso rápido a comandos deshabilitado",
-    markdownCopyV2: "Copia de Markdown v2",
-    markdownCopyV2Subtitle: "Pulsación larga abre modal de copiado",
-    hideInactiveSessions: "Ocultar sesiones inactivas",
-    hideInactiveSessionsSubtitle: "Muestra solo los chats activos en tu lista",
+      historyScope: "Historial de mensajes",
+      historyScopePerSession: "Recorrer el historial por terminal",
+      historyScopeGlobal: "Recorrer el historial en todos los terminales",
+      historyScopeModalTitle: "Historial de mensajes",
+      historyScopeModalMessage:
+        "Elige si Flecha arriba/Flecha abajo recorre solo los mensajes enviados en este terminal, o en todos los terminales.",
+      historyScopePerSessionOption: "Por terminal",
+      historyScopeGlobalOption: "Global (todos)",
+      commandPalette: "Paleta de comandos",
+      commandPaletteEnabled: "Presione ⌘K para abrir",
+      commandPaletteDisabled: "Acceso rápido a comandos deshabilitado",
+      hideInactiveSessions: "Ocultar sesiones inactivas",
+      hideInactiveSessionsSubtitle: "Muestra solo los chats activos en tu lista",
     sessionListActiveGrouping: "Agrupación de sesiones activas",
     sessionListActiveGroupingSubtitle:
       "Elige cómo se agrupan las sesiones activas en la barra lateral",
@@ -1768,9 +1865,9 @@ export const es: TranslationStructure = {
     groupInactiveSessionsByProject: "Agrupar sesiones inactivas por proyecto",
     groupInactiveSessionsByProjectSubtitle:
       "Organiza los chats inactivos por proyecto",
-	    environmentBadge: "Insignia de entorno",
-	    environmentBadgeSubtitle:
-	      "Mostrar una pequeña insignia junto al título Happier indicando el entorno actual de la app",
+      environmentBadge: "Insignia de entorno",
+      environmentBadgeSubtitle:
+        "Mostrar una pequeña insignia junto al título Happier indicando el entorno actual de la app",
     enhancedSessionWizard: "Asistente de sesión mejorado",
     enhancedSessionWizardEnabled: "Lanzador de sesión con perfil activo",
     enhancedSessionWizardDisabled: "Usando el lanzador de sesión estándar",
@@ -1795,17 +1892,18 @@ export const es: TranslationStructure = {
     connectionTimeout: "Se agotó el tiempo de conexión",
     authenticationFailed: "Falló la autenticación",
     permissionDenied: "Permiso denegado",
-	    fileNotFound: "Archivo no encontrado",
-	    invalidFormat: "Formato inválido",
-	    operationFailed: "Operación falló",
-	    daemonUnavailableTitle: "Daemon no disponible",
-	    daemonUnavailableBody:
-	      "Happier no puede comunicarse con el daemon en esta máquina. Puede estar sin conexión, iniciándose o desconectado del servidor.",
-	    tryAgain: "Intenta de nuevo",
-	    contactSupport: "Contacta soporte si el problema persiste",
-	    sessionNotFound: "Sesión no encontrada",
-	    voiceSessionFailed: "Falló al iniciar sesión de voz",
-	    voiceServiceUnavailable:
+      fileNotFound: "Archivo no encontrado",
+      invalidFormat: "Formato inválido",
+      operationFailed: "Operación falló",
+      failedToForkSession: "No se pudo bifurcar la sesión",
+      daemonUnavailableTitle: "Daemon no disponible",
+      daemonUnavailableBody:
+        "Happier no puede comunicarse con el daemon en esta máquina. Puede estar sin conexión, iniciándose o desconectado del servidor.",
+      tryAgain: "Intenta de nuevo",
+      contactSupport: "Contacta soporte si el problema persiste",
+      sessionNotFound: "Sesión no encontrada",
+      voiceSessionFailed: "Falló al iniciar sesión de voz",
+      voiceServiceUnavailable:
       "El servicio de voz no está disponible temporalmente",
     voiceAlreadyStarting: "La voz ya se está iniciando en otra sesión",
     oauthInitializationFailed: "Falló al inicializar el flujo OAuth",
@@ -2098,6 +2196,14 @@ export const es: TranslationStructure = {
   session: {
     inputPlaceholder: "Escriba un mensaje ...",
     activity: "Actividad",
+    activityCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} más…`,
+    forking: {
+      dividerTitle: "Bifurcado desde un contexto anterior",
+      dividerSubtitle: "Contexto anterior (solo lectura)",
+      openParent: "Abrir",
+      openParentA11y: "Abrir sesión padre",
+      forkFromMessageA11y: "Bifurcar desde este mensaje",
+    },
     resuming: "Reanudando...",
     resumeFailed: "No se pudo reanudar la sesión",
     resumeSupportNoteChecking:
@@ -2119,28 +2225,37 @@ export const es: TranslationStructure = {
     machineOfflineNoticeTitle: "La máquina está sin conexión",
     machineOfflineNoticeBody: ({ machine }: { machine: string }) =>
       `“${machine}” está sin conexión, así que Happier no puede reanudar esta sesión todavía. Vuelve a conectarla para continuar.`,
-	    machineOfflineCannotResume:
-	      "La máquina está sin conexión. Vuelve a conectarla para reanudar esta sesión.",
-		    openRuns: "Abrir ejecuciones de la sesión",
-		    openAutomations: "Abrir automatizaciones de la sesión",
-		    actionMenu: {
-		      openA11y: "Abrir acciones de la sesión",
-		    },
-		    detailsPanel: {
-		        emptyHint: "Abre un archivo o un diff desde el panel derecho.",
-		        unsupportedTab: "Pestaña de detalles no compatible.",
-		        closeA11y: "Cerrar detalles",
+      machineOfflineCannotResume:
+        "La máquina está sin conexión. Vuelve a conectarla para reanudar esta sesión.",
+          openRuns: "Abrir ejecuciones de la sesión",
+          openAutomations: "Abrir automatizaciones de la sesión",
+          participants: {
+            to: 'A',
+            lead: 'Principal',
+            sendToTitle: 'Enviar a',
+            broadcast: ({ teamId }: { teamId: string }) => `Difusión: ${teamId}`,
+            executionRun: ({ runId }: { runId: string }) => `Ejecución ${runId}`,
+            cardTo: ({ label }: { label: string }) => `A: ${label}`,
+            unsupportedAttachmentsOrReviewComments: 'Enviar a un destinatario aún no admite adjuntos ni comentarios de revisión.',
+          },
+          actionMenu: {
+            openA11y: "Abrir acciones de la sesión",
+          },
+        detailsPanel: {
+            emptyHint: "Abre un archivo o un diff desde el panel derecho.",
+            unsupportedTab: "Pestaña de detalles no compatible.",
+            closeA11y: "Cerrar detalles",
                 openTabA11y: ({ title }: { title: string }) => `Abrir pestaña ${title}`,
                 pinTabA11y: "Fijar pestaña",
                 pinnedTabA11y: "Pestaña fijada",
                 closeTabA11y: "Cerrar pestaña",
                 enterFocusModeA11y: "Entrar en modo de enfoque del editor",
                 exitFocusModeA11y: "Salir del modo de enfoque del editor",
-		    },
-	
-	    actionsDraft: {
-	      noInputHints: "Esta acción no tiene sugerencias de entrada.",
-	    },
+        },
+  
+      actionsDraft: {
+        noInputHints: "Esta acción no tiene sugerencias de entrada.",
+      },
 
     planOutput: {
       title: "Plan de trabajo",
@@ -2188,61 +2303,63 @@ export const es: TranslationStructure = {
       },
     },
 
-		    pendingMessages: {
-		      title: "Mensajes pendientes",
-		      indicator: ({ count }: { count: number }) => `Pendiente (${count})`,
-		      badgeLabel: ({ count }: { count: number }) => (count > 0 ? `Pendiente (+${count})` : "Pendiente"),
-		      empty: "No hay mensajes pendientes.",
-		      actions: {
-		        up: "Arriba",
-		        down: "Abajo",
-	        edit: "Editar",
-	        steerNow: "Insertar ahora",
-	        sendNow: "Enviar ahora",
-	        sendNowInterrupt: "Enviar ahora (interrumpir)",
-	        requeue: "Reencolar",
-	      },
-	      editPrompt: {
-	        title: "Editar mensaje pendiente",
-	      },
-	      removeConfirm: {
-	        title: "¿Eliminar mensaje pendiente?",
-	        body: "Esto eliminará el mensaje pendiente.",
-	      },
-	      steerConfirm: {
-	        title: "¿Insertar ahora?",
-	        body: "Esto añadirá este mensaje al turno actual sin detenerlo.",
-	      },
-	      sendConfirm: {
-	        title: "¿Enviar ahora?",
-	        interruptTitle: "¿Enviar ahora (interrumpir)?",
-	        body: "Esto detendrá el turno actual y enviará este mensaje inmediatamente.",
-	      },
-	      discarded: {
-	        title: "Mensajes descartados",
-	        subtitle:
-	          "Estos mensajes no se enviaron al agente (por ejemplo, al cambiar de remoto a local).",
-	        label: "Descartado",
-	        removeConfirm: {
-	          title: "¿Eliminar mensaje descartado?",
-	          body: "Esto eliminará el mensaje descartado.",
-	        },
-	      },
-	      errors: {
-	        updateFailed: "No se pudo actualizar el mensaje pendiente",
-	        deleteFailed: "No se pudo eliminar el mensaje pendiente",
-	        sendFailed: "No se pudo enviar el mensaje pendiente",
-	        restoreFailed: "No se pudo restaurar el mensaje descartado",
-	        deleteDiscardedFailed: "No se pudo eliminar el mensaje descartado",
-	        sendDiscardedFailed: "No se pudo enviar el mensaje descartado",
-	        reorderFailed: "No se pudo reordenar los mensajes pendientes",
-	      },
-	    },
+        pendingMessages: {
+          title: "Mensajes pendientes",
+          indicator: ({ count }: { count: number }) => `Pendiente (${count})`,
+          badgeLabel: ({ count }: { count: number }) => (count > 0 ? `Pendiente (+${count})` : "Pendiente"),
+          empty: "No hay mensajes pendientes.",
+          actions: {
+            up: "Arriba",
+            down: "Abajo",
+          edit: "Editar",
+            viewMore: "Ver más",
+            viewLess: "Ver menos",
+          steerNow: "Insertar ahora",
+          sendNow: "Enviar ahora",
+          sendNowInterrupt: "Enviar ahora (interrumpir)",
+          requeue: "Reencolar",
+        },
+        editPrompt: {
+          title: "Editar mensaje pendiente",
+        },
+        removeConfirm: {
+          title: "¿Eliminar mensaje pendiente?",
+          body: "Esto eliminará el mensaje pendiente.",
+        },
+        steerConfirm: {
+          title: "¿Insertar ahora?",
+          body: "Esto añadirá este mensaje al turno actual sin detenerlo.",
+        },
+        sendConfirm: {
+          title: "¿Enviar ahora?",
+          interruptTitle: "¿Enviar ahora (interrumpir)?",
+          body: "Esto detendrá el turno actual y enviará este mensaje inmediatamente.",
+        },
+        discarded: {
+          title: "Mensajes descartados",
+          subtitle:
+            "Estos mensajes no se enviaron al agente (por ejemplo, al cambiar de remoto a local).",
+          label: "Descartado",
+          removeConfirm: {
+            title: "¿Eliminar mensaje descartado?",
+            body: "Esto eliminará el mensaje descartado.",
+          },
+        },
+        errors: {
+          updateFailed: "No se pudo actualizar el mensaje pendiente",
+          deleteFailed: "No se pudo eliminar el mensaje pendiente",
+          sendFailed: "No se pudo enviar el mensaje pendiente",
+          restoreFailed: "No se pudo restaurar el mensaje descartado",
+          deleteDiscardedFailed: "No se pudo eliminar el mensaje descartado",
+          sendDiscardedFailed: "No se pudo enviar el mensaje descartado",
+          reorderFailed: "No se pudo reordenar los mensajes pendientes",
+        },
+      },
 
-	    sharing: {
-	      title: "Compartir",
-	      directSharing: "Compartir directamente",
-	      addShare: "Compartir con un amigo",
+      sharing: {
+        title: "Compartir",
+        directSharing: "Compartir directamente",
+        addShare: "Compartir con un amigo",
       accessLevel: "Nivel de acceso",
       shareWith: "Compartir con",
       sharedWith: "Compartido con",
@@ -2271,6 +2388,8 @@ export const es: TranslationStructure = {
         "Los enlaces públicos son de solo lectura. No se pueden aprobar permisos.",
       permissionApprovalsDisabledReadOnly:
         "Tienes acceso de solo lectura a esta sesión.",
+      permissionApprovalsDisabledInactive:
+        "Esta sesión está inactiva. No se pueden aprobar permisos.",
       permissionApprovalsDisabledNotGranted:
         "El propietario no te permitió aprobar permisos para esta sesión.",
       publicReadOnlyTitle: "Enlace público (solo lectura)",
@@ -2435,11 +2554,17 @@ export const es: TranslationStructure = {
     makeDefaultOnDevice: "Hacer predeterminado en este dispositivo",
     serverNameLabel: "Nombre del servidor",
     addAndUse: "Añadir y usar",
-    addTargetsTitle: "Añadir",
-    addServerSubtitle: "Añade un servidor nuevo y cámbiate a él",
-    notificationAddServerHint: "Este servidor aún no está guardado en este dispositivo. Añádelo abajo para continuar.",
-    serverCount: ({ count }: { count: number }) =>
-      `${count} ${plural({ count, singular: "servidor", plural: "servidores" })}`,
+      addTargetsTitle: "Añadir",
+      addServerSubtitle: "Añade un servidor nuevo y cámbiate a él",
+      notificationAddServerHint: "Este servidor aún no está guardado en este dispositivo. Añádelo abajo para continuar.",
+      serverCount: ({ count }: { count: number }) =>
+        `${count} ${plural({ count, singular: "servidor", plural: "servidores" })}`,
+      useCanonicalServerUrlTitle: "¿Usar la URL canónica del servidor?",
+    useCanonicalServerUrlBody:
+      "Este servidor anuncia una URL canónica que debería funcionar desde otros dispositivos. ¿Quieres usarla en lugar de la que ingresaste?",
+    insecureHttpUrlTitle: "URL del servidor insegura",
+    insecureHttpUrlBody:
+      "Esta URL usa http:// y puede que no funcione desde tu teléfono o fuera de tu LAN. Usa HTTPS si es posible. ¿Continuar de todos modos?",
     signedOutSwitchConfirmTitle: "No estás conectado",
     signedOutSwitchConfirmBody:
       "¿Cambiar a este servidor y continuar a la pantalla de inicio para que puedas iniciar sesión o crear una cuenta?",
@@ -2591,6 +2716,8 @@ export const es: TranslationStructure = {
     renameSession: "Renombrar Sesión",
     renameSessionSubtitle: "Cambiar el nombre de visualización de esta sesión",
     renameSessionPlaceholder: "Introduce el nombre de la sesión...",
+    forkSession: "Bifurcar sesión",
+    forkSessionSubtitle: "Crear una nueva sesión desde el contexto más reciente",
     failedToRenameSession: "Error al renombrar la sesión",
     sessionRenamed: "Sesión renombrada exitosamente",
   },
@@ -2692,14 +2819,14 @@ export const es: TranslationStructure = {
       on: "Indexación activada",
       off: "Indexación desactivada",
     },
-    model: {
-      title: "MODELO",
-      useCliSettings: "Usar la configuración del CLI",
-      configureInCli: "Configurar modelos en la configuración del CLI",
-      customDescription: "Usa un id de modelo que no esté en la lista.",
-      customPromptBody: "Introduce un id de modelo",
-      customPlaceholder: "p. ej., claude-3.5-sonnet",
-    },
+      model: {
+        title: "MODELO",
+        useCliSettings: "Usar la configuración del CLI",
+        configureInCli: "Configurar modelos en la configuración del CLI",
+        customDescription: "Usa un id de modelo que no esté en la lista.",
+        customPromptBody: "Introduce un id de modelo",
+        customPlaceholder: "p. ej., claude-3.5-sonnet",
+      },
     codexPermissionMode: {
       title: "MODO DE PERMISOS CODEX",
       default: "Configuración del CLI",
@@ -2754,6 +2881,24 @@ export const es: TranslationStructure = {
       fileLabel: "ARCHIVO",
       folderLabel: "CARPETA",
     },
+    mode: {
+      sectionTitle: "Modo",
+      badge: ({ name }: { name: string }) => `Modo: ${name}`,
+      badgePending: ({ name }: { name: string }) => `Modo: ${name} (pendiente)`,
+      badgeA11y: ({ name }: { name: string }) => `Modo: ${name}`,
+      refreshModesA11y: "Actualizar modos",
+      pendingSwitching: ({ from, to }: { from: string; to: string }) =>
+        `Pendiente: cambiando de ${from} a ${to}`,
+      currentMode: ({ name }: { name: string }) => `Actual: ${name}`,
+      loadingModes: "Cargando modos…",
+      refreshingModes: "Actualizando modos…",
+      useDefaultModeHint: "Usa el modo predeterminado para este agente.",
+      startIn: ({ name }: { name: string }) => `Iniciar en: ${name}`,
+      build: "Construir",
+      buildDescription: "Comportamiento predeterminado",
+      plan: "Planificación",
+      planDescription: "Pensar primero",
+    },
     acp: {
       modeSectionTitle: "Modo",
       refreshModesA11y: "Actualizar modos",
@@ -2800,14 +2945,20 @@ export const es: TranslationStructure = {
     output: "Salida",
   },
 
-  tools: {
-    common: {
-      more: ({ count }: { count: number }) => `+${count} más`,
-      elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,
+    tools: {
+      common: {
+        more: ({ count }: { count: number }) => `+${count} más`,
+        elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,
+        unknownToolTitle: "Herramienta",
+      },
+    bashView: {
+        commandDiffTitle: "Comando sin procesar",
+        commandDiffHint:
+          "La vista previa del comando oculta un prefijo corto de limpieza del entorno para mantenerlo legible. El comando sin procesar completo se muestra a continuación.",
     },
-    webFetch: {
-      httpStatus: ({ status }: { status: number }) => `HTTP ${status}`,
-    },
+      webFetch: {
+        httpStatus: ({ status }: { status: number }) => `HTTP ${status}`,
+      },
     fullView: {
       description: "Descripción",
       inputParams: "Parámetros de entrada",
@@ -2949,6 +3100,8 @@ export const es: TranslationStructure = {
       approve: "Aprobar plan",
       reject: "Rechazar",
       requestChanges: "Solicitar cambios",
+      planMissing:
+        "No se proporcionó el texto del plan. Consulta el plan en el mensaje anterior o pide al agente que lo incluya en la solicitud de aprobación.",
       requestChangesPlaceholder:
         "Dile a Claude qué quieres cambiar de este plan…",
       requestChangesSend: "Enviar comentarios",
@@ -3044,10 +3197,10 @@ export const es: TranslationStructure = {
     notRepo: "No es un repositorio de control de versiones",
     notUnderSourceControl: "Este directorio no está bajo control de versiones",
     searching: "Buscando archivos...",
-	    noFilesFound: "No se encontraron archivos",
-	    noFilesInProject: "No hay archivos en el proyecto",
-	    repositoryFolderLoadFailed: "No se pudo cargar la carpeta",
-	    repositoryCollapseAll: "Contraer todo",
+      noFilesFound: "No se encontraron archivos",
+      noFilesInProject: "No hay archivos en el proyecto",
+      repositoryFolderLoadFailed: "No se pudo cargar la carpeta",
+      repositoryCollapseAll: "Contraer todo",
     sourceControlOperationsLog: {
       title: "Operaciones recientes de control de versiones",
       allSessions: "Todas las sesiones",
@@ -3059,43 +3212,43 @@ export const es: TranslationStructure = {
       noCommitsAvailable: "No hay commits disponibles.",
       loadMore: "Cargar más commits",
     },
-	    reviewFilterPlaceholder: "Filtrar archivos...",
-	    reviewNoMatches: "Sin coincidencias",
-	    reviewLargeDiffOneAtATime: "Diff grande detectado; los diffs se cargarán al desplazarte.",
-	    reviewDiffRequestFailed: "No se pudo cargar el diff",
-	    reviewUnableToLoadDiff: "No se pudo cargar el diff",
-	    tryDifferentTerm: "Intente un término de búsqueda diferente",
-	    searchResults: ({ count }: { count: number }) =>
-	      `Resultados de búsqueda (${count})`,
+      reviewFilterPlaceholder: "Filtrar archivos...",
+      reviewNoMatches: "Sin coincidencias",
+      reviewLargeDiffOneAtATime: "Diff grande detectado; los diffs se cargarán al desplazarte.",
+      reviewDiffRequestFailed: "No se pudo cargar el diff",
+      reviewUnableToLoadDiff: "No se pudo cargar el diff",
+      tryDifferentTerm: "Intente un término de búsqueda diferente",
+      searchResults: ({ count }: { count: number }) =>
+        `Resultados de búsqueda (${count})`,
     projectRoot: "Raíz del proyecto",
     stagedChanges: ({ count }: { count: number }) =>
       `Cambios preparados (${count})`,
-	    unstagedChanges: ({ count }: { count: number }) =>
-	      `Cambios sin preparar (${count})`,
-	    // File viewer strings
-	    fileReadFailed: "No se pudo leer el archivo",
-	    fileWriteFailed: "No se pudo escribir el archivo",
+      unstagedChanges: ({ count }: { count: number }) =>
+        `Cambios sin preparar (${count})`,
+      // File viewer strings
+      fileReadFailed: "No se pudo leer el archivo",
+      fileWriteFailed: "No se pudo escribir el archivo",
     fileEditor: {
       experimentalHint:
         "La edición es experimental. Guarda para escribir los cambios en el worktree de la sesión.",
     },
-	    fileEditingUnsupported:
-	      "La edición de archivos no es compatible con el daemon conectado. Actualiza Happier en la máquina para habilitar operaciones de escritura.",
-	    selectionFailed: "No se pudo actualizar la selección",
-	    openReviewCommentsFailed: "No se pudieron abrir los comentarios de revisión",
-	        reviewComments: {
+      fileEditingUnsupported:
+        "La edición de archivos no es compatible con el daemon conectado. Actualiza Happier en la máquina para habilitar operaciones de escritura.",
+      selectionFailed: "No se pudo actualizar la selección",
+      openReviewCommentsFailed: "No se pudieron abrir los comentarios de revisión",
+          reviewComments: {
           title: ({ count }: { count: number }) =>
             `Comentarios de revisión (${count})`,
-	          placeholder: "Añade un comentario de revisión…",
+            placeholder: "Añade un comentario de revisión…",
           jump: "Saltar",
           addCommentA11y: "Añadir comentario",
           closeCommentA11y: "Cerrar comentario",
           draftsChipLabel: ({ count }: { count: number }) => `Revisión (${count})`,
-	          errors: {
-	            empty: "El comentario no puede estar vacío",
-	            couldNotMapSelection: "No se pudo asignar la selección a una línea del diff",
-	          },
-	        },
+            errors: {
+              empty: "El comentario no puede estar vacío",
+              couldNotMapSelection: "No se pudo asignar la selección a una línea del diff",
+            },
+          },
         commitDetails: {
           missingContext: "Falta el contexto del commit",
           failedToLoadDiff: "No se pudo cargar el diff del commit",
@@ -3123,12 +3276,13 @@ export const es: TranslationStructure = {
           generateFailed: "No se pudo generar el mensaje de commit",
           generatorDisabled: "El generador de mensajes de commit está deshabilitado",
         },
-	    loadingFile: ({ fileName }: { fileName: string }) =>
-	      `Cargando ${fileName}...`,
-	    binaryFile: "Archivo binario",
-	    cannotDisplayBinary: "No se puede mostrar el contenido del archivo binario",
-	    diff: "Diferencias",
-    file: "Archivo",
+      loadingFile: ({ fileName }: { fileName: string }) =>
+        `Cargando ${fileName}...`,
+        binaryFile: "Archivo binario",
+        imagePreviewTooLarge: "La vista previa de la imagen es demasiado grande para mostrarse",
+        cannotDisplayBinary: "No se puede mostrar el contenido del archivo binario",
+        diff: "Diferencias",
+      file: "Archivo",
     diffModes: {
       pending: "Pendiente",
       included: "Incluido",
@@ -3242,144 +3396,180 @@ export const es: TranslationStructure = {
     },
   },
 
-	  settingsSession: {
-	    messageSending: {
-	      title: "Envío de mensajes",
-	      footer:
-	        "Controla lo que ocurre cuando envías un mensaje mientras el agente está ejecutándose.",
-	      queueInAgentTitle: "En cola en el agente (actual)",
-	      queueInAgentSubtitle:
-	        "Escribe en la transcripción de inmediato; el agente lo procesa cuando esté listo.",
-	      interruptTitle: "Interrumpir y enviar",
-	      interruptSubtitle: "Aborta el turno actual y envía de inmediato.",
-	      pendingTitle: "Pendiente hasta estar listo",
-	      pendingSubtitle:
-	        "Mantén los mensajes en una cola de pendientes; el agente los toma cuando esté listo.",
-	      busySteerPolicyTitle: "Cuando el agente está ocupado (con dirección)",
-	      busySteerPolicyFooter:
-	        "Si el agente admite dirección en caliente, elige si los mensajes dirigen de inmediato o van primero a Pendientes.",
-	      busySteerPolicy: {
-	        steerImmediatelyTitle: "Dirigir de inmediato",
-	        steerImmediatelySubtitle:
-	          "Envía al instante y dirige el turno actual (sin interrumpir).",
-	        queueForReviewTitle: "Poner en Pendientes",
-	        queueForReviewSubtitle:
-	          "Pon los mensajes primero en Pendientes; envíalos después con \"Dirigir ahora\".",
-	      },
-	    },
-	    thinking: {
-	      title: "Pensamiento",
-	      footer:
-	        "Controla cómo aparecen los mensajes de pensamiento del agente en la transcripción de la sesión.",
-	      displayModeTitle: "Visualización del pensamiento",
-	      displayMode: {
-	        inlineTitle: "En línea (predeterminado)",
-	        inlineSubtitle: "Muestra los mensajes de pensamiento directamente en la transcripción.",
-	        toolTitle: "Tarjeta de herramienta",
-	        toolSubtitle: "Muestra los mensajes de pensamiento como una tarjeta de herramienta de razonamiento.",
-	        hiddenTitle: "Oculto",
-	        hiddenSubtitle: "Oculta los mensajes de pensamiento de la transcripción.",
-	      },
-	    },
-	    toolRendering: {
-	      title: "Renderizado de herramientas",
-	      footer:
-	        "Controla cuántos detalles de herramientas se muestran en la línea de tiempo de la sesión. Es una preferencia de UI; no cambia el comportamiento del agente.",
-	      defaultToolDetailLevelTitle: "Nivel de detalle predeterminado",
-	      expandedToolDetailLevelTitle: "Nivel de detalle expandido",
-	      timelineChrome: {
-	        title: "Estilo de herramientas en la línea de tiempo",
-	        cardsTitle: "Tarjetas",
-	        cardsSubtitle:
-	          "Tarjetas de herramientas con contenido en línea (según el nivel de detalle).",
-	        activityFeedTitle: "Feed de actividad",
-	        activityFeedSubtitle:
-	          "Filas compactas optimizadas para alta densidad de herramientas.",
-	      },
-	      cardDensity: {
-	        title: "Densidad de tarjetas",
-	        comfortableTitle: "Cómodo",
-	        comfortableSubtitle: "Más espacio y separación más clara.",
-	        compactTitle: "Compacto",
-	        compactSubtitle: "Encabezados más ajustados y menos padding.",
-	      },
-	      activityFeed: {
-	        defaultDetailTitle: "Detalle predeterminado (feed de actividad)",
-	        expandedDetailTitle: "Detalle expandido (feed de actividad)",
-	        tapActionTitle: "Acción al tocar (feed de actividad)",
-	        tapAction: {
-	          expandTitle: "Expandir",
-	          expandSubtitle: "Tocar expande o contrae detalles en línea.",
-	          openTitle: "Abrir",
-	          openSubtitle: "Tocar abre la vista completa de la herramienta.",
-	        },
-	        defaultExpandedTitle: "Expandido por defecto",
-	        defaultExpandedSubtitle:
-	          "Expandir filas por defecto en el feed de actividad.",
-	      },
-	      localControlDefaultTitle: "Predeterminado (control local)",
-	      showDebugByDefaultTitle: "Mostrar depuración por defecto",
-	      showDebugByDefaultSubtitle:
-	        "Expande automáticamente las cargas útiles sin procesar en la vista completa de herramientas.",
-	    },
-	    transcript: {
-	      title: "Transcripción",
-	      entrySubtitle: "Abrir ajustes de transcripción",
-	      footer:
-	        "Personaliza cómo se muestran los chats y cómo se comporta la transcripción.",
-	      layoutTitle: "Diseño",
-	      layoutFooter:
-	        "Elige entre una transcripción lineal y el agrupamiento por turnos.",
-	      layoutPickerTitle: "Diseño de transcripción",
-	      layout: {
-	        linearTitle: "Lineal (actual)",
-	        linearSubtitle: "Muestra los mensajes como una lista plana.",
-	        turnsTitle: "Turnos",
-	        turnsSubtitle: "Agrupa mensajes en turnos usuario/asistente.",
-	      },
-	      activityGroupTitle: "Agrupar herramientas en Actividad",
-	      activityGroupSubtitle:
-	        "Compacta llamadas de herramientas en una sección Actividad dentro de cada turno.",
-	      toolAppearanceTitle: "Apariencia de herramientas",
-	      toolAppearanceSubtitle:
-	        "Personaliza cómo se ven las herramientas en la transcripción.",
-	      motionTitle: "Movimiento",
-	      motionFooter: "Controla las animaciones en la transcripción.",
-	      motionPickerTitle: "Animaciones",
-	      motion: {
-	        offTitle: "Desactivado",
-	        offSubtitle: "Desactiva animaciones de la transcripción.",
-	        subtleTitle: "Sutil (predeterminado)",
-	        subtleSubtitle: "Movimiento mínimo y rápido para actividad nueva.",
-	        fullTitle: "Completo",
-	        fullSubtitle: "Movimiento y transiciones más expresivos.",
-	      },
-	      advancedMotionTitle: "Movimiento avanzado…",
-	      advancedMotionSubtitle:
-	        "Ajusta ventana de frescura y toggles de animación.",
-	      scrollTitle: "Desplazamiento",
-	      scrollFooter: "Controla el anclaje y el salto al final.",
-	      scrollPinTitle: "Anclar al final",
-	      scrollPinSubtitle:
-	        "Seguir mensajes nuevos mientras estás al final.",
-	      jumpToBottomTitle: "Botón de ir al final",
-	      jumpToBottomSubtitle:
-	        "Mostrar un botón cuando subes y llega actividad nueva.",
-	      advancedScrollTitle: "Desplazamiento avanzado…",
-	      advancedScrollSubtitle: "Ajusta umbrales y contadores.",
-	      advanced: {
-	        turnGroupingTitle: "Agrupación por turnos",
-	        turnGroupingFooter:
-	          "Controla cómo se forma Actividad dentro de los turnos.",
-	        activityStrategyTitle: "Estrategia de agrupación de Actividad",
-	        activityStrategy: {
-	          consecutiveTitle: "Herramientas consecutivas (predeterminado)",
-	          consecutiveSubtitle:
-	            "Agrupa solo llamadas consecutivas en Actividad.",
-	          allToolsTitle: "Todas las herramientas del turno",
-	          allToolsSubtitle:
-	            "Agrupa todas las herramientas del turno en una sola sección Actividad.",
-	        },
+    settingsSession: {
+      messageSending: {
+        title: "Envío de mensajes",
+        footer:
+          "Controla lo que ocurre cuando envías un mensaje mientras el agente está ejecutándose.",
+        queueInAgentTitle: "En cola en el agente (actual)",
+        queueInAgentSubtitle:
+          "Escribe en la transcripción de inmediato; el agente lo procesa cuando esté listo.",
+        interruptTitle: "Interrumpir y enviar",
+        interruptSubtitle: "Aborta el turno actual y envía de inmediato.",
+        pendingTitle: "Pendiente hasta estar listo",
+        pendingSubtitle:
+          "Mantén los mensajes en una cola de pendientes; el agente los toma cuando esté listo.",
+        busySteerPolicyTitle: "Cuando el agente está ocupado (con dirección)",
+        busySteerPolicyFooter:
+          "Si el agente admite dirección en caliente, elige si los mensajes dirigen de inmediato o van primero a Pendientes.",
+        busySteerPolicy: {
+          steerImmediatelyTitle: "Dirigir de inmediato",
+          steerImmediatelySubtitle:
+            "Envía al instante y dirige el turno actual (sin interrumpir).",
+          queueForReviewTitle: "Poner en Pendientes",
+          queueForReviewSubtitle:
+            "Pon los mensajes primero en Pendientes; envíalos después con \"Dirigir ahora\".",
+        },
+      },
+      thinking: {
+        title: "Pensamiento",
+        footer:
+          "Controla cómo aparecen los mensajes de pensamiento del agente en la transcripción de la sesión.",
+          displayModeTitle: "Visualización del pensamiento",
+          displayMode: {
+            inlineSummaryTitle: "En línea (resumen)",
+            inlineSummarySubtitle: "Muestra un resumen de una línea; toca para expandir.",
+            inlineTitle: "En línea (completo)",
+            inlineSubtitle: "Muestra el mensaje de pensamiento completo directamente en la transcripción.",
+            toolTitle: "Tarjeta de herramienta",
+            toolSubtitle: "Muestra los mensajes de pensamiento como una tarjeta de herramienta de razonamiento.",
+            hiddenTitle: "Oculto",
+            hiddenSubtitle: "Oculta los mensajes de pensamiento de la transcripción.",
+          },
+              inlineChromeTitle: "Tarjetas de pensamiento",
+              inlineChromeSubtitle: "Muestra el pensamiento en línea con un fondo de tarjeta sutil.",
+        },
+      toolRendering: {
+        title: "Renderizado de herramientas",
+          footer:
+            "Controla cuántos detalles de herramientas se muestran en la línea de tiempo de la sesión. Es una preferencia de UI; no cambia el comportamiento del agente.",
+          defaultToolDetailLevelTitle: "Nivel de detalle predeterminado",
+          expandedToolDetailLevelTitle: "Nivel de detalle expandido",
+          cardTapActionTitle: "Acción al tocar (tarjeta)",
+          timelineChrome: {
+            title: "Estilo de herramientas en la línea de tiempo",
+            cardsTitle: "Tarjetas",
+          cardsSubtitle:
+            "Tarjetas de herramientas con contenido en línea (según el nivel de detalle).",
+          activityFeedTitle: "Feed de actividad",
+          activityFeedSubtitle:
+            "Filas compactas optimizadas para alta densidad de herramientas.",
+        },
+        cardDensity: {
+          title: "Densidad de tarjetas",
+          comfortableTitle: "Cómodo",
+          comfortableSubtitle: "Más espacio y separación más clara.",
+          compactTitle: "Compacto",
+          compactSubtitle: "Encabezados más ajustados y menos padding.",
+        },
+        activityFeed: {
+          defaultDetailTitle: "Detalle predeterminado (feed de actividad)",
+          expandedDetailTitle: "Detalle expandido (feed de actividad)",
+          tapActionTitle: "Acción al tocar (feed de actividad)",
+          tapAction: {
+            expandTitle: "Expandir",
+            expandSubtitle: "Tocar expande o contrae detalles en línea.",
+            openTitle: "Abrir",
+            openSubtitle: "Tocar abre la vista completa de la herramienta.",
+          },
+          defaultExpandedTitle: "Expandido por defecto",
+          defaultExpandedSubtitle:
+            "Expandir filas por defecto en el feed de actividad.",
+        },
+        localControlDefaultTitle: "Predeterminado (control local)",
+        showDebugByDefaultTitle: "Mostrar depuración por defecto",
+        showDebugByDefaultSubtitle:
+          "Expande automáticamente las cargas útiles sin procesar en la vista completa de herramientas.",
+      },
+      transcript: {
+        title: "Transcripción",
+        entrySubtitle: "Abrir ajustes de transcripción",
+        footer:
+          "Personaliza cómo se muestran los chats y cómo se comporta la transcripción.",
+        layoutTitle: "Diseño",
+        layoutFooter:
+          "Elige entre una transcripción lineal y el agrupamiento por turnos.",
+        layoutPickerTitle: "Diseño de transcripción",
+        layout: {
+          linearTitle: "Lineal (actual)",
+          linearSubtitle: "Muestra los mensajes como una lista plana.",
+          turnsTitle: "Turnos",
+          turnsSubtitle: "Agrupa mensajes en turnos usuario/asistente.",
+        },
+        activityGroupTitle: "Agrupar herramientas en Actividad",
+        activityGroupSubtitle:
+          "Compacta llamadas de herramientas en una sección Actividad dentro de cada turno.",
+        toolAppearanceTitle: "Apariencia de herramientas",
+        toolAppearanceSubtitle:
+          "Personaliza cómo se ven las herramientas en la transcripción.",
+        motionTitle: "Movimiento",
+        motionFooter: "Controla las animaciones en la transcripción.",
+        motionPickerTitle: "Animaciones",
+        motion: {
+          offTitle: "Desactivado",
+          offSubtitle: "Desactiva animaciones de la transcripción.",
+          subtleTitle: "Sutil (predeterminado)",
+          subtleSubtitle: "Movimiento mínimo y rápido para actividad nueva.",
+          fullTitle: "Completo",
+          fullSubtitle: "Movimiento y transiciones más expresivos.",
+        },
+        advancedMotionTitle: "Movimiento avanzado…",
+        advancedMotionSubtitle:
+          "Ajusta ventana de frescura y toggles de animación.",
+        scrollTitle: "Desplazamiento",
+        scrollFooter: "Controla el anclaje y el salto al final.",
+        scrollPinTitle: "Anclar al final",
+          scrollPinSubtitle:
+            "Seguir mensajes nuevos mientras estás al final.",
+          jumpToBottomTitle: "Botón de ir al final",
+          jumpToBottomButtonLabel: "Ir al final",
+            jumpToBottomSubtitle:
+              "Mostrar un botón cuando subes y llega actividad nueva.",
+            advancedScrollTitle: "Desplazamiento avanzado…",
+          advancedScrollSubtitle: "Ajusta umbrales y contadores.",
+          advancedTitle: "Avanzado…",
+          advancedSubtitle: "Controles de rendimiento y depuración.",
+          advanced: {
+            turnGroupingTitle: "Agrupación por turnos",
+            turnGroupingFooter:
+            "Controla cómo se forma Actividad dentro de los turnos.",
+            performanceTitle: "Rendimiento",
+            performanceFooter: "Controles de rendimiento para streaming y listas.",
+            coalesceEnabledTitle: "Agrupar actualizaciones en streaming",
+            coalesceEnabledSubtitle:
+              "Agrupa actualizaciones del socket para mantener el desplazamiento fluido.",
+            coalesceWindowTitle: "Ventana de agrupación",
+            coalesceWindowSubtitle: ({ value }: { value: string }) => `Actual: ${value}ms`,
+            coalesceWindowPromptTitle: "Ventana de agrupación (ms)",
+            coalesceWindowPromptBody:
+              "Define cada cuánto se aplican al store las actualizaciones agrupadas.",
+            coalesceMaxBatchTitle: "Tamaño máximo del lote",
+            coalesceMaxBatchSubtitle: ({ value }: { value: string }) => `Actual: ${value}`,
+            coalesceMaxBatchPromptTitle: "Tamaño máximo del lote",
+            coalesceMaxBatchPromptBody:
+              "Define un límite superior de mensajes aplicados en una sola pasada.",
+            thinkingPulseStaleTitle: "Ventana de caducidad del pensamiento",
+            thinkingPulseStaleSubtitle: ({ value }: { value: string }) => `Actual: ${value}ms`,
+            thinkingPulseStalePromptTitle: "Ventana de caducidad del pensamiento (ms)",
+            thinkingPulseStalePromptBody:
+              "Oculta el pensamiento activo tras este tiempo sin actualizaciones.",
+            listImplementationTitle: "Implementación de la lista del transcript",
+            listImplementationSubtitle: "Cambiar el motor de lista (depuración).",
+            listImplementation: {
+              flashTitle: "FlashList v2 (recomendado)",
+              flashSubtitle: "Mejor rendimiento para transcripciones largas.",
+              legacyTitle: "FlatList heredado",
+              legacySubtitle: "Alternativa para depurar compatibilidad.",
+            },
+          activityStrategyTitle: "Estrategia de agrupación de Actividad",
+          activityStrategy: {
+            consecutiveTitle: "Herramientas consecutivas (predeterminado)",
+            consecutiveSubtitle:
+              "Agrupa solo llamadas consecutivas en Actividad.",
+            allToolsTitle: "Todas las herramientas del turno",
+            allToolsSubtitle:
+              "Agrupa todas las herramientas del turno en una sola sección Actividad.",
+          },
             activityCollapsedPreviewCountTitle: "Vista previa (colapsado)",
             activityCollapsedPreviewCountSubtitle: ({ value }: { value: string }) => `Muestra las últimas ${value} herramientas cuando Actividad está colapsado.`,
             activityCollapsedPreviewCount: {
@@ -3391,144 +3581,150 @@ export const es: TranslationStructure = {
               twoSubtitle: "Muestra las 2 herramientas más recientes como filas de vista previa.",
               threeTitle: "3 herramientas",
               threeSubtitle: "Muestra las 3 herramientas más recientes como filas de vista previa.",
+              countTitle: ({ value }: { value: string }) => `${value} herramientas`,
+              countSubtitle: ({ value }: { value: string }) =>
+                `Muestra las ${value} herramientas más recientes como filas de vista previa.`,
             },
-	        motionTitle: "Movimiento (avanzado)",
-	        motionFooter:
-	          "Las animaciones están limitadas por frescura para mantener estable el historial.",
-	        freshnessTitle: "Ventana de frescura",
-	        freshnessSubtitle: ({ value }: { value: string }) => `Actual: ${value}ms`,
-	        freshnessPromptTitle: "Ventana de frescura (ms)",
-	        freshnessPromptBody:
-	          "Define cuánto tiempo los elementos nuevos se consideran “frescos” para animaciones.",
-	        animateNewItemsTitle: "Animar elementos nuevos",
-	        animateNewItemsSubtitle:
-	          "Animar mensajes y herramientas que llegan en streaming.",
-	        animateToolExpandCollapseTitle:
-	          "Animar expandir/contraer herramientas",
-	        animateToolExpandCollapseSubtitle:
-	          "Animar las transiciones de expandir/contraer en línea.",
-	        animateToolExpandCollapseFreshOnlyTitle:
-	          "Expandir/contraer solo frescos",
-	        animateToolExpandCollapseFreshOnlySubtitle:
-	          "Animar expandir/contraer solo para herramientas frescas.",
-	        animateThinkingTitle: "Animar pensamiento",
-	        animateThinkingSubtitle:
-	          "Animar mensajes de pensamiento en streaming cuando sean visibles.",
-	        scrollTitle: "Desplazamiento (avanzado)",
-	        scrollFooter:
-	          "Ajusta umbrales de anclaje y comportamiento del salto.",
-	        pinOffsetTitle: "Umbral de offset anclado",
-	        pinOffsetSubtitle: ({ value }: { value: string }) => `Actual: ${value}px`,
-	        pinOffsetPromptTitle: "Umbral de offset anclado (px)",
-	        pinOffsetPromptBody:
-	          "Define qué distancia del final cuenta como anclado.",
-	        autoFollowTitle: "Auto-seguir mientras está anclado",
-	        autoFollowSubtitle:
-	          "Cuando está anclado, seguir actividad nueva automáticamente.",
-	        jumpMinNewCountTitle: "Mínimo de nuevos para el botón",
-	        jumpMinNewCountSubtitle: ({ value }: { value: string }) => `Actual: ${value}`,
-	        jumpMinNewCountPromptTitle: "Mínimo de nuevos (botón)",
-	        jumpMinNewCountPromptBody:
-	          "Mostrar el botón de ir al final solo después de este número de elementos nuevos.",
-	        jumpAnimateScrollTitle: "Animar salto al final",
-	        jumpAnimateScrollSubtitle:
-	          "Animar el desplazamiento al ir al final.",
-	      },
-	    },
-	    toolDetailOverrides: {
-	      title: "Anulaciones del detalle de herramientas",
-	      footer:
-	        "Sobrescribe el nivel de detalle para herramientas específicas. Las anulaciones se aplican al nombre canónico (V2), tras la normalización heredada.",
-	    },
-	    permissions: {
-	      title: "Permisos",
-	      entrySubtitle: "Abrir ajustes de permisos",
-	      footer:
-	        "Configura los permisos predeterminados y cómo se aplican los cambios a las sesiones en curso.",
-	      promptSurfaceTitle: "Solicitudes de permisos",
-	      promptSurfaceFooter:
-	        "Elige dónde aparecen las solicitudes de aprobación durante una sesión.",
-	      applyChangesFooter:
-	        "Elige cuándo los cambios de permisos surten efecto en las sesiones en curso.",
-	      backendFooter:
-	        "Establece el modo de permisos predeterminado al iniciar sesiones con este backend.",
-	      defaultPermissionModeTitle: "Modo de permisos predeterminado",
-	      promptSurface: {
-	        composerTitle: "Cerca del compositor (recomendado)",
-	        composerSubtitle: "Mostrar tarjetas ricas cerca del input.",
-	        transcriptTitle: "En la transcripción",
-	        transcriptSubtitle:
-	          "Mostrar solicitudes de permisos dentro de mensajes de herramientas.",
-	        bothTitle: "Ambos",
-	        bothSubtitle:
-	          "Mostrar solicitudes cerca del compositor y dentro de la transcripción.",
-	      },
-	      applyTiming: {
-	        immediateTitle: "Aplicar de inmediato",
-	        nextPromptTitle: "Aplicar en el próximo mensaje",
-	      },
-	    },
-	    subAgentGuidanceEntry: {
-	      openSubtitle: "Abrir ajustes de subagente",
-	    },
-	    actionsEntry: {
-	      footer:
-	        "Habilita acciones por superficie y ubicación (UI, voz, MCP) y controla dónde aparecen.",
-	      openSubtitle: "Abrir ajustes de acciones",
-	    },
-	    replayResume: {
-	      title: "Reanudar con reproducción",
-	      footer:
-	        "Cuando la reanudación del proveedor no está disponible, opcionalmente reproduce mensajes recientes de la transcripción en una nueva sesión como contexto.",
-	      enabledTitle: "Habilitar reanudación con reproducción",
-	      enabledSubtitleOn:
-	        "Ofrece reanudación basada en reproducción cuando la reanudación del proveedor no esté disponible.",
-	      enabledSubtitleOff: "No ofrezcas reanudación basada en reproducción.",
-	      strategyTitle: "Estrategia de reproducción",
-	      strategy: {
-	        recentTitle: "Mensajes recientes",
-	        recentSubtitle: "Usa solo los mensajes más recientes de la transcripción.",
-	        summaryRecentTitle: "Resumen + recientes (experimental)",
-	        summaryRecentSubtitle:
-	          "Incluye un resumen breve y mensajes recientes (mejor esfuerzo).",
-	      },
-	      recentMessagesTitle: "Mensajes recientes a incluir",
-	      recentMessagesPlaceholder: "16",
-	    },
-	    defaultPermissions: {
-	      title: "Permisos predeterminados",
-	      footer:
-	        "Se aplica al iniciar una nueva sesión. Los perfiles pueden anularlo opcionalmente.",
-	      applyPermissionChangesTitle: "Aplicar cambios de permisos",
-	      applyPermissionChangesImmediateSubtitle:
-	        "Aplicar de inmediato a las sesiones en curso (actualiza los metadatos de la sesión).",
-	      applyPermissionChangesNextPromptSubtitle: "Aplicar solo en el próximo mensaje.",
-	    },
-	    toolDetailLevel: {
-	      titleOnlyTitle: "Solo título",
-	      titleOnlySubtitle:
-	        "Muestra solo el nombre de la herramienta en la línea de tiempo (sin subtítulo, sin cuerpo).",
-	      compactTitle: "Compacto",
-	      compactSubtitle: "Muestra el nombre de la herramienta + un subtítulo corto en la misma línea (sin cuerpo).",
-	      summaryTitle: "Resumen",
-	      summarySubtitle: "Muestra un resumen compacto y seguro en la línea de tiempo.",
-	      fullTitle: "Completo",
-	      fullSubtitle: "Muestra todos los detalles en línea en la línea de tiempo.",
-	      defaultTitle: "Predeterminado",
-	      defaultSubtitle: "Usa el valor predeterminado global.",
+          motionTitle: "Movimiento (avanzado)",
+          motionFooter:
+            "Las animaciones están limitadas por frescura para mantener estable el historial.",
+          freshnessTitle: "Ventana de frescura",
+          freshnessSubtitle: ({ value }: { value: string }) => `Actual: ${value}ms`,
+          freshnessPromptTitle: "Ventana de frescura (ms)",
+          freshnessPromptBody:
+            "Define cuánto tiempo los elementos nuevos se consideran “frescos” para animaciones.",
+          animateNewItemsTitle: "Animar elementos nuevos",
+          animateNewItemsSubtitle:
+            "Animar mensajes y herramientas que llegan en streaming.",
+          animateToolExpandCollapseTitle:
+            "Animar expandir/contraer herramientas",
+          animateToolExpandCollapseSubtitle:
+            "Animar las transiciones de expandir/contraer en línea.",
+          animateToolExpandCollapseFreshOnlyTitle:
+            "Expandir/contraer solo frescos",
+          animateToolExpandCollapseFreshOnlySubtitle:
+            "Animar expandir/contraer solo para herramientas frescas.",
+          animateThinkingTitle: "Animar pensamiento",
+          animateThinkingSubtitle:
+            "Animar mensajes de pensamiento en streaming cuando sean visibles.",
+          scrollTitle: "Desplazamiento (avanzado)",
+          scrollFooter:
+            "Ajusta umbrales de anclaje y comportamiento del salto.",
+          pinOffsetTitle: "Umbral de offset anclado",
+          pinOffsetSubtitle: ({ value }: { value: string }) => `Actual: ${value}px`,
+          pinOffsetPromptTitle: "Umbral de offset anclado (px)",
+          pinOffsetPromptBody:
+            "Define qué distancia del final cuenta como anclado.",
+          autoFollowTitle: "Auto-seguir mientras está anclado",
+          autoFollowSubtitle:
+            "Cuando está anclado, seguir actividad nueva automáticamente.",
+          jumpMinNewCountTitle: "Mínimo de nuevos para el botón",
+          jumpMinNewCountSubtitle: ({ value }: { value: string }) => `Actual: ${value}`,
+          jumpMinNewCountPromptTitle: "Mínimo de nuevos (botón)",
+          jumpMinNewCountPromptBody:
+            "Mostrar el botón de ir al final solo después de este número de elementos nuevos.",
+          jumpAnimateScrollTitle: "Animar salto al final",
+          jumpAnimateScrollSubtitle:
+            "Animar el desplazamiento al ir al final.",
+        },
+      },
+        toolDetailOverrides: {
+          title: "Anulaciones del detalle de herramientas",
+          entrySubtitle: "Sobrescribir herramientas individuales",
+          footer:
+            "Sobrescribe el nivel de detalle para herramientas específicas. Las anulaciones se aplican al nombre canónico (V2), tras la normalización heredada.",
+          expandedTitle: "Anulaciones de detalle expandido",
+          expandedFooter: "Sobrescribe el nivel de detalle expandido para herramientas específicas.",
+        },
+      permissions: {
+        title: "Permisos",
+        entrySubtitle: "Abrir ajustes de permisos",
+        footer:
+          "Configura los permisos predeterminados y cómo se aplican los cambios a las sesiones en curso.",
+        promptSurfaceTitle: "Solicitudes de permisos",
+        promptSurfaceFooter:
+          "Elige dónde aparecen las solicitudes de aprobación durante una sesión.",
+        applyChangesFooter:
+          "Elige cuándo los cambios de permisos surten efecto en las sesiones en curso.",
+        backendFooter:
+          "Establece el modo de permisos predeterminado al iniciar sesiones con este backend.",
+        defaultPermissionModeTitle: "Modo de permisos predeterminado",
+        promptSurface: {
+          composerTitle: "Cerca del compositor (recomendado)",
+          composerSubtitle: "Mostrar tarjetas ricas cerca del input.",
+          transcriptTitle: "En la transcripción",
+          transcriptSubtitle:
+            "Mostrar solicitudes de permisos dentro de mensajes de herramientas.",
+          bothTitle: "Ambos",
+          bothSubtitle:
+            "Mostrar solicitudes cerca del compositor y dentro de la transcripción.",
+        },
+        applyTiming: {
+          immediateTitle: "Aplicar de inmediato",
+          nextPromptTitle: "Aplicar en el próximo mensaje",
+        },
+      },
+      subAgentGuidanceEntry: {
+        openSubtitle: "Abrir ajustes de subagente",
+      },
+      actionsEntry: {
+        footer:
+          "Habilita acciones por superficie y ubicación (UI, voz, MCP) y controla dónde aparecen.",
+        openSubtitle: "Abrir ajustes de acciones",
+      },
+      replayResume: {
+        title: "Reanudar con reproducción",
+        footer:
+          "Cuando la reanudación del proveedor no está disponible, opcionalmente reproduce mensajes recientes de la transcripción en una nueva sesión como contexto.",
+        enabledTitle: "Habilitar reanudación con reproducción",
+        enabledSubtitleOn:
+          "Ofrece reanudación basada en reproducción cuando la reanudación del proveedor no esté disponible.",
+        enabledSubtitleOff: "No ofrezcas reanudación basada en reproducción.",
+        strategyTitle: "Estrategia de reproducción",
+        strategy: {
+          recentTitle: "Mensajes recientes",
+          recentSubtitle: "Usa solo los mensajes más recientes de la transcripción.",
+          summaryRecentTitle: "Resumen + recientes (experimental)",
+          summaryRecentSubtitle:
+            "Incluye un resumen breve y mensajes recientes (mejor esfuerzo).",
+        },
+        recentMessagesTitle: "Mensajes recientes a incluir",
+        recentMessagesPlaceholder: "16",
+      },
+      defaultPermissions: {
+        title: "Permisos predeterminados",
+        footer:
+          "Se aplica al iniciar una nueva sesión. Los perfiles pueden anularlo opcionalmente.",
+        applyPermissionChangesTitle: "Aplicar cambios de permisos",
+        applyPermissionChangesImmediateSubtitle:
+          "Aplicar de inmediato a las sesiones en curso (actualiza los metadatos de la sesión).",
+        applyPermissionChangesNextPromptSubtitle: "Aplicar solo en el próximo mensaje.",
+      },
+      toolDetailLevel: {
+        titleOnlyTitle: "Solo título",
+        titleOnlySubtitle:
+          "Muestra solo el nombre de la herramienta en la línea de tiempo (sin subtítulo, sin cuerpo).",
+        compactTitle: "Compacto",
+        compactSubtitle: "Muestra el nombre de la herramienta + un subtítulo corto en la misma línea (sin cuerpo).",
+        summaryTitle: "Resumen",
+        summarySubtitle: "Muestra un resumen compacto y seguro en la línea de tiempo.",
+        fullTitle: "Completo",
+        fullSubtitle: "Muestra todos los detalles en línea en la línea de tiempo.",
+        defaultTitle: "Predeterminado",
+        defaultSubtitle: "Usa el valor predeterminado global.",
           styleDefaultTitle: "Predeterminado (recomendado)",
           styleDefaultSubtitle: "Tarjetas: Resumen. Feed de actividad: Compacto.",
           expandedStyleDefaultTitle: "Predeterminado (recomendado)",
           expandedStyleDefaultSubtitle: "Tarjetas: Completo. Feed de actividad: Resumen.",
-	    },
-	    terminalConnect: {
-	      title: "Conexión del terminal",
-	      legacySecretExportTitle: "Exportación de secreto heredada (compatibilidad)",
-	      legacySecretExportEnabledSubtitle:
-	        "Activado: exporta el secreto heredado de tu cuenta al terminal para que terminales antiguos puedan conectarse. No recomendado.",
-	      legacySecretExportDisabledSubtitle:
-	        "Desactivado (recomendado): aprovisiona terminales solo con la clave de contenido (Terminal Connect V2).",
-	    },
+      },
+      terminalConnect: {
+        title: "Conexión del terminal",
+        legacySecretExportTitle: "Exportación de secreto heredada (compatibilidad)",
+        legacySecretExportEnabledSubtitle:
+          "Activado: exporta el secreto heredado de tu cuenta al terminal para que terminales antiguos puedan conectarse. No recomendado.",
+        legacySecretExportDisabledSubtitle:
+          "Desactivado (recomendado): aprovisiona terminales solo con la clave de contenido (Terminal Connect V2).",
+      },
     sessionList: {
       title: "Lista de sesiones",
       footer: "Personaliza lo que aparece en cada fila de sesión.",
@@ -4391,8 +4587,8 @@ export const es: TranslationStructure = {
     anonymousId: "ID anónimo",
     publicId: "ID público",
     notAvailable: "No disponible",
-    linkNewDevice: "Vincular nuevo dispositivo",
-    linkNewDeviceSubtitle: "Escanear código QR para vincular dispositivo",
+    linkNewDevice: "Escanear QR para vincular un nuevo dispositivo",
+    linkNewDeviceSubtitle: "Escanea el código QR que se muestra en tu nuevo dispositivo",
     profile: "Perfil",
     name: "Nombre",
     github: "GitHub",
@@ -4426,7 +4622,10 @@ export const es: TranslationStructure = {
     logoutConfirm:
       "¿Seguro que quieres cerrar sesión? ¡Asegúrate de haber guardado tu clave secreta!",
     encryptionUpdateFailed: "No se pudo actualizar la configuración de cifrado.",
-    secretKeyMissing: "Secret key unavailable. Please restore your account first.",
+    secretKeyMissing: "Clave secreta no disponible. Primero restaura tu cuenta.",
+    restoreRequiredTitle: "Se requiere restauración",
+    restoreRequiredBody:
+      "Esta cuenta tiene historial cifrado. Para volver a activar el cifrado en este dispositivo, restaura tu clave secreta. Si perdiste la clave, puedes restablecer la cuenta para empezar de cero (el historial cifrado anterior no se puede recuperar).",
   },
 
   settingsLanguage: {
@@ -4567,10 +4766,10 @@ export const es: TranslationStructure = {
     subtitle:
       "Cifrado de extremo a extremo y tu cuenta se guarda solo en tu dispositivo.",
     createAccount: "Crear cuenta",
-    chooseEncryptionTitle: "Choose encryption",
-    chooseEncryptionBody: "This server supports both encrypted and non-encrypted accounts. Choose how you want to store your account data.",
-    chooseEncryptionEncrypted: "Continue with end-to-end encryption",
-    chooseEncryptionPlain: "Continue without encryption",
+    chooseEncryptionTitle: "Elige el cifrado",
+    chooseEncryptionBody: "Este servidor admite cuentas cifradas y no cifradas. Elige cómo quieres almacenar los datos de tu cuenta.",
+    chooseEncryptionEncrypted: "Continuar con cifrado de extremo a extremo",
+    chooseEncryptionPlain: "Continuar sin cifrado",
     signUpWithProvider: ({ provider }: { provider: string }) =>
       `Continuar con ${provider}`,
     signInWithCertificate: "Iniciar sesión con certificado",
@@ -4598,7 +4797,7 @@ export const es: TranslationStructure = {
       `${label} copiado al portapapeles`,
   },
 
-	  machine: {
+    machine: {
     offlineUnableToSpawn:
       "El lanzador está deshabilitado mientras la máquina está desconectada",
     offlineHelp:
@@ -4648,22 +4847,22 @@ export const es: TranslationStructure = {
     renameTitle: "Renombrar máquina",
     renameDescription:
       "Dale a esta máquina un nombre personalizado. Déjalo vacío para usar el hostname predeterminado.",
-	    renamePlaceholder: "Ingresa el nombre de la máquina",
-	    renamedSuccess: "Máquina renombrada correctamente",
-	    renameFailed: "No se pudo renombrar la máquina",
-	    actions: {
-	      removeMachine: "Eliminar máquina",
-	      removeMachineSubtitle:
-	        "Revoca esta máquina y la elimina de tu cuenta.",
-	      removeMachineConfirmBody:
-	        "Esto revocará el acceso de esta máquina (incluidas las claves de acceso y asignaciones de automatización). Puedes volver a conectarla iniciando sesión de nuevo desde el CLI.",
-	      removeMachineAlreadyRemoved:
-	        "Esta máquina ya se ha eliminado de tu cuenta.",
-	    },
-	    lastKnownPid: "Último PID conocido",
-	    lastKnownHttpPort: "Último puerto HTTP conocido",
-	    startedAt: "Iniciado en",
-	    cliVersion: "Versión del CLI",
+      renamePlaceholder: "Ingresa el nombre de la máquina",
+      renamedSuccess: "Máquina renombrada correctamente",
+      renameFailed: "No se pudo renombrar la máquina",
+      actions: {
+        removeMachine: "Eliminar máquina",
+        removeMachineSubtitle:
+          "Revoca esta máquina y la elimina de tu cuenta.",
+        removeMachineConfirmBody:
+          "Esto revocará el acceso de esta máquina (incluidas las claves de acceso y asignaciones de automatización). Puedes volver a conectarla iniciando sesión de nuevo desde el CLI.",
+        removeMachineAlreadyRemoved:
+          "Esta máquina ya se ha eliminado de tu cuenta.",
+      },
+      lastKnownPid: "Último PID conocido",
+      lastKnownHttpPort: "Último puerto HTTP conocido",
+      startedAt: "Iniciado en",
+      cliVersion: "Versión del CLI",
     daemonStateVersion: "Versión del estado del daemon",
     activeSessions: ({ count }: { count: number }) =>
       `Sesiones activas (${count})`,
@@ -4734,29 +4933,29 @@ export const es: TranslationStructure = {
     switchToLocal: "Cambiar a local",
   },
 
-  codex: {
-    // Codex permission dialog buttons
-    permissions: {
-      yesAlwaysAllowCommand: "Sí, permitir globalmente",
-      yesForSession: "Sí, y no preguntar por esta sesión",
-      stop: "Detener",
-      stopAndExplain: "Detener, y explicar qué hacer",
+    codex: {
+      // Codex permission dialog buttons
+      permissions: {
+        yesAlwaysAllowCommand: "Sí, permitir globalmente",
+        yesForSession: "Sí, y no preguntar por esta sesión",
+        stop: "Detener",
+        stopAndExplain: "Detener, y explicar qué hacer",
+      },
     },
-  },
 
-  claude: {
-    // Claude permission dialog buttons
-    permissions: {
-      yesAllowAllEdits: "Sí, permitir todas las ediciones durante esta sesión",
-      yesForTool: "Sí, no volver a preguntar para esta herramienta",
-      yesForCommandPrefix:
-        "Sí, no volver a preguntar para este prefijo de comando",
-      yesForSubcommand: "Sí, no volver a preguntar para este subcomando",
-      yesForCommandName: "Sí, no volver a preguntar para este comando",
-      stop: "Detener",
-      noTellClaude: "No, proporcionar comentarios",
+    claude: {
+      // Claude permission dialog buttons
+      permissions: {
+        yesAllowAllEdits: "Sí, permitir todas las ediciones durante esta sesión",
+        yesForTool: "Sí, no volver a preguntar para esta herramienta",
+        yesForCommandPrefix:
+          "Sí, no volver a preguntar para este prefijo de comando",
+        yesForSubcommand: "Sí, no volver a preguntar para este subcomando",
+        yesForCommandName: "Sí, no volver a preguntar para este comando",
+        stop: "Detener",
+        noTellClaude: "No, proporcionar comentarios",
+      },
     },
-  },
 
   textSelection: {
     // Text selection screen
@@ -4770,14 +4969,14 @@ export const es: TranslationStructure = {
     failedToOpen: "No se pudo abrir la selección de texto. Intenta de nuevo.",
   },
 
-	  markdown: {
-	    // Markdown copy functionality
-	    codeCopied: "Código copiado",
-	    copyFailed: "Error al copiar",
-	    mermaidRenderFailed: "Error al renderizar el diagrama mermaid",
-	    diffLabel: "Diferencias",
-	    codeLabel: "Código",
-	  },
+    markdown: {
+      // Markdown copy functionality
+      codeCopied: "Código copiado",
+      copyFailed: "Error al copiar",
+      mermaidRenderFailed: "Error al renderizar el diagrama mermaid",
+      diffLabel: "Diferencias",
+      codeLabel: "Código",
+    },
 
   artifacts: {
     // Artifacts feature
