@@ -44,6 +44,7 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
   const quotasEnabled = useFeatureEnabled('connectedServices.quotas');
   const profile = useProfile();
   const settings = useSettings();
+  const [quotaSnapshotsByKey, setQuotaSnapshotsByKey] = React.useState<Record<string, ConnectedServiceQuotaSnapshotV1 | null>>({});
 
   const rawServiceId = asStringParam((params as Record<string, unknown>).serviceId).trim();
   const parsedServiceId = ConnectedServiceIdSchema.safeParse(rawServiceId);
@@ -235,8 +236,6 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
 
     await sync.applySettings({ connectedServicesProfileLabelByKey: nextMap });
   };
-
-  const [quotaSnapshotsByKey, setQuotaSnapshotsByKey] = React.useState<Record<string, ConnectedServiceQuotaSnapshotV1 | null>>({});
 
   const setPinnedQuotaMeters = async (profileId: string, nextPinned: ReadonlyArray<string>) => {
     if (!serviceId) return;
