@@ -2,6 +2,16 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectTestFiles } from './utils/test/collect_test_files.mjs';
 
+function splitRealIntegrationTests(testFiles) {
+  const real = [];
+  const regular = [];
+  for (const file of testFiles) {
+    if (String(file).endsWith('.real.integration.test.mjs')) real.push(file);
+    else regular.push(file);
+  }
+  return { regular, real };
+}
+
 async function main() {
   const packageRoot = fileURLToPath(new URL('..', import.meta.url));
   const scriptsDir = join(packageRoot, 'scripts');
@@ -23,8 +33,21 @@ async function main() {
   }
 
   const { spawnSync } = await import('node:child_process');
-  const res = spawnSync(process.execPath, ['--test', ...testFiles], { stdio: 'inherit' });
-  process.exit(res.status ?? 1);
+  const { regular, real } = splitRealIntegrationTests(testFiles);
+
+  if (regular.length > 0) {
+    const res = spawnSync(process.execPath, ['--test', ...regular], { stdio: 'inherit' });
+    if ((res.status ?? 1) !== 0) process.exit(res.status ?? 1);
+  }
+
+  // Real integration tests may install/uninstall OS services and build global release assets,
+  // which is not safe under Node's default parallel test file execution.
+  for (const file of real) {
+    const res = spawnSync(process.execPath, ['--test', '--test-concurrency=1', file], { stdio: 'inherit' });
+    if ((res.status ?? 1) !== 0) process.exit(res.status ?? 1);
+  }
+
+  process.exit(0);
 }
 
 main().catch((e) => {
