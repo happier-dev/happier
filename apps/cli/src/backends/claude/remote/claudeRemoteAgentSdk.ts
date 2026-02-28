@@ -6,7 +6,7 @@ import { PushableAsyncIterable } from '@/utils/PushableAsyncIterable';
 import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
 
 import type { EnhancedMode } from '@/backends/claude/loop';
-import { mapToClaudeMode } from '@/backends/claude/utils/permissionMode';
+import { resolveClaudeSdkPermissionModeFromEnhancedMode } from '@/backends/claude/utils/permissionMode';
 import { getDefaultClaudeCodePathForAgentSdk } from '@/backends/claude/sdk/utils';
 import type { SessionHookData } from '@/backends/claude/utils/startHookServer';
 import { getProjectPath } from '@/backends/claude/utils/path';
@@ -290,7 +290,7 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
         return { ...out, ...(opts.claudeEnvVars ?? {}) };
     };
 
-    const mappedPermissionMode = mapToClaudeMode(mode.permissionMode);
+    const mappedPermissionMode = resolveClaudeSdkPermissionModeFromEnhancedMode(mode);
     const resumeSessionAt =
         typeof opts.resumeSessionAt === 'string' && opts.resumeSessionAt.trim().length > 0
             ? opts.resumeSessionAt.trim()
@@ -544,7 +544,7 @@ const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
                         mode = next.mode;
 
                         try {
-                            await (response as any).setPermissionMode?.(mapToClaudeMode(mode.permissionMode));
+                            await (response as any).setPermissionMode?.(resolveClaudeSdkPermissionModeFromEnhancedMode(mode));
                             await (response as any).setModel?.(mode.model ?? undefined);
                             if (
                                 typeof mode.claudeRemoteMaxThinkingTokens === 'number' ||
