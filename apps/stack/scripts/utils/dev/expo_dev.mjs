@@ -6,6 +6,7 @@ import {
   ensureExpoIsolationEnv,
   getExpoStatePaths,
   isStateProcessRunning,
+  resolveExpoTmpDir,
   wantsExpoClearCache,
   writePidState,
 } from '../expo/expo.mjs';
@@ -315,7 +316,8 @@ export async function ensureDevExpoServer({
     projectDir,
     stateFileName: 'expo.state.json',
   });
-  await ensureExpoIsolationEnv({ env, stateDir: paths.stateDir, expoHomeDir: paths.expoHomeDir, tmpDir: paths.tmpDir });
+  const tmpDir = resolveExpoTmpDir({ env, defaultTmpDir: paths.tmpDir, kind: 'expo-dev', projectDir });
+  await ensureExpoIsolationEnv({ env, stateDir: paths.stateDir, expoHomeDir: paths.expoHomeDir, tmpDir });
 
   const running = await isStateProcessRunning(paths.statePath);
   const alreadyRunning = Boolean(running.running);
