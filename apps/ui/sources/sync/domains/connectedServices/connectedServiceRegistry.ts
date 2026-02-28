@@ -5,28 +5,48 @@ export type ConnectedServiceRegistryEntry = Readonly<{
   displayName: string;
   connectCommand: string;
   supportsOauth: boolean;
-  supportsSetupToken?: boolean;
+  /**
+   * Optional list of OAuth "add profile" surface modes this service wants to expose
+   * explicitly in the service detail Actions group.
+   *
+   * When omitted or length <= 1, the UI uses the generic "Add OAuth profile" action.
+   */
+  oauthAddActionModes?: ReadonlyArray<'device' | 'paste' | 'browser'>;
+  supportsToken?: boolean;
+  tokenKind?: 'api-key' | 'setup-token';
 }>;
 
 export const CONNECTED_SERVICES_REGISTRY: readonly ConnectedServiceRegistryEntry[] = Object.freeze([
+  {
+    serviceId: 'claude-subscription',
+    displayName: 'Claude subscription',
+    connectCommand: 'happier connect claude',
+    supportsOauth: true,
+    oauthAddActionModes: ['paste'],
+    supportsToken: true,
+    tokenKind: 'setup-token',
+  },
   {
     serviceId: 'openai-codex',
     displayName: 'OpenAI Codex',
     connectCommand: 'happier connect codex',
     supportsOauth: true,
+    oauthAddActionModes: ['device', 'paste'],
   },
   {
     serviceId: 'anthropic',
-    displayName: 'Anthropic Claude',
-    connectCommand: 'happier connect claude',
-    supportsOauth: true,
-    supportsSetupToken: true,
+    displayName: 'Anthropic API key',
+    connectCommand: 'happier connect claude --api-key',
+    supportsOauth: false,
+    supportsToken: true,
+    tokenKind: 'api-key',
   },
   {
     serviceId: 'gemini',
     displayName: 'Google Gemini',
     connectCommand: 'happier connect gemini',
     supportsOauth: true,
+    oauthAddActionModes: ['paste'],
   },
 ]);
 
@@ -38,6 +58,7 @@ export function getConnectedServiceRegistryEntry(serviceId: ConnectedServiceId):
     displayName: serviceId,
     connectCommand: `happier connect ${serviceId}`,
     supportsOauth: false,
+    oauthAddActionModes: [],
+    supportsToken: false,
   };
 }
-
