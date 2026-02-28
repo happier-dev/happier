@@ -2,6 +2,7 @@
 
 import { execFileSync, spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
+import { resolveOptionalDockerBuildArgs } from './resolve-build-args.mjs';
 
 function fail(message) {
   console.error(message);
@@ -510,6 +511,8 @@ async function main() {
   const useGhaCache = String(process.env.GITHUB_ACTIONS ?? '').toLowerCase() === 'true';
 
   if (buildRelay) {
+    const defaultSentryRelease = String(process.env.SENTRY_RELEASE ?? '').trim() || sha;
+    const optionalBuildArgs = resolveOptionalDockerBuildArgs(process.env, { defaultSentryRelease });
     const args = [
       'buildx',
       'build',
@@ -526,6 +529,7 @@ async function main() {
       ...(useGhaCache ? ['--cache-to', 'type=gha,mode=max,scope=relay-server'] : []),
       '--build-arg',
       `HAPPIER_EMBEDDED_POLICY_ENV=${policyEnv}`,
+      ...optionalBuildArgs,
       '--label',
       `org.opencontainers.image.revision=${sha}`,
       ...relayTags.flatMap((t) => ['--tag', t]),
