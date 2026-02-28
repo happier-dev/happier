@@ -125,6 +125,123 @@ function createResumableBackendFactory(responseText: string): () => AgentBackend
   });
 }
 
+function createSequencedBackend(params: {
+  responses: ReadonlyArray<{ text: string; delayMs: number }>;
+  supportsSteer?: boolean;
+  cancelRejects?: boolean;
+  completionRejectMessage?: string;
+}): { backend: AgentBackend; events: { sendPrompts: string[]; steerPrompts: string[]; cancelCount: number } } {
+  let handler: AgentMessageHandler | null = null;
+  const sessionId: SessionId = 'child_session_1' as SessionId;
+  const events = { sendPrompts: [] as string[], steerPrompts: [] as string[], cancelCount: 0 };
+
+  let turnIndex = 0;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let done: Promise<void> | null = null;
+  let resolveDone: (() => void) | null = null;
+  let rejectDone: ((e: Error) => void) | null = null;
+
+  const backend: AgentBackend = {
+    async startSession() {
+      return { sessionId };
+    },
+    async sendPrompt(_sessionId: SessionId, prompt: string) {
+      events.sendPrompts.push(prompt);
+      const response = params.responses[Math.min(turnIndex, params.responses.length - 1)];
+      turnIndex += 1;
+
+      done = new Promise((resolve, reject) => {
+        resolveDone = resolve;
+        rejectDone = (e) => reject(e);
+        timer = setTimeout(() => {
+          if (typeof params.completionRejectMessage === 'string' && params.completionRejectMessage.trim().length > 0) {
+            reject(new Error(params.completionRejectMessage));
+            return;
+          }
+          handler?.({ type: 'model-output', fullText: response.text } as AgentMessage);
+          resolve();
+        }, response.delayMs);
+      });
+    },
+    async cancel(_sessionId: SessionId) {
+      events.cancelCount += 1;
+      if (timer) clearTimeout(timer);
+      if (params.cancelRejects) {
+        rejectDone?.(new Error('Turn cancelled'));
+      } else {
+        resolveDone?.();
+      }
+    },
+    ...(params.supportsSteer
+      ? {
+          async sendSteerPrompt(_sessionId: SessionId, prompt: string) {
+            events.steerPrompts.push(prompt);
+          },
+        }
+      : {}),
+    onMessage(next) {
+      handler = next;
+    },
+    async dispose() {},
+    async waitForResponseComplete() {
+      await (done ?? Promise.resolve());
+    },
+  };
+
+  return { backend, events };
+}
+
+function createCancelRaceBackend(params: Readonly<{
+  longDelayMs: number;
+}>): { backend: AgentBackend; events: { sendPrompts: string[]; cancelCount: number } } {
+  let handler: AgentMessageHandler | null = null;
+  const sessionId: SessionId = 'child_session_1' as SessionId;
+  const events = { sendPrompts: [] as string[], cancelCount: 0 };
+
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let done: Promise<void> | null = null;
+  let resolveDone: (() => void) | null = null;
+  let rejectDone: ((e: Error) => void) | null = null;
+  let rejectNextSendPrompts = 0;
+
+  const backend: AgentBackend = {
+    async startSession() {
+      return { sessionId };
+    },
+    async sendPrompt(_sessionId: SessionId, prompt: string) {
+      events.sendPrompts.push(prompt);
+      if (rejectNextSendPrompts > 0) {
+        rejectNextSendPrompts -= 1;
+        throw new Error('Turn cancelled');
+      }
+
+      done = new Promise((resolve, reject) => {
+        resolveDone = resolve;
+        rejectDone = reject;
+        timer = setTimeout(() => {
+          handler?.({ type: 'model-output', fullText: `reply:${prompt}` } as AgentMessage);
+          resolve();
+        }, params.longDelayMs);
+      });
+    },
+    async cancel(_sessionId: SessionId) {
+      events.cancelCount += 1;
+      rejectNextSendPrompts = 1;
+      if (timer) clearTimeout(timer);
+      rejectDone?.(new Error('Turn cancelled'));
+    },
+    onMessage(next) {
+      handler = next;
+    },
+    async dispose() {},
+    async waitForResponseComplete() {
+      await (done ?? Promise.resolve());
+    },
+  };
+
+  return { backend, events };
+}
+
 describe('executionRuns session RPC handlers', () => {
   it('starts and lists a review run', async () => {
     const sent: Array<{ body: ACPMessageData; meta?: Record<string, unknown> }> = [];
@@ -161,6 +278,9 @@ describe('executionRuns session RPC handlers', () => {
       ioMode: 'request_response',
     });
     expect(started.runId).toMatch(/^run_/);
+
+    // Bounded runs execute asynchronously; wait a tick so static backends can complete before GET assertions.
+    await new Promise((r) => setTimeout(r, 5));
 
     const listed = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, {});
     expect(listed.runs?.length ?? 0).toBe(1);
@@ -219,6 +339,8 @@ describe('executionRuns session RPC handlers', () => {
       runClass: 'bounded',
       ioMode: 'request_response',
     });
+
+    await new Promise((r) => setTimeout(r, 5));
 
     const got = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_GET, {
       runId: started.runId,
@@ -311,7 +433,459 @@ describe('executionRuns session RPC handlers', () => {
       message: 'next',
     });
     expect(sentReply.ok).toBe(true);
-    expect(sent.filter((m: any) => m?.body?.type === 'message').length).toBe(2);
+    await expect
+      .poll(() => sent.filter((m: any) => m?.body?.type === 'message').length, { timeout: 1_000 })
+      .toBe(2);
+  });
+
+  it('returns execution_run_busy when delivery=prompt and a long-lived run already has a turn in flight', async () => {
+    const sent: Array<{ body: unknown; meta?: Record<string, unknown> }> = [];
+    const { backend, events } = createSequencedBackend({
+      responses: [
+        { text: 'start', delayMs: 0 },
+        { text: 'reply', delayMs: 50 },
+      ],
+    });
+
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend: () => backend,
+          sendAcp: (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) =>
+            sent.push({ body, meta: opts?.meta }),
+        });
+      },
+    });
+
+    const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'delegate',
+      backendId: 'claude',
+      instructions: 'Start.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'long_lived',
+      ioMode: 'request_response',
+    });
+
+    // Long-lived runs execute their first turn asynchronously; wait a tick so subsequent send() calls
+    // deterministically test in-flight behavior for a later turn.
+    await new Promise((r) => setTimeout(r, 5));
+
+    const p1 = client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_SEND, {
+      runId: started.runId,
+      message: 'first',
+      delivery: 'prompt',
+    });
+    await new Promise((r) => setTimeout(r, 5));
+
+    const p2 = client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_SEND, {
+      runId: started.runId,
+      message: 'second',
+      delivery: 'prompt',
+    });
+
+    const busy = await p2;
+    expect(busy.ok).toBe(false);
+    expect(busy.errorCode).toBe('execution_run_busy');
+
+    await p1;
+    expect(events.sendPrompts.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('keeps long-lived runs running when a turn is cancelled by the backend', async () => {
+    const { backend } = createSequencedBackend({
+      responses: [{ text: 'start', delayMs: 0 }],
+      supportsSteer: false,
+      completionRejectMessage: 'Turn cancelled',
+    });
+
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend: () => backend,
+          sendAcp: () => {},
+        });
+      },
+    });
+
+    const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'delegate',
+      backendId: 'claude',
+      instructions: 'Start.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'long_lived',
+      ioMode: 'request_response',
+    });
+
+    await new Promise((r) => setTimeout(r, 15));
+
+    const got = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId: started.runId });
+    expect(got.run?.status).toBe('running');
+    expect(got.run?.error).toBeUndefined();
+  });
+
+  it('does not terminalize long-lived runs when sendPrompt fails with an abort-like error', async () => {
+    let handler: AgentMessageHandler | null = null;
+    const backend: AgentBackend = {
+      async startSession() {
+        return { sessionId: 'child_session_1' as SessionId };
+      },
+      async sendPrompt() {
+        throw new Error('Turn cancelled');
+      },
+      async cancel() {},
+      onMessage(next) {
+        handler = next;
+      },
+      async dispose() {},
+      async waitForResponseComplete() {
+        handler?.({ type: 'status', status: 'idle' } as any);
+      },
+    };
+
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend: () => backend,
+          sendAcp: () => {},
+        });
+      },
+    });
+
+    const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'delegate',
+      backendId: 'claude',
+      instructions: 'Start.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'long_lived',
+      ioMode: 'request_response',
+    });
+
+    await new Promise((r) => setTimeout(r, 15));
+
+    const sent = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_SEND, {
+      runId: started.runId,
+      message: 'hi',
+      delivery: 'prompt',
+    });
+    expect(sent.ok).toBe(false);
+
+    const got = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId: started.runId });
+    expect(got.run?.status).toBe('running');
+    expect(got.run?.error).toBeUndefined();
+  });
+
+  it('steers an in-flight long-lived run when delivery=steer_if_supported and backend supports sendSteerPrompt', async () => {
+    const { backend, events } = createSequencedBackend({
+      responses: [
+        { text: 'start', delayMs: 0 },
+        { text: 'reply', delayMs: 50 },
+      ],
+      supportsSteer: true,
+    });
+
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend: () => backend,
+          sendAcp: () => {},
+        });
+      },
+    });
+
+    const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'delegate',
+      backendId: 'claude',
+      instructions: 'Start.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'long_lived',
+      ioMode: 'request_response',
+    });
+
+    await new Promise((r) => setTimeout(r, 5));
+
+    const p1 = client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_SEND, {
+      runId: started.runId,
+      message: 'first',
+      delivery: 'prompt',
+    });
+    await new Promise((r) => setTimeout(r, 5));
+
+    const steered = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_SEND, {
+      runId: started.runId,
+      message: 'steer text',
+      delivery: 'steer_if_supported',
+    });
+    expect(steered.ok).toBe(true);
+    expect(events.steerPrompts).toEqual(['steer text']);
+
+    await p1;
+  });
+
+  it('interrupts an in-flight long-lived run when delivery=interrupt by cancelling then sending a new prompt', async () => {
+    const { backend, events } = createSequencedBackend({
+      responses: [
+        { text: 'start', delayMs: 0 },
+        { text: 'reply', delayMs: 50 },
+        { text: 'after', delayMs: 0 },
+      ],
+      supportsSteer: false,
+    });
+
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend: () => backend,
+          sendAcp: () => {},
+        });
+      },
+    });
+
+    const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'delegate',
+      backendId: 'claude',
+      instructions: 'Start.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'long_lived',
+      ioMode: 'request_response',
+    });
+
+    await new Promise((r) => setTimeout(r, 5));
+
+    const p1 = client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_SEND, {
+      runId: started.runId,
+      message: 'first',
+      delivery: 'prompt',
+    });
+    await new Promise((r) => setTimeout(r, 5));
+
+    const interrupted = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_SEND, {
+      runId: started.runId,
+      message: 'second',
+      delivery: 'interrupt',
+    });
+    expect(interrupted.ok).toBe(true);
+    expect(events.cancelCount).toBe(1);
+    expect(events.sendPrompts.some((p) => p === 'second')).toBe(true);
+
+    await p1;
+  });
+
+  it('retries cancel+send when the backend transiently rejects the next prompt after cancel', async () => {
+    const { backend, events } = createCancelRaceBackend({ longDelayMs: 50 });
+
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend: () => backend,
+          sendAcp: () => {},
+        });
+      },
+    });
+
+    const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'delegate',
+      backendId: 'claude',
+      instructions: 'Start.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'long_lived',
+      ioMode: 'request_response',
+    });
+
+    await new Promise((r) => setTimeout(r, 5));
+
+    const interrupted = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_SEND, {
+      runId: started.runId,
+      message: 'second',
+      delivery: 'interrupt',
+    });
+    expect(interrupted.ok).toBe(true);
+    expect(events.cancelCount).toBe(1);
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    const got = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId: started.runId });
+    expect(got.run?.status).toBe('running');
+    expect(events.sendPrompts.some((p) => p === 'second')).toBe(true);
+  });
+
+  it('does not terminalize long-lived runs when multiple in-flight turns are cancelled for steering', async () => {
+    const { backend } = createSequencedBackend({
+      responses: [
+        // Start turn: long enough that the first send interrupts it.
+        { text: 'start', delayMs: 50 },
+        // First user send: long enough that the second send interrupts it.
+        { text: 'first', delayMs: 50 },
+        // Second user send: completes quickly.
+        { text: 'second', delayMs: 0 },
+      ],
+      supportsSteer: false,
+      cancelRejects: true,
+    });
+
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend: () => backend,
+          sendAcp: () => {},
+        });
+      },
+    });
+
+    const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'delegate',
+      backendId: 'claude',
+      instructions: 'Start.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'long_lived',
+      ioMode: 'request_response',
+    });
+
+    await new Promise((r) => setTimeout(r, 5));
+
+    const first = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_SEND, {
+      runId: started.runId,
+      message: 'first',
+      delivery: 'interrupt',
+    });
+    expect(first.ok).toBe(true);
+
+    await new Promise((r) => setTimeout(r, 5));
+
+    const second = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_SEND, {
+      runId: started.runId,
+      message: 'second',
+      delivery: 'interrupt',
+    });
+    expect(second.ok).toBe(true);
+
+    await new Promise((r) => setTimeout(r, 75));
+
+    const got = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId: started.runId });
+    expect(got.run?.status).toBe('running');
+    expect(got.run?.error).toBeUndefined();
+  });
+
+  it('supports steering bounded runs while running (cancel+send fallback when steer is unavailable)', async () => {
+    const sent: Array<{ body: unknown; meta?: Record<string, unknown> }> = [];
+    const { backend, events } = createSequencedBackend({
+      responses: [
+        // Initial bounded prompt output (will be cancelled before it emits)
+        { text: JSON.stringify({ findings: [], summary: 'initial' }), delayMs: 50 },
+        // After interrupt, emit valid output
+        { text: JSON.stringify({ findings: [], summary: 'after' }), delayMs: 0 },
+      ],
+      supportsSteer: false,
+    });
+
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend: () => backend,
+          sendAcp: (_provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) =>
+            sent.push({ body, meta: opts?.meta }),
+        });
+      },
+    });
+
+    const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'review',
+      backendId: 'claude',
+      instructions: 'Review.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+
+    await new Promise((r) => setTimeout(r, 5));
+
+    const steered = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_SEND, {
+      runId: started.runId,
+      message: 'please focus on X',
+      delivery: 'steer_if_supported',
+    });
+    expect(steered.ok).toBe(true);
+    expect(events.cancelCount).toBe(1);
+
+    // Wait for bounded completion.
+    await new Promise((r) => setTimeout(r, 30));
+    const got = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId: started.runId });
+    expect(got.run?.status).toBe('succeeded');
+    expect(got.latestToolResult?.summary).toBe('after');
+  });
+
+  it('rejects bounded run sends after completion', async () => {
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend: () => createStaticBackend(JSON.stringify({ findings: [], summary: 'ok' })),
+          sendAcp: () => {},
+        });
+      },
+    });
+
+    const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'review',
+      backendId: 'claude',
+      instructions: 'Review.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    const res = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_SEND, {
+      runId: started.runId,
+      message: 'late',
+      delivery: 'steer_if_supported',
+    });
+    expect(res.ok).toBe(false);
+    expect(res.errorCode).toBe('execution_run_not_allowed');
   });
 
   it('streams voice_agent turns via execution.run.stream.*', async () => {
@@ -755,6 +1329,8 @@ describe('executionRuns session RPC handlers', () => {
       runClass: 'bounded',
       ioMode: 'request_response',
     });
+
+    await new Promise((r) => setTimeout(r, 5));
 
     const acted = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_ACTION, {
       runId: started.runId,

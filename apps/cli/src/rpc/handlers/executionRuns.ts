@@ -28,6 +28,10 @@ function invalidParams(): { ok: false; error: string; errorCode: string } {
   return { ok: false, error: 'Invalid params', errorCode: 'execution_run_invalid_action_input' };
 }
 
+function executionRunsDisabled(): { ok: false; error: string; errorCode: string } {
+  return { ok: false, error: 'Execution runs feature disabled', errorCode: 'execution_run_not_allowed' };
+}
+
 export function registerExecutionRunHandlers(
   rpc: RpcHandlerRegistrar,
   ctx: Readonly<{
@@ -74,10 +78,15 @@ export function registerExecutionRunHandlers(
 
   let cachedServerSnapshot: CliServerFeaturesSnapshot | undefined;
 
+  function isExecutionRunsEnabled(): boolean {
+    return resolveCliFeatureDecision({ featureId: 'execution.runs', env: process.env }).state === 'enabled';
+  }
+
   async function startRun(raw: unknown): Promise<
     | { ok: true; runId: string; callId: string; sidechainId: string }
     | { ok: false; error: string; errorCode: string }
   > {
+    if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunStartRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
     if (parsed.data.intent === 'voice_agent') {
@@ -165,12 +174,14 @@ export function registerExecutionRunHandlers(
   });
 
   rpc.registerHandler(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, async (raw: unknown) => {
+    if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunListRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
     return { runs: manager.listPublic() };
   });
 
   rpc.registerHandler(SESSION_RPC_METHODS.EXECUTION_RUN_GET, async (raw: unknown) => {
+    if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunGetRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
     const run = manager.getPublic(parsed.data.runId);
@@ -185,14 +196,20 @@ export function registerExecutionRunHandlers(
   });
 
   rpc.registerHandler(SESSION_RPC_METHODS.EXECUTION_RUN_SEND, async (raw: unknown) => {
+    if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunSendRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
-    const sent = await manager.send(parsed.data.runId, { message: parsed.data.message, resume: parsed.data.resume });
+    const sent = await manager.send(parsed.data.runId, {
+      message: parsed.data.message,
+      resume: parsed.data.resume,
+      delivery: parsed.data.delivery,
+    });
     if (!sent.ok) return { ok: false, error: sent.error ?? 'Send failed', errorCode: sent.errorCode ?? 'execution_run_failed' };
     return { ok: true };
   });
 
   rpc.registerHandler(SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE, async (raw: unknown) => {
+    if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunEnsureRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
     const ensured = await manager.ensure(parsed.data.runId, { resume: parsed.data.resume });
@@ -201,6 +218,7 @@ export function registerExecutionRunHandlers(
   });
 
   rpc.registerHandler(SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START, async (raw: unknown) => {
+    if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunEnsureOrStartRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
     const runId = typeof parsed.data.runId === 'string' ? parsed.data.runId.trim() : '';
@@ -216,6 +234,7 @@ export function registerExecutionRunHandlers(
   });
 
   rpc.registerHandler(SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START, async (raw: unknown) => {
+    if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunTurnStreamStartRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
     const started = await manager.startTurnStream(parsed.data.runId, { message: parsed.data.message, resume: parsed.data.resume });
@@ -224,6 +243,7 @@ export function registerExecutionRunHandlers(
   });
 
   rpc.registerHandler(SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ, async (raw: unknown) => {
+    if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunTurnStreamReadRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
     const read = await manager.readTurnStream(parsed.data.runId, {
@@ -236,6 +256,7 @@ export function registerExecutionRunHandlers(
   });
 
   rpc.registerHandler(SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL, async (raw: unknown) => {
+    if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunTurnStreamCancelRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
     const cancelled = await manager.cancelTurnStream(parsed.data.runId, { streamId: parsed.data.streamId });
@@ -244,6 +265,7 @@ export function registerExecutionRunHandlers(
   });
 
   rpc.registerHandler(SESSION_RPC_METHODS.EXECUTION_RUN_STOP, async (raw: unknown) => {
+    if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunStopRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
     const stopped = await manager.stop(parsed.data.runId);
@@ -252,6 +274,7 @@ export function registerExecutionRunHandlers(
   });
 
   rpc.registerHandler(SESSION_RPC_METHODS.EXECUTION_RUN_ACTION, async (raw: unknown) => {
+    if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunActionRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
     const acted = await manager.applyAction(parsed.data.runId, {
