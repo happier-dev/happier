@@ -351,7 +351,7 @@ export function useCreateNewSession(params: Readonly<{
                 const normalizedAcpModeId = typeof params.acpSessionModeId === 'string' ? params.acpSessionModeId.trim() : '';
                 if (normalizedAcpModeId && normalizedAcpModeId !== 'default') {
                     const core = getAgentCore(params.agentType);
-                    if (core.sessionModes.kind === 'acpAgentModes') {
+                    if (core.sessionModes.kind === 'acpAgentModes' || core.sessionModes.kind === 'staticAgentModes') {
                         try {
                             await sync.publishSessionAcpSessionModeOverrideToMetadata({
                                 sessionId: result.sessionId,
