@@ -26,8 +26,76 @@ function resolveBuildLockPath(projectRoot: string): string {
   return join(tmpdir(), `happier-cli-vitest-build-lock-${hash}`)
 }
 
+function resolveSharedDepsLockPath(projectRoot: string): string {
+  const hash = createHash('sha256').update(projectRoot).digest('hex').slice(0, 12)
+  return join(tmpdir(), `happier-cli-vitest-shared-deps-lock-${hash}`)
+}
+
 async function sleep(ms: number): Promise<void> {
   await new Promise((r) => setTimeout(r, ms))
+}
+
+function resolveBundledProtocolDistMarkers(projectRoot: string): string[] {
+  const protocolDistDir = join(projectRoot, 'node_modules', '@happier-dev', 'protocol', 'dist')
+  return [
+    join(protocolDistDir, 'sessionFork.js'),
+    join(protocolDistDir, 'features', 'payload', 'isRecord.js'),
+  ]
+}
+
+async function ensureSharedDepsBuiltOnce(projectRoot: string): Promise<void> {
+  const markers = resolveBundledProtocolDistMarkers(projectRoot)
+  if (markers.every((marker) => existsSync(marker))) return
+
+  const lockPath = resolveSharedDepsLockPath(projectRoot)
+  const startedAt = Date.now()
+
+  while (true) {
+    if (markers.every((marker) => existsSync(marker))) return
+
+    try {
+      const handle = await fs.open(lockPath, 'wx')
+      await handle.close()
+      break
+    } catch (e: any) {
+      if (e?.code !== 'EEXIST') throw e
+    }
+
+    if (Date.now() - startedAt > 240_000) {
+      throw new Error(`Timed out waiting for CLI shared deps build lock: ${lockPath}`)
+    }
+    await sleep(250)
+  }
+
+  try {
+    if (markers.every((marker) => existsSync(marker))) return
+
+    const yarnCommand = process.platform === 'win32' ? 'yarn.cmd' : 'yarn'
+    const buildResult = spawnSync(yarnCommand, ['-s', 'build:shared'], {
+      cwd: projectRoot,
+      stdio: 'pipe',
+      encoding: 'utf8',
+    })
+
+    if (buildResult.error) {
+      throw new Error(`CLI test globalSetup failed to run build:shared: ${buildResult.error.message}`)
+    }
+
+    if ((buildResult.status ?? 1) !== 0) {
+      const exitCode = typeof buildResult.status === 'number' ? buildResult.status : 'unknown'
+      const stdout = typeof buildResult.stdout === 'string' ? buildResult.stdout.trim() : ''
+      const stderr = typeof buildResult.stderr === 'string' ? buildResult.stderr.trim() : ''
+      const details = [stdout ? `stdout:\n${stdout}` : '', stderr ? `stderr:\n${stderr}` : '']
+        .filter(Boolean)
+        .join('\n\n')
+
+      throw new Error(
+        `CLI test globalSetup build:shared failed (exit ${exitCode})${details ? `\n\n${details}` : ''}`,
+      )
+    }
+  } finally {
+    await fs.rm(lockPath, { force: true }).catch(() => undefined)
+  }
 }
 
 async function ensureDistBuiltOnce(projectRoot: string): Promise<void> {
@@ -104,5 +172,6 @@ export async function setup() {
   if (skipBuild) return
 
   const projectRoot = resolveCliProjectRoot()
+  await ensureSharedDepsBuiltOnce(projectRoot)
   await ensureDistBuiltOnce(projectRoot)
 }

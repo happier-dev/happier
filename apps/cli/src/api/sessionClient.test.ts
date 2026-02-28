@@ -18,6 +18,9 @@ describe('ApiSessionClient connection handling', () => {
     let mockUserSocket: any;
     let consoleSpy: any;
     let mockSession: any;
+    const flushQueuedCommits = async (client: ApiSessionClient): Promise<void> => {
+        await (client as any).messageCommitQueueTail;
+    };
 
     beforeEach(() => {
         consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -97,10 +100,17 @@ describe('ApiSessionClient connection handling', () => {
         expect(getSpy).toHaveBeenCalledTimes(2);
     });
 
+    it('exposes last observed transcript seq for fork/resume heuristics', () => {
+        const client = new ApiSessionClient('token', mockSession);
+        expect(client.getLastObservedMessageSeq()).toBe(0);
+    });
+
     it('sends plaintext session messages when session.encryptionMode is plain', async () => {
         const client = new ApiSessionClient('fake-token', { ...mockSession, encryptionMode: 'plain' as const });
 
         client.sendUserTextMessage('hello');
+
+        await flushQueuedCommits(client);
 
         expect(mockSocket.emit).toHaveBeenCalledWith(
             'message',
@@ -112,7 +122,7 @@ describe('ApiSessionClient connection handling', () => {
         );
     });
 
-    it('normalizes outbound ACP tool-call names and inputs to V2 canonical keys', () => {
+    it('normalizes outbound ACP tool-call names and inputs to V2 canonical keys', async () => {
         const client = new ApiSessionClient('fake-token', mockSession);
         client.sendAgentMessage('opencode', {
             type: 'tool-call',
@@ -121,6 +131,8 @@ describe('ApiSessionClient connection handling', () => {
             input: { command: ['bash', '-lc', 'echo hi'] },
             id: 'msg-1',
         });
+
+        await flushQueuedCommits(client);
 
         const call = mockSocket.emit.mock.calls.find((c: any[]) => c[0] === 'message');
         expect(call).toBeTruthy();
@@ -220,7 +232,7 @@ describe('ApiSessionClient connection handling', () => {
         }
     });
 
-    it('backfills missing Read tool-call input details from permission-request toolCall.rawInput', () => {
+    it('backfills missing Read tool-call input details from permission-request toolCall.rawInput', async () => {
         const client = new ApiSessionClient('fake-token', mockSession);
 
         client.sendAgentMessage('opencode', {
@@ -246,6 +258,8 @@ describe('ApiSessionClient connection handling', () => {
             },
             id: 'msg-1',
         });
+
+        await flushQueuedCommits(client);
 
         const calls = mockSocket.emit.mock.calls.filter((c: any[]) => c[0] === 'message');
         const decryptedToolCall = calls
@@ -513,7 +527,7 @@ describe('ApiSessionClient connection handling', () => {
         getSpy.mockRestore();
     });
 
-    it('normalizes outbound ACP permission-request toolName to V2 canonical keys (supports TodoWrite)', () => {
+    it('normalizes outbound ACP permission-request toolName to V2 canonical keys (supports TodoWrite)', async () => {
         const client = new ApiSessionClient('fake-token', mockSession);
 
         client.sendAgentMessage('gemini', {
@@ -523,6 +537,8 @@ describe('ApiSessionClient connection handling', () => {
             description: 'write',
             options: {},
         });
+
+        await flushQueuedCommits(client);
 
         const call = mockSocket.emit.mock.calls.find((c: any[]) => c[0] === 'message');
         expect(call).toBeTruthy();
@@ -540,7 +556,7 @@ describe('ApiSessionClient connection handling', () => {
         });
     });
 
-    it('backfills missing permission-request input details from nested options.toolCall.content (Gemini ACP)', () => {
+    it('backfills missing permission-request input details from nested options.toolCall.content (Gemini ACP)', async () => {
         const client = new ApiSessionClient('fake-token', mockSession);
 
         client.sendAgentMessage('gemini', {
@@ -560,6 +576,8 @@ describe('ApiSessionClient connection handling', () => {
                 },
             },
         });
+
+        await flushQueuedCommits(client);
 
         const call = mockSocket.emit.mock.calls.find((c: any[]) => c[0] === 'message');
         expect(call).toBeTruthy();
@@ -582,7 +600,7 @@ describe('ApiSessionClient connection handling', () => {
         });
     });
 
-    it('normalizes outbound ACP tool-result outputs using the canonical tool name for the callId', () => {
+    it('normalizes outbound ACP tool-result outputs using the canonical tool name for the callId', async () => {
         const client = new ApiSessionClient('fake-token', mockSession);
 
         client.sendAgentMessage('opencode', {
@@ -599,6 +617,8 @@ describe('ApiSessionClient connection handling', () => {
             output: 'TRACE_OK\n',
             id: 'msg-2',
         });
+
+        await flushQueuedCommits(client);
 
         const calls = mockSocket.emit.mock.calls.filter((c: any[]) => c[0] === 'message');
         expect(calls).toHaveLength(2);
@@ -622,7 +642,7 @@ describe('ApiSessionClient connection handling', () => {
         });
     });
 
-    it('backfills empty TodoWrite tool-result outputs with the requested todos', () => {
+    it('backfills empty TodoWrite tool-result outputs with the requested todos', async () => {
         const client = new ApiSessionClient('fake-token', mockSession);
 
         client.sendAgentMessage('gemini', {
@@ -639,6 +659,8 @@ describe('ApiSessionClient connection handling', () => {
             output: [],
             id: 'msg-2',
         });
+
+        await flushQueuedCommits(client);
 
         const calls = mockSocket.emit.mock.calls.filter((c: any[]) => c[0] === 'message');
         expect(calls).toHaveLength(2);
@@ -661,7 +683,7 @@ describe('ApiSessionClient connection handling', () => {
         });
     });
 
-    it('normalizes outbound Codex MCP tool-call names to V2 canonical keys', () => {
+    it('normalizes outbound Codex MCP tool-call names to V2 canonical keys', async () => {
         const client = new ApiSessionClient('fake-token', mockSession);
         client.sendCodexMessage({
             type: 'tool-call',
@@ -670,6 +692,8 @@ describe('ApiSessionClient connection handling', () => {
             input: { command: ['bash', '-lc', 'echo hi'] },
             id: 'msg-1',
         });
+
+        await flushQueuedCommits(client);
 
         const call = mockSocket.emit.mock.calls.find((c: any[]) => c[0] === 'message');
         expect(call).toBeTruthy();
@@ -687,7 +711,7 @@ describe('ApiSessionClient connection handling', () => {
         });
     });
 
-    it('normalizes outbound Codex MCP tool-call-result outputs using the canonical tool name for the callId', () => {
+    it('normalizes outbound Codex MCP tool-call-result outputs using the canonical tool name for the callId', async () => {
         const client = new ApiSessionClient('fake-token', mockSession);
 
         client.sendCodexMessage({
@@ -704,6 +728,8 @@ describe('ApiSessionClient connection handling', () => {
             output: { stdout: 'TRACE_OK\n', exit_code: 0 },
             id: 'msg-2',
         });
+
+        await flushQueuedCommits(client);
 
         const calls = mockSocket.emit.mock.calls.filter((c: any[]) => c[0] === 'message');
         expect(calls).toHaveLength(2);
@@ -765,7 +791,7 @@ describe('ApiSessionClient connection handling', () => {
         await expect(promise).resolves.toBe(false);
     });
 
-    it('emits messages even when disconnected (socket.io will buffer)', () => {
+    it('emits messages even when disconnected (socket.io will buffer)', async () => {
         mockSocket.connected = false;
 
         const client = new ApiSessionClient('fake-token', mockSession);
@@ -780,6 +806,8 @@ describe('ApiSessionClient connection handling', () => {
 
         client.sendClaudeSessionMessage(payload);
 
+        await flushQueuedCommits(client);
+
         expect(mockSocket.emit).toHaveBeenCalledWith(
             'message',
             expect.objectContaining({
@@ -790,7 +818,7 @@ describe('ApiSessionClient connection handling', () => {
         );
     });
 
-    it('merges optional meta into outbound Claude session messages', () => {
+    it('merges optional meta into outbound Claude session messages', async () => {
         const client = new ApiSessionClient('fake-token', mockSession);
 
         const payload: RawJSONLines = {
@@ -803,6 +831,8 @@ describe('ApiSessionClient connection handling', () => {
         } as const;
 
         client.sendClaudeSessionMessage(payload, { importedFrom: 'claude-taskoutput' });
+
+        await flushQueuedCommits(client);
 
         const call = mockSocket.emit.mock.calls.filter((c: any[]) => c[0] === 'message').pop();
         expect(call).toBeTruthy();

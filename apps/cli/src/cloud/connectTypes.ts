@@ -12,6 +12,7 @@ export type CloudConnectResult = Readonly<{
 
 export type CloudConnectAuthenticateOptions = Readonly<{
   paste?: boolean;
+  device?: boolean;
   noOpen?: boolean;
   timeoutSeconds?: number;
 }>;

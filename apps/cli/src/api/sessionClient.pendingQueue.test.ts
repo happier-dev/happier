@@ -208,6 +208,8 @@ describe('ApiSessionClient pending queue materialization', () => {
             id: 'msg-1',
         });
 
+        await (client as any).messageCommitQueueTail;
+
         const call = ((sessionSocket as any).emit.mock.calls.find((args: any[]) => args[0] === 'message'));
         const encrypted = call?.[1]?.message;
         const decrypted = decrypt(mockSession.encryptionKey, mockSession.encryptionVariant, decodeBase64(encrypted));

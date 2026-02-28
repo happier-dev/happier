@@ -8,6 +8,8 @@ import { promptInput } from '@/terminal/prompts/promptInput';
 import { buildConnectedServiceCredentialRecord, sealConnectedServiceCredentialCiphertext, type ConnectedServiceId } from '@happier-dev/protocol';
 
 import type { CommandContext } from '@/cli/commandRegistry';
+import { parseConnectArgs, type ConnectParsedOptions } from './connect/parseConnectArgs';
+import { resolveConnectAuthIntent } from './connect/resolveConnectAuthIntent';
 
 /**
  * Handle connect subcommand
@@ -54,66 +56,6 @@ export async function handleConnectCommand(args: string[]): Promise<void> {
     await handleConnectVendor(visibleTarget, options);
 }
 
-type ConnectParsedOptions = Readonly<{
-  profileId: string;
-  paste: boolean;
-  noOpen: boolean;
-  timeoutSeconds: number | null;
-  setupToken: boolean;
-}>;
-
-function parseConnectArgs(args: ReadonlyArray<string>): Readonly<{
-  includeExperimental: boolean;
-  subcommand: string | null;
-  options: ConnectParsedOptions;
-}> {
-  const includeExperimental = args.includes('--all') || args.includes('--experimental');
-  const paste = args.includes('--paste');
-  const noOpen = args.includes('--no-open');
-  const setupToken = args.includes('--setup-token') || args.includes('--setup_token');
-
-  const profileFlagIdx = args.findIndex((a) => a === '--profile');
-  const profileId = profileFlagIdx !== -1 ? String(args[profileFlagIdx + 1] ?? '').trim() : '';
-
-  const timeoutFlagIdx = args.findIndex((a) => a === '--timeout');
-  const timeoutRaw = timeoutFlagIdx !== -1 ? String(args[timeoutFlagIdx + 1] ?? '').trim() : '';
-  const timeoutSeconds = timeoutRaw ? Number.parseInt(timeoutRaw, 10) : NaN;
-  const timeoutSecondsValue = Number.isFinite(timeoutSeconds) ? Math.max(1, Math.trunc(timeoutSeconds)) : null;
-
-  const knownFlags = new Set([
-    '--all',
-    '--experimental',
-    '--paste',
-    '--no-open',
-    '--setup-token',
-    '--setup_token',
-    '--profile',
-    '--timeout',
-  ]);
-  const valuesConsumedByFlags = new Set<number>([
-    profileFlagIdx !== -1 ? profileFlagIdx + 1 : -1,
-    timeoutFlagIdx !== -1 ? timeoutFlagIdx + 1 : -1,
-  ]);
-
-  const positional = args
-    .filter((_a, idx) => !valuesConsumedByFlags.has(idx))
-    .filter((a) => !knownFlags.has(a))
-    .filter((a) => !a.startsWith('--'));
-
-  const subcommand = positional[0] ?? null;
-  return {
-    includeExperimental,
-    subcommand,
-    options: {
-      profileId: profileId || 'default',
-      paste,
-      noOpen,
-      timeoutSeconds: timeoutSecondsValue,
-      setupToken,
-    },
-  };
-}
-
 async function loadConnectTargets(params: Readonly<{ includeExperimental: boolean }>): Promise<CloudConnectTarget[]> {
   const targets: CloudConnectTarget[] = [];
   for (const entry of Object.values(AGENTS)) {
@@ -138,9 +80,11 @@ ${targetLines}
   happier connect --all ...    Include experimental providers
   happier connect <target> --profile <id>      Store under a specific profile (default: default)
   happier connect <target> --paste             Headless mode: paste redirect URL
+  happier connect <target> --device            Use device-code auth (Codex)
   happier connect <target> --no-open           Do not attempt to open a browser
   happier connect <target> --timeout <seconds> Override OAuth timeout
-  happier connect claude --setup-token         Paste a Claude setup-token instead of OAuth
+  happier connect claude --oauth               Use Claude OAuth (experimental)
+  happier connect claude --setup-token         Paste a Claude setup-token (default)
 
 ${chalk.bold('Description:')}
   The connect command allows you to securely store your AI vendor API keys
@@ -155,6 +99,7 @@ ${chalk.bold('Notes:')}
   • You must be authenticated with Happier first (run 'happier auth login')
   • API keys are encrypted and stored securely in Happier cloud
   • You can manage your stored keys at app.happier.dev
+  • For Claude subscription auth, run 'claude setup-token' (Claude Code CLI) on any machine and paste it with 'happier connect claude --setup-token'
   ${opts.includeExperimental ? '' : '• Some providers are experimental; use --all to show them'}
 `);
 }
@@ -199,7 +144,8 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
     let postConnectPayload: unknown | null = null;
 
     const record = await (async () => {
-      if (target.id === 'claude' && options.setupToken) {
+      const authIntent = resolveConnectAuthIntent({ targetId: target.id, options });
+      if (authIntent.kind === 'setup-token') {
         const token = (await promptInput('Paste Claude setup-token: ')).trim();
         if (!token) throw new Error('Missing setup-token');
         return buildConnectedServiceCredentialRecord({
@@ -211,11 +157,12 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
         });
       }
 
-      const oauth = await target.authenticate({
-        paste: options.paste,
-        noOpen: options.noOpen,
-        timeoutSeconds: options.timeoutSeconds ?? undefined,
-      });
+        const oauth = await target.authenticate({
+          paste: options.paste,
+          device: options.device,
+          noOpen: options.noOpen,
+          timeoutSeconds: options.timeoutSeconds ?? undefined,
+        });
       postConnectPayload = oauth;
 
       if (target.id === 'codex') {

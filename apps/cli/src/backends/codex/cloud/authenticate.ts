@@ -12,6 +12,9 @@ import type { CloudConnectAuthenticateOptions } from '@/cloud/connectTypes';
 import { startOauthPkceWithPasteFallback } from '@/cloud/oauthPkceWithPasteFallback';
 import { promptInput } from '@/terminal/prompts/promptInput';
 
+import { createCodexCloudAuthenticator } from './createCodexCloudAuthenticator';
+import { authenticateCodexDevice, OPENAI_CODEX_DEVICE_VERIFICATION_URL } from './deviceAuth';
+
 export interface CodexAuthTokens {
     id_token: string;
     access_token: string;
@@ -141,52 +144,89 @@ export async function exchangeCodexAuthorizationCodeForTokens(params: Readonly<{
  * @returns Promise resolving to CodexAuthTokens with all token information
  */
 export async function authenticateCodex(opts?: CloudConnectAuthenticateOptions): Promise<CodexAuthTokens> {
-    // console.log('🚀 Starting Codex authentication...');
-    const mode = opts?.paste ? 'paste' : 'loopback';
-    const timeoutMs = typeof opts?.timeoutSeconds === 'number' && Number.isFinite(opts.timeoutSeconds)
-        ? Math.max(1, Math.trunc(opts.timeoutSeconds)) * 1000
+  // console.log('🚀 Starting Codex authentication...');
+  const authenticateDevice = async (params: { now: number; opts?: CloudConnectAuthenticateOptions }) => {
+    const timeoutMs =
+      typeof params.opts?.timeoutSeconds === 'number' && Number.isFinite(params.opts.timeoutSeconds)
+        ? Math.max(1, Math.trunc(params.opts.timeoutSeconds)) * 1000
+        : null;
+    const startedAt = Date.now();
+    const deadline = timeoutMs ? startedAt + timeoutMs : null;
+
+    console.log('\nOpen this URL in a browser to authenticate:\n');
+    console.log(OPENAI_CODEX_DEVICE_VERIFICATION_URL);
+
+    const tokens = await authenticateCodexDevice({
+      now: params.now,
+      onUserCode: ({ userCode }) => {
+        console.log('\nEnter this code:\n');
+        console.log(userCode);
+        console.log('');
+        if (params.opts?.noOpen) return;
+        void (async () => {
+          try {
+            await openBrowser(OPENAI_CODEX_DEVICE_VERIFICATION_URL);
+          } catch {
+            // ignore: URL is already printed
+          }
+        })();
+      },
+      sleep: async (ms) => {
+        if (deadline && Date.now() + ms > deadline) {
+          throw new Error('connect_oauth_timeout');
+        }
+        await new Promise((r) => setTimeout(r, ms));
+      },
+    });
+
+    console.log('🎉 Authentication successful!');
+    return tokens;
+  };
+
+  const authenticatePkce = async (params: { mode: 'paste' | 'loopback'; opts?: CloudConnectAuthenticateOptions }) => {
+    const timeoutMs =
+      typeof params.opts?.timeoutSeconds === 'number' && Number.isFinite(params.opts.timeoutSeconds)
+        ? Math.max(1, Math.trunc(params.opts.timeoutSeconds)) * 1000
         : undefined;
 
     const tokens = await startOauthPkceWithPasteFallback({
-        mode,
-        defaultPort: DEFAULT_PORT,
-        callbackPath: '/auth/callback',
-        generateState,
-        generatePkce: generatePkceCodes,
-        timeoutMs,
-        buildAuthorizationUrl: ({ redirectUri, state, challenge }) => {
-            const params = [
-                ['response_type', 'code'],
-                ['client_id', CLIENT_ID],
-                ['redirect_uri', redirectUri],
-                ['scope', 'openid profile email offline_access'],
-                ['code_challenge', challenge],
-                ['code_challenge_method', 'S256'],
-                ['id_token_add_organizations', 'true'],
-                ['codex_cli_simplified_flow', 'true'],
-                ['state', state],
-            ];
-            const queryString = params
-                .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
-                .join('&');
-            return `${AUTH_BASE_URL}/oauth/authorize?${queryString}`;
-        },
-        onAuthorizationUrl: ({ authorizationUrl }) => {
-            console.log('\nOpen this URL in a browser to authenticate:\n');
-            console.log(authorizationUrl);
-            console.log('\nAfter login, paste the final redirected URL here.\n');
-        },
-        promptForPastedRedirectUrl: () => promptInput('Paste redirect URL: '),
-        openAuthorizationUrl: async ({ authorizationUrl }) => {
-            if (opts?.noOpen) return;
-            console.log('📋 Opening browser for authentication...');
-            console.log(`If browser doesn't open, visit:\n${authorizationUrl}\n`);
-            await openBrowser(authorizationUrl);
-        },
-        exchangeCodeForTokens: ({ code, verifier, port }) => exchangeCodeForTokens(code, verifier, port),
-        onSuccessResponse: ({ res }) => {
-            res.writeHead(200, { 'Content-Type': 'text/html' });
-            res.end(`
+      mode: params.mode,
+      defaultPort: DEFAULT_PORT,
+      callbackPath: '/auth/callback',
+      generateState,
+      generatePkce: generatePkceCodes,
+      timeoutMs,
+      buildAuthorizationUrl: ({ redirectUri, state, challenge }) => {
+        const params = [
+          ['response_type', 'code'],
+          ['client_id', CLIENT_ID],
+          ['redirect_uri', redirectUri],
+          ['scope', 'openid profile email offline_access'],
+          ['code_challenge', challenge],
+          ['code_challenge_method', 'S256'],
+          ['id_token_add_organizations', 'true'],
+          ['codex_cli_simplified_flow', 'true'],
+          ['state', state],
+        ];
+        const queryString = params.map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join('&');
+        return `${AUTH_BASE_URL}/oauth/authorize?${queryString}`;
+      },
+      onAuthorizationUrl: ({ authorizationUrl }) => {
+        console.log('\nOpen this URL in a browser to authenticate:\n');
+        console.log(authorizationUrl);
+        console.log('\nAfter login, paste the final redirected URL here.\n');
+      },
+      promptForPastedRedirectUrl: () => promptInput('Paste redirect URL: '),
+      openAuthorizationUrl: async ({ authorizationUrl }) => {
+        if (params.opts?.noOpen) return;
+        console.log('📋 Opening browser for authentication...');
+        console.log(`If browser doesn't open, visit:\n${authorizationUrl}\n`);
+        await openBrowser(authorizationUrl);
+      },
+      exchangeCodeForTokens: ({ code, verifier, port }) => exchangeCodeForTokens(code, verifier, port),
+      onSuccessResponse: ({ res }) => {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(`
                         <html>
                         <body style="font-family: sans-serif; padding: 20px;">
                             <h2>✅ Authentication Successful!</h2>
@@ -195,11 +235,18 @@ export async function authenticateCodex(opts?: CloudConnectAuthenticateOptions):
                         </body>
                         </html>
                     `);
-        },
+      },
     });
 
     console.log('🎉 Authentication successful!');
-    // console.log(`Account ID: ${tokens.account_id || 'N/A'}`);
-
     return tokens;
+  };
+
+  const run = createCodexCloudAuthenticator({
+    now: () => Date.now(),
+    authenticateDevice,
+    authenticatePkce,
+  });
+
+  return await run(opts);
 }
