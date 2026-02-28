@@ -69,7 +69,7 @@ export async function enqueueAndMaterializeAutomationPrompt(params: {
   const localId = randomUUID();
 
   await axios.post(
-    `${configuration.serverUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}/pending`,
+    `${configuration.apiServerUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}/pending`,
     {
       localId,
       ciphertext,
@@ -81,7 +81,7 @@ export async function enqueueAndMaterializeAutomationPrompt(params: {
   );
 
   await axios.post(
-    `${configuration.serverUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}/pending/materialize-next`,
+    `${configuration.apiServerUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}/pending/materialize-next`,
     {},
     {
       headers: authHeaders(params.token),

@@ -13,7 +13,7 @@ function authHeaders(token: string): Record<string, string> {
 export type AutomationClaimClient = ReturnType<typeof createAutomationClaimClient>;
 
 export function createAutomationClaimClient(params: { token: string }) {
-  const baseUrl = configuration.serverUrl;
+  const baseUrl = configuration.apiServerUrl;
   const token = params.token;
 
   return {
