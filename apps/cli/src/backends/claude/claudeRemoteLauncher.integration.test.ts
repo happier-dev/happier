@@ -635,8 +635,10 @@ describe.sequential('claudeRemoteLauncher', () => {
 
     await writeFile(jsonlPath, `${JSON.stringify(rootPrompt)}\n${JSON.stringify(assistant)}\n`, 'utf8');
 
+    const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+
     try {
-      (session as any).claudeEnvVars = { CLAUDE_CONFIG_DIR: claudeConfigDir };
+      process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
 
       mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
         const dispatchOpts = opts as RemoteDispatchMockOptions & { onMessage?: (m: unknown) => void };
@@ -692,6 +694,11 @@ describe.sequential('claudeRemoteLauncher', () => {
       expect(await switchHandler({ to: 'local' })).toBe(true);
       await expect(launcherPromise).resolves.toBe('switch');
     } finally {
+      if (typeof previousClaudeConfigDir === 'string') {
+        process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+      } else {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      }
       await rm(claudeConfigDir, { recursive: true, force: true });
     }
   }, 30_000);

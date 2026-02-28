@@ -29,6 +29,7 @@ import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort'
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
 import { dirname, join } from 'node:path';
 import { getProjectPath } from './utils/path';
+import { resolveClaudeConfigDirOverride } from './utils/resolveClaudeConfigDirOverride';
 import { tryMergeUserMcpConfigArgsIntoHappierMcp } from './utils/mcpConfigMerge';
 
 interface PermissionsField {
@@ -86,11 +87,7 @@ function resolveClaudeProjectDir(session: Session): string {
     if (session.transcriptPath) {
         return dirname(session.transcriptPath);
     }
-    const claudeConfigDirOverride =
-        typeof session.claudeEnvVars?.CLAUDE_CONFIG_DIR === 'string'
-            ? session.claudeEnvVars.CLAUDE_CONFIG_DIR
-            : null;
-    return getProjectPath(session.path, claudeConfigDirOverride);
+    return getProjectPath(session.path, resolveClaudeConfigDirOverride(process.env));
 }
 
 type ClaudeRemoteReadySession = Readonly<{
