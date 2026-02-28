@@ -125,10 +125,9 @@ export function attachAcpMetadataToArgs(
   if (Array.isArray(update.locations) && update.locations.length > 0) acp.locations = update.locations;
   if (meta) acp.meta = meta;
 
-  // Only attach when we have something beyond kind (keeps payloads small).
-  if (Object.keys(acp).length > 1) {
-    args._acp = { ...(getAcpMetaFromArgs(args) ?? {}), ...acp };
-  }
+  // Always attach ACP metadata so downstream consumers (tooltrace, forks, debugging)
+  // have a stable opaque `_acp` envelope even when providers omit rawInput/title/etc.
+  args._acp = { ...(getAcpMetaFromArgs(args) ?? {}), ...acp };
 }
 
 /**
