@@ -829,6 +829,114 @@ describe('createOpenCodeServerRuntime', () => {
     await expect(promptPromise).resolves.toBeUndefined();
   });
 
+  it('surfaces session.error as an agent message (so model failures are visible)', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-error' });
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+
+    client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'session.error',
+        properties: {
+          sessionID: 'ses_1',
+          error: {
+            name: 'UnknownError',
+            data: { message: 'Model not found: openai/does_not_exist.' },
+          },
+        },
+      },
+    });
+
+    await expect(promptPromise).rejects.toBeTruthy();
+
+    const errorMessages = session.sendAgentMessage.mock.calls.filter(
+      (c: any[]) => c?.[0] === 'opencode' && c?.[1]?.type === 'message',
+    );
+    expect(errorMessages.length).toBeGreaterThan(0);
+    expect(errorMessages[0]?.[1]?.message).toContain('Model not found');
+  });
+
+  it('emits tool-result errors with { status: \"failed\" } and omits empty metadata (matches ACP dialect baselines)', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-tool-error' });
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+
+    client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'tool_part_1',
+            type: 'tool',
+            sessionID: 'ses_1',
+            messageID: 'msg_asst_1',
+            callID: 'call_1',
+            tool: 'Read',
+            state: {
+              status: 'error',
+              error: 'Error: File not found: /tmp/missing.txt',
+              metadata: {},
+            },
+          },
+        },
+      },
+    });
+
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
+    });
+
+    await expect(promptPromise).resolves.toBeUndefined();
+
+    const toolResultCalls = session.sendAgentMessage.mock.calls.filter(
+      (c: any[]) => c?.[0] === 'opencode' && c?.[1]?.type === 'tool-result',
+    );
+
+    expect(toolResultCalls).toHaveLength(1);
+    expect(toolResultCalls[0]?.[1]).toMatchObject({
+      callId: 'call_1',
+      isError: true,
+      output: {
+        status: 'failed',
+        error: 'Error: File not found: /tmp/missing.txt',
+      },
+    });
+    expect(toolResultCalls[0]?.[1]?.output?.metadata).toBeUndefined();
+  });
+
   it('does not emit duplicate task_complete when both session.status idle and session.idle arrive for a turn', async () => {
     const client = createFakeClient();
     const session = createFakeSession();
@@ -977,6 +1085,57 @@ describe('createOpenCodeServerRuntime', () => {
     const calls = session.sendAgentMessage.mock.calls
       .filter((c: any[]) => c?.[0] === 'opencode' && c?.[1]?.type === 'tool-call' && c?.[1]?.callId === 'call_1');
     expect(calls.length).toBe(2);
+  });
+
+  it('aliases OpenCode grep tool events as search so search normalization is stable', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-grep-alias' });
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+
+    client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part_tool_grep_1',
+            type: 'tool',
+            sessionID: 'ses_1',
+            messageID: 'msg_tool_grep_1',
+            callID: 'call_grep_1',
+            tool: 'grep',
+            state: { status: 'running', input: { pattern: 'TOKEN', path: '/tmp' } },
+          },
+        },
+      },
+    });
+
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
+    });
+    await expect(promptPromise).resolves.toBeUndefined();
+
+    const toolCalls = session.sendAgentMessage.mock.calls.filter(
+      (c: any[]) => c?.[0] === 'opencode' && c?.[1]?.type === 'tool-call' && c?.[1]?.callId === 'call_grep_1',
+    );
+    expect(toolCalls.length).toBe(1);
+    expect(toolCalls[0]?.[1]?.name).toBe('search');
   });
 
   it('imports remote transcript history into a fresh session on resume (meta.importedFrom="acp-history")', async () => {

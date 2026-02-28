@@ -77,6 +77,26 @@ function resolveOpenCodeDefaultProviderIdFromModelId(modelId: string): string {
   return trimmed.slice(0, idx);
 }
 
+function extractOpenCodeErrorText(error: unknown): string | null {
+  if (typeof error === 'string') {
+    const trimmed = error.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (error && typeof error === 'object' && !Array.isArray(error)) {
+    const rec = error as Record<string, unknown>;
+    const message = typeof rec.message === 'string' ? rec.message.trim() : '';
+    if (message) return message;
+    const data = rec.data && typeof rec.data === 'object' && !Array.isArray(rec.data) ? (rec.data as Record<string, unknown>) : null;
+    const dataMessage = typeof data?.message === 'string' ? String(data.message).trim() : '';
+    if (dataMessage) return dataMessage;
+    const detail = typeof rec.detail === 'string' ? rec.detail.trim() : '';
+    if (detail) return detail;
+    const errorText = typeof rec.error === 'string' ? rec.error.trim() : '';
+    if (errorText) return errorText;
+  }
+  return null;
+}
+
 function modelSupportsToolCalls(raw: unknown): boolean {
   const rec = asRecord(raw);
   if (!rec) return false;
@@ -555,7 +575,12 @@ export function createOpenCodeServerRuntime(params: {
     const status = normalizeString(part.state.status);
     const callId = part.callID;
     const messageID = part.messageID;
-    const toolLower = normalizeString(part.tool).trim().toLowerCase();
+    const toolRaw = normalizeString(part.tool).trim();
+    const toolLower = toolRaw.toLowerCase();
+    // OpenCode server surfaces search operations via the tool `grep`, but Happier's ACP dialect (and
+    // provider contract tests) treat this as the provider raw tool `search` (canonical CodeSearch/Grep).
+    // Alias here so downstream tool normalization attaches `_happier.rawToolName="search"` consistently.
+    const toolNameForAcp = toolLower === 'grep' ? 'search' : toolRaw;
     const meta = { opencodeMessageId: messageID };
     const rawInput = (part.state as any).input ?? {};
     const hasMeaningfulInput = hasAnyMeaningfulInputFields(rawInput);
@@ -573,7 +598,7 @@ export function createOpenCodeServerRuntime(params: {
       if (commandHint) bashCommandHintByCallId.set(callId, commandHint);
       params.session.sendAgentMessage(
         provider,
-        { type: 'tool-call', callId, name: part.tool, input: rawInput, id: randomUUID() },
+        { type: 'tool-call', callId, name: toolNameForAcp, input: rawInput, id: randomUUID() },
         { meta },
       );
     }
@@ -615,9 +640,11 @@ export function createOpenCodeServerRuntime(params: {
           }
         }
       } else {
+        const metadata = asRecord(part.state.metadata);
         const output = {
+          status: 'failed',
           error: normalizeString(part.state.error),
-          metadata: asRecord(part.state.metadata) ?? {},
+          ...(metadata && Object.keys(metadata).length > 0 ? { metadata } : null),
         };
         params.session.sendAgentMessage(provider, { type: 'tool-result', callId, output, id: randomUUID(), isError: true }, { meta });
       }
@@ -851,6 +878,10 @@ export function createOpenCodeServerRuntime(params: {
       const sessionID = normalizeString(rec.sessionID);
       if (!sessionID || sessionID !== sessionId) return;
       setThinking(false);
+      const detail = extractOpenCodeErrorText(rec.error);
+      if (detail) {
+        params.session.sendAgentMessage(provider, { type: 'message', message: detail });
+      }
       params.session.sendAgentMessage(provider, { type: 'turn_aborted', id: randomUUID() });
       rejectTurn(rec.error ?? new Error('OpenCode session error'));
       return;
@@ -991,14 +1022,25 @@ export function createOpenCodeServerRuntime(params: {
         turnPreexistingMessageIds = null;
       }
 
-      await c.sessionPromptAsync({
-        sessionId,
-        messageId: messageID,
-        agent,
-        model,
-        config,
-        parts: [{ type: 'text', text: paramsWithMeta.text }],
-      });
+      try {
+        await c.sessionPromptAsync({
+          sessionId,
+          messageId: messageID,
+          agent,
+          model,
+          config,
+          parts: [{ type: 'text', text: paramsWithMeta.text }],
+        });
+      } catch (error) {
+        setThinking(false);
+        const detail = extractOpenCodeErrorText(error);
+        if (detail) {
+          params.session.sendAgentMessage(provider, { type: 'message', message: detail });
+        }
+        params.session.sendAgentMessage(provider, { type: 'turn_aborted', id: randomUUID() });
+        rejectTurn(error);
+        throw error;
+      }
 
       const pollControlPlaneOnce = async () => {
         if (controlAbort.signal.aborted) return;
