@@ -270,6 +270,40 @@ describe.sequential('claudeRemoteLauncher', () => {
     await expect(launcherPromise).resolves.toBe('switch');
   }, 30_000);
 
+  it('includes Claude Code debug/stderr tails and exits on exit code 1 (no tight retries)', async () => {
+    const tmpRoot = await mkdtemp(join(tmpdir(), 'happy-claude-exit1-'));
+    try {
+      const debugFilePath = join(tmpRoot, 'claude-code-debug.log');
+      const stderrFilePath = join(tmpRoot, 'claude-code-stderr.log');
+      await writeFile(debugFilePath, ['debug one', 'debug two', 'debug tail'].join('\n') + '\n');
+      await writeFile(stderrFilePath, ['stderr one', 'stderr tail'].join('\n') + '\n');
+
+      const exitError = new Error('Claude Code process exited with code 1');
+      (exitError as any).happierClaudeCodeArtifacts = {
+        debugFilePath,
+        stderrFilePath,
+      };
+
+      mockClaudeRemoteDispatch.mockRejectedValueOnce(exitError);
+
+      const { session } = createRemoteHarness({ sessionId: 'sess_0' });
+      const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+
+      await expect(claudeRemoteLauncher(session)).resolves.toBe('exit');
+      expect(mockClaudeRemoteDispatch).toHaveBeenCalledTimes(1);
+
+      const sent = (session.client.sendSessionEvent as any).mock.calls
+        .map((call: any[]) => call?.[0]?.message)
+        .filter((value: unknown) => typeof value === 'string')
+        .join('\n');
+
+      expect(sent).toContain('Claude Code process exited with code 1');
+      expect(sent).toContain('debug tail');
+      expect(sent).toContain('stderr tail');
+    } finally {
+      await rm(tmpRoot, { recursive: true, force: true });
+    }
+  }, 30_000);
   it('persists the last assistant uuid into session metadata when observed in remote messages', async () => {
     const { session, client, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
 

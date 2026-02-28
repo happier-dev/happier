@@ -31,6 +31,7 @@ import { dirname, join } from 'node:path';
 import { getProjectPath } from './utils/path';
 import { resolveClaudeConfigDirOverride } from './utils/resolveClaudeConfigDirOverride';
 import { tryMergeUserMcpConfigArgsIntoHappierMcp } from './utils/mcpConfigMerge';
+import { tryReadTextFileTail } from '@/agent/runtime/readTextFileTail';
 
 interface PermissionsField {
     date: number;
@@ -83,6 +84,46 @@ function isAbortError(e: unknown): boolean {
     return false;
 }
 
+type ClaudeCodeArtifacts = Readonly<{
+    debugFilePath: string | null;
+    stderrFilePath: string | null;
+}>;
+
+function resolveClaudeCodeExitCode(error: unknown): number | null {
+    const message = error instanceof Error ? error.message : String(error);
+    const match = message.match(/Claude Code process exited with code (\d+)/);
+    if (!match) return null;
+    const parsed = Number.parseInt(match[1], 10);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function resolveClaudeCodeArtifacts(error: unknown): ClaudeCodeArtifacts | null {
+    if (!error || typeof error !== 'object') return null;
+    const raw = (error as any).happierClaudeCodeArtifacts as unknown;
+    if (!raw || typeof raw !== 'object') return null;
+    const debugFilePath = typeof (raw as any).debugFilePath === 'string' ? (raw as any).debugFilePath : null;
+    const stderrFilePath = typeof (raw as any).stderrFilePath === 'string' ? (raw as any).stderrFilePath : null;
+    if (!debugFilePath && !stderrFilePath) return null;
+    return { debugFilePath, stderrFilePath };
+}
+
+async function formatClaudeCodeArtifactsTailForUi(artifacts: ClaudeCodeArtifacts): Promise<string> {
+    const sections: string[] = [];
+
+    const addTailSection = async (label: string, path: string | null) => {
+        if (!path) return;
+        const tail = await tryReadTextFileTail(path, { maxBytes: 32_000 });
+        if (!tail) return;
+        const header = '--- ' + label + ' tail (' + path + ') ---';
+        const body = tail.tail.trimEnd();
+        sections.push([header, body.length > 0 ? body : '[empty]', ''].join('\n'));
+    };
+
+    await addTailSection('claude-code-debug', artifacts.debugFilePath);
+    await addTailSection('claude-code-stderr', artifacts.stderrFilePath);
+
+    return sections.join('\n');
+}
 function resolveClaudeProjectDir(session: Session): string {
     if (session.transcriptPath) {
         return dirname(session.transcriptPath);
@@ -591,6 +632,16 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                         continue;
                     }
 
+                    const exitCode = resolveClaudeCodeExitCode(e);
+                    if (exitCode === 1) {
+                        const artifacts = resolveClaudeCodeArtifacts(e);
+                        const base = formatErrorForUi(e);
+                        const tails = artifacts ? await formatClaudeCodeArtifactsTailForUi(artifacts) : '';
+                        const message = tails.length > 0 ? base + '\n' + tails : base;
+                        session.client.sendSessionEvent({ type: 'message', message });
+                        exitReason = 'exit';
+                        continue;
+                    }
                     session.client.sendSessionEvent({ type: 'message', message: `Claude process error: ${formatErrorForUi(e)}` });
                     continue;
                 }
