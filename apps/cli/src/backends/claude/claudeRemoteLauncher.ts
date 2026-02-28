@@ -29,6 +29,7 @@ import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort'
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
 import { dirname, join } from 'node:path';
 import { getProjectPath } from './utils/path';
+import { tryMergeUserMcpConfigArgsIntoHappierMcp } from './utils/mcpConfigMerge';
 
 interface PermissionsField {
     date: number;
@@ -430,7 +431,15 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                     getQueueSize: () => session.queue.size(),
                 });
 
-                const { mcpServers, mcpConfigJson } = await session.getOrCreateHappierMcpBridge();
+                const { mcpServers: baseMcpServers, mcpConfigJson: baseMcpConfigJson } = await session.getOrCreateHappierMcpBridge();
+
+                const mergedMcp = tryMergeUserMcpConfigArgsIntoHappierMcp({
+                    baseMcpServers,
+                    claudeArgs: session.claudeArgs,
+                });
+                const effectiveClaudeArgs = mergedMcp ? mergedMcp.filteredClaudeArgs : session.claudeArgs;
+                const effectiveMcpServers = mergedMcp ? mergedMcp.mergedMcpServers : baseMcpServers;
+                const effectiveMcpConfigJson = mergedMcp ? mergedMcp.mergedMcpConfigJson : baseMcpConfigJson;
 
                 const remoteResult = await claudeRemoteDispatch({
                     sessionId: session.sessionId,
@@ -438,8 +447,8 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                     path: session.path,
                     hookSettingsPath: session.hookSettingsPath,
                     jsRuntime: session.jsRuntime,
-                    happierMcpServers: mcpServers,
-                    happierMcpConfigJson: mcpConfigJson,
+                    happierMcpServers: effectiveMcpServers,
+                    happierMcpConfigJson: effectiveMcpConfigJson,
                     canCallTool: permissionHandler.handleToolCall,
                     isAborted: (toolCallId: string) => {
                         return permissionHandler.isAborted(toolCallId);
@@ -520,7 +529,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                     },
                     onThinkingChange: session.onThinkingChange,
                     claudeEnvVars: session.claudeEnvVars,
-                    claudeArgs: session.claudeArgs,
+                    claudeArgs: effectiveClaudeArgs,
                     onMessage,
                     onCompletionEvent: (message: string) => {
                         logger.debug(`[remote]: Completion event: ${message}`);

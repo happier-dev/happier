@@ -205,6 +205,45 @@ describe.sequential('claudeRemoteLauncher', () => {
     expect(mockResetParentChain).toHaveBeenCalledTimes(1);
   }, 30_000);
 
+  it('merges user --mcp-config JSON into happier MCP config and strips passthrough flags before dispatch', async () => {
+    const { session, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
+    const dispatchStarted = createDeferred<void>();
+
+    const userMcpConfig = JSON.stringify({
+      mcpServers: {
+        custom: { type: 'http', url: 'http://127.0.0.1:9999' },
+      },
+    });
+    session.claudeArgs = ['--mcp-config', userMcpConfig, '--max-turns', '3'];
+
+    let captured: any = null;
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
+      captured = opts as any;
+      dispatchStarted.resolve(undefined);
+      await waitForAbort((captured as any)?.signal);
+    });
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(session);
+
+    await dispatchStarted.promise;
+    expect(mockClaudeRemoteDispatch).toHaveBeenCalledTimes(1);
+
+    expect(Array.isArray(captured?.claudeArgs)).toBe(true);
+    expect(captured?.claudeArgs).not.toContain('--mcp-config');
+    expect(captured?.claudeArgs).toEqual(['--max-turns', '3']);
+
+    const parsed = JSON.parse(String(captured?.happierMcpConfigJson ?? 'null'));
+    expect(parsed?.mcpServers?.happier).toBeTruthy();
+    expect(parsed?.mcpServers?.custom).toEqual({ type: 'http', url: 'http://127.0.0.1:9999' });
+
+    expect(Object.prototype.hasOwnProperty.call(captured?.happierMcpServers ?? {}, 'happier')).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(captured?.happierMcpServers ?? {}, 'custom')).toBe(true);
+
+    const switchHandler = await switchHandlerReady;
+    expect(await switchHandler({ to: 'local' })).toBe(true);
+    await expect(launcherPromise).resolves.toBe('switch');
+  }, 30_000);
   it('does not mount Ink UI for daemon-started sessions even when a TTY is available', async () => {
     const originalStdoutIsTTY = process.stdout.isTTY;
     const originalStdinIsTTY = process.stdin.isTTY;
