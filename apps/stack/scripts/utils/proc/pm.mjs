@@ -10,6 +10,7 @@ import { run, runCapture, spawnProc } from './proc.mjs';
 import { commandExists } from './commands.mjs';
 import { coerceHappyMonorepoRootFromPath, getDefaultAutostartPaths, getHappyStacksHomeDir } from '../paths/paths.mjs';
 import { resolveInstalledPath, resolveInstalledCliRoot } from '../paths/runtime.mjs';
+import { expandHome } from '../paths/canonical_home.mjs';
 
 function sha256Hex(s) {
   return createHash('sha256').update(String(s ?? ''), 'utf-8').digest('hex');
@@ -38,6 +39,89 @@ function resolveBuildStatePath({ label, dir }) {
   const homeDir = getHappyStacksHomeDir();
   const key = sha256Hex(resolve(dir));
   return join(homeDir, 'cache', 'build', label, `${key}.json`);
+}
+
+function extractLocalImportSpecifiersFromJs(text) {
+  const src = String(text ?? '');
+  const out = new Set();
+
+  // import './x.mjs'
+  const reBareImport = /^\s*import\s+["'](\.\/[^"']+|\.\.\/[^"']+)["']/gm;
+  for (;;) {
+    const match = reBareImport.exec(src);
+    if (!match) break;
+    const spec = String(match[1] ?? '').trim();
+    if (!spec) continue;
+    out.add(spec);
+  }
+
+  // import x from './x.mjs'
+  // export * from './x.mjs'
+  const reFromImport = /^\s*(?:import|export)\b[\s\w{},*]*?\bfrom\s+["'](\.\/[^"']+|\.\.\/[^"']+)["']/gm;
+  for (;;) {
+    const match = reFromImport.exec(src);
+    if (!match) break;
+    const spec = String(match[1] ?? '').trim();
+    if (!spec) continue;
+    out.add(spec);
+  }
+
+  return Array.from(out);
+}
+
+async function assertNoMissingLocalImports({ distDir, entryPath }) {
+  const root = resolve(distDir);
+  const entry = resolve(entryPath);
+
+  const visited = new Set();
+  const queue = [entry];
+  const missing = [];
+
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current) continue;
+    const abs = resolve(current);
+    if (visited.has(abs)) continue;
+    visited.add(abs);
+
+    let contents = '';
+    try {
+      contents = await readFile(abs, 'utf-8');
+    } catch {
+      // If we can't read a file that exists, something is deeply wrong; surface it as missing.
+      missing.push({ from: abs, spec: '(unreadable)' });
+      continue;
+    }
+
+    for (const spec of extractLocalImportSpecifiersFromJs(contents)) {
+      const resolvedImport = resolve(dirname(abs), spec);
+      if (!(await pathExists(resolvedImport))) {
+        missing.push({ from: abs, spec });
+        continue;
+      }
+      // Only traverse within dist/ to avoid reading arbitrary local files.
+      if (resolvedImport === root || resolvedImport.startsWith(root + sep)) {
+        if (!visited.has(resolvedImport)) queue.push(resolvedImport);
+      }
+    }
+
+    // Keep this bounded: if dist explodes unexpectedly, fail-fast rather than hanging dev/watch.
+    if (visited.size > 5_000) {
+      throw new Error(`[local] dist import graph too large while validating ${entryPath} (visited=${visited.size})`);
+    }
+  }
+
+  if (missing.length) {
+    const preview = missing
+      .slice(0, 8)
+      .map((m) => `- ${m.spec} (from ${m.from})`)
+      .join('\n');
+    throw new Error(
+      `[local] happier-cli dist build looks partial (missing local imports).\n` +
+        `Entrypoint: ${entryPath}\n` +
+        `Missing (${missing.length}):\n${preview}`
+    );
+  }
 }
 
 async function computeGitWorktreeSignature(dir) {
@@ -113,6 +197,14 @@ export async function requireDir(label, dir) {
 }
 
 function resolveStackCacheBaseDirFromEnv(env) {
+  const explicit = (env.HAPPIER_STACK_PM_CACHE_BASE_DIR ?? '').toString().trim();
+  if (explicit) {
+    try {
+      return resolve(expandHome(explicit));
+    } catch {
+      return null;
+    }
+  }
   const envFile = (env.HAPPIER_STACK_ENV_FILE ?? '').toString().trim();
   if (!envFile) return null;
   try {
@@ -159,14 +251,16 @@ export async function applyStackCacheEnv(baseEnv) {
   // depend on global home caches (and so sandboxed runs can succeed).
   const isolateHomeRaw = (env.HAPPIER_STACK_PM_ISOLATE_HOME ?? '').toString().trim();
   const isolateHome = isolateHomeRaw ? isolateHomeRaw !== '0' : true;
-  if (isolateHome && envFile) {
-    const stackHome = join(dirname(envFile), 'home');
-    env.HOME = stackHome;
-    env.USERPROFILE = stackHome;
-    try {
-      await mkdir(stackHome, { recursive: true });
-    } catch {
-      // best-effort
+  if (isolateHome) {
+    const stackHome = envFile ? join(dirname(envFile), 'home') : join(stackCacheBase, 'home');
+    if (stackHome) {
+      env.HOME = stackHome;
+      env.USERPROFILE = stackHome;
+      try {
+        await mkdir(stackHome, { recursive: true });
+      } catch {
+        // best-effort
+      }
     }
   }
 
@@ -491,6 +585,11 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
           `  cd "${cliDir}" && ${pm.cmd} build`
       );
     }
+
+    // Dist integrity: ensure that local import specifiers reachable from the daemon entrypoint exist.
+    // This prevents restarting the daemon into a runtime MODULE_NOT_FOUND crash if the build is partial.
+    await assertNoMissingLocalImports({ distDir, entryPath: distEntrypoint });
+
     if (hadDistBeforeBuild) {
       await rm(distBackupDir, { recursive: true, force: true });
     }
