@@ -102,7 +102,9 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
   it('shows a daemon-unavailable alert with a Retry action', async () => {
     const { useCreateNewSession, modalAlertSpy } = await setupHarness();
 
-    let handleCreateSession: null | (() => Promise<void>) = null;
+    let handleCreateSession: () => Promise<void> = async () => {
+      throw new Error('expected handleCreateSession to be set');
+    };
     const setIsCreating = vi.fn();
     const settings = { experiments: false } as unknown as Settings;
     const machineEnvPresence: UseMachineEnvPresenceResult = {
@@ -151,7 +153,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await act(async () => {
       tree = renderer.create(React.createElement(Test));
     });
-    if (!handleCreateSession) throw new Error('expected handleCreateSession to be set');
 
     await act(async () => {
       const p = handleCreateSession();
@@ -175,7 +176,9 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
   it('does not retry after unmount when the alert Retry action is pressed', async () => {
     const { useCreateNewSession, modalAlertSpy, machineSpawnNewSessionSpy } = await setupHarness();
 
-    let handleCreateSession: null | (() => Promise<void>) = null;
+    let handleCreateSession: () => Promise<void> = async () => {
+      throw new Error('expected handleCreateSession to be set');
+    };
     const setIsCreating = vi.fn();
     const settings = { experiments: false } as unknown as Settings;
     const machineEnvPresence: UseMachineEnvPresenceResult = {
@@ -224,7 +227,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await act(async () => {
       tree = renderer.create(React.createElement(Test));
     });
-    if (!handleCreateSession) throw new Error('expected handleCreateSession to be set');
 
     await act(async () => {
       const p = handleCreateSession();
@@ -260,7 +262,9 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       errorMessage: 'Daemon RPC is not available',
     });
 
-    let handleCreateSession: null | (() => Promise<void>) = null;
+    let handleCreateSession: () => Promise<void> = async () => {
+      throw new Error('expected handleCreateSession to be set');
+    };
     const settings = { experiments: false } as unknown as Settings;
     const machineEnvPresence: UseMachineEnvPresenceResult = {
       isPreviewEnvSupported: false,
@@ -307,7 +311,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await act(async () => {
       renderer.create(React.createElement(Test));
     });
-    if (!handleCreateSession) throw new Error('expected handleCreateSession to be set');
 
     await act(async () => {
       const p = handleCreateSession();
