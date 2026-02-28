@@ -2,6 +2,7 @@
   "title": "Server",
   "pages": [
     "index",
+    "quickstart",
     "auth",
     "encryption",
     "auth-custom-providers",

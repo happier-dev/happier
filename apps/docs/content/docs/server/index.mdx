@@ -5,6 +5,13 @@ description: Backend configuration, deployment notes, and authentication policie
 
 This section documents the Happier backend (`apps/server`) behavior and configuration.
 
+- Quick start: most production self-hosts should set:
+  - `HANDY_MASTER_SECRET` (required)
+  - `HAPPIER_PUBLIC_SERVER_URL` (recommended; used in QR/deep links)
+  - `HAPPIER_WEBAPP_URL` (recommended when self-hosting UI or using OAuth return-to)
+  - plus your chosen storage backend env (`DATABASE_URL`, `S3_*`, etc.)
+
+- Minimal setup guide: see [Server quickstart](./quickstart)
 - Authentication overview + policy env vars: see [Auth](./auth)
 - Encryption storage policy (E2EE vs plaintext): see [Encryption & plaintext storage](./encryption)
 - GitHub OAuth + GitHub allowlists: see [GitHub auth](./auth-github)

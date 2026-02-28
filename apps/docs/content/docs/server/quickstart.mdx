@@ -1,0 +1,73 @@
+---
+title: Server quickstart
+description: Minimal production-oriented server configuration and the env vars that matter most.
+---
+
+This page is a “getting started” guide for self-hosting `apps/server`. For the full reference, see [Deployment → Environment variables](../deployment/env).
+
+## 1) Pick a canonical/share URL (recommended)
+
+Set a canonical URL that works from your phone/browser. This is what clients embed in QR/deep links and what the server advertises via `GET /v1/features`.
+
+Recommended options:
+
+- **Tailscale Serve (recommended for most self-hosts):** gives you an `https://*.ts.net` URL without opening ports.
+  - Recommended:
+    - **Leave it unset (simplest):** if `tailscale serve` is enabled on the *same machine/container host* as `apps/server`, the server will best-effort infer the `https://*.ts.net` URL at boot and advertise it to clients.
+  - Otherwise:
+    - **Set it explicitly:** `HAPPIER_PUBLIC_SERVER_URL=https://<machine>.<tailnet>.ts.net`
+      - You usually need this if Tailscale/Serve is managed from a different machine, or the `tailscale` CLI is not available in the server runtime environment.
+- **Your own domain (reverse proxy):** terminate TLS on Caddy/Nginx/Traefik and proxy to the server.
+  - Set: `HAPPIER_PUBLIC_SERVER_URL=https://api.example.com`
+
+If you self-host the web UI (or you use OAuth providers and need a non-hosted return URL), also set:
+
+- `HAPPIER_WEBAPP_URL=https://app.example.com`
+
+If you’re LAN-only, using `http://<lan-ip>:3005` is fine, but QR/deep links will only work on the same LAN/VPN.
+
+Important: Tailscale without Serve usually gives you a `100.x` IP. Browsers do **not** treat `http://100.x...` as a secure context, so the web UI won’t work reliably over plain HTTP. Use **Tailscale Serve (HTTPS)** or a reverse proxy for web/mobile flows.
+
+## 2) Set core secrets + storage
+
+At minimum, most production deployments should set:
+
+- `HANDY_MASTER_SECRET` (long random, stable across restarts)
+- `HAPPIER_DB_PROVIDER` + DB configuration:
+  - `postgres`/`mysql`: set `DATABASE_URL`
+  - `pglite`/`sqlite`: typically no external DB required
+- `HAPPIER_FILES_BACKEND`:
+  - `local`: simplest (good for single-node)
+  - `s3`: set `S3_*` credentials + `S3_PUBLIC_URL`
+
+See the canonical template at `apps/server/.env.example`.
+
+## 3) Reverse proxy / HTTPS (common)
+
+If you terminate TLS on a reverse proxy (Caddy/Nginx/Traefik), also set:
+
+- `HAPPIER_SERVER_TRUST_PROXY=1` (typical single-proxy setup)
+
+This allows correct `request.ip` and protocol detection behind `X-Forwarded-*` headers (important for rate limiting and some URL behaviors).
+
+## 4) Optional: Tailscale Serve inference
+
+If you use `tailscale serve` and you did not explicitly set `HAPPIER_PUBLIC_SERVER_URL`, the server can best-effort infer the `https://*.ts.net` URL at boot.
+
+- `HAPPIER_TAILSCALE_INFER_PUBLIC_URL=0` to disable (default is enabled)
+
+Minimal Tailscale Serve commands (on the server host, outside containers):
+
+```bash
+tailscale up
+tailscale serve --bg http://127.0.0.1:3005
+tailscale serve status
+```
+
+If you use the Happier Stack (`hstack`), prefer the guided commands in [Remote access (Tailscale)](../hstack/remote-access).
+
+## 5) Optional: auth providers
+
+If you enable GitHub/OIDC OAuth providers and you’re not using the hosted web app at `https://app.happier.dev`, make sure `HAPPIER_WEBAPP_URL` (or `HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE`) is set so the server can redirect back to your client.
+
+See [Server → Auth](./auth) and the provider pages under this section.
