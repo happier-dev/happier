@@ -2,6 +2,7 @@ import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandler
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 import type { SpawnSessionErrorCode } from '@/rpc/handlers/registerSessionHandlers';
 import { expandEnvironmentVariables } from '@/utils/expandEnvVars';
+import { sanitizeEnvVarRecord } from '@/terminal/runtime/envVarSanitization';
 import type { DaemonSpawnHooks } from '../spawnHooks';
 import { buildAuthEnvUnexpandedErrorMessage, findUnexpandedAuthEnvironmentReferences } from './authEnvValidation';
 
@@ -76,21 +77,28 @@ export async function resolveSpawnChildEnvironment(params: {
     cleanupOnExit = chainCleanup(connectedCleanupOnExit, cleanupOnExit);
   }
 
+  const sanitizedAuthEnv = sanitizeEnvVarRecord(authEnv);
+
   let profileEnv: Record<string, string> = {};
   if (Object.keys(params.profileEnvironmentVariables).length > 0) {
-    profileEnv = params.profileEnvironmentVariables;
+    profileEnv = sanitizeEnvVarRecord(params.profileEnvironmentVariables);
     params.logInfo(`[DAEMON RUN] Using GUI-provided profile environment variables (${Object.keys(profileEnv).length} vars)`);
     params.logDebug(`[DAEMON RUN] GUI profile env var keys: ${Object.keys(profileEnv).join(', ')}`);
   } else {
     params.logDebug('[DAEMON RUN] No profile environment variables provided by caller; skipping profile env injection');
   }
 
+  const explicitEnvKeysForChild = Array.from(new Set<string>([
+    ...Object.keys(profileEnv),
+    ...Object.keys(sanitizedAuthEnv),
+  ]));
+
   const sessionProfileEnv: Record<string, string> = {};
   if (params.options.profileId !== undefined) {
     sessionProfileEnv.HAPPIER_SESSION_PROFILE_ID = params.options.profileId;
   }
 
-  let extraEnv = { ...profileEnv, ...sessionProfileEnv, ...authEnv };
+  let extraEnv = { ...profileEnv, ...sessionProfileEnv, ...sanitizedAuthEnv };
   params.logDebug(
     `[DAEMON RUN] Final environment variable keys (before expansion) (${Object.keys(extraEnv).length}): ${Object.keys(extraEnv).join(', ')}`,
   );
@@ -130,6 +138,9 @@ export async function resolveSpawnChildEnvironment(params: {
   const extraEnvForChild = { ...extraEnv };
   delete extraEnvForChild.TMUX_SESSION_NAME;
   delete extraEnvForChild.TMUX_TMPDIR;
+  if (explicitEnvKeysForChild.length > 0) {
+    extraEnvForChild.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON = JSON.stringify(explicitEnvKeysForChild);
+  }
   if (params.daemonSpawnHooks?.buildExtraEnvForChild) {
     Object.assign(
       extraEnvForChild,
