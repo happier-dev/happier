@@ -19,7 +19,7 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
   credentials: Credentials;
   permissionMode?: PermissionMode;
 }): Promise<void> {
-  const lastPublishedOpenCodeSessionId = { value: null as string | null };
+  const lastPublishedOpenCodeSessionMetadata = { sessionId: null as string | null, backendMode: null as 'server' | 'acp' | null };
 
   await runStandardAcpProvider(opts, {
     flavor: 'opencode',
@@ -68,15 +68,17 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
 
         await maybeUpdateOpenCodeSessionIdMetadata({
           getOpenCodeSessionId: () => openCodeSessionId,
+          backendMode: 'acp',
           updateHappySessionMetadata: (updater) => session.updateMetadata(updater),
-          lastPublished: lastPublishedOpenCodeSessionId,
+          lastPublished: lastPublishedOpenCodeSessionMetadata,
         });
       })().catch((error) => {
         logger.debug('[opencode] Failed to publish opencodeSessionId metadata (non-fatal)', error);
       });
     },
     onAfterReset: () => {
-      lastPublishedOpenCodeSessionId.value = null;
+      lastPublishedOpenCodeSessionMetadata.sessionId = null;
+      lastPublishedOpenCodeSessionMetadata.backendMode = null;
     },
     formatPromptErrorMessage: (error) => `Error: ${error instanceof Error ? error.message : String(error)}`,
   });

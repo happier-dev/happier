@@ -5,11 +5,12 @@ import { maybeUpdateOpenCodeSessionIdMetadata } from './opencodeSessionIdMetadat
 
 describe('maybeUpdateOpenCodeSessionIdMetadata', () => {
   it('no-ops when session id is missing', async () => {
-    const lastPublished = { value: null as string | null };
+    const lastPublished = { sessionId: null as string | null, backendMode: null as 'server' | 'acp' | null };
     let called = 0;
 
     await maybeUpdateOpenCodeSessionIdMetadata({
       getOpenCodeSessionId: () => null,
+      backendMode: 'server',
       updateHappySessionMetadata: () => {
         called++;
       },
@@ -17,11 +18,12 @@ describe('maybeUpdateOpenCodeSessionIdMetadata', () => {
     });
 
     expect(called).toBe(0);
-    expect(lastPublished.value).toBeNull();
+    expect(lastPublished.sessionId).toBeNull();
+    expect(lastPublished.backendMode).toBeNull();
   });
 
-  it('publishes opencodeSessionId once per new session id and preserves other metadata', async () => {
-    const lastPublished = { value: null as string | null };
+  it('publishes opencodeSessionId once per session id and backend mode and preserves other metadata', async () => {
+    const lastPublished = { sessionId: null as string | null, backendMode: null as 'server' | 'acp' | null };
     const updates: Metadata[] = [];
 
     const apply = (updater: (m: Metadata) => Metadata) => {
@@ -31,35 +33,47 @@ describe('maybeUpdateOpenCodeSessionIdMetadata', () => {
 
     await maybeUpdateOpenCodeSessionIdMetadata({
       getOpenCodeSessionId: () => ' session-1 ',
+      backendMode: 'server',
       updateHappySessionMetadata: apply,
       lastPublished,
     });
 
     await maybeUpdateOpenCodeSessionIdMetadata({
       getOpenCodeSessionId: () => 'session-1',
+      backendMode: 'server',
+      updateHappySessionMetadata: apply,
+      lastPublished,
+    });
+
+    await maybeUpdateOpenCodeSessionIdMetadata({
+      getOpenCodeSessionId: () => 'session-1',
+      backendMode: 'acp',
       updateHappySessionMetadata: apply,
       lastPublished,
     });
 
     await maybeUpdateOpenCodeSessionIdMetadata({
       getOpenCodeSessionId: () => 'session-2',
+      backendMode: 'acp',
       updateHappySessionMetadata: apply,
       lastPublished,
     });
 
     expect(updates).toEqual([
-      { path: '/tmp', flavor: 'opencode', opencodeSessionId: 'session-1' } as unknown as Metadata,
-      { path: '/tmp', flavor: 'opencode', opencodeSessionId: 'session-2' } as unknown as Metadata,
+      { path: '/tmp', flavor: 'opencode', opencodeSessionId: 'session-1', opencodeBackendMode: 'server' } as unknown as Metadata,
+      { path: '/tmp', flavor: 'opencode', opencodeSessionId: 'session-1', opencodeBackendMode: 'acp' } as unknown as Metadata,
+      { path: '/tmp', flavor: 'opencode', opencodeSessionId: 'session-2', opencodeBackendMode: 'acp' } as unknown as Metadata,
     ]);
   });
 
-  it('does not mark the session id as published when the metadata update fails', async () => {
-    const lastPublished = { value: null as string | null };
+  it('does not mark the session id or backend mode as published when the metadata update fails', async () => {
+    const lastPublished = { sessionId: null as string | null, backendMode: null as 'server' | 'acp' | null };
     let called = 0;
 
     await expect(
       maybeUpdateOpenCodeSessionIdMetadata({
         getOpenCodeSessionId: () => 'session-1',
+        backendMode: 'server',
         updateHappySessionMetadata: async () => {
           called++;
           throw new Error('update failed');
@@ -69,6 +83,7 @@ describe('maybeUpdateOpenCodeSessionIdMetadata', () => {
     ).rejects.toThrow('update failed');
 
     expect(called).toBe(1);
-    expect(lastPublished.value).toBeNull();
+    expect(lastPublished.sessionId).toBeNull();
+    expect(lastPublished.backendMode).toBeNull();
   });
 });
