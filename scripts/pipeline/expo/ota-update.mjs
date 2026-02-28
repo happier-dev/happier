@@ -3,6 +3,7 @@
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
+import { maybeUploadSentryExpoSourceMaps } from './sentry-upload-sourcemaps.mjs';
 
 function fail(message) {
   console.error(message);
@@ -108,7 +109,23 @@ function main() {
     ['--yes', `eas-cli@${easCliVersion}`, 'update', '--branch', 'preview', '--non-interactive', '--message', message],
     { cwd: uiDir },
   );
+
+  const upload = maybeUploadSentryExpoSourceMaps({
+    dryRun,
+    uiDir,
+    distDir: 'dist',
+    env: process.env,
+    run: (cmd, args, extra) => {
+      run(opts, cmd, args, extra);
+    },
+  });
+  if (upload.status === 'uploaded') {
+    console.log('[pipeline] uploaded Sentry source maps for OTA update');
+  } else if (upload.reason) {
+    console.log(`[pipeline] skipped Sentry source maps upload (${upload.reason})`);
+  } else {
+    console.log('[pipeline] skipped Sentry source maps upload');
+  }
 }
 
 main();
-
