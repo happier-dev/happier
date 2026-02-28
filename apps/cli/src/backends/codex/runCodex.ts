@@ -837,7 +837,6 @@ export async function runCodex(opts: {
         codexAcpRuntime = createCodexAcpRuntime({
             directory,
             session,
-            pushSender: api.push(),
             messageBuffer,
             mcpServers,
             permissionHandler,
