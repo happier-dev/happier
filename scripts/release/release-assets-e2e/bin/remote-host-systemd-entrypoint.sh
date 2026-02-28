@@ -53,10 +53,16 @@ if [[ ! -f /packs/cli.tgz ]]; then
 fi
 
 prefix="$HOME/.happier/npm"
-mkdir -p "$HOME/.happier/bin" "$prefix"
+cache_dir="$HOME/.happier/.npm-cache"
+mkdir -p "$HOME/.happier/bin" "$prefix" "$cache_dir"
 npm config set prefix "$prefix" >/dev/null
+npm config set cache "$cache_dir" >/dev/null
+npm cache clean --force >/dev/null 2>&1 || true
 
-npm install -g /packs/cli.tgz >/dev/null
+rm -rf "$prefix/lib/node_modules/@happier-dev/cli"
+rm -rf "$prefix/lib/node_modules/@happier-dev/stack"
+
+npm install -g /packs/cli.tgz --no-audit --no-fund >/dev/null
 
 if [[ ! -x "$prefix/bin/happier" ]]; then
   echo "[install-shim] expected $prefix/bin/happier to exist after install" >&2
@@ -65,11 +71,13 @@ fi
 ln -sf "$prefix/bin/happier" "$HOME/.happier/bin/happier"
 
 if [[ -f /packs/stack.tgz ]]; then
-  npm install -g /packs/stack.tgz >/dev/null
+  npm install -g /packs/stack.tgz --no-audit --no-fund >/dev/null
   if [[ -x "$prefix/bin/hstack" ]]; then
     ln -sf "$prefix/bin/hstack" "$HOME/.happier/bin/hstack"
   fi
 fi
+
+rm -rf "$cache_dir" "$HOME/.npm/_cacache" >/dev/null 2>&1 || true
 
 echo "[install-shim] ok"
 SCRIPT
@@ -139,4 +147,3 @@ fi
 echo "[remote-host-systemd] booting systemd (ssh ready for auth)"
 
 exec /sbin/init
-

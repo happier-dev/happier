@@ -21,6 +21,9 @@ POSTGRES_APP_NAME="${POSTGRES_APP_NAME:-happier_npm_e2e_smoke}"
 
 REMOTE_SERVER_DB="${REMOTE_SERVER_DB:-postgres}"
 REMOTE_SERVER_PORT="${REMOTE_SERVER_PORT:-3999}"
+REMOTE_SSH_WAIT_SECONDS="${REMOTE_SSH_WAIT_SECONDS:-180}"
+REMOTE_SELF_HOST_SERVER_BINARY="${REMOTE_SELF_HOST_SERVER_BINARY:-}"
+REMOTE_SELF_HOST_PRISMA_ENGINE_PATH="${REMOTE_SELF_HOST_PRISMA_ENGINE_PATH:-}"
 
 ssh_key_src="/work/ssh/id_ed25519"
 
@@ -67,7 +70,11 @@ EOF
 chmod 600 /root/.ssh/config
 
 echo "[remote-server] waiting for ssh to remote host..."
-for _ in $(seq 1 90); do
+if ! [[ "$REMOTE_SSH_WAIT_SECONDS" =~ ^[0-9]+$ ]] || [[ "$REMOTE_SSH_WAIT_SECONDS" -le 0 ]]; then
+  echo "[remote-server] invalid REMOTE_SSH_WAIT_SECONDS=$REMOTE_SSH_WAIT_SECONDS (expected positive integer)" >&2
+  exit 2
+fi
+for _ in $(seq 1 "$REMOTE_SSH_WAIT_SECONDS"); do
   if ssh -o ConnectTimeout=5 "$REMOTE_SSH_TARGET" 'echo ok' >/dev/null 2>&1; then
     break
   fi
@@ -130,14 +137,32 @@ case "$HSTACK_REMOTE_CHANNEL" in
 esac
 
 echo "[remote-server] running: hstack remote server setup (db=${REMOTE_SERVER_DB})..."
-hstack remote server setup \
-  --ssh "$REMOTE_SSH_TARGET" \
-  "${remote_channel_args[@]}" \
-  --mode system \
-  --env "PORT=${REMOTE_SERVER_PORT}" \
-  "${db_env_args[@]}" \
-  --json \
-  >/dev/null
+setup_args=(
+  --ssh "$REMOTE_SSH_TARGET"
+  "${remote_channel_args[@]}"
+  --mode system
+  --env "PORT=${REMOTE_SERVER_PORT}"
+  "${db_env_args[@]}"
+)
+
+if [[ -n "$REMOTE_SELF_HOST_SERVER_BINARY" ]]; then
+  if [[ ! -f "$REMOTE_SELF_HOST_SERVER_BINARY" ]]; then
+    echo "[remote-server] missing REMOTE_SELF_HOST_SERVER_BINARY at $REMOTE_SELF_HOST_SERVER_BINARY" >&2
+    exit 1
+  fi
+  setup_args+=(--self-host-server-binary "$REMOTE_SELF_HOST_SERVER_BINARY")
+fi
+
+if [[ -n "$REMOTE_SELF_HOST_PRISMA_ENGINE_PATH" ]]; then
+  if [[ ! -f "$REMOTE_SELF_HOST_PRISMA_ENGINE_PATH" ]]; then
+    echo "[remote-server] missing REMOTE_SELF_HOST_PRISMA_ENGINE_PATH at $REMOTE_SELF_HOST_PRISMA_ENGINE_PATH" >&2
+    exit 1
+  fi
+  setup_args+=(--env "PRISMA_CLIENT_ENGINE_TYPE=library")
+  setup_args+=(--env "PRISMA_QUERY_ENGINE_LIBRARY=${REMOTE_SELF_HOST_PRISMA_ENGINE_PATH}")
+fi
+
+hstack remote server setup "${setup_args[@]}" --json >/dev/null
 
 echo "[remote-server] checking remote server health..."
 ssh "$REMOTE_SSH_TARGET" "curl -fsS http://127.0.0.1:${REMOTE_SERVER_PORT}/v1/version" >/dev/null

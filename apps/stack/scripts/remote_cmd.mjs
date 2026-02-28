@@ -1,5 +1,6 @@
 import './utils/env/env.mjs';
 
+import { pathToFileURL } from 'node:url';
 import { run, runCapture } from './utils/proc/proc.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 
@@ -86,6 +87,7 @@ function usageText() {
     '',
     '  hstack remote server setup --ssh <user@host> [--preview|--stable] [--channel <stable|preview>]',
     '    [--mode <user|system>]',
+    '    [--self-host-server-binary <path>]',
     '    [--env KEY=VALUE]...',
     '    [--json]',
     '',
@@ -95,6 +97,66 @@ function usageText() {
     '  - Default service mode is user; set --service none to skip daemon service setup.',
     '  - Remote server setup installs the self-host runtime as a service (default: user mode).',
   ].join('\n');
+}
+
+export function splitRemoteServerSetupEnvValues(envValues) {
+  const values = Array.isArray(envValues) ? envValues : [];
+  const serviceEnvValues = [];
+  let selfHostServerBinary = '';
+
+  for (const raw of values) {
+    const entry = String(raw ?? '').trim();
+    if (!entry) continue;
+    const eq = entry.indexOf('=');
+    const key = (eq >= 0 ? entry.slice(0, eq) : entry).trim();
+    const value = eq >= 0 ? entry.slice(eq + 1) : '';
+
+    if (key === 'HAPPIER_SELF_HOST_SERVER_BINARY') {
+      selfHostServerBinary = value.trim();
+      continue;
+    }
+
+    serviceEnvValues.push(entry);
+  }
+
+  return { serviceEnvValues, selfHostServerBinary };
+}
+
+export function buildRemoteSelfHostInstallCommand({ channel, mode, envValues }) {
+  const installUrl = 'https://happier.dev/install';
+  const remoteHstack = '$HOME/.happier/bin/hstack';
+
+  // Always disable auto-service setup in the installer so this command controls remote service behavior.
+  const installCmd = [
+    `curl -fsSL ${installUrl} |`,
+    `HAPPIER_CHANNEL=${channel} HAPPIER_WITH_DAEMON=0 HAPPIER_NONINTERACTIVE=1 bash`,
+  ].join(' ');
+
+  const split = splitRemoteServerSetupEnvValues(envValues);
+  const envArgs = split.serviceEnvValues.map((value) => `--env ${safeBashSingleQuote(value)}`).join(' ');
+
+  // `hstack self-host install` only reads this override from process.env (not from --env),
+  // so forward it via `env VAR=...` and do not persist it into the installed service env file.
+  const installEnvParts = [];
+  if (split.selfHostServerBinary) {
+    installEnvParts.push(`HAPPIER_SELF_HOST_SERVER_BINARY=${safeBashSingleQuote(split.selfHostServerBinary)}`);
+  }
+  const installEnvPrefix = installEnvParts.length ? `env ${installEnvParts.join(' ')} ` : '';
+
+  const baseSelfHostCmd = [
+    remoteHstack,
+    'self-host',
+    'install',
+    `--channel=${channel}`,
+    `--mode=${mode}`,
+    '--without-cli',
+    '--non-interactive',
+    '--json',
+  ].join(' ');
+  const sudoPrefix = mode === 'system' ? 'sudo -E ' : '';
+  const selfHostCmd = `${sudoPrefix}${installEnvPrefix}${baseSelfHostCmd}${envArgs ? ` ${envArgs}` : ''}`;
+
+  return { installCmd, selfHostCmd };
 }
 
 function resolveChannel(argv) {
@@ -284,37 +346,23 @@ async function runRemoteServerSetup(argvRaw) {
     throw new Error(`[remote] invalid --mode value: ${mode} (expected user or system)`);
   }
 
+  const selfHostServerBinaryFlag = takeFlagValue(args, '--self-host-server-binary');
+  args = selfHostServerBinaryFlag.rest;
+
   const envValues = collectEnvValues(argv0);
+  if (selfHostServerBinaryFlag.value) {
+    // Forward this override to `hstack self-host install` via process.env, without persisting it
+    // in the installed service env file.
+    envValues.push(`HAPPIER_SELF_HOST_SERVER_BINARY=${selfHostServerBinaryFlag.value}`);
+  }
+  const built = buildRemoteSelfHostInstallCommand({ channel, mode, envValues });
 
-  const installUrl = 'https://happier.dev/install';
-  const remoteHstack = '$HOME/.happier/bin/hstack';
-
-  // Always disable auto-service setup in the installer so this command controls remote service behavior.
-  const installCmd = [
-    `curl -fsSL ${installUrl} |`,
-    `HAPPIER_CHANNEL=${channel} HAPPIER_WITH_DAEMON=0 HAPPIER_NONINTERACTIVE=1 bash`,
-  ].join(' ');
-
-  await runSsh({ target: ssh.value, command: installCmd });
-
-  const envArgs = envValues.map((value) => `--env ${safeBashSingleQuote(value)}`).join(' ');
-  const baseSelfHostCmd = [
-    remoteHstack,
-    'self-host',
-    'install',
-    `--channel=${channel}`,
-    `--mode=${mode}`,
-    '--without-cli',
-    '--non-interactive',
-    '--json',
-  ].join(' ');
-  const selfHostCmd = `${mode === 'system' ? 'sudo -E ' : ''}${baseSelfHostCmd}${envArgs ? ` ${envArgs}` : ''}`;
-
-  await runSsh({ target: ssh.value, command: selfHostCmd });
+  await runSsh({ target: ssh.value, command: built.installCmd });
+  await runSsh({ target: ssh.value, command: built.selfHostCmd });
 
   printResult({
     json,
-    data: { ok: true, ssh: ssh.value, channel, mode, env: envValues },
+    data: { ok: true, ssh: ssh.value, channel, mode, env: envValues, selfHostServerBinary: selfHostServerBinaryFlag.value || null },
     text: json
       ? null
       : [
@@ -355,8 +403,10 @@ async function main() {
   process.exit(2);
 }
 
-main().catch((error) => {
-  const msg = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`${msg}\n`);
-  process.exit(1);
-});
+if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+  main().catch((error) => {
+    const msg = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${msg}\n`);
+    process.exit(1);
+  });
+}

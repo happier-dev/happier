@@ -4,6 +4,8 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const runScript = join(here, 'run.sh');
@@ -168,4 +170,44 @@ test('npm-e2e-smoke dockerhub postgres smoke waits for postgres readiness', () =
 test('npm-e2e-smoke dockerhub images smoke preflights image availability', () => {
   const content = fs.readFileSync(runScript, 'utf8');
   assert.match(content, /docker manifest inspect/);
+});
+
+test('release-assets-e2e run.sh documents relay-server upgrade smoke flags', () => {
+  const res = spawnSync('bash', [runScript, '--help'], { encoding: 'utf8' });
+  assert.equal(res.status, 0);
+  assert.match(res.stdout ?? '', /--with-relay-upgrade/);
+  assert.match(res.stdout ?? '', /--no-relay-upgrade/);
+  assert.match(res.stdout ?? '', /--relay-upgrade-from-channel=/);
+  assert.match(res.stdout ?? '', /--relay-upgrade-db=/);
+});
+
+test('release-assets-e2e compose.dockerhub mounts terminal-auth-approve for relay upgrade bootstrap', () => {
+  const composePath = join(here, 'compose.dockerhub.yml');
+  const raw = fs.readFileSync(composePath, 'utf8');
+  assert.match(raw, /\n  relay:\n/);
+  assert.match(raw, /\/scripts\/release\/release-assets-e2e\/bin:\/opt\/happier-npm-e2e\/bin:ro/);
+});
+
+test('release-assets-e2e run.sh cleanup does not crash when docker is unavailable', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'happier-release-assets-e2e-docker-down-test-'));
+  const binDir = join(tmp, 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
+
+  const dockerShim = join(binDir, 'docker');
+  fs.writeFileSync(
+    dockerShim,
+    '#!/usr/bin/env sh\n' +
+      'echo "docker shim: unavailable" >&2\n' +
+      'exit 1\n',
+    { encoding: 'utf8' }
+  );
+  fs.chmodSync(dockerShim, 0o755);
+
+  const res = spawnSync('bash', [runScript, '--mode=npm', '--no-remote-daemon', '--no-remote-server', '--timeout-s=1'], {
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}` },
+  });
+
+  assert.notEqual(res.status, 0);
+  assert.doesNotMatch(res.stderr ?? '', /unbound variable/i);
 });

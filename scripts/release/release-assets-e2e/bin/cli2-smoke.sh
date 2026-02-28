@@ -14,6 +14,10 @@ HAPPIER_WEBAPP_URL="${HAPPIER_WEBAPP_URL:-$HAPPIER_SERVER_URL}"
 CLIENT_HOME_DIR="${CLIENT_HOME_DIR:-/work/happier-home-2}"
 APPROVER_HOME_DIR="${APPROVER_HOME_DIR:-/work/primary-home}"
 
+# Reset client state so reruns cannot reuse stale tokens from previous stack instances.
+mkdir -p "$CLIENT_HOME_DIR"
+find "$CLIENT_HOME_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+
 if [[ -n "$HAPPIER_TGZ" && -f "$HAPPIER_TGZ" ]]; then
   echo "[cli2] installing happier-cli from tarball: $HAPPIER_TGZ"
   npm install -g "$HAPPIER_TGZ" >/dev/null

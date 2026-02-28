@@ -17,6 +17,19 @@ From repo root:
 ./scripts/release/release-assets-e2e/run.sh
 ```
 
+## Run via pipeline checks
+
+This is also wired into the pipeline checks runner:
+
+```bash
+node ./scripts/pipeline/run.mjs checks --profile release-assets
+```
+
+Defaults:
+- `HAPPIER_RELEASE_ASSETS_E2E_MODE=local`
+- `HAPPIER_RELEASE_ASSETS_E2E_MONOREPO=local` (when mode is `local`)
+- `HAPPIER_RELEASE_ASSETS_E2E_WITH_RELAY_UPGRADE=true` (upgrade existing server DB from Docker Hub image -> local build)
+
 ## Local tarballs (pre-publish)
 
 ```bash
@@ -58,6 +71,14 @@ From repo root:
     - `happierdev/dev-box:<channel>` runs `happier` in a “preinstalled” mode against the relay server.
 - `--docker-channel=preview|stable` (default: `preview`)
 - `--docker-images-db=sqlite|postgres|both` (default: `both`)
+- `--with-relay-upgrade` / `--no-relay-upgrade` (default: `off`)
+  - Runs an upgrade test for `happierdev/relay-server:<channel>`:
+    - start the Docker Hub image (`from`)
+    - create real auth data in the DB (via `/v1/auth`)
+    - restart with a locally-built relay-server image from your current checkout (`to`)
+    - verify the old token still works after the upgrade
+- `--relay-upgrade-from-channel=preview|stable` (default: `--docker-channel` value)
+- `--relay-upgrade-db=sqlite|postgres|both` (default: `both`)
 
 ## What it does
 
