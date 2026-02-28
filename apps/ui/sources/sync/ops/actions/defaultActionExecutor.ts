@@ -11,6 +11,7 @@ import {
   sessionExecutionRunStart,
   sessionExecutionRunStop,
 } from '@/sync/ops/sessionExecutionRuns';
+import { forkSession as forkSessionOp } from '@/sync/ops/sessions';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { sendSessionMessageWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
@@ -56,6 +57,29 @@ export function createDefaultActionExecutor(opts?: Readonly<{
 
     sessionOpen: async ({ sessionId }) =>
       await openSessionForVoiceTool({ sessionId, resolveServerIdForSessionId: opts?.resolveServerIdForSessionId }),
+
+    sessionFork: async ({ sessionId, serverId }) => {
+      const sid = String(sessionId ?? '').trim();
+      if (!sid) return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
+      const stateAny: any = storage.getState();
+      const session = stateAny?.sessions?.[sid] ?? null;
+      const machineId = typeof session?.metadata?.machineId === 'string' ? String(session.metadata.machineId).trim() : '';
+      if (!machineId) return { ok: false, errorCode: 'machine_not_found', errorMessage: 'machine_not_found' };
+
+      const result = await forkSessionOp({
+        machineId,
+        serverId,
+        parentSessionId: sid,
+        forkPoint: { type: 'latest' },
+      } as any);
+      if ((result as any)?.ok !== true) return result as any;
+
+      const childSessionId = String((result as any).childSessionId ?? '').trim();
+      if (childSessionId) {
+        await openSessionForVoiceTool({ sessionId: childSessionId, resolveServerIdForSessionId: opts?.resolveServerIdForSessionId });
+      }
+      return { ok: true, status: 'forked', parentSessionId: sid, childSessionId };
+    },
 
     sessionSpawnNew: async ({ tag, workspaceId, agentId, modelId, path, host, initialMessage }) =>
       await spawnSessionForVoiceTool({ tag, workspaceId, agentId, modelId, path, host, initialMessage }),
