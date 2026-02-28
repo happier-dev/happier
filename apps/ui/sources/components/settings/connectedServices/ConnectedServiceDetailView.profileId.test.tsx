@@ -1,6 +1,6 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -26,8 +26,14 @@ vi.mock('@/modal', () => ({
   },
 }));
 
+let connectedServicesEnabled = true;
+let quotasEnabled = false;
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-  useFeatureEnabled: (featureId: string) => (featureId === 'connectedServices.quotas' ? false : true),
+  useFeatureEnabled: (featureId: string) => {
+    if (featureId === 'connectedServices') return connectedServicesEnabled;
+    if (featureId === 'connectedServices.quotas') return quotasEnabled;
+    return true;
+  },
 }));
 
 vi.mock('@/sync/store/hooks', async () => {
@@ -61,6 +67,11 @@ vi.mock('@/sync/domains/connectedServices/storeConnectedServiceCredentialForAcco
 }));
 
 describe('ConnectedServiceDetailView profile id validation', () => {
+  beforeEach(() => {
+    connectedServicesEnabled = true;
+    quotasEnabled = false;
+  });
+
   it('rejects invalid profile ids before navigating to oauth connect', async () => {
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
 
@@ -76,5 +87,46 @@ describe('ConnectedServiceDetailView profile id validation', () => {
 
     expect(alertSpy).toHaveBeenCalled();
     expect(pushSpy).not.toHaveBeenCalled();
+  });
+
+  it('shows a fallback alert when routing to oauth connect fails', async () => {
+    promptSpy.mockResolvedValueOnce('work');
+    pushSpy.mockImplementationOnce(() => {
+      throw new Error('route failed');
+    });
+
+    const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
+
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(<ConnectedServiceDetailView />);
+    });
+
+    const add = tree.root.find((n) => n.props?.title === 'Add OAuth profile');
+    await act(async () => {
+      await add.props.onPress?.();
+    });
+
+    expect(pushSpy).toHaveBeenCalled();
+    expect(alertSpy).toHaveBeenCalled();
+  });
+
+  it('does not violate hooks order when feature state changes between renders', async () => {
+    connectedServicesEnabled = false;
+
+    const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
+    const Inner = (ConnectedServiceDetailView as unknown as { type: React.ComponentType<Record<string, never>> }).type;
+
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(<Inner />);
+    });
+
+    connectedServicesEnabled = true;
+    await act(async () => {
+      tree.update(<Inner />);
+    });
+
+    expect(tree.root).toBeDefined();
   });
 });

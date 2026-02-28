@@ -56,29 +56,6 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
   const defaultProfileIdRaw = serviceId ? settings.connectedServicesDefaultProfileByServiceId[serviceId] : undefined;
   const defaultProfileId = typeof defaultProfileIdRaw === 'string' ? defaultProfileIdRaw.trim() : '';
 
-  if (!connectedServicesEnabled) {
-    return (
-      <ItemList>
-        <ItemGroup title={t('settings.connectedAccounts')}>
-          <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ opacity: 0.7 }}>
-              {t('settings.connectedAccountsDisabled')}
-            </Text>
-          </View>
-        </ItemGroup>
-
-        <ItemGroup>
-          <Item
-            title={t('common.done')}
-            icon={<Ionicons name="close-outline" size={22} color={theme.colors.accent.blue} />}
-            onPress={() => router.back()}
-            showChevron={false}
-          />
-        </ItemGroup>
-      </ItemList>
-    );
-  }
-
   const ensureCredentials = () => {
     if (!auth.credentials) {
       throw new Error('Not authenticated');
@@ -124,18 +101,41 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
   };
 
   const handleConnectOauth = async (profileId: string) => {
-    router.push({ pathname: '/(app)/settings/connected-services/oauth', params: { serviceId: serviceId!, profileId } });
+    if (!serviceId || !entry) return;
+    if (!entry?.supportsOauth) {
+      await Modal.alert(
+        t('connect.unsupported.connectTitle', { name: entry?.displayName ?? serviceId ?? t('connectedServices.fallbackName') }),
+        t('connect.unsupported.runCommandInTerminalWithCommand', { command: entry.connectCommand }),
+        [{ text: t('common.ok'), style: 'cancel' }],
+      );
+      return;
+    }
+    try {
+      router.push({ pathname: '/(app)/settings/connected-services/oauth', params: { serviceId: serviceId!, profileId } });
+    } catch {
+      await Modal.alert(
+        t('connect.unsupported.connectTitle', { name: entry?.displayName ?? serviceId ?? t('connectedServices.fallbackName') }),
+        t('connect.unsupported.runCommandInTerminalWithCommand', { command: entry.connectCommand }),
+        [{ text: t('common.ok'), style: 'cancel' }],
+      );
+    }
   };
 
-  const handleConnectSetupToken = async () => {
+  const handleConnectToken = async () => {
+    if (!serviceId || !entry) return;
     const profileId = await promptProfileId();
     if (!profileId) return;
 
+    const tokenKind = entry?.tokenKind ?? null;
     const token = await Modal.prompt(
-      t('connectedServices.detail.prompts.setupTokenTitle'),
-      t('connectedServices.detail.prompts.setupTokenBody'),
+      tokenKind === 'setup-token'
+        ? t('connectedServices.detail.prompts.setupTokenTitle')
+        : t('connectedServices.detail.prompts.apiKeyTitle'),
+      tokenKind === 'setup-token'
+        ? t('connectedServices.detail.prompts.setupTokenBody')
+        : t('connectedServices.detail.prompts.apiKeyBody'),
       {
-        placeholder: 'setup-token',
+        placeholder: tokenKind === 'setup-token' ? 'sk-ant-oat01-…' : 'sk-ant-…',
         confirmText: t('common.save'),
         cancelText: t('common.cancel'),
       },
@@ -250,6 +250,27 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
     await sync.applySettings({ connectedServicesQuotaPinnedMeterIdsByKey: nextMap });
   };
 
+  if (!connectedServicesEnabled) {
+    return (
+      <ItemList>
+        <ItemGroup title={t('settings.connectedAccounts')}>
+          <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+            <Text style={{ opacity: 0.7 }}>{t('settings.connectedAccountsDisabled')}</Text>
+          </View>
+        </ItemGroup>
+
+        <ItemGroup>
+          <Item
+            title={t('common.done')}
+            icon={<Ionicons name="close-outline" size={22} color={theme.colors.accent.blue} />}
+            onPress={() => router.back()}
+            showChevron={false}
+          />
+        </ItemGroup>
+      </ItemList>
+    );
+  }
+
   if (!serviceId || !entry) {
     return (
       <ItemList>
@@ -299,20 +320,22 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
 
       <ConnectedServiceDetailActionsGroup
         defaultProfileId={defaultProfileId}
-        supportsSetupToken={Boolean(entry.supportsSetupToken)}
+        supportsOauth={Boolean(entry.supportsOauth)}
+        supportsToken={Boolean(entry.supportsToken)}
+        tokenKind={entry.tokenKind ?? null}
         onSetDefaultProfile={() => void handleSetDefaultProfile()}
         onSetProfileLabel={() => void handleSetProfileLabel()}
         onAddOauthProfile={() => void handleAddOauthProfile()}
-        onConnectSetupToken={() => void handleConnectSetupToken()}
+        onConnectToken={() => void handleConnectToken()}
       />
 
-        <ItemGroup>
-          <Item
+      <ItemGroup>
+        <Item
           title={t('common.done')}
           icon={<Ionicons name="close-outline" size={22} color={theme.colors.accent.blue} />}
           onPress={() => router.back()}
           showChevron={false}
-          />
+        />
       </ItemGroup>
     </ItemList>
   );

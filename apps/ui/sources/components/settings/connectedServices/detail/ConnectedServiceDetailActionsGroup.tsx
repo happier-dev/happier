@@ -8,17 +8,20 @@ import { t } from '@/text';
 
 export const ConnectedServiceDetailActionsGroup = React.memo(function ConnectedServiceDetailActionsGroup(props: Readonly<{
   defaultProfileId: string;
-  supportsSetupToken: boolean;
+  supportsOauth: boolean;
+  supportsToken: boolean;
+  tokenKind: 'api-key' | 'setup-token' | null;
   onSetDefaultProfile: () => void;
   onSetProfileLabel: () => void;
   onAddOauthProfile: () => void;
-  onConnectSetupToken: () => void;
+  onConnectToken: () => void;
 }>) {
   const { theme } = useUnistyles();
 
   return (
     <ItemGroup title={t('connectedServices.detail.actionsGroupTitle')}>
       <Item
+        testID="connected-services-action:set-default-profile"
         title={t('connectedServices.detail.setDefaultProfileTitle')}
         subtitle={
           props.defaultProfileId
@@ -29,23 +32,36 @@ export const ConnectedServiceDetailActionsGroup = React.memo(function ConnectedS
         onPress={props.onSetDefaultProfile}
       />
       <Item
+        testID="connected-services-action:set-profile-label"
         title={t('connectedServices.detail.setProfileLabelTitle')}
         subtitle={t('connectedServices.detail.setProfileLabelSubtitle')}
         icon={<Ionicons name="pencil-outline" size={22} color={theme.colors.accent.blue} />}
         onPress={props.onSetProfileLabel}
       />
-      <Item
-        title={t('connectedServices.detail.addOauthProfileTitle')}
-        subtitle={t('connectedServices.detail.addOauthProfileSubtitle')}
-        icon={<Ionicons name="add-circle-outline" size={22} color={theme.colors.accent.blue} />}
-        onPress={props.onAddOauthProfile}
-      />
-      {props.supportsSetupToken ? (
+      {props.supportsToken ? (
         <Item
-          title={t('connectedServices.detail.connectSetupTokenTitle')}
-          subtitle={t('connectedServices.detail.connectSetupTokenSubtitle')}
+          testID="connected-services-action:connect-token"
+          title={
+            props.tokenKind === 'setup-token'
+              ? t('connectedServices.detail.connectSetupTokenTitle')
+              : t('connectedServices.detail.connectApiKeyTitle')
+          }
+          subtitle={
+            props.tokenKind === 'setup-token'
+              ? t('connectedServices.detail.connectSetupTokenSubtitle')
+              : t('connectedServices.detail.connectApiKeySubtitle')
+          }
           icon={<Ionicons name="key-outline" size={22} color={theme.colors.accent.blue} />}
-          onPress={props.onConnectSetupToken}
+          onPress={props.onConnectToken}
+        />
+      ) : null}
+      {props.supportsOauth ? (
+        <Item
+          testID="connected-services-action:add-oauth-profile"
+          title={t('connectedServices.detail.addOauthProfileTitle')}
+          subtitle={t('connectedServices.detail.addOauthProfileSubtitle')}
+          icon={<Ionicons name="add-circle-outline" size={22} color={theme.colors.accent.blue} />}
+          onPress={props.onAddOauthProfile}
         />
       ) : null}
     </ItemGroup>
