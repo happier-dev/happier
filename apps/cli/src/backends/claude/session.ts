@@ -27,7 +27,6 @@ export class Session {
     pushSender: PushNotificationClient | null;
     accountSettings: AccountSettings | null;
     readonly queue: MessageQueue2<EnhancedMode>;
-    readonly claudeEnvVars?: Record<string, string>;
     claudeArgs?: string[];  // Made mutable to allow filtering
     readonly _onModeChange: (mode: 'local' | 'remote') => void;
     /** Path to temporary settings file with SessionStart hook (required for session tracking) */
@@ -89,7 +88,6 @@ export class Session {
         path: string,
         logPath: string,
         sessionId: string | null,
-        claudeEnvVars?: Record<string, string>,
         claudeArgs?: string[],
         messageQueue: MessageQueue2<EnhancedMode>,
         onModeChange: (mode: 'local' | 'remote') => void,
@@ -106,7 +104,6 @@ export class Session {
         this.logPath = opts.logPath;
         this.sessionId = opts.sessionId;
         this.queue = opts.messageQueue;
-        this.claudeEnvVars = opts.claudeEnvVars;
         this.claudeArgs = opts.claudeArgs;
         this._onModeChange = opts.onModeChange;
         this.hookSettingsPath = opts.hookSettingsPath;
