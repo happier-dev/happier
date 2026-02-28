@@ -26,9 +26,9 @@ export async function materializePiConnectedServiceAuth(params: Readonly<{
 
   if (params.anthropic) {
     if (params.anthropic.kind !== 'token') {
-      throw new Error('Pi requires an Anthropic setup-token (connected-services kind=token), not an oauth credential.');
+      throw new Error('Anthropic OAuth credentials are not supported. Reconnect using an Anthropic API key.');
     }
-    env.ANTHROPIC_OAUTH_TOKEN = params.anthropic.token.token;
+    env.ANTHROPIC_API_KEY = params.anthropic.token.token;
   }
 
   await writeJsonAtomic(join(agentDir, 'auth.json'), auth);
