@@ -72,6 +72,9 @@ class Configuration {
   // Claude Task tool policy (remote mode).
   public readonly claudeTaskAllowRunInBackground: boolean
 
+  // Claude abort handling (prevents noisy post-abort unhandledRejection crashes).
+  public readonly claudeAbortUnhandledRejectionIgnoreWindowMs: number
+
   // Execution runs and ephemeral tasks (session-process budgets).
   public readonly executionRunsMaxConcurrentPerSession: number
   public readonly ephemeralTasksMaxConcurrentPerSession: number
@@ -257,6 +260,11 @@ class Configuration {
 
     const allowTaskBackgroundRaw = String(process.env.HAPPIER_CLAUDE_TASK_ALLOW_RUN_IN_BACKGROUND ?? '').trim().toLowerCase();
     this.claudeTaskAllowRunInBackground = ['1', 'true', 'yes', 'on'].includes(allowTaskBackgroundRaw);
+
+    const abortIgnoreWindowRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_ABORT_UNHANDLED_REJECTION_IGNORE_WINDOW_MS ?? ''), 10);
+    // Default: 10s. Set to 0 to disable suppression.
+    this.claudeAbortUnhandledRejectionIgnoreWindowMs =
+      Number.isFinite(abortIgnoreWindowRaw) && abortIgnoreWindowRaw >= 0 ? Math.min(abortIgnoreWindowRaw, 60_000) : 10_000;
 
     const maxConcurrentRunsRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION ?? ''), 10);
     const maxConcurrentTasksRaw = Number.parseInt(String(process.env.HAPPIER_EPHEMERAL_TASKS_MAX_CONCURRENT_PER_SESSION ?? ''), 10);

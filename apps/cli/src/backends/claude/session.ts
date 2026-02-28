@@ -56,6 +56,14 @@ export class Session {
      */
     lastPermissionMode: PermissionMode = 'default';
     lastPermissionModeUpdatedAt: number = 0;
+
+    /**
+     * Timestamp of the most recent user-initiated abort request.
+     *
+     * Used as a narrow safety valve to avoid treating known abort cancellation
+     * signals as crashes when they surface as process-level unhandled rejections.
+     */
+    private lastUserAbortRequestedAtMs: number = 0;
     
     /** Callbacks to be notified when session ID is found/changed */
     private sessionFoundCallbacks: ((info: SessionFoundInfo) => void)[] = [];
@@ -100,6 +108,18 @@ export class Session {
         // Start keep alive
         this.client.keepAlive(this.thinking, this.mode);
         this.scheduleNextKeepAlive();
+    }
+
+    noteUserAbortRequested(): void {
+        this.lastUserAbortRequestedAtMs = Date.now();
+    }
+
+    wasUserAbortRequestedRecently(withinMs: number): boolean {
+        const windowMs = Number.isFinite(withinMs) ? Math.max(0, Math.trunc(withinMs)) : 0;
+        if (windowMs === 0) return false;
+        const last = this.lastUserAbortRequestedAtMs;
+        if (last <= 0) return false;
+        return Date.now() - last <= windowMs;
     }
 
     setPushSender(pushSender: PushNotificationClient | null): void {

@@ -129,6 +129,8 @@ export async function claudeLocalLauncher(
         async function doAbort() {
             logger.debug('[local]: doAbort');
 
+            session.noteUserAbortRequested();
+
             // Switching to remote mode
             if (!exitReason) {
                 exitReason = { type: 'switch' };

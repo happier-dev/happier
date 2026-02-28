@@ -42,6 +42,7 @@ import { ClaudeLocalPermissionBridge, DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE } f
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { computeRunnerTerminationOutcome, type RunnerTerminationEvent } from '@/agent/runtime/runnerTerminationOutcome';
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
+import { createClaudeShouldTerminateOnUnhandledRejection } from './claudeUnhandledRejectionPolicy';
 import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
@@ -696,6 +697,10 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         process,
         exit: (code) => process.exit(code),
         onTerminate: cleanup,
+        shouldTerminateOnUnhandledRejection: createClaudeShouldTerminateOnUnhandledRejection({
+            abortWasRequestedRecently: (withinMs) => currentSession?.wasUserAbortRequestedRecently(withinMs) ?? false,
+            ignoreWindowMs: configuration.claudeAbortUnhandledRejectionIgnoreWindowMs,
+        }),
     });
 
     registerKillSessionHandler(session.rpcHandlerManager, async () => {
@@ -1270,6 +1275,10 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
         process,
         exit: (code) => process.exit(code),
         onTerminate: async (event, outcome) => {
+        shouldTerminateOnUnhandledRejection: createClaudeShouldTerminateOnUnhandledRejection({
+            abortWasRequestedRecently: (withinMs) => currentSession?.wasUserAbortRequestedRecently(withinMs) ?? false,
+            ignoreWindowMs: configuration.claudeAbortUnhandledRejectionIgnoreWindowMs,
+        }),
             restoreStdinBestEffort({ stdin: process.stdin as any });
             try {
                 coordinator.cancel();

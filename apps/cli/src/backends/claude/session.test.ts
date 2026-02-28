@@ -65,6 +65,27 @@ function hookWithTranscript(transcriptPath: string): SessionFoundHookData {
 }
 
 describe('Session', () => {
+  it('tracks recent user abort requests', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-02-26T07:46:00.000Z'));
+
+    const client = createSessionClientStub();
+    const session = createSession(client);
+
+    try {
+      expect(session.wasUserAbortRequestedRecently(1)).toBe(false);
+
+      session.noteUserAbortRequested();
+      expect(session.wasUserAbortRequestedRecently(10_000)).toBe(true);
+
+      vi.setSystemTime(new Date('2026-02-26T07:46:11.000Z'));
+      expect(session.wasUserAbortRequestedRecently(10_000)).toBe(false);
+    } finally {
+      session.cleanup();
+      vi.useRealTimers();
+    }
+  });
+
   it('defaults startedBy to terminal', () => {
     const client = createSessionClientStub();
 
