@@ -153,10 +153,10 @@ export class ApiMachineClient {
 
     connect(params?: { onConnect?: () => void | Promise<void> }) {
         // socket.io-client expects an http(s) URL (even when forcing websocket transport).
-        const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+        const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
         logger.debug(`[API MACHINE] Connecting to ${serverUrl}`);
 
-        const transports = configuration.socketForceWebsocketOnly ? ['websocket'] : undefined;
+        const transports = configuration.socketIoTransports;
         this.socket = io(serverUrl, {
             ...(transports ? { transports } : null),
             auth: {
@@ -314,7 +314,7 @@ export class ApiMachineClient {
         }
 
         const p = (async () => {
-            const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+            const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
             const response = await axios.get(`${serverUrl}/v1/account/profile`, {
                 headers: {
                     Authorization: `Bearer ${this.token}`,
@@ -340,7 +340,7 @@ export class ApiMachineClient {
 
     private async refreshMachineFromServer(): Promise<void> {
         try {
-            const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+            const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
             const response = await axios.get(`${serverUrl}/v1/machines/${this.machine.id}`, {
                 headers: {
                     Authorization: `Bearer ${this.token}`,
