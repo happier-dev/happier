@@ -10,15 +10,6 @@ type ClaudeRemoteDispatchDependencies = Readonly<{
     claudeRemoteAgentSdk: typeof claudeRemoteAgentSdk;
 }>;
 
-function argsContainMcpConfigFlag(args?: string[] | null): boolean {
-    const input = args ?? [];
-    for (const arg of input) {
-        if (arg === '--mcp-config') return true;
-        if (typeof arg === 'string' && arg.startsWith('--mcp-config=')) return true;
-    }
-    return false;
-}
-
 export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage }>(
     opts: T,
     deps?: Partial<ClaudeRemoteDispatchDependencies>,
@@ -43,10 +34,7 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
     const resolvedLegacy = deps?.claudeRemote ?? claudeRemote;
     const resolvedAgentSdk = deps?.claudeRemoteAgentSdk ?? claudeRemoteAgentSdk;
 
-    // The Agent SDK runner cannot transparently passthrough CLI-only flags like `--mcp-config`.
-    // If the user provided `--mcp-config`, route to the legacy runner so the underlying Claude Code
-    // CLI sees those flags verbatim.
-    if (first.mode.claudeRemoteAgentSdkEnabled === true && !argsContainMcpConfigFlag((opts as any).claudeArgs)) {
+    if (first.mode.claudeRemoteAgentSdkEnabled === true) {
         await resolvedAgentSdk(runnerOpts as any);
         return;
     }

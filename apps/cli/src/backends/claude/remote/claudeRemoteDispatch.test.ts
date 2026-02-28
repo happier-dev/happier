@@ -26,7 +26,7 @@ describe('claudeRemoteDispatch', () => {
         expect(mockLegacy).toHaveBeenCalledTimes(0);
     });
 
-    it('routes to legacy runner when user provided --mcp-config flags (Agent SDK cannot passthrough)', async () => {
+    it('still routes to Agent SDK runner when enabled even if --mcp-config flags are present (runner parses and maps to mcpServers)', async () => {
         const mockLegacy = vi.fn(async () => {});
         const mockAgentSdk = vi.fn(async () => {});
 
@@ -46,7 +46,7 @@ describe('claudeRemoteDispatch', () => {
             { claudeRemote: mockLegacy, claudeRemoteAgentSdk: mockAgentSdk },
         );
 
-        expect(mockLegacy).toHaveBeenCalledTimes(1);
-        expect(mockAgentSdk).toHaveBeenCalledTimes(0);
+        expect(mockAgentSdk).toHaveBeenCalledTimes(1);
+        expect(mockLegacy).toHaveBeenCalledTimes(0);
     });
 });

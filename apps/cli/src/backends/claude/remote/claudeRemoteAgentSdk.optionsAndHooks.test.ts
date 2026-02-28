@@ -192,6 +192,68 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(capturedOptions.mcpServers).toEqual(happierMcpServers);
     });
 
+    it('merges --mcp-config mcpServers into injected MCP servers when using the Agent SDK runner', async () => {
+        let capturedOptions: any = null;
+
+        const createQuery = vi.fn((_params: any) => {
+            capturedOptions = _params.options;
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
+        });
+
+        const happierMcpServers = {
+            happier: { command: 'node', args: ['happier-mcp.mjs', '--url', 'http://127.0.0.1:1234'] },
+        };
+        const userMcpConfig = JSON.stringify({
+            mcpServers: {
+                custom: { type: 'http', url: 'http://127.0.0.1:9999' },
+            },
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeEnvVars: {},
+            claudeArgs: ['--mcp-config', userMcpConfig],
+            claudeExecutablePath: '/tmp/claude',
+            happierMcpServers,
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            createQuery,
+        } as any);
+
+        expect(capturedOptions).toBeTruthy();
+        expect(capturedOptions.mcpServers).toEqual(
+            expect.objectContaining({
+                custom: { type: 'http', url: 'http://127.0.0.1:9999' },
+                happier: expect.anything(),
+            }),
+        );
+        // Happier MCP always wins on name collisions.
+        expect(capturedOptions.mcpServers.happier).toEqual(happierMcpServers.happier);
+    });
+
     it('sets allowDangerouslySkipPermissions only when permissionMode is bypassPermissions', async () => {
         let capturedOptions: any = null;
 

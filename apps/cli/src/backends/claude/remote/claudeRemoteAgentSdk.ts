@@ -14,6 +14,7 @@ import { getClaudeRemoteSystemPrompt } from '@/backends/claude/utils/remoteSyste
 import { normalizeClaudeToolUseNamesInSdkMessage } from '@/backends/claude/utils/normalizeClaudeToolUseNames';
 import { parseClaudeSdkFlagOverridesFromArgs } from '@/backends/claude/remote/sdkFlagOverrides';
 import { resolveClaudeRemoteSessionStartPlan } from '@/backends/claude/remote/sessionStartPlan';
+import { tryMergeUserMcpConfigArgsIntoHappierMcp } from '@/backends/claude/utils/mcpConfigMerge';
 import { parseCheckpointsCommand, parseRewindCommand } from './agentSdk/claudeAgentSdkSlashCommands';
 import {
     extractTextDeltaFromStreamEvent,
@@ -37,7 +38,14 @@ import type { McpServerConfig } from '@/agent';
 type AgentSdkQueryFactory = (params: {
     prompt: string | AsyncIterable<any>;
     options?: Record<string, unknown>;
-}) => AgentSdkQueryType;
+}function argsContainMcpConfigFlag(args?: readonly string[] | null): boolean {
+    if (!args || args.length === 0) return false;
+    for (const arg of args) {
+        if (arg === '--mcp-config') return true;
+        if (typeof arg === 'string' && arg.startsWith('--mcp-config=')) return true;
+    }
+    return false;
+}
 
 
 function toAgentSdkPermissionResult(result: PermissionResult): any {
@@ -119,12 +127,22 @@ export async function claudeRemoteAgentSdk(opts: {
         });
     };
 
-    const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
+        const mergedMcp = tryMergeUserMcpConfigArgsIntoHappierMcp({
+        baseMcpServers: opts.happierMcpServers ?? {},
+        claudeArgs: effectiveClaudeArgs,
+    });
+    if (argsContainMcpConfigFlag(opts.claudeArgs) && !mergedMcp) {
+        throw new Error('Invalid --mcp-config: expected JSON object with a { "mcpServers": { ... } } field.');
+    }
+    const effectiveClaudeArgs = mergedMcp ? mergedMcp.filteredClaudeArgs : opts.claudeArgs;
+    const effectiveMcpServers = mergedMcp ? mergedMcp.mergedMcpServers : opts.happierMcpServers;
+
+const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
         sessionId: opts.sessionId,
         transcriptPath: opts.transcriptPath,
         path: opts.path,
         claudeConfigDir: opts.claudeEnvVars?.CLAUDE_CONFIG_DIR ?? null,
-        claudeArgs: opts.claudeArgs,
+        claudeArgs: effectiveClaudeArgs,
     }, {
         logPrefix: 'claudeRemoteAgentSdk',
     });
@@ -148,7 +166,7 @@ export async function claudeRemoteAgentSdk(opts: {
 
     let mode = initial.mode;
 
-    const argOverrides = parseClaudeSdkFlagOverridesFromArgs(opts.claudeArgs);
+    const argOverrides = parseClaudeSdkFlagOverridesFromArgs(effectiveClaudeArgs);
     const customSystemPrompt = argOverrides.customSystemPrompt ?? mode.customSystemPrompt;
     const appendSystemPrompt = argOverrides.appendSystemPrompt ?? mode.appendSystemPrompt;
     const remoteSystemPrompt = getClaudeRemoteSystemPrompt({ disableTodos: mode.claudeRemoteDisableTodos === true });
@@ -384,7 +402,7 @@ export async function claudeRemoteAgentSdk(opts: {
         systemPrompt: buildSystemPrompt(),
         strictMcpConfig: mode.claudeRemoteStrictMcpServerConfig === true || argOverrides.strictMcpConfig,
         canUseTool,
-        ...(opts.happierMcpServers ? { mcpServers: opts.happierMcpServers } : {}),
+        ...(effectiveMcpServers ? { mcpServers: effectiveMcpServers } : {}),
         env: buildClaudeSubprocessEnv(),
         executable: opts.jsRuntime ?? 'node',
         pathToClaudeCodeExecutable: opts.claudeExecutablePath ?? getDefaultClaudeCodePathForAgentSdk(),
