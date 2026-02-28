@@ -40,7 +40,9 @@ import type { McpServerConfig } from '@/agent';
 type AgentSdkQueryFactory = (params: {
     prompt: string | AsyncIterable<any>;
     options?: Record<string, unknown>;
-}function argsContainMcpConfigFlag(args?: readonly string[] | null): boolean {
+}) => AgentSdkQueryType;
+
+function argsContainMcpConfigFlag(args?: readonly string[] | null): boolean {
     if (!args || args.length === 0) return false;
     for (const arg of args) {
         if (arg === '--mcp-config') return true;
