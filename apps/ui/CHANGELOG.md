@@ -2,9 +2,10 @@
 
 ## Version 8 - 2026-02-18
 
-This update includes a small navigation quality-of-life fix, improves QR scanning for terminal connect links, and prevents intermittent web startup errors related to font loading.
+This update includes a small navigation quality-of-life fix, improves QR scanning for terminal connect links, prevents intermittent web startup errors related to font loading, and makes the connection status menu easier to open and close.
 
 - Fixed the sidebar logo button so it reliably returns you to the home screen.
+- Fixed the connection status menu so clicking the status indicator toggles it open and closed.
 - Fixed “Open Camera” so it can scan terminal connect QR codes that contain the web connect URL (not just the `happier://terminal?...` deep link).
 - Fixed intermittent web font loading timeouts that could surface as “6000ms timeout exceeded” errors during startup.
 
