@@ -112,22 +112,20 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     const anchorRef = React.useRef<any>(null);
     const [authStatusByServerId, setAuthStatusByServerId] = React.useState<Record<string, 'signedIn' | 'signedOut' | 'unknown'>>({});
 
-    const connectionStatus = React.useMemo(() => {
+    const connectionStatus = React.useMemo((): { color: string; isPulsing: boolean } => {
         switch (socketStatus.status) {
             case 'connected':
-                return { color: theme.colors.status.connected, isPulsing: false, text: t('status.connected') };
+                return { color: theme.colors.status.connected, isPulsing: false };
             case 'connecting':
-                return { color: theme.colors.status.connecting, isPulsing: true, text: t('status.connecting') };
+                return { color: theme.colors.status.connecting, isPulsing: true };
             case 'disconnected':
-                return { color: theme.colors.status.disconnected, isPulsing: false, text: t('status.disconnected') };
+                return { color: theme.colors.status.disconnected, isPulsing: false };
             case 'error':
-                return { color: theme.colors.status.error, isPulsing: false, text: t('status.error') };
+                return { color: theme.colors.status.error, isPulsing: false };
             default:
-                return { color: theme.colors.status.default, isPulsing: false, text: '' };
+                return { color: theme.colors.status.default, isPulsing: false };
         }
     }, [socketStatus.status, theme.colors.status]);
-
-    if (!connectionStatus.text) return null;
 
     const textSize = props.textSize ?? (props.variant === 'sidebar' ? 11 : 12);
     const dotSize = props.dotSize ?? 6;
@@ -149,6 +147,13 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
             return '';
         }
     }, [open]);
+
+    const activeServerLabel = React.useMemo(() => {
+        const active = servers.find((server) => server.id === activeServerId);
+        const name = String(active?.name ?? '').trim();
+        if (name) return name;
+        return toServerUrlDisplay(getServerUrl()) || t('status.connected');
+    }, [activeServerId, servers]);
 
     React.useEffect(() => {
         let cancelled = false;
@@ -307,7 +312,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                         style={[styles.statusText, { color: connectionStatus.color, fontSize: textSize }]}
                         numberOfLines={1}
                     >
-                        {connectionStatus.text}
+                        {activeServerLabel}
                     </Text>
                     <Ionicons
                         name={open ? "chevron-up" : "chevron-down"}
