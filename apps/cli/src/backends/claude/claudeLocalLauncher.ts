@@ -11,6 +11,7 @@ import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTa
 import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
 import { configuration } from '@/configuration';
+import { tryMergeUserMcpConfigArgsIntoHappierMcp } from './utils/mcpConfigMerge';
 
 function upsertClaudePermissionModeArgs(args: string[] | undefined, mode: PermissionMode): string[] | undefined {
     const filtered: string[] = [];
@@ -233,7 +234,14 @@ export async function claudeLocalLauncher(
                 // This is essential for remote → local switches where the app-selected mode must carry over.
                 session.claudeArgs = upsertClaudePermissionModeArgs(session.claudeArgs, session.lastPermissionMode);
 
-                const { mcpConfigJson } = await session.getOrCreateHappierMcpBridge();
+                const { mcpServers: baseMcpServers, mcpConfigJson: baseMcpConfigJson } = await session.getOrCreateHappierMcpBridge();
+
+                const mergedMcp = tryMergeUserMcpConfigArgsIntoHappierMcp({
+                    baseMcpServers,
+                    claudeArgs: session.claudeArgs,
+                });
+                const effectiveClaudeArgs = mergedMcp ? mergedMcp.filteredClaudeArgs : session.claudeArgs;
+                const effectiveMcpConfigJson = mergedMcp ? mergedMcp.mergedMcpConfigJson : baseMcpConfigJson;
 
                 await claudeLocal({
                     path: session.path,
@@ -242,8 +250,8 @@ export async function claudeLocalLauncher(
                     onThinkingChange: session.onThinkingChange,
                     abort: processAbortController.signal,
                     claudeEnvVars: session.claudeEnvVars,
-                    claudeArgs: session.claudeArgs,
-                    happierMcpConfigJson: mcpConfigJson,
+                    claudeArgs: effectiveClaudeArgs,
+                    happierMcpConfigJson: effectiveMcpConfigJson,
                     hookSettingsPath: session.hookSettingsPath,
                 });
 

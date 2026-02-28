@@ -258,6 +258,33 @@ describe('claudeLocalLauncher', () => {
     expect(result).toEqual({ type: 'exit', code: 0 });
   });
 
+  it('merges user --mcp-config JSON into happierMcpConfigJson and strips passthrough flags', async () => {
+    const { session } = createLocalHarness();
+
+    const userMcpConfig = JSON.stringify({
+      mcpServers: {
+        custom: { type: 'http', url: 'http://127.0.0.1:9999' },
+      },
+    });
+    session.claudeArgs = ['--mcp-config', userMcpConfig, '--max-turns', '3'];
+
+    let captured: LocalLaunchOptions | null = null;
+    mockClaudeLocal.mockImplementationOnce(async (opts: LocalLaunchOptions) => {
+      captured = opts;
+    });
+
+    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+    const result = await claudeLocalLauncher(session);
+
+    expect(mockClaudeLocal).toHaveBeenCalledTimes(1);
+    expect((captured as any)?.claudeArgs).not.toContain('--mcp-config');
+
+    const parsed = JSON.parse(String((captured as any)?.happierMcpConfigJson ?? 'null'));
+    expect(parsed?.mcpServers?.happier).toBeTruthy();
+    expect(parsed?.mcpServers?.custom).toEqual({ type: 'http', url: 'http://127.0.0.1:9999' });
+    expect(result).toEqual({ type: 'exit', code: 0 });
+  });
+
   it('inspects the pending queue when entering local mode from a remote switch', async () => {
     const { session, client } = createLocalHarness();
 
