@@ -13,6 +13,7 @@ import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import type { PushNotificationClient } from '@/api/pushNotifications';
 import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge';
 import type { McpServerConfig } from '@/agent';
+import type { AccountSettings } from '@happier-dev/protocol';
 
 export type SessionFoundInfo = {
     sessionId: string;
@@ -24,6 +25,7 @@ export class Session {
     readonly logPath: string;
     readonly client: SessionClientPort;
     pushSender: PushNotificationClient | null;
+    accountSettings: AccountSettings | null;
     readonly queue: MessageQueue2<EnhancedMode>;
     readonly claudeEnvVars?: Record<string, string>;
     claudeArgs?: string[];  // Made mutable to allow filtering
@@ -76,6 +78,7 @@ export class Session {
     constructor(opts: {
         client: SessionClientPort,
         pushSender?: PushNotificationClient | null,
+        accountSettings?: AccountSettings | null,
         path: string,
         logPath: string,
         sessionId: string | null,
@@ -92,6 +95,7 @@ export class Session {
         this.path = opts.path;
         this.client = opts.client;
         this.pushSender = opts.pushSender ?? null;
+        this.accountSettings = opts.accountSettings ?? null;
         this.logPath = opts.logPath;
         this.sessionId = opts.sessionId;
         this.queue = opts.messageQueue;
@@ -124,6 +128,10 @@ export class Session {
 
     setPushSender(pushSender: PushNotificationClient | null): void {
         this.pushSender = pushSender;
+    }
+
+    setAccountSettings(settings: AccountSettings | null): void {
+        this.accountSettings = settings;
     }
 
     private scheduleNextKeepAlive(): void {
