@@ -21,6 +21,7 @@ export function hashClaudeEnhancedModeForQueue(mode: EnhancedMode): string {
         return hashObject({
             claudeSdkPermissionMode,
             agentModeId: effectiveAgentModeId || null,
+            replaySeedAllowed: mode.replaySeedAllowed !== false,
             model: mode.model,
             fallbackModel: mode.fallbackModel,
             customSystemPrompt: mode.customSystemPrompt,
@@ -33,6 +34,7 @@ export function hashClaudeEnhancedModeForQueue(mode: EnhancedMode): string {
         agentSdk: true,
         claudeSdkPermissionMode,
         agentModeId: effectiveAgentModeId || null,
+        replaySeedAllowed: mode.replaySeedAllowed !== false,
         claudeRemoteSettingSources: mode.claudeRemoteSettingSources,
         claudeRemoteEnableFileCheckpointing: mode.claudeRemoteEnableFileCheckpointing,
         claudeRemoteDisableTodos: mode.claudeRemoteDisableTodos,

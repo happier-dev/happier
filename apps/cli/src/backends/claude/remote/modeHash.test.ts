@@ -101,4 +101,20 @@ describe('hashClaudeEnhancedModeForQueue', () => {
 
         expect(next).not.toBe(base);
     });
+
+    it('changes when replaySeedAllowed changes', () => {
+        const base = hashClaudeEnhancedModeForQueue(makeMode({
+            claudeRemoteAgentSdkEnabled: true,
+            claudeRemoteSettingSources: 'project',
+            replaySeedAllowed: true,
+        }));
+
+        const next = hashClaudeEnhancedModeForQueue(makeMode({
+            claudeRemoteAgentSdkEnabled: true,
+            claudeRemoteSettingSources: 'project',
+            replaySeedAllowed: false,
+        }));
+
+        expect(next).not.toBe(base);
+    });
 });
