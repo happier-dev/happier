@@ -59,7 +59,12 @@ rl.on('line', (line) => {
       out({ id: command.id, type: 'response', command: 'prompt', success: true });
       out({ type: 'turn_end' });
       if (promptCount === 1) {
-        setTimeout(() => process.exit(0), 10);
+        const mode = process.env.CRASH_MODE || 'timeout';
+        if (mode === 'immediate') {
+          setImmediate(() => process.exit(0));
+        } else {
+          setTimeout(() => process.exit(0), 10);
+        }
       }
       return;
     default:
@@ -133,5 +138,42 @@ describe('PiRpcBackend ensureProcess recovery', () => {
     expect(boots[1]!.argv).toContain('--session');
     expect(boots[1]!.argv).toContain(sessionPath);
   });
-});
 
+  it('recovers when the RPC process exits immediately after a turn (no EPIPE)', async () => {
+    workDir = makeTempDir('happier-pi-recovery-');
+    const piDir = join(workDir, 'pi-agent');
+    const sessionsDir = join(piDir, 'sessions', '--workdir--');
+    const bootLogPath = join(workDir, 'boot.log');
+    const authPath = join(piDir, 'auth.json');
+    const sessionPath = join(sessionsDir, `2026-02-18T00-00-00-000Z_pi-session-1.jsonl`);
+
+    mkdirSync(sessionsDir, { recursive: true, mode: 0o700 });
+    writeFileSync(authPath, JSON.stringify({ 'openai-codex': { type: 'oauth', access: 'a', refresh: 'r', expires: 999999999 } }) + '\\n');
+    writeFileSync(sessionPath, '{"role":"system","content":[{"type":"text","text":"stub"}]}' + '\\n');
+
+    const fake = makeFakePiRpcCrashAfterFirstTurnScript(workDir);
+    backend = new PiRpcBackend({
+      cwd: workDir,
+      command: process.execPath,
+      args: [fake],
+      env: {
+        BOOT_LOG_PATH: bootLogPath,
+        PI_CODING_AGENT_DIR: piDir,
+        SESSION_FILE_PATH: sessionPath,
+        CRASH_MODE: 'immediate',
+      },
+    });
+
+    const started = await backend.startSession();
+    await backend.sendPrompt(started.sessionId, 'first');
+
+    // Trigger recovery immediately after the first turn completes, without waiting for the child
+    // process 'exit' event to be observed by the parent.
+    await backend.sendPrompt(started.sessionId, 'second');
+
+    const boots = parseBootLog(await readFile(bootLogPath, 'utf8'));
+    expect(boots.length).toBe(2);
+    expect(boots[1]!.argv).toContain('--session');
+    expect(boots[1]!.argv).toContain(sessionPath);
+  });
+});

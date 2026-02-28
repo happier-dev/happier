@@ -312,34 +312,55 @@ export class PiRpcBackend implements AgentBackend {
       // If the process died between turns, `ensureProcess()` may need to restart and reattach via --session.
       await this.ensureProcess();
 
-      const turn = this.createPendingTurn(240_000);
       settleBarrier();
-      try {
-        await this.sendCommand({ type: 'prompt', message });
-      } catch (error) {
-        const promptError = asError(error);
-        const normalizedError = promptError.message.toLowerCase();
-        const canFallbackToSteer =
-          normalizedError.includes('already processing') || normalizedError.includes('streamingbehavior');
 
-        if (canFallbackToSteer) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const turn = this.createPendingTurn(240_000);
+        try {
+          await this.sendCommand({ type: 'prompt', message });
+          await turn;
+          return;
+        } catch (error) {
+          const promptError = asError(error);
+          const normalizedError = promptError.message.toLowerCase();
+          const canFallbackToSteer =
+            normalizedError.includes('already processing') || normalizedError.includes('streamingbehavior');
+
+          if (canFallbackToSteer) {
+            try {
+              await this.sendCommand({ type: 'steer', message });
+              await turn;
+              return;
+            } catch (steerError) {
+              const resolvedSteerError = asError(steerError);
+              this.rejectPendingTurn(resolvedSteerError);
+              await turn.catch(() => undefined);
+              throw resolvedSteerError;
+            }
+          }
+
+          this.rejectPendingTurn(promptError);
+          await turn.catch(() => undefined);
+
+          const canRecoverFromProcessExit =
+            attempt === 0 &&
+            !!this.sessionId &&
+            (normalizedError.includes('pi process exited') ||
+              normalizedError.includes('pi process terminated') ||
+              normalizedError.includes('failed to write pi rpc command') ||
+              normalizedError.includes('epipe'));
+
+          if (!canRecoverFromProcessExit) {
+            throw promptError;
+          }
+
           try {
-            await this.sendCommand({ type: 'steer', message });
-            await turn;
-            return;
-          } catch (steerError) {
-            const resolvedSteerError = asError(steerError);
-            this.rejectPendingTurn(resolvedSteerError);
-            await turn.catch(() => undefined);
-            throw resolvedSteerError;
+            await this.restartAndContinue();
+          } catch (restartError) {
+            throw asError(restartError);
           }
         }
-
-        this.rejectPendingTurn(promptError);
-        await turn.catch(() => undefined);
-        throw promptError;
       }
-      await turn;
     } catch (error) {
       settleBarrier(asError(error));
       throw error;
@@ -478,6 +499,24 @@ export class PiRpcBackend implements AgentBackend {
     this.stdoutLineReader.on('line', (line) => this.handleStdoutLine(line));
     this.stderrLineReader = readline.createInterface({ input: child.stderr });
     this.stderrLineReader.on('line', (line) => this.handleStderrLine(line));
+
+    const handleIoError = (error: unknown) => {
+      const resolved = asError(error);
+      if (!this.disposed) {
+        this.emitMessage({
+          type: 'status',
+          status: 'error',
+          detail: `Pi IO error: ${resolved.message}`,
+        });
+      }
+      this.rejectAllPending(new Error(`Pi IO error: ${resolved.message}`));
+      this.rejectPendingTurn(new Error('Pi process terminated'));
+    };
+
+    // Defensive: avoid unhandled EPIPE on stdio streams when the subprocess exits between turns.
+    child.stdin.on('error', handleIoError);
+    child.stdout.on('error', handleIoError);
+    child.stderr.on('error', handleIoError);
 
     child.on('error', (error) => {
       this.emitMessage({
