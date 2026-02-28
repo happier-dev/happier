@@ -110,14 +110,14 @@ describe('apiConnectedServicesV2', () => {
     } satisfies Partial<HappyError>);
   });
 
-	  it('posts OAuth exchange params to the proxy endpoint and returns bundle', async () => {
-	    mockServerConfig();
-	    const fetchMock = vi.fn(async (_input: unknown, _init?: RequestInit) => ({
-	      ok: true,
-	      status: 200,
-	      json: async () => ({ bundle: 'bundle-1' }),
-	    }));
-	    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+  it('posts OAuth exchange params to the proxy endpoint and returns bundle', async () => {
+    mockServerConfig();
+    const fetchMock = vi.fn(async (_input: unknown, _init?: RequestInit) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ bundle: 'bundle-1' }),
+    }));
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const { exchangeConnectedServiceOauthViaProxy } = await import('./apiConnectedServicesV2');
     const result = await exchangeConnectedServiceOauthViaProxy(credentials, {
@@ -148,6 +148,54 @@ describe('apiConnectedServicesV2', () => {
         redirectUri: 'http://localhost:1455/auth/callback',
         state: 'state-1',
       }),
+    );
+  });
+
+  it('starts OpenAI Codex device auth via the v2 endpoint', async () => {
+    mockServerConfig();
+    const fetchMock = vi.fn(async (_input: unknown, _init?: RequestInit) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        deviceAuthId: 'dev-1',
+        userCode: 'ABCD-EFGH',
+        intervalMs: 5000,
+        verificationUrl: 'https://auth.openai.com/codex/device',
+      }),
+    }));
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    const { startOpenAiCodexDeviceAuthViaProxy } = await import('./apiConnectedServicesV2');
+    const res = await startOpenAiCodexDeviceAuthViaProxy(credentials, { publicKey: 'pk-1' });
+
+    expect(res.userCode).toBe('ABCD-EFGH');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.example.test/v2/connect/openai-codex/oauth/device/start',
+      expect.objectContaining({ method: 'POST', headers: expect.any(Headers) }),
+    );
+  });
+
+  it('polls OpenAI Codex device auth via the v2 endpoint', async () => {
+    mockServerConfig();
+    const fetchMock = vi.fn(async (_input: unknown, _init?: RequestInit) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ status: 'pending', retryAfterMs: 8000 }),
+    }));
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    const { pollOpenAiCodexDeviceAuthViaProxy } = await import('./apiConnectedServicesV2');
+    const res = await pollOpenAiCodexDeviceAuthViaProxy(credentials, {
+      publicKey: 'pk-1',
+      deviceAuthId: 'dev-1',
+      userCode: 'ABCD-EFGH',
+      intervalMs: 5000,
+    });
+
+    expect(res.status).toBe('pending');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.example.test/v2/connect/openai-codex/oauth/device/poll',
+      expect.objectContaining({ method: 'POST', headers: expect.any(Headers) }),
     );
   });
 });

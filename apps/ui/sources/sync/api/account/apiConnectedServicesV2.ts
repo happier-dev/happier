@@ -211,3 +211,107 @@ export async function exchangeConnectedServiceOauthViaProxy(
     return { bundle };
   });
 }
+
+export type OpenAiCodexDeviceAuthStartResponse = Readonly<{
+  deviceAuthId: string;
+  userCode: string;
+  intervalMs: number;
+  verificationUrl: string;
+}>;
+
+export async function startOpenAiCodexDeviceAuthViaProxy(
+  credentials: AuthCredentials,
+  params: Readonly<{ publicKey: string }>,
+): Promise<OpenAiCodexDeviceAuthStartResponse> {
+  return await backoff(async () => {
+    const response = await serverFetch(
+      `/v2/connect/openai-codex/oauth/device/start`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${credentials.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ publicKey: params.publicKey }),
+      },
+      { includeAuth: false },
+    );
+
+    const json = await response.json().catch(() => null);
+    if (!response.ok) {
+      if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
+        let message = 'connect_oauth_exchange_failed';
+        message = extractErrorCode(json) ?? message;
+        throw new HappyError(message, false, { status: response.status, kind: 'server' });
+      }
+      throw new Error(`Failed to start device auth: ${response.status}`);
+    }
+
+    const deviceAuthId = json && typeof (json as any).deviceAuthId === 'string' ? String((json as any).deviceAuthId) : '';
+    const userCode = json && typeof (json as any).userCode === 'string' ? String((json as any).userCode) : '';
+    const intervalMs = json && typeof (json as any).intervalMs === 'number' ? Number((json as any).intervalMs) : NaN;
+    const verificationUrl =
+      json && typeof (json as any).verificationUrl === 'string' ? String((json as any).verificationUrl) : '';
+
+    if (!deviceAuthId || !userCode || !Number.isFinite(intervalMs) || intervalMs <= 0 || !verificationUrl) {
+      throw new HappyError('invalid response', false, { status: response.status, kind: 'server' });
+    }
+
+    return { deviceAuthId, userCode, intervalMs, verificationUrl };
+  });
+}
+
+export type OpenAiCodexDeviceAuthPollResponse =
+  | Readonly<{ status: 'pending'; retryAfterMs: number }>
+  | Readonly<{ status: 'success'; bundle: string }>;
+
+export async function pollOpenAiCodexDeviceAuthViaProxy(
+  credentials: AuthCredentials,
+  params: Readonly<{ publicKey: string; deviceAuthId: string; userCode: string; intervalMs: number }>,
+): Promise<OpenAiCodexDeviceAuthPollResponse> {
+  return await backoff(async () => {
+    const response = await serverFetch(
+      `/v2/connect/openai-codex/oauth/device/poll`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${credentials.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          publicKey: params.publicKey,
+          deviceAuthId: params.deviceAuthId,
+          userCode: params.userCode,
+          intervalMs: params.intervalMs,
+        }),
+      },
+      { includeAuth: false },
+    );
+
+    const json = await response.json().catch(() => null);
+    if (!response.ok) {
+      if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
+        let message = 'connect_oauth_exchange_failed';
+        message = extractErrorCode(json) ?? message;
+        throw new HappyError(message, false, { status: response.status, kind: 'server' });
+      }
+      throw new Error(`Failed to poll device auth: ${response.status}`);
+    }
+
+    const status = json && typeof (json as any).status === 'string' ? String((json as any).status) : '';
+    if (status === 'pending') {
+      const retryAfterMs = typeof (json as any).retryAfterMs === 'number' ? Number((json as any).retryAfterMs) : NaN;
+      if (!Number.isFinite(retryAfterMs) || retryAfterMs <= 0) {
+        throw new HappyError('invalid response', false, { status: response.status, kind: 'server' });
+      }
+      return { status: 'pending', retryAfterMs };
+    }
+    if (status === 'success') {
+      const bundle = typeof (json as any).bundle === 'string' ? String((json as any).bundle) : '';
+      if (!bundle) throw new HappyError('invalid response', false, { status: response.status, kind: 'server' });
+      return { status: 'success', bundle };
+    }
+
+    throw new HappyError('invalid response', false, { status: response.status, kind: 'server' });
+  });
+}
