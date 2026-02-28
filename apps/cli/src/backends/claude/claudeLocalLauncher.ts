@@ -203,7 +203,7 @@ export async function claudeLocalLauncher(
         // Handle session start
         const handleSessionStart = (sessionId: string) => {
             session.onSessionFound(sessionId);
-            scanner.onNewSession(sessionId);
+            scanner.onNewSession({ sessionId, transcriptPath: session.transcriptPath });
         }
 
 	        // Run local mode
