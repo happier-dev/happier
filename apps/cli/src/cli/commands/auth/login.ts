@@ -14,6 +14,7 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
 
   const forceAuth = args.includes('--force') || args.includes('-f');
   const noOpen = args.includes('--no-open') || args.includes('--no-browser') || args.includes('--no-browser-open');
+  const printConfigureLinks = args.includes('--print-configure-links');
   let method: 'web' | 'mobile' | null = null;
   try {
     method = resolveAuthMethodFlag(args);
@@ -25,6 +26,10 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
 
   if (noOpen) {
     process.env.HAPPIER_NO_BROWSER_OPEN = '1';
+  }
+
+  if (printConfigureLinks) {
+    process.env.HAPPIER_AUTH_PRINT_CONFIGURE_LINKS = '1';
   }
 
   if (forceAuth) {

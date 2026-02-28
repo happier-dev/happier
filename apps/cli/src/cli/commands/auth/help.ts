@@ -18,15 +18,16 @@ ${chalk.bold('Options:')}
   --no-open  Do not attempt to open a browser (prints URL instead)
   --force    Clear credentials, machine ID, and stop daemon before re-auth
   --method   Force authentication method (web|mobile). Useful for headless/non-TTY.
+  --print-configure-links  Print advanced “configure server” links for tooling (rare)
   --all      When used with logout, remove local data for all servers
   --json       Print machine-readable JSON (recommended for containers)
   --public-key Used with approve/wait; the terminal public key from "auth request --json"
   --ssh        Used with pair-remote; ssh target (e.g. user@host)
   --server      Use an existing saved server profile
-  --server-url  Use a specific server URL (defaults to persisting as a new profile)
+  --server-url  Use a specific server URL (does not persist unless --persist)
   --webapp-url  Override web app URL for this server profile
-  --persist     Persist --server-url as the active server profile (default)
-  --no-persist  Use --server-url for this invocation only
+  --persist     Persist --server-url as the active server profile
+  --no-persist  Use --server-url for this invocation only (default)
 
 ${chalk.gray('PS: Your master secret never leaves your mobile/web device. Each CLI machine')}
 ${chalk.gray('receives only a derived key for per-machine encryption, so backup codes')}
