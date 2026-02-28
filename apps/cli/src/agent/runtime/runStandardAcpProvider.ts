@@ -21,12 +21,12 @@ import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRu
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
 import { runPermissionModePromptLoop } from '@/agent/runtime/runPermissionModePromptLoop';
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
+import { shouldSendReadyPushNotification } from '@/settings/notifications/notificationsPolicy';
 import type { InFlightSteerController } from '@/agent/runtime/permission/bindPermissionModeQueue';
 import type { Credentials } from '@/persistence';
 import { registerKillSessionHandler } from '@/rpc/handlers/killSession';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/ui/logger';
-import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
 
 type RuntimeForLoop = {
@@ -63,6 +63,7 @@ export type StandardAcpProviderRunOptions = {
   modelUpdatedAt?: number;
   existingSessionId?: string;
   resume?: string;
+  accountSettingsContext?: import('@/settings/accountSettings/bootstrapAccountSettingsContext').AccountSettingsContext | null;
 };
 
 export type StandardAcpProviderConfig = {
@@ -143,7 +144,7 @@ export async function runStandardAcpProvider(
     machineMetadata: config.machineMetadata,
   });
 
-  const accountSettings = getActiveAccountSettingsSnapshot()?.settings ?? null;
+  const accountSettings = opts.accountSettingsContext?.settings ?? null;
   const permissionModeSeed = resolvePermissionModeSeedForAgentStart({
     agentId: config.flavor,
     explicitPermissionMode: opts.permissionMode,
@@ -193,6 +194,8 @@ export async function runStandardAcpProvider(
   permissionHandler = createProviderEnforcedPermissionHandlerFn({
     session,
     logPrefix: config.uiLogPrefix,
+    pushSender: api.push(),
+    getAccountSettings: () => opts.accountSettingsContext?.settings ?? null,
     onAbortRequested: () => abortRequestedCallback?.(),
   });
   permissionHandler.setPermissionMode(initialPermissionMode);
@@ -319,6 +322,7 @@ export async function runStandardAcpProvider(
         pushSender: api.push(),
         waitingForCommandLabel: config.waitingForCommandLabel,
         logPrefix: config.uiLogPrefix,
+        shouldSendPush: () => shouldSendReadyPushNotification(opts.accountSettingsContext?.settings ?? null),
       });
     });
 
