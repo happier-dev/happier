@@ -37,18 +37,20 @@ import { applyClaudeRemoteMetaState } from '@/backends/claude/remote/claudeRemot
 import { resolveInitialClaudeRemoteMetaState } from '@/backends/claude/remote/resolveInitialClaudeRemoteMetaState';
 import { inferPermissionIntentFromClaudeArgs } from './utils/inferPermissionIntentFromArgs';
 import { adoptModelOverrideFromMetadata } from './utils/adoptModelOverrideFromMetadata';
+import { resolveAcpSessionModeOverrideFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
 import { ClaudeLocalPermissionBridge, DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE } from '@/backends/claude/localPermissions/localPermissionBridge';
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { computeRunnerTerminationOutcome, type RunnerTerminationEvent } from '@/agent/runtime/runnerTerminationOutcome';
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
 import { createClaudeShouldTerminateOnUnhandledRejection } from './claudeUnhandledRejectionPolicy';
-import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
-import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
-	import { runStartupCoordinator } from '@/agent/runtime/startup/startupCoordinator';
-	import { createStartupTiming } from '@/agent/runtime/startup/startupTiming';
-	import { writeStartupOverridesCacheForBackend } from '@/agent/runtime/startup/startupOverridesCache';
-	import { createClaudeStartupSpec, type ClaudeStartupArtifacts } from '@/backends/claude/startup/createClaudeStartupSpec';
+    import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+    import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
+    import { resolveClaudeConfigDirOverride } from '@/backends/claude/utils/resolveClaudeConfigDirOverride';
+        import { runStartupCoordinator } from '@/agent/runtime/startup/startupCoordinator';
+        import { createStartupTiming } from '@/agent/runtime/startup/startupTiming';
+        import { writeStartupOverridesCacheForBackend } from '@/agent/runtime/startup/startupOverridesCache';
+        import { createClaudeStartupSpec, type ClaudeStartupArtifacts } from '@/backends/claude/startup/createClaudeStartupSpec';
 import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers';
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
 import { createStartupMetadataOverrides } from '@/agent/runtime/createStartupMetadataOverrides';
@@ -63,14 +65,15 @@ export interface StartOptions {
     modelId?: string
     modelUpdatedAt?: number
     permissionMode?: PermissionMode
-    startingMode?: 'local' | 'remote'
-    shouldStartDaemon?: boolean
-    claudeEnvVars?: Record<string, string>
-    claudeArgs?: string[]
-    startedBy?: 'daemon' | 'terminal'
-    /** JavaScript runtime to use for spawning Claude Code (default: 'node') */
-    jsRuntime?: JsRuntime
-    /** Internal terminal runtime flags passed by the spawner (daemon/tmux wrapper). */
+    agentModeId?: string
+    agentModeUpdatedAt?: number
+        startingMode?: 'local' | 'remote'
+        shouldStartDaemon?: boolean
+        claudeArgs?: string[]
+        startedBy?: 'daemon' | 'terminal'
+        /** JavaScript runtime to use for spawning Claude Code (default: 'node') */
+        jsRuntime?: JsRuntime
+        /** Internal terminal runtime flags passed by the spawner (daemon/tmux wrapper). */
     terminalRuntime?: TerminalRuntimeFlags | null
     /** Seed defaults for Claude remote-mode settings forwarded via message meta. */
     claudeRemoteMetaDefaults?: Record<string, unknown> | null
@@ -174,6 +177,8 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         terminalRuntime: options.terminalRuntime ?? null,
         permissionMode: initialPermissionMode,
         permissionModeUpdatedAt: typeof explicitPermissionModeUpdatedAt === 'number' ? explicitPermissionModeUpdatedAt : Date.now(),
+        agentModeId: options.agentModeId,
+        agentModeUpdatedAt: options.agentModeUpdatedAt,
         modelId: initialModelId,
         modelUpdatedAt: initialModelUpdatedAt,
     });
@@ -228,16 +233,15 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             process.once('SIGTERM', abortOnSignal);
 
             try {
-		                await claudeLocal({
-		                    path: workingDirectory,
-		                    sessionId: null,
-		                    onSessionFound: (id) => { offlineSessionId = id; },
-		                    onThinkingChange: () => {},
-		                    abort: abortController.signal,
-		                    claudeEnvVars: options.claudeEnvVars,
-		                    claudeArgs: options.claudeArgs,
-		                });
-	            } finally {
+                            await claudeLocal({
+                                path: workingDirectory,
+                                sessionId: null,
+                                onSessionFound: (id) => { offlineSessionId = id; },
+                                onThinkingChange: () => {},
+                                abort: abortController.signal,
+                                claudeArgs: options.claudeArgs,
+                            });
+                    } finally {
                 process.removeListener('SIGINT', abortOnSignal);
                 process.removeListener('SIGTERM', abortOnSignal);
                 reconnection.cancel();
@@ -338,23 +342,23 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         // If the user did not explicitly choose a permission mode for this CLI process, prefer the canonical
         // session metadata snapshot (and, for attach flows, transcript-derived recovery). This is essential for:
         // - UI apply timing = next_prompt (metadata already set, message meta absent)
-	        // - local ↔ remote switching without losing the selected permission policy
-	        await overridesSync.seedFromSession();
-	        overridesSync.syncFromMetadata();
-	        try {
-	            const snapshot = overridesSync.getSnapshot();
-	            writeStartupOverridesCacheForBackend({
-	                backendId: 'claude',
-	                permissionMode: snapshot.permissionMode.current,
-	                permissionModeUpdatedAt: snapshot.permissionMode.updatedAt,
-	                modelId: snapshot.modelOverride.current,
-	                modelUpdatedAt: snapshot.modelOverride.updatedAt,
-	                updatedAt: Date.now(),
-	            });
-	        } catch {
-	            // ignore
-	        }
-	    }
+            // - local ↔ remote switching without losing the selected permission policy
+            await overridesSync.seedFromSession();
+            overridesSync.syncFromMetadata();
+            try {
+                const snapshot = overridesSync.getSnapshot();
+                writeStartupOverridesCacheForBackend({
+                    backendId: 'claude',
+                    permissionMode: snapshot.permissionMode.current,
+                    permissionModeUpdatedAt: snapshot.permissionMode.updatedAt,
+                    modelId: snapshot.modelOverride.current,
+                    modelUpdatedAt: snapshot.modelOverride.updatedAt,
+                    updatedAt: Date.now(),
+                });
+            } catch {
+                // ignore
+            }
+        }
 
     await persistTerminalAttachmentInfoIfNeeded({ sessionId: baseSession.id, terminal });
     sendTerminalFallbackMessageIfNeeded({ session, terminal });
@@ -438,12 +442,12 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     logger.debug(`[START] Hook server started on port ${hookServer.port}`);
 
     // Generate hook settings file for Claude
-    const hookSettingsPath = generateHookSettingsFile(hookServer.port, {
-        enableLocalPermissionBridge: true,
-        permissionHookSecret,
-        claudeConfigDir: options.claudeEnvVars?.CLAUDE_CONFIG_DIR,
-    });
-    logger.debug(`[START] Generated hook settings file: ${hookSettingsPath}`);
+        const hookSettingsPath = generateHookSettingsFile(hookServer.port, {
+            enableLocalPermissionBridge: true,
+            permissionHookSecret,
+            claudeConfigDir: resolveClaudeConfigDirOverride(process.env) ?? undefined,
+        });
+        logger.debug(`[START] Generated hook settings file: ${hookSettingsPath}`);
 
     // Print log file path
     const logPath = logger.logFilePath;
@@ -479,12 +483,15 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     // Forward messages to the queue
     // Permission modes: Use the unified 7-mode type, mapping happens at SDK boundary in claudeRemote.ts
     let currentPermissionMode: PermissionMode = options.permissionMode ?? 'default';
+    let currentAgentModeId: string | null =
+        typeof options.agentModeId === 'string' && options.agentModeId.trim().length > 0 ? options.agentModeId.trim() : null;
+    let currentAgentModeUpdatedAt = typeof options.agentModeUpdatedAt === 'number' ? options.agentModeUpdatedAt : 0;
     let currentModel = options.model; // Track current model state
-	    let currentModelUpdatedAt = typeof options.modelUpdatedAt === 'number' ? options.modelUpdatedAt : 0;
-	    let currentFallbackModel: string | undefined = undefined; // Track current fallback model
-	    let currentCustomSystemPrompt: string | undefined = undefined; // Track current custom system prompt
-	    let currentAppendSystemPrompt: string | undefined = undefined; // Track current append system prompt
-	    session.onUserMessage((message) => {
+        let currentModelUpdatedAt = typeof options.modelUpdatedAt === 'number' ? options.modelUpdatedAt : 0;
+        let currentFallbackModel: string | undefined = undefined; // Track current fallback model
+        let currentCustomSystemPrompt: string | undefined = undefined; // Track current custom system prompt
+        let currentAppendSystemPrompt: string | undefined = undefined; // Track current append system prompt
+        session.onUserMessage((message) => {
         const adoptedModel = adoptModelOverrideFromMetadata({
             currentModelId: currentModel,
             currentUpdatedAt: currentModelUpdatedAt,
@@ -494,6 +501,16 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             currentModel = adoptedModel.modelId;
             currentModelUpdatedAt = adoptedModel.updatedAt;
             logger.debug(`[loop] Model updated from session metadata: ${adoptedModel.modelId || 'reset to default'}`);
+        }
+
+        const resolvedAgentModeOverride = resolveAcpSessionModeOverrideFromMetadataSnapshot({
+            metadata: session.getMetadataSnapshot(),
+        });
+        if (resolvedAgentModeOverride && resolvedAgentModeOverride.updatedAt > currentAgentModeUpdatedAt) {
+            currentAgentModeUpdatedAt = resolvedAgentModeOverride.updatedAt;
+            const normalizedModeId = resolvedAgentModeOverride.modeId.trim();
+            currentAgentModeId = normalizedModeId.length > 0 ? normalizedModeId : null;
+            logger.debug(`[loop] Agent mode updated from session metadata: ${currentAgentModeId ?? 'default'}`);
         }
 
         // Resolve permission mode from meta - pass through as-is, mapping happens at SDK boundary
@@ -550,7 +567,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             logger.debug(`[loop] User message received with no append system prompt override, using current: ${currentAppendSystemPrompt ? 'set' : 'none'}`);
         }
 
-	        currentClaudeRemoteMetaState = applyClaudeRemoteMetaState(currentClaudeRemoteMetaState, message.meta);
+            currentClaudeRemoteMetaState = applyClaudeRemoteMetaState(currentClaudeRemoteMetaState, message.meta);
         const nextLocalPermissionBridgeEnabled = currentClaudeRemoteMetaState.claudeLocalPermissionBridgeEnabled === true;
         const nextLocalPermissionBridgeWaitIndefinitely = currentClaudeRemoteMetaState.claudeLocalPermissionBridgeWaitIndefinitely === true;
         const nextLocalPermissionBridgeTimeoutMs = nextLocalPermissionBridgeWaitIndefinitely
@@ -585,59 +602,44 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         }
 
         const participantRouting = parseParticipantMessageMeta(message.meta);
-        const queuedText = participantRouting
+
+        // Push with resolved permission mode, model, system prompts, and tools
+        const enhancedMode: EnhancedMode = {
+            permissionMode: messagePermissionMode || 'default',
+            agentModeId: currentAgentModeId,
+            replaySeedAllowed: participantRouting ? true : parseSpecialCommand(message.content.text).type === null,
+            localId: message.localId ?? null,
+            model: messageModel,
+            fallbackModel: messageFallbackModel,
+            customSystemPrompt: messageCustomSystemPrompt,
+            appendSystemPrompt: messageAppendSystemPrompt,
+            ...currentClaudeRemoteMetaState,
+        };
+
+        const baseQueuedText = participantRouting
             ? formatClaudeTeamRoutedPrompt({ originalText: message.content.text, recipient: participantRouting.recipient })
             : message.content.text;
 
         // Participant-routed user messages must be treated as plain text (no special command parsing).
         if (!participantRouting) {
-        // Check for special commands before processing
-        const specialCommand = parseSpecialCommand(message.content.text);
+            const specialCommand = parseSpecialCommand(message.content.text);
 
-        if (specialCommand.type === 'compact') {
-            logger.debug('[start] Detected /compact command');
-	            const enhancedMode: EnhancedMode = {
-	                permissionMode: messagePermissionMode || 'default',
-	                localId: message.localId ?? null,
-	                model: messageModel,
-	                fallbackModel: messageFallbackModel,
-	                customSystemPrompt: messageCustomSystemPrompt,
-	                appendSystemPrompt: messageAppendSystemPrompt,
-	                ...currentClaudeRemoteMetaState,
-	            };
-            messageQueue.pushIsolateAndClear(specialCommand.originalMessage || message.content.text, enhancedMode);
-            logger.debugLargeJson('[start] /compact command pushed to queue:', message);
-            return;
+            if (specialCommand.type === 'compact') {
+                logger.debug('[start] Detected /compact command');
+                messageQueue.pushIsolateAndClear(specialCommand.originalMessage || message.content.text, enhancedMode);
+                logger.debugLargeJson('[start] /compact command pushed to queue:', message);
+                return;
+            }
+
+            if (specialCommand.type === 'clear') {
+                logger.debug('[start] Detected /clear command');
+                messageQueue.pushIsolateAndClear(specialCommand.originalMessage || message.content.text, enhancedMode);
+                logger.debugLargeJson('[start] /clear command pushed to queue:', message);
+                return;
+            }
         }
 
-        if (specialCommand.type === 'clear') {
-            logger.debug('[start] Detected /clear command');
-	            const enhancedMode: EnhancedMode = {
-	                permissionMode: messagePermissionMode || 'default',
-	                localId: message.localId ?? null,
-	                model: messageModel,
-	                fallbackModel: messageFallbackModel,
-	                customSystemPrompt: messageCustomSystemPrompt,
-	                appendSystemPrompt: messageAppendSystemPrompt,
-	                ...currentClaudeRemoteMetaState,
-	            };
-            messageQueue.pushIsolateAndClear(specialCommand.originalMessage || message.content.text, enhancedMode);
-            logger.debugLargeJson('[start] /clear command pushed to queue:', message);
-            return;
-        }
-        }
-
-        // Push with resolved permission mode, model, system prompts, and tools
-	        const enhancedMode: EnhancedMode = {
-	            permissionMode: messagePermissionMode || 'default',
-	            localId: message.localId ?? null,
-	            model: messageModel,
-	            fallbackModel: messageFallbackModel,
-	            customSystemPrompt: messageCustomSystemPrompt,
-	            appendSystemPrompt: messageAppendSystemPrompt,
-	            ...currentClaudeRemoteMetaState,
-	        };
-        messageQueue.push(queuedText, enhancedMode);
+        messageQueue.push(baseQueuedText, enhancedMode);
         logger.debugLargeJson('User message pushed to queue:', message)
     });
 
@@ -694,15 +696,15 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         }
     };
 
-    const terminationHandlers = registerRunnerTerminationHandlers({
-        process,
-        exit: (code) => process.exit(code),
-        onTerminate: cleanup,
-        shouldTerminateOnUnhandledRejection: createClaudeShouldTerminateOnUnhandledRejection({
-            abortWasRequestedRecently: (withinMs) => currentSession?.wasUserAbortRequestedRecently(withinMs) ?? false,
-            ignoreWindowMs: configuration.claudeAbortUnhandledRejectionIgnoreWindowMs,
-        }),
-    });
+        const terminationHandlers = registerRunnerTerminationHandlers({
+            process,
+            exit: (code) => process.exit(code),
+            onTerminate: cleanup,
+            shouldTerminateOnUnhandledRejection: createClaudeShouldTerminateOnUnhandledRejection({
+                abortWasRequestedRecently: (withinMs) => currentSession?.wasUserAbortRequestedRecently(withinMs) ?? false,
+                ignoreWindowMs: configuration.claudeAbortUnhandledRejectionIgnoreWindowMs,
+            }),
+        });
 
     registerKillSessionHandler(session.rpcHandlerManager, async () => {
         terminationHandlers.requestTermination({ kind: 'killSession' });
@@ -710,18 +712,20 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     });
 
     // Create claude loop
-	    const exitCode = await loop({
-	        path: workingDirectory,
-	        model: options.model,
-	        permissionMode: options.permissionMode,
-	        permissionModeUpdatedAt: options.permissionModeUpdatedAt,
-	        startingMode: options.startingMode,
-	        startedBy: options.startedBy,
-	        messageQueue,
-	        session,
-	        pushSender: api.push(),
-	        onModeChange: (newMode) => {
-	            session.sendSessionEvent({ type: 'switch', mode: newMode });
+            const exitCode = await loop({
+                path: workingDirectory,
+                model: options.model,
+                permissionMode: options.permissionMode,
+                permissionModeUpdatedAt: options.permissionModeUpdatedAt,
+                startingMode: options.startingMode,
+                claudeCodeExperimentalAgentTeamsEnabled: currentClaudeRemoteMetaState.claudeCodeExperimentalAgentTeamsEnabled,
+                startedBy: options.startedBy,
+                messageQueue,
+                session,
+            pushSender: api.push(),
+            accountSettings,
+            onModeChange: (newMode) => {
+                session.sendSessionEvent({ type: 'switch', mode: newMode });
             updateAgentStateBestEffort(
                 session,
                 (currentState) => ({
@@ -745,11 +749,10 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
                 rebuildLocalPermissionBridge();
             }
         },
-		        claudeEnvVars: options.claudeEnvVars,
-		        claudeArgs: options.claudeArgs,
-		        hookSettingsPath,
-		        jsRuntime: options.jsRuntime
-		    });
+                    claudeArgs: options.claudeArgs,
+                    hookSettingsPath,
+                    jsRuntime: options.jsRuntime
+                });
 
     terminationHandlers.dispose();
 
@@ -886,13 +889,13 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
             startHookServer: async () => {
                 return await startHookServer(hookServerOptions);
             },
-            generateHookSettingsFile: (port) => {
-                return generateHookSettingsFile(port, {
-                    enableLocalPermissionBridge: true,
-                    permissionHookSecret,
-                    claudeConfigDir: options.claudeEnvVars?.CLAUDE_CONFIG_DIR,
-                });
-            },
+                generateHookSettingsFile: (port) => {
+                    return generateHookSettingsFile(port, {
+                        enableLocalPermissionBridge: true,
+                        permissionHookSecret,
+                        claudeConfigDir: resolveClaudeConfigDirOverride(process.env) ?? undefined,
+                    });
+                },
             cleanupHookSettingsFile,
             initializeSessionInBackground: async ({ artifacts, signal }) => {
                 if (signal.aborted) return;
@@ -918,6 +921,8 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     terminalRuntime: options.terminalRuntime ?? null,
                     permissionMode: initialPermissionMode,
                     permissionModeUpdatedAt: typeof explicitPermissionModeUpdatedAt === 'number' ? explicitPermissionModeUpdatedAt : Date.now(),
+                    agentModeId: options.agentModeId,
+                    agentModeUpdatedAt: options.agentModeUpdatedAt,
                     modelId: initialModelId,
                     modelUpdatedAt: initialModelUpdatedAt,
                 });
@@ -940,55 +945,55 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         currentSession.setPushSender(pushSender);
                     }
 
-	                    {
-	                        const permissionModeRef = {
-	                            current: options.permissionMode ?? 'default',
-	                            updatedAt: typeof options.permissionModeUpdatedAt === 'number' ? options.permissionModeUpdatedAt : 0,
-	                        };
-	                        const modelOverrideRef = { current: initialModelId ?? null, updatedAt: initialModelUpdatedAt };
+                        {
+                            const permissionModeRef = {
+                                current: options.permissionMode ?? 'default',
+                                updatedAt: typeof options.permissionModeUpdatedAt === 'number' ? options.permissionModeUpdatedAt : 0,
+                            };
+                            const modelOverrideRef = { current: initialModelId ?? null, updatedAt: initialModelUpdatedAt };
 
-	                        const overridesSync = await initializeRuntimeOverridesSynchronizer({
-	                            explicitPermissionMode:
-	                                typeof explicitPermissionMode === 'string' ? (explicitPermissionMode as PermissionMode) : undefined,
-		                            sessionKind: existingSessionId ? 'attach' : 'fresh',
-		                            take: configuration.startupPermissionSeedTranscriptTake,
-		                            session: {
-		                                getMetadataSnapshot: () => session.getMetadataSnapshot(),
-		                                fetchLatestUserPermissionIntentFromTranscript: (args) =>
-	                                    session.fetchLatestUserPermissionIntentFromTranscript(args),
-	                            },
-	                            permissionMode: permissionModeRef,
-	                            modelOverride: modelOverrideRef,
-	                            onPermissionModeApplied: () => {
-	                                options.permissionMode = permissionModeRef.current;
-	                                options.permissionModeUpdatedAt = permissionModeRef.updatedAt;
-	                            },
-	                            onModelOverrideApplied: () => {
-	                                if (initialModelId) return;
-	                                options.modelId = modelOverrideRef.current ?? undefined;
-	                                options.model = modelOverrideRef.current ?? undefined;
-	                                options.modelUpdatedAt = modelOverrideRef.updatedAt;
-	                            },
-	                        });
+                            const overridesSync = await initializeRuntimeOverridesSynchronizer({
+                                explicitPermissionMode:
+                                    typeof explicitPermissionMode === 'string' ? (explicitPermissionMode as PermissionMode) : undefined,
+                                    sessionKind: existingSessionId ? 'attach' : 'fresh',
+                                    take: configuration.startupPermissionSeedTranscriptTake,
+                                    session: {
+                                        getMetadataSnapshot: () => session.getMetadataSnapshot(),
+                                        fetchLatestUserPermissionIntentFromTranscript: (args) =>
+                                        session.fetchLatestUserPermissionIntentFromTranscript(args),
+                                },
+                                permissionMode: permissionModeRef,
+                                modelOverride: modelOverrideRef,
+                                onPermissionModeApplied: () => {
+                                    options.permissionMode = permissionModeRef.current;
+                                    options.permissionModeUpdatedAt = permissionModeRef.updatedAt;
+                                },
+                                onModelOverrideApplied: () => {
+                                    if (initialModelId) return;
+                                    options.modelId = modelOverrideRef.current ?? undefined;
+                                    options.model = modelOverrideRef.current ?? undefined;
+                                    options.modelUpdatedAt = modelOverrideRef.updatedAt;
+                                },
+                            });
 
-		                        const stopSeedSpan = timing.startSpan('resolve_startup_permission_mode');
-		                        await overridesSync.seedFromSession();
-		                        stopSeedSpan();
-		                        overridesSync.syncFromMetadata();
-		                        try {
-		                            const snapshot = overridesSync.getSnapshot();
-		                            writeStartupOverridesCacheForBackend({
-		                                backendId: 'claude',
-		                                permissionMode: snapshot.permissionMode.current,
-		                                permissionModeUpdatedAt: snapshot.permissionMode.updatedAt,
-		                                modelId: snapshot.modelOverride.current,
-		                                modelUpdatedAt: snapshot.modelOverride.updatedAt,
-		                                updatedAt: Date.now(),
-		                            });
-		                        } catch {
-		                            // ignore
-		                        }
-		                    }
+                                const stopSeedSpan = timing.startSpan('resolve_startup_permission_mode');
+                                await overridesSync.seedFromSession();
+                                stopSeedSpan();
+                                overridesSync.syncFromMetadata();
+                                try {
+                                    const snapshot = overridesSync.getSnapshot();
+                                    writeStartupOverridesCacheForBackend({
+                                        backendId: 'claude',
+                                        permissionMode: snapshot.permissionMode.current,
+                                        permissionModeUpdatedAt: snapshot.permissionMode.updatedAt,
+                                        modelId: snapshot.modelOverride.current,
+                                        modelUpdatedAt: snapshot.modelOverride.updatedAt,
+                                        updatedAt: Date.now(),
+                                    });
+                                } catch {
+                                    // ignore
+                                }
+                            }
 
                 // Extract SDK metadata in background and update session when ready
                 extractSDKMetadataAsync(async (sdkMetadata) => {
@@ -1024,10 +1029,10 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                 // Forward messages from server to the local queue.
                 let currentPermissionMode: PermissionMode = options.permissionMode ?? 'default';
                 let currentModel = options.model;
-	                let currentModelUpdatedAt = typeof options.modelUpdatedAt === 'number' ? options.modelUpdatedAt : 0;
-	                let currentFallbackModel: string | undefined = undefined;
-	                let currentCustomSystemPrompt: string | undefined = undefined;
-	                let currentAppendSystemPrompt: string | undefined = undefined;
+                    let currentModelUpdatedAt = typeof options.modelUpdatedAt === 'number' ? options.modelUpdatedAt : 0;
+                    let currentFallbackModel: string | undefined = undefined;
+                    let currentCustomSystemPrompt: string | undefined = undefined;
+                    let currentAppendSystemPrompt: string | undefined = undefined;
 
                 session.onUserMessage((message) => {
                     const adoptedModel = adoptModelOverrideFromMetadata({
@@ -1075,7 +1080,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         currentAppendSystemPrompt = messageAppendSystemPrompt;
                     }
 
-	                    currentClaudeRemoteMetaState = applyClaudeRemoteMetaState(currentClaudeRemoteMetaState, message.meta);
+                        currentClaudeRemoteMetaState = applyClaudeRemoteMetaState(currentClaudeRemoteMetaState, message.meta);
                     const nextLocalPermissionBridgeEnabled = currentClaudeRemoteMetaState.claudeLocalPermissionBridgeEnabled === true;
                     const nextLocalPermissionBridgeWaitIndefinitely = currentClaudeRemoteMetaState.claudeLocalPermissionBridgeWaitIndefinitely === true;
                     const nextLocalPermissionBridgeTimeoutMs = nextLocalPermissionBridgeWaitIndefinitely
@@ -1109,38 +1114,29 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     }
 
                     const participantRouting = parseParticipantMessageMeta(message.meta);
-                    const queuedText = participantRouting
+                    const enhancedMode: EnhancedMode = {
+                        permissionMode: messagePermissionMode || 'default',
+                        replaySeedAllowed: participantRouting ? true : parseSpecialCommand(message.content.text).type === null,
+                        localId: message.localId ?? null,
+                        model: messageModel,
+                        fallbackModel: messageFallbackModel,
+                        customSystemPrompt: messageCustomSystemPrompt,
+                        appendSystemPrompt: messageAppendSystemPrompt,
+                        ...currentClaudeRemoteMetaState,
+                    };
+                    const baseQueuedText = participantRouting
                         ? formatClaudeTeamRoutedPrompt({ originalText: message.content.text, recipient: participantRouting.recipient })
                         : message.content.text;
 
-                    // Participant-routed user messages must be treated as plain text (no special command parsing).
                     if (!participantRouting) {
-                    const specialCommand = parseSpecialCommand(message.content.text);
-	                    if (specialCommand.type === 'compact' || specialCommand.type === 'clear') {
-	                        const enhancedMode: EnhancedMode = {
-	                            permissionMode: messagePermissionMode || 'default',
-	                            localId: message.localId ?? null,
-	                            model: messageModel,
-	                            fallbackModel: messageFallbackModel,
-	                            customSystemPrompt: messageCustomSystemPrompt,
-	                            appendSystemPrompt: messageAppendSystemPrompt,
-	                            ...currentClaudeRemoteMetaState,
-	                        };
-                        messageQueue.pushIsolateAndClear(specialCommand.originalMessage || message.content.text, enhancedMode);
-                        return;
-                    }
+                        const specialCommand = parseSpecialCommand(message.content.text);
+                        if (specialCommand.type === 'compact' || specialCommand.type === 'clear') {
+                            messageQueue.pushIsolateAndClear(specialCommand.originalMessage || message.content.text, enhancedMode);
+                            return;
+                        }
                     }
 
-	                    const enhancedMode: EnhancedMode = {
-	                        permissionMode: messagePermissionMode || 'default',
-	                        localId: message.localId ?? null,
-	                        model: messageModel,
-	                        fallbackModel: messageFallbackModel,
-	                        customSystemPrompt: messageCustomSystemPrompt,
-	                        appendSystemPrompt: messageAppendSystemPrompt,
-	                        ...currentClaudeRemoteMetaState,
-	                    };
-                    messageQueue.push(queuedText, enhancedMode);
+                    messageQueue.push(baseQueuedText, enhancedMode);
                 });
 
                 if (timing.enabled) {
@@ -1158,20 +1154,20 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                 };
 
                 const stopCreateSpan = timing.startSpan('initialize_backend_run_session');
-	                const initialized = await initializeBackendRunSession({
-	                    api,
-	                    sessionTag,
-	                    metadata,
-	                    state,
+                    const initialized = await initializeBackendRunSession({
+                        api,
+                        sessionTag,
+                        metadata,
+                        state,
                         existingSessionId,
-		                    uiLogPrefix: '[claude]',
-		                    offlineNotify: (message: string) => {
-		                        artifacts.deferredSession.sendSessionEvent({ type: 'message', message });
-		                    },
-	                    startupMetadataOverrides: createStartupMetadataOverrides({
-	                        permissionMode: explicitPermissionMode,
-	                        permissionModeUpdatedAt: explicitPermissionModeUpdatedAt,
-	                        modelId: initialModelId ?? undefined,
+                            uiLogPrefix: '[claude]',
+                            offlineNotify: (message: string) => {
+                                artifacts.deferredSession.sendSessionEvent({ type: 'message', message });
+                            },
+                        startupMetadataOverrides: createStartupMetadataOverrides({
+                            permissionMode: explicitPermissionMode,
+                            permissionModeUpdatedAt: explicitPermissionModeUpdatedAt,
+                            modelId: initialModelId ?? undefined,
                         modelUpdatedAt: initialModelUpdatedAt,
                     }),
                     allowOfflineStub: true,
@@ -1208,15 +1204,16 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     throw new Error('Claude startup prerequisites missing');
                 }
 
-                const exitCode = await loop({
-                    path: workingDirectory,
-                    model: options.model,
-                    permissionMode: options.permissionMode,
-                    permissionModeUpdatedAt: options.permissionModeUpdatedAt,
-                    startingMode: options.startingMode,
-                    startedBy: options.startedBy,
-                    messageQueue,
-                    onModeChange: (newMode) => {
+                    const exitCode = await loop({
+                        path: workingDirectory,
+                        model: options.model,
+                        permissionMode: options.permissionMode,
+                        permissionModeUpdatedAt: options.permissionModeUpdatedAt,
+                        startingMode: options.startingMode,
+                        claudeCodeExperimentalAgentTeamsEnabled: currentClaudeRemoteMetaState.claudeCodeExperimentalAgentTeamsEnabled,
+                        startedBy: options.startedBy,
+                        messageQueue,
+                        onModeChange: (newMode) => {
                         artifacts.deferredSession.sendSessionEvent({ type: 'switch', mode: newMode });
                         updateAgentStateBestEffort(
                             artifacts.deferredSession,
@@ -1244,42 +1241,37 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         if (pushSender) {
                             sessionInstance.setPushSender(pushSender);
                         }
-                    },
-                    session: artifacts.deferredSession,
-                    claudeEnvVars: options.claudeEnvVars,
-                    claudeArgs: options.claudeArgs,
-                    hookSettingsPath,
-                    jsRuntime: options.jsRuntime,
-                    pushSender: null,
-                });
+                        },
+                        session: artifacts.deferredSession,
+                        claudeArgs: options.claudeArgs,
+                        hookSettingsPath,
+                        jsRuntime: options.jsRuntime,
+                        pushSender: null,
+                    });
 
                 return exitCode;
             },
         },
     });
 
-	    const coordinator = runStartupCoordinator({
-	        ctx: {
-	            backendId: 'claude',
-	            sessionKind: existingSessionId ? 'attach' : 'fresh',
-	            startingModeIntent: 'local',
-	            startedBy: 'terminal',
-	            hasTty: Boolean(process.stdout.isTTY && process.stdin.isTTY),
-	            workspaceDir: workingDirectory,
+        const coordinator = runStartupCoordinator({
+            ctx: {
+                backendId: 'claude',
+                sessionKind: existingSessionId ? 'attach' : 'fresh',
+                startingModeIntent: 'local',
+                startedBy: 'terminal',
+                hasTty: Boolean(process.stdout.isTTY && process.stdin.isTTY),
+                workspaceDir: workingDirectory,
             nowMs,
             timing,
         },
         spec: startupSpec,
     });
 
-    const terminationHandlers = registerRunnerTerminationHandlers({
-        process,
-        exit: (code) => process.exit(code),
-        onTerminate: async (event, outcome) => {
-        shouldTerminateOnUnhandledRejection: createClaudeShouldTerminateOnUnhandledRejection({
-            abortWasRequestedRecently: (withinMs) => currentSession?.wasUserAbortRequestedRecently(withinMs) ?? false,
-            ignoreWindowMs: configuration.claudeAbortUnhandledRejectionIgnoreWindowMs,
-        }),
+        const terminationHandlers = registerRunnerTerminationHandlers({
+            process,
+            exit: (code) => process.exit(code),
+            onTerminate: async (event, outcome) => {
             restoreStdinBestEffort({ stdin: process.stdin as any });
             try {
                 coordinator.cancel();
@@ -1304,10 +1296,14 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
             }
 
             // Preserve existing termination semantics
-            void event;
-            void outcome;
-        },
-    });
+                void event;
+                void outcome;
+            },
+            shouldTerminateOnUnhandledRejection: createClaudeShouldTerminateOnUnhandledRejection({
+                abortWasRequestedRecently: (withinMs) => currentSession?.wasUserAbortRequestedRecently(withinMs) ?? false,
+                ignoreWindowMs: configuration.claudeAbortUnhandledRejectionIgnoreWindowMs,
+            }),
+        });
 
     registerKillSessionHandler(coordinator.artifacts.deferredSession.rpcHandlerManager, async () => {
         terminationHandlers.requestTermination({ kind: 'killSession' });
