@@ -31,6 +31,7 @@ export function buildGitSnapshot(input: {
     statusOutput: string;
     includedNumStatOutput: string;
     pendingNumStatOutput: string;
+    untrackedStatsByPath?: Record<string, { pendingAdded: number; isBinary: boolean }>;
 }): ScmWorkingSnapshot {
     const parsedStatus = parseGitStatusPorcelainV2Z(input.statusOutput);
     const includedSummary = parseNumStatZ(input.includedNumStatOutput);
@@ -62,6 +63,7 @@ export function buildGitSnapshot(input: {
 
     for (const path of parsedStatus.notAdded) {
         if (entries.has(path)) continue;
+        const untrackedStats = input.untrackedStatsByPath?.[path] ?? null;
         entries.set(path, {
             path,
             previousPath: null,
@@ -73,9 +75,9 @@ export function buildGitSnapshot(input: {
             stats: {
                 includedAdded: 0,
                 includedRemoved: 0,
-                pendingAdded: 0,
+                pendingAdded: untrackedStats ? Math.max(0, Number(untrackedStats.pendingAdded) || 0) : 0,
                 pendingRemoved: 0,
-                isBinary: false,
+                isBinary: untrackedStats ? Boolean(untrackedStats.isBinary) : false,
             },
         });
     }

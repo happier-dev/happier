@@ -62,6 +62,30 @@ describe('git status snapshot parser', () => {
         });
     });
 
+    it('applies untracked file stats when provided (counts as pending additions)', () => {
+        const statusOutput =
+            '# branch.oid 1111111111111111111111111111111111111111\0' +
+            '# branch.head main\0' +
+            '? Dockerfile\0';
+
+        const snapshot = buildGitSnapshot({
+            projectKey: 'machine-1:/repo',
+            fetchedAt: 123,
+            rootPath: '/repo',
+            statusOutput,
+            includedNumStatOutput: '',
+            pendingNumStatOutput: '',
+            untrackedStatsByPath: {
+                Dockerfile: { pendingAdded: 12, isBinary: false },
+            },
+        });
+
+        const untracked = snapshot.entries.find((entry) => entry.path === 'Dockerfile');
+        expect(untracked?.kind).toBe('untracked');
+        expect(untracked?.stats.pendingAdded).toBe(12);
+        expect(snapshot.totals.pendingAdded).toBe(12);
+    });
+
     it('parses newline-containing paths for ordinary and renamed entries', () => {
         const statusOutput =
             '# branch.oid 1111111111111111111111111111111111111111\0' +

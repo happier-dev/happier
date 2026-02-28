@@ -4,6 +4,7 @@ import type { ScmBackend } from '../../types';
 import { detectGitRepo, getGitSnapshot } from './repository';
 import { createGitCapabilities } from './statusSnapshot';
 import { gitChangeExclude, gitChangeInclude } from './operations/changeApply';
+import { gitChangeDiscard } from './operations/changeDiscard';
 import { gitCommitBackout, gitCommitCreate } from './operations/commitOperations';
 import { gitDiffCommit, gitDiffFile, gitLogList } from './operations/readOperations';
 import { gitRemoteFetch, gitRemotePull, gitRemotePush } from './operations/remoteOperations';
@@ -17,6 +18,7 @@ function createUnsupportedGitModeCapabilities() {
         readLog: false,
         writeInclude: false,
         writeExclude: false,
+        writeDiscard: false,
         writeCommit: false,
         writeCommitPathSelection: false,
         writeCommitLineSelection: false,
@@ -60,6 +62,7 @@ export function createGitBackend(): ScmBackend {
         diffCommit: gitDiffCommit,
         changeInclude: gitChangeInclude,
         changeExclude: gitChangeExclude,
+        changeDiscard: gitChangeDiscard,
         commitCreate: gitCommitCreate,
         commitBackout: gitCommitBackout,
         logList: gitLogList,

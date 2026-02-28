@@ -3,7 +3,7 @@ import type { ScmBackendDescribeResponse } from '@happier-dev/protocol';
 import type { ScmBackend } from '../../types';
 import { createSaplingCapabilities } from './capabilities';
 import { mapSaplingErrorCode } from './errorCodes';
-import { saplingChangeExclude, saplingChangeInclude } from './operations/changeOperations';
+import { saplingChangeDiscard, saplingChangeExclude, saplingChangeInclude } from './operations/changeOperations';
 import { saplingCommitBackout, saplingCommitCreate } from './operations/commitOperations';
 import { saplingDiffCommit, saplingDiffFile, saplingLogList } from './operations/readOperations';
 import { saplingRemoteFetch, saplingRemotePull, saplingRemotePush } from './operations/remoteOperations';
@@ -58,6 +58,7 @@ export function createSaplingBackend(): ScmBackend {
         async changeExclude() {
             return saplingChangeExclude();
         },
+        changeDiscard: saplingChangeDiscard,
         commitCreate: saplingCommitCreate,
         commitBackout: saplingCommitBackout,
         logList: saplingLogList,
