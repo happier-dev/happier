@@ -1,13 +1,22 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { handleClaudeCliCommand } from './command';
-
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.resetModules();
+  vi.unmock('node:child_process');
 });
 
 describe('happier (default claude) help output', () => {
   it('includes global server selection flags', async () => {
+    vi.resetModules();
+    const execFileSyncSpy = vi.fn(() => 'claude help output');
+    vi.doMock('node:child_process', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:child_process')>();
+      return { ...actual, execFileSync: execFileSyncSpy };
+    });
+
+    const { handleClaudeCliCommand } = await import('./command');
+
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
       throw new Error(`exit:${code ?? 0}`);
     }) as any);
@@ -34,5 +43,11 @@ describe('happier (default claude) help output', () => {
     expect(stdout).toContain('--public-server-url');
     expect(stdout).toContain('--server ');
     expect(stdout).not.toContain('--claude-env');
+
+    expect(execFileSyncSpy).toHaveBeenCalledWith(
+      process.execPath,
+      expect.arrayContaining([expect.stringContaining('claude_local_launcher.cjs'), '--help']),
+      expect.objectContaining({ encoding: 'utf8', windowsHide: true }),
+    );
   });
 });
