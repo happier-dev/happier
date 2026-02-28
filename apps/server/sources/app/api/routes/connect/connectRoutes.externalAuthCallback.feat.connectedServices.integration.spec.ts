@@ -161,6 +161,64 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
         await app.close();
     });
 
+    it("redirects back to the requesting web origin when the auth params request includes a loopback Origin header", async () => {
+        process.env.GITHUB_CLIENT_ID = "gh_client";
+        process.env.GITHUB_CLIENT_SECRET = "gh_secret";
+        process.env.GITHUB_REDIRECT_URL = "https://api.example.test/v1/oauth/github/callback";
+        process.env.AUTH_SIGNUP_PROVIDERS = "github";
+        process.env.HAPPIER_WEBAPP_URL = "https://app.example.test";
+
+        const seed = new Uint8Array(32).fill(2);
+        const kp = tweetnacl.sign.keyPair.fromSeed(seed);
+        const publicKey = privacyKit.encodeBase64(new Uint8Array(kp.publicKey));
+
+        const ghProfile = {
+            id: 123,
+            login: "octocat",
+            avatar_url: "https://avatars.example.test/octo.png",
+            name: "Octo Cat",
+        };
+
+        const fetchMock = vi.fn(async (url: any) => {
+            if (typeof url === "string" && url.includes("https://github.com/login/oauth/access_token")) {
+                return { ok: true, json: async () => ({ access_token: "tok_1" }) } as any;
+            }
+            if (typeof url === "string" && url.includes("https://api.github.com/user")) {
+                return { ok: true, json: async () => ghProfile } as any;
+            }
+            throw new Error(`Unexpected fetch: ${String(url)}`);
+        });
+        vi.stubGlobal("fetch", fetchMock as any);
+
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const origin = "http://localhost:19081";
+        const paramsRes = await app.inject({
+            method: "GET",
+            url: `/v1/auth/external/github/params?publicKey=${encodeURIComponent(publicKey)}`,
+            headers: { origin },
+        });
+        expect(paramsRes.statusCode).toBe(200);
+        const paramsUrl = new URL((paramsRes.json() as { url: string }).url);
+        const state = paramsUrl.searchParams.get("state");
+        expect(state).toBeTruthy();
+
+        const res = await app.inject({
+            method: "GET",
+            url: `/v1/oauth/github/callback?code=c1&state=${encodeURIComponent(state!)}`,
+        });
+
+        expect(res.statusCode).toBe(302);
+        const redirect = new URL(res.headers.location as string);
+        expect(redirect.origin + redirect.pathname).toBe(`${origin}/oauth/github`);
+        expect(redirect.searchParams.get("flow")).toBe("auth");
+        expect(redirect.searchParams.get("pending")).toBeTruthy();
+
+        await app.close();
+    });
+
     it("creates a pending auth record for proofHash auth-start and includes provisioning hints in the redirect", async () => {
         process.env.GITHUB_CLIENT_ID = "gh_client";
         process.env.GITHUB_CLIENT_SECRET = "gh_secret";

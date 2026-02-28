@@ -16,6 +16,7 @@ import { deleteOAuthPendingBestEffort, loadValidOAuthPending } from "./connectRo
 import { ExternalOAuthErrorResponseSchema, ExternalOAuthParamsResponseSchema } from "@happier-dev/protocol";
 import { readAuthOauthKeylessFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveKeylessAccountsAvailability } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
+import { resolveWebAppOAuthReturnUrlFromRequestHeaders } from "./oauthExternal/oauthExternalConfig";
 
 export function connectAuthExternalRoutes(app: Fastify) {
     //
@@ -107,6 +108,11 @@ export function connectAuthExternalRoutes(app: Fastify) {
         }
 
         try {
+            const webAppOAuthReturnUrl = resolveWebAppOAuthReturnUrlFromRequestHeaders({
+                env: process.env,
+                providerId,
+                headers: request.headers as any,
+            });
             const url = await createExternalAuthorizeUrl({
                 flow: "auth",
                 env: process.env,
@@ -114,6 +120,7 @@ export function connectAuthExternalRoutes(app: Fastify) {
                 provider,
                 publicKeyHex,
                 proofHash,
+                ...(webAppOAuthReturnUrl ? { webAppOAuthReturnUrl } : {}),
             });
             if (!url) return reply.code(400).send({ error: OAUTH_STATE_UNAVAILABLE_CODE });
             return reply.send({ url });

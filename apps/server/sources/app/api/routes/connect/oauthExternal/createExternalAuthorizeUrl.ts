@@ -16,6 +16,7 @@ type ExternalAuthorizeFlowParams =
           env: NodeJS.ProcessEnv;
           publicKeyHex: string | null;
           proofHash: string | null;
+          webAppOAuthReturnUrl?: string | null;
       }>
     | Readonly<{
           flow: "connect";
@@ -23,6 +24,7 @@ type ExternalAuthorizeFlowParams =
           provider: OAuthFlowProvider;
           env: NodeJS.ProcessEnv;
           userId: string;
+          webAppOAuthReturnUrl?: string | null;
       }>;
 
 export async function createExternalAuthorizeUrl(params: ExternalAuthorizeFlowParams): Promise<string | null> {
@@ -38,7 +40,12 @@ export async function createExternalAuthorizeUrl(params: ExternalAuthorizeFlowPa
             await db.repeatKey.create({
                 data: {
                     key: `oauth_state_${sid}`,
-                    value: JSON.stringify({ provider: params.providerId, pkceCodeVerifier, nonce }),
+                    value: JSON.stringify({
+                        provider: params.providerId,
+                        pkceCodeVerifier,
+                        nonce,
+                        ...(params.webAppOAuthReturnUrl ? { webAppOAuthReturnUrl: params.webAppOAuthReturnUrl } : {}),
+                    }),
                     expiresAt: new Date(Date.now() + ttlMs),
                 },
             });

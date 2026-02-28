@@ -46,10 +46,10 @@ export function registerOAuthCallbackRoute(app: Fastify) {
     }, async (request, reply) => {
         const providerId = request.params.provider.toString().trim().toLowerCase();
         const provider = findOAuthProviderById(process.env, providerId);
-        const webAppUrl = resolveWebAppOAuthReturnUrlFromEnv(process.env, providerId);
+        const fallbackWebAppUrl = resolveWebAppOAuthReturnUrlFromEnv(process.env, providerId);
 
         if (!provider) {
-            return reply.redirect(buildRedirectUrl(webAppUrl, { error: "unsupported-provider" }));
+            return reply.redirect(buildRedirectUrl(fallbackWebAppUrl, { error: "unsupported-provider" }));
         }
 
         const { code, state } = request.query;
@@ -59,31 +59,36 @@ export function registerOAuthCallbackRoute(app: Fastify) {
         if (!oauthState || oauthState.provider !== providerId) {
             const stateHash = createHash("sha256").update(state, "utf8").digest("hex").slice(0, 12);
             log({ module: "oauth" }, `Invalid state token (sha256:${stateHash})`);
-            return reply.redirect(buildRedirectUrl(webAppUrl, { error: "invalid_state" }));
+            return reply.redirect(buildRedirectUrl(fallbackWebAppUrl, { error: "invalid_state" }));
         }
 
         const sid = oauthState.sid?.toString().trim() || "";
         if (!sid) {
-            return reply.redirect(buildRedirectUrl(webAppUrl, { flow: oauthState.flow, error: "invalid_state" }));
+            return reply.redirect(buildRedirectUrl(fallbackWebAppUrl, { flow: oauthState.flow, error: "invalid_state" }));
         }
         const attempt = await loadValidOAuthStateAttempt(sid);
         if (!attempt) {
-            return reply.redirect(buildRedirectUrl(webAppUrl, { flow: oauthState.flow, error: "invalid_state" }));
+            return reply.redirect(buildRedirectUrl(fallbackWebAppUrl, { flow: oauthState.flow, error: "invalid_state" }));
         }
         await deleteOAuthStateAttemptBestEffort(sid);
         let attemptJson: unknown;
         try {
             attemptJson = JSON.parse(attempt.value);
         } catch {
-            return reply.redirect(buildRedirectUrl(webAppUrl, { flow: oauthState.flow, error: "invalid_state" }));
+            return reply.redirect(buildRedirectUrl(fallbackWebAppUrl, { flow: oauthState.flow, error: "invalid_state" }));
         }
         const attemptParsed = oauthStateAttemptSchema.safeParse(attemptJson);
         if (!attemptParsed.success) {
-            return reply.redirect(buildRedirectUrl(webAppUrl, { flow: oauthState.flow, error: "invalid_state" }));
+            return reply.redirect(buildRedirectUrl(fallbackWebAppUrl, { flow: oauthState.flow, error: "invalid_state" }));
         }
         if (attemptParsed.data.provider.toString().trim().toLowerCase() !== providerId) {
-            return reply.redirect(buildRedirectUrl(webAppUrl, { flow: oauthState.flow, error: "invalid_state" }));
+            return reply.redirect(buildRedirectUrl(fallbackWebAppUrl, { flow: oauthState.flow, error: "invalid_state" }));
         }
+
+        const webAppUrl =
+            typeof attemptParsed.data.webAppOAuthReturnUrl === "string" && attemptParsed.data.webAppOAuthReturnUrl.trim()
+                ? attemptParsed.data.webAppOAuthReturnUrl.trim()
+                : fallbackWebAppUrl;
 
         const flow = oauthState.flow;
         const authMode = flow === "auth" && oauthState.publicKey ? "keyed" : flow === "auth" ? "keyless" : null;

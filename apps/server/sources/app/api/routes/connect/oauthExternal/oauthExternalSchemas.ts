@@ -4,6 +4,7 @@ export const oauthStateAttemptSchema = z.object({
     provider: z.string(),
     pkceCodeVerifier: z.string(),
     nonce: z.string(),
+    webAppOAuthReturnUrl: z.string().optional(),
 });
 
 export const connectPendingSchema = z.object({
