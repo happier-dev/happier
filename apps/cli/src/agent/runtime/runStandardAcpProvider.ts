@@ -197,6 +197,7 @@ export async function runStandardAcpProvider(
     pushSender: api.push(),
     getAccountSettings: () => opts.accountSettingsContext?.settings ?? null,
     onAbortRequested: () => abortRequestedCallback?.(),
+    toolTrace: { protocol: 'acp', provider: config.agentMessageType },
   });
   permissionHandler.setPermissionMode(initialPermissionMode);
 
