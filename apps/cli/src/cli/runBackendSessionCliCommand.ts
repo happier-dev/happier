@@ -6,7 +6,7 @@ import type { Credentials } from '@/persistence';
 import { readCredentials, readSettings } from '@/persistence';
 import { authAndSetupMachineIfNeeded, ensureMachineIdInSettings } from '@/ui/auth';
 import type { CommandContext } from '@/cli/commandRegistry';
-import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { bootstrapAccountSettingsContext, type AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { ensureDaemonRunningForSessionCommand, shouldAutoStartDaemonAfterAuth } from '@/daemon/ensureDaemon';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
@@ -23,6 +23,7 @@ type CommonBackendRunOptions = ParsedSessionStartArgs & {
   terminalRuntime: CommandContext['terminalRuntime'];
   existingSessionId: string | undefined;
   resume: string | undefined;
+  accountSettingsContext: AccountSettingsContext | null;
 };
 
 export async function runBackendSessionCliCommand<Extra extends Record<string, unknown>>(params: {
@@ -84,6 +85,7 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
 
     const run = await runPromise;
 
+    let accountSettingsContext: AccountSettingsContext | null = null;
     if (params.agentIdForAccountSettings) {
       const snapshot = await bootstrapAccountSettingsContext({
         agentId: params.agentIdForAccountSettings,
@@ -91,6 +93,7 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
         mode: resolved.startedBy === 'daemon' ? 'blocking' : 'fast',
         refresh: refreshSettings ? 'force' : 'auto',
       });
+      accountSettingsContext = snapshot;
 
       if (params.agentIdForAccountSettings === 'codex' && resolved.startedBy !== 'daemon' && snapshot.whenRefreshed) {
         await snapshot.whenRefreshed;
@@ -109,6 +112,7 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
       modelUpdatedAt: resolved.modelUpdatedAt,
       existingSessionId: normalizedExistingSessionId || undefined,
       resume,
+      accountSettingsContext,
       ...extraOptions,
     });
   } catch (error) {
