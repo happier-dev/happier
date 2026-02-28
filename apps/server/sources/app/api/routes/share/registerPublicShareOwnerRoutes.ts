@@ -12,7 +12,7 @@ import {
 import { createHash } from "crypto";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
-import { gateRateLimitConfig } from "@/app/api/utils/apiRateLimitPolicy";
+import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 
 export function registerPublicShareOwnerRoutes(app: Fastify): void {
     /**
@@ -21,10 +21,7 @@ export function registerPublicShareOwnerRoutes(app: Fastify): void {
     app.post('/v1/sessions/:sessionId/public-share', {
         preHandler: app.authenticate,
         config: {
-            rateLimit: gateRateLimitConfig(process.env, {
-                max: 10,
-                timeWindow: '1 minute'
-            })
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "share.public.manage"),
         },
         schema: {
             params: z.object({
