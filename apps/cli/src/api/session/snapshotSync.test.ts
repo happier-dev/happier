@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { makeSessionFixtureRow } from '@/sessionControl/testFixtures';
 
 vi.mock('@/configuration', () => ({
-    configuration: { serverUrl: 'http://example.invalid' },
+    configuration: { serverUrl: 'http://example.invalid', apiServerUrl: 'http://example.invalid' },
 }));
 
 import axios from 'axios';

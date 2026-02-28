@@ -80,7 +80,7 @@ export async function findTranscriptEncryptedMessageByLocalId(params: {
     onError?: (error: unknown) => void;
     timeoutMs?: number;
 }): Promise<TranscriptMessageLookupResult | null> {
-    const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+    const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
     return await findTranscriptEncryptedMessageByLocalIdV2({
         token: params.token,
         serverUrl,

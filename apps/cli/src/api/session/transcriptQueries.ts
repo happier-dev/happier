@@ -27,7 +27,7 @@ export async function fetchRecentTranscriptTextItemsForAcpImportFromServer(
   params: SessionTranscriptQueryParams & { take?: number },
 ): Promise<Array<{ role: 'user' | 'agent'; text: string }>> {
   const take = normalizeTake(params.take, 150);
-  const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+  const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
 
   try {
     const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
@@ -111,7 +111,7 @@ export async function fetchLatestUserPermissionIntentFromEncryptedTranscript(
   params: SessionTranscriptQueryParams & { take?: number },
 ): Promise<{ intent: PermissionMode; updatedAt: number } | null> {
   const take = normalizeTake(params.take, 200);
-  const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+  const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
 
   try {
     const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {

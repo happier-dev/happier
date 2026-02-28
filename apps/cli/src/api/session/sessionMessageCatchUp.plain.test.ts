@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/configuration', () => ({
-  configuration: { serverUrl: 'http://example.test' },
+  configuration: { serverUrl: 'http://example.test', apiServerUrl: 'http://example.test' },
 }));
 
 vi.mock('../client/loopbackUrl', () => ({
@@ -42,4 +42,3 @@ describe('sessionMessageCatchUp (plaintext envelopes)', () => {
     expect(updates[0]?.body?.message?.content?.t).toBe('plain');
   });
 });
-
