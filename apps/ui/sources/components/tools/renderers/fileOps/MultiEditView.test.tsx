@@ -22,6 +22,7 @@ vi.mock('@/text', () => ({
     t: (key: string, vars?: any) => {
         if (key === 'tools.multiEdit.editNumber') return `Edit ${vars.index}/${vars.total}`;
         if (key === 'tools.multiEdit.replaceAll') return 'Replace all';
+        if (key === 'tools.common.more') return `+${vars.count} more`;
         return key;
     },
 }));

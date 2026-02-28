@@ -5,6 +5,7 @@ import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import type { ToolViewProps } from '../core/_registry';
 import { coerceToolResultRecord } from '../../legacy/coerceToolResultRecord';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 type GrepMatch = { filePath?: string; line?: number; excerpt?: string };
@@ -56,7 +57,7 @@ export const GrepView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
                         </View>
                     );
                 })}
-                {more > 0 && <Text style={styles.more}>+{more} more</Text>}
+                {more > 0 && <Text style={styles.more}>{t('tools.structuredResult.more', { count: more })}</Text>}
             </View>
         </ToolSectionView>
     );
