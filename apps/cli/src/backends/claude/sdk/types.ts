@@ -139,6 +139,11 @@ export interface SDKControlRequest {
 export type PermissionResult = {
     behavior: 'allow'
     updatedInput: Record<string, unknown>
+    /**
+     * Optional permission updates to apply inside the provider runtime.
+     * This matches the Claude Agent SDK `updatedPermissions` schema.
+     */
+    updatedPermissions?: unknown
 } | {
     behavior: 'deny'
     message: string

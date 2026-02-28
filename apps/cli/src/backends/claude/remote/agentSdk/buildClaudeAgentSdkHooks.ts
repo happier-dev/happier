@@ -17,6 +17,7 @@ function toAgentSdkPermissionResult(result: PermissionResult): any {
     return {
       behavior: 'allow',
       updatedInput: result.updatedInput,
+      ...(typeof result.updatedPermissions !== 'undefined' ? { updatedPermissions: result.updatedPermissions } : {}),
     };
   }
 
@@ -141,6 +142,7 @@ export function buildClaudeAgentSdkHooks(params: Readonly<{
                 result.updatedInput && typeof result.updatedInput === 'object' && !Array.isArray(result.updatedInput)
                   ? (result.updatedInput as Record<string, unknown>)
                   : undefined;
+              const updatedPermissions = result.updatedPermissions;
               return {
                 continue: true,
                 suppressOutput: true,
@@ -149,6 +151,7 @@ export function buildClaudeAgentSdkHooks(params: Readonly<{
                   decision: {
                     behavior: 'allow',
                     ...(updatedInput ? { updatedInput } : {}),
+                    ...(typeof updatedPermissions !== 'undefined' ? { updatedPermissions } : {}),
                   },
                 },
               };

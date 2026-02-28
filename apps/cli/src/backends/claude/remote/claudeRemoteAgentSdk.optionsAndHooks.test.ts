@@ -1082,6 +1082,84 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             }),
         );
     });
+    it('includes updatedPermissions when canCallTool returns permission updates', async () => {
+        const canCallTool = vi.fn(async () => ({
+            behavior: 'allow',
+            updatedInput: { file_path: '/tmp/file.txt' },
+            updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }],
+        }));
+
+        let capturedHooks: any = null;
+        const createQuery = vi.fn((_params: any) => {
+            capturedHooks = _params.options?.hooks;
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        let didSendFirst = false;
+        const nextMessage = vi.fn(async () => {
+            if (didSendFirst) return null;
+            didSendFirst = true;
+            return { message: 'hello', mode: makeMode() };
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeEnvVars: {},
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool,
+            isAborted: () => false,
+            nextMessage,
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            createQuery,
+        } as any);
+
+        expect(capturedHooks?.PermissionRequest?.[0]?.hooks?.length).toBe(1);
+
+        const output = await capturedHooks.PermissionRequest[0].hooks[0](
+            {
+                hook_event_name: 'PermissionRequest',
+                session_id: 'sess_1',
+                transcript_path: '/tmp/sess_1.jsonl',
+                cwd: '/tmp',
+                tool_name: 'Read',
+                tool_input: { file_path: '/tmp/file.txt' },
+                permission_suggestions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }],
+            },
+            'toolu_123',
+            { signal: new AbortController().signal },
+        );
+
+        expect(output).toEqual(
+            expect.objectContaining({
+                continue: true,
+                suppressOutput: true,
+                hookSpecificOutput: {
+                    hookEventName: 'PermissionRequest',
+                    decision: {
+                        behavior: 'allow',
+                        updatedInput: { file_path: '/tmp/file.txt' },
+                        updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }],
+                    },
+                },
+            }),
+        );
+    });
+
     it('registers PreToolUse hook that scrubs sensitive env vars for Bash commands', async () => {
         let capturedHooks: any = null;
 
