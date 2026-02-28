@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 export const RELEASE_CHANNELS = new Set(['stable', 'preview']);
 
 export const CLI_STACK_TARGETS = [
-  { bunTarget: 'bun-linux-x64', os: 'linux', arch: 'x64', exeExt: '' },
+  { bunTarget: 'bun-linux-x64-baseline', os: 'linux', arch: 'x64', exeExt: '' },
   { bunTarget: 'bun-linux-arm64', os: 'linux', arch: 'arm64', exeExt: '' },
   { bunTarget: 'bun-darwin-x64', os: 'darwin', arch: 'x64', exeExt: '' },
   { bunTarget: 'bun-darwin-arm64', os: 'darwin', arch: 'arm64', exeExt: '' },
@@ -19,7 +19,7 @@ export const CLI_STACK_TARGETS = [
 ];
 
 export const SERVER_TARGETS = [
-  { bunTarget: 'bun-linux-x64', os: 'linux', arch: 'x64', exeExt: '' },
+  { bunTarget: 'bun-linux-x64-baseline', os: 'linux', arch: 'x64', exeExt: '' },
   { bunTarget: 'bun-linux-arm64', os: 'linux', arch: 'arm64', exeExt: '' },
   { bunTarget: 'bun-darwin-x64', os: 'darwin', arch: 'x64', exeExt: '' },
   { bunTarget: 'bun-darwin-arm64', os: 'darwin', arch: 'arm64', exeExt: '' },
@@ -222,6 +222,17 @@ export async function compileBunBinary({ entrypoint, bunTarget, outfile, cwd = p
     args.push('--external', e);
   }
   execOrThrow('bun', args, { cwd });
+
+  // In some environments bun can report success before the compiled output becomes visible on disk.
+  // Fail closed with a short wait to avoid flaky release-asset packaging.
+  const startedAt = Date.now();
+  const timeoutMs = 5_000;
+  while (Date.now() - startedAt < timeoutMs) {
+    const info = await stat(outfile).catch(() => null);
+    if (info?.isFile()) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`[release] bun build succeeded but compiled output is missing: ${outfile}`);
 }
 
 export async function packageTargetBinary({
