@@ -11,6 +11,7 @@ import { constants } from 'node:fs'
 import { dirname } from 'node:path'
 import { configuration } from '@/configuration'
 import { sanitizeServerIdForFilesystem } from '@/server/serverId';
+import { isLocalishServerUrl } from '@/server/serverUrlClassification';
 import * as z from 'zod';
 import { decodeBase64, encodeBase64 } from '@/api/encryption';
 import { logger } from '@/ui/logger';
@@ -35,7 +36,7 @@ function bestEffortChmodSync(path: string, mode: number): void {
 
 // Settings schema version: Integer for overall Settings structure compatibility.
 // Incremented when Settings structure changes.
-export const SUPPORTED_SCHEMA_VERSION = 5;
+export const SUPPORTED_SCHEMA_VERSION = 6;
 
 interface Settings {
   // Schema version for backwards compatibility
@@ -54,11 +55,10 @@ interface Settings {
     name: string
     serverUrl: string
     /**
-     * Public URL for deep links/QR codes (defaults to serverUrl when unset).
-     * Useful when the CLI can reach a server via an internal address (e.g. loopback),
-     * but other devices must use a different public hostname (e.g. Tailscale).
+     * Optional device-local API URL optimization (schema v6+).
+     * When set, the CLI may use this for API calls, but it must never be embedded into deep links/QR codes.
      */
-    publicServerUrl?: string
+    localServerUrl?: string
     webappUrl: string
     createdAt: number
     updatedAt: number
@@ -106,7 +106,6 @@ const defaultSettings: Settings = {
       id: 'cloud',
       name: 'Happier Cloud',
       serverUrl: 'https://api.happier.dev',
-      publicServerUrl: 'https://api.happier.dev',
       webappUrl: 'https://app.happier.dev',
       createdAt: 0,
       updatedAt: 0,
@@ -182,6 +181,33 @@ function migrateSettings(raw: any, fromVersion: number): any {
     if ('lastChangesCursorByAccountId' in migrated) delete migrated.lastChangesCursorByAccountId;
 
     migrated.schemaVersion = 5;
+  }
+
+  // Migration from v5 to v6 (canonical serverUrl + optional localServerUrl)
+  if (fromVersion < 6) {
+    const normalizeUrl = (value: unknown): string =>
+      String(value ?? '').trim().replace(/\/+$/, '');
+
+    const servers = migrated?.servers && typeof migrated.servers === 'object' ? migrated.servers : null;
+    if (servers) {
+      for (const [id, value] of Object.entries(servers as Record<string, any>)) {
+        if (!value || typeof value !== 'object') continue;
+        const serverUrl = normalizeUrl((value as any).serverUrl);
+        const publicServerUrl = normalizeUrl((value as any).publicServerUrl);
+        if (publicServerUrl && publicServerUrl !== serverUrl) {
+          (value as any).serverUrl = publicServerUrl;
+          if (serverUrl && isLocalishServerUrl(serverUrl)) {
+            (value as any).localServerUrl = serverUrl;
+          }
+        }
+        if ('publicServerUrl' in (value as any)) {
+          delete (value as any).publicServerUrl;
+        }
+        (servers as any)[id] = value;
+      }
+    }
+
+    migrated.schemaVersion = 6;
   }
 
   // Future migrations go here:
