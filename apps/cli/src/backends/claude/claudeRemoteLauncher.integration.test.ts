@@ -244,6 +244,7 @@ describe.sequential('claudeRemoteLauncher', () => {
     expect(await switchHandler({ to: 'local' })).toBe(true);
     await expect(launcherPromise).resolves.toBe('switch');
   }, 30_000);
+
   it('passes resumeSessionAt from metadata snapshot into the remote dispatch options', async () => {
     const { session, switchHandlerReady } = createRemoteHarness({
       sessionId: 'sess_0',
@@ -304,6 +305,7 @@ describe.sequential('claudeRemoteLauncher', () => {
       await rm(tmpRoot, { recursive: true, force: true });
     }
   }, 30_000);
+
   it('persists the last assistant uuid into session metadata when observed in remote messages', async () => {
     const { session, client, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
 
@@ -367,6 +369,7 @@ describe.sequential('claudeRemoteLauncher', () => {
     expect(await switchHandler({ to: 'local' })).toBe(true);
     await expect(launcherPromise).resolves.toBe('switch');
   }, 30_000);
+
   it('does not mount Ink UI for daemon-started sessions even when a TTY is available', async () => {
     const originalStdoutIsTTY = process.stdout.isTTY;
     const originalStdinIsTTY = process.stdin.isTTY;
@@ -462,8 +465,8 @@ describe.sequential('claudeRemoteLauncher', () => {
     expect(mockResetParentChain).toHaveBeenCalledTimes(1);
   });
 
-	  it('replaces TaskOutput tool_result transcript payloads with an empty string (content is streamed via sidechain)', async () => {
-	    const { session, sendClaudeSessionMessage, switchHandlerReady } = createRemoteHarness();
+      it('replaces TaskOutput tool_result transcript payloads with an empty string (content is streamed via sidechain)', async () => {
+        const { session, sendClaudeSessionMessage, switchHandlerReady } = createRemoteHarness();
 
     const taskOutputToolUseId = 'tool_taskoutput_1';
 
@@ -518,19 +521,19 @@ describe.sequential('claudeRemoteLauncher', () => {
     });
 
     const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
-	    const launcherPromise = claudeRemoteLauncher(session);
+        const launcherPromise = claudeRemoteLauncher(session);
 
-	    await vi.waitFor(() => {
-	      expect(sendClaudeSessionMessage).toHaveBeenCalled();
-	    });
+        await vi.waitFor(() => {
+          expect(sendClaudeSessionMessage).toHaveBeenCalled();
+        });
 
-	    const sent = sendClaudeSessionMessage.mock.calls
-	      .map((c: any[]) => c[0])
-	      .find((m: any) => {
-	      const blocks = m?.message?.content;
-	      if (!Array.isArray(blocks)) return false;
-	      return blocks.some((b: any) => b?.type === 'tool_result' && b?.tool_use_id === taskOutputToolUseId);
-	    });
+        const sent = sendClaudeSessionMessage.mock.calls
+          .map((c: any[]) => c[0])
+          .find((m: any) => {
+          const blocks = m?.message?.content;
+          if (!Array.isArray(blocks)) return false;
+          return blocks.some((b: any) => b?.type === 'tool_result' && b?.tool_use_id === taskOutputToolUseId);
+        });
     expect(sent).toBeTruthy();
 
     const blocks = (sent as any).message.content as any[];
@@ -667,15 +670,14 @@ describe.sequential('claudeRemoteLauncher', () => {
       message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
     };
 
-    await writeFile(jsonlPath, `${JSON.stringify(rootPrompt)}\n${JSON.stringify(assistant)}\n`, 'utf8');
+        await writeFile(jsonlPath, `${JSON.stringify(rootPrompt)}\n${JSON.stringify(assistant)}\n`, 'utf8');
 
-    const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+        const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+        try {
+          process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
 
-    try {
-      process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
-
-      mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
-        const dispatchOpts = opts as RemoteDispatchMockOptions & { onMessage?: (m: unknown) => void };
+          mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
+            const dispatchOpts = opts as RemoteDispatchMockOptions & { onMessage?: (m: unknown) => void };
 
         dispatchOpts.onMessage?.({
           type: 'assistant',
@@ -724,16 +726,16 @@ describe.sequential('claudeRemoteLauncher', () => {
         );
       });
 
-      const switchHandler = await switchHandlerReady;
-      expect(await switchHandler({ to: 'local' })).toBe(true);
-      await expect(launcherPromise).resolves.toBe('switch');
-    } finally {
-      if (typeof previousClaudeConfigDir === 'string') {
-        process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
-      } else {
-        delete process.env.CLAUDE_CONFIG_DIR;
-      }
-      await rm(claudeConfigDir, { recursive: true, force: true });
-    }
-  }, 30_000);
+          const switchHandler = await switchHandlerReady;
+          expect(await switchHandler({ to: 'local' })).toBe(true);
+          await expect(launcherPromise).resolves.toBe('switch');
+        } finally {
+          if (typeof previousClaudeConfigDir === 'string') {
+            process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+          } else {
+            delete process.env.CLAUDE_CONFIG_DIR;
+          }
+          await rm(claudeConfigDir, { recursive: true, force: true });
+        }
+      }, 30_000);
 });
