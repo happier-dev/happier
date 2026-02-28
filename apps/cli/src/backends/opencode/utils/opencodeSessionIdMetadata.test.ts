@@ -22,7 +22,7 @@ describe('maybeUpdateOpenCodeSessionIdMetadata', () => {
     expect(lastPublished.backendMode).toBeNull();
   });
 
-  it('publishes opencodeSessionId once per session id and backend mode and preserves other metadata', async () => {
+  it('publishes opencodeSessionId once per new session id and preserves other metadata', async () => {
     const lastPublished = { sessionId: null as string | null, backendMode: null as 'server' | 'acp' | null };
     const updates: Metadata[] = [];
 
@@ -46,27 +46,19 @@ describe('maybeUpdateOpenCodeSessionIdMetadata', () => {
     });
 
     await maybeUpdateOpenCodeSessionIdMetadata({
-      getOpenCodeSessionId: () => 'session-1',
-      backendMode: 'acp',
-      updateHappySessionMetadata: apply,
-      lastPublished,
-    });
-
-    await maybeUpdateOpenCodeSessionIdMetadata({
       getOpenCodeSessionId: () => 'session-2',
-      backendMode: 'acp',
+      backendMode: 'server',
       updateHappySessionMetadata: apply,
       lastPublished,
     });
 
     expect(updates).toEqual([
       { path: '/tmp', flavor: 'opencode', opencodeSessionId: 'session-1', opencodeBackendMode: 'server' } as unknown as Metadata,
-      { path: '/tmp', flavor: 'opencode', opencodeSessionId: 'session-1', opencodeBackendMode: 'acp' } as unknown as Metadata,
-      { path: '/tmp', flavor: 'opencode', opencodeSessionId: 'session-2', opencodeBackendMode: 'acp' } as unknown as Metadata,
+      { path: '/tmp', flavor: 'opencode', opencodeSessionId: 'session-2', opencodeBackendMode: 'server' } as unknown as Metadata,
     ]);
   });
 
-  it('does not mark the session id or backend mode as published when the metadata update fails', async () => {
+  it('does not mark the session id as published when the metadata update fails', async () => {
     const lastPublished = { sessionId: null as string | null, backendMode: null as 'server' | 'acp' | null };
     let called = 0;
 
