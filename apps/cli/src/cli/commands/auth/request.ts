@@ -38,7 +38,7 @@ export async function handleAuthRequest(args: string[]): Promise<void> {
   const claimSecretHash = sha256Base64Url(claimSecret);
 
   const publicKeyB64 = encodeBase64(keypair.publicKey);
-  await axios.post(`${configuration.serverUrl}/v1/auth/request`, {
+  await axios.post(`${configuration.apiServerUrl}/v1/auth/request`, {
     publicKey: publicKeyB64,
     supportsV2: true,
     claimSecretHash,
@@ -93,4 +93,3 @@ export async function handleAuthRequest(args: string[]): Promise<void> {
     }),
   );
 }
-
