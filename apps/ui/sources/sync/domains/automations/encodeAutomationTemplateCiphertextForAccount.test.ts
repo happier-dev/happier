@@ -2,14 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { encodeAutomationTemplateCiphertextForAccount } from './encodeAutomationTemplateCiphertextForAccount';
 
-const serverFetchSpy = vi.fn(async () => ({
+const serverFetchSpy = vi.fn(async (..._args: unknown[]) => ({
   ok: true,
   status: 200,
   json: async () => ({ mode: 'plain', updatedAt: 1 }),
 }));
 
 vi.mock('@/sync/http/client', () => ({
-  serverFetch: (...args: any[]) => serverFetchSpy(...args),
+  serverFetch: (...args: unknown[]) => serverFetchSpy(...args),
 }));
 
 describe('encodeAutomationTemplateCiphertextForAccount', () => {
@@ -53,4 +53,3 @@ describe('encodeAutomationTemplateCiphertextForAccount', () => {
     expect(encryptRaw).toHaveBeenCalled();
   });
 });
-
