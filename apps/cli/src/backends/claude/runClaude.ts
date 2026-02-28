@@ -44,7 +44,6 @@ import { computeRunnerTerminationOutcome, type RunnerTerminationEvent } from '@/
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
 import { createClaudeShouldTerminateOnUnhandledRejection } from './claudeUnhandledRejectionPolicy';
 import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
-import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
 	import { runStartupCoordinator } from '@/agent/runtime/startup/startupCoordinator';
 	import { createStartupTiming } from '@/agent/runtime/startup/startupTiming';
@@ -86,6 +85,8 @@ export interface StartOptions {
      * Used for resuming inactive sessions.
      */
     existingSessionId?: string
+    /** Account settings snapshot for this runner (used for notification policy + seeds). */
+    accountSettings?: import('@happier-dev/protocol').AccountSettings | null
 }
 
 export async function runClaude(credentials: Credentials, options: StartOptions = {}): Promise<void> {
@@ -141,7 +142,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     // This is important because there may be no app-sent user messages yet (no meta.permissionMode to infer from).
     const explicitPermissionMode = options.permissionMode;
     const explicitPermissionModeUpdatedAt = options.permissionModeUpdatedAt;
-    const accountSettings = getActiveAccountSettingsSnapshot()?.settings ?? null;
+    const accountSettings = options.accountSettings ?? null;
     const permissionModeSeed = resolvePermissionModeSeedForAgentStart({
         agentId: 'claude',
         explicitPermissionMode,
@@ -806,7 +807,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
     // Resolve initial permission mode for local starts without blocking on server-derived seeds.
     const explicitPermissionMode = options.permissionMode;
     const explicitPermissionModeUpdatedAt = options.permissionModeUpdatedAt;
-    const accountSettings = getActiveAccountSettingsSnapshot()?.settings ?? null;
+    const accountSettings = options.accountSettings ?? null;
     const permissionModeSeed = resolvePermissionModeSeedForAgentStart({
         agentId: 'claude',
         explicitPermissionMode,
