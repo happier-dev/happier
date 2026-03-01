@@ -1,19 +1,15 @@
 import { MarkdownSpan, parseMarkdown } from './parseMarkdown';
 import * as React from 'react';
+import type { StyleProp, TextStyle } from 'react-native';
 import { Pressable, ScrollView, View, Platform } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { ScrollView as GestureHandlerScrollView } from 'react-native-gesture-handler';
 import { StyleSheet } from 'react-native-unistyles';
 import { Text } from '../ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { SimpleSyntaxHighlighter } from '../ui/media/SimpleSyntaxHighlighter';
-import { Modal } from '@/modal';
-import { useLocalSetting } from '@/sync/domains/state/storage';
-import { storeTempText } from '@/sync/domains/state/persistence';
-import { useRouter } from 'expo-router';
-import * as Clipboard from 'expo-clipboard';
 import { MermaidRenderer } from './MermaidRenderer';
 import { t } from '@/text';
 import { MarkdownSpansView } from './MarkdownSpansView';
+import { MarkdownCodeBlock } from './MarkdownCodeBlock';
 
 // Option type for callback
 export type Option = {
@@ -21,50 +17,41 @@ export type Option = {
 };
 
 export const MarkdownView = React.memo((props: { 
+    testID?: string;
     markdown: string;
     onOptionPress?: (option: Option) => void;
+    textStyle?: StyleProp<TextStyle>;
+    variant?: 'default' | 'thinking';
 }) => {
     const blocks = React.useMemo(() => parseMarkdown(props.markdown), [props.markdown]);
     
-    // Backwards compatibility: The original version just returned the view, wrapping the list of blocks.
-    // It made each of the individual text elements selectable. When we enable the markdownCopyV2 feature,
-    // we disable the selectable property on individual text segments on mobile only. Instead, the long press
-    // will be handled by a wrapper Pressable. If we don't disable the selectable property, then you will see
-    // the native copy modal come up at the same time as the long press handler is fired.
-    const markdownCopyV2 = useLocalSetting('markdownCopyV2');
-    const selectable = Platform.OS === 'web' || !markdownCopyV2;
-    const router = useRouter();
-
-    const handleLongPress = React.useCallback(() => {
-        try {
-            const textId = storeTempText(props.markdown);
-            router.push(`/text-selection?textId=${textId}`);
-        } catch (error) {
-            Modal.alert(t('common.error'), t('textSelection.failedToOpen'));
-        }
-    }, [props.markdown, router]);
+    const selectable = true;
+    const variant: 'default' | 'thinking' = props.variant === 'thinking' ? 'thinking' : 'default';
     const renderContent = () => {
         return (
-            <View style={{ width: '100%' }}>
+            <View testID={props.testID} style={{ width: '100%' }}>
                 {blocks.map((block, index) => {
                     if (block.type === 'text') {
-                        return <RenderTextBlock spans={block.content} key={index} first={index === 0} last={index === blocks.length - 1} selectable={selectable} />;
+                        return <RenderTextBlock spans={block.content} key={index} first={index === 0} last={index === blocks.length - 1} selectable={selectable} textStyle={props.textStyle} variant={variant} />;
                     } else if (block.type === 'header') {
-                        return <RenderHeaderBlock level={block.level} spans={block.content} key={index} first={index === 0} last={index === blocks.length - 1} selectable={selectable} />;
+                        return <RenderHeaderBlock level={block.level} spans={block.content} key={index} first={index === 0} last={index === blocks.length - 1} selectable={selectable} textStyle={props.textStyle} variant={variant} />;
                     } else if (block.type === 'horizontal-rule') {
                         return <View style={style.horizontalRule} key={index} />;
                     } else if (block.type === 'list') {
-                        return <RenderListBlock items={block.items} key={index} first={index === 0} last={index === blocks.length - 1} selectable={selectable} />;
+                        return <RenderListBlock items={block.items} key={index} first={index === 0} last={index === blocks.length - 1} selectable={selectable} textStyle={props.textStyle} variant={variant} />;
                     } else if (block.type === 'numbered-list') {
-                        return <RenderNumberedListBlock items={block.items} key={index} first={index === 0} last={index === blocks.length - 1} selectable={selectable} />;
+                        return <RenderNumberedListBlock items={block.items} key={index} first={index === 0} last={index === blocks.length - 1} selectable={selectable} textStyle={props.textStyle} variant={variant} />;
                     } else if (block.type === 'code-block') {
+                        if (variant === 'thinking') {
+                            return <RenderThinkingCodeBlock content={block.content} language={block.language} key={index} first={index === 0} last={index === blocks.length - 1} selectable={selectable} textStyle={props.textStyle} />;
+                        }
                         return <RenderCodeBlock content={block.content} language={block.language} key={index} first={index === 0} last={index === blocks.length - 1} selectable={selectable} />;
                     } else if (block.type === 'mermaid') {
                         return <MermaidRenderer content={block.content} key={index} />;
                     } else if (block.type === 'options') {
-                        return <RenderOptionsBlock items={block.items} key={index} first={index === 0} last={index === blocks.length - 1} selectable={selectable} onOptionPress={props.onOptionPress} />;
+                        return <RenderOptionsBlock items={block.items} key={index} first={index === 0} last={index === blocks.length - 1} selectable={selectable} onOptionPress={props.onOptionPress} textStyle={props.textStyle} />;
                     } else if (block.type === 'table') {
-                        return <RenderTableBlock headers={block.headers} rows={block.rows} key={index} first={index === 0} last={index === blocks.length - 1} />;
+                        return <RenderTableBlock headers={block.headers} rows={block.rows} key={index} first={index === 0} last={index === blocks.length - 1} textStyle={props.textStyle} />;
                     } else {
                         return null;
                     }
@@ -72,63 +59,46 @@ export const MarkdownView = React.memo((props: {
             </View>
         );
     }
-
-    if (!markdownCopyV2) {
-        return renderContent();
-    }
-    
-    if (Platform.OS === 'web') {
-        return renderContent();
-    }
-    
-    // Use GestureDetector with LongPress gesture - it doesn't block pan gestures
-    // so horizontal scrolling in code blocks and tables still works
-    const longPressGesture = Gesture.LongPress()
-        .minDuration(500)
-        .onStart(() => {
-            handleLongPress();
-        })
-        .runOnJS(true);
-
-    return (
-        <GestureDetector gesture={longPressGesture}>
-            <View style={{ width: '100%' }}>
-                {renderContent()}
-            </View>
-        </GestureDetector>
-    );
+    return renderContent();
 });
 
-function RenderTextBlock(props: { spans: MarkdownSpan[], first: boolean, last: boolean, selectable: boolean }) {
+function RenderTextBlock(props: { spans: MarkdownSpan[], first: boolean, last: boolean, selectable: boolean, textStyle?: StyleProp<TextStyle>, variant: 'default' | 'thinking' }) {
+    const baseStyle = [style.text, props.textStyle];
     return (
-        <Text selectable={props.selectable} style={[style.text, props.first && style.first, props.last && style.last]}>
+        <Text selectable={props.selectable} style={[...baseStyle, props.first && style.first, props.last && style.last]}>
             <MarkdownSpansView
                 spans={props.spans}
-                baseStyle={style.text}
+                baseStyle={baseStyle}
                 linkStyle={style.link}
-                resolveSpanStyle={(s) => (style as any)[s]}
+                resolveSpanStyle={(s) => {
+                    if (props.variant === 'thinking' && s === 'code') return style.thinkingInlineCode;
+                    return (style as any)[s];
+                }}
             />
         </Text>
     );
 }
 
-function RenderHeaderBlock(props: { level: 1 | 2 | 3 | 4 | 5 | 6, spans: MarkdownSpan[], first: boolean, last: boolean, selectable: boolean }) {
+function RenderHeaderBlock(props: { level: 1 | 2 | 3 | 4 | 5 | 6, spans: MarkdownSpan[], first: boolean, last: boolean, selectable: boolean, textStyle?: StyleProp<TextStyle>, variant: 'default' | 'thinking' }) {
     const s = (style as any)[`header${props.level}`];
-    const headerStyle = [style.header, s, props.first && style.first, props.last && style.last];
+    const headerStyle = [style.header, s, props.textStyle, props.first && style.first, props.last && style.last];
     return (
         <Text selectable={props.selectable} style={headerStyle}>
             <MarkdownSpansView
                 spans={props.spans}
                 baseStyle={headerStyle}
                 linkStyle={style.link}
-                resolveSpanStyle={(sn) => (style as any)[sn]}
+                resolveSpanStyle={(sn) => {
+                    if (props.variant === 'thinking' && sn === 'code') return style.thinkingInlineCode;
+                    return (style as any)[sn];
+                }}
             />
         </Text>
     );
 }
 
-function RenderListBlock(props: { items: MarkdownSpan[][], first: boolean, last: boolean, selectable: boolean }) {
-    const listStyle = [style.text, style.list];
+function RenderListBlock(props: { items: MarkdownSpan[][], first: boolean, last: boolean, selectable: boolean, textStyle?: StyleProp<TextStyle>, variant: 'default' | 'thinking' }) {
+    const listStyle = [style.text, style.list, props.textStyle];
     return (
         <View style={{ flexDirection: 'column', marginBottom: 8, gap: 1 }}>
             {props.items.map((item, index) => (
@@ -138,7 +108,10 @@ function RenderListBlock(props: { items: MarkdownSpan[][], first: boolean, last:
                         spans={item}
                         baseStyle={listStyle}
                         linkStyle={style.link}
-                        resolveSpanStyle={(sn) => (style as any)[sn]}
+                        resolveSpanStyle={(sn) => {
+                            if (props.variant === 'thinking' && sn === 'code') return style.thinkingInlineCode;
+                            return (style as any)[sn];
+                        }}
                     />
                 </Text>
             ))}
@@ -146,8 +119,8 @@ function RenderListBlock(props: { items: MarkdownSpan[][], first: boolean, last:
     );
 }
 
-function RenderNumberedListBlock(props: { items: { number: number, spans: MarkdownSpan[] }[], first: boolean, last: boolean, selectable: boolean }) {
-    const listStyle = [style.text, style.list];
+function RenderNumberedListBlock(props: { items: { number: number, spans: MarkdownSpan[] }[], first: boolean, last: boolean, selectable: boolean, textStyle?: StyleProp<TextStyle>, variant: 'default' | 'thinking' }) {
+    const listStyle = [style.text, style.list, props.textStyle];
     return (
         <View style={{ flexDirection: 'column', marginBottom: 8, gap: 1 }}>
             {props.items.map((item, index) => (
@@ -157,7 +130,10 @@ function RenderNumberedListBlock(props: { items: { number: number, spans: Markdo
                         spans={item.spans}
                         baseStyle={listStyle}
                         linkStyle={style.link}
-                        resolveSpanStyle={(sn) => (style as any)[sn]}
+                        resolveSpanStyle={(sn) => {
+                            if (props.variant === 'thinking' && sn === 'code') return style.thinkingInlineCode;
+                            return (style as any)[sn];
+                        }}
                     />
                 </Text>
             ))}
@@ -166,49 +142,24 @@ function RenderNumberedListBlock(props: { items: { number: number, spans: Markdo
 }
 
 function RenderCodeBlock(props: { content: string, language: string | null, first: boolean, last: boolean, selectable: boolean }) {
-    const [isHovered, setIsHovered] = React.useState(false);
-    const isWeb = Platform.OS === 'web';
-
-    const copyCode = React.useCallback(async () => {
-        try {
-            await Clipboard.setStringAsync(props.content);
-            Modal.alert(t('common.success'), t('markdown.codeCopied'), [{ text: t('common.ok'), style: 'cancel' }]);
-        } catch (error) {
-            Modal.alert(t('common.error'), t('markdown.copyFailed'), [{ text: t('common.ok'), style: 'cancel' }]);
-        }
-    }, [props.content]);
-
     return (
-        <Pressable
-            style={[style.codeBlock, props.first && style.first, props.last && style.last]}
-            onHoverIn={isWeb ? () => setIsHovered(true) : undefined}
-            onHoverOut={isWeb ? () => setIsHovered(false) : undefined}
-        >
-            {props.language && <Text selectable={props.selectable} style={style.codeLanguage}>{props.language}</Text>}
-            <ScrollView
-                style={{ flexGrow: 0, flexShrink: 0 }}
-                horizontal={true}
-                contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 16 }}
-                showsHorizontalScrollIndicator={false}
-            >
-                <SimpleSyntaxHighlighter
-                    code={props.content}
-                    language={props.language}
-                    selectable={props.selectable}
-                />
-            </ScrollView>
-            <View
-                style={[style.copyButtonWrapper, isHovered && style.copyButtonWrapperVisible]}
-                {...(Platform.OS === 'web' ? ({ className: 'copy-button-wrapper' } as any) : {})}
-            >
-                <Pressable
-                    style={style.copyButton}
-                    onPress={copyCode}
-                >
-                    <Text style={style.copyButtonText}>{t('common.copy')}</Text>
-                </Pressable>
-            </View>
-        </Pressable>
+        <View style={[style.codeBlock, props.first && style.first, props.last && style.last]}>
+            <MarkdownCodeBlock
+                content={props.content}
+                language={props.language}
+                selectable={props.selectable}
+            />
+        </View>
+    );
+}
+
+function RenderThinkingCodeBlock(props: { content: string, language: string | null, first: boolean, last: boolean, selectable: boolean, textStyle?: StyleProp<TextStyle> }) {
+    return (
+        <View style={[style.thinkingCodeBlockContainer, props.first && style.first, props.last && style.last]}>
+            <Text selectable={props.selectable} style={[style.text, props.textStyle, style.thinkingCodeBlockText]}>
+                {props.content}
+            </Text>
+        </View>
     );
 }
 
@@ -217,8 +168,10 @@ function RenderOptionsBlock(props: {
     first: boolean, 
     last: boolean, 
     selectable: boolean,
-    onOptionPress?: (option: Option) => void 
+    onOptionPress?: (option: Option) => void,
+    textStyle?: StyleProp<TextStyle>,
 }) {
+    const optionTextStyle = [style.optionText, props.textStyle];
     return (
         <View style={[style.optionsContainer, props.first && style.first, props.last && style.last]}>
             {props.items.map((item, index) => {
@@ -232,13 +185,13 @@ function RenderOptionsBlock(props: {
                             ]}
                             onPress={() => props.onOptionPress?.({ title: item })}
                         >
-                            <Text selectable={props.selectable} style={style.optionText}>{item}</Text>
+                            <Text selectable={props.selectable} style={optionTextStyle}>{item}</Text>
                         </Pressable>
                     );
                 } else {
                     return (
                         <View key={index} style={style.optionItem}>
-                            <Text selectable={props.selectable} style={style.optionText}>{item}</Text>
+                            <Text selectable={props.selectable} style={optionTextStyle}>{item}</Text>
                         </View>
                     );
                 }
@@ -256,52 +209,73 @@ function RenderTableBlock(props: {
     headers: string[],
     rows: string[][],
     first: boolean,
-    last: boolean
+    last: boolean,
+    textStyle?: StyleProp<TextStyle>,
 }) {
-    const columnCount = props.headers.length;
-    const rowCount = props.rows.length;
-    const isLastRow = (rowIndex: number) => rowIndex === rowCount - 1;
+  const columnCount = props.headers.length;
+  const rowCount = props.rows.length;
+  const isLastRow = (rowIndex: number) => rowIndex === rowCount - 1;
 
-    return (
-        <View style={[style.tableContainer, props.first && style.first, props.last && style.last]}>
-            <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={Platform.OS !== 'web'}
-                nestedScrollEnabled={true}
-                style={style.tableScrollView}
-            >
-                <View style={style.tableContent}>
-                    {/* Render each column as a vertical container */}
-                    {props.headers.map((header, colIndex) => (
-                        <View
-                            key={`column-${colIndex}`}
-                            style={[
-                                style.tableColumn,
-                                colIndex === columnCount - 1 && style.tableColumnLast
-                            ]}
-                        >
-                            {/* Header cell for this column */}
-                            <View style={[style.tableCell, style.tableHeaderCell, style.tableCellFirst]}>
-                                <Text style={style.tableHeaderText}>{header}</Text>
-                            </View>
-                            {/* Data cells for this column */}
-                            {props.rows.map((row, rowIndex) => (
-                                <View
-                                    key={`cell-${rowIndex}-${colIndex}`}
-                                    style={[
-                                        style.tableCell,
-                                        isLastRow(rowIndex) && style.tableCellLast
-                                    ]}
-                                >
-                                    <Text style={style.tableCellText}>{row[colIndex] ?? ''}</Text>
-                                </View>
-                            ))}
-                        </View>
-                    ))}
-                </View>
-            </ScrollView>
-        </View>
-    );
+  const scrollContents = (
+      <View style={style.tableContent}>
+          {/* Render each column as a vertical container */}
+          {props.headers.map((header, colIndex) => (
+              <View
+                  key={`column-${colIndex}`}
+                  style={[
+                      style.tableColumn,
+                      colIndex === columnCount - 1 && style.tableColumnLast
+                  ]}
+              >
+                  {/* Header cell for this column */}
+                  <View style={[style.tableCell, style.tableHeaderCell, style.tableCellFirst]}>
+                      <Text selectable style={[style.tableHeaderText, props.textStyle]}>{header}</Text>
+                  </View>
+                  {/* Data cells for this column */}
+                  {props.rows.map((row, rowIndex) => (
+                      <View
+                          key={`cell-${rowIndex}-${colIndex}`}
+                          style={[
+                              style.tableCell,
+                              isLastRow(rowIndex) && style.tableCellLast
+                          ]}
+                      >
+                          <Text selectable style={[style.tableCellText, props.textStyle]}>{row[colIndex] ?? ''}</Text>
+                      </View>
+                  ))}
+              </View>
+          ))}
+      </View>
+  );
+
+  return (
+      <View style={[style.tableContainer, props.first && style.first, props.last && style.last]}>
+          {/*
+           * Use RNGH ScrollView on native so horizontal pans reliably win gesture negotiation
+           * inside nested transcript lists on Android.
+           */}
+          {Platform.OS === 'web' ? (
+              <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  nestedScrollEnabled={true}
+                  style={style.tableScrollView}
+              >
+                  {scrollContents}
+              </ScrollView>
+          ) : (
+              <GestureHandlerScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={true}
+                  nestedScrollEnabled={true}
+                  disallowInterruption={true}
+                  style={style.tableScrollView}
+              >
+                  {scrollContents}
+              </GestureHandlerScrollView>
+          )}
+      </View>
+  );
 }
 
 
@@ -320,20 +294,21 @@ const style = StyleSheet.create((theme) => ({
     },
 
     italic: {
-        fontStyle: 'italic',
+        ...Typography.default('italic'),
     },
     bold: {
-        fontWeight: 'bold',
+        ...Typography.default('semiBold'),
     },
     semibold: {
-        fontWeight: '600',
+        ...Typography.default('semiBold'),
     },
     code: {
         ...Typography.mono(),
-        fontSize: 16,
-        lineHeight: 21,  // Reduced from 24 to 21
         backgroundColor: theme.colors.surfaceHighest,
-        color: theme.colors.text,
+    },
+    thinkingInlineCode: {
+        ...Typography.mono(),
+        backgroundColor: 'transparent',
     },
     link: {
         ...Typography.default(),
@@ -416,6 +391,8 @@ const style = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surfaceHighest,
         borderRadius: 8,
         marginVertical: 8,
+        width: '100%',
+        alignSelf: 'stretch',
         position: 'relative',
         zIndex: 1,
     },
@@ -445,6 +422,15 @@ const style = StyleSheet.create((theme) => ({
         color: theme.colors.text,
         fontSize: 14,
         lineHeight: 20,
+    },
+    thinkingCodeBlockContainer: {
+        marginVertical: 8,
+        width: '100%',
+        alignSelf: 'stretch',
+    },
+    thinkingCodeBlockText: {
+        ...Typography.mono(),
+        backgroundColor: 'transparent',
     },
     horizontalRule: {
         height: 1,
