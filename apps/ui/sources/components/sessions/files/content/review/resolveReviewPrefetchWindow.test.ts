@@ -36,6 +36,8 @@ describe('resolveReviewPrefetchWindow', () => {
             maxFileIndex: 2,
         });
 
-        expect(window).toEqual({ startFileIndex: 0, endFileIndex: 2 });
+        // Prefetch should never include files *above* the first visible file index, because loading
+        // those diffs can change heights above the viewport and cause scroll "snap back" on web.
+        expect(window).toEqual({ startFileIndex: 1, endFileIndex: 2 });
     });
 });

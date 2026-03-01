@@ -28,7 +28,12 @@ export function resolveReviewPrefetchWindow(input: Readonly<{
         return null;
     }
 
-    const startFileIndex = Math.max(0, Math.min(maxFileIndex, minVisible - behind));
+    // Never include file indices *above* the first visible file. Loading diffs above the viewport can
+    // change heights outside the user's view and cause scroll "snap back" (especially on web).
+    //
+    // Keep behindCount for future tunings, but clamp the window start to the first visible index
+    // so prefetch does not trigger above-viewport height changes.
+    const startFileIndex = Math.max(0, Math.min(maxFileIndex, Math.max(minVisible, minVisible - behind)));
     const endFileIndex = Math.max(0, Math.min(maxFileIndex, maxVisible + ahead));
 
     return { startFileIndex, endFileIndex };
