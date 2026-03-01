@@ -1,4 +1,4 @@
-export type ToolViewDetailLevel = 'title' | 'summary' | 'full';
+export type ToolViewDetailLevel = 'title' | 'compact' | 'summary' | 'full';
 
 export function resolveToolViewDetailLevel(params: {
     toolName: string;
@@ -8,7 +8,7 @@ export function resolveToolViewDetailLevel(params: {
     detailLevelByToolName: Record<string, ToolViewDetailLevel> | null | undefined;
 }): ToolViewDetailLevel {
     const override = params.detailLevelByToolName?.[params.toolName];
-    if (override === 'title' || override === 'summary' || override === 'full') {
+    if (override === 'title' || override === 'compact' || override === 'summary' || override === 'full') {
         return override;
     }
 
