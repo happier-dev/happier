@@ -22,6 +22,7 @@ import { ATTRIBUTION_INVALIDATION_WINDOW_MS, shouldAttributeChangedPaths } from 
 import { isSessionPathWithinRepoRoot } from './sync/paths';
 import { collectChangedPaths } from './sync/snapshotDiff';
 import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectManager';
+import { readSessionWorkspaceContext } from '@/sync/domains/session/readSessionWorkspaceContext';
 
 type InvalidationSource = 'unknown' | 'mutation';
 
@@ -73,11 +74,17 @@ export class ScmStatusSync {
         if (mapped) {
             return mapped;
         }
-        const session = storage.getState().sessions[sessionId];
-        if (!session?.metadata?.path) {
+        const state = storage.getState();
+        const session = state.sessions[sessionId];
+        if (!session) {
             return null;
         }
-        return `${resolveProjectMachineScopeId(session.metadata)}:${session.metadata.path}`;
+        const workspaceContext = readSessionWorkspaceContext(state, sessionId);
+        if (!workspaceContext.workspacePath) {
+            return null;
+        }
+        const machineScopeId = workspaceContext.projectMachineId ?? resolveProjectMachineScopeId(session.metadata ?? {});
+        return `${machineScopeId}:${workspaceContext.workspacePath}`;
     }
 
     /**
@@ -213,10 +220,10 @@ export class ScmStatusSync {
 	    }
 
     private getAnySessionForProject(projectKey: string): string | null {
+        const state = storage.getState();
         for (const [sessionId, key] of this.sessionToProjectKey.entries()) {
             if (key !== projectKey) continue;
-            const session = storage.getState().sessions[sessionId];
-            if (session?.metadata?.path) {
+            if (readSessionWorkspaceContext(state, sessionId).workspacePath) {
                 return sessionId;
             }
         }
@@ -244,7 +251,10 @@ export class ScmStatusSync {
                 return;
             }
 
-            const scopeId = resolveProjectMachineScopeId(state.sessions[sessionId]?.metadata ?? {});
+            const sessionWorkspaceContext = readSessionWorkspaceContext(state, sessionId);
+            const scopeId =
+                sessionWorkspaceContext.projectMachineId
+                ?? resolveProjectMachineScopeId(state.sessions[sessionId]?.metadata ?? {});
             const repoRoot = snapshot.repo.rootPath;
             if (snapshot.repo.isRepo && scopeId !== 'unknown' && repoRoot) {
                 activeProjectKey = `${scopeId}:${repoRoot}`;
