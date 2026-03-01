@@ -156,6 +156,14 @@ function buildQuestionAnswersArray(params: {
   return out;
 }
 
+function looksLikeFreeformQuestionHintLabel(label: string): boolean {
+  const normalized = label.trim().toLowerCase();
+  if (!normalized) return false;
+  // OpenCode sometimes encodes freeform questions as a single “type/enter your answer” option.
+  // Treat these as typed answers rather than a real selection.
+  return normalized.includes('type') || normalized.includes('enter') || normalized.includes('your own answer');
+}
+
 function parseQuestionRequest(raw: unknown): OpenCodeQuestionRequest | null {
   const rec = asRecord(raw);
   if (!rec) return null;
@@ -695,7 +703,34 @@ export function createOpenCodeServerRuntime(params: {
       questions: questions.map((q) => ({
         question: normalizeString(q.question),
         header: normalizeString(q.header),
-        options: Array.isArray(q.options) ? q.options : [],
+        ...(() => {
+          const rawOptions = Array.isArray(q.options) ? q.options : [];
+          const options = rawOptions
+            .map((opt) => (asRecord(opt) ?? null))
+            .filter((opt): opt is Record<string, unknown> => Boolean(opt))
+            .map((opt) => ({
+              label: normalizeString(opt.label),
+              description: normalizeString(opt.description),
+            }))
+            .filter((opt) => opt.label.trim().length > 0);
+
+          // OpenCode represents some freeform prompts as a single “type now” option with a `locations` field,
+          // but Happier’s AskUserQuestion should treat these as typed answers (not a real selection).
+          const hasLocations = Array.isArray((q as any).locations);
+          const isSingleOptionHint = options.length === 1 && looksLikeFreeformQuestionHintLabel(options[0]!.label);
+          const isFreeform = hasLocations || options.length === 0 || (q.multiple !== true && isSingleOptionHint);
+          if (!isFreeform) return { options };
+
+          const hint = options[0];
+          const placeholder = hint?.label?.trim() ?? '';
+          const description = hint?.description?.trim() ?? '';
+          return {
+            options: [],
+            ...(placeholder || description
+              ? { freeform: { ...(placeholder ? { placeholder } : null), ...(description ? { description } : null) } }
+              : null),
+          };
+        })(),
         multiSelect: q.multiple === true,
       })),
     };

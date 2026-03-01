@@ -573,6 +573,128 @@ describe('createOpenCodeServerRuntime', () => {
     );
   });
 
+  it('treats location-based OpenCode questions as freeform (options are a UI hint, not a real choice)', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const permissionHandler = {
+      handleToolCall: vi.fn(async () => ({ decision: 'approved', answers: { 'Which file should I inspect?': 'README.md' } })),
+    };
+
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: permissionHandler as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+
+    client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'question.asked',
+        properties: {
+          id: 'que_freeform',
+          sessionID: 'ses_1',
+          questions: [
+            {
+              question: 'Which file should I inspect?',
+              header: 'File to inspect',
+              locations: [],
+              options: [
+                { label: 'Type path now', description: 'Provide the repo-relative file path you want me to inspect.' },
+              ],
+              multiple: false,
+            },
+          ],
+        },
+      },
+    });
+
+    await expect.poll(() => client.questionReply.mock.calls.length).toBe(1);
+
+    expect(permissionHandler.handleToolCall).toHaveBeenCalledWith(
+      'que_freeform',
+      'AskUserQuestion',
+      expect.objectContaining({
+        questions: [
+          expect.objectContaining({
+            question: 'Which file should I inspect?',
+            header: 'File to inspect',
+            options: [],
+            freeform: expect.objectContaining({
+              placeholder: 'Type path now',
+              description: 'Provide the repo-relative file path you want me to inspect.',
+            }),
+          }),
+        ],
+      }),
+    );
+
+    expect(client.questionReply).toHaveBeenCalledWith({ requestId: 'que_freeform', answers: [['README.md']] });
+  });
+
+  it('treats single-option "type/enter" OpenCode questions as freeform even when locations are omitted', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const permissionHandler = {
+      handleToolCall: vi.fn(async () => ({ decision: 'approved', answers: { 'Which file should I inspect?': 'README.md' } })),
+    };
+
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: permissionHandler as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+
+    client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'question.asked',
+        properties: {
+          id: 'que_freeform_2',
+          sessionID: 'ses_1',
+          questions: [
+            {
+              question: 'Which file should I inspect?',
+              header: 'File to inspect',
+              options: [
+                { label: 'Type your own answer', description: 'Enter the file path you want me to inspect.' },
+              ],
+              multiple: false,
+            },
+          ],
+        },
+      },
+    });
+
+    await expect.poll(() => client.questionReply.mock.calls.length).toBe(1);
+
+    expect(permissionHandler.handleToolCall).toHaveBeenCalledWith(
+      'que_freeform_2',
+      'AskUserQuestion',
+      expect.objectContaining({
+        questions: [
+          expect.objectContaining({
+            options: [],
+            freeform: expect.objectContaining({ placeholder: 'Type your own answer' }),
+          }),
+        ],
+      }),
+    );
+  });
+
   it('does not double-handle questions when question.asked arrives and the control-plane poll also sees it', async () => {
     const client = createFakeClient() as any;
     const session = createFakeSession();
