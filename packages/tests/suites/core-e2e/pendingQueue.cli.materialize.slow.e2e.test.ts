@@ -34,7 +34,8 @@ describe('core e2e: CLI materializes server pending queue v2', () => {
     const testDir = run.testDir('pending-queue-v2-cli-materialize');
     const startedAt = new Date().toISOString();
 
-    server = await startServerLight({ testDir });
+    // Use sqlite for determinism; pglite wasm/socket can be flaky in some environments.
+    server = await startServerLight({ testDir, dbProvider: 'sqlite' });
     const auth = await createTestAuth(server.baseUrl);
 
     const cliHome = resolve(join(testDir, 'cli-home'));
