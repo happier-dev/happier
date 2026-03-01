@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { createContext, runInContext } from 'node:vm';
 
 describe('logger.debugLargeJson', () => {
     const originalDebug = process.env.DEBUG;
@@ -54,6 +55,44 @@ describe('logger.debugLargeJson', () => {
         expect(existsSync(logger.getLogPath())).toBe(true);
         const content = readFileSync(logger.getLogPath(), 'utf8');
         expect(content).toContain('[TEST] error serialization');
+        expect(content).toContain('boom');
+    });
+
+    it('does not throw when debugLargeJson receives circular objects', async () => {
+        process.env.DEBUG = '1';
+
+        const { logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
+
+        const obj: { a: number; self?: unknown } = { a: 1 };
+        obj.self = obj;
+
+        expect(() => {
+            logger.debugLargeJson('[TEST] circular json', obj);
+        }).not.toThrow();
+
+        expect(existsSync(logger.getLogPath())).toBe(true);
+        const content = readFileSync(logger.getLogPath(), 'utf8');
+        expect(content).toContain('[TEST] circular json');
+    });
+
+    it('does not throw when logging a cross-realm Error with circular refs', async () => {
+        const { logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
+
+        const ctx = createContext({});
+        const err = runInContext(
+            "(() => { const e = new Error('boom'); e.error = e; return e; })()",
+            ctx,
+        );
+
+        expect(err instanceof Error).toBe(false);
+
+        expect(() => {
+            logger.debug('[TEST] cross-realm error', err);
+        }).not.toThrow();
+
+        expect(existsSync(logger.getLogPath())).toBe(true);
+        const content = readFileSync(logger.getLogPath(), 'utf8');
+        expect(content).toContain('[TEST] cross-realm error');
         expect(content).toContain('boom');
     });
 

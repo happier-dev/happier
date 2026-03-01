@@ -10,6 +10,7 @@ import { appendFileSync } from 'fs'
 import { configuration } from '@/configuration'
 import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
+import { inspect } from 'node:util'
 // Note: readDaemonState is imported lazily inside listDaemonLogFiles() to avoid
 // circular dependency: logger.ts ↔ persistence.ts
 
@@ -88,14 +89,21 @@ class Logger {
     if (!process.env.DEBUG) return;
 
     // Some of our messages are huge, but we still want to show them in the logs
+    const visited = new WeakSet<object>()
     const truncateStrings = (obj: unknown): unknown => {
       if (typeof obj === 'string') {
         return obj.length > maxStringLength 
           ? obj.substring(0, maxStringLength) + '... [truncated for logs]'
           : obj
       }
+
+      if (typeof obj === 'bigint') {
+        return `${obj.toString()}n`
+      }
       
       if (Array.isArray(obj)) {
+        if (visited.has(obj)) return '[Circular]'
+        visited.add(obj)
         const truncatedArray = obj.map(item => truncateStrings(item)).slice(0, maxArrayLength)
         if (obj.length > maxArrayLength) {
           truncatedArray.push(`... [truncated array for logs up to ${maxArrayLength} items]` as unknown)
@@ -104,6 +112,8 @@ class Logger {
       }
       
       if (obj && typeof obj === 'object') {
+        if (visited.has(obj)) return '[Circular]'
+        visited.add(obj)
         const result: Record<string, unknown> = {}
         for (const [key, value] of Object.entries(obj)) {
           if (key === 'usage') {
@@ -119,7 +129,12 @@ class Logger {
     }
 
     const truncatedObject = truncateStrings(object)
-    const json = JSON.stringify(truncatedObject, null, 2)
+    let json = ''
+    try {
+      json = JSON.stringify(truncatedObject, null, 2)
+    } catch {
+      json = inspect(truncatedObject, { depth: 8, maxArrayLength })
+    }
     this.logToFile(`[${this.localTimezoneTimestamp()}]`, message, '\n', json)
   }
   
