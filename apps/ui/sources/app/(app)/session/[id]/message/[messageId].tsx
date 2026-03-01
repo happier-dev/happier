@@ -18,11 +18,14 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { deriveAutoRecipientFromFocusedToolTranscript, deriveSessionParticipantTargets } from '@/sync/domains/session/participants/deriveSessionParticipantTargets';
+import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 import { useSessionRecipientState } from '@/components/sessions/agentInput/recipient/useSessionRecipientState';
 import { RecipientChip } from '@/components/sessions/agentInput/recipient/RecipientChip';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/AgentInput';
 import { resolveParticipantRoutedSend } from '@/sync/domains/input/participants/resolveParticipantRoutedSend';
-import { sessionExecutionRunSend } from '@/sync/ops/sessionExecutionRuns';
+import { isExecutionRunNotRunningSendError, sessionExecutionRunSend } from '@/sync/ops/sessionExecutionRuns';
+import { useSessionRunningExecutionRuns } from '@/hooks/session/useSessionRunningExecutionRuns';
+import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
 
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -246,6 +249,28 @@ function TextFullView(props: { text: string }) {
     );
 }
 
+function ensureExecutionRunAutoRecipientTarget(
+    targets: readonly SessionParticipantTarget[],
+    autoRecipient: ParticipantRecipientV1 | null,
+): readonly SessionParticipantTarget[] {
+    if (!autoRecipient || autoRecipient.kind !== 'execution_run') return targets;
+    if (
+        targets.some(
+            (target) => target.recipient.kind === 'execution_run' && target.recipient.runId === autoRecipient.runId,
+        )
+    ) {
+        return targets;
+    }
+    const displayLabel = t('session.participants.executionRun', { runId: autoRecipient.runId });
+    const injectedTarget = {
+        key: `execution_run:${autoRecipient.runId}`,
+        displayLabel,
+        recipient: { kind: 'execution_run', runId: autoRecipient.runId, label: displayLabel } satisfies ParticipantRecipientV1,
+    } satisfies SessionParticipantTarget;
+
+    return [injectedTarget, ...targets];
+}
+
 function ToolCallFullView(props: {
     message: Extract<Message, { kind: 'tool-call' }>;
     sessionId: string;
@@ -256,14 +281,22 @@ function ToolCallFullView(props: {
 }) {
     const { messages: committedMessages } = useSessionMessages(props.sessionId);
     const [composerText, setComposerText] = React.useState('');
+    const runningExecutionRuns = useSessionRunningExecutionRuns({
+        sessionId: props.sessionId,
+        enabled: true,
+    });
 
     const focusedTool = props.message.tool;
     const toolName = focusedTool?.name;
     const canShowComposer = toolName === 'Task' || toolName === 'SubAgentRun' || toolName === 'Agent';
 
-    const participantTargets = React.useMemo(() => {
-        return deriveSessionParticipantTargets({ session: props.session, messages: committedMessages });
-    }, [committedMessages, props.session]);
+    const baseParticipantTargets = React.useMemo(() => {
+        return deriveSessionParticipantTargets({
+            session: props.session,
+            messages: committedMessages,
+            activeExecutionRuns: runningExecutionRuns,
+        });
+    }, [committedMessages, props.session, runningExecutionRuns]);
 
     const autoRecipient = React.useMemo(() => {
         if (!canShowComposer) return null;
@@ -271,8 +304,14 @@ function ToolCallFullView(props: {
             session: props.session,
             tool: focusedTool,
             messages: committedMessages,
+            activeExecutionRuns: runningExecutionRuns,
+            focusedMessages: props.message.children,
         });
-    }, [canShowComposer, committedMessages, focusedTool, props.session]);
+    }, [canShowComposer, committedMessages, focusedTool, props.message.children, props.session, runningExecutionRuns]);
+
+    const participantTargets = React.useMemo(() => {
+        return ensureExecutionRunAutoRecipientTarget(baseParticipantTargets, autoRecipient);
+    }, [autoRecipient, baseParticipantTargets]);
 
     const recipientState = useSessionRecipientState({ targets: participantTargets, autoRecipient });
 
@@ -336,6 +375,9 @@ function ToolCallFullView(props: {
                                     delivery: routed.delivery,
                                 });
                                 if (!result.ok) {
+                                    if (isExecutionRunNotRunningSendError(result)) {
+                                        recipientState.setManualRecipient(null);
+                                    }
                                     setComposerText(previousMessage);
                                     Modal.alert(t('common.error'), result.error ?? t('runs.send.failedToSend'));
                                 }
