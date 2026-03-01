@@ -27,6 +27,7 @@ import { DeleteView } from '../fileOps/DeleteView';
 import { MCPToolView } from '../system/MCPToolView';
 import { UnknownToolView } from '../system/UnknownToolView';
 import { SubAgentRunView } from '../workflow/SubAgentRunView';
+import { AgentTeamView } from '../workflow/AgentTeamView';
 import { KnownCanonicalToolNameV2Schema, type KnownCanonicalToolNameV2 } from '@happier-dev/protocol';
 
 export type ToolViewDetailLevel = 'title' | 'summary' | 'full';
@@ -40,7 +41,7 @@ export type ToolViewProps = {
     interaction?: {
         canSendMessages: boolean;
         canApprovePermissions: boolean;
-        permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted';
+        permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
     };
 }
 
@@ -74,6 +75,9 @@ export const toolViewRegistry: Record<KnownCanonicalToolNameV2, ToolViewComponen
     WorkspaceIndexingPermission: WorkspaceIndexingPermissionView,
     change_title: ChangeTitleView,
     SubAgentRun: SubAgentRunView,
+    AgentTeamCreate: AgentTeamView,
+    AgentTeamDelete: AgentTeamView,
+    AgentTeamSendMessage: AgentTeamView,
 };
 
 const legacyToolNameToCanonical: Record<string, KnownCanonicalToolNameV2> = {
