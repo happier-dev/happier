@@ -183,7 +183,7 @@ export const ConnectedServiceQuotaCard = React.memo(function ConnectedServiceQuo
 
       {snapshot?.planLabel ? (
         <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 2 }}>
-          <Text style={{ opacity: 0.7 }}>{t('connectedServices.quota.planLabel', { plan: snapshot.planLabel })}</Text>
+          <Text style={{ color: theme.colors.textSecondary }}>{t('connectedServices.quota.planLabel', { plan: snapshot.planLabel })}</Text>
         </View>
       ) : null}
 

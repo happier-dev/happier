@@ -14,12 +14,12 @@ import { useAuth } from '@/auth/context/AuthContext';
 import { sync } from '@/sync/sync';
 import { useProfile, useSettings } from '@/sync/store/hooks';
 import { deleteConnectedServiceCredentialForAccount } from '@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount';
-import { getConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { connectedServiceProfileKey, resolveConnectedServiceProfileLabel } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import { ConnectedServiceIdSchema, type ConnectedServiceId } from '@happier-dev/protocol';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
 import { ConnectedServiceQuotaCard } from '../ConnectedServiceQuotaCard';
+import { resolveConnectedServiceDisplayName } from '../model/resolveConnectedServiceDisplayName';
 
 function asStringParam(value: unknown): string {
   if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : '';
@@ -47,7 +47,7 @@ export const ConnectedServiceProfileDetailView = React.memo(function ConnectedSe
       <ItemList>
         <ItemGroup title={t('settings.connectedAccounts')}>
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ opacity: 0.7 }}>{t('settings.connectedAccountsDisabled')}</Text>
+            <Text style={{ color: theme.colors.textSecondary }}>{t('settings.connectedAccountsDisabled')}</Text>
           </View>
         </ItemGroup>
       </ItemList>
@@ -59,14 +59,14 @@ export const ConnectedServiceProfileDetailView = React.memo(function ConnectedSe
       <ItemList>
         <ItemGroup title={t('connectedServices.title')}>
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ opacity: 0.7 }}>{t('connectedServices.oauthPaste.invalidConfig')}</Text>
+            <Text style={{ color: theme.colors.textSecondary }}>{t('connectedServices.oauthPaste.invalidConfig')}</Text>
           </View>
         </ItemGroup>
       </ItemList>
     );
   }
 
-  const entry = getConnectedServiceRegistryEntry(serviceId);
+  const serviceLabel = resolveConnectedServiceDisplayName(serviceId);
   const svc = profile.connectedServicesV2.find((s) => s.serviceId === serviceId) ?? null;
   const profileRecord = (svc?.profiles ?? []).find((p) => p.profileId === profileId) ?? null;
   const status = profileRecord?.status === 'connected' ? 'connected' : 'needs_reauth';
@@ -92,7 +92,7 @@ export const ConnectedServiceProfileDetailView = React.memo(function ConnectedSe
   const handleDisconnect = async () => {
     const ok = await Modal.confirm(
       t('modals.disconnect'),
-      t('connectedServices.detail.disconnectConfirmBody', { service: entry.displayName, profileId }),
+      t('connectedServices.detail.disconnectConfirmBody', { service: serviceLabel, profileId }),
       { confirmText: t('modals.disconnect'), cancelText: t('common.cancel') },
     );
     if (!ok) return;
@@ -150,7 +150,7 @@ export const ConnectedServiceProfileDetailView = React.memo(function ConnectedSe
 
   return (
     <ItemList>
-      <ItemGroup title={`${entry.displayName} • ${title}`}>
+      <ItemGroup title={`${serviceLabel} • ${title}`}>
         <Item
           title={t('connectedServices.profile.profileId')}
           subtitle={profileId}

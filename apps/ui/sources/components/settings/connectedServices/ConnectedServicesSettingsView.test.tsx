@@ -70,8 +70,8 @@ vi.mock('@/text', () => ({
 }));
 
 vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', () => ({
-    CONNECTED_SERVICES_REGISTRY: [{ serviceId: 'openai-codex', displayName: 'Codex', connectCommand: 'happier connect codex' }],
-    getConnectedServiceRegistryEntry: (_serviceId: string) => ({ displayName: 'Codex', connectCommand: 'happier connect codex' }),
+    CONNECTED_SERVICES_REGISTRY: [{ serviceId: 'openai-codex', connectCommand: 'happier connect codex', supportsOauth: true }],
+    getConnectedServiceRegistryEntry: (_serviceId: string) => ({ serviceId: 'openai-codex', connectCommand: 'happier connect codex', supportsOauth: true }),
 }));
 
 vi.mock('@/hooks/server/connectedServices/useConnectedServiceQuotaBadges', () => ({

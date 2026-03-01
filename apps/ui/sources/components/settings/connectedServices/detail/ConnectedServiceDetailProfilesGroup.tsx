@@ -45,7 +45,7 @@ export const ConnectedServiceDetailProfilesGroup = React.memo(function Connected
     <ItemGroup title={props.title}>
       {props.profiles.length === 0 ? (
         <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-          <Text style={{ opacity: 0.7 }}>{t('connectedServices.detail.profiles.empty')}</Text>
+          <Text style={{ color: theme.colors.textSecondary }}>{t('connectedServices.detail.profiles.empty')}</Text>
         </View>
       ) : null}
 

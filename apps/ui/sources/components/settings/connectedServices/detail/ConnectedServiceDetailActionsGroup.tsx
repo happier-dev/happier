@@ -15,7 +15,9 @@ export const ConnectedServiceDetailActionsGroup = React.memo(function ConnectedS
   onConnectToken: () => void;
 }>) {
   const { theme } = useUnistyles();
-  const singleOauthMode: 'device' | 'paste' | 'browser' | null = props.oauthAddActionModes?.[0] ?? null;
+  const oauthModes = props.oauthAddActionModes ?? [];
+  const showExplicitOauthModes = oauthModes.length > 0;
+  const singleOauthMode: 'device' | 'paste' | 'browser' | null = oauthModes[0] ?? null;
 
   return (
     <ItemGroup title={t('connectedServices.detail.actionsGroupTitle')}>
@@ -38,8 +40,8 @@ export const ConnectedServiceDetailActionsGroup = React.memo(function ConnectedS
       ) : null}
       {props.supportsOauth ? (
         <>
-          {(props.oauthAddActionModes ?? []).length > 1 ? (
-            (props.oauthAddActionModes ?? []).map((mode) => {
+          {showExplicitOauthModes ? (
+            oauthModes.map((mode) => {
               const titleKey =
                 mode === 'device'
                   ? t('connectedServices.detail.addOauthProfileDeviceTitle')

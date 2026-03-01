@@ -18,6 +18,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { ConnectedServiceQuotaBadgesView } from '@/components/settings/connectedServices/ConnectedServiceQuotaBadgesView';
 import { useConnectedServiceQuotaBadges } from '@/hooks/server/connectedServices/useConnectedServiceQuotaBadges';
 import { connectedServiceProfileKey, resolveConnectedServiceDefaultProfileId } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
+import { resolveConnectedServiceDisplayName } from './model/resolveConnectedServiceDisplayName';
 
 export const ConnectedServicesSettingsView = React.memo(function ConnectedServicesSettingsView() {
   const { theme } = useUnistyles();
@@ -58,7 +59,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
       <ItemList>
         <ItemGroup title={t('connectedServices.title')}>
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ opacity: 0.7 }}>
+            <Text style={{ color: theme.colors.textSecondary }}>
               {t('settings.connectedAccountsDisabled')}
             </Text>
           </View>
@@ -72,7 +73,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
       <ItemGroup title={t('connectedServices.title')}>
         {services.length === 0 ? (
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ opacity: 0.7 }}>{t('connectedServices.list.empty')}</Text>
+            <Text style={{ color: theme.colors.textSecondary }}>{t('connectedServices.list.empty')}</Text>
           </View>
         ) : null}
 
@@ -80,7 +81,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
           const serviceId = serviceIdRaw;
           const svc = services.find((s) => s.serviceId === serviceId) ?? null;
           const entry = getConnectedServiceRegistryEntry(serviceId);
-          const label = entry.displayName;
+          const label = resolveConnectedServiceDisplayName(serviceId);
           const profiles = svc?.profiles ?? [];
           const connected = profiles.filter((p) => p.status === 'connected');
           const connectedIds = connected
