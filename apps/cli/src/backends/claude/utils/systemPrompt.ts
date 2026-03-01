@@ -32,8 +32,7 @@ const CO_AUTHORED_CREDITS = (() => trimIdent(`
 	`))();
 
 /**
- * System prompt with conditional Co-Authored-By lines based on Claude's settings.json configuration.
- * Settings are read once on startup for performance.
+ * System prompt with optional Co-Authored-By credits based on Happier settings.
  */
 export function getClaudeSystemPrompt(): string {
   const includeCoAuthored = shouldIncludeCoAuthoredBy();

@@ -47,7 +47,7 @@ describe('generateHookSettingsFile', () => {
     expect(permissionCommand).toContain('test-secret-123');
   });
 
-  it('merges hook settings with the user Claude settings file instead of replacing it', () => {
+  it('does not read or copy arbitrary keys from Claude settings.json', () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-claude-settings-'));
     createdDirs.push(dir);
     process.env.CLAUDE_CONFIG_DIR = dir;
@@ -66,44 +66,13 @@ describe('generateHookSettingsFile', () => {
     createdFiles.push(filePath);
 
     const parsed = JSON.parse(readFileSync(filePath, 'utf8')) as any;
-    expect(parsed.includeCoAuthoredBy).toBe(true);
-    expect(parsed.customKey).toBe('custom-value');
+    expect(parsed.includeCoAuthoredBy).toBeUndefined();
+    expect(parsed.customKey).toBeUndefined();
 
-    const sessionStartCommands = (parsed.hooks?.SessionStart ?? [])
+    const hookCommands = (parsed.hooks?.SessionStart ?? [])
       .flatMap((entry: any) => entry?.hooks ?? [])
       .map((hook: any) => hook?.command)
       .filter((command: any) => typeof command === 'string');
-
-    expect(sessionStartCommands).toEqual(expect.arrayContaining([
-      'echo user-session-start',
-      expect.stringContaining('session_hook_forwarder.cjs'),
-    ]));
-  });
-
-  it('reads Claude settings from explicit claudeConfigDir option (does not require process.env.CLAUDE_CONFIG_DIR)', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'happier-claude-settings-explicit-'));
-    createdDirs.push(dir);
-
-    writeFileSync(
-      join(dir, 'settings.json'),
-      JSON.stringify(
-        {
-          includeCoAuthoredBy: true,
-          customKey: 'custom-value',
-          hooks: {
-            SessionStart: [{ matcher: '*', hooks: [{ type: 'command', command: 'echo user-session-start' }] }],
-          },
-        },
-        null,
-        2,
-      ),
-    );
-
-    const filePath = generateHookSettingsFile(43126, { claudeConfigDir: dir });
-    createdFiles.push(filePath);
-
-    const parsed = JSON.parse(readFileSync(filePath, 'utf8')) as any;
-    expect(parsed.includeCoAuthoredBy).toBe(true);
-    expect(parsed.customKey).toBe('custom-value');
+    expect(hookCommands).toEqual(expect.arrayContaining([expect.stringContaining('session_hook_forwarder.cjs')]));
   });
 });

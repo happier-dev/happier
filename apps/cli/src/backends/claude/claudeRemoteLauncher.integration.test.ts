@@ -205,7 +205,7 @@ describe.sequential('claudeRemoteLauncher', () => {
     expect(mockResetParentChain).toHaveBeenCalledTimes(1);
   }, 30_000);
 
-  it('merges user --mcp-config JSON into happier MCP config and strips passthrough flags before dispatch', async () => {
+  it('passes through user --mcp-config args and does not parse/merge them into happier MCP config before dispatch', async () => {
     const { session, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
     const dispatchStarted = createDeferred<void>();
 
@@ -230,15 +230,14 @@ describe.sequential('claudeRemoteLauncher', () => {
     expect(mockClaudeRemoteDispatch).toHaveBeenCalledTimes(1);
 
     expect(Array.isArray(captured?.claudeArgs)).toBe(true);
-    expect(captured?.claudeArgs).not.toContain('--mcp-config');
-    expect(captured?.claudeArgs).toEqual(['--max-turns', '3']);
+    expect(captured?.claudeArgs).toEqual(['--mcp-config', userMcpConfig, '--max-turns', '3']);
 
     const parsed = JSON.parse(String(captured?.happierMcpConfigJson ?? 'null'));
     expect(parsed?.mcpServers?.happier).toBeTruthy();
-    expect(parsed?.mcpServers?.custom).toEqual({ type: 'http', url: 'http://127.0.0.1:9999' });
+    expect(parsed?.mcpServers?.custom).toBeUndefined();
 
     expect(Object.prototype.hasOwnProperty.call(captured?.happierMcpServers ?? {}, 'happier')).toBe(true);
-    expect(Object.prototype.hasOwnProperty.call(captured?.happierMcpServers ?? {}, 'custom')).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(captured?.happierMcpServers ?? {}, 'custom')).toBe(false);
 
     const switchHandler = await switchHandlerReady;
     expect(await switchHandler({ to: 'local' })).toBe(true);

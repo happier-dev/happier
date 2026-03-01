@@ -691,7 +691,7 @@ function makeAcpPermissionModeOutsideWorkspaceScenario(
 
 const agentSdkRemoteMetaBase = {
   claudeRemoteAgentSdkEnabled: true,
-  claudeRemoteSettingSources: 'user_project',
+  claudeRemoteSettingSourcesV2: ['user', 'project', 'local'],
 } as const;
 
 function withAgentSdkRemoteMeta(
@@ -2612,7 +2612,9 @@ await server.connect(new StdioServerTransport());
   },
 
   task_subagent_reply: (provider) => {
-    assertProviderId(provider, 'opencode');
+    if (provider.id !== 'opencode' && provider.id !== 'opencode_server') {
+      throw new Error(`task_subagent_reply only supports OpenCode-family providers (got ${provider.id})`);
+    }
     const pid = acpProviderId(provider);
     return {
       id: 'task_subagent_reply',

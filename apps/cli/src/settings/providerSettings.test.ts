@@ -52,14 +52,15 @@ describe('providerSettings', () => {
       agentId: 'claude',
       settings: {
         claudeRemoteAgentSdkEnabled: true,
-        claudeRemoteSettingSources: 'user_project',
+        claudeRemoteSettingSourcesV2: ['user', 'project', 'local'],
         claudeRemoteAdvancedOptionsJson: '{\"plugins\":[]}',
       },
       session: null,
     });
 
     expect(extras.claudeRemoteAgentSdkEnabled).toBe(true);
-    expect(extras.claudeRemoteSettingSources).toBe('user_project');
+    expect(extras.claudeRemoteSettingSourcesV2).toEqual(['user', 'project', 'local']);
+    expect(extras.claudeRemoteSettingSources).toBeUndefined();
     // Normalized JSON.
     expect(extras.claudeRemoteAdvancedOptionsJson).toBe('{\"plugins\":[]}');
   });

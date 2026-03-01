@@ -11,7 +11,6 @@ import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTa
 import { resolveAcpSessionModeOverrideFromMetadataSnapshot, resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
 import { configuration } from '@/configuration';
-import { tryMergeUserMcpConfigArgsIntoHappierMcp } from './utils/mcpConfigMerge';
 import { resolveClaudeConfigDirOverride } from './utils/resolveClaudeConfigDirOverride';
 import { resolveClaudeCodeExperimentalEnvOverlay } from './spawn/resolveClaudeCodeExperimentalEnvOverlay';
 
@@ -251,13 +250,7 @@ export async function claudeLocalLauncher(
                     agentModeId: resolvedAgentMode ? resolvedAgentMode.modeId : null,
                 });
 
-                const { mcpServers: baseMcpServers, mcpConfigJson: baseMcpConfigJson } = await session.getOrCreateHappierMcpBridge();
-                const mergedMcp = tryMergeUserMcpConfigArgsIntoHappierMcp({
-                    baseMcpServers,
-                    claudeArgs: session.claudeArgs,
-                });
-                const effectiveClaudeArgs = mergedMcp ? mergedMcp.filteredClaudeArgs : session.claudeArgs;
-                const effectiveMcpConfigJson = mergedMcp ? mergedMcp.mergedMcpConfigJson : baseMcpConfigJson;
+                const { mcpConfigJson: baseMcpConfigJson } = await session.getOrCreateHappierMcpBridge();
 
                 await claudeLocal({
                     path: session.path,
@@ -265,11 +258,11 @@ export async function claudeLocalLauncher(
                     onSessionFound: handleSessionStart,
                     onThinkingChange: session.onThinkingChange,
                     abort: processAbortController.signal,
-                    claudeArgs: effectiveClaudeArgs,
+                    claudeArgs: session.claudeArgs,
                     envOverlay: resolveClaudeCodeExperimentalEnvOverlay({
                         claudeCodeExperimentalAgentTeamsEnabled: session.claudeCodeExperimentalAgentTeamsEnabled,
                     }),
-                    happierMcpConfigJson: effectiveMcpConfigJson,
+                    happierMcpConfigJson: baseMcpConfigJson,
                     hookSettingsPath: session.hookSettingsPath,
                 });
 

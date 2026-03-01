@@ -1,5 +1,15 @@
 type McpServersRecord = Record<string, unknown>;
 
+/**
+ * NOTE:
+ * This helper exists ONLY for the Claude Agent SDK runner (remote mode) where we cannot pass
+ * through raw CLI `--mcp-config` flags and must instead materialize an `mcpServers` object.
+ *
+ * For CLI-based spawns (local mode + legacy remote runner), Claude Code already merges multiple
+ * `--mcp-config` inputs additively (last-write-wins on server name collisions). In those paths,
+ * we intentionally avoid parsing/merging user JSON and instead append Happier's `--mcp-config`
+ * after any user-provided passthrough flags.
+ */
 const FORBIDDEN_MCP_SERVER_NAMES = new Set(['__proto__', 'constructor', 'prototype']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {

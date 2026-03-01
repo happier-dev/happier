@@ -44,25 +44,25 @@ export const CLAUDE_PROVIDER_SETTINGS_PLUGIN = {
                     subtitle: 'Use the official @anthropic-ai/claude-agent-sdk for remote mode.',
                 },
                 {
-                    key: 'claudeRemoteSettingSources',
-                    kind: 'enum',
+                    key: 'claudeRemoteSettingSourcesV2',
+                    kind: 'multiEnum',
                     title: 'Setting sources',
                     subtitle: 'Controls which Claude settings are loaded.',
                     enumOptions: [
                         {
+                            id: 'user',
+                            title: 'User',
+                            subtitle: 'Loads user-global Claude config.',
+                        },
+                        {
                             id: 'project',
-                            title: 'Project only',
-                            subtitle: 'Loads repo settings (e.g. CLAUDE.md) for predictability.',
+                            title: 'Project',
+                            subtitle: 'Loads repo settings (including CLAUDE.md).',
                         },
                         {
-                            id: 'user_project',
-                            title: 'User + Project',
-                            subtitle: 'Closer to local Claude behavior; may include user-global config.',
-                        },
-                        {
-                            id: 'none',
-                            title: 'None',
-                            subtitle: 'Most deterministic; ignores CLAUDE.md and user config.',
+                            id: 'local',
+                            title: 'Local',
+                            subtitle: 'Loads local-only overrides.',
                         },
                     ],
                 },

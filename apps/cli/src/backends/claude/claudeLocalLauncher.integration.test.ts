@@ -258,7 +258,7 @@ describe('claudeLocalLauncher', () => {
     expect(result).toEqual({ type: 'exit', code: 0 });
   });
 
-  it('merges user --mcp-config JSON into happierMcpConfigJson and strips passthrough flags', async () => {
+  it('passes through user --mcp-config args and does not parse/merge them into happierMcpConfigJson', async () => {
     const { session } = createLocalHarness();
 
     const userMcpConfig = JSON.stringify({
@@ -277,11 +277,11 @@ describe('claudeLocalLauncher', () => {
     const result = await claudeLocalLauncher(session);
 
     expect(mockClaudeLocal).toHaveBeenCalledTimes(1);
-    expect((captured as any)?.claudeArgs).not.toContain('--mcp-config');
+    expect((captured as any)?.claudeArgs).toEqual(['--mcp-config', userMcpConfig, '--max-turns', '3']);
 
     const parsed = JSON.parse(String((captured as any)?.happierMcpConfigJson ?? 'null'));
     expect(parsed?.mcpServers?.happier).toBeTruthy();
-    expect(parsed?.mcpServers?.custom).toEqual({ type: 'http', url: 'http://127.0.0.1:9999' });
+    expect(parsed?.mcpServers?.custom).toBeUndefined();
     expect(result).toEqual({ type: 'exit', code: 0 });
   });
 

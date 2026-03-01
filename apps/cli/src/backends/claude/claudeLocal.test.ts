@@ -148,6 +148,34 @@ describe('claudeLocal --continue handling', () => {
         expect(spawnArgs[idx + 1]).toBe(mcpJson);
     });
 
+    it('appends Happier --mcp-config after any user --mcp-config flags (last-wins on collisions)', async () => {
+        const userMcp = JSON.stringify({
+            mcpServers: { fixture: { command: 'node', args: ['server.mjs'] } },
+        });
+        const happierMcp = JSON.stringify({
+            mcpServers: { happier: { command: 'node', args: ['happier-mcp.mjs', '--url', 'http://127.0.0.1:1234'] } },
+        });
+
+        await claudeLocal({
+            abort: new AbortController().signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            claudeArgs: ['--mcp-config', userMcp],
+            happierMcpConfigJson: happierMcp,
+        } as any);
+
+        expect(mockSpawn).toHaveBeenCalled();
+        const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+        const mcpFlags = spawnArgs
+            .map((value, index) => ({ value, index }))
+            .filter((entry) => entry.value === '--mcp-config')
+            .map((entry) => entry.index);
+        expect(mcpFlags.length).toBe(2);
+        expect(spawnArgs[mcpFlags[0]! + 1]).toBe(userMcp);
+        expect(spawnArgs[mcpFlags[1]! + 1]).toBe(happierMcp);
+    });
+
     it('should spawn the Node launcher using process.execPath when running under Node', async () => {
         mockClaudeFindLastSession.mockReturnValue(null);
 

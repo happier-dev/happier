@@ -445,7 +445,6 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         const hookSettingsPath = generateHookSettingsFile(hookServer.port, {
             enableLocalPermissionBridge: true,
             permissionHookSecret,
-            claudeConfigDir: resolveClaudeConfigDirOverride(process.env) ?? undefined,
         });
         logger.debug(`[START] Generated hook settings file: ${hookSettingsPath}`);
 
@@ -893,7 +892,6 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     return generateHookSettingsFile(port, {
                         enableLocalPermissionBridge: true,
                         permissionHookSecret,
-                        claudeConfigDir: resolveClaudeConfigDirOverride(process.env) ?? undefined,
                     });
                 },
             cleanupHookSettingsFile,

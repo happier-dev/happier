@@ -1,8 +1,15 @@
 /**
  * Generate temporary settings file with Claude hooks for session tracking
  * 
- * Creates a settings.json file that configures Claude's SessionStart hook
- * to notify our HTTP server when sessions change (new session, resume, compact, etc.)
+ * Creates a settings overlay file passed to Claude Code via `--settings`.
+ *
+ * IMPORTANT:
+ * We intentionally do NOT read or merge Claude's `~/.claude/settings.json` (or project/local variants).
+ * Claude Code merges `--settings` additively with settings loaded from its configured sources, including hooks.
+ *
+ * This was validated by running real `claude -p` processes:
+ * - Project settings hooks + `--settings` hooks both fired (additive).
+ * - Therefore, reading/merging user settings here is redundant and can introduce bugs (stale merges, invalid JSON).
  */
 
 import { join, resolve } from 'node:path';
@@ -10,18 +17,16 @@ import { writeFileSync, mkdirSync, unlinkSync, existsSync } from 'node:fs';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { projectPath } from '@/projectPath';
-import { readClaudeSettings, type ClaudeSettings } from './claudeSettings';
 import { isBun } from '@/utils/runtime';
 
 export interface GenerateHookSettingsOptions {
     enableLocalPermissionBridge?: boolean;
     permissionHookSecret?: string;
-    /**
-     * Override Claude config directory when the subprocess uses a non-default CLAUDE_CONFIG_DIR.
-     * This ensures our generated --settings overlay merges with the correct user settings.
-     */
-    claudeConfigDir?: string;
 }
+
+type ClaudeHookSettingsOverlay = Readonly<{
+    hooks: Record<string, unknown>;
+}>;
 
 /**
  * Generate a temporary settings file with SessionStart hook configuration
@@ -78,43 +83,7 @@ export function generateHookSettingsFile(port: number, options: GenerateHookSett
         ];
     }
 
-    const baseSettings: ClaudeSettings = readClaudeSettings(options.claudeConfigDir) ?? {};
-    const baseHooks =
-        baseSettings && typeof baseSettings === 'object' && baseSettings.hooks && typeof baseSettings.hooks === 'object'
-            ? (baseSettings.hooks as Record<string, unknown>)
-            : {};
-
-    const mergedHooks: Record<string, unknown> = { ...baseHooks };
-    for (const [hookName, requiredValue] of Object.entries(hooks)) {
-        const requiredEntries = Array.isArray(requiredValue) ? requiredValue : [requiredValue];
-        const existingEntries = Array.isArray(mergedHooks[hookName]) ? [...(mergedHooks[hookName] as unknown[])] : [];
-
-        for (const requiredEntry of requiredEntries) {
-            const requiredCommand = (() => {
-                try {
-                    const cmd = (requiredEntry as any)?.hooks?.[0]?.command;
-                    return typeof cmd === 'string' ? cmd : null;
-                } catch {
-                    return null;
-                }
-            })();
-
-            const alreadyPresent = requiredCommand
-                ? existingEntries.some((entry: any) => Array.isArray(entry?.hooks) && entry.hooks.some((h: any) => h?.command === requiredCommand))
-                : false;
-
-            if (!alreadyPresent) {
-                existingEntries.push(requiredEntry);
-            }
-        }
-
-        mergedHooks[hookName] = existingEntries;
-    }
-
-    const settings: ClaudeSettings = {
-        ...baseSettings,
-        hooks: mergedHooks,
-    };
+    const settings: ClaudeHookSettingsOverlay = { hooks };
 
     writeFileSync(filepath, JSON.stringify(settings, null, 2));
     logger.debug(`[generateHookSettings] Created hook settings file: ${filepath}`);

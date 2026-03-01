@@ -168,12 +168,27 @@ export async function claudeRemoteAgentSdk(opts: {
     const remoteSystemPrompt = getClaudeRemoteSystemPrompt({ disableTodos: mode.claudeRemoteDisableTodos === true });
     const enableFileCheckpointing = mode.claudeRemoteEnableFileCheckpointing === true;
     const settingSources = (() => {
+        const rawV2 = (mode as any).claudeRemoteSettingSourcesV2 as unknown;
+        if (Array.isArray(rawV2)) {
+            const set = new Set<string>();
+            for (const value of rawV2) {
+                if (typeof value === 'string') set.add(value);
+            }
+            const normalized: Array<'user' | 'project' | 'local'> = [];
+            for (const key of ['user', 'project', 'local'] as const) {
+                if (set.has(key)) normalized.push(key);
+            }
+            // When all sources are selected, do not force an explicit override so Claude can apply
+            // its own defaults (future-proof).
+            if (normalized.length === 3) return undefined;
+            return normalized;
+        }
+
+        // Legacy v1 mapping (back-compat).
         const value = mode.claudeRemoteSettingSources;
         if (value === 'none') return [];
         if (value === 'user_project') return ['user', 'project'];
         if (value === 'project') return ['project'];
-        // Default: do not force settingSources so Claude can apply its own defaults
-        // (which includes loading user configuration).
         return undefined;
     })();
     const advancedOptionsJsonRaw = typeof mode.claudeRemoteAdvancedOptionsJson === 'string'

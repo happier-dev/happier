@@ -78,7 +78,7 @@ describe('pendingQueueV2 optimistic thinking', () => {
                 ...storage.getState(),
                 settings: settingsParse({
                     claudeRemoteAgentSdkEnabled: true,
-                    claudeRemoteSettingSources: 'project',
+                    claudeRemoteSettingSourcesV2: ['project'],
                 }),
             },
             true,
@@ -98,6 +98,7 @@ describe('pendingQueueV2 optimistic thinking', () => {
         const metadata = pending[0]?.rawRecord?.meta as Record<string, unknown> | undefined;
         expect(metadata?.claudeRemoteAgentSdkEnabled).toBe(true);
         expect(metadata?.claudeRemoteSettingSources).toBe('project');
+        expect(metadata?.claudeRemoteSettingSourcesV2).toEqual(['project']);
     });
 
     it('includes metaOverrides (e.g. meta.happier) for queued sends', async () => {

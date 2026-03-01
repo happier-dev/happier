@@ -253,15 +253,18 @@ export async function claudeLocal(opts: {
                 }
             }
 
-            // Add hook settings for session tracking (when available)
+            // Append Happier-injected flags after any user-provided flags.
+            //
+            // Claude Code merges multiple `--mcp-config` sources additively and uses last-write-wins on collisions.
+            // Appending here means we do not need to parse/merge user JSON and Happier wins on collisions.
+            //
+            // `--settings` is also treated as an additive overlay by Claude Code (validated via real CLI runs).
             if (opts.hookSettingsPath) {
-                args.push('--settings', opts.hookSettingsPath);
+                flagArgs.push('--settings', opts.hookSettingsPath);
                 logger.debug(`[ClaudeLocal] Using hook settings: ${opts.hookSettingsPath}`);
             }
-
-            // Inject additional MCP servers (additive unless the user passes --strict-mcp-config).
             if (typeof opts.happierMcpConfigJson === 'string' && opts.happierMcpConfigJson.trim().length > 0) {
-                args.push('--mcp-config', opts.happierMcpConfigJson.trim());
+                flagArgs.push('--mcp-config', opts.happierMcpConfigJson.trim());
             }
 
             // Add flag arguments before positional prompts.

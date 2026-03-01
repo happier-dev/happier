@@ -36,6 +36,33 @@ function extractMcpConfigPassthroughArgs(args?: string[]): string[] | undefined 
     return out.length > 0 ? out : undefined;
 }
 
+function resolveSettingSourcesPassthroughArgs(mode: EnhancedMode): string[] | null {
+    const rawV2 = mode.claudeRemoteSettingSourcesV2;
+    if (Array.isArray(rawV2)) {
+        const set = new Set<string>();
+        for (const value of rawV2) {
+            if (typeof value === 'string') set.add(value);
+        }
+        const normalized: Array<'user' | 'project' | 'local'> = [];
+        for (const key of ['user', 'project', 'local'] as const) {
+            if (set.has(key)) normalized.push(key);
+        }
+        if (normalized.length === 3) return null;
+        // Claude Code CLI does not accept an explicit "none" value for --setting-sources.
+        // If no sources are selected, omit the override so we don't break the invocation.
+        if (normalized.length === 0) return null;
+        const value = normalized.join(',');
+        return ['--setting-sources', value];
+    }
+
+    const legacy = mode.claudeRemoteSettingSources;
+    // Legacy "none" can't be represented as a Claude Code CLI flag; avoid passing an invalid value.
+    if (legacy === 'none') return null;
+    if (legacy === 'project') return ['--setting-sources', 'project'];
+    if (legacy === 'user_project') return ['--setting-sources', 'user,project'];
+    return null;
+}
+
 export async function claudeRemote(opts: {
 
     // Fixed parameters
@@ -45,7 +72,12 @@ export async function claudeRemote(opts: {
     claudeArgs?: string[],
     /**
      * Optional MCP config JSON to inject into the Claude Code CLI invocation (e.g. Happier MCP).
-     * When set, this is prepended to any user-provided `--mcp-config` passthrough args.
+     *
+     * Claude Code merges multiple `--mcp-config` inputs additively and uses last-write-wins
+     * when the same server name appears more than once.
+     *
+     * We intentionally append Happier's injected MCP config AFTER any user-provided `--mcp-config`
+     * passthrough args so Happier wins on collisions (and so we don't need to parse/merge user JSON).
      */
     happierMcpConfigJson?: string,
     signal?: AbortSignal,
@@ -119,12 +151,13 @@ export async function claudeRemote(opts: {
     const appendSystemPrompt = argOverrides.appendSystemPrompt ?? initial.mode.appendSystemPrompt;
     const remoteSystemPrompt = getClaudeRemoteSystemPrompt({ disableTodos: initial.mode.claudeRemoteDisableTodos === true });
 
+    const settingSourcesArgs = resolveSettingSourcesPassthroughArgs(mode);
     const passthroughMcpArgs = extractMcpConfigPassthroughArgs(opts.claudeArgs);
     const injectedMcpArgs =
         typeof opts.happierMcpConfigJson === 'string' && opts.happierMcpConfigJson.trim().length > 0
             ? ['--mcp-config', opts.happierMcpConfigJson.trim()]
             : null;
-    const extraArgs = [...(injectedMcpArgs ?? []), ...(passthroughMcpArgs ?? [])];
+    const extraArgs = [...(settingSourcesArgs ?? []), ...(passthroughMcpArgs ?? []), ...(injectedMcpArgs ?? [])];
 
     const sdkOptions: QueryOptions = {
         cwd: opts.path,

@@ -865,7 +865,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         );
     });
 
-    it('maps claudeRemoteSettingSources into Agent SDK settingSources', async () => {
+    it('maps claudeRemoteSettingSourcesV2 into Agent SDK settingSources', async () => {
         let capturedOptions: any = null;
 
         const createQuery = vi.fn((_params: any) => {
@@ -892,7 +892,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             isAborted: () => false,
             nextMessage: async () => ({
                 message: 'hello',
-                mode: makeMode({ claudeRemoteSettingSources: 'user_project' as any, claudeRemoteAgentSdkEnabled: true }),
+                mode: makeMode({ claudeRemoteSettingSourcesV2: ['user', 'project'], claudeRemoteAgentSdkEnabled: true } as any),
             }),
             onReady: () => {},
             onSessionFound: () => {},
@@ -901,6 +901,44 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         } as any);
 
         expect(capturedOptions?.settingSources).toEqual(['user', 'project']);
+    });
+
+    it('does not force an explicit settingSources override when claudeRemoteSettingSourcesV2 selects all sources', async () => {
+        let capturedOptions: any = null;
+
+        const createQuery = vi.fn((_params: any) => {
+            capturedOptions = _params.options;
+            return {
+                async *[Symbol.asyncIterator]() {
+                    yield { type: 'result' } as any;
+                },
+                close: vi.fn(),
+                setPermissionMode: vi.fn(),
+                setModel: vi.fn(),
+                setMaxThinkingTokens: vi.fn(),
+                supportedCommands: vi.fn(async () => []),
+                supportedModels: vi.fn(async () => []),
+            } as any;
+        });
+
+        await claudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage: async () => ({
+                message: 'hello',
+                mode: makeMode({ claudeRemoteSettingSourcesV2: ['user', 'project', 'local'], claudeRemoteAgentSdkEnabled: true } as any),
+            }),
+            onReady: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            createQuery,
+        } as any);
+
+        expect(capturedOptions?.settingSources).toBeUndefined();
     });
 
     it('publishes supportedCommands to callback without blocking the loop', async () => {
