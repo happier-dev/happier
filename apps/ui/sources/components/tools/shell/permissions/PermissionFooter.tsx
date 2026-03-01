@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { sessionAbort, sessionAllow, sessionDeny } from '@/sync/ops';
+import { sessionAbort, sessionAllow, sessionAllowWithPermissionUpdates, sessionDeny } from '@/sync/ops';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { storage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
@@ -22,13 +22,14 @@ interface PermissionFooterProps {
         allowedTools?: string[];
         allowTools?: string[]; // legacy alias
         decision?: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
+        suggestions?: unknown;
     };
     sessionId: string;
     toolName: string;
     toolInput?: any;
     metadata?: any;
     canApprovePermissions?: boolean;
-    disabledReason?: 'public' | 'readOnly' | 'notGranted';
+    disabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
     embedded?: boolean;
 }
 
@@ -54,6 +55,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     const copy = getPermissionFooterCopy(agentId);
     const isCodexDecision = copy.protocol === 'codexDecision';
     const isNativeCodexAgent = agentId === 'codex';
+    const shouldUseClaudePermissionUpdates = agentId === 'claude' || Array.isArray(permission?.suggestions);
     const shouldForceReadOnlyAfterStop = !isCodexDecision;
     // Codex always provides proposed_execpolicy_amendment
     const execPolicyCommand = (() => {
@@ -72,6 +74,8 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                 ? t('session.sharing.permissionApprovalsDisabledPublic')
                 : disabledReason === 'readOnly'
                     ? t('session.sharing.permissionApprovalsDisabledReadOnly')
+                    : disabledReason === 'inactive'
+                        ? t('session.sharing.permissionApprovalsDisabledInactive')
                     : t('session.sharing.permissionApprovalsDisabledNotGranted');
         return (
             <View style={{ marginTop: 8, paddingHorizontal: 12, paddingBottom: 12 }}>
@@ -115,7 +119,14 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
 
         setLoadingAllEdits(true);
         try {
-            await sessionAllow(sessionId, permission.id, 'acceptEdits');
+            if (shouldUseClaudePermissionUpdates) {
+                await sessionAllowWithPermissionUpdates(sessionId, permission.id, {
+                    mode: 'acceptEdits',
+                    updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }],
+                });
+            } else {
+                await sessionAllow(sessionId, permission.id, 'acceptEdits');
+            }
             // Update the session permission mode to 'acceptEdits' for future permissions
             storage.getState().updateSessionPermissionMode(sessionId, 'acceptEdits');
         } catch (error) {
@@ -137,8 +148,21 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             if (command && (lower === 'bash' || lower === 'execute' || lower === 'shell')) {
                 toolIdentifier = `${toolName}(${command})`;
             }
-            
-            await sessionAllow(sessionId, permission.id, undefined, [toolIdentifier]);
+
+            if (shouldUseClaudePermissionUpdates) {
+                const parsed = parseParenIdentifier(toolIdentifier);
+                const rules = [
+                    parsed
+                        ? { toolName: parsed.name, ...(parsed.spec ? { ruleContent: parsed.spec } : {}) }
+                        : { toolName: toolIdentifier },
+                ];
+                await sessionAllowWithPermissionUpdates(sessionId, permission.id, {
+                    allowedTools: [toolIdentifier],
+                    updatedPermissions: [{ type: 'addRules', rules, behavior: 'allow', destination: 'session' }],
+                });
+            } else {
+                await sessionAllow(sessionId, permission.id, undefined, [toolIdentifier]);
+            }
         } catch (error) {
             console.error('Failed to approve for session:', error);
         } finally {
@@ -168,7 +192,20 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         setLoadingForSessionPrefix(true);
         try {
             const toolIdentifier = `${toolName}(${cmd} ${sub}:*)`;
-            await sessionAllow(sessionId, permission.id, undefined, [toolIdentifier]);
+            if (shouldUseClaudePermissionUpdates) {
+                const parsed = parseParenIdentifier(toolIdentifier);
+                const rules = [
+                    parsed
+                        ? { toolName: parsed.name, ...(parsed.spec ? { ruleContent: parsed.spec } : {}) }
+                        : { toolName: toolIdentifier },
+                ];
+                await sessionAllowWithPermissionUpdates(sessionId, permission.id, {
+                    allowedTools: [toolIdentifier],
+                    updatedPermissions: [{ type: 'addRules', rules, behavior: 'allow', destination: 'session' }],
+                });
+            } else {
+                await sessionAllow(sessionId, permission.id, undefined, [toolIdentifier]);
+            }
         } catch (error) {
             console.error('Failed to approve subcommand for session:', error);
         } finally {
@@ -190,7 +227,20 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         setLoadingForSessionCommandName(true);
         try {
             const toolIdentifier = `${toolName}(${first}:*)`;
-            await sessionAllow(sessionId, permission.id, undefined, [toolIdentifier]);
+            if (shouldUseClaudePermissionUpdates) {
+                const parsed = parseParenIdentifier(toolIdentifier);
+                const rules = [
+                    parsed
+                        ? { toolName: parsed.name, ...(parsed.spec ? { ruleContent: parsed.spec } : {}) }
+                        : { toolName: toolIdentifier },
+                ];
+                await sessionAllowWithPermissionUpdates(sessionId, permission.id, {
+                    allowedTools: [toolIdentifier],
+                    updatedPermissions: [{ type: 'addRules', rules, behavior: 'allow', destination: 'session' }],
+                });
+            } else {
+                await sessionAllow(sessionId, permission.id, undefined, [toolIdentifier]);
+            }
         } catch (error) {
             console.error('Failed to approve command name for session:', error);
         } finally {
@@ -295,12 +345,34 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     const shellToolNames = new Set(['bash', 'execute', 'shell']);
 
     const stripSimpleEnvPrelude = (command: string): string => {
-        const parts = command.trim().split(/\s+/);
-        let i = 0;
-        while (i < parts.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(parts[i])) {
-            i++;
+        const stripLeadingEnvAssignments = (input: string): string => {
+            const parts = input.trim().split(/\s+/);
+            let i = 0;
+            while (i < parts.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(parts[i])) {
+                i++;
+            }
+            return parts.slice(i).join(' ');
+        };
+
+        const stripLeadingUnsetPrelude = (input: string): string => {
+            const trimmed = input.trimStart();
+            if (!trimmed.startsWith('unset ')) return input;
+            // Only strip a simple "unset VAR VAR2; <cmd>" prelude. If there is no semicolon,
+            // or if it looks like a real unset invocation (flags/assignments), keep it.
+            const match = trimmed.match(/^unset(?:\s+[A-Za-z_][A-Za-z0-9_]*)+\s*;\s*/);
+            if (!match) return input;
+            return trimmed.slice(match[0].length);
+        };
+
+        let out = command.trim();
+        // Claude (and some shells) prepend env assignment and/or env-unset preludes; strip them
+        // for "effective command" purposes (allowlisting/prefix matching + button labels).
+        for (let i = 0; i < 3; i++) {
+            const next = stripLeadingUnsetPrelude(stripLeadingEnvAssignments(out)).trim();
+            if (next === out) break;
+            out = next;
         }
-        return parts.slice(i).join(' ');
+        return out;
     };
 
     const matchesPrefix = (command: string, prefix: string): boolean => {
@@ -424,10 +496,6 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             paddingHorizontal: embedded ? 0 : 12,
             paddingVertical: embedded ? 0 : 8,
         },
-        summary: {
-            fontSize: 12,
-            color: theme.colors.textSecondary,
-        },
         buttonContainer: {
             flexDirection: 'column',
             gap: 4,
@@ -522,9 +590,6 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     if (copy.protocol === 'codexDecision') {
         return (
             <View style={styles.container}>
-                <Text style={styles.summary} numberOfLines={2} ellipsizeMode="tail">
-                    {formatPermissionRequestSummary({ toolName, toolInput })}
-                </Text>
                 <View style={styles.buttonContainer}>
                     {/* Codex: Yes button */}
                     <TouchableOpacity
@@ -659,9 +724,6 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     const showAllowForSessionCommandName = isShellTool && typeof commandForShell === 'string' && commandForShell.length > 0 && Boolean(stripSimpleEnvPrelude(String(commandForShell)).split(/\s+/).filter(Boolean)[0]);
     return (
         <View style={styles.container}>
-            <Text style={styles.summary} numberOfLines={2} ellipsizeMode="tail">
-                {formatPermissionRequestSummary({ toolName, toolInput })}
-            </Text>
             <View style={styles.buttonContainer}>
                 <TouchableOpacity
                     style={[

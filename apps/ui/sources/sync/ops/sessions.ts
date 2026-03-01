@@ -46,6 +46,11 @@ interface SessionPermissionRequest {
         command: string[];
     };
     /**
+     * Optional permission updates to apply inside the agent runtime (provider-specific).
+     * This is used to accept provider-suggested permission changes (e.g. Claude Agent SDK `permission_suggestions`).
+     */
+    updatedPermissions?: unknown;
+    /**
      * AskUserQuestion: structured answers keyed by question text.
      * When present, the agent can complete the tool call without requiring a follow-up user message.
      */
@@ -347,6 +352,33 @@ export async function sessionAllow(
         allowedTools,
         decision,
         execPolicyAmendment
+    };
+    await apiSocket.sessionRPC(sessionId, 'permission', request);
+}
+
+/**
+ * Allow a permission request and attach provider permission updates.
+ *
+ * Used when the backend exposes structured permission suggestions that can be applied in-runtime
+ * (e.g. Claude Agent SDK `permission_suggestions`).
+ */
+export async function sessionAllowWithPermissionUpdates(
+    sessionId: string,
+    id: string,
+    params: Readonly<{
+        mode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
+        allowedTools?: string[];
+        decision?: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment';
+        updatedPermissions: unknown;
+    }>,
+): Promise<void> {
+    const request: SessionPermissionRequest = {
+        id,
+        approved: true,
+        mode: params.mode,
+        allowedTools: params.allowedTools,
+        decision: params.decision,
+        updatedPermissions: params.updatedPermissions,
     };
     await apiSocket.sessionRPC(sessionId, 'permission', request);
 }

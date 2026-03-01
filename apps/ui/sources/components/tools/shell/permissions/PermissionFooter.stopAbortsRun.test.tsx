@@ -32,6 +32,7 @@ vi.mock('react-native', () => ({
     Text: 'Text',
     TouchableOpacity: 'TouchableOpacity',
     ActivityIndicator: 'ActivityIndicator',
+    Alert: { alert: vi.fn() },
     Platform: { OS: 'ios', select: <T,>(value: { ios?: T }) => value.ios },
     StyleSheet: { create: <T,>(styles: T) => styles },
 }));
@@ -59,6 +60,7 @@ vi.mock('@expo/vector-icons', () => ({
 
 vi.mock('@/sync/ops', () => ({
     sessionAllow: vi.fn(async () => {}),
+    sessionAllowWithPermissionUpdates: vi.fn(async () => {}),
     sessionDeny: ops.sessionDeny,
     sessionAbort: ops.sessionAbort,
 }));

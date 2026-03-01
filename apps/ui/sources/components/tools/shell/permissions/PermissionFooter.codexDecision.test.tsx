@@ -10,6 +10,7 @@ vi.mock('react-native', () => ({
     Text: 'Text',
     TouchableOpacity: 'TouchableOpacity',
     ActivityIndicator: 'ActivityIndicator',
+    Alert: { alert: vi.fn() },
     Platform: { OS: 'ios', select: <T,>(value: { ios?: T }) => value.ios },
     StyleSheet: { create: <T,>(styles: T) => styles },
 }));
@@ -37,6 +38,7 @@ vi.mock('@expo/vector-icons', () => ({
 
 vi.mock('@/sync/ops', () => ({
     sessionAllow: vi.fn(async () => {}),
+    sessionAllowWithPermissionUpdates: vi.fn(async () => {}),
     sessionDeny: vi.fn(async () => {}),
     sessionAbort: vi.fn(async () => {}),
 }));
@@ -69,7 +71,7 @@ vi.mock('@/agents/catalog/permissionUiCopy', () => ({
 }));
 
 describe('PermissionFooter (codexDecision)', () => {
-    it('shows a command summary line for codex decision approvals', () => {
+    it('does not repeat the request summary (the tool UI already shows it)', () => {
         let tree: renderer.ReactTestRenderer | undefined;
 
         act(() => {
@@ -90,7 +92,8 @@ describe('PermissionFooter (codexDecision)', () => {
             return Array.isArray(child) ? child : [child];
         }).filter((entry): entry is string => typeof entry === 'string');
 
-        expect(flattened).toContain('Run: pwd');
+        expect(flattened).not.toContain('Run: pwd');
+        expect(flattened).toContain('common.yes');
     });
 
     it('approves execpolicy amendment using the latest proposed_execpolicy_amendment payload', async () => {
