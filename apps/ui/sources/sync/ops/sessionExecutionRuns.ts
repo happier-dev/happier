@@ -42,6 +42,28 @@ export type SessionExecutionRunGetResult =
     | ExecutionRunGetResponse
     | { ok: false; error: string; errorCode?: string };
 
+function readOkFalseErrorShape(response: unknown): { ok: false; error: string; errorCode?: string } | null {
+    if (!response || typeof response !== 'object') return null;
+    if ((response as any).ok !== false) return null;
+    if (typeof (response as any).error !== 'string') return null;
+    return {
+        ok: false,
+        error: String((response as any).error),
+        ...(typeof (response as any).errorCode === 'string' ? { errorCode: String((response as any).errorCode) } : {}),
+    };
+}
+
+export function isExecutionRunNotRunningSendError(result: unknown): boolean {
+    if (!result || typeof result !== 'object') return false;
+    if ((result as any).ok !== false) return false;
+
+    const errorCode = typeof (result as any).errorCode === 'string' ? String((result as any).errorCode).trim().toLowerCase() : '';
+    if (errorCode === 'execution_run_not_allowed' || errorCode === 'execution_run_not_running') return true;
+
+    const error = typeof (result as any).error === 'string' ? String((result as any).error).trim().toLowerCase() : '';
+    return error.includes('not running') || error.includes('already finished');
+}
+
 export async function sessionExecutionRunStart(
     sessionId: string,
     request: ExecutionRunStartRequest,
@@ -55,13 +77,8 @@ export async function sessionExecutionRunStart(
             method: SESSION_RPC_METHODS.EXECUTION_RUN_START,
             payload: request,
         });
-        if (response && typeof response === 'object' && (response as any).ok === false && typeof (response as any).error === 'string') {
-            return {
-                ok: false,
-                error: String((response as any).error),
-                ...(typeof (response as any).errorCode === 'string' ? { errorCode: String((response as any).errorCode) } : {}),
-            };
-        }
+        const okFalse = readOkFalseErrorShape(response);
+        if (okFalse) return okFalse;
         if (
             !response
             || typeof response !== 'object'
@@ -94,6 +111,8 @@ export async function sessionExecutionRunSend(
             method: SESSION_RPC_METHODS.EXECUTION_RUN_SEND,
             payload: request,
         });
+        const okFalse = readOkFalseErrorShape(response);
+        if (okFalse) return okFalse;
         if (!response || typeof response !== 'object' || (response as any).ok !== true) {
             return { ok: false, error: 'Unsupported response from session RPC' };
         }
@@ -120,6 +139,8 @@ export async function sessionExecutionRunStop(
             method: SESSION_RPC_METHODS.EXECUTION_RUN_STOP,
             payload: request,
         });
+        const okFalse = readOkFalseErrorShape(response);
+        if (okFalse) return okFalse;
         if (!response || typeof response !== 'object' || (response as any).ok !== true) {
             return { ok: false, error: 'Unsupported response from session RPC' };
         }

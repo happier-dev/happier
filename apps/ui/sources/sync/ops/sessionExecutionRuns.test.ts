@@ -99,6 +99,16 @@ describe('sessionExecutionRuns', () => {
         expect(response.ok).toBe(true);
     });
 
+    it('returns ok:false error shapes from execution.run.send without treating them as unsupported', async () => {
+        sessionRpcMock.mockResolvedValue({ ok: false, error: 'Not found', errorCode: 'execution_run_not_found' });
+
+        const { sessionExecutionRunSend } = await import('./sessionExecutionRuns');
+        const response = await sessionExecutionRunSend('session-1', { runId: 'run_1', message: 'hello' });
+
+        expect((response as any).ok).toBe(false);
+        expect((response as any).errorCode).toBe('execution_run_not_found');
+    });
+
     it('calls execution.run.stop through session RPC', async () => {
         sessionRpcMock.mockResolvedValue({ ok: true });
 
@@ -111,6 +121,16 @@ describe('sessionExecutionRuns', () => {
             { runId: 'run_1' },
         );
         expect(response.ok).toBe(true);
+    });
+
+    it('returns ok:false error shapes from execution.run.stop without treating them as unsupported', async () => {
+        sessionRpcMock.mockResolvedValue({ ok: false, error: 'Not running', errorCode: 'execution_run_not_allowed' });
+
+        const { sessionExecutionRunStop } = await import('./sessionExecutionRuns');
+        const response = await sessionExecutionRunStop('session-1', { runId: 'run_1' });
+
+        expect((response as any).ok).toBe(false);
+        expect((response as any).errorCode).toBe('execution_run_not_allowed');
     });
 
     it('calls execution.run.list through session RPC', async () => {
@@ -150,5 +170,39 @@ describe('sessionExecutionRuns', () => {
             { runId: 'run_1', includeStructured: true },
         );
         expect((response as any).run?.runId).toBe('run_1');
+    });
+
+    it('detects terminal not-running send errors by error code', async () => {
+        const { isExecutionRunNotRunningSendError } = await import('./sessionExecutionRuns');
+        expect(
+            isExecutionRunNotRunningSendError({
+                ok: false,
+                error: 'Not running',
+                errorCode: 'execution_run_not_allowed',
+            }),
+        ).toBe(true);
+        expect(
+            isExecutionRunNotRunningSendError({
+                ok: false,
+                error: 'Already finished',
+                errorCode: 'execution_run_not_running',
+            }),
+        ).toBe(true);
+    });
+
+    it('detects terminal not-running send errors by message fallback', async () => {
+        const { isExecutionRunNotRunningSendError } = await import('./sessionExecutionRuns');
+        expect(
+            isExecutionRunNotRunningSendError({
+                ok: false,
+                error: 'execution run is not running anymore',
+            }),
+        ).toBe(true);
+        expect(
+            isExecutionRunNotRunningSendError({
+                ok: false,
+                error: 'some other transport failure',
+            }),
+        ).toBe(false);
     });
 });
