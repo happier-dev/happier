@@ -1,7 +1,6 @@
 import { listActionSpecs, type ActionId } from '@happier-dev/protocol';
 
 export type ParsedSessionSlashCommand =
-    | { kind: 'client.clear_input' }
     | { kind: 'action'; actionId: ActionId; rest: string };
 
 const SLASH_TOKEN_TO_ACTION_ID: Readonly<Record<string, ActionId>> = (() => {
@@ -31,10 +30,6 @@ function tokenize(input: string): { command: string; rest: string } | null {
 export function parseSessionSlashCommand(input: string): ParsedSessionSlashCommand | null {
     const tokens = tokenize(input);
     if (!tokens) return null;
-
-    if (tokens.command === '/clear') {
-        return { kind: 'client.clear_input' };
-    }
 
     const actionId = SLASH_TOKEN_TO_ACTION_ID[tokens.command];
     if (actionId) return { kind: 'action', actionId, rest: tokens.rest };
