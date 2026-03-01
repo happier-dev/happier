@@ -6,6 +6,55 @@ import { installVitestRnShim } from './vitestRnShim';
 // Clear it by default so feature tests can opt-in explicitly per case.
 process.env.HAPPIER_FEATURE_POLICY_ENV = '';
 
+const ORIGINAL_WINDOW = (globalThis as any).window;
+const ORIGINAL_DOCUMENT = (globalThis as any).document;
+const ORIGINAL_NAVIGATOR = (globalThis as any).navigator;
+const ORIGINAL_WINDOW_DESCRIPTOR = Object.getOwnPropertyDescriptor(globalThis as any, 'window');
+const ORIGINAL_DOCUMENT_DESCRIPTOR = Object.getOwnPropertyDescriptor(globalThis as any, 'document');
+const ORIGINAL_NAVIGATOR_DESCRIPTOR = Object.getOwnPropertyDescriptor(globalThis as any, 'navigator');
+const HAD_WINDOW = Object.prototype.hasOwnProperty.call(globalThis as any, 'window');
+const HAD_DOCUMENT = Object.prototype.hasOwnProperty.call(globalThis as any, 'document');
+const HAD_NAVIGATOR = Object.prototype.hasOwnProperty.call(globalThis as any, 'navigator');
+
+function restoreDomGlobalsToOriginal(): void {
+    const g = globalThis as any;
+
+    const restore = (key: 'window' | 'document' | 'navigator', had: boolean, value: unknown) => {
+        if (had) {
+            try {
+                g[key] = value;
+            } catch {
+                const originalDescriptor =
+                    key === 'window'
+                        ? ORIGINAL_WINDOW_DESCRIPTOR
+                        : key === 'document'
+                            ? ORIGINAL_DOCUMENT_DESCRIPTOR
+                            : ORIGINAL_NAVIGATOR_DESCRIPTOR;
+                if (originalDescriptor?.configurable) {
+                    // Node can expose DOM-like globals (e.g. navigator) as accessor-only properties.
+                    // Re-define them as data properties for test determinism.
+                    Object.defineProperty(g, key, {
+                        value,
+                        enumerable: true,
+                        configurable: true,
+                        writable: true,
+                    });
+                }
+            }
+            return;
+        }
+        try {
+            delete g[key];
+        } catch {
+            g[key] = undefined;
+        }
+    };
+
+    restore('window', HAD_WINDOW, ORIGINAL_WINDOW);
+    restore('document', HAD_DOCUMENT, ORIGINAL_DOCUMENT);
+    restore('navigator', HAD_NAVIGATOR, ORIGINAL_NAVIGATOR);
+}
+
 type StorageLike = Readonly<{
     getItem: (key: string) => string | null;
     setItem: (key: string, value: string) => void;
@@ -62,6 +111,11 @@ beforeEach(() => {
     // of every test to avoid cross-test leakage (Vitest workers may execute multiple test files).
     vi.useRealTimers();
 
+    // Many UI tests intentionally fake DOM globals by assigning directly to `globalThis.window` /
+    // `globalThis.document` without using `vi.stubGlobal`. Reset them to the original node runtime
+    // shape before each test so server seeding/runtime heuristics stay deterministic.
+    restoreDomGlobalsToOriginal();
+
     store.clear();
     localStorageBacking.clear();
     sessionStorageBacking.clear();
@@ -80,6 +134,8 @@ afterEach(() => {
     // Many tests use `vi.stubGlobal('fetch', ...)` and other globals. Ensure they don't leak across
     // test files (Vitest workers may reuse the same global between sequential test files).
     vi.unstubAllGlobals();
+
+    restoreDomGlobalsToOriginal();
 });
 
 vi.mock('react-native-mmkv', () => {
@@ -172,6 +228,12 @@ vi.mock('expo-updates', () => ({
 // `expo-image` uses native view managers; stub it for Vitest.
 vi.mock('expo-image', () => ({
     Image: 'Image',
+}));
+
+// FlashList v2 depends on React Native new architecture internals that do not exist in node/Vitest.
+// Most unit tests only need a stable host component shape.
+vi.mock('@shopify/flash-list', () => ({
+    FlashList: 'FlashList',
 }));
 
 // `expo-secure-store` is native; stub its async API for token storage tests.
