@@ -28,16 +28,15 @@ export type AgentAdvancedModeCapabilities = Readonly<{
 
 export function getAgentAdvancedModeCapabilities(agentId: AgentId): AgentAdvancedModeCapabilities {
   const sessionModesKind = getAgentSessionModesKind(agentId);
-  const supportsPlanMode = agentId === 'claude' || sessionModesKind === 'acpAgentModes';
+  const supportsPlanMode = sessionModesKind === 'acpAgentModes' || sessionModesKind === 'staticAgentModes';
   const supportsAcceptEdits = agentId === 'claude';
 
   const supportsRuntimeModeSwitch: AgentRuntimeModeSwitchKind =
     sessionModesKind === 'acpAgentModes'
       ? 'acp-setSessionMode'
-      : agentId === 'claude'
+      : sessionModesKind === 'staticAgentModes'
         ? 'provider-native'
         : 'metadata-gating';
 
   return { supportsPlanMode, supportsAcceptEdits, supportsRuntimeModeSwitch };
 }
-
