@@ -33,22 +33,23 @@ vi.mock('@/theme', () => ({
     lightTheme: { colors: { groupped: { background: '#fff' } } },
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    AppState: {
-        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-    },
-    Platform: {
-        OS: 'ios',
-        select: (spec: Record<string, unknown>) =>
-            spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? (spec as any).ios : (spec as any).default,
-    },
-    Appearance: {
-        getColorScheme: () => 'light',
-    },
-}));
+vi.mock('react-native', async () => {
+    const actual = await import('@/dev/reactNativeStub');
+    return {
+        ...actual,
+        AppState: {
+            addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+        },
+        Platform: {
+            OS: 'ios',
+            select: (spec: Record<string, unknown>) =>
+                spec && Object.prototype.hasOwnProperty.call(spec, 'ios') ? (spec as any).ios : (spec as any).default,
+        },
+        Appearance: {
+            getColorScheme: () => 'light',
+        },
+    };
+});
 
 vi.mock('@expo/vector-icons', async () => {
     const Ionicons = Object.assign(
@@ -129,7 +130,7 @@ describe('AppearanceSettingsScreen (session list controls)', () => {
     });
 
     it('renders session list grouping controls and hide-inactive toggle', async () => {
-        const { default: AppearanceSettingsScreen } = await import('./appearance');
+        const { default: AppearanceSettingsScreen } = await import('@/app/(app)/settings/appearance');
 
         let tree: renderer.ReactTestRenderer;
         await act(async () => {
