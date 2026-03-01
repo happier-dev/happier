@@ -24,51 +24,28 @@ describe('featureLocalPolicy', () => {
         }
     });
 
-    it('fails closed for connectedServices.quotas when build-time env is missing', () => {
-        const envBackup = process.env.EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED;
-        try {
-            const env = process.env as Record<string, string | undefined>;
-            delete env.EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED;
-            expect(resolveLocalFeaturePolicyEnabled('connectedServices.quotas', {
-                ...settingsDefaults,
-                experiments: true,
-                featureToggles: {},
-            })).toBe(false);
-        } finally {
-            if (typeof envBackup === 'string') {
-                process.env.EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED = envBackup;
-            } else {
-                const env = process.env as Record<string, string | undefined>;
-                delete env.EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED;
-            }
-        }
-    });
-
-    it('enables connectedServices.quotas when build-time env is truthy', () => {
-        const envBackup = process.env.EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED;
-        try {
-            process.env.EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED = '1';
-            expect(resolveLocalFeaturePolicyEnabled('connectedServices.quotas', {
-                ...settingsDefaults,
-                experiments: true,
-                featureToggles: { 'connectedServices.quotas': true },
-            })).toBe(true);
-        } finally {
-            if (typeof envBackup === 'string') {
-                process.env.EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED = envBackup;
-            } else {
-                const env = process.env as Record<string, string | undefined>;
-                delete env.EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED;
-            }
-        }
-    });
-
     it('disables connectedServices by default when experiments are on', () => {
         expect(resolveLocalFeaturePolicyEnabled('connectedServices', {
             ...settingsDefaults,
             experiments: true,
             featureToggles: {},
         })).toBe(false);
+    });
+
+    it('disables connectedServices.quotas by default when experiments are on', () => {
+        expect(resolveLocalFeaturePolicyEnabled('connectedServices.quotas', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: {},
+        })).toBe(false);
+    });
+
+    it('enables connectedServices.quotas when explicitly enabled', () => {
+        expect(resolveLocalFeaturePolicyEnabled('connectedServices.quotas', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: { 'connectedServices.quotas': true },
+        })).toBe(true);
     });
 
     it('disables memory.search by default when experiments are on', () => {

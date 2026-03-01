@@ -3,10 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { readAuthFeatureEnv, readConnectedServicesFeatureEnv } from './readFeatureEnv';
 
 describe('readConnectedServicesFeatureEnv', () => {
-  it('defaults quotasEnabled to true when env is unset', () => {
+  it('defaults quotasEnabled to false when env is unset', () => {
     const env: NodeJS.ProcessEnv = {};
     const res = readConnectedServicesFeatureEnv(env);
-    expect(res.quotasEnabled).toBe(true);
+    expect(res.quotasEnabled).toBe(false);
   });
 });
 
