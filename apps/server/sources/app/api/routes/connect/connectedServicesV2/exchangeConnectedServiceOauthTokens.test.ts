@@ -2,7 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { encodeBase64, BOX_BUNDLE_PUBLIC_KEY_BYTES } from "@happier-dev/protocol";
 
-import { ConnectedServiceOauthStateMismatchError, ConnectedServiceOauthTimeoutError, exchangeConnectedServiceOauthTokens } from "./exchangeConnectedServiceOauthTokens";
+import {
+    ConnectedServiceOauthExchangeError,
+    ConnectedServiceOauthStateMismatchError,
+    ConnectedServiceOauthTimeoutError,
+    exchangeConnectedServiceOauthTokens,
+} from "./exchangeConnectedServiceOauthTokens";
 
 function buildRecipientPublicKeyB64Url(): string {
     const bytes = new Uint8Array(BOX_BUNDLE_PUBLIC_KEY_BYTES).fill(7);
@@ -10,6 +15,19 @@ function buildRecipientPublicKeyB64Url(): string {
 }
 
 describe("exchangeConnectedServiceOauthTokens", () => {
+    it("rejects openai api-key service oauth exchange", async () => {
+        await expect(exchangeConnectedServiceOauthTokens({
+            serviceId: "openai",
+            publicKeyB64Url: buildRecipientPublicKeyB64Url(),
+            code: "c",
+            verifier: "v",
+            redirectUri: "http://localhost:54545/oauth2callback",
+            now: 1700000000000,
+            fetcher: vi.fn() as any,
+            state: "s",
+        })).rejects.toThrow(/openai api key/i);
+    });
+
     it("rejects anthropic oauth exchange", async () => {
         await expect(exchangeConnectedServiceOauthTokens({
             serviceId: "anthropic",
@@ -70,10 +88,10 @@ describe("exchangeConnectedServiceOauthTokens", () => {
         })).rejects.toBeInstanceOf(ConnectedServiceOauthStateMismatchError);
     });
 
-    it("exchanges gemini tokens without sending client_secret", async () => {
+    it("exchanges gemini tokens and sends client_secret", async () => {
         const fetchMock = vi.fn(async (_url: any, init: any) => {
             const body = String(init?.body?.toString?.() ?? init?.body ?? "");
-            expect(body).not.toContain("client_secret=");
+            expect(body).toContain("client_secret=");
             return {
                 ok: true,
                 status: 200,
@@ -101,6 +119,75 @@ describe("exchangeConnectedServiceOauthTokens", () => {
 
         expect(typeof res.bundleB64Url).toBe("string");
         expect(res.bundleB64Url.length).toBeGreaterThan(0);
+    });
+
+    it("returns a dedicated error when Gemini does not return a refresh token", async () => {
+        const fetchMock = vi.fn(async () => ({
+            ok: true,
+            status: 200,
+            json: async () => ({
+                access_token: "at",
+                // refresh_token intentionally omitted
+                expires_in: 3600,
+                scope: "s",
+                token_type: "Bearer",
+            }),
+            text: async () => "",
+        }));
+
+        await expect(exchangeConnectedServiceOauthTokens({
+            serviceId: "gemini",
+            publicKeyB64Url: buildRecipientPublicKeyB64Url(),
+            code: "c",
+            verifier: "v",
+            redirectUri: "http://localhost:54545/oauth2callback",
+            now: 1700000000000,
+            fetcher: fetchMock as any,
+        })).rejects.toMatchObject({
+            errorCode: "connect_oauth_missing_refresh_token",
+        } satisfies Partial<ConnectedServiceOauthExchangeError>);
+    });
+
+    it("returns a dedicated error when Gemini OAuth code is invalid", async () => {
+        const fetchMock = vi.fn(async () => ({
+            ok: false,
+            status: 400,
+            json: async () => ({ error: "invalid_grant", error_description: "Bad Request" }),
+            text: async () => "invalid_grant",
+        }));
+
+        await expect(exchangeConnectedServiceOauthTokens({
+            serviceId: "gemini",
+            publicKeyB64Url: buildRecipientPublicKeyB64Url(),
+            code: "c",
+            verifier: "v",
+            redirectUri: "http://localhost:54545/oauth2callback",
+            now: 1700000000000,
+            fetcher: fetchMock as any,
+        })).rejects.toMatchObject({
+            errorCode: "connect_oauth_invalid_grant",
+        } satisfies Partial<ConnectedServiceOauthExchangeError>);
+    });
+
+    it("returns a dedicated error when Gemini OAuth client is rejected", async () => {
+        const fetchMock = vi.fn(async () => ({
+            ok: false,
+            status: 401,
+            json: async () => ({ error: "invalid_client", error_description: "Unauthorized" }),
+            text: async () => "invalid_client",
+        }));
+
+        await expect(exchangeConnectedServiceOauthTokens({
+            serviceId: "gemini",
+            publicKeyB64Url: buildRecipientPublicKeyB64Url(),
+            code: "c",
+            verifier: "v",
+            redirectUri: "http://localhost:54545/oauth2callback",
+            now: 1700000000000,
+            fetcher: fetchMock as any,
+        })).rejects.toMatchObject({
+            errorCode: "connect_oauth_invalid_client",
+        } satisfies Partial<ConnectedServiceOauthExchangeError>);
     });
 
     it("passes an AbortSignal to token exchange fetch requests", async () => {

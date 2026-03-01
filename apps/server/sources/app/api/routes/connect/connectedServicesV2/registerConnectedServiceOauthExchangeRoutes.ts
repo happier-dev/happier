@@ -4,6 +4,7 @@ import type { Fastify } from "../../../types";
 import { ConnectedServiceIdSchema, type ConnectedServiceId } from "@happier-dev/protocol";
 
 import {
+  ConnectedServiceOauthExchangeError,
   ConnectedServiceOauthStateMismatchError,
   ConnectedServiceOauthTimeoutError,
   exchangeConnectedServiceOauthTokens,
@@ -21,6 +22,9 @@ const ConnectedServiceOauthExchangeErrorResponseSchema = z.union([
       "connect_oauth_state_mismatch",
       "connect_oauth_timeout",
       "connect_oauth_exchange_failed",
+      "connect_oauth_invalid_grant",
+      "connect_oauth_invalid_client",
+      "connect_oauth_missing_refresh_token",
     ]),
   }),
   // Fastify validation errors can occur before the handler (e.g. max-length checks). When using
@@ -53,7 +57,7 @@ export function registerConnectedServiceOauthExchangeRoutes(app: Fastify): void 
     },
   }, async (request, reply) => {
     const serviceId = request.params.serviceId satisfies ConnectedServiceId;
-    if (serviceId === "anthropic") {
+    if (serviceId === "anthropic" || serviceId === "openai") {
       return reply.code(400).send({ error: "connect_oauth_exchange_failed" });
     }
     try {
@@ -73,6 +77,9 @@ export function registerConnectedServiceOauthExchangeRoutes(app: Fastify): void 
       }
       if (error instanceof ConnectedServiceOauthStateMismatchError) {
         return reply.code(400).send({ error: "connect_oauth_state_mismatch" });
+      }
+      if (error instanceof ConnectedServiceOauthExchangeError) {
+        return reply.code(400).send({ error: error.errorCode });
       }
       return reply.code(400).send({ error: "connect_oauth_exchange_failed" });
     }

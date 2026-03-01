@@ -8,10 +8,10 @@ import {
   type ConnectedServiceId,
 } from "@happier-dev/protocol";
 
-const OPENAI_CODEX_OAUTH_CLIENT_ID_ENV = "HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_OAUTH_CLIENT_ID";
-const OPENAI_CODEX_OAUTH_TOKEN_URL_ENV = "HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_OAUTH_TOKEN_URL";
+import { assertNonEmptyString } from "../connectValueParsers";
+import { extractOpenAiCodexAccountId } from "./openaiCodexIdTokenClaims";
+import { resolveOpenAiCodexOauthClientId, resolveOpenAiCodexOauthTokenUrl } from "../oauthConfig";
 
-const DEFAULT_OPENAI_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const DEFAULT_OPENAI_ISSUER = "https://auth.openai.com";
 
 export const OPENAI_CODEX_DEVICE_VERIFICATION_URL = `${DEFAULT_OPENAI_ISSUER}/codex/device`;
@@ -32,20 +32,6 @@ type OauthExchangePayload = Readonly<{
   raw: unknown;
 }>;
 
-function resolveNonEmptyEnv(raw: string | undefined, fallback: string): string {
-  if (typeof raw !== "string") return fallback;
-  const trimmed = raw.trim();
-  return trimmed ? trimmed : fallback;
-}
-
-function resolveOpenAiCodexClientId(env: NodeJS.ProcessEnv): string {
-  return resolveNonEmptyEnv(env[OPENAI_CODEX_OAUTH_CLIENT_ID_ENV], DEFAULT_OPENAI_CODEX_CLIENT_ID);
-}
-
-function resolveOpenAiCodexTokenUrl(env: NodeJS.ProcessEnv): string {
-  return resolveNonEmptyEnv(env[OPENAI_CODEX_OAUTH_TOKEN_URL_ENV], `${DEFAULT_OPENAI_ISSUER}/oauth/token`);
-}
-
 function resolveOpenAiDeviceUsercodeUrl(): string {
   return `${DEFAULT_OPENAI_ISSUER}/api/accounts/deviceauth/usercode`;
 }
@@ -62,40 +48,6 @@ function parseRecipientPublicKey(publicKeyB64Url: string): Uint8Array {
   return bytes;
 }
 
-function assertNonEmptyString(value: unknown, label: string): string {
-  if (typeof value !== "string" || !value.trim()) {
-    throw new Error(`Invalid ${label}`);
-  }
-  return value;
-}
-
-function decodeJwtPayloadBestEffort(token: string): any | null {
-  const parts = token.split(".");
-  if (parts.length !== 3) return null;
-  try {
-    const json = Buffer.from(parts[1], "base64url").toString("utf8");
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
-}
-
-function extractOpenAiCodexAccountId(idToken: string | null): string | null {
-  if (!idToken) return null;
-  const payload = decodeJwtPayloadBestEffort(idToken);
-  if (!payload || typeof payload !== "object") return null;
-
-  const direct = (payload as any).chatgpt_account_id;
-  if (typeof direct === "string" && direct.trim()) return direct;
-
-  const authClaim = (payload as any)["https://api.openai.com/auth"];
-  if (authClaim && typeof authClaim === "object") {
-    const nested = authClaim.chatgpt_account_id || authClaim.account_id;
-    if (typeof nested === "string" && nested.trim()) return nested;
-  }
-  return null;
-}
-
 export type OpenAiCodexDeviceAuthStartResult = Readonly<{
   deviceAuthId: string;
   userCode: string;
@@ -108,7 +60,7 @@ export async function startOpenAiCodexDeviceAuth(params: Readonly<{ fetcher?: ty
   const response = await fetcher(resolveOpenAiDeviceUsercodeUrl(), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ client_id: resolveOpenAiCodexClientId(process.env) }),
+    body: JSON.stringify({ client_id: resolveOpenAiCodexOauthClientId(process.env) }),
   });
   if (!response.ok) {
     throw new Error(`Device auth start failed: ${response.status}`);
@@ -167,8 +119,8 @@ async function exchangeOpenAiCodexAuthorizationCodeForTokens(params: Readonly<{
   redirectUri: string;
   now: number;
 }>): Promise<OauthExchangePayload> {
-  const tokenUrl = resolveOpenAiCodexTokenUrl(process.env);
-  const clientId = resolveOpenAiCodexClientId(process.env);
+  const tokenUrl = resolveOpenAiCodexOauthTokenUrl(process.env);
+  const clientId = resolveOpenAiCodexOauthClientId(process.env);
 
   const response = await params.fetcher(tokenUrl, {
     method: "POST",

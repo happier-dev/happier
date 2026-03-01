@@ -8,6 +8,17 @@ import {
     type ConnectedServiceId,
 } from "@happier-dev/protocol";
 import { parseIntEnv } from "@/config/env";
+import { assertNonEmptyString } from "./connectValueParsers";
+import { extractOpenAiCodexAccountId } from "./openaiCodex/openaiCodexIdTokenClaims";
+import {
+    resolveClaudeSubscriptionOauthClientId,
+    resolveClaudeSubscriptionOauthTokenUrl,
+    resolveGeminiOauthClientId,
+    resolveGeminiOauthClientSecret,
+    resolveGeminiOauthTokenUrl,
+    resolveOpenAiCodexOauthClientId,
+    resolveOpenAiCodexOauthTokenUrl,
+} from "./oauthConfig";
 
 export class ConnectedServiceOauthTimeoutError extends Error {
     constructor() {
@@ -20,6 +31,22 @@ export class ConnectedServiceOauthStateMismatchError extends Error {
     constructor() {
         super("OAuth state mismatch");
         this.name = "ConnectedServiceOauthStateMismatchError";
+    }
+}
+
+export type ConnectedServiceOauthExchangeErrorCode =
+    | "connect_oauth_exchange_failed"
+    | "connect_oauth_invalid_grant"
+    | "connect_oauth_invalid_client"
+    | "connect_oauth_missing_refresh_token";
+
+export class ConnectedServiceOauthExchangeError extends Error {
+    constructor(
+        public readonly errorCode: ConnectedServiceOauthExchangeErrorCode,
+        message: string,
+    ) {
+        super(message);
+        this.name = "ConnectedServiceOauthExchangeError";
     }
 }
 
@@ -47,79 +74,12 @@ type OauthExchangePayload = Readonly<{
     raw: unknown;
 }>;
 
-function resolveNonEmptyEnv(raw: string | undefined, fallback: string): string {
-    if (typeof raw !== "string") return fallback;
-    const trimmed = raw.trim();
-    return trimmed ? trimmed : fallback;
-}
-
-function resolveOpenAiCodexOauthClientId(env: NodeJS.ProcessEnv): string {
-    return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_OAUTH_CLIENT_ID, "app_EMoamEEZ73f0CkXaXp7hrann");
-}
-
-function resolveOpenAiCodexOauthTokenUrl(env: NodeJS.ProcessEnv): string {
-    return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_OAUTH_TOKEN_URL, "https://auth.openai.com/oauth/token");
-}
-
-function resolveGeminiOauthClientId(env: NodeJS.ProcessEnv): string {
-    return resolveNonEmptyEnv(
-        env.HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_CLIENT_ID,
-        "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
-    );
-}
-
-function resolveGeminiOauthTokenUrl(env: NodeJS.ProcessEnv): string {
-    return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_TOKEN_URL, "https://oauth2.googleapis.com/token");
-}
-
-function resolveClaudeSubscriptionOauthClientId(env: NodeJS.ProcessEnv): string {
-    return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID, "9d1c250a-e61b-44d9-88ed-5944d1962f5e");
-}
-
-function resolveClaudeSubscriptionOauthTokenUrl(env: NodeJS.ProcessEnv): string {
-    return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL, "https://console.anthropic.com/v1/oauth/token");
-}
-
 function parseRecipientPublicKey(publicKeyB64Url: string): Uint8Array {
     const bytes = decodeBase64(publicKeyB64Url, "base64url");
     if (bytes.length !== BOX_BUNDLE_PUBLIC_KEY_BYTES) {
         throw new Error(`Invalid publicKey length: ${bytes.length}`);
     }
     return bytes;
-}
-
-function assertNonEmptyString(value: unknown, label: string): string {
-    if (typeof value !== "string" || !value.trim()) {
-        throw new Error(`Invalid ${label}`);
-    }
-    return value;
-}
-
-function decodeJwtPayloadBestEffort(token: string): any | null {
-    const parts = token.split(".");
-    if (parts.length !== 3) return null;
-    try {
-        const json = Buffer.from(parts[1], "base64url").toString("utf8");
-        return JSON.parse(json);
-    } catch {
-        return null;
-    }
-}
-
-function extractOpenAiCodexAccountId(idToken: string | null): string | null {
-    if (!idToken) return null;
-    const payload = decodeJwtPayloadBestEffort(idToken);
-    if (!payload || typeof payload !== "object") return null;
-
-    const direct = (payload as any).chatgpt_account_id;
-    if (typeof direct === "string" && direct.trim()) return direct;
-
-    const authClaim = (payload as any)["https://api.openai.com/auth"];
-    if (authClaim && typeof authClaim === "object") {
-        const nested = authClaim.chatgpt_account_id || authClaim.account_id;
-        if (typeof nested === "string" && nested.trim()) return nested;
-    }
-    return null;
 }
 
 function resolveOauthExchangeTimeoutMs(env: NodeJS.ProcessEnv): number {
@@ -202,6 +162,7 @@ async function exchangeGemini(params: Readonly<{
     fetcher: typeof fetch;
 }>): Promise<OauthExchangePayload> {
     const clientId = resolveGeminiOauthClientId(process.env);
+    const clientSecret = resolveGeminiOauthClientSecret(process.env);
     const tokenUrl = resolveGeminiOauthTokenUrl(process.env);
 
     const response = await params.fetcher(tokenUrl, {
@@ -212,18 +173,44 @@ async function exchangeGemini(params: Readonly<{
         body: new URLSearchParams({
             grant_type: "authorization_code",
             client_id: clientId,
+            client_secret: clientSecret,
             code: params.code,
             code_verifier: params.verifier,
             redirect_uri: params.redirectUri,
         }),
     });
     if (!response.ok) {
-        throw new Error(`Token exchange failed: ${response.status}`);
+        const json = await response.json().catch(() => null);
+        const providerError = json && typeof (json as any).error === "string" ? String((json as any).error) : "";
+        const providerDescription =
+            json && typeof (json as any).error_description === "string" ? String((json as any).error_description) : "";
+        if (providerError === "invalid_grant") {
+            throw new ConnectedServiceOauthExchangeError(
+                "connect_oauth_invalid_grant",
+                providerDescription || "Gemini OAuth code is invalid or expired.",
+            );
+        }
+        if (providerError === "invalid_client") {
+            throw new ConnectedServiceOauthExchangeError(
+                "connect_oauth_invalid_client",
+                providerDescription || "Gemini OAuth client credentials are invalid.",
+            );
+        }
+        throw new ConnectedServiceOauthExchangeError(
+            "connect_oauth_exchange_failed",
+            `Token exchange failed: ${response.status}`,
+        );
     }
 
     const json = (await response.json()) as any;
     const accessToken = assertNonEmptyString(json?.access_token, "access_token");
-    const refreshToken = assertNonEmptyString(json?.refresh_token, "refresh_token");
+    const refreshToken = typeof json?.refresh_token === "string" ? json.refresh_token : "";
+    if (!refreshToken.trim()) {
+        throw new ConnectedServiceOauthExchangeError(
+            "connect_oauth_missing_refresh_token",
+            "Gemini OAuth did not return a refresh token.",
+        );
+    }
     const expiresIn = Number.isFinite(json?.expires_in) ? Number(json.expires_in) : NaN;
     const expiresAt = Number.isFinite(expiresIn) && expiresIn > 0 ? params.now + Math.trunc(expiresIn) * 1000 : null;
 
@@ -311,6 +298,9 @@ export async function exchangeConnectedServiceOauthTokens(params: OauthExchangeI
         }
         if (params.serviceId === "anthropic") {
             throw new Error("Anthropic OAuth exchange is not supported. Use an API key instead.");
+        }
+        if (params.serviceId === "openai") {
+            throw new Error("OpenAI API key service does not support OAuth exchange.");
         }
         if (params.serviceId === "claude-subscription") {
             const state = params.state?.trim() ?? "";
