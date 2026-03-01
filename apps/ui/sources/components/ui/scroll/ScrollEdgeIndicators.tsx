@@ -29,6 +29,7 @@ export function ScrollEdgeIndicators(props: {
         <>
             {edges.top ? (
                 <View
+                    pointerEvents="none"
                     style={[
                         {
                             position: 'absolute',
@@ -36,7 +37,7 @@ export function ScrollEdgeIndicators(props: {
                             left: 0,
                             right: 0,
                             alignItems: 'center',
-                            zIndex: 11,
+                            zIndex: 20,
                             opacity,
                             pointerEvents: 'none',
                         },
@@ -49,6 +50,7 @@ export function ScrollEdgeIndicators(props: {
 
             {edges.bottom ? (
                 <View
+                    pointerEvents="none"
                     style={[
                         {
                             position: 'absolute',
@@ -56,7 +58,7 @@ export function ScrollEdgeIndicators(props: {
                             left: 0,
                             right: 0,
                             alignItems: 'center',
-                            zIndex: 11,
+                            zIndex: 20,
                             opacity,
                             pointerEvents: 'none',
                         },
@@ -69,6 +71,7 @@ export function ScrollEdgeIndicators(props: {
 
             {edges.left ? (
                 <View
+                    pointerEvents="none"
                     style={[
                         {
                             position: 'absolute',
@@ -76,7 +79,7 @@ export function ScrollEdgeIndicators(props: {
                             top: 0,
                             bottom: 0,
                             justifyContent: 'center',
-                            zIndex: 11,
+                            zIndex: 20,
                             opacity,
                             pointerEvents: 'none',
                         },
@@ -91,6 +94,7 @@ export function ScrollEdgeIndicators(props: {
 
             {edges.right ? (
                 <View
+                    pointerEvents="none"
                     style={[
                         {
                             position: 'absolute',
@@ -98,7 +102,7 @@ export function ScrollEdgeIndicators(props: {
                             top: 0,
                             bottom: 0,
                             justifyContent: 'center',
-                            zIndex: 11,
+                            zIndex: 20,
                             opacity,
                             pointerEvents: 'none',
                         },
@@ -113,4 +117,3 @@ export function ScrollEdgeIndicators(props: {
         </>
     );
 }
-

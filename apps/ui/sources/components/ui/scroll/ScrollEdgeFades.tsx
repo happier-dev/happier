@@ -36,6 +36,7 @@ export function ScrollEdgeFades(props: {
         <>
             {edges.top ? (
                 <View
+                    pointerEvents="none"
                     style={[
                         {
                             position: 'absolute',
@@ -60,6 +61,7 @@ export function ScrollEdgeFades(props: {
 
             {edges.bottom ? (
                 <View
+                    pointerEvents="none"
                     style={[
                         {
                             position: 'absolute',
@@ -84,6 +86,7 @@ export function ScrollEdgeFades(props: {
 
             {edges.left ? (
                 <View
+                    pointerEvents="none"
                     style={[
                         {
                             position: 'absolute',
@@ -108,6 +111,7 @@ export function ScrollEdgeFades(props: {
 
             {edges.right ? (
                 <View
+                    pointerEvents="none"
                     style={[
                         {
                             position: 'absolute',
@@ -132,4 +136,3 @@ export function ScrollEdgeFades(props: {
         </>
     );
 }
-
