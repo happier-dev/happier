@@ -14,9 +14,10 @@ import {
 // Agent states
 //
 
-export const MetadataSchema = z.object({
-    path: z.string(),
-    host: z.string(),
+const MetadataObjectSchema = z.object({
+    // Cloud/system sessions may omit these fields; treat missing/null as empty.
+    path: z.string().nullish().transform((value) => (typeof value === 'string' ? value : '')),
+    host: z.string().nullish().transform((value) => (typeof value === 'string' ? value : '')),
     version: z.string().optional(),
     name: z.string().optional(),
     os: z.string().optional(),
@@ -30,6 +31,7 @@ export const MetadataSchema = z.object({
     codexSessionId: z.string().optional(), // Codex session/conversation ID (uuid)
     geminiSessionId: z.string().optional(), // Gemini ACP session ID (opaque)
     opencodeSessionId: z.string().optional(), // OpenCode ACP session ID (opaque)
+    opencodeBackendMode: z.enum(['server', 'acp']).optional(),
     auggieSessionId: z.string().optional(), // Auggie ACP session ID (opaque)
     qwenSessionId: z.string().optional(), // Qwen Code ACP session ID (opaque)
     kimiSessionId: z.string().optional(), // Kimi ACP session ID (opaque)
@@ -142,7 +144,47 @@ export const MetadataSchema = z.object({
      * These should be excluded from user-facing lists by default.
      */
     systemSessionV1: createSessionSystemSessionV1Schema(z).optional(),
+    /**
+     * Fork lineage for a child session.
+     *
+     * Used to render a virtual ancestor transcript (read-only) without duplicating messages.
+     */
+    forkV1: z.object({
+        v: z.literal(1),
+        parentSessionId: z.string(),
+        parentCutoffSeqInclusive: z.number(),
+        createdAtMs: z.number(),
+        strategy: z.string(),
+        providerHint: z.object({
+            providerId: z.string().optional(),
+            backendMode: z.string().optional(),
+            vendorSessionId: z.string().optional(),
+        }).optional(),
+    }).optional(),
+    /**
+     * Hidden replay seed applied exactly once to the first real user prompt.
+     */
+    replaySeedV1: z.object({
+        v: z.literal(1),
+        seedText: z.string(),
+        sourceSessionId: z.string(),
+        sourceCutoffSeqInclusive: z.number(),
+        createdAtMs: z.number(),
+        appliedToLocalId: z.string().optional(),
+        appliedAtMs: z.number().optional(),
+    }).optional(),
 }).passthrough();
+
+export const MetadataSchema = z.preprocess((value) => {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    if (!trimmed) return value;
+    try {
+        return JSON.parse(trimmed);
+    } catch {
+        return value;
+    }
+}, MetadataObjectSchema);
 
 export type Metadata = z.infer<typeof MetadataSchema>;
 
@@ -150,11 +192,18 @@ export const AgentStateSchema = z.object({
     controlledByUser: z.boolean().nullish(),
     requests: z.record(z.string(), z.object({
         tool: z.string(),
+        kind: z.string().optional(),
         arguments: z.any(),
-        createdAt: z.number().nullish()
+        createdAt: z.number().nullish(),
+        /**
+         * Optional provider-provided permission suggestions for this request.
+         * (e.g. Claude Agent SDK `permission_suggestions`).
+         */
+        permissionSuggestions: z.any().optional(),
     })).nullish(),
     completedRequests: z.record(z.string(), z.object({
         tool: z.string(),
+        kind: z.string().optional(),
         arguments: z.any(),
         createdAt: z.number().nullish(),
         completedAt: z.number().nullish(),
@@ -162,7 +211,8 @@ export const AgentStateSchema = z.object({
         reason: z.string().nullish(),
         mode: z.string().nullish(),
         allowedTools: z.array(z.string()).nullish(),
-        decision: z.enum(['approved', 'approved_for_session', 'approved_execpolicy_amendment', 'denied', 'abort']).nullish()
+        decision: z.enum(['approved', 'approved_for_session', 'approved_execpolicy_amendment', 'denied', 'abort']).nullish(),
+        updatedPermissions: z.any().optional(),
     })).nullish(),
     /**
      * Optional agent capabilities negotiated via agentState.
@@ -364,6 +414,7 @@ export interface ScmCapabilities {
     writeCommitPathSelection?: boolean;
     writeCommitLineSelection?: boolean;
     writeBackout: boolean;
+    writeDiscard?: boolean;
     writeRemoteFetch: boolean;
     writeRemotePull: boolean;
     writeRemotePush: boolean;
