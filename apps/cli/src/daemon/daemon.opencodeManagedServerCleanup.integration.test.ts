@@ -17,6 +17,7 @@ type EnvSnapshot = {
   serverUrl: string | undefined;
   webappUrl: string | undefined;
   publicServerUrl: string | undefined;
+  opencodeServerStatePath: string | undefined;
 };
 
 const originalEnv: EnvSnapshot = {
@@ -25,6 +26,7 @@ const originalEnv: EnvSnapshot = {
   serverUrl: process.env.HAPPIER_SERVER_URL,
   webappUrl: process.env.HAPPIER_WEBAPP_URL,
   publicServerUrl: process.env.HAPPIER_PUBLIC_SERVER_URL,
+  opencodeServerStatePath: process.env.HAPPIER_OPENCODE_SERVER_STATE_PATH,
 };
 
 let isolatedHomeDir: string | null = null;
@@ -57,6 +59,7 @@ async function prepareIsolatedHome(): Promise<void> {
   process.env.HAPPIER_SERVER_URL = sourceServerUrl;
   process.env.HAPPIER_WEBAPP_URL = sourceWebappUrl;
   process.env.HAPPIER_PUBLIC_SERVER_URL = sourcePublicServerUrl;
+  process.env.HAPPIER_OPENCODE_SERVER_STATE_PATH = join(isolatedHomeDir, 'opencode', `managed-server-${process.pid}.json`);
   reloadConfiguration();
 
   await copyIfExists(sourceSettingsFile, configuration.settingsFile);
@@ -95,6 +98,8 @@ async function restoreEnvAndCleanup(): Promise<void> {
   else process.env.HAPPIER_WEBAPP_URL = originalEnv.webappUrl;
   if (originalEnv.publicServerUrl === undefined) delete process.env.HAPPIER_PUBLIC_SERVER_URL;
   else process.env.HAPPIER_PUBLIC_SERVER_URL = originalEnv.publicServerUrl;
+  if (originalEnv.opencodeServerStatePath === undefined) delete process.env.HAPPIER_OPENCODE_SERVER_STATE_PATH;
+  else process.env.HAPPIER_OPENCODE_SERVER_STATE_PATH = originalEnv.opencodeServerStatePath;
   reloadConfiguration();
 }
 
@@ -250,7 +255,9 @@ describe('daemon OpenCode managed server cleanup', { timeout: 120_000 }, () => {
     const fake = await startFakeOpenCodeHealthServer();
     let daemon: Awaited<ReturnType<typeof startDaemonStartSync>> | null = null;
     try {
-      const statePath = join(configuration.happyHomeDir, 'opencode', 'managed-server.json');
+      const statePath = process.env.HAPPIER_OPENCODE_SERVER_STATE_PATH
+        ? process.env.HAPPIER_OPENCODE_SERVER_STATE_PATH.trim()
+        : join(configuration.happyHomeDir, 'opencode', 'managed-server.json');
       await mkdir(dirname(statePath), { recursive: true });
       await rm(statePath, { force: true }).catch(() => {});
       await writeFile(

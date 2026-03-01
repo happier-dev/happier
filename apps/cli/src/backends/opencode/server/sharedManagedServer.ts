@@ -12,12 +12,19 @@ export type SharedManagedOpenCodeServerState = Readonly<{
   startedAtMs: number;
 }>;
 
+type ManagedServerProcessInfo = Readonly<{
+  name: string;
+  cmd: string;
+}>;
+
 type ResolveDeps = Readonly<{
   withLock: <T>(fn: () => Promise<T>) => Promise<T>;
   readState: () => Promise<SharedManagedOpenCodeServerState | null>;
   writeState: (state: SharedManagedOpenCodeServerState) => Promise<void>;
   isPidAlive: (pid: number) => boolean;
   probeHealth: (baseUrl: string) => Promise<boolean>;
+  getProcessInfo?: (pid: number) => Promise<ManagedServerProcessInfo | null>;
+  killPid?: (pid: number) => void;
   startServer: () => Promise<{ baseUrl: string; pid: number }>;
   nowMs?: () => number;
 }>;
@@ -30,6 +37,13 @@ export async function resolveSharedManagedOpenCodeServerBaseUrl(
     if (state && deps.isPidAlive(state.pid)) {
       const healthy = await deps.probeHealth(state.baseUrl).catch(() => false);
       if (healthy) return { baseUrl: state.baseUrl, didStart: false };
+
+      if (deps.getProcessInfo && deps.killPid) {
+        const info = await deps.getProcessInfo(state.pid).catch(() => null);
+        if (looksLikeOpenCodeServe(info)) {
+          deps.killPid(state.pid);
+        }
+      }
     }
 
     const started = await deps.startServer();
@@ -108,6 +122,8 @@ export async function ensureSharedManagedOpenCodeServerBaseUrl(params: Readonly<
     writeState: async (state) => await writeStateFile(statePath, state),
     isPidAlive,
     probeHealth: params.probeHealth,
+    getProcessInfo: async (pid) => await getProcessInfoBestEffort(pid),
+    killPid: killPidBestEffort,
     startServer: async () => {
       const started = await startManagedOpenCodeServer({ ...(xdgRootDir ? { xdgRootDir } : {}) });
       return { baseUrl: started.baseUrl, pid: started.pid };
@@ -116,11 +132,6 @@ export async function ensureSharedManagedOpenCodeServerBaseUrl(params: Readonly<
 
   return resolved.baseUrl;
 }
-
-type ManagedServerProcessInfo = Readonly<{
-  name: string;
-  cmd: string;
-}>;
 
 type StopDeps = Readonly<{
   withLock: <T>(fn: () => Promise<T>) => Promise<T>;
@@ -139,6 +150,23 @@ function looksLikeOpenCodeServe(info: ManagedServerProcessInfo | null): boolean 
   if (name.includes('opencode')) return true;
   if (cmd.includes('opencode') && cmd.includes('serve')) return true;
   return false;
+}
+
+async function getProcessInfoBestEffort(pid: number): Promise<ManagedServerProcessInfo | null> {
+  const mod = await import('ps-list').catch(() => null as any);
+  const psList: null | (() => Promise<any[]>) = mod && typeof mod === 'function'
+    ? mod
+    : mod && typeof (mod as any).default === 'function'
+      ? (mod as any).default
+      : null;
+  if (!psList) return null;
+  const procs = await psList().catch(() => []);
+  const proc = Array.isArray(procs) ? procs.find((p) => (p as any)?.pid === pid) : null;
+  if (!proc) return null;
+  const name = typeof (proc as any).name === 'string' ? String((proc as any).name) : '';
+  const cmd = typeof (proc as any).cmd === 'string' ? String((proc as any).cmd) : '';
+  if (!name && !cmd) return null;
+  return { name, cmd };
 }
 
 export async function stopSharedManagedOpenCodeServerFromState(
@@ -211,22 +239,7 @@ export async function stopSharedManagedOpenCodeServerFromEnvBestEffort(): Promis
     },
     isPidAlive,
     probeHealth: async (baseUrl) => await probeOpenCodeHealthBestEffort(baseUrl),
-    getProcessInfo: async (pid) => {
-      const mod = await import('ps-list').catch(() => null as any);
-      const psList: null | (() => Promise<any[]>) = mod && typeof mod === 'function'
-        ? mod
-        : mod && typeof (mod as any).default === 'function'
-          ? (mod as any).default
-          : null;
-      if (!psList) return null;
-      const procs = await psList().catch(() => []);
-      const proc = Array.isArray(procs) ? procs.find((p) => (p as any)?.pid === pid) : null;
-      if (!proc) return null;
-      const name = typeof (proc as any).name === 'string' ? String((proc as any).name) : '';
-      const cmd = typeof (proc as any).cmd === 'string' ? String((proc as any).cmd) : '';
-      if (!name && !cmd) return null;
-      return { name, cmd };
-    },
+    getProcessInfo: async (pid) => await getProcessInfoBestEffort(pid),
     killPid: killPidBestEffort,
   }).then(() => {}).catch(() => {});
 }

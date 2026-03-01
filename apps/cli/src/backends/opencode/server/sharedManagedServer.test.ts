@@ -56,6 +56,27 @@ describe('resolveSharedManagedOpenCodeServerBaseUrl', () => {
     expect(deps.startServer).toHaveBeenCalledTimes(1);
     expect(deps.writeState).toHaveBeenCalledWith({ baseUrl: 'http://127.0.0.1:9999', pid: 222, startedAtMs: 7 });
   });
+
+  it('kills an unhealthy recorded managed server when it looks like opencode serve', async () => {
+    const deps = {
+      withLock: async <T>(fn: () => Promise<T>) => await fn(),
+      readState: vi.fn(async () => ({ baseUrl: 'http://127.0.0.1:1234', pid: 111, startedAtMs: 1 })),
+      writeState: vi.fn(async () => {}),
+      isPidAlive: vi.fn(() => true),
+      probeHealth: vi.fn(async () => false),
+      getProcessInfo: vi.fn(async () => ({ name: 'opencode', cmd: 'opencode serve --port 1234' })),
+      killPid: vi.fn(() => {}),
+      startServer: vi.fn(async () => ({ baseUrl: 'http://127.0.0.1:9999', pid: 222 })),
+      nowMs: () => 9,
+    };
+
+    const out = await resolveSharedManagedOpenCodeServerBaseUrl(deps);
+
+    expect(out).toEqual({ baseUrl: 'http://127.0.0.1:9999', didStart: true });
+    expect(deps.killPid).toHaveBeenCalledWith(111);
+    expect(deps.startServer).toHaveBeenCalledTimes(1);
+    expect(deps.writeState).toHaveBeenCalledWith({ baseUrl: 'http://127.0.0.1:9999', pid: 222, startedAtMs: 9 });
+  });
 });
 
 describe('stopSharedManagedOpenCodeServerFromState', () => {
