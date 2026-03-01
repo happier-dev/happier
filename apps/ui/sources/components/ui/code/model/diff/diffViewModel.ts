@@ -53,15 +53,32 @@ function computeTextDiffStats(oldText: string, newText: string): { added: number
 }
 
 function computeUnifiedDiffStats(unifiedDiff: string): { added: number; removed: number } {
-    const lines = unifiedDiff.split('\n');
     let added = 0;
     let removed = 0;
-    for (const line of lines) {
-        if (!line) continue;
-        if (line.startsWith('+++ ') || line.startsWith('--- ') || line.startsWith('diff --git ')) continue;
-        if (line.startsWith('@@')) continue;
-        if (line.startsWith('+')) added += 1;
-        else if (line.startsWith('-')) removed += 1;
+    let cursor = 0;
+    while (cursor <= unifiedDiff.length) {
+        const nextNewline = unifiedDiff.indexOf('\n', cursor);
+        const lineEnd = nextNewline === -1 ? unifiedDiff.length : nextNewline;
+        const lineLen = lineEnd - cursor;
+        if (lineLen > 0) {
+            const first = unifiedDiff.charCodeAt(cursor);
+            const isPlus = first === 43; // +
+            const isMinus = first === 45; // -
+            const isAt = first === 64; // @
+
+            const startsWith = (needle: string) => unifiedDiff.startsWith(needle, cursor);
+            const skip =
+                startsWith('+++ ')
+                || startsWith('--- ')
+                || startsWith('diff --git ')
+                || (isAt && startsWith('@@'));
+            if (!skip) {
+                if (isPlus) added += 1;
+                else if (isMinus) removed += 1;
+            }
+        }
+        if (nextNewline === -1) break;
+        cursor = lineEnd + 1;
     }
     return { added, removed };
 }
@@ -138,6 +155,34 @@ export function parseUnifiedDiff(unifiedDiff: string): { oldText: string; newTex
     };
 }
 
+function extractUnifiedDiffFileName(unifiedDiff: string): string | undefined {
+    let cursor = 0;
+    let scannedLines = 0;
+    while (cursor <= unifiedDiff.length && scannedLines < 80) {
+        const nextNewline = unifiedDiff.indexOf('\n', cursor);
+        const lineEnd = nextNewline === -1 ? unifiedDiff.length : nextNewline;
+        const line = unifiedDiff.slice(cursor, lineEnd);
+
+        if (line.startsWith('+++ b/')) return line.slice('+++ b/'.length);
+        if (line.startsWith('+++ ')) return line.slice('+++ '.length);
+
+        if (line.startsWith('diff --git ')) {
+            // diff --git a/path b/path
+            const parts = line.split(' ');
+            if (parts.length >= 4) {
+                const bPath = parts[3];
+                if (typeof bPath === 'string') return bPath.replace(/^b\//, '');
+            }
+        }
+
+        if (line.startsWith('@@')) break;
+        scannedLines += 1;
+        if (nextNewline === -1) break;
+        cursor = lineEnd + 1;
+    }
+    return undefined;
+}
+
 export function normalizeDiffFileInputs(input: unknown): DiffBlockInput[] {
     if (!input || typeof input !== 'object') return [];
     const files = (input as any).files;
@@ -204,7 +249,7 @@ export function buildDiffFileEntries(blocks: DiffBlockInput[]): DiffFileEntry[] 
                         ? computeTextDiffStats(oldText, newText)
                         : { added: 0, removed: 0 };
 
-            const filePath = entry.filePath ?? (unified ? parseUnifiedDiff(unified).fileName : undefined);
+            const filePath = entry.filePath ?? (unified ? extractUnifiedDiffFileName(unified) : undefined);
             const kind = unified ? inferUnifiedDiffKind(unified) : inferTextDiffKind(oldText ?? '', newText ?? '');
             return {
                 key: `${filePath ?? 'unknown'}::${idx}`,
