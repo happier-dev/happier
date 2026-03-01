@@ -69,18 +69,18 @@ describe('buildTranscriptTurns', () => {
         const turns = buildTranscriptTurns({
             messageIdsOldestFirst,
             messagesById,
-            showActivityGroup: true,
-            activityGroupStrategy: 'consecutive_tools',
+            groupToolCalls: true,
+            toolCallsGroupStrategy: 'consecutive_tools',
         });
 
         expect(turns.map((t) => t.userMessageId)).toEqual(['u1', 'u2']);
 
         const [turn1, turn2] = turns;
-        expect(turn1?.content.map((c) => c.kind)).toEqual(['message', 'activity', 'message']);
+        expect(turn1?.content.map((c) => c.kind)).toEqual(['message', 'tool_calls', 'message']);
         if (turn1?.content[0]?.kind === 'message') {
             expect(turn1.content[0].messageId).toBe('a1');
         }
-        if (turn1?.content[1]?.kind === 'activity') {
+        if (turn1?.content[1]?.kind === 'tool_calls') {
             expect(turn1.content[1].toolMessageIds).toEqual(['t1', 't2']);
         }
         if (turn1?.content[2]?.kind === 'message') {
@@ -103,8 +103,8 @@ describe('buildTranscriptTurns', () => {
         const turns = buildTranscriptTurns({
             messageIdsOldestFirst,
             messagesById,
-            showActivityGroup: false,
-            activityGroupStrategy: 'consecutive_tools',
+            groupToolCalls: false,
+            toolCallsGroupStrategy: 'consecutive_tools',
         });
 
         expect(turns.map((t) => t.userMessageId)).toEqual([null, 'u1']);
@@ -135,14 +135,14 @@ describe('buildTranscriptTurns', () => {
         const turns = buildTranscriptTurns({
             messageIdsOldestFirst,
             messagesById,
-            showActivityGroup: true,
-            activityGroupStrategy: 'all_tools_in_turn',
+            groupToolCalls: true,
+            toolCallsGroupStrategy: 'all_tools_in_turn',
         });
 
         expect(turns).toHaveLength(1);
         const turn = turns[0]!;
-        expect(turn.content.map((c) => c.kind)).toEqual(['message', 'activity', 'message', 'message']);
-        if (turn.content[1]?.kind === 'activity') {
+        expect(turn.content.map((c) => c.kind)).toEqual(['message', 'tool_calls', 'message', 'message']);
+        if (turn.content[1]?.kind === 'tool_calls') {
             expect(turn.content[1].toolMessageIds).toEqual(['t1', 't2']);
         }
     });
@@ -161,15 +161,15 @@ describe('buildTranscriptTurns', () => {
         const turns = buildTranscriptTurns({
             messageIdsOldestFirst,
             messagesById,
-            showActivityGroup: true,
-            activityGroupStrategy: 'consecutive_tools',
+            groupToolCalls: true,
+            toolCallsGroupStrategy: 'consecutive_tools',
         });
 
         expect(turns).toHaveLength(1);
-        const activity = turns[0]!.content.find((c) => c.kind === 'activity');
-        expect(activity?.kind).toBe('activity');
-        if (activity?.kind === 'activity') {
-            expect(activity.toolMessageIds).toEqual(['t1', 't2']);
+        const toolCalls = turns[0]!.content.find((c) => c.kind === 'tool_calls');
+        expect(toolCalls?.kind).toBe('tool_calls');
+        if (toolCalls?.kind === 'tool_calls') {
+            expect(toolCalls.toolMessageIds).toEqual(['t1', 't2']);
         }
     });
 });
@@ -188,8 +188,8 @@ describe('buildTranscriptTurnsCached', () => {
             cache: null,
             messageIdsOldestFirst: ['u1', 'a1', 'u2', 'a2'],
             messagesById,
-            showActivityGroup: true,
-            activityGroupStrategy: 'consecutive_tools',
+            groupToolCalls: true,
+            toolCallsGroupStrategy: 'consecutive_tools',
         });
 
         const a3 = agentMessage('a3', 5);
@@ -198,8 +198,8 @@ describe('buildTranscriptTurnsCached', () => {
             cache: cache1,
             messageIdsOldestFirst: ['u1', 'a1', 'u2', 'a2', 'a3'],
             messagesById,
-            showActivityGroup: true,
-            activityGroupStrategy: 'consecutive_tools',
+            groupToolCalls: true,
+            toolCallsGroupStrategy: 'consecutive_tools',
         });
 
         expect(cache1.turns).toHaveLength(2);
@@ -221,15 +221,15 @@ describe('buildTranscriptTurnsCached', () => {
             cache: null,
             messageIdsOldestFirst: ['u1', 'a1'],
             messagesById,
-            showActivityGroup: false,
-            activityGroupStrategy: 'consecutive_tools',
+            groupToolCalls: false,
+            toolCallsGroupStrategy: 'consecutive_tools',
         });
         const cache2 = buildTranscriptTurnsCached({
             cache: cache1,
             messageIdsOldestFirst: ['a0', 'u1', 'a1'],
             messagesById,
-            showActivityGroup: false,
-            activityGroupStrategy: 'consecutive_tools',
+            groupToolCalls: false,
+            toolCallsGroupStrategy: 'consecutive_tools',
         });
 
         expect(cache2.turns.map((t) => t.userMessageId)).toEqual([null, 'u1']);

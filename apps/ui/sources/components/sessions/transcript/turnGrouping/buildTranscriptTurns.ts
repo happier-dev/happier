@@ -1,6 +1,6 @@
 import type { Message, ToolCallMessage, UserTextMessage } from '@/sync/domains/messages/messageTypes';
 
-export type TranscriptTurnActivityGroupStrategy = 'consecutive_tools' | 'all_tools_in_turn';
+export type TranscriptTurnToolCallsGroupStrategy = 'consecutive_tools' | 'all_tools_in_turn';
 
 export type TranscriptTurnContent =
     | {
@@ -8,7 +8,7 @@ export type TranscriptTurnContent =
         messageId: string;
     }
     | {
-        kind: 'activity';
+        kind: 'tool_calls';
         id: string;
         toolMessageIds: string[];
     };
@@ -21,8 +21,8 @@ export type TranscriptTurn = {
 
 export type TranscriptTurnsBuildCache = Readonly<{
     messageIdsOldestFirst: readonly string[];
-    showActivityGroup: boolean;
-    activityGroupStrategy: TranscriptTurnActivityGroupStrategy;
+    groupToolCalls: boolean;
+    toolCallsGroupStrategy: TranscriptTurnToolCallsGroupStrategy;
     turns: TranscriptTurn[];
     // Internal: incremental builder state for the current (last) turn.
     lastTurnState: TranscriptTurnsLastTurnState;
@@ -42,11 +42,11 @@ function isToolMessage(m: Message): m is ToolCallMessage {
 }
 
 function createEmptyLastTurnState(opts: Readonly<{
-    showActivityGroup: boolean;
-    activityGroupStrategy: TranscriptTurnActivityGroupStrategy;
+    groupToolCalls: boolean;
+    toolCallsGroupStrategy: TranscriptTurnToolCallsGroupStrategy;
 }>): TranscriptTurnsLastTurnState {
-    if (!opts.showActivityGroup) return { kind: 'none' };
-    if (opts.activityGroupStrategy === 'all_tools_in_turn') {
+    if (!opts.groupToolCalls) return { kind: 'none' };
+    if (opts.toolCallsGroupStrategy === 'all_tools_in_turn') {
         return { kind: 'all_tools_in_turn', activityIndex: null };
     }
     return { kind: 'consecutive_tools', openActivityIndex: null };
@@ -65,18 +65,18 @@ function appendNonUserToTurn(params: Readonly<{
     lastTurnState: TranscriptTurnsLastTurnState;
     messageId: string;
     message: Message;
-    showActivityGroup: boolean;
-    activityGroupStrategy: TranscriptTurnActivityGroupStrategy;
+    groupToolCalls: boolean;
+    toolCallsGroupStrategy: TranscriptTurnToolCallsGroupStrategy;
 }>): { turn: TranscriptTurn; lastTurnState: TranscriptTurnsLastTurnState } {
     const turn = params.turn;
     const content = turn.content.slice();
 
-    if (!params.showActivityGroup) {
+    if (!params.groupToolCalls) {
         content.push({ kind: 'message', messageId: params.messageId });
         return { turn: { ...turn, content }, lastTurnState: { kind: 'none' } };
     }
 
-    if (params.activityGroupStrategy === 'all_tools_in_turn') {
+    if (params.toolCallsGroupStrategy === 'all_tools_in_turn') {
         if (isToolMessage(params.message)) {
             const state =
                 params.lastTurnState.kind === 'all_tools_in_turn'
@@ -85,19 +85,19 @@ function appendNonUserToTurn(params: Readonly<{
             if (state.activityIndex == null) {
                 const idx = content.length;
                 content.push({
-                    kind: 'activity',
-                    id: `activity:${turn.id}:${params.messageId}`,
+                    kind: 'tool_calls',
+                    id: `toolCalls:${turn.id}:${params.messageId}`,
                     toolMessageIds: [params.messageId],
                 });
                 return { turn: { ...turn, content }, lastTurnState: { kind: 'all_tools_in_turn', activityIndex: idx } };
             }
             const prev = content[state.activityIndex];
-            if (prev?.kind !== 'activity') {
+            if (prev?.kind !== 'tool_calls') {
                 // Defensive: if content shape is unexpected, fall back to inserting a new activity group.
                 const idx = content.length;
                 content.push({
-                    kind: 'activity',
-                    id: `activity:${turn.id}:${params.messageId}`,
+                    kind: 'tool_calls',
+                    id: `toolCalls:${turn.id}:${params.messageId}`,
                     toolMessageIds: [params.messageId],
                 });
                 return { turn: { ...turn, content }, lastTurnState: { kind: 'all_tools_in_turn', activityIndex: idx } };
@@ -124,7 +124,7 @@ function appendNonUserToTurn(params: Readonly<{
     if (isToolMessage(params.message)) {
         if (state.openActivityIndex != null) {
             const prev = content[state.openActivityIndex];
-            if (prev?.kind === 'activity') {
+            if (prev?.kind === 'tool_calls') {
                 content[state.openActivityIndex] = { ...prev, toolMessageIds: [...prev.toolMessageIds, params.messageId] };
                 return { turn: { ...turn, content }, lastTurnState: state };
             }
@@ -132,8 +132,8 @@ function appendNonUserToTurn(params: Readonly<{
 
         const idx = content.length;
         content.push({
-            kind: 'activity',
-            id: `activity:${turn.id}:${params.messageId}`,
+            kind: 'tool_calls',
+            id: `toolCalls:${turn.id}:${params.messageId}`,
             toolMessageIds: [params.messageId],
         });
         return { turn: { ...turn, content }, lastTurnState: { kind: 'consecutive_tools', openActivityIndex: idx } };
@@ -155,13 +155,13 @@ export function buildTranscriptTurnsCached(opts: {
     cache: TranscriptTurnsBuildCache | null;
     messageIdsOldestFirst: string[];
     messagesById: Readonly<Record<string, Message>>;
-    showActivityGroup: boolean;
-    activityGroupStrategy: TranscriptTurnActivityGroupStrategy;
+    groupToolCalls: boolean;
+    toolCallsGroupStrategy: TranscriptTurnToolCallsGroupStrategy;
 }): TranscriptTurnsBuildCache {
     const canReuse =
         opts.cache != null &&
-        opts.cache.showActivityGroup === opts.showActivityGroup &&
-        opts.cache.activityGroupStrategy === opts.activityGroupStrategy &&
+        opts.cache.groupToolCalls === opts.groupToolCalls &&
+        opts.cache.toolCallsGroupStrategy === opts.toolCallsGroupStrategy &&
         isPrefix({ prefix: opts.cache.messageIdsOldestFirst, full: opts.messageIdsOldestFirst });
 
     // Append-only incremental path.
@@ -216,16 +216,16 @@ export function buildTranscriptTurnsCached(opts: {
                 lastTurnState,
                 messageId: message.id,
                 message,
-                showActivityGroup: opts.showActivityGroup,
-                activityGroupStrategy: opts.activityGroupStrategy,
+                groupToolCalls: opts.groupToolCalls,
+                toolCallsGroupStrategy: opts.toolCallsGroupStrategy,
             });
             replaceLastTurn(updated.turn, updated.lastTurnState);
         }
 
         return {
             messageIdsOldestFirst: opts.messageIdsOldestFirst,
-            showActivityGroup: opts.showActivityGroup,
-            activityGroupStrategy: opts.activityGroupStrategy,
+            groupToolCalls: opts.groupToolCalls,
+            toolCallsGroupStrategy: opts.toolCallsGroupStrategy,
             turns: nextTurns,
             lastTurnState,
         };
@@ -256,8 +256,8 @@ export function buildTranscriptTurnsCached(opts: {
             lastTurnState,
             messageId: message.id,
             message,
-            showActivityGroup: opts.showActivityGroup,
-            activityGroupStrategy: opts.activityGroupStrategy,
+            groupToolCalls: opts.groupToolCalls,
+            toolCallsGroupStrategy: opts.toolCallsGroupStrategy,
         });
         turns[turns.length - 1] = updated.turn;
         lastTurnState = updated.lastTurnState;
@@ -265,8 +265,8 @@ export function buildTranscriptTurnsCached(opts: {
 
     return {
         messageIdsOldestFirst: opts.messageIdsOldestFirst,
-        showActivityGroup: opts.showActivityGroup,
-        activityGroupStrategy: opts.activityGroupStrategy,
+        groupToolCalls: opts.groupToolCalls,
+        toolCallsGroupStrategy: opts.toolCallsGroupStrategy,
         turns,
         lastTurnState,
     };
@@ -275,14 +275,14 @@ export function buildTranscriptTurnsCached(opts: {
 export function buildTranscriptTurns(opts: {
     messageIdsOldestFirst: string[];
     messagesById: Readonly<Record<string, Message>>;
-    showActivityGroup: boolean;
-    activityGroupStrategy: TranscriptTurnActivityGroupStrategy;
+    groupToolCalls: boolean;
+    toolCallsGroupStrategy: TranscriptTurnToolCallsGroupStrategy;
 }): TranscriptTurn[] {
     return buildTranscriptTurnsCached({
         cache: null,
         messageIdsOldestFirst: opts.messageIdsOldestFirst,
         messagesById: opts.messagesById,
-        showActivityGroup: opts.showActivityGroup,
-        activityGroupStrategy: opts.activityGroupStrategy,
+        groupToolCalls: opts.groupToolCalls,
+        toolCallsGroupStrategy: opts.toolCallsGroupStrategy,
     }).turns;
 }
