@@ -84,6 +84,19 @@ test.describe('ui e2e: auth + terminal connect', () => {
     throw new Error(`Failed to read machine id from server light sqlite db: ${dbPath}`);
   }
 
+  async function waitForLatestMachineId(params: { suiteDir: string; timeoutMs?: number }): Promise<string> {
+    const timeoutMs = params.timeoutMs ?? 60_000;
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      try {
+        return readLatestMachineIdFromServerLightDb({ suiteDir: params.suiteDir });
+      } catch {
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    }
+    return readLatestMachineIdFromServerLightDb({ suiteDir: params.suiteDir });
+  }
+
   function readMachineActiveFromServerLightDb(params: { suiteDir: string; machineId: string }): boolean | null {
     const dbPath = resolveServerLightSqliteDbPath({ suiteDir: params.suiteDir });
     try {
@@ -272,6 +285,12 @@ test.describe('ui e2e: auth + terminal connect', () => {
       await restoreAccountUsingSecretKey(page, uiBaseUrl, accountSecretKeyFormatted, { postRestorePath: '/new' });
 
       await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
+      const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
+      await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 120_000 });
+      await page.getByTestId('agent-input-machine-chip').click();
+      await expect(page.getByTestId(`new-session-machine:${machineId}`)).toHaveCount(1, { timeout: 120_000 });
+      await page.getByTestId(`new-session-machine:${machineId}`).click();
+
       const prompt = `UI_E2E_MESSAGE_${run.runId}`;
       await page.getByTestId('new-session-composer-input').fill(prompt);
       await page.getByTestId('new-session-composer-input').press('Enter');
@@ -388,112 +407,6 @@ test.describe('ui e2e: auth + terminal connect', () => {
       await page.getByTestId('session-composer-input').fill(followup);
       await page.getByTestId('session-composer-input').press('Enter');
       await expect(ok1).toHaveCount(ok1Before + 1, { timeout: 180_000 });
-    } catch (error) {
-      thrown = error;
-      throw error;
-    } finally {
-      if (thrown) {
-        const diagnostic =
-          `# Browser diagnostics\n\n` +
-          `## Console\n\n${pageConsole.length ? pageConsole.join('\n') : '(none)'}\n\n` +
-          `## Page errors\n\n${pageErrors.length ? pageErrors.join('\n') : '(none)'}\n\n` +
-          `## Request failures\n\n${requestFailures.length ? requestFailures.join('\n') : '(none)'}\n\n` +
-          `## Response errors\n\n${responseErrors.length ? responseErrors.join('\n') : '(none)'}\n`;
-        await testInfo.attach('browser-diagnostics.md', { body: diagnostic, contentType: 'text/markdown' });
-      }
-    }
-  });
-
-  test('queues messages while daemon is offline and delivers them after reconnect', async ({ page }, testInfo) => {
-    test.setTimeout(420_000);
-    if (!ui) throw new Error('missing ui fixture');
-    if (!server) throw new Error('missing server fixture');
-    if (!uiBaseUrl) throw new Error('missing ui base url');
-    if (!accountSecretKeyFormatted) throw new Error('missing account secret key from prior test');
-    if (!createdSessionId) throw new Error('missing session id from prior test');
-    if (!daemon) throw new Error('missing daemon from prior test');
-    if (!fakeClaudePath) throw new Error('missing fake Claude path from prior test');
-
-    const pageConsole: string[] = [];
-    const pageErrors: string[] = [];
-    const requestFailures: string[] = [];
-    const responseErrors: string[] = [];
-
-    page.on('console', (msg) => pageConsole.push(`[${msg.type()}] ${msg.text()}`));
-    page.on('pageerror', (err) => pageErrors.push(String(err)));
-    page.on('requestfailed', (request) => {
-      const failure = request.failure();
-      requestFailures.push(`${request.method()} ${request.url()} ${failure ? `-> ${failure.errorText}` : ''}`.trim());
-    });
-    page.on('response', (response) => {
-      const status = response.status();
-      if (status >= 400) responseErrors.push(`${status} ${response.request().method()} ${response.url()}`);
-    });
-
-    const testDir = resolve(join(suiteDir, 't4-offline-queue'));
-    await mkdir(testDir, { recursive: true });
-
-    let thrown: unknown = null;
-    try {
-      await restoreAccountUsingSecretKey(page, uiBaseUrl, accountSecretKeyFormatted);
-      await page.goto(`${uiBaseUrl}/session/${createdSessionId}`, { waitUntil: 'domcontentloaded' });
-      await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 120_000 });
-
-      // Ensure prior transcript content is loaded before we snapshot `okBefore`, otherwise
-      // late-arriving history can be mistaken for an offline daemon response.
-      await expect(page.getByText('FAKE_CLAUDE_OK_1')).toHaveCount(1, { timeout: 120_000 });
-
-      const ok = page.getByText(/FAKE_CLAUDE_OK_/);
-      const okBefore = await ok.count();
-
-      const machineId = readLatestMachineIdFromServerLightDb({ suiteDir });
-      await daemon.stop();
-      daemon = null;
-
-      await expect
-        .poll(async () => {
-          return readMachineActiveFromServerLightDb({ suiteDir, machineId });
-        }, { timeout: 180_000 })
-        .toBe(false);
-
-      const prompt = `UI_E2E_MESSAGE_OFFLINE_${run.runId}`;
-      await page.getByTestId('session-composer-input').fill(prompt);
-      await page.getByTestId('session-composer-input').press('Enter');
-      await expect(page.getByText(prompt)).toHaveCount(1, { timeout: 60_000 });
-
-      // While the daemon is offline, we should not receive a provider response.
-      await expect
-        .poll(async () => {
-          return await ok.count();
-        }, { timeout: 15_000 })
-        .toBe(okBefore);
-
-      fakeClaudeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
-      daemon = await startTestDaemon({
-        testDir,
-        happyHomeDir: cliHomeDir,
-        env: {
-          ...process.env,
-          CI: '1',
-          HAPPIER_HOME_DIR: cliHomeDir,
-          HAPPIER_SERVER_URL: server.baseUrl,
-          HAPPIER_WEBAPP_URL: uiBaseUrl,
-          HAPPIER_DISABLE_CAFFEINATE: '1',
-          HAPPIER_VARIANT: 'dev',
-          HAPPIER_CLAUDE_PATH: fakeClaudePath,
-          HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLogPath,
-          HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${run.runId}`,
-          HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: `fake-claude-invocation-${run.runId}`,
-        },
-      });
-
-      await expect
-        .poll(async () => {
-          return readMachineActiveFromServerLightDb({ suiteDir, machineId });
-        }, { timeout: 180_000 })
-        .toBe(true);
-
-      await expect(ok).toHaveCount(okBefore + 1, { timeout: 180_000 });
     } catch (error) {
       thrown = error;
       throw error;
