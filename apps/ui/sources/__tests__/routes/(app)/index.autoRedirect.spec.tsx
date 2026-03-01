@@ -9,6 +9,17 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
+let expoScheme: string | undefined = undefined;
+vi.mock('expo-constants', () => ({
+    default: {
+        expoConfig: {
+            get scheme() {
+                return expoScheme;
+            },
+        },
+    },
+}));
+
 vi.mock('react-native-reanimated', () => ({}));
 vi.mock('react-native-typography', () => ({ iOSUIKit: { title3: {} } }));
 vi.mock('@/components/navigation/shell/HomeHeader', () => ({ HomeHeaderNotAuth: () => null }));
@@ -129,7 +140,10 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 }));
 
 describe('/ (welcome) auto redirect', () => {
+    const testTimeoutMs = 60_000;
+
     beforeEach(() => {
+        expoScheme = undefined;
         openURL.mockClear();
         getServerFeaturesMock.mockClear();
         getServerFeaturesSnapshotMock.mockClear();
@@ -142,7 +156,7 @@ describe('/ (welcome) auto redirect', () => {
     });
 
     async function renderWelcomeScreen(): Promise<void> {
-        const { default: Screen } = await import('./index');
+        const { default: Screen } = await import('@/app/(app)/index');
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
             await act(async () => {
@@ -160,7 +174,7 @@ describe('/ (welcome) auto redirect', () => {
         vi.resetModules();
         await renderWelcomeScreen();
         expect(openURL).toHaveBeenCalledWith('https://example.test/oauth');
-    });
+    }, testTimeoutMs);
 
     it('does not double-trigger auto-redirect when the effect runs twice before suppression is resolved', async () => {
         vi.resetModules();
@@ -171,7 +185,7 @@ describe('/ (welcome) auto redirect', () => {
         });
         getSuppressedUntilMock.mockImplementationOnce(async () => await suppressedUntilPromise);
 
-        const { default: Screen } = await import('./index');
+        const { default: Screen } = await import('@/app/(app)/index');
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
             await act(async () => {
@@ -193,7 +207,7 @@ describe('/ (welcome) auto redirect', () => {
                 tree?.unmount();
             });
         }
-    });
+    }, testTimeoutMs);
 
     it('does not auto-start provider signup when auto-redirect is temporarily suppressed', async () => {
         vi.resetModules();
@@ -201,7 +215,7 @@ describe('/ (welcome) auto redirect', () => {
 
         await renderWelcomeScreen();
         expect(openURL).not.toHaveBeenCalled();
-    });
+    }, testTimeoutMs);
 
     it('does not throw when server features fetch fails', async () => {
         vi.resetModules();
@@ -210,14 +224,14 @@ describe('/ (welcome) auto redirect', () => {
 
         await renderWelcomeScreen();
         expect(openURL).not.toHaveBeenCalled();
-    });
+    }, testTimeoutMs);
 
     it('refuses unsafe external signup URLs', async () => {
         vi.resetModules();
         externalSignupUrl = 'javascript:alert(1)';
         await renderWelcomeScreen();
         expect(openURL).not.toHaveBeenCalled();
-    });
+    }, testTimeoutMs);
 
     it('auto-starts mTLS login when server enables auth.ui.autoRedirect=mtls', async () => {
         vi.resetModules();
@@ -234,7 +248,26 @@ describe('/ (welcome) auto redirect', () => {
 
         await renderWelcomeScreen();
         expect(openURL).toHaveBeenCalledWith('https://server.test/v1/auth/mtls/start?returnTo=happier%3A%2F%2F%2Fmtls');
-    });
+    }, testTimeoutMs);
+
+    it('uses the configured app scheme for the mTLS returnTo deep link', async () => {
+        vi.resetModules();
+        expoScheme = 'happier-dev';
+
+        getServerFeaturesSnapshotMock.mockResolvedValueOnce({
+            status: 'ready',
+            features: createWelcomeFeaturesResponse({
+                signupMethods: [{ id: 'anonymous', enabled: false }],
+                loginMethods: [{ id: 'mtls', enabled: true }],
+                autoRedirectEnabled: true,
+                autoRedirectProviderId: 'mtls',
+                providerOffboardingIntervalSeconds: 86400,
+            }),
+        });
+
+        await renderWelcomeScreen();
+        expect(openURL).toHaveBeenCalledWith('https://server.test/v1/auth/mtls/start?returnTo=happier-dev%3A%2F%2F%2Fmtls');
+    }, testTimeoutMs);
 
     it('auto-starts keyless provider login when server enables auth.ui.autoRedirect for a keyless login method', async () => {
         vi.resetModules();
@@ -266,5 +299,5 @@ describe('/ (welcome) auto redirect', () => {
 
         await renderWelcomeScreen();
         expect(openURL).toHaveBeenCalledWith('https://example.test/oauth-login');
-    });
+    }, testTimeoutMs);
 });

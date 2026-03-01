@@ -28,6 +28,7 @@ import { Text } from '@/components/ui/text/Text';
 import { buildDataKeyCredentialsForToken } from "@/auth/flows/buildDataKeyCredentialsForToken";
 import { digest } from "@/platform/digest";
 import { encodeHex } from "@/encryption/hex";
+import { resolveAppUrlScheme } from "@/utils/url/appScheme";
 
 
 export default function Home() {
@@ -333,7 +334,7 @@ function NotAuthenticated() {
             }
 
             if (Platform.OS !== 'web') {
-                const returnTo = 'happier:///mtls';
+                const returnTo = `${resolveAppUrlScheme()}:///mtls`;
                 const startUrl = `${serverUrl}/v1/auth/mtls/start?returnTo=${encodeURIComponent(returnTo)}`;
                 await Linking.openURL(startUrl);
                 return;
