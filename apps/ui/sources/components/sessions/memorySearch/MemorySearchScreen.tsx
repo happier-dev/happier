@@ -10,6 +10,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
 import { MemorySearchResultV1Schema, RPC_METHODS } from '@happier-dev/protocol';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
@@ -77,7 +78,7 @@ export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
         return (
             <View style={{ flex: 1, padding: 16, alignItems: 'center', justifyContent: 'center' }}>
                 <Text style={{ color: theme.colors.textSecondary }}>
-                    Memory search is disabled.
+                    {t('memorySearchSettings.disabled.title')}
                 </Text>
                 <Pressable
                     testID="memory-search-open-features"
@@ -85,7 +86,7 @@ export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
                     style={{ paddingVertical: 10 }}
                 >
                     <Text style={{ color: theme.colors.text }}>
-                        Open feature settings
+                        {t('memorySearchSettings.disabled.openFeatureSettings')}
                     </Text>
                 </Pressable>
             </View>
@@ -109,14 +110,14 @@ export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
                 style={{ paddingVertical: 8 }}
             >
                 <Text style={{ color: theme.colors.textSecondary }}>
-                    {'Machine: ' + machineTitle}
+                    {t('memorySearchSettings.screen.machineLabel', { machine: machineTitle })}
                 </Text>
             </Pressable>
             <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
                 <TextInput
                     value={query}
                     onChangeText={setQuery}
-                    placeholder="Search memory"
+                    placeholder={t('memorySearchSettings.screen.searchPlaceholder')}
                     placeholderTextColor={theme.colors.input.placeholder}
                     style={{
                         flex: 1,
@@ -185,7 +186,7 @@ export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
                         }}
                     >
                         <Text style={{ color: '#fff' }}>
-                            Enable Local Memory Search
+                            {t('memorySearchSettings.screen.enableLocalSearch')}
                         </Text>
                     </Pressable>
                 </View>
