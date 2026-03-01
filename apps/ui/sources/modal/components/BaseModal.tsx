@@ -9,6 +9,7 @@ import {
 import { StyleSheet } from 'react-native-unistyles';
 import { requireRadixDialog, requireRadixDismissableLayer } from '@/utils/web/radixCjs';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
+import { t } from '@/text';
 
 // On web, stop events from propagating to expo-router's modal overlay
 // which intercepts clicks when it applies pointer-events: none to body
@@ -147,7 +148,7 @@ export function BaseModal({
                                 closeOnBackdrop ? undefined : (e) => e.preventDefault()
                             }
                         >
-                            <Dialog.Title style={visuallyHiddenStyle}>Dialog</Dialog.Title>
+                            <Dialog.Title style={visuallyHiddenStyle}>{t('common.dialog')}</Dialog.Title>
                             {/* Host for web portals (e.g. popovers) that must live inside the dialog subtree. */}
                             <div
                                 data-happy-modal-portal-host=""
