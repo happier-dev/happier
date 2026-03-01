@@ -41,6 +41,7 @@ describe('sessions ops server-scoped routing', () => {
     it('routes continue-with-replay through server-scoped machine rpc with requested server id', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-2' });
         const { continueSessionWithReplay } = await import('./sessions');
+        const summaryRunner = { v: 1, backendId: 'claude', modelId: 'default', permissionMode: 'no_tools' } as const;
 
         const result = await continueSessionWithReplay({
             machineId: 'machine-1',
@@ -49,8 +50,9 @@ describe('sessions ops server-scoped routing', () => {
             approvedNewDirectoryCreation: true,
             replay: {
                 previousSessionId: 'sess-prev',
-                strategy: 'recent_messages',
+                strategy: 'summary_plus_recent',
                 recentMessagesCount: 2,
+                summaryRunner,
             },
             serverId: 'server-b',
         } as any);
@@ -60,17 +62,22 @@ describe('sessions ops server-scoped routing', () => {
             machineId: 'machine-1',
             method: 'session.continueWithReplay',
             serverId: 'server-b',
+            payload: expect.objectContaining({
+                replay: expect.objectContaining({ summaryRunner }),
+            }),
         }));
     });
 
     it('routes session fork through server-scoped machine rpc with requested server id', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({ ok: true, childSessionId: 'sess-child' });
         const { forkSession } = await import('./sessions');
+        const replaySummaryRunner = { v: 1, backendId: 'claude', modelId: 'default', permissionMode: 'no_tools' } as const;
 
         const result = await forkSession({
             machineId: 'machine-1',
             parentSessionId: 'sess-parent',
             forkPoint: { type: 'seq', upToSeqInclusive: 12 },
+            replaySummaryRunner,
             serverId: 'server-b',
         } as any);
 
@@ -79,6 +86,7 @@ describe('sessions ops server-scoped routing', () => {
             machineId: 'machine-1',
             method: 'session.fork',
             serverId: 'server-b',
+            payload: expect.objectContaining({ replaySummaryRunner }),
         }));
     });
 
