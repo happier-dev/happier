@@ -9,25 +9,32 @@ const {
     mockSessionRPC,
     modalAlert,
     modalConfirm,
-    modalPrompt,
-    showScmCommitMessageEditorModal,
-    invalidateFromMutationAndAwait,
-    trackingCapture,
-} = vi.hoisted(() => ({
-    mockSessionRPC: vi.fn(),
-    modalAlert: vi.fn(),
-    modalConfirm: vi.fn(),
-    modalPrompt: vi.fn(),
-    showScmCommitMessageEditorModal: vi.fn(),
-    invalidateFromMutationAndAwait: vi.fn(async () => {}),
-    trackingCapture: vi.fn(),
-}));
+	    modalPrompt,
+	    showScmCommitMessageEditorModal,
+	    invalidateFromMutationAndAwait,
+	    trackingCapture,
+	    mockMachineRPC,
+	} = vi.hoisted(() => ({
+	    mockSessionRPC: vi.fn(),
+	    modalAlert: vi.fn(),
+	    modalConfirm: vi.fn(),
+	    modalPrompt: vi.fn(),
+	    showScmCommitMessageEditorModal: vi.fn(),
+	    invalidateFromMutationAndAwait: vi.fn(async () => {}),
+	    trackingCapture: vi.fn(),
+	    mockMachineRPC: vi.fn(async () => {
+	        const err = new Error('RPC method not available');
+	        (err as Error & { rpcErrorCode?: string }).rpcErrorCode = 'RPC_METHOD_NOT_AVAILABLE';
+	        throw err;
+	    }),
+	}));
 
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        sessionRPC: mockSessionRPC,
-    },
-}));
+	vi.mock('@/sync/api/session/apiSocket', () => ({
+	    apiSocket: {
+	        sessionRPC: mockSessionRPC,
+	        machineRPC: mockMachineRPC,
+	    },
+	}));
 
 // sessions ops import sync for non-git helpers; keep this test node-safe.
 vi.mock('@/sync/sync', () => ({
@@ -136,19 +143,26 @@ describe('useFilesScmOperations integration', () => {
         storage.setState(initialStorageState, true);
         projectManager.clear();
 
-        mockSessionRPC.mockReset();
-        modalAlert.mockReset();
-        modalConfirm.mockReset();
-        modalPrompt.mockReset();
-        showScmCommitMessageEditorModal.mockReset();
+	        mockSessionRPC.mockReset();
+	        mockMachineRPC.mockReset();
+	        modalAlert.mockReset();
+	        modalConfirm.mockReset();
+	        modalPrompt.mockReset();
+	        showScmCommitMessageEditorModal.mockReset();
         invalidateFromMutationAndAwait.mockReset();
         invalidateFromMutationAndAwait.mockImplementation(async () => {});
-        trackingCapture.mockReset();
+	        trackingCapture.mockReset();
 
-        modalConfirm.mockResolvedValue(true);
-        modalPrompt.mockResolvedValue('feat: hook integration commit');
-        showScmCommitMessageEditorModal.mockResolvedValue('feat: hook integration commit');
-    });
+	        mockMachineRPC.mockImplementation(async () => {
+	            const err = new Error('RPC method not available');
+	            (err as Error & { rpcErrorCode?: string }).rpcErrorCode = 'RPC_METHOD_NOT_AVAILABLE';
+	            throw err;
+	        });
+
+	        modalConfirm.mockResolvedValue(true);
+	        modalPrompt.mockResolvedValue('feat: hook integration commit');
+	        showScmCommitMessageEditorModal.mockResolvedValue('feat: hook integration commit');
+	    });
 
     it('creates a commit then pushes successfully against a real remote', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-hook-remote-'));

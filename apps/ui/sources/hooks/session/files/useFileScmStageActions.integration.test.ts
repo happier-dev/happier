@@ -6,22 +6,29 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const {
-    mockSessionRPC,
-    modalAlert,
-    invalidateFromMutationAndAwait,
-    trackingCapture,
-} = vi.hoisted(() => ({
-    mockSessionRPC: vi.fn(),
-    modalAlert: vi.fn(),
-    invalidateFromMutationAndAwait: vi.fn(async () => {}),
-    trackingCapture: vi.fn(),
-}));
+	    mockSessionRPC,
+	    modalAlert,
+	    invalidateFromMutationAndAwait,
+	    trackingCapture,
+	    mockMachineRPC,
+	} = vi.hoisted(() => ({
+	    mockSessionRPC: vi.fn(),
+	    modalAlert: vi.fn(),
+	    invalidateFromMutationAndAwait: vi.fn(async () => {}),
+	    trackingCapture: vi.fn(),
+	    mockMachineRPC: vi.fn(async () => {
+	        const err = new Error('RPC method not available');
+	        (err as Error & { rpcErrorCode?: string }).rpcErrorCode = 'RPC_METHOD_NOT_AVAILABLE';
+	        throw err;
+	    }),
+	}));
 
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        sessionRPC: mockSessionRPC,
-    },
-}));
+	vi.mock('@/sync/api/session/apiSocket', () => ({
+	    apiSocket: {
+	        sessionRPC: mockSessionRPC,
+	        machineRPC: mockMachineRPC,
+	    },
+	}));
 
 // sessions ops import sync for non-git helpers; keep this test node-safe.
 vi.mock('@/sync/sync', () => ({
@@ -157,13 +164,20 @@ function selectionKeyByContent(diff: string, expectedLine: string): string {
 describe('useFileScmStageActions integration', () => {
     beforeEach(() => {
         storage.setState(initialStorageState, true);
-        projectManager.clear();
+	        projectManager.clear();
 
-        mockSessionRPC.mockReset();
-        modalAlert.mockReset();
-        invalidateFromMutationAndAwait.mockReset();
-        trackingCapture.mockReset();
-    });
+	        mockSessionRPC.mockReset();
+	        mockMachineRPC.mockReset();
+	        modalAlert.mockReset();
+	        invalidateFromMutationAndAwait.mockReset();
+	        trackingCapture.mockReset();
+
+	        mockMachineRPC.mockImplementation(async () => {
+	            const err = new Error('RPC method not available');
+	            (err as Error & { rpcErrorCode?: string }).rpcErrorCode = 'RPC_METHOD_NOT_AVAILABLE';
+	            throw err;
+	        });
+	    });
 
     it('stages and unstages a full file through real git operations', async () => {
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-file-stage-'));
