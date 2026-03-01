@@ -454,114 +454,135 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
         // up-front so the next layout pass uses updated heights (prevents empty gaps on web and
         // avoids stale measurement artifacts in virtualization).
         const rawList: any = listRef.current as any;
-        rawList?.clearLayoutCacheOnUpdate?.();
+        try {
+            const clearLayoutCache = rawList?.clearLayoutCacheOnUpdate;
+            if (typeof clearLayoutCache === 'function') {
+                clearLayoutCache.call(rawList);
+            }
+        } catch {
+            // ignore
+        }
 
         if (Platform.OS !== 'web') {
             toggleCollapsed(path);
             return;
         }
 
-        const host =
-            (rawList?.getScrollableNode?.() as HTMLElement | null)
-            ?? null;
-        if (!host) {
+        let didToggle = false;
+        const toggleOnce = () => {
+            if (didToggle) return;
+            didToggle = true;
             toggleCollapsed(path);
-            return;
-        }
+        };
 
-        const isScrollable = (el: HTMLElement | null) => {
-            if (!el) return false;
+        try {
+            const host = (rawList?.getScrollableNode?.() as HTMLElement | null) ?? null;
+            const safePath = toTestIdSafeValue(path);
+            const rowSelector = `[data-testid="scm-change-row-${safePath}"]`;
+            const doc = (globalThis as any).document as Document | undefined;
+            const queryRow = (): HTMLElement | null => {
+                const fromDoc = doc?.querySelector?.(rowSelector) as HTMLElement | null | undefined;
+                if (fromDoc) return fromDoc;
+                const fromHost = (host as any)?.querySelector?.(rowSelector) as HTMLElement | null | undefined;
+                return fromHost ?? null;
+            };
+
+            const rowBefore = queryRow();
+            if (!rowBefore) {
+                toggleOnce();
+                return;
+            }
+
             const win = (globalThis as any).window as Window | undefined;
-            if (!win?.getComputedStyle) return false;
-            const style = win.getComputedStyle(el);
-            const overflowY = style.overflowY;
-            return (overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 1;
-        };
+            const isScrollable = (el: HTMLElement | null) => {
+                if (!el) return false;
+                if (!win?.getComputedStyle) return false;
+                const style = win.getComputedStyle(el);
+                const overflowY = style.overflowY;
+                return (overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 1;
+            };
+            const findScrollableAncestor = (el: HTMLElement | null): HTMLElement | null => {
+                let cursor: HTMLElement | null = el;
+                let steps = 0;
+                while (cursor && steps < 40) {
+                    if (isScrollable(cursor)) return cursor;
+                    cursor = cursor.parentElement;
+                    steps += 1;
+                }
+                return null;
+            };
 
-        const safePath = toTestIdSafeValue(path);
-        const rowSelector = `[data-testid="scm-change-row-${safePath}"]`;
-        const rowBefore = host.querySelector<HTMLElement>(rowSelector) ?? null;
-
-        // Match Playwright helpers: identify the real scroll container by `overflowY` and measurable overflow.
-        // FlashList can render a nested scroll div on web; prefer that over arbitrary ancestors with scrollTop.
-        const findScrollRoot = (base: HTMLElement | null): HTMLElement | null => {
-            if (!base) return null;
-            const candidates: HTMLElement[] = [];
-            if (isScrollable(base)) candidates.push(base);
-            const descendants = Array.from(base.querySelectorAll('*')) as HTMLElement[];
-            for (const child of descendants) {
-                if (isScrollable(child)) candidates.push(child);
+            const scrollRoot =
+                findScrollableAncestor(rowBefore)
+                ?? webScrollRootRef.current
+                ?? resolveWebScrollRoot()
+                ?? host;
+            if (!scrollRoot) {
+                toggleOnce();
+                return;
             }
-            let cursor: HTMLElement | null = base.parentElement;
-            while (cursor) {
-                if (isScrollable(cursor)) candidates.push(cursor);
-                cursor = cursor.parentElement;
+            webScrollRootRef.current = scrollRoot;
+
+            const scrollTopBefore = typeof (scrollRoot as any).scrollTop === 'number' ? (scrollRoot as any).scrollTop : null;
+            if (scrollTopBefore == null) {
+                toggleOnce();
+                return;
             }
-            if (candidates.length === 0) return null;
-            return candidates.reduce((prev, next) => {
-                const prevScore = Math.max(prev.clientHeight, 0) * 1_000_000 + Math.max(prev.scrollHeight - prev.clientHeight, 0);
-                const nextScore = Math.max(next.clientHeight, 0) * 1_000_000 + Math.max(next.scrollHeight - next.clientHeight, 0);
-                return nextScore >= prevScore ? next : prev;
-            });
-        };
 
-        const scrollRoot =
-            findScrollRoot(host)
-            ?? findScrollRoot(rowBefore)
-            ?? (rawList?.getScrollableNode?.() as HTMLElement | null)
-            ?? host;
-
-        const scrollRootTopBefore = scrollRoot.getBoundingClientRect?.().top ?? 0;
-        const rowTopBefore = rowBefore?.getBoundingClientRect?.().top ?? null;
-        const scrollTopBefore = typeof (scrollRoot as any).scrollTop === 'number' ? (scrollRoot as any).scrollTop : null;
-        const rowOffsetBefore = rowTopBefore == null ? null : rowTopBefore - scrollRootTopBefore;
-
-        toggleCollapsed(path);
-
-        if (rowOffsetBefore == null || scrollTopBefore == null) return;
-
-        const applyCorrection = () => {
-            const rowAfter = scrollRoot.querySelector<HTMLElement>(rowSelector) ?? null;
-            const scrollRootTop = scrollRoot.getBoundingClientRect?.().top ?? 0;
-            const rowTopAfter = rowAfter?.getBoundingClientRect?.().top ?? null;
-            if (rowTopAfter == null) return;
-            const rowOffsetAfter = rowTopAfter - scrollRootTop;
-            const delta = rowOffsetAfter - rowOffsetBefore;
-            if (!Number.isFinite(delta) || Math.abs(delta) < 0.5) return;
-            const currentOffset =
-                typeof (scrollRoot as any).scrollTop === 'number'
-                    ? (scrollRoot as any).scrollTop
-                    : scrollTopBefore;
-            if (currentOffset == null) return;
-            const nextOffset = currentOffset + delta;
-            try {
-                rawList?.scrollToOffset?.({ offset: nextOffset, animated: false });
-                (scrollRoot as any).scrollTop = nextOffset;
-            } catch {
-                // ignore
+            const scrollRootTopBefore = scrollRoot.getBoundingClientRect?.().top ?? 0;
+            const rowTopBefore = rowBefore.getBoundingClientRect?.().top ?? null;
+            const rowOffsetBefore = rowTopBefore == null ? null : rowTopBefore - scrollRootTopBefore;
+            if (rowOffsetBefore == null) {
+                toggleOnce();
+                return;
             }
-        };
 
-        const raf: (cb: FrameRequestCallback) => number =
-            typeof globalThis.requestAnimationFrame === 'function'
-                ? globalThis.requestAnimationFrame.bind(globalThis)
-                : (cb) => globalThis.setTimeout(() => cb(Date.now()), 0);
+            toggleOnce();
 
-        // FlashList may apply post-layout scroll adjustments; re-apply correction for a short, bounded window.
-        const startedAt = typeof performance !== 'undefined' && typeof performance.now === 'function'
-            ? performance.now()
-            : Date.now();
-        const maxMs = 420;
-        const step = () => {
-            applyCorrection();
-            const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
+            const applyCorrection = () => {
+                const rowAfter = queryRow();
+                const scrollRootTop = scrollRoot.getBoundingClientRect?.().top ?? 0;
+                const rowTopAfter = rowAfter?.getBoundingClientRect?.().top ?? null;
+                if (rowTopAfter == null) return;
+                const rowOffsetAfter = rowTopAfter - scrollRootTop;
+                const delta = rowOffsetAfter - rowOffsetBefore;
+                if (!Number.isFinite(delta) || Math.abs(delta) < 0.5) return;
+                const currentOffset =
+                    typeof (scrollRoot as any).scrollTop === 'number'
+                        ? (scrollRoot as any).scrollTop
+                        : scrollTopBefore;
+                if (currentOffset == null) return;
+                const nextOffset = currentOffset + delta;
+                try {
+                    (scrollRoot as any).scrollTop = nextOffset;
+                } catch {
+                    // ignore
+                }
+            };
+
+            const raf: (cb: FrameRequestCallback) => number =
+                typeof globalThis.requestAnimationFrame === 'function'
+                    ? globalThis.requestAnimationFrame.bind(globalThis)
+                    : (cb) => globalThis.setTimeout(() => cb(Date.now()), 0);
+
+            // FlashList may apply post-layout scroll adjustments; re-apply correction for a short, bounded window.
+            const startedAt = typeof performance !== 'undefined' && typeof performance.now === 'function'
                 ? performance.now()
                 : Date.now();
-            if (now - startedAt >= maxMs) return;
+            const maxMs = 420;
+            const step = () => {
+                applyCorrection();
+                const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
+                    ? performance.now()
+                    : Date.now();
+                if (now - startedAt >= maxMs) return;
+                raf(() => step());
+            };
             raf(() => step());
-        };
-        raf(() => step());
-    }, [toggleCollapsed]);
+        } catch {
+            toggleOnce();
+        }
+    }, [resolveWebScrollRoot, toggleCollapsed]);
 
     const prefetch = useChangedFilesReviewPrefetch({
         sessionId,
