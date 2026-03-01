@@ -78,7 +78,12 @@ vi.mock('../permissions/PermissionFooter', () => ({
 }));
 
 vi.mock('@/text', () => ({
-    t: (key: string) => key,
+    t: (key: string) => {
+        if (key === 'tools.structuredResult.stdout') return 'stdout';
+        if (key === 'tools.structuredResult.stderr') return 'stderr';
+        if (key === 'tools.structuredResult.exit') return 'exit';
+        return key;
+    },
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({

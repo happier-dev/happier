@@ -1,31 +1,31 @@
 import * as React from 'react';
 import { View, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Ionicons, Octicons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { getToolViewComponent } from '@/components/tools/renderers/core/_registry';
 import { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
-import { CodeView } from '@/components/ui/media/CodeView';
-import { ToolSectionView } from '../presentation/ToolSectionView';
 import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
-import { ToolError } from '../presentation/ToolError';
-import { knownTools } from '@/components/tools/catalog';
 import { Metadata } from '@/sync/domains/state/storageTypes';
 import { useRouter } from 'expo-router';
 import { PermissionFooter } from '../permissions/PermissionFooter';
 import { parseToolUseError } from '@/utils/errors/toolErrorParser';
-import { formatMCPSubtitle, formatMCPTitle } from '@/components/tools/renderers/system/MCPToolView';
 import { t } from '@/text';
-import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
-import { StructuredResultView } from '@/components/tools/renderers/system/StructuredResultView';
-import { inferToolNameForRendering } from '@/components/tools/normalization/policy/toolNameInference';
-import { normalizeToolCallForRendering } from '@/components/tools/normalization/core/normalizeToolCallForRendering';
 import { useSetting } from '@/sync/domains/state/storage';
 import { resolveToolViewDetailLevel } from '@/components/tools/normalization/policy/resolveToolViewDetailLevel';
-import { ToolHeaderActionsContext } from '../presentation/ToolHeaderActionsContext';
 import { Text } from '@/components/ui/text/Text';
+import { ToolInlineBody } from './ToolInlineBody';
+import { TranscriptCollapsible } from '@/components/sessions/transcript/motion/TranscriptCollapsible';
+import { buildToolHeaderModel } from '@/components/tools/shell/presentation/buildToolHeaderModel';
+import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
+import {
+    resolveToolViewDetailLevelDefaultForChromeMode,
+    resolveToolViewExpandedDetailLevelDefaultForChromeMode,
+    type ToolViewDetailLevelSetting,
+    type ToolViewExpandedDetailLevelSetting,
+} from '@/components/tools/normalization/policy/resolveToolViewDetailDefaultsForChromeMode';
+import { deriveToolTimelineDensity } from '@/components/tools/normalization/policy/deriveToolTimelineDensity';
+import { resolvePermissionPromptSurface, shouldShowGenericPermissionPromptForRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
 
-
-const KNOWN_TOOL_KEYS = Object.keys(knownTools);
 
 interface ToolViewProps {
     metadata: Metadata | null;
@@ -37,7 +37,7 @@ interface ToolViewProps {
     interaction?: {
         canSendMessages: boolean;
         canApprovePermissions: boolean;
-        permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted';
+        permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
     };
 }
 
@@ -46,15 +46,48 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
     const router = useRouter();
     const { theme } = useUnistyles();
     const [isExpanded, setIsExpanded] = React.useState(false);
-    const toolForRendering = React.useMemo<ToolCall>(() => normalizeToolCallForRendering(tool), [tool]);
-    const isWaitingForPermission = toolForRendering.permission?.status === 'pending' && toolForRendering.state === 'running';
-    const parsedToolInput = toolForRendering.input;
     const toolViewDetailLevelDefault = useSetting('toolViewDetailLevelDefault');
     const toolViewDetailLevelDefaultLocalControl = useSetting('toolViewDetailLevelDefaultLocalControl');
     const toolViewDetailLevelByToolName = useSetting('toolViewDetailLevelByToolName');
     const toolViewTapAction = useSetting('toolViewTapAction');
     const toolViewExpandedDetailLevelDefault = useSetting('toolViewExpandedDetailLevelDefault');
     const toolViewExpandedDetailLevelByToolName = useSetting('toolViewExpandedDetailLevelByToolName');
+    const permissionPromptSurface = useSetting('permissionPromptSurface');
+    const normalizedToolViewDetailLevelDefaultSetting: ToolViewDetailLevelSetting =
+        toolViewDetailLevelDefault === 'default' ||
+        toolViewDetailLevelDefault === 'title' ||
+        toolViewDetailLevelDefault === 'compact' ||
+        toolViewDetailLevelDefault === 'summary' ||
+        toolViewDetailLevelDefault === 'full'
+            ? toolViewDetailLevelDefault
+            : 'default';
+    const normalizedToolViewExpandedDetailLevelDefaultSetting: ToolViewExpandedDetailLevelSetting =
+        toolViewExpandedDetailLevelDefault === 'default' ||
+        toolViewExpandedDetailLevelDefault === 'summary' ||
+        toolViewExpandedDetailLevelDefault === 'full'
+            ? toolViewExpandedDetailLevelDefault
+            : 'default';
+    const resolvedDetailLevelDefault = resolveToolViewDetailLevelDefaultForChromeMode({
+        chromeMode: 'cards',
+        setting: normalizedToolViewDetailLevelDefaultSetting,
+    });
+    const resolvedExpandedDetailLevelDefault = resolveToolViewExpandedDetailLevelDefaultForChromeMode({
+        chromeMode: 'cards',
+        setting: normalizedToolViewExpandedDetailLevelDefaultSetting,
+    });
+
+    const headerModel = React.useMemo(() => {
+        return buildToolHeaderModel({
+            tool,
+            metadata: props.metadata,
+            iconSize: 18,
+            iconColorPrimary: theme.colors.text,
+            iconColorSecondary: theme.colors.textSecondary,
+        });
+    }, [props.metadata, theme.colors.text, theme.colors.textSecondary, tool]);
+
+    const toolForRendering = headerModel.toolForRendering;
+    const isWaitingForPermission = headerModel.isWaitingForPermission;
 
     const handleOpen = React.useCallback(() => {
         if (onPress) {
@@ -70,88 +103,23 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         setIsExpanded((v) => !v);
     }, []);
 
-    const inferredTool = inferToolNameForRendering({
-        toolName: toolForRendering.name,
-        toolInput: parsedToolInput,
-        toolDescription: toolForRendering.description,
-        knownToolKeys: KNOWN_TOOL_KEYS,
-    });
-    const normalizedToolName = toolForRendering.name.startsWith('mcp__') ? toolForRendering.name : inferredTool.normalizedToolName;
-    const usedInferenceFallback =
-        !toolForRendering.name.startsWith('mcp__') && inferredTool.source !== 'original' && inferredTool.normalizedToolName !== toolForRendering.name;
+    const normalizedToolName = headerModel.normalizedToolName;
+    let knownTool = headerModel.knownTool;
 
-    let knownTool = knownTools[normalizedToolName as keyof typeof knownTools] as any;
-
-    let description: string | null = null;
-    let status: string | null = null;
+    const description: string | null = headerModel.subtitle;
+    const status: string | null = headerModel.statusText;
     let minimal = false;
-    let icon = <Ionicons name="construct-outline" size={18} color={theme.colors.textSecondary} />;
     let noStatus = false;
     let hideDefaultError = false;
     
     // For some agents (e.g. Gemini): unknown tools should be rendered as minimal (hidden)
     // to avoid showing raw INPUT/OUTPUT for internal tools we haven't explicitly supported yet.
-    const agentId = resolveAgentIdFromFlavor(props.metadata?.flavor);
-    const hideUnknownToolsByDefault = agentId ? getAgentCore(agentId).toolRendering.hideUnknownToolsByDefault : false;
-    if (!knownTool && hideUnknownToolsByDefault) {
+    if (headerModel.shouldHideBodyPermanently) {
         minimal = true;
     }
 
-    // Extract status first to potentially use as title
-    if (knownTool && typeof knownTool.extractStatus === 'function') {
-        const state = knownTool.extractStatus({ tool, metadata: props.metadata });
-        if (typeof state === 'string' && state) {
-            status = state;
-        }
-    }
-
     // Handle optional title and function type
-    let toolTitle = normalizedToolName;
-    
-    // Special handling for MCP tools
-    if (toolForRendering.name.startsWith('mcp__')) {
-        toolTitle = formatMCPTitle(toolForRendering.name);
-        icon = <Ionicons name="extension-puzzle-outline" size={18} color={theme.colors.textSecondary} />;
-        const subtitle = formatMCPSubtitle(toolForRendering.input);
-        if (subtitle) {
-            description = subtitle;
-        }
-    } else if (knownTool?.title) {
-        if (typeof knownTool.title === 'function') {
-            toolTitle = knownTool.title({ tool: toolForRendering, metadata: props.metadata });
-        } else {
-            toolTitle = knownTool.title;
-        }
-    }
-
-    // If we inferred a known/canonical tool name, keep the known tool title.
-    // The fallback description is only a better title when the inferred tool is still unknown.
-    if (usedInferenceFallback && !knownTool && typeof toolForRendering.description === 'string' && toolForRendering.description.trim().length > 0) {
-        toolTitle = toolForRendering.description.trim();
-    }
-
-    if (knownTool && typeof knownTool.extractSubtitle === 'function') {
-        const subtitle = knownTool.extractSubtitle({ tool: toolForRendering, metadata: props.metadata });
-        if (typeof subtitle === 'string' && subtitle) {
-            description = subtitle;
-        }
-    }
-    // Fallback: if a tool has a provider/normalizer description but no explicit subtitle,
-    // surface it so the timeline card isn't blank (common for search tools).
-    if (!description) {
-        const raw = typeof toolForRendering.description === 'string' ? toolForRendering.description.trim() : '';
-        if (raw) {
-            const rawLower = raw.toLowerCase();
-            // Some providers emit generic markers that are not user-meaningful and can cause tests
-            // (and the UI) to show confusing subtitles (e.g. "execute").
-            if (rawLower !== 'execute') {
-                const title = typeof toolTitle === 'string' ? toolTitle.trim() : '';
-                if (!title || raw !== title) {
-                    description = raw;
-                }
-            }
-        }
-    }
+    const toolTitle = headerModel.title;
     if (knownTool && knownTool.minimal !== undefined) {
         if (typeof knownTool.minimal === 'function') {
             minimal = knownTool.minimal({ tool: toolForRendering, metadata: props.metadata, messages: props.messages });
@@ -160,26 +128,18 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         }
     }
 
-    const hasSpecificView = !!getToolViewComponent(normalizedToolName);
-    const isUnknownTool =
-        !toolForRendering.name.startsWith('mcp__') &&
-        !knownTool &&
-        !hasSpecificView;
-
-    const shouldCollapseUnknownToolByDefault = isUnknownTool && toolForRendering.state === 'completed';
-
-    const collapsedDetailLevel = toolForRendering.name.startsWith('mcp__') || shouldCollapseUnknownToolByDefault
+    const collapsedDetailLevel = toolForRendering.name.startsWith('mcp__') || headerModel.shouldCollapseUnknownToolByDefault
         ? 'title'
         : resolveToolViewDetailLevel({
               toolName: normalizedToolName,
               toolInput: toolForRendering.input,
-              detailLevelDefault: toolViewDetailLevelDefault,
+              detailLevelDefault: resolvedDetailLevelDefault,
               detailLevelDefaultLocalControl: toolViewDetailLevelDefaultLocalControl,
               detailLevelByToolName: toolViewDetailLevelByToolName as any,
           });
 
     const expandedDetailLevel: 'summary' | 'full' =
-        (toolViewExpandedDetailLevelByToolName as any)?.[normalizedToolName] ?? toolViewExpandedDetailLevelDefault;
+        (toolViewExpandedDetailLevelByToolName as any)?.[normalizedToolName] ?? resolvedExpandedDetailLevelDefault;
 
     const effectiveDetailLevel = isExpanded ? expandedDetailLevel : collapsedDetailLevel;
     const inlineDetailLevel =
@@ -187,26 +147,25 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
             ? 'summary'
             : effectiveDetailLevel;
 
+    const { density: timelineDensity, iconSize } = deriveToolTimelineDensity(effectiveDetailLevel);
+    const icon = React.useMemo(() => {
+        if (iconSize === 18) return headerModel.icon;
+        return buildToolHeaderModel({
+            tool,
+            metadata: props.metadata,
+            iconSize,
+            iconColorPrimary: theme.colors.text,
+            iconColorSecondary: theme.colors.textSecondary,
+        }).icon;
+    }, [headerModel.icon, iconSize, props.metadata, theme.colors.text, theme.colors.textSecondary, tool]);
+
     // Apply the per-tool detail level preference for the timeline card.
     // - title: hide the tool body
+    // - compact: hide the tool body, keep a short inline subtitle
     // - summary: default current behavior
     // - full: prefer full-view component when available
-    if (effectiveDetailLevel === 'title') {
+    if (effectiveDetailLevel === 'title' || effectiveDetailLevel === 'compact') {
         minimal = true;
-    }
-    
-    // Special handling for CodexBash to determine icon based on parsed_cmd
-    if (toolForRendering.name === 'CodexBash' && toolForRendering.input?.parsed_cmd && Array.isArray(toolForRendering.input.parsed_cmd) && toolForRendering.input.parsed_cmd.length > 0) {
-        const parsedCmd = toolForRendering.input.parsed_cmd[0];
-        if (parsedCmd.type === 'read') {
-            icon = <Octicons name="eye" size={18} color={theme.colors.text} />;
-        } else if (parsedCmd.type === 'write') {
-            icon = <Octicons name="file-diff" size={18} color={theme.colors.text} />;
-        } else {
-            icon = <Octicons name="terminal" size={18} color={theme.colors.text} />;
-        }
-    } else if (knownTool && typeof knownTool.icon === 'function') {
-        icon = knownTool.icon(18, theme.colors.text);
     }
     
     if (knownTool && typeof knownTool.noStatus === 'boolean') {
@@ -223,17 +182,17 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         isToolUseError = true;
     }
 
-    // Check permission status first for denied/canceled states
-    if (tool.permission && (tool.permission.status === 'denied' || tool.permission.status === 'canceled')) {
+    const statusKind = resolveToolStatusIndicatorKind(toolForRendering);
+    if (statusKind === 'permission_blocked') {
         statusIcon = <Ionicons name="remove-circle-outline" size={20} color={theme.colors.textSecondary} />;
-    } else if (isWaitingForPermission) {
+    } else if (statusKind === 'permission_pending') {
         statusIcon = <Ionicons name="lock-closed-outline" size={20} color={theme.colors.warning} />;
     } else if (isToolUseError) {
         statusIcon = <Ionicons name="remove-circle-outline" size={20} color={theme.colors.textSecondary} />;
         hideDefaultError = true;
         minimal = true;
     } else {
-        switch (tool.state) {
+        switch (toolForRendering.state) {
             case 'running':
                 if (!noStatus) {
                     statusIcon = <ActivityIndicator size="small" color={theme.colors.text} style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }} />;
@@ -268,21 +227,48 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                 : null;
 
     const [headerActions, setHeaderActions] = React.useState<React.ReactNode | null>(null);
+    const isBodyVisible = effectiveDetailLevel !== 'title' && effectiveDetailLevel !== 'compact';
+    const bodyDetailLevel: 'summary' | 'full' = inlineDetailLevel === 'full' ? 'full' : 'summary';
+    const lastVisibleBodyDetailLevelRef = React.useRef<'summary' | 'full'>(bodyDetailLevel);
+    if (isBodyVisible) {
+        lastVisibleBodyDetailLevelRef.current = bodyDetailLevel;
+    }
+    const renderBodyDetailLevel = isBodyVisible ? bodyDetailLevel : lastVisibleBodyDetailLevelRef.current;
+
+    const collapsibleId =
+        messageId ??
+        toolForRendering.id ??
+        `${sessionId ?? 'no-session'}:${normalizedToolName}:${toolForRendering.createdAt}`;
+
+    const resolvedPermissionPromptSurface = resolvePermissionPromptSurface(permissionPromptSurface);
+    const showPermissionPromptsInTranscript = resolvedPermissionPromptSurface === 'transcript';
+
+    const headerDescription = effectiveDetailLevel === 'title' ? null : description;
+    const headerStatusText = effectiveDetailLevel === 'title' ? null : status;
+    const showSubtitleInline = timelineDensity === 'compact' || effectiveDetailLevel === 'compact';
 
     return (
         <View style={styles.container}>
-            <View style={styles.header}>
+            <View style={[styles.header, timelineDensity === 'compact' ? styles.headerCompact : null]}>
                 <TouchableOpacity style={styles.headerMain} onPress={primaryOnPress} activeOpacity={0.8}>
-                    <View style={styles.iconContainer}>
+                    <View style={[styles.iconContainer, timelineDensity === 'compact' ? styles.iconContainerCompact : null]}>
                         {icon}
                     </View>
                     <View style={styles.titleContainer}>
-                        <Text style={styles.toolName} numberOfLines={1}>{toolTitle}{status ? <Text style={styles.status}>{` ${status}`}</Text> : null}</Text>
-                        {description && (
-                            <Text style={styles.toolDescription} numberOfLines={1}>
-                                {description}
+                        <Text style={styles.toolName} numberOfLines={1}>
+                            {toolTitle}
+                            {headerStatusText ? <Text style={styles.status}>{` ${headerStatusText}`}</Text> : null}
+                            {showSubtitleInline && headerDescription ? (
+                                <Text style={styles.compactSubtitle} numberOfLines={1}>
+                                    {` · ${headerDescription}`}
+                                </Text>
+                            ) : null}
+                        </Text>
+                        {!showSubtitleInline && headerDescription ? (
+                            <Text testID="tool-card-subtitle" style={styles.toolDescription} numberOfLines={1}>
+                                {headerDescription}
                             </Text>
-                        )}
+                        ) : null}
                     </View>
                     {tool.state === 'running' && !isWaitingForPermission && (
                         <View style={styles.elapsedContainer}>
@@ -304,6 +290,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                             onPress={secondaryOnPress}
                             activeOpacity={0.8}
                             style={styles.secondaryAction}
+                            hitSlop={15}
                             accessibilityRole="button"
                             accessibilityLabel={secondaryTapAction === 'open' ? t('toolView.open') : t('toolView.expand')}
                         >
@@ -322,123 +309,25 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
             </View>
 
             {/* Content area - either custom children or tool-specific view */}
-            {(() => {
-                // "Title" detail level hides the tool body entirely (the tool can still be opened
-                // into the full view by tapping the header).
-                if (effectiveDetailLevel === 'title') {
-                    return null;
-                }
-
-                // When a permission is denied/canceled, the tool body often has no result payload.
-                // Render an explicit status so the user understands why the tool did not run.
-                if (toolForRendering.permission && (toolForRendering.permission.status === 'denied' || toolForRendering.permission.status === 'canceled')) {
-                    const canBlameReadOnlyMode = (() => {
-                        if (props.metadata?.permissionMode !== 'read-only') return false;
-                        const agentId = resolveAgentIdFromFlavor(props.metadata?.flavor);
-                        if (!agentId) return false;
-                        const core = getAgentCore(agentId);
-                        return core.permissions?.modeGroup === 'codexLike';
-                    })();
-                    const message =
-                        toolForRendering.permission.status === 'denied'
-                            ? canBlameReadOnlyMode
-                                ? 'Denied by Read Only mode (write actions are denied).'
-                                : t('errors.permissionDenied')
-                            : 'Permission canceled';
-                    return (
-                        <View style={styles.content}>
-                            <ToolError message={message} />
-                        </View>
-                    );
-                }
-
-                // Try to use a specific tool view component first
-                const SpecificToolView = getToolViewComponent(normalizedToolName);
-                if (SpecificToolView) {
-                    return (
-                        <View style={styles.content}>
-                            <ToolHeaderActionsContext.Provider value={{ setHeaderActions }}>
-                                <SpecificToolView
-                                    tool={toolForRendering}
-                                    metadata={props.metadata}
-                                    messages={props.messages ?? []}
-                                    sessionId={sessionId}
-                                    detailLevel={inlineDetailLevel}
-                                    interaction={props.interaction}
-                                />
-                            </ToolHeaderActionsContext.Provider>
-                            {toolForRendering.state === 'error' && toolForRendering.result &&
-                                !(toolForRendering.permission && (toolForRendering.permission.status === 'denied' || toolForRendering.permission.status === 'canceled')) &&
-                                !hideDefaultError && (
-                                    <ToolError
-                                        message={
-                                            typeof toolForRendering.result === 'string'
-                                                ? toolForRendering.result
-                                                : JSON.stringify(toolForRendering.result, null, 2)
-                                        }
-                                    />
-                                )}
-                        </View>
-                    );
-                }
-
-                // Minimal tools don't show default INPUT/OUTPUT blocks.
-                if (minimal) {
-                    if (toolForRendering.result) {
-                        return (
-                            <View style={styles.content}>
-                                <StructuredResultView tool={toolForRendering} metadata={props.metadata} messages={props.messages ?? []} sessionId={sessionId} />
-                            </View>
-                        );
-                    }
-                    return null;
-                }
-
-                // Show error state if present (but not for denied/canceled permissions and not when hideDefaultError is true)
-                if (toolForRendering.state === 'error' && toolForRendering.result &&
-                    !(toolForRendering.permission && (toolForRendering.permission.status === 'denied' || toolForRendering.permission.status === 'canceled')) &&
-                    !isToolUseError) {
-                    return (
-                        <View style={styles.content}>
-                            <ToolError
-                                message={
-                                    typeof toolForRendering.result === 'string'
-                                        ? toolForRendering.result
-                                        : JSON.stringify(toolForRendering.result, null, 2)
-                                }
-                            />
-                        </View>
-                    );
-                }
-
-                // Fall back to default view
-                return (
-                    <View style={styles.content}>
-                        {/* Default content when no custom view available */}
-                        {toolForRendering.input && (
-                            <ToolSectionView title={t('toolView.input')}>
-                                <CodeView code={JSON.stringify(toolForRendering.input, null, 2)} />
-                            </ToolSectionView>
-                        )}
-
-                        {toolForRendering.state === 'running' && toolForRendering.result && (
-                            <StructuredResultView tool={toolForRendering} metadata={props.metadata} messages={props.messages ?? []} sessionId={sessionId} />
-                        )}
-
-                        {toolForRendering.state === 'completed' && toolForRendering.result && (
-                            <ToolSectionView title={t('toolView.output')}>
-                                <CodeView
-                                    code={typeof toolForRendering.result === 'string' ? toolForRendering.result : JSON.stringify(toolForRendering.result, null, 2)}
-                                />
-                            </ToolSectionView>
-                        )}
-                    </View>
-                );
-            })()}
+            <TranscriptCollapsible id={collapsibleId} createdAt={toolForRendering.createdAt} expanded={isBodyVisible}>
+                <View style={styles.content}>
+                    <ToolInlineBody
+                        mode="card"
+                        tool={toolForRendering}
+                        normalizedToolName={normalizedToolName}
+                        metadata={props.metadata}
+                        messages={props.messages ?? []}
+                        sessionId={sessionId}
+                        interaction={props.interaction}
+                        detailLevel={renderBodyDetailLevel}
+                        setHeaderActions={setHeaderActions}
+                    />
+                </View>
+            </TranscriptCollapsible>
 
             {/* Permission footer - rendered for most tools */}
             {/* AskUserQuestion and ExitPlanMode have custom action UIs */}
-            {isWaitingForPermission && toolForRendering.permission && sessionId && toolForRendering.name !== 'AskUserQuestion' && toolForRendering.name !== 'ExitPlanMode' && toolForRendering.name !== 'exit_plan_mode' && toolForRendering.name !== 'AcpHistoryImport' && (
+            {showPermissionPromptsInTranscript && isWaitingForPermission && toolForRendering.permission && sessionId && shouldShowGenericPermissionPromptForRequest({ toolName: toolForRendering.name, requestKind: toolForRendering.permission.kind }) && (
                 <PermissionFooter
                     permission={toolForRendering.permission}
                     sessionId={sessionId}
@@ -456,7 +345,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
 function ElapsedView(props: { from: number }) {
     const { from } = props;
     const elapsed = useElapsedTime(from);
-    return <Text style={styles.elapsedText}>{`${elapsed.toFixed(1)}s`}</Text>;
+    return <Text style={styles.elapsedText}>{t('tools.common.elapsedSeconds', { seconds: elapsed.toFixed(1) })}</Text>;
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -472,6 +361,10 @@ const styles = StyleSheet.create((theme) => ({
         justifyContent: 'space-between',
         padding: 12,
         backgroundColor: theme.colors.surfaceHighest,
+    },
+    headerCompact: {
+        paddingHorizontal: 10,
+        paddingVertical: 10,
     },
     headerMain: {
         flexDirection: 'row',
@@ -496,6 +389,10 @@ const styles = StyleSheet.create((theme) => ({
         height: 24,
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    iconContainerCompact: {
+        width: 18,
+        height: 18,
     },
     titleContainer: {
         flex: 1,
@@ -522,6 +419,11 @@ const styles = StyleSheet.create((theme) => ({
         fontSize: 13,
         color: theme.colors.textSecondary,
         marginTop: 2,
+    },
+    compactSubtitle: {
+        fontSize: 13,
+        fontWeight: '400',
+        color: theme.colors.textSecondary,
     },
     content: {
         paddingHorizontal: 12,

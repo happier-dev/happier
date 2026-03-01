@@ -5,6 +5,11 @@ import { collectHostText, makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+vi.mock('@/components/sessions/transcript/motion/TranscriptCollapsible', () => ({
+    TranscriptCollapsible: ({ expanded, children }: any) =>
+        expanded ? React.createElement(React.Fragment, null, children) : null,
+}));
+
 vi.mock('expo-router', () => ({
     useRouter: () => ({ push: vi.fn() }),
 }));
@@ -119,7 +124,7 @@ describe('ToolView (minimal tools)', () => {
         });
 
         const flattened = collectHostText(tree!);
-        expect(flattened).toContain('stdout');
+        expect(flattened.some((item) => item.includes('stdout'))).toBe(true);
         expect(flattened).not.toContain('toolView.input');
         expect(tree!.root.findAllByType('SpecificToolView' as any)).toHaveLength(0);
     });

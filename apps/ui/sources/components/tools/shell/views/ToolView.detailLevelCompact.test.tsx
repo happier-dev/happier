@@ -1,6 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+
 import { makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -11,12 +12,7 @@ vi.mock('expo-router', () => ({
 
 vi.mock('react-native', async () => {
     const rn = await import('@/dev/reactNativeStub');
-    return {
-        ...rn,
-        AppState: rn.AppState,
-        NativeModules: {},
-        Platform: { ...rn.Platform, OS: 'ios', select: (v: any) => v.ios },
-    };
+    return { ...rn, AppState: rn.AppState, Platform: { ...rn.Platform, OS: 'ios', select: (v: any) => v.ios } };
 });
 
 vi.mock('react-native-unistyles', () => ({
@@ -28,8 +24,10 @@ vi.mock('react-native-unistyles', () => ({
                 surfaceHighest: '#fff',
                 text: '#000',
                 textSecondary: '#666',
-                warning: '#f00',
+                warning: '#f90',
+                success: '#0a0',
                 shadow: { color: '#000', opacity: 0.1 },
+                surfacePressedOverlay: 'rgba(0,0,0,0.04)',
             },
         },
     }),
@@ -40,17 +38,23 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
+vi.mock('@/hooks/ui/useElapsedTime', () => ({
+    useElapsedTime: () => 0.1,
+}));
+
+const renderedToolViewSpy = vi.fn();
 vi.mock('@/components/tools/renderers/core/_registry', () => ({
-    getToolViewComponent: () => null,
+    getToolViewComponent: () => (props: any) => {
+        renderedToolViewSpy(props);
+        return React.createElement('SpecificToolView', null);
+    },
 }));
 
 vi.mock('@/components/tools/catalog', () => ({
     knownTools: {
-        ExitPlanMode: {
-            title: 'Plan proposal',
-        },
-        exit_plan_mode: {
-            title: 'Plan proposal',
+        edit: {
+            title: 'Edit',
+            extractSubtitle: () => 'file.ts',
         },
     },
 }));
@@ -80,16 +84,24 @@ vi.mock('../permissions/PermissionFooter', () => ({
     PermissionFooter: () => React.createElement('PermissionFooter', null),
 }));
 
+vi.mock('@/components/sessions/transcript/motion/TranscriptCollapsible', () => ({
+    TranscriptCollapsible: ({ expanded, children }: any) =>
+        expanded ? React.createElement(React.Fragment, null, children) : null,
+}));
+
 vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: (key: string) => {
-        if (key === 'toolViewDetailLevelDefault') return 'summary';
+        if (key === 'toolViewDetailLevelDefault') return 'compact';
         if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
         if (key === 'toolViewDetailLevelByToolName') return {};
         if (key === 'toolViewShowDebugByDefault') return false;
+        if (key === 'toolViewTapAction') return 'expand';
+        if (key === 'toolViewExpandedDetailLevelDefault') return 'summary';
+        if (key === 'toolViewExpandedDetailLevelByToolName') return {};
         if (key === 'permissionPromptSurface') return 'transcript';
         return null;
     },
@@ -101,46 +113,34 @@ vi.mock('@/agents/catalog/catalog', () => ({
     resolveAgentIdFromFlavor: () => null,
 }));
 
-describe('ToolView (ExitPlanMode)', () => {
-    it('does not render PermissionFooter for ExitPlanMode', async () => {
+function collectRenderedText(tree: renderer.ReactTestRenderer): string {
+    const json = tree.toJSON();
+    const collect = (node: any): string => {
+        if (!node) return '';
+        if (typeof node === 'string') return node;
+        if (Array.isArray(node)) return node.map(collect).join('');
+        return (node.children ?? []).map(collect).join('');
+    };
+    return collect(json);
+}
+
+describe('ToolView (detail level: compact)', () => {
+    it('hides the tool body but still shows a compact inline subtitle', async () => {
+        renderedToolViewSpy.mockReset();
         const { ToolView } = await import('./ToolView');
 
-        const tool = makeToolCall({
-            name: 'ExitPlanMode',
-            state: 'running',
-            input: { plan: 'plan' },
-            completedAt: null,
-            permission: { id: 'perm1', status: 'pending' },
-        });
+        const tool = makeToolCall({ name: 'edit', state: 'running', input: {}, description: null, result: { ok: true } });
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
-            tree = renderer.create(
-                React.createElement(ToolView, { tool, metadata: null, messages: [], sessionId: 's1', messageId: 'm1' }),
-            );
+            tree = renderer.create(React.createElement(ToolView, { tool, metadata: null, messages: [] }));
         });
 
-        expect(tree!.root.findAllByType('PermissionFooter' as any)).toHaveLength(0);
-    });
+        expect(tree!.root.findAllByProps({ testID: 'tool-card-subtitle' })).toHaveLength(0);
+        expect(collectRenderedText(tree!)).toContain('file.ts');
 
-    it('renders PermissionFooter for normal tools', async () => {
-        const { ToolView } = await import('./ToolView');
-
-        const tool = makeToolCall({
-            name: 'Write',
-            state: 'running',
-            input: { file_path: '/tmp/x', content: 'x' },
-            completedAt: null,
-            permission: { id: 'perm1', status: 'pending' },
-        });
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ToolView, { tool, metadata: null, messages: [], sessionId: 's1', messageId: 'm1' }),
-            );
-        });
-
-        expect(tree!.root.findAllByType('PermissionFooter' as any).length).toBeGreaterThan(0);
+        // Body should not be mounted at compact level.
+        expect(renderedToolViewSpy).not.toHaveBeenCalled();
+        expect(tree!.root.findAllByType('SpecificToolView' as any)).toHaveLength(0);
     });
 });
