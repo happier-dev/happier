@@ -3,60 +3,12 @@ import { Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
-import type { BundledLanguage, BundledTheme, HighlighterGeneric, TokensResult } from 'shiki';
-import { createHighlighter } from 'shiki';
 
 import { CodeLinesViewCore, type CodeLinesViewProps } from './CodeLinesViewCore';
 import { resolveEffectiveSyntaxHighlighting } from './resolveEffectiveSyntaxHighlighting';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-
-type ShikiInlineToken = Readonly<{ text: string; color: string }>;
-type ShikiToken = Readonly<{ content: string; color?: string }>;
-type ShikiCodeToTokensResult = Readonly<{ tokens: readonly (readonly ShikiToken[])[]; fg?: string }>;
-type ShikiHighlighter = HighlighterGeneric<BundledLanguage, BundledTheme>;
-
-const shikiHighlighterCache = new Map<string, ShikiHighlighter>();
-const shikiHighlighterInflight = new Map<string, Promise<ShikiHighlighter>>();
-
-function resolveShikiLanguageId(language: string): BundledLanguage {
-    const lower = language.trim().toLowerCase();
-    const mapped = lower === 'typescript'
-        ? 'ts'
-        : lower === 'javascript'
-            ? 'js'
-            : lower === 'py'
-                ? 'python'
-                : lower;
-    // Shiki is tolerant at runtime; typing is stricter than our resolver. Fallback to "text" if missing.
-    return (mapped || 'text') as unknown as BundledLanguage;
-}
-
-async function getShikiHighlighter(params: { theme: string; language: string }): Promise<ShikiHighlighter> {
-    const key = `${params.theme}:${params.language}`;
-    const cached = shikiHighlighterCache.get(key);
-    if (cached) return cached;
-
-    const existingInflight = shikiHighlighterInflight.get(key);
-    if (existingInflight) {
-        return await existingInflight;
-    }
-
-    const promise: Promise<ShikiHighlighter> = (async () => {
-        const lang = resolveShikiLanguageId(params.language);
-        const highlighter = await createHighlighter({
-            themes: [params.theme],
-            langs: [lang],
-        });
-        shikiHighlighterCache.set(key, highlighter as any);
-        return highlighter as any;
-    })().finally(() => {
-        // Always clear inflight to allow retries after failures.
-        shikiHighlighterInflight.delete(key);
-    });
-
-    shikiHighlighterInflight.set(key, promise);
-    return await promise;
-}
+import type { ShikiInlineToken } from '@/components/ui/code/highlighting/shiki/shikiTokenize.web';
+import { shikiTokenizeLines } from '@/components/ui/code/highlighting/shiki/shikiTokenize.web';
 
 export function CodeLinesView(props: CodeLinesViewProps) {
     const { theme } = useUnistyles();
@@ -68,7 +20,7 @@ export function CodeLinesView(props: CodeLinesViewProps) {
     const [advancedTokensByIndex, setAdvancedTokensByIndex] = React.useState<readonly (readonly ShikiInlineToken[] | null)[] | null>(null);
     const [advancedTokensRevision, setAdvancedTokensRevision] = React.useState(0);
 
-    const shikiTheme = theme.dark ? 'github-dark' : 'github-light';
+    const isDark = theme.dark === true;
     const shikiEnabled = effectiveSyntaxHighlighting.mode === 'advanced'
         && Platform.OS === 'web'
         && Boolean(effectiveSyntaxHighlighting.language);
@@ -95,19 +47,11 @@ export function CodeLinesView(props: CodeLinesViewProps) {
 
         fireAndForget((async () => {
             try {
-                const highlighter = await getShikiHighlighter({
-                    theme: shikiTheme,
+                const { tokensByLine, fg } = await shikiTokenizeLines({
+                    isDark,
                     language: syntaxLanguage,
+                    lines: inputLines,
                 });
-
-                const lang = resolveShikiLanguageId(syntaxLanguage);
-                const res = highlighter.codeToTokens(inputLines.join('\n'), {
-                    lang,
-                    theme: shikiTheme as unknown as BundledTheme,
-                }) as unknown as TokensResult;
-
-                const fg = typeof (res as any).fg === 'string' ? (res as any).fg : '#000';
-                const tokens2d = ((res as any).tokens ?? []) as ShikiCodeToTokensResult['tokens'];
 
                 const out: Array<readonly ShikiInlineToken[] | null> = [];
                 for (let i = 0; i < props.lines.length; i++) {
@@ -120,11 +64,8 @@ export function CodeLinesView(props: CodeLinesViewProps) {
                         out.push(null);
                         continue;
                     }
-                    const row = tokens2d[i] ?? [];
-                    out.push(row.map((t) => ({
-                        text: t.content ?? '',
-                        color: t.color ?? fg,
-                    })));
+                    const row = tokensByLine[i] ?? [];
+                    out.push(row.map((t) => ({ text: t.text, color: t.color ?? fg })));
                 }
 
                 if (cancelled) return;
@@ -134,7 +75,7 @@ export function CodeLinesView(props: CodeLinesViewProps) {
                 if (cancelled) return;
                 setAdvancedTokensByIndex(null);
             }
-        })(), { tag: 'CodeLinesView.loadShikiTokens' });
+        })());
 
         return () => {
             cancelled = true;
@@ -143,9 +84,9 @@ export function CodeLinesView(props: CodeLinesViewProps) {
         codeLinesForShiki,
         effectiveSyntaxHighlighting.language,
         effectiveSyntaxHighlighting.maxLineLength,
+        isDark,
         props.lines,
         shikiEnabled,
-        shikiTheme,
     ]);
 
     return (
