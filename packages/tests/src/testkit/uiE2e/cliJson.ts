@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join, resolve as resolvePath } from 'node:path';
 
-import { ensureCliDistBuilt } from '../process/cliDist';
+import { ensureCliDistSnapshotEntrypoint } from '../process/cliDist';
 import { runLoggedCommand } from '../process/spawnProcess';
 import { repoRootDir } from '../paths';
 
@@ -43,7 +43,10 @@ export async function runCliJson(params: Readonly<{
   args: string[];
   timeoutMs?: number;
 }>): Promise<JsonEnvelope> {
-  const cliDistEntrypoint = await ensureCliDistBuilt({ testDir: params.testDir, env: params.env });
+  const cliDistEntrypoint = await ensureCliDistSnapshotEntrypoint(
+    { testDir: params.testDir, env: params.env },
+    { snapshotDir: resolvePath(join(params.testDir, 'cli-dist')) },
+  );
   const stdoutPath = resolvePath(join(params.testDir, `cli.${params.label}.stdout.log`));
   const stderrPath = resolvePath(join(params.testDir, `cli.${params.label}.stderr.log`));
 
@@ -69,4 +72,3 @@ export async function runCliJson(params: Readonly<{
   const stdoutText = await readFile(stdoutPath, 'utf8').catch(() => '');
   return pickLastJsonEnvelope(stdoutText);
 }
-
