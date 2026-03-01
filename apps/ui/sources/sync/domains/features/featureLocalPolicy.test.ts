@@ -151,7 +151,7 @@ describe('featureLocalPolicy', () => {
         })).toBe(false);
     });
 
-    it('defaults files.reviewComments and files.editor to disabled when experiments are on', () => {
+    it('defaults files.reviewComments to disabled but keeps files.editor enabled by default', () => {
         expect(resolveLocalFeaturePolicyEnabled('files.reviewComments', {
             ...settingsDefaults,
             experiments: true,
@@ -162,13 +162,27 @@ describe('featureLocalPolicy', () => {
             ...settingsDefaults,
             experiments: true,
             featureToggles: {},
-        })).toBe(false);
+        })).toBe(true);
+
+        expect(resolveLocalFeaturePolicyEnabled('files.editor', {
+            ...settingsDefaults,
+            experiments: false,
+            featureToggles: {},
+        })).toBe(true);
     });
 
     it('defaults files.diffSyntaxHighlighting to enabled when experiments are on', () => {
         expect(resolveLocalFeaturePolicyEnabled('files.diffSyntaxHighlighting', {
             ...settingsDefaults,
             experiments: true,
+            featureToggles: {},
+        })).toBe(true);
+    });
+
+    it('defaults files.diffSyntaxHighlighting to enabled when experiments are off', () => {
+        expect(resolveLocalFeaturePolicyEnabled('files.diffSyntaxHighlighting', {
+            ...settingsDefaults,
+            experiments: false,
             featureToggles: {},
         })).toBe(true);
     });

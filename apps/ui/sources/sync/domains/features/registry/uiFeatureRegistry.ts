@@ -168,7 +168,7 @@ export const UI_FEATURE_REGISTRY = {
     'files.diffSyntaxHighlighting': {
         settingsToggle: {
             showInSettings: true,
-            isExperimental: true,
+            isExperimental: false,
             defaultEnabled: true,
             titleKey: 'settingsFeatures.expFilesDiffSyntaxHighlighting',
             subtitleKey: 'settingsFeatures.expFilesDiffSyntaxHighlightingSubtitle',
@@ -198,8 +198,8 @@ export const UI_FEATURE_REGISTRY = {
     'files.editor': {
         settingsToggle: {
             showInSettings: true,
-            isExperimental: true,
-            defaultEnabled: false,
+            isExperimental: false,
+            defaultEnabled: true,
             titleKey: 'settingsFeatures.expFilesEditor',
             subtitleKey: 'settingsFeatures.expFilesEditorSubtitle',
             icon: { ioniconName: 'create-outline', color: '#FF9500' },
