@@ -80,4 +80,111 @@ describe('ToolInlineBody (text selection scope)', () => {
     expect(scopes.length).toBeGreaterThan(0);
     expect(tree.root.findAllByType('ToolError' as any).length).toBe(1);
   });
+
+  it('uses structured fallback instead of raw ToolError for SubAgentRun error rows without specific renderer', async () => {
+    const { ToolInlineBody } = await import('./ToolInlineBody');
+
+    const tool: any = {
+      id: 't-subagent',
+      name: 'SubAgentRun',
+      state: 'error',
+      input: {},
+      result: { status: 'timeout', error: { code: 'execution_run_timeout', message: 'Timed out' } },
+      createdAt: 1,
+      startedAt: null,
+      completedAt: null,
+      permission: undefined,
+    };
+
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <ToolInlineBody
+          mode="card"
+          tool={tool}
+          normalizedToolName="SubAgentRun"
+          metadata={null}
+          messages={[]}
+          detailLevel="summary"
+          setHeaderActions={() => {}}
+        />
+      );
+    });
+
+    expect(tree.root.findAllByType('StructuredResultView' as any).length).toBe(1);
+    expect(tree.root.findAllByType('ToolError' as any).length).toBe(0);
+  });
+
+  it('uses SubAgentRun fallback even when normalized tool name is not SubAgentRun', async () => {
+    const { ToolInlineBody } = await import('./ToolInlineBody');
+
+    const tool: any = {
+      id: 't-subagent-raw',
+      name: 'SubAgentRun',
+      state: 'error',
+      input: {},
+      result: { status: 'timeout', error: { code: 'execution_run_timeout', message: 'Timed out' } },
+      createdAt: 1,
+      startedAt: null,
+      completedAt: null,
+      permission: undefined,
+    };
+
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <ToolInlineBody
+          mode="card"
+          tool={tool}
+          normalizedToolName="UnknownTool"
+          metadata={null}
+          messages={[]}
+          detailLevel="summary"
+          setHeaderActions={() => {}}
+        />
+      );
+    });
+
+    expect(tree.root.findAllByType('StructuredResultView' as any).length).toBe(1);
+    expect(tree.root.findAllByType('ToolError' as any).length).toBe(0);
+  });
+
+  it('uses structured fallback for error payloads that match SubAgentRun result shape', async () => {
+    const { ToolInlineBody } = await import('./ToolInlineBody');
+
+    const tool: any = {
+      id: 't-subagent-shape',
+      name: 'UnknownTool',
+      state: 'error',
+      input: {},
+      result: {
+        status: 'timeout',
+        runId: 'run_test',
+        callId: 'subagent_run_test',
+        error: { code: 'execution_run_timeout', message: 'Timed out' },
+      },
+      createdAt: 1,
+      startedAt: null,
+      completedAt: null,
+      permission: undefined,
+    };
+
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <ToolInlineBody
+          mode="card"
+          tool={tool}
+          normalizedToolName="UnknownTool"
+          metadata={null}
+          messages={[]}
+          detailLevel="summary"
+          setHeaderActions={() => {}}
+        />
+      );
+    });
+
+    expect(tree.root.findAllByType('StructuredResultView' as any).length).toBe(1);
+    expect(tree.root.findAllByType('ToolError' as any).length).toBe(0);
+  });
 });
