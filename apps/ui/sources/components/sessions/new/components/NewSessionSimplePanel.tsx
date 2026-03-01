@@ -97,7 +97,7 @@ export function NewSessionSimplePanel(props: Readonly<{
                     >
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                             <Ionicons name="attach-outline" size={16} color={iconColor} />
-                            {showLabel ? <Text style={textStyle}>Attach</Text> : null}
+                            {showLabel ? <Text style={textStyle}>{t('common.attach')}</Text> : null}
                         </View>
                     </Pressable>
                 ),
@@ -125,7 +125,20 @@ export function NewSessionSimplePanel(props: Readonly<{
                 const attachmentsBlock = formatAttachmentsBlock(uploaded);
                 const trimmed = initialPrompt.trim();
                 const text = trimmed.length > 0 ? `${trimmed}\n\n${attachmentsBlock}` : attachmentsBlock;
-                await sync.sendMessage(sessionId, text);
+                await sync.sendMessage(sessionId, text, trimmed, {
+                    happier: {
+                        kind: 'attachments.v1',
+                        payload: {
+                            attachments: uploaded.map((a) => ({
+                                name: a.name,
+                                path: a.path,
+                                mimeType: a.mimeType,
+                                sizeBytes: a.sizeBytes,
+                                sha256: a.sha256,
+                            })),
+                        },
+                    },
+                } as Record<string, unknown>);
                 clearDrafts();
             },
         });

@@ -226,7 +226,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                     >
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                             <Ionicons name="attach-outline" size={16} color={iconColor} />
-                            {showLabel ? <Text style={textStyle}>Attach</Text> : null}
+                            {showLabel ? <Text style={textStyle}>{t('common.attach')}</Text> : null}
                         </View>
                     </Pressable>
                 ),
@@ -244,21 +244,34 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         const initialPrompt = String(props.footer.sessionPrompt ?? '');
         props.footer.handleCreateSession({
             initialMessage: 'skip',
-            afterCreated: async (sessionId) => {
-                const { uploaded } = await uploadAttachmentDraftsToSession({
-                    sessionId,
-                    drafts,
-                    config: attachmentsUploadConfig,
-                    applyDraftPatch,
-                });
-                const attachmentsBlock = formatAttachmentsBlock(uploaded);
-                const trimmed = initialPrompt.trim();
-                const text = trimmed.length > 0 ? `${trimmed}\n\n${attachmentsBlock}` : attachmentsBlock;
-                await sync.sendMessage(sessionId, text);
-                clearDrafts();
-            },
-        });
-    }, [
+              afterCreated: async (sessionId) => {
+                  const { uploaded } = await uploadAttachmentDraftsToSession({
+                      sessionId,
+                      drafts,
+                      config: attachmentsUploadConfig,
+                      applyDraftPatch,
+                  });
+                  const attachmentsBlock = formatAttachmentsBlock(uploaded);
+                  const trimmed = initialPrompt.trim();
+                  const text = trimmed.length > 0 ? `${trimmed}\n\n${attachmentsBlock}` : attachmentsBlock;
+                  await sync.sendMessage(sessionId, text, trimmed, {
+                      happier: {
+                          kind: 'attachments.v1',
+                          payload: {
+                              attachments: uploaded.map((a) => ({
+                                  name: a.name,
+                                  path: a.path,
+                                  mimeType: a.mimeType,
+                                  sizeBytes: a.sizeBytes,
+                                  sha256: a.sha256,
+                              })),
+                          },
+                      },
+                  } as Record<string, unknown>);
+                  clearDrafts();
+              },
+          });
+      }, [
         applyDraftPatch,
         attachmentsUploadConfig,
         attachmentsUploadsEnabled,
@@ -335,13 +348,13 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         setFavoriteDirectories,
     } = props.machine;
 
-	    const {
-	        sessionPrompt,
-	        setSessionPrompt,
-	        canCreate,
-	        isCreating,
-	        emptyAutocompletePrefixes,
-	        emptyAutocompleteSuggestions,
+      const {
+          sessionPrompt,
+          setSessionPrompt,
+          canCreate,
+          isCreating,
+          emptyAutocompletePrefixes,
+          emptyAutocompleteSuggestions,
         connectionStatus,
         resumeSessionId,
         onResumeClick,
@@ -604,6 +617,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         selectedMachine={selectedMachine || null}
                                         recentMachines={recentMachines}
                                         favoriteMachines={favoriteMachineItems}
+                                        testIdPrefix="new-session-machine"
                                         showCliGlyphs={true}
                                         autoDetectCliGlyphs={false}
                                         showFavorites={true}
@@ -764,26 +778,26 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                         />
                     ) : null}
                     <View style={{ paddingHorizontal: newSessionSidePadding }}>
-	                        <View style={{ maxWidth: layout.maxWidth, width: '100%', alignSelf: 'center' }}>
-	                            <AgentInput
-	                                value={sessionPrompt}
-	                                onChangeText={setSessionPrompt}
-	                                onSend={handleSend}
-	                                isSendDisabled={!canCreate}
-	                                isSending={isCreating}
-	                                placeholder={t('session.inputPlaceholder')}
-	                                autocompletePrefixes={emptyAutocompletePrefixes}
-	                                autocompleteSuggestions={emptyAutocompleteSuggestions}
-	                                    extraActionChips={extraActionChips}
-	                                    attachments={agentInputAttachments}
-	                                    onAttachmentsAdded={attachmentsUploadsEnabled ? addWebFiles : undefined}
-	                                    hasSendableAttachments={hasSendableAttachments}
-	                                inputMaxHeight={inputMaxHeight}
-	                                agentType={agentType}
-	                                onAgentClick={handleAgentInputAgentClick}
-	                                permissionMode={permissionMode}
-	                                onPermissionModeChange={handlePermissionModeChange}
-	                                onPermissionClick={handleAgentInputPermissionClick}
+                          <View style={{ maxWidth: layout.maxWidth, width: '100%', alignSelf: 'center' }}>
+                              <AgentInput
+                                  value={sessionPrompt}
+                                  onChangeText={setSessionPrompt}
+                                  onSend={handleSend}
+                                  isSendDisabled={!canCreate}
+                                  isSending={isCreating}
+                                  placeholder={t('session.inputPlaceholder')}
+                                  autocompletePrefixes={emptyAutocompletePrefixes}
+                                  autocompleteSuggestions={emptyAutocompleteSuggestions}
+                                      extraActionChips={extraActionChips}
+                                      attachments={agentInputAttachments}
+                                      onAttachmentsAdded={attachmentsUploadsEnabled ? addWebFiles : undefined}
+                                      hasSendableAttachments={hasSendableAttachments}
+                                  inputMaxHeight={inputMaxHeight}
+                                  agentType={agentType}
+                                  onAgentClick={handleAgentInputAgentClick}
+                                  permissionMode={permissionMode}
+                                  onPermissionModeChange={handlePermissionModeChange}
+                                  onPermissionClick={handleAgentInputPermissionClick}
                                 modelMode={modelMode}
                                 onModelModeChange={setModelMode}
                                 modelOptionsOverride={modelOptions}
@@ -804,19 +818,19 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                 resumeSessionId={resumeSessionId}
                                 onResumeClick={onResumeClick}
                                 resumeIsChecking={resumeIsChecking}
-	                                contentPaddingHorizontal={0}
-	                                {...(useProfiles ? {
-	                                    profileId: selectedProfileId,
-	                                                onProfileClick: handleAgentInputProfileClick,
-	                                    envVarsCount: selectedProfileEnvVarsCount || undefined,
-	                                    onEnvVarsClick: selectedProfileEnvVarsCount > 0 ? handleEnvVarsClick : undefined,
-	                                } : {})}
-	                            />
-	                            {attachmentsUploadsEnabled ? (
-	                                <AttachmentFilePicker ref={filePickerRef} onAttachmentsPicked={addPickedAttachments} multiple />
-	                            ) : null}
-	                        </View>
-	                    </View>
+                                  contentPaddingHorizontal={0}
+                                  {...(useProfiles ? {
+                                      profileId: selectedProfileId,
+                                                  onProfileClick: handleAgentInputProfileClick,
+                                      envVarsCount: selectedProfileEnvVarsCount || undefined,
+                                      onEnvVarsClick: selectedProfileEnvVarsCount > 0 ? handleEnvVarsClick : undefined,
+                                  } : {})}
+                              />
+                              {attachmentsUploadsEnabled ? (
+                                  <AttachmentFilePicker ref={filePickerRef} onAttachmentsPicked={addPickedAttachments} multiple />
+                              ) : null}
+                          </View>
+                      </View>
                 </View>
             </View>
         </KeyboardAvoidingView>

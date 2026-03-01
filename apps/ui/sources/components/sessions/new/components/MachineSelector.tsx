@@ -36,6 +36,7 @@ export interface MachineSelectorProps {
     favoritesSectionTitle?: string;
     allSectionTitle?: string;
     noItemsMessage?: string;
+    testIdPrefix?: string;
     /**
      * When true, offline machines are visible but non-selectable (greyed out + not-allowed cursor on web).
      */
@@ -61,6 +62,7 @@ export function MachineSelector({
     favoritesSectionTitle: favoritesSectionTitleProp,
     allSectionTitle: allSectionTitleProp,
     noItemsMessage: noItemsMessageProp,
+    testIdPrefix,
     disableOfflineMachines = true,
 }: MachineSelectorProps) {
     const { theme } = useUnistyles();
@@ -151,6 +153,7 @@ export function MachineSelector({
             onSelect={onSelect}
             onToggleFavorite={onToggleFavorite}
             searchPlacement={searchPlacement}
+            testIdPrefix={testIdPrefix}
         />
     );
 }
