@@ -60,6 +60,12 @@ export const lightTheme = {
         surfacePressed: '#f0f0f2',
         surfaceSelected: Platform.select({ ios: '#eaeaea', default: '#eaeaea' }),
         surfacePressedOverlay: Platform.select({ ios: '#D1D1D6', default: 'transparent' }),
+        overlay: {
+            scrim: 'rgba(0, 0, 0, 0.45)',
+            scrimStrong: 'rgba(0, 0, 0, 0.6)',
+            text: '#FFFFFF',
+            textSecondary: 'rgba(255, 255, 255, 0.9)',
+        },
         surfaceHigh: '#F8F8F8',
         surfaceHighest: '#f0f0f0',
         divider: Platform.select({ ios: '#eaeaea', default: '#eaeaea' }),
@@ -278,6 +284,12 @@ export const darkTheme = {
         surfacePressed: '#2C2C2E',
         surfaceSelected: '#2C2C2E',
         surfacePressedOverlay: Platform.select({ ios: '#2C2C2E', default: 'transparent' }),
+        overlay: {
+            scrim: 'rgba(0, 0, 0, 0.45)',
+            scrimStrong: 'rgba(0, 0, 0, 0.6)',
+            text: '#FFFFFF',
+            textSecondary: 'rgba(255, 255, 255, 0.9)',
+        },
         // iOS dark theme is #1c1c1e for items, and #000 for the background
         surfaceHigh: Platform.select({ ios: '#2C2C2E', default: '#171717' }),
         surfaceHighest: Platform.select({ ios: '#38383A', default: '#292929' }),
