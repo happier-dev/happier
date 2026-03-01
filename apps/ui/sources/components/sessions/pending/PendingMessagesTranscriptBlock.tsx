@@ -303,7 +303,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             styles.userMessageWrapper,
                             isWeb && (hoveredMessageId === message.id || menuOpen) ? styles.userMessageWrapperHovered : null,
                         ]}
-                        pointerEvents={isWeb ? 'auto' : 'box-none'}
+                        {...(!isWeb ? { pointerEvents: 'box-none' as const } : null)}
                         {...(isWeb
                             ? {
                                 onPointerEnter: () => setHoveredMessageId(message.id),
@@ -354,11 +354,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 
                         <View
                             testID={`pendingMessages.pendingAffordance:${message.id}`}
-                            pointerEvents="none"
+                            {...(!isWeb ? { pointerEvents: 'none' as const } : null)}
                             style={[
                                 styles.pendingAffordanceChip,
                                 { backgroundColor: theme.colors.surface, borderColor: theme.colors.divider },
                                 hideChipBecauseNextHovered ? { opacity: 0 } : null,
+                                isWeb ? { pointerEvents: 'none' as const } : null,
                             ]}
                         >
                             <Ionicons name="time-outline" size={8} color={theme.colors.textSecondary} />
@@ -370,20 +371,18 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                         {isWeb ? (
                             <View
                                 testID={`pendingMessages.actionsOverlay:${message.id}`}
-                                pointerEvents={hoveredMessageId === message.id || menuOpen ? 'auto' : 'none'}
                                 style={[
                                     styles.messageActionContainer,
                                     !(hoveredMessageId === message.id || menuOpen) ? styles.messageActionContainerHidden : null,
+                                    { pointerEvents: hoveredMessageId === message.id || menuOpen ? 'auto' : 'none' },
                                 ]}
                             >
                                 {props.pendingMessages.length > 1 ? (
                                     renderDragHandle({
                                         children: (
-                                            <IconAction
+                                            <ReorderDragHandleAffordance
                                                 testID={`pendingMessages.reorder:${message.id}`}
                                                 accessibilityLabel={t('common.reorder')}
-                                                icon="reorder-three-outline"
-                                                onPress={() => {}}
                                             />
                                         ),
                                         accessibilityLabel: t('common.reorder'),
@@ -421,11 +420,9 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             <View style={styles.messageActionContainer}>
                                 {renderDragHandle({
                                     children: (
-                                        <IconAction
+                                        <ReorderDragHandleAffordance
                                             testID={`pendingMessages.reorder:${message.id}`}
                                             accessibilityLabel={t('common.reorder')}
-                                            icon="reorder-three-outline"
-                                            onPress={() => {}}
                                         />
                                     ),
                                     accessibilityLabel: t('common.reorder'),
@@ -490,7 +487,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                     <View
                         testID={`pendingMessages.discarded.row:${message.id}`}
                         style={[styles.userMessageWrapper, { opacity: 0.85 }]}
-                        pointerEvents={isWeb ? 'auto' : 'box-none'}
+                        {...(!isWeb ? { pointerEvents: 'box-none' as const } : null)}
                         {...(isWeb
                             ? {
                                 onPointerEnter: () => setHoveredMessageId(message.id),
@@ -519,10 +516,10 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                         {isWeb ? (
                             <View
                                 testID={`pendingMessages.discarded.actionsOverlay:${message.id}`}
-                                pointerEvents={hoveredMessageId === message.id || menuOpen ? 'auto' : 'none'}
                                 style={[
                                     styles.messageActionContainer,
                                     !(hoveredMessageId === message.id || menuOpen) ? styles.messageActionContainerHidden : null,
+                                    { pointerEvents: hoveredMessageId === message.id || menuOpen ? 'auto' : 'none' },
                                 ]}
                             >
                                 <IconAction
@@ -702,6 +699,33 @@ function IconAction(props: {
         >
             <Ionicons name={props.icon} size={12} color={tint} />
         </Pressable>
+    );
+}
+
+function ReorderDragHandleAffordance(props: {
+    accessibilityLabel: string;
+    testID?: string;
+}) {
+    const { theme } = useUnistyles();
+    const isWeb = Platform.OS === 'web';
+    return (
+        <View
+            testID={props.testID}
+            accessibilityLabel={props.accessibilityLabel}
+            {...(!isWeb ? { pointerEvents: 'none' as const } : null)}
+            style={[
+                {
+                    padding: 2,
+                    borderRadius: 6,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    opacity: 0.65,
+                },
+                isWeb ? ({ pointerEvents: 'none' } as const) : null,
+            ]}
+        >
+            <Ionicons name="reorder-three-outline" size={12} color={theme.colors.textSecondary} />
+        </View>
     );
 }
 

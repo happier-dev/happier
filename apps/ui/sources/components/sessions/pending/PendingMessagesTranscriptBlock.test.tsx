@@ -300,14 +300,16 @@ describe('PendingMessagesTranscriptBlock', () => {
         const overlay = findNodeByTestId(tree!, 'pendingMessages.actionsOverlay:p1');
         expect(overlay).toBeTruthy();
         expect(flattenStyle(overlay!.props.style).opacity).toBe(0);
-        expect(overlay!.props.pointerEvents).toBe('none');
+        expect(overlay!.props.pointerEvents).toBeUndefined();
+        expect(flattenStyle(overlay!.props.style).pointerEvents).toBe('none');
 
         await hoverPendingMessageRow(tree!, 'p1');
 
         const overlayAfterHover = findNodeByTestId(tree!, 'pendingMessages.actionsOverlay:p1');
         expect(overlayAfterHover).toBeTruthy();
         expect(flattenStyle(overlayAfterHover!.props.style).opacity).toBe(1);
-        expect(overlayAfterHover!.props.pointerEvents).toBe('auto');
+        expect(overlayAfterHover!.props.pointerEvents).toBeUndefined();
+        expect(flattenStyle(overlayAfterHover!.props.style).pointerEvents).toBe('auto');
     });
 
     it('offers steer-now while a steer-capable session is thinking and does not abort the turn', async () => {
@@ -413,14 +415,16 @@ describe('PendingMessagesTranscriptBlock', () => {
         const overlay = findNodeByTestId(tree!, 'pendingMessages.discarded.actionsOverlay:d1');
         expect(overlay).toBeTruthy();
         expect(flattenStyle(overlay!.props.style).opacity).toBe(0);
-        expect(overlay!.props.pointerEvents).toBe('none');
+        expect(overlay!.props.pointerEvents).toBeUndefined();
+        expect(flattenStyle(overlay!.props.style).pointerEvents).toBe('none');
 
         await hoverDiscardedMessageRow(tree!, 'd1');
 
         const overlayAfterHover = findNodeByTestId(tree!, 'pendingMessages.discarded.actionsOverlay:d1');
         expect(overlayAfterHover).toBeTruthy();
         expect(flattenStyle(overlayAfterHover!.props.style).opacity).toBe(1);
-        expect(overlayAfterHover!.props.pointerEvents).toBe('auto');
+        expect(overlayAfterHover!.props.pointerEvents).toBeUndefined();
+        expect(flattenStyle(overlayAfterHover!.props.style).pointerEvents).toBe('auto');
     });
 
     it('hides the next pending chip while hovering a message on web', async () => {
@@ -463,5 +467,27 @@ describe('PendingMessagesTranscriptBlock', () => {
         await hoverPendingMessageRow(tree!, 'p2');
         expect(findPressableByTestId(tree!, 'pendingMessages.moveUp:p2')).toBeFalsy();
         expect(findPressableByTestId(tree!, 'pendingMessages.moveDown:p1')).toBeFalsy();
+    });
+
+    it('renders reorder affordance without nested pressable action', async () => {
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        await act(async () => {
+            tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1',
+                pendingMessages: [
+                    { id: 'p1', text: 'one', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} },
+                    { id: 'p2', text: 'two', displayText: undefined, createdAt: 1, updatedAt: 1, localId: 'p2', rawRecord: {} },
+                ],
+                discardedMessages: [],
+            }));
+        });
+
+        await hoverPendingMessageRow(tree!, 'p1');
+
+        const reorderHandle = tree!.root.findAllByType('View').find((node) => (node.props as any)?.testID === 'pendingMessages.reorder:p1');
+        expect(reorderHandle).toBeTruthy();
+        expect(findPressableByTestId(tree!, 'pendingMessages.reorder:p1')).toBeFalsy();
+        expect((reorderHandle!.props as any).pointerEvents).toBeUndefined();
+        expect(flattenStyle((reorderHandle!.props as any).style).pointerEvents).toBe('none');
     });
 });
