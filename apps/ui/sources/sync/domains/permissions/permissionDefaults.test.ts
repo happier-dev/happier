@@ -10,7 +10,7 @@ describe('resolveNewSessionDefaultPermissionMode', () => {
     };
 
     it('uses account defaults when no profile override is present', () => {
-        expect(resolveNewSessionDefaultPermissionMode({ agentType: 'claude', accountDefaults })).toBe('plan');
+        expect(resolveNewSessionDefaultPermissionMode({ agentType: 'claude', accountDefaults })).toBe('read-only');
         expect(resolveNewSessionDefaultPermissionMode({ agentType: 'codex', accountDefaults })).toBe('safe-yolo');
         expect(resolveNewSessionDefaultPermissionMode({ agentType: 'gemini', accountDefaults })).toBe('read-only');
     });
@@ -19,12 +19,12 @@ describe('resolveNewSessionDefaultPermissionMode', () => {
         const profileDefaults = { codex: 'yolo' as PermissionMode };
         expect(resolveNewSessionDefaultPermissionMode({ agentType: 'codex', accountDefaults, profileDefaults })).toBe('yolo');
         // Other providers fall back to account defaults when no override exists.
-        expect(resolveNewSessionDefaultPermissionMode({ agentType: 'claude', accountDefaults, profileDefaults })).toBe('plan');
+        expect(resolveNewSessionDefaultPermissionMode({ agentType: 'claude', accountDefaults, profileDefaults })).toBe('read-only');
     });
 
     it('falls back to legacy profile override mapping when provider-specific override is missing', () => {
-        expect(resolveNewSessionDefaultPermissionMode({ agentType: 'claude', accountDefaults, legacyProfileDefaultPermissionMode: 'plan' })).toBe('plan');
-        // "plan" is not a codex-like permission mode. Fail closed to read-only.
+        expect(resolveNewSessionDefaultPermissionMode({ agentType: 'claude', accountDefaults, legacyProfileDefaultPermissionMode: 'plan' })).toBe('read-only');
+        // Legacy "plan" is mapped to read-only.
         expect(resolveNewSessionDefaultPermissionMode({ agentType: 'codex', accountDefaults, legacyProfileDefaultPermissionMode: 'plan' })).toBe('read-only');
         expect(resolveNewSessionDefaultPermissionMode({ agentType: 'gemini', accountDefaults, legacyProfileDefaultPermissionMode: 'bypassPermissions' })).toBe('yolo');
     });

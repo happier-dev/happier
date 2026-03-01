@@ -6,10 +6,10 @@ export type { PermissionMode } from '@happier-dev/agents';
 
 // We keep the user-facing intents consistent across agents. Providers that cannot enforce
 // certain intents (e.g. Claude "read-only") are handled via effective-policy mapping.
-export const CLAUDE_PERMISSION_MODES = ['default', 'read-only', 'safe-yolo', 'yolo', 'plan'] as const;
+export const CLAUDE_PERMISSION_MODES = ['default', 'read-only', 'safe-yolo', 'yolo'] as const;
 export const CODEX_LIKE_PERMISSION_MODES = ['default', 'read-only', 'safe-yolo', 'yolo'] as const;
 
-const CLAUDE_PERMISSION_MODE_CYCLE = ['default', 'safe-yolo', 'yolo', 'plan'] as const;
+const CLAUDE_PERMISSION_MODE_CYCLE = ['default', 'safe-yolo', 'yolo'] as const;
 
 export type PermissionModeGroupId = SharedPermissionModeGroupId;
 
@@ -20,8 +20,11 @@ export function isPermissionMode(value: unknown): value is PermissionMode {
 export function normalizePermissionModeForGroup(mode: PermissionMode, group: PermissionModeGroupId): PermissionMode {
     const normalized = (parsePermissionIntentAlias(mode) ?? 'default') as PermissionMode;
 
+    // Legacy mapping: "plan" is now an agent behavior mode, not a permission strictness choice.
+    // Treat it as read-only at the permission layer.
+    if (normalized === 'plan') return 'read-only';
+
     if (group === 'codexLike') {
-        if (normalized === 'plan') return 'read-only';
         return (CODEX_LIKE_PERMISSION_MODES as readonly string[]).includes(normalized)
             ? normalized
             : 'default';

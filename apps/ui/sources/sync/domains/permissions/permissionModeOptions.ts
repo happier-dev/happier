@@ -28,7 +28,6 @@ const BADGE_KEY_SEGMENT_CLAUDE: Partial<Record<PermissionMode, string>> = {
     'read-only': 'badgeReadOnly',
     'safe-yolo': 'badgeSafeYolo',
     yolo: 'badgeYolo',
-    plan: 'badgePlan',
 };
 
 const BADGE_KEY_SEGMENT_CODEX_LIKE: Partial<Record<PermissionMode, string>> = {
@@ -82,7 +81,6 @@ export function getPermissionModeOptionsForAgentType(agentType: AgentType): read
         { value: 'read-only', label: getPermissionModeLabelForAgentType(agentType, 'read-only'), description: getPermissionModeDescriptionForAgentType(agentType, 'read-only'), icon: 'eye-outline' },
         { value: 'safe-yolo', label: getPermissionModeLabelForAgentType(agentType, 'safe-yolo'), description: getPermissionModeDescriptionForAgentType(agentType, 'safe-yolo'), icon: 'shield-checkmark-outline' },
         { value: 'yolo', label: getPermissionModeLabelForAgentType(agentType, 'yolo'), description: getPermissionModeDescriptionForAgentType(agentType, 'yolo'), icon: 'flash-outline' },
-        { value: 'plan', label: getPermissionModeLabelForAgentType(agentType, 'plan'), description: getPermissionModeDescriptionForAgentType(agentType, 'plan'), icon: 'list-outline' },
     ];
 }
 

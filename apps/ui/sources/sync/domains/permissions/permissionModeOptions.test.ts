@@ -22,13 +22,14 @@ describe('permissionModeOptions', () => {
         expect(normalizePermissionModeForAgentType('read-only', 'claude')).toBe('read-only');
         expect(normalizePermissionModeForAgentType('acceptEdits', 'codex')).toBe('safe-yolo');
         expect(normalizePermissionModeForAgentType('plan', 'codex')).toBe('read-only');
+        expect(normalizePermissionModeForAgentType('plan', 'claude')).toBe('read-only');
     });
 
-    it('does not include plan in codex option lists', () => {
-        expect(getPermissionModeOptionsForAgentType('claude').map((o) => o.value)).toContain('plan');
+    it('does not include legacy plan in option lists', () => {
+        expect(getPermissionModeOptionsForAgentType('claude').map((o) => o.value)).not.toContain('plan');
         expect(getPermissionModeOptionsForAgentType('codex').map((o) => o.value)).not.toContain('plan');
 
-        expect(getPermissionModeOptionsForSession('claude', { path: '/tmp', host: 'h' } as Metadata).map((o) => o.value)).toContain('plan');
+        expect(getPermissionModeOptionsForSession('claude', { path: '/tmp', host: 'h' } as Metadata).map((o) => o.value)).not.toContain('plan');
         expect(getPermissionModeOptionsForSession('codex', { path: '/tmp', host: 'h' } as Metadata).map((o) => o.value)).not.toContain('plan');
     });
 
@@ -62,7 +63,9 @@ describe('permissionModeOptions', () => {
         expect(getPermissionModeBadgeLabelForAgentType('gemini', 'safe-yolo' as PermissionMode)).not.toBe('');
     });
 
-    it('returns a badge label for plan when the agent supports surfacing plan mode', () => {
-        expect(getPermissionModeBadgeLabelForAgentType('claude', 'plan' as PermissionMode)).not.toBe('');
+    it('maps legacy plan badge to the read-only badge', () => {
+        expect(getPermissionModeBadgeLabelForAgentType('claude', 'plan' as PermissionMode)).toBe(
+            getPermissionModeBadgeLabelForAgentType('claude', 'read-only' as PermissionMode),
+        );
     });
 });

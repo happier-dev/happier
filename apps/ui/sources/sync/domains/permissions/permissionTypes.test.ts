@@ -27,7 +27,7 @@ describe('normalizePermissionModeForGroup', () => {
         expect(normalizePermissionModeForGroup('read-only', 'claude')).toBe('read-only');
         expect(normalizePermissionModeForGroup('safe-yolo', 'claude')).toBe('safe-yolo');
         expect(normalizePermissionModeForGroup('yolo', 'claude')).toBe('yolo');
-        expect(normalizePermissionModeForGroup('plan', 'claude')).toBe('plan');
+        expect(normalizePermissionModeForGroup('plan', 'claude')).toBe('read-only');
         expect(normalizePermissionModeForGroup('acceptEdits', 'claude')).toBe('safe-yolo');
         expect(normalizePermissionModeForGroup('bypassPermissions', 'claude')).toBe('yolo');
     });
@@ -61,8 +61,9 @@ describe('getNextPermissionModeForGroup', () => {
     it('cycles through claude intents and clamps invalid current modes', () => {
         expect(getNextPermissionModeForGroup('default', 'claude')).toBe('safe-yolo');
         expect(getNextPermissionModeForGroup('safe-yolo', 'claude')).toBe('yolo');
-        expect(getNextPermissionModeForGroup('yolo', 'claude')).toBe('plan');
-        expect(getNextPermissionModeForGroup('plan', 'claude')).toBe('default');
+        expect(getNextPermissionModeForGroup('yolo', 'claude')).toBe('default');
+        // Legacy values (including plan) are treated as default when cycling.
+        expect(getNextPermissionModeForGroup('plan', 'claude')).toBe('safe-yolo');
 
         // If a codex-like mode slips in, treat it as default before cycling.
         expect(getNextPermissionModeForGroup('read-only', 'claude')).toBe('safe-yolo');
@@ -70,7 +71,7 @@ describe('getNextPermissionModeForGroup', () => {
 
     it('normalizes claude legacy tokens when cycling', () => {
         expect(getNextPermissionModeForGroup('acceptEdits', 'claude')).toBe('yolo');
-        expect(getNextPermissionModeForGroup('bypassPermissions', 'claude')).toBe('plan');
+        expect(getNextPermissionModeForGroup('bypassPermissions', 'claude')).toBe('default');
     });
 });
 

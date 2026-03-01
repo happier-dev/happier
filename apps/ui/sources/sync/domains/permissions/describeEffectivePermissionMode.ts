@@ -61,15 +61,13 @@ export function describeEffectivePermissionMode(_params: {
         _params.metadata?.acpConfigOptionsV1,
     );
 
-    // Keep legacy "plan" for display so we can fail-closed in Codex-like providers.
     const selected = (parsePermissionIntentAlias(_params.selectedMode) ?? 'default') as PermissionMode;
-    const normalized = selected === 'plan' ? 'plan' : normalizePermissionModeForAgentType(selected, _params.agentType);
+    const normalized = normalizePermissionModeForAgentType(selected, _params.agentType);
     const reasons: EffectivePermissionModeReason[] = [];
 
     let effectiveMode: PermissionMode = normalized;
 
-    if (group === 'codexLike' && normalized === 'plan') {
-        effectiveMode = 'read-only';
+    if (selected === 'plan') {
         reasons.push({ code: 'plan_not_supported_for_provider' });
     }
 
