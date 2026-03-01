@@ -2,15 +2,11 @@
  * Platform adapter: HMAC-SHA512.
  *
  * Strategy:
- * - App runtime (native + web): implement HMAC via `expo-crypto` SHA-512 digest.
- *   (expo-crypto does not expose HMAC directly.)
+ * - App runtime (native + web): implement HMAC via platform `digest('SHA-512', ...)`.
  * - Tests (vitest/node): alias `@/platform/hmacSha512` to `hmacSha512.node.ts`.
- *
- * IMPORTANT:
- * - Do NOT import `expo-crypto` from code that runs in node tests unless it’s behind a vitest alias.
  */
 
-import * as Crypto from 'expo-crypto';
+import { digest } from './digest';
 
 export async function hmacSha512(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
     const blockSize = 128; // SHA-512 block size in bytes
@@ -20,8 +16,7 @@ export async function hmacSha512(key: Uint8Array, data: Uint8Array): Promise<Uin
     // Prepare key
     let actualKey = key;
     if (key.length > blockSize) {
-        const keyHash = await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA512, new Uint8Array(key));
-        actualKey = new Uint8Array(keyHash);
+        actualKey = await digest('SHA-512', new Uint8Array(key));
     }
 
     // Pad key to block size
@@ -40,13 +35,11 @@ export async function hmacSha512(key: Uint8Array, data: Uint8Array): Promise<Uin
     const innerData = new Uint8Array(blockSize + data.length);
     innerData.set(innerKey);
     innerData.set(data, blockSize);
-    const innerHash = await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA512, innerData);
+    const innerHash = await digest('SHA-512', innerData);
 
     // Outer hash: SHA512(outerKey || innerHash)
     const outerData = new Uint8Array(blockSize + 64);
     outerData.set(outerKey);
-    outerData.set(new Uint8Array(innerHash), blockSize);
-    const finalHash = await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA512, outerData);
-    return new Uint8Array(finalHash);
+    outerData.set(innerHash, blockSize);
+    return await digest('SHA-512', outerData);
 }
-
