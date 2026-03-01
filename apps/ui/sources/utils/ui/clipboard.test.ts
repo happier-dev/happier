@@ -39,3 +39,33 @@ describe('getClipboardStringTrimmedSafe', () => {
         await expect(getClipboardStringTrimmedSafe()).resolves.toBe('');
     });
 });
+
+describe('setClipboardStringSafe', () => {
+    it('writes to clipboard and returns true', async () => {
+        vi.resetModules();
+        const setStringAsync = vi.fn(async () => {});
+        vi.doMock('expo-clipboard', () => {
+            return {
+                setStringAsync,
+            };
+        });
+
+        const { setClipboardStringSafe } = await import('./clipboard');
+        await expect(setClipboardStringSafe('hello')).resolves.toBe(true);
+        expect(setStringAsync).toHaveBeenCalledWith('hello');
+    });
+
+    it('returns false when clipboard write throws', async () => {
+        vi.resetModules();
+        vi.doMock('expo-clipboard', () => {
+            return {
+                setStringAsync: vi.fn(async () => {
+                    throw new Error('clipboard failed');
+                }),
+            };
+        });
+
+        const { setClipboardStringSafe } = await import('./clipboard');
+        await expect(setClipboardStringSafe('hello')).resolves.toBe(false);
+    });
+});
