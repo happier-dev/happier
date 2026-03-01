@@ -22,6 +22,8 @@ import { HappyError } from '@/utils/errors/errors';
 import { getAuthProvider } from '@/auth/providers/registry';
 import { isSafeBadgeUrl } from '@/utils/url/urlSafety';
 
+const USERNAME_PREFIX = '@';
+
 export default function UserProfileScreen() {
     const { id } = useLocalSearchParams<{ id: string }>();
     const { credentials } = useAuth();
@@ -202,7 +204,7 @@ export default function UserProfileScreen() {
 
                     <Text style={styles.displayName}>{displayName}</Text>
 
-                    <Text style={styles.username}>@{userProfile.username}</Text>
+                        <Text style={styles.username}>{USERNAME_PREFIX}{userProfile.username}</Text>
 
                     {/* Bio */}
                     {userProfile.bio && (
