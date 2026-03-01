@@ -17,7 +17,7 @@ describe('resolveInitialClaudeRemoteMetaState', () => {
     const resolved = resolveInitialClaudeRemoteMetaState({
       metaDefaults: {
         claudeRemoteAgentSdkEnabled: true,
-        claudeRemoteSettingSources: 'user_project',
+        claudeRemoteSettingSourcesV2: ['user', 'project'],
         claudeLocalPermissionBridgeEnabled: true,
         claudeLocalPermissionBridgeWaitIndefinitely: false,
         claudeLocalPermissionBridgeTimeoutSeconds: 600,
@@ -26,7 +26,7 @@ describe('resolveInitialClaudeRemoteMetaState', () => {
     });
 
     expect(resolved.claudeRemoteAgentSdkEnabled).toBe(true);
-    expect(resolved.claudeRemoteSettingSources).toBe('user_project');
+    expect((resolved as any).claudeRemoteSettingSourcesV2).toEqual(['user', 'project']);
     expect((resolved as any).claudeLocalPermissionBridgeEnabled).toBe(true);
     expect((resolved as any).claudeLocalPermissionBridgeWaitIndefinitely).toBe(false);
     expect((resolved as any).claudeLocalPermissionBridgeTimeoutSeconds).toBe(600);
