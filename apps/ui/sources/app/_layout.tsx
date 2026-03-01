@@ -11,7 +11,6 @@ import {
     PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
     PUSH_NOTIFICATION_CATEGORY_IDS,
 } from '@happier-dev/protocol';
-import { t } from '@/text';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { AuthProvider } from '@/auth/context/AuthContext';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
@@ -23,6 +22,7 @@ import sodium from '@/encryption/libsodium.lib';
 import { View, Platform } from 'react-native';
 import { ModalProvider } from '@/modal';
 import { PostHogProvider } from 'posthog-react-native';
+import * as Sentry from '@sentry/react-native';
 import { tracking } from '@/track/tracking';
 import { syncRestore } from '@/sync/sync';
 import { useTrackScreens } from '@/track/useTrackScreens';
@@ -31,6 +31,7 @@ import { FaviconPermissionIndicator } from '@/components/web/FaviconPermissionIn
 import { CommandPaletteProvider } from '@/components/CommandPalette/CommandPaletteProvider';
 import { StatusBarProvider } from '@/components/ui/layout/StatusBarProvider';
 import { DesktopUpdateBanner } from '@/components/ui/feedback/DesktopUpdateBanner';
+import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 // import * as SystemUI from 'expo-system-ui';
 import { monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyInLocalBuilds } from '@/utils/system/remoteLogger';
 import { installBugReportConsoleCapture } from '@/utils/system/bugReportLogBuffer';
@@ -38,6 +39,13 @@ import { configureBugReportUserActionTrail } from '@/utils/system/bugReportActio
 import { useUnistyles } from 'react-native-unistyles';
 import { AsyncLock } from '@/utils/system/lock';
 import { useWebUiFontScale } from '@/components/ui/text/useWebUiFontScale';
+import { usePierreDiffWorkerPoolWarmup } from '@/components/ui/code/diff/pierre/usePierreDiffWorkerPoolWarmup';
+import { initializeSentryOnce } from '@/utils/system/sentry';
+import { t } from '@/text';
+import { AppCrashRecoveryBoundary } from '@/components/appShell/AppCrashRecoveryBoundary';
+import { WebCryptoStartupGate } from '@/components/web/WebCryptoStartupGate';
+
+initializeSentryOnce();
 
 function shouldCaptureRnwUnexpectedTextNodeStacks(): boolean {
     // Dev-only diagnostics: enable via `?debugRnwTextNode=1` on web.
@@ -563,9 +571,10 @@ async function loadFonts() {
     });
 }
 
-export default function RootLayout() {
+function RootLayout() {
     const { theme } = useUnistyles();
     useWebUiFontScale();
+    usePierreDiffWorkerPoolWarmup();
     const navigationTheme = React.useMemo(() => {
         if (theme.dark) {
             return {
@@ -585,6 +594,35 @@ export default function RootLayout() {
         };
     }, [theme.dark]);
 
+    const onRestart = React.useCallback(() => {
+        if (Platform.OS === 'web') {
+            try {
+                (globalThis as any).location?.reload?.();
+            } catch {
+                // ignore
+            }
+            return;
+        }
+
+        void import('expo-updates')
+            .then((Updates) => Updates.reloadAsync())
+            .catch(() => {});
+    }, []);
+
+    return (
+        <WebCryptoStartupGate>
+            <AppBoot
+                navigationTheme={navigationTheme}
+                onRestart={onRestart}
+            />
+        </WebCryptoStartupGate>
+    );
+}
+
+function AppBoot(props: {
+    navigationTheme: any;
+    onRestart: () => void;
+}) {
     //
     // Init sequence
     //
@@ -652,17 +690,19 @@ export default function RootLayout() {
             <KeyboardProvider>
                 <GestureHandlerRootView style={{ flex: 1 }}>
                     <AuthProvider initialCredentials={initState.credentials}>
-                        <ThemeProvider value={navigationTheme}>
+                        <ThemeProvider value={props.navigationTheme}>
                             <StatusBarProvider />
                             <ModalProvider>
                                 <CommandPaletteProvider>
                                     <RealtimeProvider>
-                                        <HorizontalSafeAreaWrapper>
-                                            <DesktopUpdateBanner />
-                                            <View style={{ flex: 1 }}>
-                                                <SidebarNavigator />
-                                            </View>
-                                        </HorizontalSafeAreaWrapper>
+                                        <AppPaneProvider>
+                                            <HorizontalSafeAreaWrapper>
+                                                <DesktopUpdateBanner />
+                                                <View style={{ flex: 1 }}>
+                                                    <SidebarNavigator />
+                                                </View>
+                                            </HorizontalSafeAreaWrapper>
+                                        </AppPaneProvider>
                                     </RealtimeProvider>
                                 </CommandPaletteProvider>
                             </ModalProvider>
@@ -683,7 +723,20 @@ export default function RootLayout() {
     return (
         <>
             <FaviconPermissionIndicator />
-            {providers}
+            <AppCrashRecoveryBoundary
+                onRestart={props.onRestart}
+                onError={(error) => {
+                    try {
+                        (Sentry as any).captureException?.(error);
+                    } catch {
+                        // ignore
+                    }
+                }}
+            >
+                {providers}
+            </AppCrashRecoveryBoundary>
         </>
     );
 }
+
+export default Sentry.wrap(RootLayout);

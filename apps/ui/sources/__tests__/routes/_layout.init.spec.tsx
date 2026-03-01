@@ -1,6 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS } from '@happier-dev/protocol';
 
 // Avoid React "act(...) environment" warnings in non-JSDOM test environments.
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -9,12 +10,30 @@ const loadAsyncMock = vi.fn();
 const syncRestoreMock = vi.fn(async () => {});
 const hideAsyncMock = vi.fn(async () => {});
 let mockedPlatformOS: string = 'web';
+let mockedConfigVariant: string = '';
+const sentryInitMock = vi.fn();
+const sentryMobileReplayIntegrationMock = vi.fn(() => ({ name: 'mobileReplayIntegration' }));
+const sentryWrapMock = vi.fn((Component: any) => Component);
 
 const { fromModuleMock } = vi.hoisted(() => ({
     fromModuleMock: vi.fn(),
 }));
 
 vi.mock('react-native-quick-base64', () => ({}));
+
+vi.mock('@/config', () => ({
+    config: {
+        get variant() {
+            return mockedConfigVariant;
+        },
+    },
+}));
+
+vi.mock('@sentry/react-native', () => ({
+    init: (...args: any[]) => (sentryInitMock as any).apply(undefined, args),
+    mobileReplayIntegration: (...args: any[]) => (sentryMobileReplayIntegrationMock as any).apply(undefined, args),
+    wrap: (...args: any[]) => (sentryWrapMock as any).apply(undefined, args),
+}));
 
 vi.mock('expo-splash-screen', () => ({
     setOptions: vi.fn(),
@@ -35,6 +54,7 @@ vi.mock('expo-asset', () => ({
 vi.mock('expo-notifications', () => ({
     setNotificationHandler: vi.fn(),
     setNotificationChannelAsync: vi.fn(async () => {}),
+    setNotificationCategoryAsync: vi.fn(async () => {}),
     AndroidImportance: { MAX: 5 },
 }));
 
@@ -95,6 +115,14 @@ vi.mock('@/components/navigation/shell/SidebarNavigator', () => {
     };
 });
 
+vi.mock('@/components/appShell/AppCrashRecoveryBoundary', () => {
+    const React = require('react');
+    return {
+        AppCrashRecoveryBoundary: ({ children }: { children: React.ReactNode }) =>
+            React.createElement('AppCrashRecoveryBoundary', null, children),
+    };
+});
+
 vi.mock('@/encryption/libsodium.lib', () => ({
     default: {
         ready: Promise.resolve(),
@@ -112,6 +140,8 @@ vi.mock('react-native', () => {
             set OS(value: string) {
                 mockedPlatformOS = value;
             },
+            select: (options: any) =>
+                options?.[mockedPlatformOS] ?? options?.default ?? options?.ios ?? options?.android,
         },
     };
 });
@@ -176,6 +206,10 @@ vi.mock('@/utils/system/remoteLogger', () => ({
 }));
 
 vi.mock('react-native-unistyles', () => ({
+    StyleSheet: {
+        create: (styles: any) => styles,
+        hairlineWidth: 1,
+    },
     useUnistyles: () => ({
         theme: {
             dark: false,
@@ -187,10 +221,19 @@ vi.mock('react-native-unistyles', () => ({
 }));
 
 describe('app/_layout init resilience', () => {
+    const previousSentryDsn = process.env.EXPO_PUBLIC_SENTRY_DSN;
+    const previousSentryLogs = process.env.EXPO_PUBLIC_SENTRY_ENABLE_LOGS;
+    const previousSentryReplay = process.env.EXPO_PUBLIC_SENTRY_ENABLE_REPLAY;
+    const previousSentryReplaySessionRate = process.env.EXPO_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE;
+    const previousSentryReplayOnErrorRate = process.env.EXPO_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE;
+
     afterEach(() => {
         // Ensure no test leaks fake timers into subsequent tests.
         vi.useRealTimers();
         mockedPlatformOS = 'web';
+        mockedConfigVariant = '';
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+        delete (globalThis as any).__HAPPIER_SENTRY_INIT__;
         // Clean up any navigator overrides from tests.
         // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
         delete (globalThis as any).navigator;
@@ -198,8 +241,81 @@ describe('app/_layout init resilience', () => {
         delete (globalThis as any).document;
         // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
         delete (globalThis as any).window;
+        sentryInitMock.mockClear();
+        sentryMobileReplayIntegrationMock.mockClear();
+        sentryWrapMock.mockClear();
+        if (previousSentryDsn === undefined) delete process.env.EXPO_PUBLIC_SENTRY_DSN;
+        else process.env.EXPO_PUBLIC_SENTRY_DSN = previousSentryDsn;
+        if (previousSentryLogs === undefined) delete process.env.EXPO_PUBLIC_SENTRY_ENABLE_LOGS;
+        else process.env.EXPO_PUBLIC_SENTRY_ENABLE_LOGS = previousSentryLogs;
+        if (previousSentryReplay === undefined) delete process.env.EXPO_PUBLIC_SENTRY_ENABLE_REPLAY;
+        else process.env.EXPO_PUBLIC_SENTRY_ENABLE_REPLAY = previousSentryReplay;
+        if (previousSentryReplaySessionRate === undefined) delete process.env.EXPO_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE;
+        else process.env.EXPO_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE = previousSentryReplaySessionRate;
+        if (previousSentryReplayOnErrorRate === undefined) delete process.env.EXPO_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE;
+        else process.env.EXPO_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE = previousSentryReplayOnErrorRate;
         vi.resetModules();
         vi.clearAllMocks();
+    });
+
+    it('wraps the root layout with Sentry.wrap', async () => {
+        await import('@/app/_layout');
+        expect(sentryWrapMock).toHaveBeenCalledTimes(1);
+        expect(typeof sentryWrapMock.mock.calls[0]?.[0]).toBe('function');
+    });
+
+    it('configures separate Android notification channels for permission/action request pushes', async () => {
+        mockedPlatformOS = 'android';
+        await import('@/app/_layout');
+
+        const Notifications = await import('expo-notifications');
+        expect((Notifications as any).setNotificationChannelAsync).toHaveBeenCalledWith(
+            PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.permissionRequestsV1,
+            expect.any(Object),
+        );
+        expect((Notifications as any).setNotificationChannelAsync).toHaveBeenCalledWith(
+            PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.userActionRequestsV1,
+            expect.any(Object),
+        );
+    });
+
+    it('uses app variant as the default Sentry environment when EXPO_PUBLIC_SENTRY_ENVIRONMENT is unset', async () => {
+        process.env.EXPO_PUBLIC_SENTRY_DSN = 'https://examplePublicKey@o0.ingest.sentry.io/0';
+        mockedConfigVariant = 'preview';
+
+        const RootLayout = (await import('@/app/_layout')).default;
+
+        await act(async () => {
+            renderer.create(React.createElement(RootLayout));
+        });
+
+        expect(sentryInitMock).toHaveBeenCalledTimes(1);
+        expect(sentryInitMock.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+            environment: 'preview',
+        }));
+    });
+
+    it('initializes Sentry when EXPO_PUBLIC_SENTRY_DSN is configured', async () => {
+        process.env.EXPO_PUBLIC_SENTRY_DSN = 'https://examplePublicKey@o0.ingest.sentry.io/0';
+        process.env.EXPO_PUBLIC_SENTRY_ENABLE_LOGS = '1';
+        process.env.EXPO_PUBLIC_SENTRY_ENABLE_REPLAY = '1';
+        process.env.EXPO_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE = '0.1';
+        process.env.EXPO_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE = '1';
+
+        const RootLayout = (await import('@/app/_layout')).default;
+
+        await act(async () => {
+            renderer.create(React.createElement(RootLayout));
+        });
+
+        expect(sentryMobileReplayIntegrationMock).toHaveBeenCalledTimes(1);
+        expect(sentryInitMock).toHaveBeenCalledTimes(1);
+        expect(sentryInitMock.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+            dsn: 'https://examplePublicKey@o0.ingest.sentry.io/0',
+            enableLogs: true,
+            replaysSessionSampleRate: 0.1,
+            replaysOnErrorSampleRate: 1,
+        }));
     });
 
     it('continues boot when native font loading fails', async () => {
@@ -207,7 +323,7 @@ describe('app/_layout init resilience', () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         loadAsyncMock.mockRejectedValueOnce(new Error('6000ms timeout exceeded'));
 
-        const RootLayout = (await import('./_layout')).default;
+        const RootLayout = (await import('@/app/_layout')).default;
 
         let tree: renderer.ReactTestRenderer;
         await act(async () => {
@@ -223,6 +339,23 @@ describe('app/_layout init resilience', () => {
         expect(syncRestoreMock).not.toHaveBeenCalled();
         expect(tree!.toJSON()).not.toBeNull();
         consoleErrorSpy.mockRestore();
+    });
+
+    it('wraps the provider stack with AppCrashRecoveryBoundary', async () => {
+        mockedPlatformOS = 'ios';
+        const RootLayout = (await import('@/app/_layout')).default;
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(RootLayout));
+        });
+
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(tree!.root.findAllByType('AppCrashRecoveryBoundary' as any)).toHaveLength(1);
     });
 
     it('injects web font faces and does not invoke expo-font on web', async () => {
@@ -243,7 +376,7 @@ describe('app/_layout init resilience', () => {
             configurable: true,
         });
 
-        const RootLayout = (await import('./_layout')).default;
+        const RootLayout = (await import('@/app/_layout')).default;
 
         let tree: renderer.ReactTestRenderer;
         await act(async () => {
@@ -282,7 +415,7 @@ describe('app/_layout init resilience', () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         loadAsyncMock.mockRejectedValueOnce(new Error('6000ms timeout exceeded'));
 
-        const RootLayout = (await import('./_layout')).default;
+        const RootLayout = (await import('@/app/_layout')).default;
 
         let tree: renderer.ReactTestRenderer;
         await act(async () => {
@@ -382,7 +515,7 @@ describe('app/_layout init resilience', () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         loadAsyncMock.mockRejectedValueOnce(new Error('6000ms timeout exceeded'));
 
-        const RootLayout = (await import('./_layout')).default;
+        const RootLayout = (await import('@/app/_layout')).default;
 
         let tree: renderer.ReactTestRenderer;
         await act(async () => {
@@ -418,7 +551,7 @@ describe('app/_layout init resilience', () => {
             configurable: true,
         });
 
-        const RootLayout = (await import('./_layout')).default;
+        const RootLayout = (await import('@/app/_layout')).default;
 
         let tree: renderer.ReactTestRenderer;
         await act(async () => {
@@ -440,7 +573,7 @@ describe('app/_layout init resilience', () => {
             throw new Error('6000ms timeout exceeded');
         });
 
-        const RootLayout = (await import('./_layout')).default;
+        const RootLayout = (await import('@/app/_layout')).default;
 
         let tree: renderer.ReactTestRenderer;
         await act(async () => {
@@ -470,7 +603,7 @@ describe('app/_layout init resilience', () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         loadAsyncMock.mockRejectedValueOnce(new Error('6000ms timeout exceeded'));
 
-        const RootLayout = (await import('./_layout')).default;
+        const RootLayout = (await import('@/app/_layout')).default;
 
         let tree: renderer.ReactTestRenderer;
         await act(async () => {
