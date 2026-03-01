@@ -4,6 +4,7 @@ import { Pressable, View } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { ScmProjectOperationLogEntry } from '@/sync/runtime/orchestration/projectManager';
+import { t } from '@/text';
 
 type SourceControlOperationsLogSectionProps = Readonly<{
     theme: any;
@@ -44,7 +45,7 @@ export function SourceControlOperationsLogSection(props: SourceControlOperations
                     ...Typography.default('semiBold'),
                 }}
             >
-                Recent source-control operations
+                {t('files.sourceControlOperationsLog.title')}
             </Text>
             {hasCrossSessionLogEntries && (
                 <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
@@ -63,7 +64,7 @@ export function SourceControlOperationsLogSection(props: SourceControlOperations
                         }}
                     >
                         <Text style={{ fontSize: 11, color: theme.colors.textSecondary, ...Typography.default('semiBold') }}>
-                            All sessions
+                            {t('files.sourceControlOperationsLog.allSessions')}
                         </Text>
                     </Pressable>
                     <Pressable
@@ -81,7 +82,7 @@ export function SourceControlOperationsLogSection(props: SourceControlOperations
                         }}
                     >
                         <Text style={{ fontSize: 11, color: theme.colors.textSecondary, ...Typography.default('semiBold') }}>
-                            This session
+                            {t('files.sourceControlOperationsLog.thisSession')}
                         </Text>
                     </Pressable>
                 </View>
@@ -95,7 +96,7 @@ export function SourceControlOperationsLogSection(props: SourceControlOperations
                         ...Typography.default(),
                     }}
                 >
-                    No recent operations for this session.
+                    {t('files.sourceControlOperationsLog.emptyThisSession')}
                 </Text>
             ) : (
                 visibleOperationLog.map((entry) => (

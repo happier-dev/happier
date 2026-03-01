@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Typography } from '@/constants/Typography';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 export type ScmCommitMessageGenerateResult =
@@ -191,7 +192,7 @@ export function ScmCommitMessageEditorModal(props: Readonly<{
                 <TextInput
                     style={[styles.input, Typography.default()]}
                     value={message}
-                    placeholder="Commit message"
+                    placeholder={t('files.commitMessageEditor.placeholder')}
                     placeholderTextColor={theme.colors.input.placeholder}
                     onChangeText={(v) => setMessage(String(v))}
                     multiline={true}
@@ -206,16 +207,20 @@ export function ScmCommitMessageEditorModal(props: Readonly<{
 
             <View style={styles.footer}>
                 <View style={{ flexDirection: 'row', gap: 8 }}>
-                    <Button label="Cancel" onPress={closeCancel} disabled={busy} />
+                    <Button label={t('common.cancel')} onPress={closeCancel} disabled={busy} />
                     {props.canGenerate ? (
-                        <Button label={busy ? 'Generating…' : 'Generate'} onPress={generate} disabled={busy} />
+                        <Button
+                            label={busy ? t('files.commitMessageEditor.generating') : t('files.commitMessageEditor.generate')}
+                            onPress={generate}
+                            disabled={busy}
+                        />
                     ) : null}
                     {pendingSuggestion ? (
-                        <Button label="Apply suggestion" onPress={applySuggestion} disabled={busy} />
+                        <Button label={t('files.commitMessageEditor.applySuggestion')} onPress={applySuggestion} disabled={busy} />
                     ) : null}
                 </View>
 
-                <Button label="Commit" primary={true} onPress={commit} disabled={busy} />
+                <Button label={t('files.commitMessageEditor.commit')} primary={true} onPress={commit} disabled={busy} />
             </View>
         </View>
     );
