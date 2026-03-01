@@ -208,6 +208,10 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
     const hadPendingTurn = Boolean(this.pendingTurn);
     if (hadPendingTurn) {
       this.ignoreNextNonSuccessResult = true;
+      const pending = this.pendingTurn;
+      this.pendingTurn = null;
+      this.pendingTurnCompletion = null;
+      pending?.reject(new Error('Turn cancelled'));
     }
 
     // Best-effort: interrupt the current execution in the Claude Code subprocess.
@@ -387,12 +391,6 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
 
     if (this.ignoreNextNonSuccessResult) {
       this.ignoreNextNonSuccessResult = false;
-      const pending = this.pendingTurn;
-      if (pending) {
-        this.pendingTurn = null;
-        this.pendingTurnCompletion = null;
-        pending.reject(new Error('Turn cancelled'));
-      }
       this.emit({ type: 'status', status: 'idle' });
       return;
     }
