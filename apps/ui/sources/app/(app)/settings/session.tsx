@@ -10,6 +10,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { LlmTaskRunnerConfigV1BackendModelPicker } from '@/components/settings/llmTasks/LlmTaskRunnerConfigV1BackendModelPicker';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useSettingMutable } from '@/sync/domains/state/storage';
@@ -38,6 +39,7 @@ export default React.memo(function SessionSettingsScreen() {
     const [sessionReplayEnabled, setSessionReplayEnabled] = useSettingMutable('sessionReplayEnabled');
     const [sessionReplayStrategy, setSessionReplayStrategy] = useSettingMutable('sessionReplayStrategy');
     const [sessionReplayRecentMessagesCount, setSessionReplayRecentMessagesCount] = useSettingMutable('sessionReplayRecentMessagesCount');
+    const [sessionReplaySummaryRunnerV1, setSessionReplaySummaryRunnerV1] = useSettingMutable('sessionReplaySummaryRunnerV1');
 
     const [sessionTagsEnabled, setSessionTagsEnabled] = useSettingMutable('sessionTagsEnabled');
 
@@ -285,6 +287,22 @@ export default React.memo(function SessionSettingsScreen() {
                                 }}
                             />
                         </View>
+
+                        {executionRunsEnabled && sessionReplayStrategy === 'summary_plus_recent' ? (
+                            <View style={[styles.inputContainer, { paddingTop: 0 }]}>
+                                <Text style={styles.fieldLabel}>
+                                    {t('settingsSession.replayResume.summaryRunner.title')}
+                                </Text>
+
+                                <LlmTaskRunnerConfigV1BackendModelPicker
+                                    value={(sessionReplaySummaryRunnerV1 as any) ?? null}
+                                    onChange={(next) => setSessionReplaySummaryRunnerV1((next as any) ?? null)}
+                                    backendTestID="settings-session-replay-summaryRunner-backend"
+                                    modelTestID="settings-session-replay-summaryRunner-model"
+                                    popoverBoundaryRef={popoverBoundaryRef}
+                                />
+                            </View>
+                        ) : null}
                     </>
                 ) : null}
             </ItemGroup>
@@ -401,6 +419,12 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         fontSize: 13,
         color: theme.colors.groupped.sectionTitle,
+        marginBottom: 4,
+    },
+    fieldLabelMuted: {
+        ...Typography.default('regular'),
+        fontSize: 12,
+        color: theme.colors.textSecondary,
         marginBottom: 4,
     },
     textInput: {
