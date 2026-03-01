@@ -8,6 +8,7 @@ class ModalManagerClass implements IModal {
     private hideAllModalsFn: (() => void) | null = null;
     private confirmResolvers: Map<string, (value: boolean) => void> = new Map();
     private promptResolvers: Map<string, (value: string | null) => void> = new Map();
+    private alertResolvers: Map<string, () => void> = new Map();
 
     setFunctions(
         showModal: (config: Omit<ModalConfig, 'id'>) => string,
@@ -41,6 +42,48 @@ class ModalManagerClass implements IModal {
             // Use native alert
             Alert.alert(title, message, buttons);
         }
+    }
+
+    async alertAsync(title: string, message?: string, buttons?: AlertButton[]): Promise<void> {
+        if (Platform.OS === 'web') {
+            if (!this.showModalFn) {
+                console.error('ModalManager not initialized. Make sure ModalProvider is mounted.');
+                return;
+            }
+
+            const modalId = this.showModalFn({
+                type: 'alert',
+                title,
+                message,
+                buttons: buttons || [{ text: t('common.ok') }],
+            } as Omit<ModalConfig, 'id'>);
+
+            return new Promise<void>((resolve) => {
+                this.alertResolvers.set(modalId, resolve);
+            });
+        }
+
+        return new Promise<void>((resolve) => {
+            let resolved = false;
+            const resolveOnce = () => {
+                if (resolved) return;
+                resolved = true;
+                resolve();
+            };
+
+            const safeButtons = (buttons && buttons.length > 0 ? buttons : [{ text: t('common.ok') }]).map((btn) => ({
+                ...btn,
+                onPress: () => {
+                    try {
+                        btn.onPress?.();
+                    } finally {
+                        resolveOnce();
+                    }
+                },
+            }));
+
+            Alert.alert(title, message, safeButtons, { cancelable: false });
+        });
     }
 
     async confirm(
@@ -138,6 +181,14 @@ class ModalManagerClass implements IModal {
         if (resolver) {
             resolver(value);
             this.confirmResolvers.delete(id);
+        }
+    }
+
+    resolveAlert(id: string): void {
+        const resolver = this.alertResolvers.get(id);
+        if (resolver) {
+            resolver();
+            this.alertResolvers.delete(id);
         }
     }
 
