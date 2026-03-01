@@ -76,7 +76,7 @@ vi.mock('@/components/settings/pickers/resolvePreferredMachineId', () => ({
 }));
 
 vi.mock('@/text', () => ({
-    t: () => 'Claude',
+    t: (key: string) => key,
 }));
 
 describe('SubAgentGuidanceRuleEditorModal', () => {
@@ -99,7 +99,7 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
         });
 
         const buttons = tree!.root.findAllByType('RoundButton' as any);
-        const saveButton = buttons.find((b: any) => b.props?.title === 'Save');
+        const saveButton = buttons.find((b: any) => b.props?.title === 'common.save');
 
         expect(saveButton).toBeTruthy();
         expect(saveButton!.props.disabled).toBe(true);
@@ -130,7 +130,7 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
         });
 
         const buttons = tree!.root.findAllByType('RoundButton' as any);
-        const saveButton = buttons.find((b: any) => b.props?.title === 'Save');
+        const saveButton = buttons.find((b: any) => b.props?.title === 'common.save');
 
         expect(saveButton).toBeTruthy();
         expect(saveButton!.props.disabled).toBe(false);

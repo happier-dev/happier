@@ -87,7 +87,7 @@ describe('SubAgentSettingsView', () => {
         });
 
         const items = tree.root.findAllByType('Item' as any);
-        const enableItem = items.find((item: any) => item?.props?.title === 'Enable Execution Runs');
+        const enableItem = items.find((item: any) => item?.props?.title === 'subAgentGuidance.settings.disabled.enableExecutionRuns.title');
         expect(enableItem).toBeTruthy();
     });
 });
