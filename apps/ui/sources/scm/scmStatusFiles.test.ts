@@ -98,4 +98,64 @@ describe('snapshotToScmStatusFiles', () => {
         });
         expect(files.pendingFiles.find((item) => item.fullPath === 'new.txt')?.status).toBe('untracked');
     });
+
+    it('memoizes derived status files per snapshot instance', () => {
+        const snapshot: ScmWorkingSnapshot = {
+            projectKey: 'machine:/repo',
+            fetchedAt: 1,
+            repo: { isRepo: true, rootPath: '/repo' },
+            capabilities: {
+                readStatus: true,
+                readDiffFile: true,
+                readDiffCommit: true,
+                readLog: true,
+                writeInclude: true,
+                writeExclude: true,
+                writeCommit: true,
+                writeCommitPathSelection: true,
+                writeCommitLineSelection: true,
+                writeBackout: true,
+                writeRemoteFetch: true,
+                writeRemotePull: true,
+                writeRemotePush: true,
+                workspaceWorktreeCreate: true,
+                changeSetModel: 'index',
+                supportedDiffAreas: ['included', 'pending', 'both'],
+            },
+            branch: { head: 'main', upstream: 'origin/main', ahead: 0, behind: 0, detached: false },
+            stashCount: 0,
+            hasConflicts: false,
+            entries: [
+                {
+                    path: 'src/a.ts',
+                    previousPath: null,
+                    kind: 'modified',
+                    includeStatus: 'M',
+                    pendingStatus: '',
+                    hasIncludedDelta: true,
+                    hasPendingDelta: false,
+                    stats: {
+                        includedAdded: 1,
+                        includedRemoved: 0,
+                        pendingAdded: 0,
+                        pendingRemoved: 0,
+                        isBinary: false,
+                    },
+                },
+            ],
+            totals: {
+                includedFiles: 1,
+                pendingFiles: 0,
+                untrackedFiles: 0,
+                includedAdded: 1,
+                includedRemoved: 0,
+                pendingAdded: 0,
+                pendingRemoved: 0,
+            },
+        };
+
+        const first = snapshotToScmStatusFiles(snapshot);
+        const second = snapshotToScmStatusFiles(snapshot);
+        expect(second).toBe(first);
+    });
 });
