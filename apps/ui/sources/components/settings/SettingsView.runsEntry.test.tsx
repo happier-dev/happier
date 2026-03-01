@@ -11,6 +11,10 @@ const routerPushSpy = vi.fn();
 vi.mock('react-native', () => ({
     View: 'View',
     Pressable: 'Pressable',
+    Dimensions: {
+        get: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
+    },
+    useWindowDimensions: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
     Platform: {
         OS: 'web',
         select: (options: any) => (options && 'default' in options ? options.default : undefined),
@@ -259,7 +263,7 @@ describe('SettingsView (runs entry)', () => {
 
         const items = tree.root.findAllByType('Item' as any);
         const voiceItem = items.find((item: any) => item?.props?.title === 'settings.voiceAssistant');
-        const sourceControlItem = items.find((item: any) => item?.props?.title === 'Source control');
+        const sourceControlItem = items.find((item: any) => item?.props?.title === 'settings.sourceControl');
         const memorySearchItem = items.find((item: any) => item?.props?.title === 'settings.memorySearch');
 
         expect(voiceItem).toBeFalsy();
@@ -279,7 +283,7 @@ describe('SettingsView (runs entry)', () => {
 
         const items = tree.root.findAllByType('Item' as any);
         const voiceItem = items.find((item: any) => item?.props?.title === 'settings.voiceAssistant');
-        const sourceControlItem = items.find((item: any) => item?.props?.title === 'Source control');
+        const sourceControlItem = items.find((item: any) => item?.props?.title === 'settings.sourceControl');
         const memorySearchItem = items.find((item: any) => item?.props?.title === 'settings.memorySearch');
 
         expect(voiceItem).toBeTruthy();

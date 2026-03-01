@@ -11,6 +11,10 @@ const linkingOpenURLSpy = vi.fn(async () => {});
 vi.mock('react-native', () => ({
     View: 'View',
     Pressable: 'Pressable',
+    Dimensions: {
+        get: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
+    },
+    useWindowDimensions: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
     Platform: {
         OS: 'web',
         select: (options: any) => (options && 'default' in options ? options.default : undefined),
@@ -204,6 +208,25 @@ describe('SettingsView', () => {
         });
 
         expect(routerPushSpy).toHaveBeenCalledWith('/server');
+    });
+
+    it('includes a System Status entry that routes to /(app)/settings/system-status', async () => {
+        const { SettingsView } = await import('./SettingsView');
+
+        let tree!: ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(SettingsView));
+        });
+
+        const items = tree.root.findAllByType('Item' as any);
+        const systemStatusItem = items.find((item: any) => item?.props?.title === 'settings.systemStatus');
+        expect(systemStatusItem).toBeTruthy();
+
+        await act(async () => {
+            systemStatusItem!.props.onPress();
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/system-status');
     });
 
     it('routes to the in-app bug report composer by default when Report issue is pressed', async () => {
