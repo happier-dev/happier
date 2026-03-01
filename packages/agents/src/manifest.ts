@@ -8,11 +8,12 @@ export const AGENTS_CORE = {
         cliSubcommand: 'claude',
         detectKey: 'claude',
         flavorAliases: [],
-        cloudConnect: { vendorKey: 'anthropic', status: 'experimental' },
+        cloudConnect: { vendorKey: 'anthropic', status: 'wired' },
         connectedServices: {
-            supportedServiceIds: ['anthropic'],
+            supportedServiceIds: ['claude-subscription', 'anthropic'],
             supportedKindsByServiceId: {
-                anthropic: ['oauth', 'token'],
+                'claude-subscription': ['oauth', 'token'],
+                anthropic: ['token'],
             },
         },
         resume: { vendorResume: 'supported', vendorResumeIdField: null, runtimeGate: null },
@@ -22,11 +23,12 @@ export const AGENTS_CORE = {
         cliSubcommand: 'codex',
         detectKey: 'codex',
         flavorAliases: ['codex-acp', 'codex-mcp'],
-        cloudConnect: { vendorKey: 'openai', status: 'experimental' },
+        cloudConnect: { vendorKey: 'openai', status: 'wired' },
         connectedServices: {
-            supportedServiceIds: ['openai-codex'],
+            supportedServiceIds: ['openai-codex', 'openai'],
             supportedKindsByServiceId: {
                 'openai-codex': ['oauth'],
+                openai: ['token'],
             },
         },
         resume: { vendorResume: 'experimental', vendorResumeIdField: 'codexSessionId', runtimeGate: null },
@@ -38,10 +40,11 @@ export const AGENTS_CORE = {
         flavorAliases: [],
         cloudConnect: null,
         connectedServices: {
-            supportedServiceIds: ['openai-codex', 'anthropic'],
+            supportedServiceIds: ['openai-codex', 'openai', 'anthropic'],
             supportedKindsByServiceId: {
                 'openai-codex': ['oauth'],
-                anthropic: ['oauth'],
+                openai: ['token'],
+                anthropic: ['token'],
             },
         },
         resume: { vendorResume: 'supported', vendorResumeIdField: 'opencodeSessionId', runtimeGate: 'acpLoadSession' },
@@ -103,9 +106,11 @@ export const AGENTS_CORE = {
         flavorAliases: ['pi-coding-agent'],
         cloudConnect: null,
         connectedServices: {
-            supportedServiceIds: ['openai-codex', 'anthropic'],
+            supportedServiceIds: ['openai-codex', 'openai', 'claude-subscription', 'anthropic'],
             supportedKindsByServiceId: {
                 'openai-codex': ['oauth'],
+                openai: ['token'],
+                'claude-subscription': ['token'],
                 anthropic: ['token'],
             },
         },
