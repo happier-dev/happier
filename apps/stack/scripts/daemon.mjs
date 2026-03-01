@@ -11,6 +11,7 @@ import {
   resolveStackDaemonStatePaths,
   resolveStackCredentialPaths,
 } from './utils/auth/credentials_paths.mjs';
+import { ensureActiveAccessKeyValid } from './utils/auth/ensure_active_access_key_valid.mjs';
 import { decodeJwtPayloadUnsafe } from './utils/auth/decode_jwt_payload_unsafe.mjs';
 import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import { existsSync, readdirSync, readFileSync, unlinkSync } from 'node:fs';
@@ -875,6 +876,17 @@ export async function startLocalDaemonWithAuth({
   const mirrored = await ensureServerScopedCredentialsFromLegacy({ cliHomeDir, internalServerUrl, env: baseEnv });
   if (mirrored.copied) {
     console.log(`[local] migrated daemon credentials to server profile: ${mirrored.source} -> ${mirrored.target}`);
+  }
+  // Repair: if the active server-scoped access key is stale/unauthorized (common when switching server scope ids),
+  // copy a valid fallback credential (url-hash scoped or legacy) into the active server scope before daemon start.
+  try {
+    const timeoutMs = parseNonNegativeInt(baseEnv.HAPPIER_STACK_CREDENTIAL_VALIDATE_TIMEOUT_MS, 2_500);
+    const repaired = await ensureActiveAccessKeyValid({ cliHomeDir, serverUrl: internalServerUrl, env: baseEnv, timeoutMs });
+    if (repaired.kind === 'repaired') {
+      console.log(`[local] repaired daemon credentials: ${repaired.sourcePath} -> ${repaired.activePath}`);
+    }
+  } catch {
+    // best-effort only; daemon start can still proceed and surface auth errors if any remain.
   }
 
   const existing = checkDaemonState(cliHomeDir, { serverUrl: internalServerUrl, env: daemonEnv });
