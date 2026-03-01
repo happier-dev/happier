@@ -48,6 +48,7 @@ export type SessionFilesScreenBodyProps = Readonly<{
     inFlightScmOperation: InFlightOperation;
     isSessionInactive: boolean;
     machineReachable: boolean;
+    machineRpcTargetAvailable: boolean;
 
     backendLabel: string;
     commitActionLabel: string;
@@ -171,7 +172,7 @@ export function SessionFilesScreenBody(props: SessionFilesScreenBodyProps) {
             ) : props.scmSnapshot && !props.scmSnapshot.repo.isRepo ? (
                 <NotSourceControlRepositoryState />
             ) : !props.scmSnapshot && props.scmSnapshotError ? (
-                props.isSessionInactive ? (
+                props.isSessionInactive && !props.machineRpcTargetAvailable ? (
                     <SourceControlSessionInactiveState
                         machineReachable={props.machineReachable}
                         onOpenSession={props.onOpenSession}
