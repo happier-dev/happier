@@ -10,6 +10,7 @@ NO_PATH_UPDATE="${HAPPIER_NO_PATH_UPDATE:-0}"
 NONINTERACTIVE="${HAPPIER_NONINTERACTIVE:-0}"
 ACTION="${HAPPIER_INSTALLER_ACTION:-install}" # install|reinstall|version|check|uninstall|restart
 DEBUG_MODE="${HAPPIER_INSTALLER_DEBUG:-0}"
+VERBOSE_MODE="${HAPPIER_INSTALLER_VERBOSE:-0}"
 PURGE_INSTALL_DIR="${HAPPIER_INSTALLER_PURGE:-0}"
 GITHUB_REPO="${HAPPIER_GITHUB_REPO:-happier-dev/happier}"
 GITHUB_TOKEN="${HAPPIER_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}"
@@ -310,6 +311,10 @@ tar_extract_gz() {
   # GNU tar on Linux emits noisy, non-actionable warnings when extracting archives created by bsdtar/libarchive:
   #   "Ignoring unknown extended header keyword 'LIBARCHIVE.xattr...'"
   # Filter those while preserving real errors.
+  if [[ "${VERBOSE_MODE}" == "1" ]]; then
+    tar -xzf "${archive_path}" -C "${dest_dir}"
+    return
+  fi
   tar -xzf "${archive_path}" -C "${dest_dir}" 2> >(grep -v -E "^tar: Ignoring unknown extended header keyword" >&2 || true)
 }
 
@@ -411,6 +416,7 @@ Options:
   --restart
   --uninstall [--purge]
   --reset
+  --verbose
   --debug
   -h, --help
 EOF
@@ -481,8 +487,13 @@ while [[ $# -gt 0 ]]; do
       PURGE_INSTALL_DIR="1"
       shift 1
       ;;
+    --verbose)
+      VERBOSE_MODE="1"
+      shift 1
+      ;;
     --debug)
       DEBUG_MODE="1"
+      VERBOSE_MODE="1"
       shift 1
       ;;
     -h|--help)
@@ -502,6 +513,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "${DEBUG_MODE}" == "1" ]]; then
+  VERBOSE_MODE="1"
   set -x
 fi
 
@@ -795,7 +807,7 @@ fi
 
 TMP_DIR="$(mktemp -d)"
 cleanup() {
-  if [[ "${DEBUG_MODE}" == "1" ]]; then
+  if [[ "${DEBUG_MODE}" == "1" || "${VERBOSE_MODE}" == "1" ]]; then
     return
   fi
   rm -rf "${TMP_DIR}"
