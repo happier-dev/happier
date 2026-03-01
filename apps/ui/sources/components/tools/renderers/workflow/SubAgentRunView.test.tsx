@@ -8,6 +8,10 @@ vi.mock('@/components/tools/renderers/system/StructuredResultView', () => ({
     StructuredResultView: () => React.createElement('StructuredResultView'),
 }));
 
+vi.mock('@/text', () => ({
+    t: (key: string) => key,
+}));
+
 describe('SubAgentRunView', () => {
     it('renders sidechain text messages while running (detailLevel=full)', async () => {
         const { SubAgentRunView } = await import('./SubAgentRunView');
@@ -59,7 +63,7 @@ describe('SubAgentRunView', () => {
         });
 
         const text = tree.root.findAllByType('Text').map((n: any) => String(n.props.children)).join('\n');
-        expect(text).toContain('Review digest');
+        expect(text).toContain('tools.subAgentRunView.reviewDigestTitle');
         expect(text).toContain('Avoid any');
     });
 
@@ -82,7 +86,7 @@ describe('SubAgentRunView', () => {
         });
 
         const text = tree.root.findAllByType('Text').map((n: any) => String(n.props.children)).join('\\n');
-        expect(text).toContain('Plan');
+        expect(text).toContain('tools.subAgentRunView.planTitle');
         expect(text).toContain('Do A then B.');
     });
 
@@ -105,7 +109,7 @@ describe('SubAgentRunView', () => {
         });
 
         const text = tree.root.findAllByType('Text').map((n: any) => String(n.props.children)).join('\\n');
-        expect(text).toContain('Delegate');
+        expect(text).toContain('tools.subAgentRunView.delegateTitle');
         expect(text).toContain('Delegated output.');
     });
 });
