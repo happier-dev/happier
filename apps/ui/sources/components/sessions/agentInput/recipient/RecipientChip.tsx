@@ -96,7 +96,9 @@ export const RecipientChip = React.memo(function RecipientChip(props: RecipientC
                 {({ maxHeight }) => (
                     <AgentInputPopoverSurface maxHeight={maxHeight} scrollEnabled keyboardShouldPersistTaps="handled">
                         <View style={{ paddingHorizontal: 12, paddingVertical: 10, gap: 8 }}>
-                            <Text style={{ fontSize: 12, fontWeight: '600' }}>{t('session.participants.sendToTitle')}</Text>
+                            <Text style={{ fontSize: 12, fontWeight: '600', color: theme.colors.textSecondary }}>
+                                {t('session.participants.sendToTitle')}
+                            </Text>
 
                             <Pressable
                                 onPress={() => {
@@ -108,7 +110,7 @@ export const RecipientChip = React.memo(function RecipientChip(props: RecipientC
                                     opacity: pressed ? 0.7 : 1,
                                 })}
                             >
-                                <Text style={{ fontSize: 13 }}>{t('session.participants.lead')}</Text>
+                                <Text style={{ fontSize: 13, color: theme.colors.text }}>{t('session.participants.lead')}</Text>
                             </Pressable>
 
                             {props.targets.map((target) => (
@@ -136,7 +138,7 @@ export const RecipientChip = React.memo(function RecipientChip(props: RecipientC
                                                 }}
                                             />
                                         ) : null}
-                                        <Text style={{ fontSize: 13 }}>{resolveTargetLabel(target)}</Text>
+                                        <Text style={{ fontSize: 13, color: theme.colors.text }}>{resolveTargetLabel(target)}</Text>
                                     </View>
                                 </Pressable>
                             ))}

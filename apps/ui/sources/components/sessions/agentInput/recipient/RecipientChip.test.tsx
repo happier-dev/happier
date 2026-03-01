@@ -21,6 +21,17 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props),
 }));
 
+vi.mock('react-native-unistyles', () => ({
+    useUnistyles: () => ({
+        theme: {
+            colors: {
+                text: '#f4f4f4',
+                textSecondary: '#9ca3af',
+            },
+        },
+    }),
+}));
+
 vi.mock('@/text', () => ({
     t: (key: string, vars?: Record<string, unknown>) => {
         if (vars && typeof vars.label === 'string') return `${key}:${vars.label}`;
@@ -81,5 +92,48 @@ describe('RecipientChip', () => {
 
         expect(tree!.toJSON()).not.toBeNull();
         expect(capturedPopoverProps?.portal?.web).toBe(true);
+    });
+
+    it('styles recipient popover text with theme colors for dark mode contrast', async () => {
+        const { RecipientChip } = await import('./RecipientChip');
+        const ctx = {
+            chipStyle: () => ({ padding: 4 }),
+            iconColor: '#000',
+            showLabel: true,
+            textStyle: {},
+            popoverAnchorRef: null,
+        } as any;
+
+        act(() => {
+            renderer.create(
+                <RecipientChip
+                    ctx={ctx}
+                    targets={[
+                        {
+                            key: 'agent_team_member:team_1:alpha',
+                            displayLabel: 'alpha',
+                            recipient: { kind: 'agent_team_member', teamId: 'team_1', memberId: 'alpha' },
+                        },
+                    ]}
+                    recipient={null}
+                    onRecipientChange={() => {}}
+                />,
+            );
+        });
+
+        expect(typeof capturedPopoverProps?.children).toBe('function');
+        let popoverTree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            popoverTree = renderer.create(capturedPopoverProps.children({ maxHeight: 240 }));
+        });
+        expect(popoverTree).not.toBeNull();
+        const textNodes = popoverTree!.root.findAllByType('Text');
+        const leadNode = textNodes.find((node) => node.props.children === 'session.participants.lead');
+        const titleNode = textNodes.find((node) => node.props.children === 'session.participants.sendToTitle');
+        const teammateNode = textNodes.find((node) => node.props.children === 'alpha');
+
+        expect(leadNode?.props.style).toMatchObject({ color: '#f4f4f4' });
+        expect(teammateNode?.props.style).toMatchObject({ color: '#f4f4f4' });
+        expect(titleNode?.props.style).toMatchObject({ color: '#9ca3af' });
     });
 });

@@ -79,4 +79,30 @@ describe('useSessionRecipientState', () => {
         expect(hook.getCurrent().recipient?.kind).toBe('agent_team_broadcast');
         hook.unmount();
     });
+
+    it('accepts autoRecipient for agent_team_member when member id matches but team id differs', async () => {
+        const targetRecipient: ParticipantRecipientV1 = {
+            kind: 'agent_team_member',
+            teamId: 'repo-inspectors',
+            memberId: 'readme-inspector@snoopy-splashing-patterson',
+            memberLabel: 'readme-inspector',
+        };
+        const autoRecipient: ParticipantRecipientV1 = {
+            kind: 'agent_team_member',
+            teamId: 'snoopy-splashing-patterson',
+            memberId: 'readme-inspector@snoopy-splashing-patterson',
+            memberLabel: 'readme-inspector',
+        };
+
+        const hook = await renderHook(() =>
+            useSessionRecipientState({
+                targets: [target(targetRecipient)],
+                autoRecipient,
+            }),
+        );
+
+        expect(hook.getCurrent().recipient?.kind).toBe('agent_team_member');
+        expect((hook.getCurrent().recipient as any)?.memberId).toBe('readme-inspector@snoopy-splashing-patterson');
+        hook.unmount();
+    });
 });

@@ -16,7 +16,10 @@ function recipientsEqual(a: ParticipantRecipientV1 | null, b: ParticipantRecipie
         return a.teamId === bb.teamId;
     }
     const bb = b as Extract<ParticipantRecipientV1, { kind: 'agent_team_member' }>;
-    return a.teamId === bb.teamId && a.memberId === bb.memberId;
+    // Claude can emit an internal runtime team id in teammate tool payloads while the user-facing
+    // team id in participant targets comes from TeamCreate input. Member ids are globally unique
+    // within a session (`name@internal-team-id`), so prefer member-id equality for matching.
+    return a.memberId === bb.memberId;
 }
 
 function isRecipientAvailable(targets: readonly SessionParticipantTarget[], recipient: ParticipantRecipientV1): boolean {
