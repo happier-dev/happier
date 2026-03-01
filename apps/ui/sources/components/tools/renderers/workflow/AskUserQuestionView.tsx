@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, TextInput } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
@@ -22,6 +22,10 @@ interface Question {
     header: string;
     options: QuestionOption[];
     multiSelect: boolean;
+    freeform?: {
+        placeholder?: string;
+        description?: string;
+    };
 }
 
 interface AskUserQuestionInput {
@@ -139,6 +143,23 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.textSecondary,
         marginTop: 2,
     },
+    freeformInput: {
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        borderRadius: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 12,
+        fontSize: 14,
+        color: theme.colors.text,
+        backgroundColor: theme.colors.surface,
+        minHeight: 44,
+    },
+    freeformDescription: {
+        fontSize: 13,
+        color: theme.colors.textSecondary,
+        marginTop: 6,
+        marginLeft: 2,
+    },
     actionsContainer: {
         flexDirection: 'row',
         gap: 12,
@@ -186,6 +207,7 @@ const styles = StyleSheet.create((theme) => ({
 export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId, interaction }) => {
     const { theme } = useUnistyles();
     const [selections, setSelections] = React.useState<Map<number, Set<number>>>(new Map());
+    const [freeformAnswers, setFreeformAnswers] = React.useState<Map<number, string>>(new Map());
     const [isSubmitting, setIsSubmitting] = React.useState(false);
     const [isSubmitted, setIsSubmitted] = React.useState(false);
 
@@ -209,8 +231,14 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
 
     // Check if all questions have at least one selection
     const allQuestionsAnswered = questions.every((_, qIndex) => {
+        const q = questions[qIndex];
+        const options = Array.isArray(q?.options) ? q.options : [];
+        if (options.length === 0) {
+            const value = freeformAnswers.get(qIndex);
+            return typeof value === 'string' && value.trim().length > 0;
+        }
         const selected = selections.get(qIndex);
-        return selected && selected.size > 0;
+        return Boolean(selected && selected.size > 0);
     });
 
     const handleOptionToggle = React.useCallback((questionIndex: number, optionIndex: number, multiSelect: boolean) => {
@@ -253,17 +281,25 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
         const responseLines: string[] = [];
         const answers: Record<string, string> = {};
         questions.forEach((q, qIndex) => {
+            const questionKey = typeof q.question === 'string' && q.question.trim().length > 0 ? q.question : q.header;
+            const options = Array.isArray(q.options) ? q.options : [];
+            if (options.length === 0) {
+                const typed = freeformAnswers.get(qIndex);
+                const typedText = typeof typed === 'string' ? typed.trim() : '';
+                if (typedText.length > 0) {
+                    responseLines.push(`${q.header}: ${typedText}`);
+                    answers[questionKey] = typedText;
+                }
+                return;
+            }
+
             const selected = selections.get(qIndex);
             if (selected && selected.size > 0) {
                 const selectedLabelsArray = Array.from(selected)
-                    .map(optIndex => q.options[optIndex]?.label)
-                    .filter(Boolean)
+                    .map(optIndex => options[optIndex]?.label)
+                    .filter(Boolean);
                 const selectedLabelsText = selectedLabelsArray.join(', ');
                 responseLines.push(`${q.header}: ${selectedLabelsText}`);
-
-                // Claude Code AskUserQuestion expects `answers` keyed by the *question text*,
-                // with values as strings (multi-select is comma-separated).
-                const questionKey = typeof q.question === 'string' && q.question.trim().length > 0 ? q.question : q.header;
                 answers[questionKey] = selectedLabelsText;
             }
         });
@@ -298,7 +334,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
         } finally {
             setIsSubmitting(false);
         }
-    }, [sessionId, questions, selections, allQuestionsAnswered, isSubmitting, tool.permission?.id]);
+    }, [sessionId, questions, selections, freeformAnswers, allQuestionsAnswered, isSubmitting, tool.permission?.id]);
 
     // Show submitted state
     if (isSubmitted || tool.state === 'completed') {
@@ -309,13 +345,19 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                     {questions.map((q, qIndex) => {
                         const selected = selections.get(qIndex);
                         const questionKey = typeof q.question === 'string' && q.question.trim().length > 0 ? q.question : q.header;
+                        const options = Array.isArray(q.options) ? q.options : [];
+                        const freeform = freeformAnswers.get(qIndex);
                         const selectedLabels =
-                            selected && selected.size > 0
-                                ? Array.from(selected)
-                                    .map(optIndex => q.options[optIndex]?.label)
-                                    .filter(Boolean)
-                                    .join(', ')
-                                : (answersFromResult?.[questionKey] ?? '-');
+                            options.length === 0
+                                ? ((typeof freeform === 'string' && freeform.trim().length > 0)
+                                    ? freeform.trim()
+                                    : (answersFromResult?.[questionKey] ?? '-'))
+                                : (selected && selected.size > 0
+                                    ? Array.from(selected)
+                                        .map(optIndex => options[optIndex]?.label)
+                                        .filter(Boolean)
+                                        .join(', ')
+                                    : (answersFromResult?.[questionKey] ?? '-'));
                         return (
                             <View key={qIndex} style={styles.submittedItem}>
                                 <Text style={styles.submittedHeader}>{q.header}:</Text>
@@ -338,6 +380,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                 ) : null}
                 {questions.map((question, qIndex) => {
                     const selectedOptions = selections.get(qIndex) || new Set();
+                    const options = Array.isArray(question.options) ? question.options : [];
 
                     return (
                         <View key={qIndex} style={styles.questionSection}>
@@ -346,7 +389,31 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                             </View>
                             <Text style={styles.questionText}>{question.question}</Text>
                             <View style={styles.optionsContainer}>
-                                {question.options.map((option, oIndex) => {
+                                {options.length === 0 ? (
+                                    <View>
+                                        <TextInput
+                                            style={styles.freeformInput}
+                                            value={freeformAnswers.get(qIndex) ?? ''}
+                                            onChangeText={(text) => {
+                                                if (!canInteract) return;
+                                                setFreeformAnswers((prev) => {
+                                                    const next = new Map(prev);
+                                                    next.set(qIndex, text);
+                                                    return next;
+                                                });
+                                            }}
+                                            placeholder={question.freeform?.placeholder ?? t('tools.askUserQuestion.otherPlaceholder')}
+                                            placeholderTextColor={theme.colors.textSecondary}
+                                            editable={canInteract}
+                                            autoCapitalize="none"
+                                            autoCorrect={false}
+                                        />
+                                        {question.freeform?.description ? (
+                                            <Text style={styles.freeformDescription}>{question.freeform.description}</Text>
+                                        ) : null}
+                                    </View>
+                                ) : null}
+                                {options.map((option, oIndex) => {
                                     const isSelected = selectedOptions.has(oIndex);
 
                                     return (

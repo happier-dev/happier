@@ -72,6 +72,26 @@ describe('AskUserQuestionView', () => {
         });
     }
 
+    function makeFreeformTool(overrides: Partial<ToolCall> = {}): ToolCall {
+        return makeToolCall({
+            name: 'AskUserQuestion',
+            state: 'running',
+            input: {
+                questions: [
+                    {
+                        header: 'Q1',
+                        question: 'Which file should I inspect?',
+                        multiSelect: false,
+                        options: [],
+                    },
+                ],
+            },
+            completedAt: null,
+            permission: { id: 'toolu_1', status: 'pending' },
+            ...overrides,
+        });
+    }
+
     async function renderView(tool: ToolCall, overrides: Record<string, unknown> = {}) {
         const { AskUserQuestionView } = await import('./AskUserQuestionView');
         let tree: renderer.ReactTestRenderer | undefined;
@@ -101,6 +121,20 @@ describe('AskUserQuestionView', () => {
             return labels.includes('tools.askUserQuestion.submit');
         });
         expect(submit).toBeTruthy();
+        await act(async () => {
+            await submit!.props.onPress();
+        });
+    }
+
+    async function fillFreeformAndSubmit(tree: renderer.ReactTestRenderer, answer: string) {
+        const input = tree.root.findByType('TextInput' as any);
+        await act(async () => {
+            input.props.onChangeText(answer);
+        });
+
+        const submit = findPressableByText(tree, 'tools.askUserQuestion.submit');
+        expect(submit).toBeTruthy();
+        expect(submit!.props.disabled).toBe(false);
         await act(async () => {
             await submit!.props.onPress();
         });
@@ -188,5 +222,17 @@ describe('AskUserQuestionView', () => {
 
         const texts = collectHostText(tree);
         expect(texts).toContain('session.sharing.permissionApprovalsDisabledNotGranted');
+    });
+
+    it('supports freeform questions with no options by submitting typed answers', async () => {
+        sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
+
+        const tree = await renderView(makeFreeformTool());
+        await fillFreeformAndSubmit(tree, 'README.md');
+
+        expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(1);
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', { 'Which file should I inspect?': 'README.md' });
+        expect(sessionDeny).toHaveBeenCalledTimes(0);
+        expect(sendMessage).toHaveBeenCalledTimes(0);
     });
 });
