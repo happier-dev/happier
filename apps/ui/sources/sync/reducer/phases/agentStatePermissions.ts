@@ -145,6 +145,29 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                             };
                             hasChanged = true;
                         }
+                        if (message.tool.permission && message.tool.permission.status !== 'pending') {
+                            // AgentState.requests is the authoritative source of truth for pending user input.
+                            // If a tool was previously marked canceled/denied due to a transient UI disconnect
+                            // (e.g. web reload), restore it back to pending so the user can answer.
+                            message.tool.permission.status = 'pending';
+                            delete (message.tool.permission as any).reason;
+                            delete (message.tool.permission as any).decision;
+                            delete (message.tool.permission as any).mode;
+                            delete (message.tool.permission as any).allowedTools;
+                            delete (message.tool.permission as any).date;
+
+                            // Reset tool execution state so the renderer can re-surface the interactive UI.
+                            if (message.tool.state !== 'running') {
+                                message.tool.state = 'running';
+                            }
+                            if (message.tool.completedAt !== null) {
+                                message.tool.completedAt = null;
+                            }
+                            if (message.tool.result !== undefined) {
+                                message.tool.result = undefined;
+                            }
+                            hasChanged = true;
+                        }
                         if (message.tool.permission && typeof request.kind === 'string' && message.tool.permission.kind !== request.kind) {
                             message.tool.permission.kind = request.kind;
                             hasChanged = true;
