@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { encodeBase64, encryptLegacy } from '@/api/encryption';
 import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 
+import type { AutomationDaemonAssignmentsResponse } from './automationTypes';
+
 const TEST_ENCRYPTION = {
   type: 'legacy' as const,
   secret: new Uint8Array(32).fill(7),
@@ -58,8 +60,45 @@ type RecordedState = {
   pendingMaterialize: unknown[];
 };
 
+function buildDefaultAssignments(params: {
+  machineId: string;
+  claimRunOnce: { run: Record<string, unknown>; automation: Record<string, unknown> };
+}): AutomationDaemonAssignmentsResponse['assignments'] {
+  const now = Date.now();
+  const dueAt = params.claimRunOnce.run.dueAt;
+  const nextRunAt = typeof dueAt === 'number' && Number.isFinite(dueAt) ? dueAt : now;
+
+  return [
+    {
+      machineId: params.machineId,
+      enabled: true,
+      priority: 0,
+      updatedAt: now,
+      automation: {
+        id: String(params.claimRunOnce.automation.id),
+        name: String(params.claimRunOnce.automation.name),
+        enabled: Boolean(params.claimRunOnce.automation.enabled),
+        schedule: {
+          kind: 'interval',
+          scheduleExpr: null,
+          everyMs: 60_000,
+          timezone: null,
+        },
+        targetType:
+          params.claimRunOnce.automation.targetType === 'existing_session' ? 'existing_session' : 'new_session',
+        templateCiphertext: String(params.claimRunOnce.automation.templateCiphertext),
+        templateVersion: 1,
+        nextRunAt,
+        lastRunAt: null,
+        updatedAt: now,
+      },
+    },
+  ];
+}
+
 async function startAutomationServer(params: {
   claimRunOnce: { run: Record<string, unknown>; automation: Record<string, unknown> } | null;
+  assignments?: AutomationDaemonAssignmentsResponse['assignments'];
   missingAutomationRoutes?: boolean;
 }): Promise<{ baseUrl: string; close: () => Promise<void>; state: RecordedState }> {
   const state: RecordedState = {
@@ -79,7 +118,11 @@ async function startAutomationServer(params: {
     state.requests.push(`${String(request.method ?? 'GET').toUpperCase()} ${url.pathname}`);
 
     if (!params.missingAutomationRoutes && request.method === 'GET' && url.pathname === '/v2/automations/daemon/assignments') {
-      writeJson(response, 200, { assignments: [] });
+      const machineId = url.searchParams.get('machineId') ?? 'machine-unknown';
+      const assignments =
+        params.assignments ??
+        (params.claimRunOnce ? buildDefaultAssignments({ machineId, claimRunOnce: params.claimRunOnce }) : []);
+      writeJson(response, 200, { assignments });
       return;
     }
 
