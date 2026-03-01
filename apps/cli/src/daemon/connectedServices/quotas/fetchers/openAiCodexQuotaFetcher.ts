@@ -1,21 +1,7 @@
 import type { ConnectedServiceQuotaFetcher } from '../types';
 import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function normalizeNonEmptyString(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed ? trimmed : null;
-}
-
-function normalizePct(value: unknown): number | null {
-  const num = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(num)) return null;
-  return Math.max(0, Math.min(100, num));
-}
+import { isRecord, normalizeNonEmptyString, normalizePct, resolveConnectedServiceQuotaAccountLabel } from '../quotaNormalization';
 
 function normalizeResetAtMs(value: unknown): number | null {
   const num = typeof value === 'number' ? value : Number(value);
@@ -25,9 +11,7 @@ function normalizeResetAtMs(value: unknown): number | null {
 }
 
 function resolveAccountLabel(record: ConnectedServiceCredentialRecordV1): string | null {
-  if (record.kind === 'oauth') return record.oauth.providerEmail ?? null;
-  if (record.kind === 'token') return record.token.providerEmail ?? null;
-  return null;
+  return resolveConnectedServiceQuotaAccountLabel(record);
 }
 
 export function createOpenAiCodexQuotaFetcher(params?: Readonly<{

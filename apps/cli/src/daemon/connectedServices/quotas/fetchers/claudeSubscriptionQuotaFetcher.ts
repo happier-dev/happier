@@ -4,15 +4,7 @@ import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
 const DEFAULT_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const DEFAULT_BETA_HEADER_VALUE = 'oauth-2025-04-20';
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function normalizePct(value: unknown): number | null {
-  const num = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(num)) return null;
-  return Math.max(0, Math.min(100, num));
-}
+import { isRecord, normalizePct, resolveConnectedServiceQuotaAccountLabel } from '../quotaNormalization';
 
 function parseIsoDateMs(value: unknown): number | null {
   if (typeof value !== 'string') return null;
@@ -23,9 +15,7 @@ function parseIsoDateMs(value: unknown): number | null {
 }
 
 function resolveAccountLabel(record: ConnectedServiceCredentialRecordV1): string | null {
-  if (record.kind === 'oauth') return record.oauth.providerEmail ?? null;
-  if (record.kind === 'token') return record.token.providerEmail ?? null;
-  return null;
+  return resolveConnectedServiceQuotaAccountLabel(record);
 }
 
 const WINDOW_LABELS: Readonly<Record<string, string>> = Object.freeze({
@@ -37,7 +27,7 @@ const WINDOW_LABELS: Readonly<Record<string, string>> = Object.freeze({
   iguana_necktie: 'Unknown',
 });
 
-export function createAnthropicQuotaFetcher(params?: Readonly<{
+export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
   usageUrl?: string;
   betaHeaderValue?: string;
   staleAfterMs?: number;
@@ -52,7 +42,7 @@ export function createAnthropicQuotaFetcher(params?: Readonly<{
   const userAgent = params?.userAgent ?? 'happier';
 
   return {
-    serviceId: 'anthropic',
+    serviceId: 'claude-subscription',
     fetch: async ({ record, now, signal }) => {
       if (record.kind !== 'oauth') return null;
 

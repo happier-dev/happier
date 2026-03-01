@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ConnectedServiceQuotaSnapshotV1Schema, buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 
-import { createAnthropicQuotaFetcher } from './anthropicQuotaFetcher';
+import { createClaudeSubscriptionQuotaFetcher } from './claudeSubscriptionQuotaFetcher';
 
-describe('createAnthropicQuotaFetcher', () => {
-  it('fetches and parses Anthropic oauth usage into a quota snapshot', async () => {
+describe('createClaudeSubscriptionQuotaFetcher', () => {
+  it('fetches and parses Claude subscription oauth usage into a quota snapshot', async () => {
     const now = 1_000_000;
     const fetchMock = vi.fn(async (_input: unknown, _init?: unknown) => ({
       ok: true,
@@ -19,7 +19,7 @@ describe('createAnthropicQuotaFetcher', () => {
 
     const record = buildConnectedServiceCredentialRecord({
       now,
-      serviceId: 'anthropic',
+      serviceId: 'claude-subscription',
       profileId: 'work',
       kind: 'oauth',
       expiresAt: now + 60_000,
@@ -34,7 +34,8 @@ describe('createAnthropicQuotaFetcher', () => {
       },
     });
 
-    const fetcher = createAnthropicQuotaFetcher({ staleAfterMs: 300_000 });
+    const fetcher = createClaudeSubscriptionQuotaFetcher({ staleAfterMs: 300_000 });
+    expect(fetcher.serviceId).toBe('claude-subscription');
     const snapshot = await fetcher.fetch({ record, now, signal: new AbortController().signal });
 
     const parsed = ConnectedServiceQuotaSnapshotV1Schema.safeParse(snapshot);
