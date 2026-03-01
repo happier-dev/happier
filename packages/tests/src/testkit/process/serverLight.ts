@@ -1,7 +1,9 @@
 import { mkdirSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomInt } from 'node:crypto';
 import { createServer } from 'node:net';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import { repoRootDir } from '../paths';
 import { runLoggedCommand, spawnLoggedProcess, type SpawnedProcess } from './spawnProcess';
@@ -54,6 +56,23 @@ export function shouldRetryServerStart(params: {
 
 function composeServerStartTail(stderrTail: string, stdoutTail: string): string {
   return `${stderrTail}\n${stdoutTail}`.trim();
+}
+
+async function readUtf8Tail(filePath: string, maxChars: number): Promise<string> {
+  try {
+    const raw = await readFile(filePath, 'utf8');
+    return raw.length > maxChars ? raw.slice(-maxChars) : raw;
+  } catch {
+    return '';
+  }
+}
+
+function shouldRetryPgliteWasmTrap(params: { attempt: number; maxAttempts: number; stderrTail: string }): boolean {
+  if (params.attempt >= params.maxAttempts) return false;
+  const idx = params.stderrTail.lastIndexOf('RuntimeError: unreachable');
+  if (idx < 0) return false;
+  // Ensure the trap shows up near the end of stderr (avoid retrying on stale earlier attempts).
+  return idx > Math.max(0, params.stderrTail.length - 2_000);
 }
 
 function attachServerStartTailToError(params: {
@@ -205,6 +224,8 @@ export async function startServerLight(params: {
     CI: '1',
     // Avoid global port conflicts during test runs.
     METRICS_ENABLED: 'false',
+    // Core E2E assumes a fresh auth key can always mint an account token unless a test explicitly disables it.
+    AUTH_ANONYMOUS_SIGNUP_ENABLED: mergedEnv.AUTH_ANONYMOUS_SIGNUP_ENABLED ?? 'true',
     // Core E2E suite expects public file storage to work without extra services (Minio/S3).
     HAPPIER_FILES_BACKEND: 'local',
     HAPPY_SERVER_LIGHT_DATA_DIR: dataDir,
@@ -255,24 +276,41 @@ export async function startServerLight(params: {
   // Ensure the light database schema exists before the server boots.
   // Server light uses pglite + Prisma but does not auto-migrate on startup.
   const migrateArgs = resolveMigrateCommandArgs(dbProvider);
-  await runLoggedCommand({
-    command: yarnCommand(),
-    args: migrateArgs,
-    cwd: repoRootDir(),
-    env: {
-      ...baseEnv,
-      PORT: '0',
-      PUBLIC_URL: 'http://127.0.0.1:0',
-      ...(dbProvider === 'sqlite'
-        ? { DATABASE_URL: sqliteUrl }
-        : dbProvider === 'postgres' || dbProvider === 'mysql'
-          ? { DATABASE_URL: databaseUrlForExternalProvider }
-          : {}),
-    },
-    stdoutPath: resolve(params.testDir, 'server.migrate.stdout.log'),
-    stderrPath: resolve(params.testDir, 'server.migrate.stderr.log'),
-    timeoutMs: 180_000,
-  });
+  const migrateStdoutPath = resolve(params.testDir, 'server.migrate.stdout.log');
+  const migrateStderrPath = resolve(params.testDir, 'server.migrate.stderr.log');
+  const migrateEnv: NodeJS.ProcessEnv = {
+    ...baseEnv,
+    PORT: '0',
+    PUBLIC_URL: 'http://127.0.0.1:0',
+    ...(dbProvider === 'sqlite'
+      ? { DATABASE_URL: sqliteUrl }
+      : dbProvider === 'postgres' || dbProvider === 'mysql'
+        ? { DATABASE_URL: databaseUrlForExternalProvider }
+        : {}),
+  };
+  const migrateMaxAttempts = dbProvider === 'pglite' ? 3 : 1;
+  for (let attempt = 1; attempt <= migrateMaxAttempts; attempt++) {
+    try {
+      await runLoggedCommand({
+        command: yarnCommand(),
+        args: migrateArgs,
+        cwd: repoRootDir(),
+        env: migrateEnv,
+        stdoutPath: migrateStdoutPath,
+        stderrPath: migrateStderrPath,
+        timeoutMs: 180_000,
+      });
+      break;
+    } catch (error) {
+      const stderrTail = await readUtf8Tail(migrateStderrPath, 8_000);
+      if (dbProvider === 'pglite' && shouldRetryPgliteWasmTrap({ attempt, maxAttempts: migrateMaxAttempts, stderrTail })) {
+        await sleep(250);
+        continue;
+      }
+      const stdoutTail = await readUtf8Tail(migrateStdoutPath, 8_000);
+      throw attachServerStartTailToError({ error, stderrTail, stdoutTail });
+    }
+  }
 
   const portAllocator = params.__portAllocator ?? (async () => pickPortCandidate());
   const maxAttempts = 5;
