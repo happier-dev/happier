@@ -640,6 +640,12 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="settings/add-phone"
+                options={{
+                    headerTitle: t('settings.addYourPhone'),
+                }}
+            />
+            <Stack.Screen
                 name="settings/appearance"
                 options={{
                     headerTitle: t('settings.appearance'),
@@ -661,6 +667,18 @@ export default function RootLayout() {
                 name="settings/report-issue"
                 options={{
                     headerTitle: t('settings.reportIssue'),
+                }}
+            />
+            <Stack.Screen
+                name="settings/system-status"
+                options={{
+                    headerTitle: t('settings.systemStatus'),
+                }}
+            />
+            <Stack.Screen
+                name="settings/diagnosis"
+                options={{
+                    headerTitle: t('diagnosis.title'),
                 }}
             />
             <Stack.Screen
@@ -691,6 +709,18 @@ export default function RootLayout() {
                 name="terminal/index"
                 options={{
                     headerTitle: t('navigation.connectTerminal'),
+                }}
+            />
+            <Stack.Screen
+                name="scan/terminal"
+                options={{
+                    headerShown: false,
+                }}
+            />
+            <Stack.Screen
+                name="scan/account"
+                options={{
+                    headerShown: false,
                 }}
             />
             <Stack.Screen
