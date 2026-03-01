@@ -77,6 +77,13 @@ vi.mock('@/sync/domains/connectedServices/storeConnectedServiceCredentialForAcco
   deleteConnectedServiceCredentialForAccount: vi.fn(async () => {}),
 }));
 
+vi.mock('@/components/ui/lists/ItemRowActions', () => {
+  const React = require('react');
+  return {
+    ItemRowActions: (props: any) => React.createElement('ItemRowActions', props, props.children),
+  };
+});
+
 const { getConnectedServiceQuotaSnapshotSealedSpy } = vi.hoisted(() => ({
   getConnectedServiceQuotaSnapshotSealedSpy: vi.fn<
     (...args: Parameters<typeof getConnectedServiceQuotaSnapshotSealed>) => ReturnType<typeof getConnectedServiceQuotaSnapshotSealed>
@@ -131,7 +138,7 @@ describe('ConnectedServiceDetailView quotas', () => {
     });
 
     const items = tree.root.findAll((n) => typeof n.props?.title === 'string' && typeof n.props?.onPress === 'function');
-    expect(items.length).toBe(1);
+    expect(items.length).toBe(0);
   });
 
   it('persists pinned meter ids via settings when toggled', async () => {

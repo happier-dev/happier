@@ -66,6 +66,13 @@ vi.mock('@/sync/domains/connectedServices/storeConnectedServiceCredentialForAcco
   deleteConnectedServiceCredentialForAccount: vi.fn(async () => {}),
 }));
 
+vi.mock('@/components/ui/lists/ItemRowActions', () => {
+  const React = require('react');
+  return {
+    ItemRowActions: (props: any) => React.createElement('ItemRowActions', props, props.children),
+  };
+});
+
 describe('ConnectedServiceDetailView profile id validation', () => {
   beforeEach(() => {
     connectedServicesEnabled = true;
@@ -80,7 +87,7 @@ describe('ConnectedServiceDetailView profile id validation', () => {
       tree = renderer.create(<ConnectedServiceDetailView />);
     });
 
-    const add = tree.root.find((n) => n.props?.title === 'Add OAuth profile');
+    const add = tree.root.find((n) => n.props?.testID === 'connected-services-action:add-oauth-profile-device');
     await act(async () => {
       await add.props.onPress?.();
     });
@@ -102,12 +109,21 @@ describe('ConnectedServiceDetailView profile id validation', () => {
       tree = renderer.create(<ConnectedServiceDetailView />);
     });
 
-    const add = tree.root.find((n) => n.props?.title === 'Add OAuth profile');
+    const add = tree.root.find((n) => n.props?.testID === 'connected-services-action:add-oauth-profile-device');
     await act(async () => {
       await add.props.onPress?.();
     });
 
-    expect(pushSpy).toHaveBeenCalled();
+    expect(pushSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pathname: '/(app)/settings/connected-services/oauth',
+        params: expect.objectContaining({
+          serviceId: 'openai-codex',
+          profileId: 'work',
+          method: 'device',
+        }),
+      }),
+    );
     expect(alertSpy).toHaveBeenCalled();
   });
 

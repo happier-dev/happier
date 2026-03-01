@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -11,6 +12,8 @@ import type { ConnectedServiceId, ConnectedServiceQuotaSnapshotV1 } from '@happi
 import { t } from '@/text';
 
 import { ConnectedServiceQuotaBadgesView } from '../ConnectedServiceQuotaBadgesView';
+import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import type { ItemAction } from '@/components/ui/lists/itemActions';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 
@@ -32,14 +35,19 @@ export const ConnectedServiceDetailProfilesGroup = React.memo(function Connected
   quotasEnabled: boolean;
   onDisconnect: (profileId: string) => void;
   onConnectOauth: (profileId: string) => void;
+  onOpenProfile: (profileId: string) => void;
+  onSetDefaultProfile: (profileId: string) => void;
+  onEditProfileLabel: (profileId: string) => void;
 }>) {
-	  return (
-	    <ItemGroup title={props.title}>
-	      {props.profiles.length === 0 ? (
-	        <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-	          <Text style={{ opacity: 0.7 }}>{t('connectedServices.detail.profiles.empty')}</Text>
-	        </View>
-	      ) : null}
+  const { theme } = useUnistyles();
+
+  return (
+    <ItemGroup title={props.title}>
+      {props.profiles.length === 0 ? (
+        <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+          <Text style={{ opacity: 0.7 }}>{t('connectedServices.detail.profiles.empty')}</Text>
+        </View>
+      ) : null}
 
       {props.profiles.map((p) => {
         const profileId = typeof p?.profileId === 'string' ? p.profileId : '';
@@ -64,17 +72,48 @@ export const ConnectedServiceDetailProfilesGroup = React.memo(function Connected
           })
           : [];
 
-	        const providerEmail = typeof p?.providerEmail === 'string' ? p.providerEmail : null;
-	        const connectedSubtitle = providerEmail ?? t('connectedServices.detail.profiles.connected');
-	        const subtitleParts = [
-	          profileId === props.defaultProfileId ? t('connectedServices.detail.profiles.defaultBadge') : null,
-	          label ? profileId : null,
-	          label ? connectedSubtitle : connectedSubtitle,
-	        ].filter(Boolean) as string[];
-	        const subtitle = status === 'connected' ? subtitleParts.join(' • ') : t('connectedServices.detail.profiles.needsReauth');
+        const providerEmail = typeof p?.providerEmail === 'string' ? p.providerEmail : null;
+        const connectedSubtitle = providerEmail ?? t('connectedServices.detail.profiles.connected');
+        const subtitleParts = [
+          profileId === props.defaultProfileId ? t('connectedServices.detail.profiles.defaultBadge') : null,
+          label ? profileId : null,
+          label ? connectedSubtitle : connectedSubtitle,
+        ].filter(Boolean) as string[];
+        const subtitle = status === 'connected' ? subtitleParts.join(' • ') : t('connectedServices.detail.profiles.needsReauth');
 
         const iconName = status === 'connected' ? 'checkmark-circle-outline' : 'warning-outline';
-        const iconColor = status === 'connected' ? '#34C759' : '#FF9500';
+        const iconColor = status === 'connected' ? theme.colors.success : theme.colors.accent.orange;
+        const isDefault = profileId === props.defaultProfileId;
+
+        const actions: ItemAction[] = [
+          {
+            id: 'default',
+            title: isDefault ? t('connectedServices.detail.actions.unsetDefault') : t('connectedServices.detail.actions.setDefault'),
+            icon: isDefault ? 'star' : 'star-outline',
+            color: isDefault ? theme.colors.button.primary.background : theme.colors.textSecondary,
+            onPress: () => props.onSetDefaultProfile(isDefault ? '' : profileId),
+          },
+          {
+            id: 'label',
+            title: t('connectedServices.detail.actions.editLabel'),
+            icon: 'pencil-outline',
+            onPress: () => props.onEditProfileLabel(profileId),
+          },
+          ...(status === 'connected'
+            ? [{
+              id: 'disconnect',
+              title: t('modals.disconnect'),
+              icon: 'trash-outline',
+              destructive: true,
+              onPress: () => props.onDisconnect(profileId),
+            } satisfies ItemAction]
+            : [{
+              id: 'reconnect',
+              title: t('connectedServices.detail.actions.reconnect'),
+              icon: 'refresh-outline',
+              onPress: () => props.onConnectOauth(profileId),
+            } satisfies ItemAction]),
+        ];
 
         return (
           <Item
@@ -82,11 +121,20 @@ export const ConnectedServiceDetailProfilesGroup = React.memo(function Connected
             title={label ?? profileId}
             subtitle={subtitle}
             icon={<Ionicons name={iconName as IoniconName} size={22} color={iconColor} />}
-            rightElement={props.quotasEnabled ? <ConnectedServiceQuotaBadgesView badges={badges} /> : undefined}
-            onPress={() => {
-              if (status === 'connected') props.onDisconnect(profileId);
-              else props.onConnectOauth(profileId);
-            }}
+            rightElement={(
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                {props.quotasEnabled ? <ConnectedServiceQuotaBadgesView badges={badges} /> : null}
+                <ItemRowActions
+                  title={label ?? profileId}
+                  compactActionIds={['default', 'label']}
+                  pinnedActionIds={['default']}
+                  overflowPosition="beforePinned"
+                  iconSize={18}
+                  actions={actions}
+                />
+              </View>
+            )}
+            onPress={() => props.onOpenProfile(profileId)}
           />
         );
       })}
