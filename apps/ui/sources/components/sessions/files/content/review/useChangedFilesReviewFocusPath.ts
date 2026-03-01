@@ -14,11 +14,17 @@ export function useChangedFilesReviewFocusPath(input: Readonly<{
     const scrollToPath = input.scrollToPath;
 
     const [highlightedPath, setHighlightedPath] = React.useState<string | null>(null);
+    const appliedFocusPathRef = React.useRef<string | null>(null);
 
     React.useEffect(() => {
         const resolved = typeof focusPath === 'string' ? focusPath : null;
-        if (!resolved) return;
+        if (!resolved) {
+            appliedFocusPathRef.current = null;
+            return;
+        }
+        if (appliedFocusPathRef.current === resolved) return;
         if (!reviewFiles.some((f) => f.fullPath === resolved)) return;
+        appliedFocusPathRef.current = resolved;
 
         setHighlightedPath(resolved);
         expandPath(resolved);
