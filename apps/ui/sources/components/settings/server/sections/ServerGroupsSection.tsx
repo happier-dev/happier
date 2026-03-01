@@ -7,6 +7,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Switch } from '@/components/ui/forms/Switch';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
+import { t } from '@/text';
 
 type ServerGroupsSectionProps = Readonly<{
     groupSelectionEnabled: boolean;
@@ -23,21 +24,24 @@ export function ServerGroupsSection(props: ServerGroupsSectionProps) {
     const { theme } = useUnistyles();
 
     return (
-        <ItemGroup title="Concurrent multi-server view" footer="Select whether to combine multiple servers in one session list.">
+        <ItemGroup
+            title={t('server.multiServerView.title')}
+            footer={t('server.multiServerView.footer')}
+        >
             <Item
-                title="Enable concurrent view"
-                subtitle="Show sessions from selected servers together"
+                title={t('server.multiServerView.enableTitle')}
+                subtitle={t('server.multiServerView.enableSubtitle')}
                 icon={<Ionicons name="layers-outline" size={29} color={theme.colors.textSecondary} />}
                 rightElement={<Switch value={Boolean(props.groupSelectionEnabled)} onValueChange={props.setGroupSelectionEnabled} />}
                 showChevron={false}
                 onPress={() => props.setGroupSelectionEnabled(!props.groupSelectionEnabled)}
             />
             <Item
-                title="Presentation mode"
+                title={t('server.multiServerView.presentationTitle')}
                 subtitle={
                     props.groupSelectionPresentation === 'flat-with-badge'
-                        ? 'Flat list with server badges'
-                        : 'Grouped by server'
+                        ? t('server.multiServerView.presentation.flatWithBadges')
+                        : t('server.multiServerView.presentation.groupedByServer')
                 }
                 icon={<Ionicons name="list-outline" size={29} color={theme.colors.textSecondary} />}
                 rightElement={<Ionicons name="swap-horizontal-outline" size={20} color={theme.colors.textSecondary} />}
