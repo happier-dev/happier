@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Pressable, Platform } from 'react-native';
+import { View, Pressable, Platform, useWindowDimensions } from 'react-native';
 import { useAuth } from '@/auth/context/AuthContext';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
@@ -42,12 +42,15 @@ import { authChallenge } from '@/auth/flows/challenge';
 import { buildContentKeyBinding } from '@/auth/oauth/contentKeyBinding';
 import { buildAccountEncryptionMigrateToE2eeRequest } from '@/sync/ops/account/buildAccountEncryptionMigrateToE2eeRequest';
 import { getConnectedServiceCredentialPlain } from '@/sync/api/account/apiConnectedServicesV3';
+import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
+import { AccountEncryptionMigrateInvalidParamsReasonSchema } from '@happier-dev/protocol';
 
 
 export default React.memo(() => {
     const { theme } = useUnistyles();
     const auth = useAuth();
     const router = useRouter();
+    const { width, height } = useWindowDimensions();
     const [showSecret, setShowSecret] = useState(false);
     const [copiedRecently, setCopiedRecently] = useState(false);
     const [analyticsOptOut, setAnalyticsOptOut] = useSettingMutable('analyticsOptOut');
@@ -183,8 +186,9 @@ export default React.memo(() => {
         }
     };
 
-    const showAddYourPhone = Platform.OS === 'web' || isRunningOnMac();
-    const showLinkNewDevice = Platform.OS !== 'web';
+    const isPhoneSizedWeb = Platform.OS === 'web' && isWebMobileLikeQrScannerHost({ width, height });
+    const showAddYourPhone = isRunningOnMac() || (Platform.OS === 'web' && !isPhoneSizedWeb);
+    const showLinkNewDevice = !isRunningOnMac() && (Platform.OS !== 'web' || isPhoneSizedWeb);
     const showAccountAccessGroup = showAddYourPhone || showLinkNewDevice;
 
     return (
@@ -370,7 +374,7 @@ export default React.memo(() => {
                                     <Ionicons
                                         name={copiedRecently ? "checkmark-circle" : "copy-outline"}
                                         size={18}
-                                        color={copiedRecently ? "#34C759" : theme.colors.textSecondary}
+                                        color={copiedRecently ? theme.colors.success : theme.colors.textSecondary}
                                     />
                                 </View>
                                 <Text style={{
@@ -405,10 +409,11 @@ export default React.memo(() => {
                                     onValueChange={async (enabled) => {
                                         if (!auth.credentials) return;
                                         if (accountEncryptionMode == null) return;
+                                        const credentials = auth.credentials;
+                                        const nextMode = enabled ? 'e2ee' : 'plain';
 
                                         setAccountEncryptionModeSaving(true);
                                         try {
-                                            const nextMode = enabled ? 'e2ee' : 'plain';
                                             const expectedSettingsVersion = storage.getState().settingsVersion ?? 0;
                                             const connectedServiceProfiles = profile.connectedServicesV2.flatMap((svc) =>
                                                 svc.profiles.map((p) => ({
@@ -424,21 +429,21 @@ export default React.memo(() => {
                                             let generatedSecret: string | null = null;
                                             const legacyCredentialsForE2ee = nextMode === 'e2ee'
                                                 ? (() => {
-                                                    if (isLegacyAuthCredentials(auth.credentials)) return auth.credentials;
+                                                    if (isLegacyAuthCredentials(credentials)) return credentials;
                                                     generatedSecret = encodeBase64(getRandomBytes(32), 'base64url');
-                                                    return { token: auth.credentials.token, secret: generatedSecret };
+                                                    return { token: credentials.token, secret: generatedSecret };
                                                 })()
                                                 : null;
 
                                             const request = nextMode === 'plain'
                                                 ? await buildAccountEncryptionMigrateToPlainRequest({
-                                                    credentials: auth.credentials,
+                                                    credentials,
                                                     expectedSettingsVersion,
                                                     settings: storage.getState().settings,
                                                     connectedServiceProfiles,
                                                     automations,
                                                     fetchConnectedServiceCredentialSealed: async ({ serviceId, profileId }) =>
-                                                        await getConnectedServiceCredentialSealed(auth.credentials, { serviceId, profileId }),
+                                                        await getConnectedServiceCredentialSealed(credentials, { serviceId, profileId }),
                                                     decryptAutomationTemplateRaw: async (payloadCiphertext: string) =>
                                                         await sync.encryption.decryptAutomationTemplateRaw(payloadCiphertext),
                                                 })
@@ -449,7 +454,7 @@ export default React.memo(() => {
                                                     connectedServiceProfiles,
                                                     automations,
                                                     fetchConnectedServiceCredentialPlain: async ({ serviceId, profileId }) =>
-                                                        await getConnectedServiceCredentialPlain(auth.credentials, { serviceId, profileId }),
+                                                        await getConnectedServiceCredentialPlain(credentials, { serviceId, profileId }),
                                                 });
 
                                             const keyProof = nextMode === 'e2ee'
@@ -471,7 +476,7 @@ export default React.memo(() => {
                                                 : null;
 
                                             if (nextMode === 'e2ee' && !keyProof) {
-                                                await Modal.alert(t('common.error'), t('settingsAccount.secretKeyMissing'));
+                                                await Modal.alertAsync(t('common.error'), t('settingsAccount.secretKeyMissing'));
                                                 return;
                                             }
 
@@ -489,14 +494,41 @@ export default React.memo(() => {
 
                                             if (generatedSecret) {
                                                 await auth.login(auth.credentials.token, generatedSecret);
-                                                await Modal.alert(t('settingsAccount.backup'), t('settingsAccount.backupDescription'));
+                                                await Modal.alertAsync(t('settingsAccount.backup'), t('settingsAccount.backupDescription'));
                                             }
                                         } catch (e) {
                                             if (e instanceof HappyError) {
-                                                await Modal.alert(t('common.error'), e.message);
+                                                if (nextMode === 'e2ee' && e.status === 400) {
+                                                    if (
+                                                        !isLegacyAuthCredentials(credentials) &&
+                                                        e.code === AccountEncryptionMigrateInvalidParamsReasonSchema.enum.restore_required
+                                                    ) {
+                                                        await Modal.alertAsync(
+                                                            t('settingsAccount.restoreRequiredTitle'),
+                                                            t('settingsAccount.restoreRequiredBody'),
+                                                            [
+                                                                {
+                                                                    text: t('navigation.restoreWithSecretKey'),
+                                                                    onPress: () => router.push('/restore/manual'),
+                                                                },
+                                                                {
+                                                                    text: t('connect.lostAccessConfirmButton'),
+                                                                    style: 'destructive',
+                                                                    onPress: () => router.push('/restore/lost-access'),
+                                                                },
+                                                            ],
+                                                        );
+                                                        return;
+                                                    }
+                                                    if (e.code === AccountEncryptionMigrateInvalidParamsReasonSchema.enum.key_proof_required) {
+                                                        await Modal.alertAsync(t('common.error'), t('settingsAccount.secretKeyMissing'));
+                                                        return;
+                                                    }
+                                                }
+                                                await Modal.alertAsync(t('common.error'), e.message);
                                                 return;
                                             }
-                                            await Modal.alert(t('common.error'), t('settingsAccount.encryptionUpdateFailed'));
+                                            await Modal.alertAsync(t('common.error'), t('settingsAccount.encryptionUpdateFailed'));
                                             return;
                                         } finally {
                                             setAccountEncryptionModeSaving(false);

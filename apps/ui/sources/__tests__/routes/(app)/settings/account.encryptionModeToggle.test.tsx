@@ -14,8 +14,9 @@ import {
 
 vi.mock('react-native-reanimated', () => ({}));
 
+const routerPushMock = vi.hoisted(() => vi.fn());
 vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
+    useRouter: () => ({ push: routerPushMock, back: vi.fn() }),
 }));
 
 const useFeatureEnabledMock = vi.hoisted(() => vi.fn());
@@ -78,7 +79,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
         });
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
-        const { default: AccountScreen } = await import('./account');
+        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
@@ -145,7 +146,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
         });
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
-        const { default: AccountScreen } = await import('./account');
+        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
@@ -218,9 +219,9 @@ describe('Settings → Account (encryption mode toggle)', () => {
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
         const { Modal } = await import('@/modal');
-        const alertSpy = vi.spyOn(Modal, 'alert').mockResolvedValue();
+        const alertSpy = vi.spyOn(Modal, 'alertAsync').mockResolvedValue();
 
-        const { default: AccountScreen } = await import('./account');
+        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
@@ -265,7 +266,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
         storage.getState().replaceSettings({ analyticsOptOut: false } as any, 7);
 
         const { Modal } = await import('@/modal');
-        const alertSpy = vi.spyOn(Modal, 'alert').mockResolvedValue();
+        const alertSpy = vi.spyOn(Modal, 'alertAsync').mockResolvedValue();
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = getRequestUrl(input);
@@ -305,7 +306,7 @@ describe('Settings → Account (encryption mode toggle)', () => {
         });
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
-        const { default: AccountScreen } = await import('./account');
+        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
@@ -328,6 +329,84 @@ describe('Settings → Account (encryption mode toggle)', () => {
 
             expect(loginSpy).toHaveBeenCalledWith('t', expect.any(String));
             expect(alertSpy).toHaveBeenCalled();
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+        }
+    });
+
+    it('shows a restore-required message when enabling e2ee fails with invalid params on keyless credentials', async () => {
+        useFeatureEnabledMock.mockReturnValue(true);
+        const loginSpy = vi.fn(async () => {});
+        useAuthMock.mockReturnValue({
+            isAuthenticated: true,
+            credentials: { token: 't', encryption: { publicKey: 'pk', machineKey: Buffer.from(new Uint8Array(32).fill(4)).toString('base64') } },
+            logout: vi.fn(),
+            login: loginSpy,
+        });
+        storage.getState().applyProfile({ ...profileDefaults, linkedProviders: [], username: null });
+        storage.getState().replaceSettings({ analyticsOptOut: false } as any, 7);
+
+        const { Modal } = await import('@/modal');
+        const alertSpy = vi.spyOn(Modal, 'alertAsync').mockResolvedValue();
+
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = getRequestUrl(input);
+            const method = (init?.method ?? 'GET').toUpperCase();
+            if (isFeaturesRequest(url)) {
+                return {
+                    ok: true,
+                    json: async () => createAccountFeaturesResponse({ encryptionAccountOptOutEnabled: true }),
+                };
+            }
+            if (url.endsWith('/v1/account/encryption') && method === 'GET') {
+                return {
+                    ok: true,
+                    json: async () => ({ mode: 'plain', updatedAt: 1 }),
+                };
+            }
+            if (url.endsWith('/v1/account/encryption/migrate') && method === 'POST') {
+                return {
+                    ok: false,
+                    status: 400,
+                    json: async () => ({ error: 'invalid-params', reason: 'restore_required' }),
+                };
+            }
+            throw new Error(`Unexpected fetch: ${url} (${method})`);
+        });
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        try {
+            await act(async () => {
+                tree = renderer.create(<AccountScreen />);
+            });
+            await act(async () => {});
+
+            const encryptionItems =
+                tree?.root.findAll(
+                    (node) =>
+                        node?.props?.rightElement?.props?.testID === 'settings-account-encryption-mode-switch' &&
+                        typeof node?.props?.rightElement?.props?.onValueChange === 'function',
+                ) ?? [];
+            expect(encryptionItems).toHaveLength(1);
+
+            await act(async () => {
+                await encryptionItems[0]!.props.rightElement.props.onValueChange(true);
+            });
+
+            expect(loginSpy).not.toHaveBeenCalled();
+            expect(alertSpy).toHaveBeenCalledWith(
+                expect.any(String),
+                expect.any(String),
+                expect.arrayContaining([
+                    expect.objectContaining({ text: expect.stringMatching(/restore/i) }),
+                    expect.objectContaining({ text: expect.stringMatching(/reset|lost access/i) }),
+                ]),
+            );
         } finally {
             act(() => {
                 tree?.unmount();
