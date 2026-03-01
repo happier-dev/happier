@@ -57,6 +57,51 @@ function makeSnapshot(): ScmWorkingSnapshot {
 }
 
 describe('useChangedFilesData', () => {
+    it('can skip attribution computation for repository-only surfaces', () => {
+        let latest: UseChangedFilesDataResult | null = null;
+
+        function Test() {
+            latest = useChangedFilesData({
+                sessionId: 's1',
+                scmSnapshot: makeSnapshot(),
+                touchedPaths: ['src/a.ts'],
+                operationLog: [
+                    {
+                        id: 'log-1',
+                        sessionId: 's1',
+                        operation: 'stage',
+                        status: 'success',
+                        timestamp: 1,
+                        path: 'src/a.ts',
+                    },
+                ],
+                projectSessionIds: ['s1'],
+                searchQuery: '',
+                showAllRepositoryFiles: false,
+                computeAttribution: false,
+            });
+            return null;
+        }
+
+        let root: renderer.ReactTestRenderer;
+        act(() => {
+            root = renderer.create(<Test />);
+        });
+
+        expect(latest).not.toBeNull();
+        if (!latest) {
+            throw new Error('Expected hook result');
+        }
+        const result: UseChangedFilesDataResult = latest;
+        expect(result.showSessionViewToggle).toBe(false);
+        expect(result.sessionAttributedFiles).toHaveLength(0);
+        expect(result.repositoryOnlyFiles).toHaveLength(1);
+        expect(result.suppressedInferredCount).toBe(0);
+        act(() => {
+            root!.unmount();
+        });
+    });
+
     it('includes inferred session attribution when reliability is high', () => {
         let latest: UseChangedFilesDataResult | null = null;
 
