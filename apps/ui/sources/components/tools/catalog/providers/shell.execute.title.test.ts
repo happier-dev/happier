@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/text', () => ({
-    t: (key: string) => {
+    t: (key: string, vars?: any) => {
         if (key === 'tools.names.terminal') return 'Terminal';
+        if (key === 'tools.desc.terminalCmd') return `Run ${String(vars?.cmd ?? '')}`.trim();
         return key;
     },
 }));
@@ -25,7 +26,7 @@ describe('providerShellTools.execute', () => {
         const title = providerShellTools.execute.title({ metadata: null, tool });
         const subtitle = providerShellTools.execute.extractSubtitle?.({ metadata: null, tool });
 
-        expect(title).toBe('rm -rf /tmp/x');
+        expect(title).toBe('Run rm');
         expect(subtitle).toBe('rm -rf /tmp/x');
     });
 
@@ -46,6 +47,6 @@ describe('providerShellTools.execute', () => {
         } as any;
 
         const title = providerShellTools.execute.title({ metadata: null, tool });
-        expect(title).toBe('rm -rf /tmp/x');
+        expect(title).toBe('Run rm');
     });
 });

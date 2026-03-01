@@ -130,10 +130,17 @@ export const providerShellTools = {
                 // Extract just the command part before [
                 const bracketIdx = acpTitle.indexOf(' [');
                 const rawTitle = bracketIdx > 0 ? acpTitle.substring(0, bracketIdx) : acpTitle;
-                return stripShellCommandPreludeForDisplay(rawTitle);
+                const cmd = stripShellCommandPreludeForDisplay(rawTitle).trim();
+                const firstWord = cmd.split(/\s+/)[0];
+                if (firstWord) return t('tools.desc.terminalCmd', { cmd: firstWord });
+                return t('tools.names.terminal');
             }
             const cmd = extractShellCommand(opts.tool.input);
-            if (cmd) return stripShellCommandPreludeForDisplay(cmd);
+            if (cmd) {
+                const stripped = stripShellCommandPreludeForDisplay(cmd).trim();
+                const firstWord = stripped.split(/\s+/)[0];
+                if (firstWord) return t('tools.desc.terminalCmd', { cmd: firstWord });
+            }
             return t('tools.names.terminal');
         },
         icon: ICON_TERMINAL,

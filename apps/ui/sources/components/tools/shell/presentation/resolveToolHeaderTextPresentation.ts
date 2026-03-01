@@ -16,6 +16,48 @@ export type ToolHeaderTextPresentation = Readonly<{
     statusText: string | null;
 }>;
 
+function asObject(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return value as Record<string, unknown>;
+}
+
+function parseJsonLikeSubtitle(subtitle: string): Record<string, unknown> | null {
+    const trimmed = subtitle.trim();
+    if (!trimmed) return null;
+
+    const parseAsObject = (value: unknown): Record<string, unknown> | null => {
+        if (typeof value !== 'string') return asObject(value);
+        const inner = value.trim();
+        if (!inner) return null;
+        if (inner[0] !== '{' && inner[0] !== '[' && inner[0] !== '"') return null;
+        try {
+            return parseAsObject(JSON.parse(inner));
+        } catch {
+            return null;
+        }
+    };
+
+    return parseAsObject(trimmed);
+}
+
+function compactSubAgentRunSubtitle(subtitle: string | null, normalizedToolName: string): string | null {
+    if (!subtitle || normalizedToolName !== 'SubAgentRun') return subtitle;
+    const parsed = parseJsonLikeSubtitle(subtitle);
+    if (!parsed) return subtitle;
+
+    const summary = typeof parsed.summary === 'string' ? parsed.summary.trim() : '';
+    if (summary) return summary;
+
+    const errorObj = asObject(parsed.error);
+    const errorMessage = typeof errorObj?.message === 'string' ? errorObj.message.trim() : '';
+    if (errorMessage) return errorMessage;
+
+    const message = typeof parsed.message === 'string' ? parsed.message.trim() : '';
+    if (message) return message;
+
+    return null;
+}
+
 export function resolveToolHeaderTextPresentation(params: {
     tool: ToolCall;
     metadata: Metadata | null;
@@ -94,6 +136,8 @@ export function resolveToolHeaderTextPresentation(params: {
             }
         }
     }
+
+    subtitle = compactSubAgentRunSubtitle(subtitle, normalizedToolName);
 
     return {
         normalizedToolName,

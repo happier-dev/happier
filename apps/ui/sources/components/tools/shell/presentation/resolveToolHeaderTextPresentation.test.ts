@@ -73,4 +73,17 @@ describe('resolveToolHeaderTextPresentation', () => {
         expect(model.title).toBe('MCP:mcp__foo');
         expect(model.subtitle).toBe('sub:1');
     });
+
+    it('compacts SubAgentRun JSON subtitle to summary text', async () => {
+        const { resolveToolHeaderTextPresentation } = await import('./resolveToolHeaderTextPresentation');
+        const tool = makeToolCall({
+            name: 'SubAgentRun',
+            description:
+                '{"status":"timeout","summary":"Timed out after 120000ms","error":{"code":"execution_run_timeout","message":"Timed out after 120000ms"}}',
+        });
+        inferred = { normalizedToolName: 'SubAgentRun', source: 'original' };
+        const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
+        expect(model.title).toBe('SubAgentRun');
+        expect(model.subtitle).toBe('Timed out after 120000ms');
+    });
 });
