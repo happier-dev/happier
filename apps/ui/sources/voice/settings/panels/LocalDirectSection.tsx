@@ -42,9 +42,9 @@ export function LocalDirectSection(props: {
       <LocalVoiceSttGroup cfgStt={cfg.stt} setStt={(next) => setCfg({ stt: next })} popoverBoundaryRef={props.popoverBoundaryRef} />
 
       {sttProvider === 'device' ? (
-        <ItemGroup title="Hands-free">
+        <ItemGroup title={t('settingsVoice.local.conversation.handsFree.title')}>
           <Item
-            title="Enable hands-free"
+            title={t('settingsVoice.local.conversation.handsFree.enableTitle')}
             rightElement={
               <Switch
                 value={cfg.handsFree.enabled}
@@ -53,11 +53,11 @@ export function LocalDirectSection(props: {
             }
           />
           <Item
-            title="Silence (ms)"
+            title={t('settingsVoice.local.conversation.handsFree.silenceTitle')}
             detail={String(cfg.handsFree.endpointing.silenceMs)}
             onPress={() => {
               fireAndForget((async () => {
-                const raw = await Modal.prompt('Silence (ms)', undefined, {
+                const raw = await Modal.prompt(t('settingsVoice.local.conversation.handsFree.silenceTitle'), undefined, {
                   inputType: 'numeric',
                   placeholder: String(cfg.handsFree.endpointing.silenceMs),
                 });
@@ -74,11 +74,11 @@ export function LocalDirectSection(props: {
             }}
           />
           <Item
-            title="Minimum speech (ms)"
+            title={t('settingsVoice.local.conversation.handsFree.minSpeechTitle')}
             detail={String(cfg.handsFree.endpointing.minSpeechMs)}
             onPress={() => {
               fireAndForget((async () => {
-                const raw = await Modal.prompt('Minimum speech (ms)', undefined, {
+                const raw = await Modal.prompt(t('settingsVoice.local.conversation.handsFree.minSpeechTitle'), undefined, {
                   inputType: 'numeric',
                   placeholder: String(cfg.handsFree.endpointing.minSpeechMs),
                 });
@@ -106,14 +106,18 @@ export function LocalDirectSection(props: {
 
       <ItemGroup>
         <Item
-          title="Network timeout (ms)"
+          title={t('settingsVoice.local.conversation.network.timeoutTitle')}
           detail={String(cfg.networkTimeoutMs)}
           onPress={() => {
             fireAndForget((async () => {
-              const raw = await Modal.prompt('Network timeout (ms)', 'Timeout for requests to your STT/TTS endpoints (1000–60000).', {
+              const raw = await Modal.prompt(
+                t('settingsVoice.local.conversation.network.timeoutTitle'),
+                t('settingsVoice.local.conversation.network.timeoutPromptBody'),
+                {
                 inputType: 'numeric',
                 placeholder: String(cfg.networkTimeoutMs),
-              });
+                }
+              );
               if (raw === null) return;
               const next = Number(String(raw).trim());
               if (!Number.isFinite(next)) return;

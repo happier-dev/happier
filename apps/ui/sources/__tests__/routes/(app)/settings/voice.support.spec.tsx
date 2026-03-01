@@ -217,7 +217,7 @@ beforeEach(() => {
 
 describe('VoiceSettingsScreen (server voice unsupported)', () => {
     it('hides Happier Voice option and coerces mode to off', async () => {
-        const VoiceSettingsScreen = (await import('./voice')).default;
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
 
         let tree!: ReactTestRenderer;
         act(() => {
@@ -242,7 +242,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.providerId = 'local_conversation';
         voiceState.adapters.local_conversation.conversationMode = 'direct_session';
 
-        const VoiceSettingsScreen = (await import('./voice')).default;
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
 
         let tree!: ReactTestRenderer;
         act(() => {
@@ -265,7 +265,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.providerId = 'realtime_elevenlabs';
         voiceState.adapters.realtime_elevenlabs.billingMode = 'byo';
 
-        const VoiceSettingsScreen = (await import('./voice')).default;
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
 
         let tree!: ReactTestRenderer;
         act(() => {
@@ -287,7 +287,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
     });
 
     it('does not show navigation chevrons for voice mode selection rows', async () => {
-        const VoiceSettingsScreen = (await import('./voice')).default;
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
 
         let tree!: ReactTestRenderer;
         act(() => {
@@ -309,7 +309,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
     });
 
     it('does not render ineffective privacy toggles (file paths/tool args) as interactive settings', async () => {
-        const VoiceSettingsScreen = (await import('./voice')).default;
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
 
         let tree!: ReactTestRenderer;
         act(() => {
@@ -330,7 +330,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         // Enable local conversation so the section renders.
         voiceState.providerId = 'local_conversation';
 
-        const VoiceSettingsScreen = (await import('./voice')).default;
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
 
         let tree!: ReactTestRenderer;
         act(() => {
@@ -358,7 +358,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.providerId = 'local_conversation';
         voiceState.adapters.local_conversation.conversationMode = 'agent';
 
-        const VoiceSettingsScreen = (await import('./voice')).default;
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
 
         let tree!: ReactTestRenderer;
         act(() => {
@@ -386,7 +386,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.providerId = 'local_conversation';
         voiceState.adapters.local_conversation.conversationMode = 'agent';
 
-        const VoiceSettingsScreen = (await import('./voice')).default;
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
 
         let tree!: ReactTestRenderer;
         act(() => {
@@ -421,7 +421,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.adapters.local_conversation.agent.agentId = 'unknown-agent';
         voiceState.adapters.local_conversation.agent.transcript = { persistenceMode: 'persistent', epoch: 1 };
 
-        const VoiceSettingsScreen = (await import('./voice')).default;
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
 
         let tree!: ReactTestRenderer;
         act(() => {
@@ -443,7 +443,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.adapters.local_conversation.agent.backend = 'daemon';
         voiceState.adapters.local_conversation.agent.commitIsolation = false;
 
-        const VoiceSettingsScreen = (await import('./voice')).default;
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
 
         let tree!: ReactTestRenderer;
         act(() => {
@@ -451,9 +451,9 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         });
         await act(async () => {});
 
-        const commitIsolationItem = tree.root
-            .findAll((n) => n.props?.title === 'Commit isolation')
-            .find((n) => typeof n.props?.onPress === 'function');
+            const commitIsolationItem = tree.root
+                .findAll((n) => n.props?.title === 'settingsVoice.local.conversation.commitIsolation.title')
+                .find((n) => typeof n.props?.onPress === 'function');
         expect(commitIsolationItem).toBeTruthy();
 
         await act(async () => {
@@ -484,7 +484,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         resetGlobalVoiceAgentPersistenceSpy.mockClear();
         (Modal as any).confirm.mockResolvedValueOnce(true);
 
-        const VoiceSettingsScreen = (await import('./voice')).default;
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
 
         let tree!: ReactTestRenderer;
         act(() => {
@@ -492,9 +492,9 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         });
         await act(async () => {});
 
-        const resetItem = tree.root
-            .findAll((n) => n.props?.title === 'Reset voice agent')
-            .find((n) => typeof n.props?.onPress === 'function');
+            const resetItem = tree.root
+                .findAll((n) => n.props?.title === 'settingsVoice.local.conversation.resetVoiceAgent.title')
+                .find((n) => typeof n.props?.onPress === 'function');
         expect(resetItem).toBeTruthy();
 
         await act(async () => {
@@ -525,7 +525,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
 
         (Modal as any).prompt.mockResolvedValueOnce('999999');
 
-        const VoiceSettingsScreen = (await import('./voice')).default;
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
 
         let tree!: ReactTestRenderer;
         act(() => {
@@ -560,7 +560,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
 
         voiceState.providerId = 'local_direct';
 
-        const VoiceSettingsScreen = (await import('./voice')).default;
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
 
         let tree!: ReactTestRenderer;
         act(() => {
@@ -588,7 +588,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.providerId = 'off';
         voiceState.assistantLanguage = null;
 
-        const VoiceSettingsScreen = (await import('./voice')).default;
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
 
         let tree!: ReactTestRenderer;
         act(() => {
@@ -615,7 +615,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.adapters.realtime_elevenlabs.billingMode = 'byo';
         decryptSecretValue.mockReturnValue('xi-test');
 
-        const VoiceSettingsScreen = (await import('./voice')).default;
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
 
         let tree!: ReactTestRenderer;
         act(() => {
@@ -644,7 +644,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.providerId = 'realtime_elevenlabs';
         voiceState.adapters.realtime_elevenlabs.billingMode = 'byo';
 
-        const VoiceSettingsScreen = (await import('./voice')).default;
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
 
         let tree!: ReactTestRenderer;
         act(() => {
