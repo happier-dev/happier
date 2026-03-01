@@ -18,6 +18,8 @@ import { ConnectedServiceOauthPasteView } from './ConnectedServiceOauthPasteView
 import { OpenAiCodexDeviceAuthView } from './oauth/openai/OpenAiCodexDeviceAuthView';
 import { ConnectedServiceOauthEmbeddedView } from './oauth/ConnectedServiceOauthEmbeddedView';
 import { resolveConnectedServiceOauthMode } from './oauth/resolveConnectedServiceOauthMode';
+import { resolveConnectedServiceOauthErrorMessage } from './oauth/resolveConnectedServiceOauthErrorMessage';
+import { resolveConnectedServiceDisplayName } from './model/resolveConnectedServiceDisplayName';
 
 function asStringParam(value: unknown): string {
   if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : '';
@@ -37,11 +39,12 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
   const method = asStringParam((params as any).method).trim().toLowerCase();
 
   const entry = serviceId ? getConnectedServiceRegistryEntry(serviceId) : null;
+  const serviceLabel = serviceId ? resolveConnectedServiceDisplayName(serviceId) : (rawServiceId || t('connectedServices.fallbackName'));
 
   if (!serviceId || !entry || !profileId) {
     return (
       <View style={{ flex: 1 }}>
-        <OAuthViewUnsupported name={rawServiceId || t('connectedServices.fallbackName')} command={entry?.connectCommand} />
+        <OAuthViewUnsupported name={serviceLabel} command={entry?.connectCommand} />
       </View>
     );
   }
@@ -49,7 +52,7 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
   if (!connectedServicesEnabled) {
     return (
       <View style={{ flex: 1 }}>
-        <OAuthViewUnsupported name={entry.displayName} command={entry.connectCommand} />
+        <OAuthViewUnsupported name={serviceLabel} command={entry.connectCommand} />
       </View>
     );
   }
@@ -57,7 +60,7 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
   if (!entry.supportsOauth) {
     return (
       <View style={{ flex: 1 }}>
-        <OAuthViewUnsupported name={entry.displayName} command={entry.connectCommand} />
+        <OAuthViewUnsupported name={serviceLabel} command={entry.connectCommand} />
       </View>
     );
   }
@@ -143,7 +146,7 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
   };
 
   if (!adapter) {
-    return <OAuthViewUnsupported name={entry.displayName} command={entry.connectCommand} />;
+    return <OAuthViewUnsupported name={serviceLabel} command={entry.connectCommand} />;
   }
 
   const redirectUri = adapter.defaultRedirectUri;
@@ -170,13 +173,17 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
           await registerMaybeRecord(record);
           await Modal.alert(
             t('connectedServices.oauthPaste.alerts.connectedTitle'),
-            t('connectedServices.oauthPaste.alerts.connectedBody', { serviceId: entry.displayName, profileId }),
+            t('connectedServices.oauthPaste.alerts.connectedBody', { serviceId: serviceLabel, profileId }),
           );
           router.back();
         } catch (e: unknown) {
+          const message = resolveConnectedServiceOauthErrorMessage(
+            e,
+            t('connectedServices.oauthPaste.alerts.failedToConnect'),
+          );
           await Modal.alert(
             t('common.error'),
-            e instanceof Error ? e.message : t('connectedServices.oauthPaste.alerts.failedToConnect'),
+            message,
           );
         }
       })(), { tag: 'ConnectedServiceOauthView.onSuccess' });
@@ -185,7 +192,7 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
 
   return (
     <ConnectedServiceOauthEmbeddedView
-      name={entry.displayName}
+      name={serviceLabel}
       command={entry.connectCommand}
       config={config}
       fallbackAction={{

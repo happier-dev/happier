@@ -28,13 +28,17 @@ vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: { token: 't', secret: 's' } }),
 }));
 
+vi.mock('@/text', () => ({
+  t: (key: string) => key,
+}));
+
 vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', () => ({
   getConnectedServiceRegistryEntry: (serviceId: string) => ({
-    displayName: String(serviceId),
+    serviceId,
     connectCommand: `happier connect ${serviceId}`,
     supportsOauth: serviceId !== 'anthropic',
     oauthAddActionModes: serviceId === 'openai-codex'
-      ? ['device', 'paste']
+      ? ['device', 'paste', 'browser']
       : serviceId === 'claude-subscription'
         ? ['paste']
         : ['paste'],
@@ -124,5 +128,20 @@ describe('ConnectedServiceOauthView mode selection', () => {
 
     expect(tree.root.findAllByType('ConnectedServiceOauthEmbeddedView' as any)).toHaveLength(1);
     expect(tree.root.findAllByType('ConnectedServiceOauthPasteView' as any)).toHaveLength(0);
+  });
+
+  it('supports embedded oauth for openai-codex when explicitly requested on native', async () => {
+    searchParams = { serviceId: 'openai-codex', profileId: 'work', method: 'browser' };
+    routerPushSpy.mockClear();
+    routerBackSpy.mockClear();
+    const { ConnectedServiceOauthView } = await import('./ConnectedServiceOauthView');
+
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(<ConnectedServiceOauthView />);
+    });
+
+    expect(tree.root.findAllByType('ConnectedServiceOauthEmbeddedView' as any)).toHaveLength(1);
+    expect(tree.root.findAllByType('OpenAiCodexDeviceAuthView' as any)).toHaveLength(0);
   });
 });
